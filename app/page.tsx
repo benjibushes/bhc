@@ -223,7 +223,7 @@ export default function HomePage() {
             rel="noopener noreferrer"
                 className="inline-block px-12 py-5 bg-bone-white text-charcoal-black hover:bg-dust-gray hover:text-bone-white transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone-white"
               >
-                Get Yours (15% Off) →
+                Get Yours →
               </a>
             </div>
 
@@ -454,7 +454,7 @@ export default function HomePage() {
             rel="noopener noreferrer"
                 className="inline-block px-10 py-5 bg-transparent text-bone-white hover:bg-bone-white hover:text-charcoal-black transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone-white"
           >
-                Shop Limited Drop (15% Off)
+                Shop Limited Drop
           </a>
         </div>
             <p className="text-sm pt-4 text-dust-gray">
@@ -474,7 +474,7 @@ export default function HomePage() {
               <Button href="/faq" variant="secondary">FAQ</Button>
               <Button href="/about" variant="secondary">About</Button>
               <Button href="/news" variant="secondary">News</Button>
-              <Button href="https://www.sackett-ranch.com/pages/buy-half-cow" variant="secondary">Merch (15% Off)</Button>
+              <Button href="https://www.sackett-ranch.com/pages/buy-half-cow" variant="secondary">Merch</Button>
               <Button href="/member" variant="secondary">Member Login</Button>
             </div>
             
