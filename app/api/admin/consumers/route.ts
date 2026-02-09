@@ -4,7 +4,21 @@ import { TABLES } from '@/lib/airtable';
 
 export async function GET() {
   try {
-    const consumers = await getAllRecords(TABLES.CONSUMERS);
+    const records = await getAllRecords(TABLES.CONSUMERS);
+    
+    // Transform Airtable field names to frontend-friendly names
+    const consumers = records.map((record: any) => ({
+      id: record.id,
+      first_name: record['Full Name'] || '',
+      email: record['Email'] || '',
+      phone: record['Phone'] || '',
+      state: record['State'] || '',
+      interests: record['Interests'] || [],
+      status: record['Status'] || 'Pending',
+      membership: record['Membership'] || 'none',
+      created_at: record['Created'] || record.createdTime || new Date().toISOString(),
+    }));
+    
     return NextResponse.json(consumers);
   } catch (error: any) {
     console.error('API error fetching consumers:', error);
