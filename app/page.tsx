@@ -210,26 +210,26 @@ export default function HomePage() {
         <Container>
           <div className="text-center space-y-8">
             <h2 className="font-serif text-4xl md:text-5xl">
-              BuyHalfCow Merch
+              BuyHalfCow × Sackett Ranch
             </h2>
             <p className="text-xl text-dust-gray max-w-2xl mx-auto">
-              Western apparel and ranch gear.<br />
-              <strong className="text-bone-white">Open to everyone</strong> — no membership required.
+              Limited-edition collab drop.<br />
+              <strong className="text-bone-white">15% OFF</strong> — HERD members only.
             </p>
             
             <div className="pt-6">
               <a 
-                href="https://merch.buyhalfcow.com" 
+                href="https://www.sackett-ranch.com/pages/buy-half-cow" 
             target="_blank"
             rel="noopener noreferrer"
                 className="inline-block px-12 py-5 bg-bone-white text-charcoal-black hover:bg-dust-gray hover:text-bone-white transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone-white"
               >
-                Shop Now →
+                Shop Limited Drop →
               </a>
             </div>
 
             <p className="text-sm text-dust-gray pt-4">
-              Members get 20% off everything + early drop access
+              HERD members get 15% off with code at checkout
             </p>
           </div>
         </Container>
@@ -450,12 +450,12 @@ export default function HomePage() {
                 I'm a Partner
           </a>
           <a
-                href="https://merch.buyhalfcow.com"
+                href="https://www.sackett-ranch.com/pages/buy-half-cow"
             target="_blank"
             rel="noopener noreferrer"
                 className="inline-block px-10 py-5 bg-transparent text-bone-white hover:bg-bone-white hover:text-charcoal-black transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone-white"
           >
-                Shop Merch
+                Shop Limited Drop (15% Off)
           </a>
         </div>
             <p className="text-sm pt-4 text-dust-gray">
@@ -475,7 +475,7 @@ export default function HomePage() {
               <Button href="/faq" variant="secondary">FAQ</Button>
               <Button href="/about" variant="secondary">About</Button>
               <Button href="/news" variant="secondary">News</Button>
-              <Button href="https://merch.buyhalfcow.com" variant="secondary">Merch</Button>
+              <Button href="https://www.sackett-ranch.com/pages/buy-half-cow" variant="secondary">Merch (15% Off)</Button>
               <Button href="/member" variant="secondary">Member Login</Button>
             </div>
             
