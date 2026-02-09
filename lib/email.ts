@@ -40,11 +40,12 @@ export async function sendConsumerConfirmation(data: {
             </div>
             <h1>Welcome to The HERD</h1>
             <p>Hi ${data.firstName},</p>
-            <p>Thank you for joining <strong>15,000+ HERD members</strong> sourcing real American beef directly from verified ranchers.</p>
+            <p>Thank you for joining <strong>15,000+ HERD members</strong> rebuilding real food directly from American ranchers.</p>
+            <p><strong>You're among the first 1,000 members. That matters.</strong></p>
             <div class="divider"></div>
             <p><strong>What Happens Next:</strong></p>
             <p>I'm personally reviewing your application (along with hundreds during launch week). You'll hear back within <strong>24-48 hours</strong>.</p>
-            <p>Once approved, you'll get access to:</p>
+            <p>Here's what you're getting early access to:</p>
             <ul>
               <li><strong>200+ verified ranchers</strong> in 30+ states</li>
               <li>Ranchers in <strong>${data.state}</strong> (your state)</li>
@@ -167,10 +168,13 @@ export async function sendPartnerConfirmation(data: {
             <p>Hi ${data.name},</p>
             <p>Thank you for your interest in ${data.type === 'rancher' ? 'joining 200+ American ranchers in The HERD network' : 'partnering with BuyHalfCow'}.</p>
             <p>I've received your application and will review it personally.</p>
+            ${data.type === 'rancher' ? `
+              <p><strong>You're not joining a platform — you're joining the founding layer.</strong></p>
+            ` : ''}
             <div class="divider"></div>
             <p><strong>What Happens Next:</strong></p>
             ${data.type === 'rancher' ? `
-              <p>During launch week, I'm onboarding <strong>200 ranchers</strong> and reviewing each application carefully. Here's the process:</p>
+              <p>During launch week, I'm certifying the first <strong>200 founding ranchers</strong> and reviewing each application carefully. Here's the process:</p>
               <ol style="line-height: 1.8; color: #6B4F3F;">
                 <li><strong>Schedule your call</strong> — Book your 30-minute onboarding call on my calendar (see below)</li>
                 <li><strong>Onboarding call</strong> — We discuss your operation, answer questions, explain The HERD network</li>

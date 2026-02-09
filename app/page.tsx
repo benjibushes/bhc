@@ -54,19 +54,18 @@ export default function HomePage() {
 
             {/* Hero Headline */}
             <h1 className="font-serif text-4xl md:text-6xl lg:text-7xl leading-tight">
-              Join 15,000+ HERD Members<br />
-              Sourcing Real American Beef
+              15,000+ Americans<br />
+              Rebuilding Real Food
           </h1>
             
             <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle-brown">
-              200+ verified ranchers. 30+ states. No middleman.<br />
-              Direct access to American ranches.<br />
-              Built on trust, verification, and real relationships.
+              Direct rancher access. Local beef. No middleman.<br />
+              This is how we take back the food system.
             </p>
 
             <div className="pt-8">
               <div className="inline-block px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium tracking-wide uppercase">
-                🚀 LAUNCH WEEK — Applications reviewed in 24 hours
+                LAUNCH WEEK — Get in early
               </div>
             </div>
           </div>
@@ -205,16 +204,16 @@ export default function HomePage() {
 
       <Divider />
 
-      {/* MERCH SECTION - Revenue Driver */}
+      {/* MERCH SECTION - Signal of Belief */}
       <section className="py-20 bg-charcoal-black text-bone-white">
         <Container>
           <div className="text-center space-y-8">
             <h2 className="font-serif text-4xl md:text-5xl">
-              BuyHalfCow × Sackett Ranch
+              Wear The Signal
             </h2>
-            <p className="text-xl text-dust-gray max-w-2xl mx-auto">
-              Limited-edition collab drop.<br />
-              <strong className="text-bone-white">15% OFF</strong> — HERD members only.
+            <p className="text-xl text-dust-gray max-w-2xl mx-auto leading-relaxed">
+              Limited Sackett Ranch collab. If you're wearing this, you were early.<br />
+              <strong className="text-bone-white">This is how we prove demand to ranchers — and fund the first partnerships.</strong>
             </p>
             
             <div className="pt-6">
@@ -224,12 +223,12 @@ export default function HomePage() {
             rel="noopener noreferrer"
                 className="inline-block px-12 py-5 bg-bone-white text-charcoal-black hover:bg-dust-gray hover:text-bone-white transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone-white"
               >
-                Shop Limited Drop →
+                Get Yours (15% Off) →
               </a>
             </div>
 
             <p className="text-sm text-dust-gray pt-4">
-              HERD members get 15% off with code at checkout
+              HERD members only. Sells out fast.
             </p>
           </div>
         </Container>
