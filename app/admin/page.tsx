@@ -25,10 +25,13 @@ interface Rancher {
   ranch_name: string;
   operator_name: string;
   email: string;
+  phone: string;
   state: string;
   beef_types: string;
   status: string;
   certified: boolean;
+  ranch_tour_interested?: boolean;
+  ranch_tour_availability?: string;
   created_at: string;
 }
 
