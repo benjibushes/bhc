@@ -168,15 +168,46 @@ export default function PartnerPage() {
         <Container>
           <div className="max-w-2xl mx-auto text-center space-y-8">
             <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
-              Application Received
+              Application Received ✓
             </h1>
             <Divider />
-            <p className="text-lg leading-relaxed text-[#6B4F3F]">
-              Thank you for your interest in partnering with BuyHalfCow.
-            </p>
-            <p className="text-lg leading-relaxed">
-              We manually review every application. You'll hear from us within 3-5 business days.
-            </p>
+            
+            {partnerType === 'rancher' && (
+              <>
+                <div className="bg-[#0E0E0E] text-[#F4F1EC] p-8 space-y-6">
+                  <h2 className="text-2xl font-medium">
+                    📞 Next Step: Schedule Your Onboarding Call
+                  </h2>
+                  <p className="text-lg leading-relaxed">
+                    Your application is saved! Now book your required 30-minute onboarding call 
+                    to discuss your operation and get approved.
+                  </p>
+                  <a
+                    href={process.env.NEXT_PUBLIC_CALENDLY_LINK || 'https://cal.com/ben-beauchman-1itnsg/30min'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block px-12 py-5 bg-[#F4F1EC] text-[#0E0E0E] hover:bg-[#E4E1DC] transition-colors duration-300 font-medium tracking-wider uppercase text-base"
+                  >
+                    📅 Schedule Your Call Now →
+                  </a>
+                  <p className="text-sm text-[#A7A29A]">
+                    Can't find a time? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
+                  </p>
+                </div>
+              </>
+            )}
+            
+            {partnerType !== 'rancher' && (
+              <>
+                <p className="text-lg leading-relaxed text-[#6B4F3F]">
+                  Thank you for your interest in partnering with BuyHalfCow.
+                </p>
+                <p className="text-lg leading-relaxed">
+                  We manually review every application. You'll hear from us within 3-5 business days.
+                </p>
+              </>
+            )}
+            
             <div className="pt-8">
               <Link href="/" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
                 ← Back to home
@@ -325,41 +356,6 @@ export default function PartnerPage() {
                     rows={4}
                     placeholder="Tell us about your ranch operations, practices, and what makes your beef special"
                   />
-
-                  <Divider />
-
-                  <div className="space-y-4 p-6 bg-[#F4F1EC] border-2 border-[#0E0E0E]">
-                    <h3 className="font-medium text-lg">📞 Required: Schedule Your Onboarding Call</h3>
-                    <p className="text-sm text-[#6B4F3F] leading-relaxed">
-                      Before we can approve your application, you need to schedule a 30-minute onboarding call. 
-                      We'll discuss your operation, answer questions, and walk through how The HERD network works.
-                    </p>
-                    
-                    <div className="bg-white p-4 border border-[#A7A29A]">
-                      <p className="text-sm font-medium mb-3">
-                        Click below to see my available times and book your call:
-                      </p>
-                      <a
-                        href={process.env.NEXT_PUBLIC_CALENDLY_LINK || 'https://calendly.com'}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-block w-full px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors duration-300 font-medium tracking-wide uppercase text-sm text-center border border-[#0E0E0E]"
-                      >
-                        📅 View Available Times & Schedule Call
-                      </a>
-                      <p className="text-xs text-[#6B4F3F] mt-3">
-                        Can't find a time that works? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
-                      </p>
-                    </div>
-
-                    <Checkbox
-                      label="I have scheduled (or will schedule immediately after submitting) my onboarding call"
-                      name="callScheduled"
-                      checked={rancherData.callScheduled || false}
-                      onChange={handleRancherChange}
-                      required
-                    />
-                  </div>
 
                   <Divider />
 
