@@ -66,6 +66,8 @@ export default function AdminPage() {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [landDeals, setLandDeals] = useState<LandDeal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [rancherStateFilter, setRancherStateFilter] = useState<string>('');
+  const [consumerStateFilter, setConsumerStateFilter] = useState<string>('');
 
   useEffect(() => {
     fetchAllData();
@@ -278,12 +280,57 @@ export default function AdminPage() {
             {/* CONSUMERS TAB */}
             {activeTab === 'consumers' && (
               <div className="space-y-4">
-                <h2 className="font-[family-name:var(--font-serif)] text-2xl">Consumer Applications</h2>
+                <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+                  <h2 className="font-[family-name:var(--font-serif)] text-2xl">Consumer Applications</h2>
+                  
+                  <div className="flex items-center gap-3">
+                    <select
+                      value={consumerStateFilter}
+                      onChange={(e) => setConsumerStateFilter(e.target.value)}
+                      className="px-4 py-2 border-2 border-[#0E0E0E] bg-[#F4F1EC] text-sm font-medium"
+                    >
+                      <option value="">All States ({consumers.length})</option>
+                      {Array.from(new Set(consumers.map(c => c.state).filter(Boolean))).sort().map(state => {
+                        const count = consumers.filter(c => c.state === state).length;
+                        return <option key={state} value={state}>{state} ({count})</option>;
+                      })}
+                    </select>
+                    
+                    {consumerStateFilter && (
+                      <button
+                        onClick={async () => {
+                          const filtered = consumers.filter(c => c.state === consumerStateFilter && c.status === 'pending');
+                          if (filtered.length === 0) {
+                            alert('No pending consumers in this state');
+                            return;
+                          }
+                          if (!confirm(`Approve ${filtered.length} pending consumer(s) in ${consumerStateFilter}?`)) return;
+                          for (const consumer of filtered) {
+                            await updateConsumerStatus(consumer.id, 'approved', consumer.membership);
+                          }
+                          fetchAllData();
+                        }}
+                        className="px-4 py-2 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] text-sm font-medium whitespace-nowrap"
+                      >
+                        ✓ Approve All Pending
+                      </button>
+                    )}
+                  </div>
+                </div>
+                
                 {consumers.length === 0 ? (
                   <p className="text-[#6B4F3F]">No consumers yet.</p>
                 ) : (
-                  <div className="space-y-4">
-                    {consumers.map((consumer) => (
+                  <>
+                    {consumerStateFilter && (
+                      <p className="text-sm text-[#6B4F3F] mb-4">
+                        Showing {consumers.filter(c => c.state === consumerStateFilter).length} consumer(s) in {consumerStateFilter}
+                      </p>
+                    )}
+                    <div className="space-y-4">
+                      {consumers
+                        .filter(c => !consumerStateFilter || c.state === consumerStateFilter)
+                        .map((consumer) => (
                       <div key={consumer.id} className="p-4 border border-[#A7A29A] space-y-3">
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div>
@@ -317,8 +364,9 @@ export default function AdminPage() {
                           Applied: {new Date(consumer.created_at).toLocaleDateString()}
                         </p>
                       </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -326,12 +374,76 @@ export default function AdminPage() {
             {/* RANCHERS TAB */}
             {activeTab === 'ranchers' && (
               <div className="space-y-4">
-                <h2 className="font-[family-name:var(--font-serif)] text-2xl">Rancher Applications</h2>
+                <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+                  <h2 className="font-[family-name:var(--font-serif)] text-2xl">Rancher Applications</h2>
+                  
+                  <div className="flex items-center gap-3">
+                    <select
+                      value={rancherStateFilter}
+                      onChange={(e) => setRancherStateFilter(e.target.value)}
+                      className="px-4 py-2 border-2 border-[#0E0E0E] bg-[#F4F1EC] text-sm font-medium"
+                    >
+                      <option value="">All States ({ranchers.length})</option>
+                      {Array.from(new Set(ranchers.map(r => r.state).filter(Boolean))).sort().map(state => {
+                        const count = ranchers.filter(r => r.state === state).length;
+                        return <option key={state} value={state}>{state} ({count})</option>;
+                      })}
+                    </select>
+                    
+                    {rancherStateFilter && (
+                      <>
+                        <button
+                          onClick={async () => {
+                            const filtered = ranchers.filter(r => r.state === rancherStateFilter && r.status === 'pending');
+                            if (filtered.length === 0) {
+                              alert('No pending ranchers in this state');
+                              return;
+                            }
+                            if (!confirm(`Approve ${filtered.length} pending rancher(s) in ${rancherStateFilter}?`)) return;
+                            for (const rancher of filtered) {
+                              await updateRancherStatus(rancher.id, 'approved', rancher.certified);
+                            }
+                            fetchAllData();
+                          }}
+                          className="px-4 py-2 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] text-sm font-medium whitespace-nowrap"
+                        >
+                          ✓ Approve All Pending
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const filtered = ranchers.filter(r => r.state === rancherStateFilter && r.status === 'approved' && !r.certified);
+                            if (filtered.length === 0) {
+                              alert('No uncertified approved ranchers in this state');
+                              return;
+                            }
+                            if (!confirm(`Certify ${filtered.length} rancher(s) in ${rancherStateFilter}?`)) return;
+                            for (const rancher of filtered) {
+                              await updateRancherStatus(rancher.id, 'approved', true);
+                            }
+                            fetchAllData();
+                          }}
+                          className="px-4 py-2 bg-transparent text-[#0E0E0E] border-2 border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] text-sm font-medium whitespace-nowrap"
+                        >
+                          🏅 Certify All Approved
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                
                 {ranchers.length === 0 ? (
                   <p className="text-[#6B4F3F]">No rancher applications yet.</p>
                 ) : (
-                  <div className="space-y-4">
-                    {ranchers.map((rancher) => (
+                  <>
+                    {rancherStateFilter && (
+                      <p className="text-sm text-[#6B4F3F] mb-4">
+                        Showing {ranchers.filter(r => r.state === rancherStateFilter).length} rancher(s) in {rancherStateFilter}
+                      </p>
+                    )}
+                    <div className="space-y-4">
+                      {ranchers
+                        .filter(r => !rancherStateFilter || r.state === rancherStateFilter)
+                        .map((rancher) => (
                       <div key={rancher.id} className="p-4 border border-[#A7A29A] space-y-3">
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="flex-1 min-w-[200px]">
@@ -388,8 +500,9 @@ export default function AdminPage() {
                           )}
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
             )}
