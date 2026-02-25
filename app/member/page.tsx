@@ -3,303 +3,330 @@
 import { useState, useEffect } from 'react';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
-import Button from '../components/Button';
+import MemberAuthGuard from '../components/MemberAuthGuard';
 import ContactRancherButton from '../components/ContactRancherButton';
 import Link from 'next/link';
 
 interface Rancher {
   id: string;
-  ranch_name: string;
-  operator_name: string;
-  email: string;
-  phone: string;
-  state: string;
-  beef_types: string;
-  monthly_capacity: number;
-  certifications: string;
-  certified: boolean;
+  'Ranch Name': string;
+  'Operator Name': string;
+  Email: string;
+  Phone: string;
+  State: string;
+  'Beef Types': string;
+  'Monthly Capacity': number;
+  Certifications: string;
+  Certified: boolean;
 }
 
 interface LandDeal {
   id: string;
-  property_location: string;
-  state: string;
-  acreage: number;
-  asking_price: string;
-  property_type: string;
-  description: string;
+  'Property Location': string;
+  State: string;
+  Acreage: number;
+  'Asking Price': string;
+  'Property Type': string;
+  Description: string;
 }
 
 interface Brand {
   id: string;
-  brand_name: string;
-  product_type: string;
-  website: string;
-  promotion_details: string;
-  discount_offered: number;
+  'Brand Name': string;
+  'Product Type': string;
+  Website: string;
+  'Promotion Details': string;
+  'Discount Offered': number;
 }
 
-interface MemberData {
-  isMember: boolean;
-  userState?: string;
-  ranchers: Rancher[];
-  landDeals: LandDeal[];
-  brands: Brand[];
+interface MemberReferral {
+  id: string;
+  status: string;
+  rancher_name: string;
+  created_at: string;
 }
 
-export default function MemberPage() {
-  const [memberData, setMemberData] = useState<MemberData | null>(null);
+type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
+
+const statusLabels: Record<string, { label: string; style: string }> = {
+  'Pending Approval': { label: 'Being Matched', style: 'bg-yellow-100 text-yellow-800' },
+  'Intro Sent': { label: 'Rancher Introduced', style: 'bg-blue-100 text-blue-800' },
+  'In Progress': { label: 'In Progress', style: 'bg-purple-100 text-purple-800' },
+  'Closed Won': { label: 'Completed', style: 'bg-green-100 text-green-800' },
+  'Closed Lost': { label: 'Closed', style: 'bg-gray-100 text-gray-600' },
+  'Rejected': { label: 'No Match Available', style: 'bg-red-100 text-red-800' },
+};
+
+function MemberDashboard({ member }: { member: { id: string; name: string; email: string; state: string } }) {
+  const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [data, setData] = useState<{
+    memberState: string;
+    stateRanchers: Rancher[];
+    otherRanchers: Rancher[];
+    landDeals: LandDeal[];
+    brands: Brand[];
+    memberReferrals: MemberReferral[];
+  } | null>(null);
 
   useEffect(() => {
-    fetchMemberContent();
+    fetchContent();
   }, []);
 
-  const fetchMemberContent = async () => {
+  const fetchContent = async () => {
     try {
       const response = await fetch('/api/member/content');
-      const data = await response.json();
-      
-      // Temporary test override: treat as member
-      setMemberData({
-        isMember: true,
-        userState: 'TX',
-        ranchers: data.ranchers || [],
-        landDeals: data.landDeals || [],
-        brands: data.brands || [],
-      });
-      setLoading(false);
+      if (response.ok) {
+        const content = await response.json();
+        setData(content);
+      }
     } catch (err) {
-      setError('Failed to load member content');
+      console.error('Error fetching content:', err);
+    } finally {
       setLoading(false);
     }
   };
 
+  const handleLogout = async () => {
+    await fetch('/api/auth/member/session', { method: 'DELETE' });
+    window.location.href = '/';
+  };
+
   if (loading) {
     return (
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
         <Container>
           <div className="text-center">
-            <p className="text-lg text-[#6B4F3F]">Loading...</p>
+            <div className="inline-block w-8 h-8 border-4 border-charcoal-black border-t-transparent rounded-full animate-spin" />
           </div>
         </Container>
       </main>
     );
   }
 
-  // PAYWALL - Show if not a member
-  if (!memberData?.isMember) {
-    return (
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
-        <Container>
-          <div className="max-w-2xl mx-auto text-center space-y-8">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
-              Members Only
-            </h1>
-            <Divider />
-            <p className="text-xl leading-relaxed text-[#6B4F3F]">
-              This area is reserved for verified BuyHalfCow members.
-            </p>
-            <div className="space-y-4 text-lg leading-relaxed">
-              <p>As a member, you get exclusive access to:</p>
-              <ul className="text-left max-w-md mx-auto space-y-2">
-                <li>✓ Certified ranchers in your state</li>
-                <li>✓ Private land deals</li>
-                <li>✓ Exclusive brand promotions</li>
-                <li>✓ Weekly member updates</li>
-              </ul>
-            </div>
-            <Divider />
-            <div className="flex flex-col sm:flex-row gap-4 justify-center pt-8">
-              <Button href="/access">Apply for Access</Button>
-              <Button href="/" variant="secondary">Back to Home</Button>
-            </div>
-          </div>
-        </Container>
-      </main>
-    );
-  }
+  const tabs: { key: Tab; label: string }[] = [
+    { key: 'dashboard', label: 'My Status' },
+    { key: 'ranchers', label: `Ranchers${data?.stateRanchers?.length ? ` (${data.stateRanchers.length} in ${data.memberState})` : ''}` },
+    { key: 'land', label: `Land Deals (${data?.landDeals?.length || 0})` },
+    { key: 'brands', label: `Promotions (${data?.brands?.length || 0})` },
+  ];
 
-  // MEMBER DASHBOARD - Show if authenticated
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen py-12 bg-bone-white text-charcoal-black">
       <Container>
-        <div className="space-y-16">
+        <div className="space-y-8">
           {/* Header */}
-          <div className="text-center space-y-6">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
-              Member Dashboard
-            </h1>
-            <Divider />
-            <p className="text-lg text-[#6B4F3F]">
-              Your state: <span className="font-medium text-[#0E0E0E]">{memberData.userState || 'Not set'}</span>
-            </p>
-          </div>
-
-          {/* Certified Ranchers in Your State */}
-          <section className="space-y-8">
-            <div className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-3xl">
-                Certified Ranchers in {memberData.userState}
-              </h2>
-              <p className="text-[#6B4F3F] leading-relaxed">
-                These ranchers have been verified and certified by BuyHalfCow.
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h1 className="font-serif text-3xl md:text-4xl">
+                Welcome back, {member.name.split(' ')[0]}
+              </h1>
+              <p className="text-saddle-brown mt-1">
+                {member.state} Member
               </p>
             </div>
+            <button
+              onClick={handleLogout}
+              className="text-sm text-dust-gray hover:text-charcoal-black transition-colors"
+            >
+              Log out
+            </button>
+          </div>
 
-            {memberData.ranchers.length === 0 ? (
-              <div className="p-8 border border-[#A7A29A] text-center">
-                <p className="text-[#6B4F3F]">
-                  No certified ranchers in your state yet. Check back soon.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {memberData.ranchers.map((rancher) => (
-                  <div key={rancher.id} className="p-6 border border-[#A7A29A] space-y-4">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="font-[family-name:var(--font-serif)] text-2xl">
-                          {rancher.ranch_name}
-                        </h3>
-                        <p className="text-[#6B4F3F]">Operator: {rancher.operator_name}</p>
+          <Divider />
+
+          {/* Tabs */}
+          <div className="flex flex-wrap gap-2">
+            {tabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`px-4 py-2 text-sm font-medium tracking-wider uppercase transition-colors ${
+                  activeTab === tab.key
+                    ? 'bg-charcoal-black text-bone-white'
+                    : 'border border-dust-gray hover:bg-charcoal-black hover:text-bone-white'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Dashboard Tab */}
+          {activeTab === 'dashboard' && (
+            <div className="space-y-8">
+              <h2 className="font-serif text-2xl">Your Referral Status</h2>
+
+              {data?.memberReferrals && data.memberReferrals.length > 0 ? (
+                <div className="space-y-4">
+                  {data.memberReferrals.map((ref) => {
+                    const statusInfo = statusLabels[ref.status] || { label: ref.status, style: 'bg-gray-100 text-gray-600' };
+                    return (
+                      <div key={ref.id} className="p-6 border border-dust-gray bg-white">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                          <div>
+                            <span className={`inline-block px-3 py-1 text-xs font-medium uppercase tracking-wider ${statusInfo.style}`}>
+                              {statusInfo.label}
+                            </span>
+                            {ref.rancher_name && (
+                              <p className="mt-2 text-sm text-saddle-brown">
+                                Matched with: <strong className="text-charcoal-black">{ref.rancher_name}</strong>
+                              </p>
+                            )}
+                          </div>
+                          <p className="text-xs text-dust-gray">
+                            {ref.created_at ? new Date(ref.created_at).toLocaleDateString() : ''}
+                          </p>
+                        </div>
+
+                        {ref.status === 'Pending Approval' && (
+                          <p className="mt-3 text-sm text-saddle-brown">
+                            We&apos;re finding the best rancher match for you. You&apos;ll receive an email introduction soon.
+                          </p>
+                        )}
+                        {ref.status === 'Intro Sent' && (
+                          <p className="mt-3 text-sm text-saddle-brown">
+                            Your rancher has been introduced. Check your email for their contact details.
+                          </p>
+                        )}
                       </div>
-                      {rancher.certified && (
-                        <span className="px-3 py-1 bg-[#0E0E0E] text-[#F4F1EC] text-sm">
-                          CERTIFIED
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-8 border border-dust-gray text-center bg-white">
+                  <p className="text-saddle-brown mb-4">
+                    No active referrals yet. We&apos;re working on matching you with a rancher in {data?.memberState || 'your state'}.
+                  </p>
+                  <p className="text-sm text-dust-gray">
+                    You&apos;ll receive an email when a match is found.
+                  </p>
+                </div>
+              )}
+
+              <Divider />
+
+              <div className="grid md:grid-cols-3 gap-6">
+                <div className="p-6 border border-dust-gray bg-white text-center">
+                  <div className="font-serif text-3xl">{data?.stateRanchers?.length || 0}</div>
+                  <p className="text-sm text-saddle-brown mt-1">Ranchers in {data?.memberState}</p>
+                </div>
+                <div className="p-6 border border-dust-gray bg-white text-center">
+                  <div className="font-serif text-3xl">{data?.landDeals?.length || 0}</div>
+                  <p className="text-sm text-saddle-brown mt-1">Land Deals Available</p>
+                </div>
+                <div className="p-6 border border-dust-gray bg-white text-center">
+                  <div className="font-serif text-3xl">{data?.brands?.length || 0}</div>
+                  <p className="text-sm text-saddle-brown mt-1">Active Promotions</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Ranchers Tab */}
+          {activeTab === 'ranchers' && (
+            <div className="space-y-8">
+              {data?.stateRanchers && data.stateRanchers.length > 0 && (
+                <>
+                  <h2 className="font-serif text-2xl">Ranchers in {data.memberState}</h2>
+                  <div className="space-y-6">
+                    {data.stateRanchers.map((rancher) => (
+                      <RancherCard key={rancher.id} rancher={rancher} />
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {data?.stateRanchers?.length === 0 && (
+                <div className="p-8 border border-dust-gray text-center bg-white">
+                  <p className="text-saddle-brown">
+                    No certified ranchers in {data.memberState} yet. We&apos;re actively onboarding ranchers in your area.
+                  </p>
+                </div>
+              )}
+
+              {data?.otherRanchers && data.otherRanchers.length > 0 && (
+                <>
+                  <Divider />
+                  <h2 className="font-serif text-2xl">Other Certified Ranchers</h2>
+                  <div className="space-y-6">
+                    {data.otherRanchers.map((rancher) => (
+                      <RancherCard key={rancher.id} rancher={rancher} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Land Deals Tab */}
+          {activeTab === 'land' && (
+            <div className="space-y-8">
+              <h2 className="font-serif text-2xl">Exclusive Land Deals</h2>
+              {data?.landDeals && data.landDeals.length > 0 ? (
+                <div className="space-y-6">
+                  {data.landDeals.map((deal) => (
+                    <div key={deal.id} className="p-6 border border-dust-gray bg-white space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-serif text-xl">
+                            {deal.Acreage} Acres — {deal['Property Location'] || deal.State}
+                          </h3>
+                          <p className="text-sm text-saddle-brown">{deal.State} &middot; {deal['Property Type']}</p>
+                        </div>
+                        <span className="font-serif text-xl">{deal['Asking Price']}</span>
+                      </div>
+                      {deal.Description && <p className="text-sm leading-relaxed">{deal.Description}</p>}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-8 border border-dust-gray text-center bg-white">
+                  <p className="text-saddle-brown">No land deals available right now. Check back soon.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Brands Tab */}
+          {activeTab === 'brands' && (
+            <div className="space-y-8">
+              <h2 className="font-serif text-2xl">Member Promotions</h2>
+              {data?.brands && data.brands.length > 0 ? (
+                <div className="grid md:grid-cols-2 gap-6">
+                  {data.brands.map((brand) => (
+                    <div key={brand.id} className="p-6 border border-dust-gray bg-white space-y-4">
+                      <h3 className="font-serif text-xl">{brand['Brand Name']}</h3>
+                      <p className="text-sm text-saddle-brown">{brand['Product Type']}</p>
+                      <Divider />
+                      {brand['Promotion Details'] && <p className="text-sm leading-relaxed">{brand['Promotion Details']}</p>}
+                      {brand['Discount Offered'] > 0 && (
+                        <span className="inline-block px-4 py-2 bg-charcoal-black text-bone-white font-medium text-sm">
+                          {brand['Discount Offered']}% OFF
                         </span>
                       )}
-                    </div>
-                    <Divider />
-                    <div className="grid md:grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <span className="text-[#6B4F3F]">Location:</span> {rancher.state}
-                      </div>
-                      <div>
-                        <span className="text-[#6B4F3F]">Capacity:</span> {rancher.monthly_capacity} head/month
-                      </div>
-                      <div className="md:col-span-2">
-                        <span className="text-[#6B4F3F]">Beef Types:</span> {rancher.beef_types}
-                      </div>
-                      {rancher.certifications && (
-                        <div className="md:col-span-2">
-                          <span className="text-[#6B4F3F]">Certifications:</span> {rancher.certifications}
+                      {brand.Website && (
+                        <div>
+                          <a href={brand.Website} target="_blank" rel="noopener noreferrer" className="text-sm text-charcoal-black hover:text-saddle-brown transition-colors">
+                            Visit Website →
+                          </a>
                         </div>
                       )}
                     </div>
-                    <div className="pt-4">
-                      <ContactRancherButton rancher={rancher} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <Divider />
-
-          {/* Land Deals */}
-          <section className="space-y-8">
-            <div className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-3xl">
-                Exclusive Land Deals
-              </h2>
-              <p className="text-[#6B4F3F] leading-relaxed">
-                Private opportunities available only to BuyHalfCow members.
-              </p>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-8 border border-dust-gray text-center bg-white">
+                  <p className="text-saddle-brown">No active promotions right now. Check back soon.</p>
+                </div>
+              )}
             </div>
-
-            {memberData.landDeals.length === 0 ? (
-              <div className="p-8 border border-[#A7A29A] text-center">
-                <p className="text-[#6B4F3F]">
-                  No land deals available at this time. Check back soon.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {memberData.landDeals.map((deal) => (
-                  <div key={deal.id} className="p-6 border border-[#A7A29A] space-y-4">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="font-[family-name:var(--font-serif)] text-2xl">
-                          {deal.acreage} Acres — {deal.property_location}
-                        </h3>
-                        <p className="text-[#6B4F3F]">{deal.state}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-[family-name:var(--font-serif)] text-xl">
-                          {deal.asking_price}
-                        </p>
-                      </div>
-                    </div>
-                    <Divider />
-                    <div className="space-y-2">
-                      <p className="text-sm">
-                        <span className="text-[#6B4F3F]">Type:</span> {deal.property_type}
-                      </p>
-                      <p className="leading-relaxed">{deal.description}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <Divider />
-
-          {/* Brand Promotions */}
-          <section className="space-y-8">
-            <div className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-3xl">
-                Member Promotions
-              </h2>
-              <p className="text-[#6B4F3F] leading-relaxed">
-                Exclusive discounts from our trusted brand partners.
-              </p>
-            </div>
-
-            {memberData.brands.length === 0 ? (
-              <div className="p-8 border border-[#A7A29A] text-center">
-                <p className="text-[#6B4F3F]">
-                  No active promotions at this time. Check back soon.
-                </p>
-              </div>
-            ) : (
-              <div className="grid md:grid-cols-2 gap-6">
-                {memberData.brands.map((brand) => (
-                  <div key={brand.id} className="p-6 border border-[#A7A29A] space-y-4">
-                    <h3 className="font-[family-name:var(--font-serif)] text-2xl">
-                      {brand.brand_name}
-                    </h3>
-                    <p className="text-sm text-[#6B4F3F]">{brand.product_type}</p>
-                    <Divider />
-                    <p className="leading-relaxed">{brand.promotion_details}</p>
-                    <div className="pt-2">
-                      <span className="inline-block px-4 py-2 bg-[#0E0E0E] text-[#F4F1EC] font-medium">
-                        {brand.discount_offered}% OFF
-                      </span>
-                    </div>
-                    {brand.website && (
-                      <a
-                        href={brand.website}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-block text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors text-sm"
-                      >
-                        Visit Website →
-                      </a>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
+          )}
 
           <Divider />
 
           <div className="text-center">
-            <Link href="/" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/" className="text-saddle-brown hover:text-charcoal-black transition-colors text-sm">
               ← Back to home
             </Link>
           </div>
@@ -309,3 +336,47 @@ export default function MemberPage() {
   );
 }
 
+function RancherCard({ rancher }: { rancher: Rancher }) {
+  const rancherForContact = {
+    id: rancher.id,
+    ranch_name: rancher['Ranch Name'] || '',
+    operator_name: rancher['Operator Name'] || '',
+    email: rancher.Email || '',
+    state: rancher.State || '',
+  };
+
+  return (
+    <div className="p-6 border border-dust-gray bg-white space-y-4">
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="font-serif text-xl">{rancher['Ranch Name']}</h3>
+          <p className="text-sm text-saddle-brown">Operator: {rancher['Operator Name']}</p>
+        </div>
+        {rancher.Certified && (
+          <span className="px-3 py-1 bg-charcoal-black text-bone-white text-xs font-medium uppercase tracking-wider">
+            Certified
+          </span>
+        )}
+      </div>
+      <div className="grid md:grid-cols-2 gap-3 text-sm">
+        <div><span className="text-saddle-brown">Location:</span> {rancher.State}</div>
+        <div><span className="text-saddle-brown">Capacity:</span> {rancher['Monthly Capacity']} head/month</div>
+        <div className="md:col-span-2"><span className="text-saddle-brown">Beef Types:</span> {rancher['Beef Types']}</div>
+        {rancher.Certifications && (
+          <div className="md:col-span-2"><span className="text-saddle-brown">Certifications:</span> {rancher.Certifications}</div>
+        )}
+      </div>
+      <div className="pt-2">
+        <ContactRancherButton rancher={rancherForContact} />
+      </div>
+    </div>
+  );
+}
+
+export default function MemberPage() {
+  return (
+    <MemberAuthGuard>
+      {(member) => <MemberDashboard member={member} />}
+    </MemberAuthGuard>
+  );
+}

@@ -26,6 +26,15 @@ export async function PATCH(
     if (body.beefTypes) fields['Beef Types'] = body.beefTypes;
     if (body.monthlyCapacity !== undefined) fields['Monthly Capacity'] = parseInt(body.monthlyCapacity);
     if (body.certifications !== undefined) fields['Certifications'] = body.certifications;
+    if (body.onboarding_status) fields['Onboarding Status'] = body.onboarding_status;
+    if (body.active_status) fields['Active Status'] = body.active_status;
+    if (body.agreement_signed === true) fields['Agreement Signed'] = true;
+    else if (body.agreement_signed === false) fields['Agreement Signed'] = false;
+    if (body.states_served) fields['States Served'] = body.states_served;
+    if (body.max_active_referrals !== undefined) fields['Max Active Referrals'] = parseInt(body.max_active_referrals);
+    if (body.performance_score !== undefined) fields['Performance Score'] = parseInt(body.performance_score);
+    if (body.verification_status) fields['Verification Status'] = body.verification_status;
+    if (body.call_notes) fields['Call Notes'] = body.call_notes;
 
     const updatedRecord = await updateRecord(TABLES.RANCHERS, id, fields);
     return NextResponse.json(updatedRecord);

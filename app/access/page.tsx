@@ -6,6 +6,7 @@ import Divider from '../components/Divider';
 import Input from '../components/Input';
 import Select from '../components/Select';
 import Checkbox from '../components/Checkbox';
+import Textarea from '../components/Textarea';
 import Button from '../components/Button';
 import Link from 'next/link';
 
@@ -63,21 +64,93 @@ const US_STATES = [
   { value: 'WY', label: 'Wyoming' },
 ];
 
+const ORDER_TYPE_OPTIONS = [
+  { value: '', label: 'Select order type' },
+  { value: 'Quarter', label: 'Quarter Cow' },
+  { value: 'Half', label: 'Half Cow' },
+  { value: 'Whole', label: 'Whole Cow' },
+  { value: 'Not Sure', label: 'Not Sure Yet' },
+];
+
+const BUDGET_OPTIONS = [
+  { value: '', label: 'Select your budget range' },
+  { value: '<$500', label: 'Under $500' },
+  { value: '$500-$1000', label: '$500 - $1,000' },
+  { value: '$1000-$2000', label: '$1,000 - $2,000' },
+  { value: '$2000+', label: '$2,000+' },
+  { value: 'Unsure', label: 'Unsure' },
+];
+
+function calculateIntentScore(data: {
+  orderType: string;
+  budgetRange: string;
+  notes: string;
+  phone: string;
+  email: string;
+}) {
+  let score = 0;
+
+  if (data.orderType === 'Whole') score += 30;
+  else if (data.orderType === 'Half') score += 20;
+  else if (data.orderType === 'Quarter') score += 10;
+
+  if (data.budgetRange === '$2000+') score += 25;
+  else if (data.budgetRange === '$1000-$2000') score += 20;
+  else if (data.budgetRange === '$500-$1000') score += 10;
+
+  if (data.notes && data.notes.length > 20) score += 15;
+  if (data.phone && data.email) score += 10;
+
+  return score;
+}
+
+function classifyIntent(score: number): string {
+  if (score >= 70) return 'High';
+  if (score >= 40) return 'Medium';
+  return 'Low';
+}
+
+function validateEmail(email: string): boolean {
+  const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  if (!re.test(email)) return false;
+  const throwaway = ['mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwaway.email', 'yopmail.com', 'sharklasers.com', 'grr.la', 'guerrillamailblock.com', '10minutemail.com', 'trashmail.com'];
+  const domain = email.split('@')[1]?.toLowerCase();
+  return !throwaway.includes(domain);
+}
+
+function validatePhone(phone: string): boolean {
+  const digits = phone.replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 15;
+}
+
+function validateName(name: string): boolean {
+  const trimmed = name.trim();
+  if (trimmed.length < 2 || trimmed.length > 100) return false;
+  if (/^\d+$/.test(trimmed)) return false;
+  if (/[<>{}()\[\]\\\/]/.test(trimmed)) return false;
+  return true;
+}
+
 export default function AccessPage() {
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
     phone: '',
     state: '',
+    orderType: '',
+    budgetRange: '',
+    notes: '',
     interestBeef: false,
     interestLand: false,
     interestMerch: false,
     interestAll: false,
+    website: '', // honeypot
   });
 
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [formLoadedAt] = useState(Date.now());
   const [campaignData, setCampaignData] = useState({
     campaign: '',
     source: 'organic',
@@ -85,15 +158,18 @@ export default function AccessPage() {
   });
 
   useEffect(() => {
-    // Read campaign tracking data from localStorage
     const campaign = localStorage.getItem('bhc_campaign') || '';
     const source = localStorage.getItem('bhc_source') || 'organic';
     const utmParams = localStorage.getItem('bhc_utm_params') || '';
-    
     setCampaignData({ campaign, source, utmParams });
   }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
@@ -107,11 +183,43 @@ export default function AccessPage() {
     e.preventDefault();
     setError('');
 
-    // Validate at least one interest is selected
+    // Honeypot check
+    if (formData.website) return;
+
+    // Time-based bot check: form filled in under 3 seconds is suspicious
+    if (Date.now() - formLoadedAt < 3000) {
+      setError('Please take a moment to fill out the form completely.');
+      return;
+    }
+
+    if (!validateName(formData.fullName)) {
+      setError('Please enter a valid full name.');
+      return;
+    }
+
+    if (!validateEmail(formData.email)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+
+    if (!validatePhone(formData.phone)) {
+      setError('Please enter a valid phone number.');
+      return;
+    }
+
     if (!formData.interestBeef && !formData.interestLand && !formData.interestMerch && !formData.interestAll) {
       setError('Please select at least one interest.');
       return;
     }
+
+    const intentScore = calculateIntentScore({
+      orderType: formData.orderType,
+      budgetRange: formData.budgetRange,
+      notes: formData.notes,
+      phone: formData.phone,
+      email: formData.email,
+    });
+    const intentClassification = classifyIntent(intentScore);
 
     setIsSubmitting(true);
 
@@ -120,7 +228,19 @@ export default function AccessPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...formData,
+          fullName: formData.fullName.trim(),
+          email: formData.email.trim().toLowerCase(),
+          phone: formData.phone.trim(),
+          state: formData.state,
+          orderType: formData.orderType,
+          budgetRange: formData.budgetRange,
+          notes: formData.notes.trim(),
+          interestBeef: formData.interestBeef,
+          interestLand: formData.interestLand,
+          interestMerch: formData.interestMerch,
+          interestAll: formData.interestAll,
+          intentScore,
+          intentClassification,
           source: campaignData.source,
           campaign: campaignData.campaign,
           utmParams: campaignData.utmParams,
@@ -128,12 +248,13 @@ export default function AccessPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Submission failed');
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Submission failed');
       }
 
       setIsSubmitted(true);
-    } catch (err) {
-      setError('Something went wrong. Please try again.');
+    } catch (err: any) {
+      setError(err.message || 'Something went wrong. Please try again.');
       setIsSubmitting(false);
     }
   };
@@ -144,15 +265,29 @@ export default function AccessPage() {
         <Container>
           <div className="max-w-2xl mx-auto text-center space-y-8">
             <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
-              Application Received
+              You&apos;re In
             </h1>
             <Divider />
             <p className="text-xl leading-relaxed">
-              We review all applications manually. You'll receive an email within 3-5 business days with your membership status and access instructions.
+              Your application is being matched with a verified rancher in your state. You&apos;ll receive an email within 24-48 hours with your personal introduction.
             </p>
+            <div className="space-y-3 text-left max-w-md mx-auto pt-4">
+              <div className="flex items-center gap-3 text-base">
+                <span className="w-6 h-6 bg-[#0E0E0E] text-[#F4F1EC] rounded-full flex items-center justify-center text-xs font-bold">1</span>
+                <span>Application received</span>
+              </div>
+              <div className="flex items-center gap-3 text-base text-[#6B4F3F]">
+                <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold">2</span>
+                <span>Matching you with a rancher...</span>
+              </div>
+              <div className="flex items-center gap-3 text-base text-[#A7A29A]">
+                <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold">3</span>
+                <span>Personal introduction via email</span>
+              </div>
+            </div>
             <div className="pt-8">
               <Link href="/" className="text-[#6B4F3F] hover:text-[#0E0E0E] transition-colors">
-                ← Back to home
+                &larr; Back to home
               </Link>
             </div>
           </div>
@@ -171,13 +306,25 @@ export default function AccessPage() {
             </h1>
             <Divider />
             <p className="text-lg text-[#6B4F3F]">
-              Apply for membership to access verified ranchers, land deals, and exclusive member benefits by state.
+              Apply to get matched with a verified rancher in your state. We review every application and personally introduce you.
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Honeypot - hidden from real users */}
+            <div className="absolute opacity-0 h-0 overflow-hidden" aria-hidden="true" tabIndex={-1}>
+              <input
+                type="text"
+                name="website"
+                value={formData.website}
+                onChange={handleInputChange}
+                tabIndex={-1}
+                autoComplete="off"
+              />
+            </div>
+
             <Input
-              label="First Name"
+              label="Full Name"
               name="fullName"
               required
               value={formData.fullName}
@@ -211,9 +358,44 @@ export default function AccessPage() {
               options={US_STATES}
             />
 
+            <Divider />
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-[#6B4F3F] uppercase tracking-wider">
+                Help us match you with the right rancher
+              </p>
+            </div>
+
+            <Select
+              label="What are you looking for?"
+              name="orderType"
+              value={formData.orderType}
+              onChange={handleInputChange}
+              options={ORDER_TYPE_OPTIONS}
+            />
+
+            <Select
+              label="Budget Range"
+              name="budgetRange"
+              value={formData.budgetRange}
+              onChange={handleInputChange}
+              options={BUDGET_OPTIONS}
+            />
+
+            <Textarea
+              label="Anything else we should know?"
+              name="notes"
+              value={formData.notes}
+              onChange={handleTextareaChange}
+              placeholder="Specific preferences, dietary needs, timeline, etc."
+              rows={3}
+            />
+
+            <Divider />
+
             <div className="space-y-4">
               <p className="text-sm font-medium">
-                I'm interested in: <span className="text-[#8C2F2F]">*</span>
+                I&apos;m interested in: <span className="text-[#8C2F2F]">*</span>
               </p>
               <Checkbox
                 label="Beef"
@@ -256,7 +438,7 @@ export default function AccessPage() {
 
           <div className="mt-12 text-center">
             <Link href="/" className="text-[#6B4F3F] hover:text-[#0E0E0E] transition-colors">
-              ← Back to home
+              &larr; Back to home
             </Link>
           </div>
         </div>
@@ -264,4 +446,3 @@ export default function AccessPage() {
     </main>
   );
 }
-

@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server';
-import { createRecord } from '@/lib/airtable';
+import { createRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
+
+function isValidEmail(email: string): boolean {
+  const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  if (!re.test(email)) return false;
+  const throwaway = ['mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwaway.email', 'yopmail.com', 'sharklasers.com'];
+  const domain = email.split('@')[1]?.toLowerCase();
+  return !throwaway.includes(domain);
+}
 
 export async function POST(request: Request) {
   try {
@@ -15,12 +23,24 @@ export async function POST(request: Request) {
     let record;
     let tableName;
 
-    // Handle Rancher application
     if (partnerType === 'rancher') {
       const { ranchName, operatorName, email, phone, state, beefTypes, monthlyCapacity, certifications, operationDetails, callScheduled, ranchTourInterested, ranchTourAvailability } = body;
 
       if (!ranchName || !operatorName || !email || !state || !beefTypes) {
         return NextResponse.json({ error: 'Missing required fields for rancher' }, { status: 400 });
+      }
+
+      if (!isValidEmail(email)) {
+        return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
+      }
+
+      try {
+        const existing = await getAllRecords(TABLES.RANCHERS, `{Email} = "${email.trim().toLowerCase()}"`);
+        if (existing.length > 0) {
+          return NextResponse.json({ error: 'This email is already registered. Check your inbox for your confirmation.' }, { status: 409 });
+        }
+      } catch (e) {
+        console.error('Error checking duplicate rancher:', e);
       }
 
       tableName = TABLES.RANCHERS;

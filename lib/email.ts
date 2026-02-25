@@ -35,22 +35,17 @@ export async function sendConsumerConfirmation(data: {
         </head>
         <body>
           <div class="container">
-            <div style="background: #0E0E0E; color: #F4F1EC; padding: 10px 20px; text-align: center; font-size: 11px; font-weight: bold; letter-spacing: 1.5px; margin: -40px -40px 30px -40px;">
-              🚀 LAUNCH WEEK — 15,000+ HERD MEMBERS
-            </div>
             <h1>Welcome to The HERD</h1>
             <p>Hi ${data.firstName},</p>
-            <p>Thank you for joining <strong>15,000+ HERD members</strong> rebuilding real food directly from American ranchers.</p>
-            <p><strong>You're among the first 1,000 members. That matters.</strong></p>
+            <p>Thank you for applying. You're joining a growing community of people sourcing real beef directly from American ranchers.</p>
             <div class="divider"></div>
             <p><strong>What Happens Next:</strong></p>
-            <p>I'm personally reviewing your application (along with hundreds during launch week). You'll hear back within <strong>24-48 hours</strong>.</p>
-            <p>Here's what you're getting early access to:</p>
+            <p>I personally review every application. You'll hear back within <strong>24-48 hours</strong> with a matched rancher introduction in your area.</p>
+            <p>Here's what you're getting access to:</p>
             <ul>
-              <li><strong>200+ verified ranchers</strong> in 30+ states</li>
-              <li>Ranchers in <strong>${data.state}</strong> (your state)</li>
-              <li>Direct, personal introductions to ranchers</li>
-              <li>Exclusive land deals and brand promotions</li>
+              <li>Verified ranchers in <strong>${data.state}</strong></li>
+              <li>Direct, personal introductions</li>
+              <li>A curated network — no spam, no middlemen</li>
             </ul>
             <div class="divider"></div>
             <p><strong>While you wait:</strong> Check out our <a href="https://buyhalfcow.com/faq" style="color: #0E0E0E; text-decoration: underline;">FAQ</a> to learn how The HERD works!</p>
@@ -161,12 +156,9 @@ export async function sendPartnerConfirmation(data: {
         </head>
         <body>
           <div class="container">
-            <div style="background: #0E0E0E; color: #F4F1EC; padding: 10px 20px; text-align: center; font-size: 11px; font-weight: bold; letter-spacing: 1.5px; margin: -40px -40px 30px -40px;">
-              🤠 RANCHER ONBOARDING — LAUNCH WEEK
-            </div>
             <h1>${typeLabels[data.type]} Application Received</h1>
             <p>Hi ${data.name},</p>
-            <p>Thank you for your interest in ${data.type === 'rancher' ? 'joining 200+ American ranchers in The HERD network' : 'partnering with BuyHalfCow'}.</p>
+            <p>Thank you for your interest in ${data.type === 'rancher' ? 'joining The HERD rancher network' : 'partnering with BuyHalfCow'}.</p>
             <p>I've received your application and will review it personally.</p>
             ${data.type === 'rancher' ? `
               <p><strong>You're not joining a platform — you're joining the founding layer.</strong></p>
@@ -174,12 +166,12 @@ export async function sendPartnerConfirmation(data: {
             <div class="divider"></div>
             <p><strong>What Happens Next:</strong></p>
             ${data.type === 'rancher' ? `
-              <p>During launch week, I'm certifying the first <strong>200 founding ranchers</strong> and reviewing each application carefully. Here's the process:</p>
+              <p>I'm personally reviewing and certifying every rancher in the network. Here's the process:</p>
               <ol style="line-height: 1.8; color: #6B4F3F;">
                 <li><strong>Schedule your call</strong> — Book your 30-minute onboarding call on my calendar (see below)</li>
                 <li><strong>Onboarding call</strong> — We discuss your operation, answer questions, explain The HERD network</li>
                 <li><strong>Ranch tour</strong> — I'll visit your ranch in person for verification (if you indicated interest)</li>
-                <li><strong>Certification</strong> — Once verified, your listing goes live to 15,000+ HERD members</li>
+                <li><strong>Certification</strong> — Once verified, you start receiving qualified buyer introductions</li>
               </ol>
               <div style="background: #0E0E0E; color: #F4F1EC; padding: 30px; margin: 30px 0; text-align: center;">
                 <h3 style="margin: 0 0 15px 0; font-size: 20px; color: #F4F1EC;">📞 NEXT STEP: Schedule Your Call</h3>

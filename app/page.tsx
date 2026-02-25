@@ -1,20 +1,17 @@
 'use client';
 
-import { useEffect, Suspense } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Container from './components/Container';
 import Divider from './components/Divider';
 import Button from './components/Button';
-import Image from 'next/image';
 
 function CampaignTracker() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    // Capture campaign parameter from URL
     const campaign = searchParams.get('campaign');
     const source = searchParams.get('source') || searchParams.get('utm_source');
-    const medium = searchParams.get('utm_medium');
     const utmParams = searchParams.toString();
 
     if (campaign) {
@@ -32,6 +29,33 @@ function CampaignTracker() {
   return null;
 }
 
+function LiveStats() {
+  const [stats, setStats] = useState<{ rancherCount: number; buyerCount: number } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/stats/public')
+      .then(r => r.json())
+      .then(setStats)
+      .catch(() => {});
+  }, []);
+
+  if (!stats) return null;
+
+  return (
+    <div className="flex justify-center gap-8 pt-6">
+      <div className="text-center">
+        <div className="font-serif text-3xl md:text-4xl">{stats.rancherCount}</div>
+        <div className="text-xs uppercase tracking-wider text-saddle-brown">Ranchers in Pipeline</div>
+      </div>
+      <div className="w-px bg-dust-gray" />
+      <div className="text-center">
+        <div className="font-serif text-3xl md:text-4xl">{stats.buyerCount}</div>
+        <div className="text-xs uppercase tracking-wider text-saddle-brown">Buyers Waiting</div>
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-bone-white text-charcoal-black">
@@ -42,32 +66,27 @@ export default function HomePage() {
       <section className="py-12 md:py-20">
         <Container>
           <div className="text-center space-y-8">
-            {/* Logo */}
             <div className="flex justify-center mb-8">
               <div className="w-32 h-32 md:w-40 md:h-40 relative">
-                {/* Placeholder for logo - replace with actual logo */}
                 <div className="w-full h-full flex items-center justify-center">
                   <span className="font-serif text-6xl md:text-7xl">BHC</span>
                 </div>
               </div>
             </div>
 
-            {/* Hero Headline */}
             <h1 className="font-serif text-4xl md:text-6xl lg:text-7xl leading-tight">
-              15,000+ Americans<br />
+              18,000+ People<br />
               Rebuilding Real Food
-          </h1>
+            </h1>
             
             <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle-brown">
               Direct rancher access. Local beef. No middleman.<br />
               This is how we take back the food system.
             </p>
 
-            <div className="pt-8">
-              <div className="inline-block px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium tracking-wide uppercase">
-                LAUNCH WEEK — Get in early
-              </div>
-            </div>
+            <Suspense fallback={null}>
+              <LiveStats />
+            </Suspense>
           </div>
         </Container>
       </section>
@@ -107,7 +126,7 @@ export default function HomePage() {
                 </p>
                 <p className="flex items-start">
                   <span className="mr-2">✓</span>
-                  <span>Join 15,000+ HERD members</span>
+                  <span>Join 18,000+ followers sourcing direct</span>
                 </p>
               </div>
               <Button href="/access" className="w-full">
@@ -121,7 +140,7 @@ export default function HomePage() {
                 <div className="text-5xl mb-4">🤠</div>
                 <h3 className="font-serif text-2xl mb-2">I'm a Rancher</h3>
                 <p className="text-sm text-saddle-brown mb-6">
-                  Join 200+ American ranchers serving The HERD
+                  Join American ranchers serving The HERD
                 </p>
               </div>
               <div className="space-y-3 text-sm">
@@ -475,7 +494,8 @@ export default function HomePage() {
               <Button href="/about" variant="secondary">About</Button>
               <Button href="/news" variant="secondary">News</Button>
               <Button href="https://www.sackett-ranch.com/pages/buy-half-cow" variant="secondary">Merch</Button>
-              <Button href="/member" variant="secondary">Member Login</Button>
+              <Button href="/member/login" variant="secondary">Member Login</Button>
+              <Button href="/rancher/login" variant="secondary">Rancher Login</Button>
             </div>
             
             <Divider />

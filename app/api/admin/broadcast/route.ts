@@ -18,23 +18,23 @@ export async function POST(request: Request) {
     if (audienceType === 'consumers') {
       const consumers = await getAllRecords(TABLES.CONSUMERS);
       recipients = consumers.map((c: any) => ({
-        email: c.fields?.['Email'] || '',
-        name: c.fields?.['Full Name'] || 'Member',
+        email: c['Email'] || '',
+        name: c['Full Name'] || 'Member',
       })).filter((r: any) => r.email);
     } else if (audienceType === 'consumers-by-state') {
       const consumers = await getAllRecords(TABLES.CONSUMERS);
       recipients = consumers
-        .filter((c: any) => selectedStates.includes(c.fields?.['State']))
+        .filter((c: any) => selectedStates.includes(c['State']))
         .map((c: any) => ({
-          email: c.fields?.['Email'] || '',
-          name: c.fields?.['Full Name'] || 'Member',
+          email: c['Email'] || '',
+          name: c['Full Name'] || 'Member',
         }))
         .filter((r: any) => r.email);
     } else if (audienceType === 'ranchers') {
       const ranchers = await getAllRecords(TABLES.RANCHERS);
       recipients = ranchers.map((r: any) => ({
-        email: r.fields?.['Email'] || '',
-        name: r.fields?.['Operator Name'] || 'Rancher',
+        email: r['Email'] || '',
+        name: r['Operator Name'] || 'Rancher',
       })).filter((r: any) => r.email);
     }
 

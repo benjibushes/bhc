@@ -20,6 +20,7 @@ export const TABLES = {
   NEWS_POSTS: 'News',
   INQUIRIES: 'Inquiries',
   CAMPAIGNS: 'Campaigns',
+  REFERRALS: 'Referrals',
 };
 
 // Helper function to create a record

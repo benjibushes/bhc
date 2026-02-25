@@ -8,6 +8,14 @@ import AdminAuthGuard from '../components/AdminAuthGuard';
 
 type Tab = 'consumers' | 'ranchers' | 'brands' | 'landDeals';
 
+interface ReferralStats {
+  totalBuyers: number;
+  totalRanchers: number;
+  totalReferrals: number;
+  pendingApproval: number;
+  closedDealsThisMonth: { count: number; totalCommission: number };
+}
+
 interface Consumer {
   id: string;
   first_name: string;
@@ -32,6 +40,14 @@ interface Rancher {
   certified: boolean;
   ranch_tour_interested?: boolean;
   ranch_tour_availability?: string;
+  active_status?: string;
+  onboarding_status?: string;
+  current_active_referrals?: number;
+  max_active_referrals?: number;
+  monthly_capacity?: number;
+  agreement_signed?: boolean;
+  docs_sent_at?: string;
+  verification_status?: string;
   created_at: string;
 }
 
@@ -68,6 +84,15 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [rancherStateFilter, setRancherStateFilter] = useState<string>('');
   const [consumerStateFilter, setConsumerStateFilter] = useState<string>('');
+  const [refStats, setRefStats] = useState<ReferralStats | null>(null);
+  const [onboardingModal, setOnboardingModal] = useState<Rancher | null>(null);
+  const [onboardingForm, setOnboardingForm] = useState({
+    callSummary: '',
+    confirmedCapacity: 10,
+    specialNotes: '',
+    includeVerification: true,
+  });
+  const [sendingDocs, setSendingDocs] = useState(false);
 
   useEffect(() => {
     fetchAllData();
@@ -76,11 +101,12 @@ export default function AdminPage() {
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      const [consumersRes, ranchersRes, brandsRes, landDealsRes] = await Promise.all([
+      const [consumersRes, ranchersRes, brandsRes, landDealsRes, refStatsRes] = await Promise.all([
         fetch('/api/admin/consumers'),
         fetch('/api/admin/ranchers'),
         fetch('/api/admin/brands'),
         fetch('/api/admin/landDeals'),
+        fetch('/api/admin/referrals/stats').catch(() => null),
       ]);
 
       const [consumersData, ranchersData, brandsData, landDealsData] = await Promise.all([
@@ -94,6 +120,10 @@ export default function AdminPage() {
       setRanchers(ranchersData);
       setBrands(brandsData);
       setLandDeals(landDealsData);
+
+      if (refStatsRes && refStatsRes.ok) {
+        setRefStats(await refStatsRes.json());
+      }
     } catch (error) {
       console.error('Error fetching admin data:', error);
     }
@@ -153,6 +183,42 @@ export default function AdminPage() {
       fetchAllData();
     } catch (error) {
       console.error('Error updating land deal:', error);
+    }
+  };
+
+  const handleSendOnboarding = async (rancherId: string) => {
+    setSendingDocs(true);
+    try {
+      const res = await fetch(`/api/ranchers/${rancherId}/send-onboarding`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(onboardingForm),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('Onboarding package sent!');
+        setOnboardingModal(null);
+        setOnboardingForm({ callSummary: '', confirmedCapacity: 10, specialNotes: '', includeVerification: true });
+        fetchAllData();
+      } else {
+        alert(data.error || 'Failed to send onboarding package');
+      }
+    } catch {
+      alert('Error sending onboarding package');
+    }
+    setSendingDocs(false);
+  };
+
+  const updateOnboardingStatus = async (rancherId: string, newStatus: string) => {
+    try {
+      await fetch(`/api/admin/ranchers/${rancherId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ onboarding_status: newStatus }),
+      });
+      fetchAllData();
+    } catch {
+      alert('Error updating onboarding status');
     }
   };
 
@@ -218,16 +284,50 @@ export default function AdminPage() {
             </div>
           </div>
 
+          {/* Referral Stats Banner */}
+          {refStats && refStats.pendingApproval > 0 && (
+            <div className="p-4 border-2 border-yellow-400 bg-yellow-50 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="font-medium text-yellow-800">
+                  {refStats.pendingApproval} referral{refStats.pendingApproval > 1 ? 's' : ''} pending approval
+                </p>
+                <p className="text-sm text-yellow-700">
+                  {refStats.totalReferrals} total referrals &middot; {refStats.closedDealsThisMonth.count} closed this month (${refStats.closedDealsThisMonth.totalCommission.toLocaleString()} commission)
+                </p>
+              </div>
+              <Button href="/admin/referrals">
+                Review Referrals &rarr;
+              </Button>
+            </div>
+          )}
+
           {/* Action Links */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Button href="/admin/referrals" variant="secondary">
+              🤝 Referral Queue
+            </Button>
+            <Button href="/admin/heatmap" variant="secondary">
+              🗺️ State Heatmap
+            </Button>
+            <Button href="/admin/commissions" variant="secondary">
+              💰 Commissions
+            </Button>
+            <Button href="/admin/backfill" variant="secondary">
+              📧 Backfill Campaign
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Button href="/admin/broadcast" variant="secondary">
-              📧 Send Broadcast Email
+              📤 Broadcast Email
             </Button>
             <Button href="/admin/analytics" variant="secondary">
-              📊 View Analytics & ROI
+              📊 Analytics
+            </Button>
+            <Button href="/admin/compliance" variant="secondary">
+              📋 Compliance
             </Button>
             <Button href="/admin/inquiries" variant="secondary">
-              💰 Manage Inquiries
+              📨 Inquiries
             </Button>
           </div>
 
@@ -447,24 +547,50 @@ export default function AdminPage() {
                       <div key={rancher.id} className="p-4 border border-[#A7A29A] space-y-3">
                         <div className="flex flex-wrap items-start justify-between gap-4">
                           <div className="flex-1 min-w-[200px]">
-                            <h3 className="font-medium text-lg">{rancher.ranch_name}</h3>
+                            <div className="flex items-center gap-2 mb-1">
+                              <h3 className="font-medium text-lg">{rancher.ranch_name}</h3>
+                              {rancher.onboarding_status && (
+                                <span className={`px-2 py-0.5 text-xs border ${
+                                  rancher.onboarding_status === 'Live' ? 'bg-green-100 text-green-800 border-green-300' :
+                                  rancher.onboarding_status === 'Docs Sent' ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                                  rancher.onboarding_status === 'Agreement Signed' ? 'bg-blue-100 text-blue-800 border-blue-300' :
+                                  rancher.onboarding_status === 'Verification Complete' ? 'bg-indigo-100 text-indigo-800 border-indigo-300' :
+                                  'bg-gray-100 text-gray-600 border-gray-300'
+                                }`}>
+                                  {rancher.onboarding_status}
+                                </span>
+                              )}
+                              {rancher.active_status && rancher.active_status !== 'Pending Onboarding' && (
+                                <span className={`px-2 py-0.5 text-xs border ${
+                                  rancher.active_status === 'Active' ? 'bg-green-100 text-green-800 border-green-300' :
+                                  rancher.active_status === 'At Capacity' ? 'bg-red-100 text-red-800 border-red-300' :
+                                  rancher.active_status === 'Paused' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
+                                  'bg-gray-100 text-gray-600 border-gray-300'
+                                }`}>
+                                  {rancher.active_status}
+                                </span>
+                              )}
+                            </div>
                             <p className="text-sm text-[#6B4F3F]">Operator: {rancher.operator_name}</p>
-                            <p className="text-sm">{rancher.email} · {rancher.phone}</p>
+                            <p className="text-sm">{rancher.email} &middot; {rancher.phone}</p>
                             <p className="text-sm">State: {rancher.state}</p>
                             <p className="text-sm">Beef Types: {rancher.beef_types}</p>
-                            {(rancher as any).call_scheduled && (
-                              <p className="text-xs mt-2 px-2 py-1 bg-green-50 border border-green-600 text-green-700 inline-block">
-                                ✓ Call Scheduled via Calendly
+                            {rancher.current_active_referrals !== undefined && rancher.current_active_referrals > 0 && (
+                              <p className="text-sm">Referrals: {rancher.current_active_referrals}/{rancher.max_active_referrals || 5}</p>
+                            )}
+                            {rancher.docs_sent_at && (
+                              <p className="text-xs mt-1 text-orange-700">
+                                Docs sent {Math.floor((Date.now() - new Date(rancher.docs_sent_at).getTime()) / 86400000)} days ago
                               </p>
                             )}
                             {rancher.ranch_tour_interested && (
-                              <p className="text-xs mt-2 text-[#8C2F2F]">
-                                🤠 Interested in ranch tour
+                              <p className="text-xs mt-1 text-[#8C2F2F]">
+                                Interested in ranch tour
                                 {rancher.ranch_tour_availability && `: ${rancher.ranch_tour_availability}`}
                               </p>
                             )}
                           </div>
-                          <div className="flex gap-2 flex-wrap">
+                          <div className="flex flex-col gap-2">
                             <select
                               value={rancher.status}
                               onChange={(e) => updateRancherStatus(rancher.id, e.target.value, rancher.certified)}
@@ -486,16 +612,43 @@ export default function AdminPage() {
                             </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-4 pt-2">
+                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[#A7A29A]/30">
                           <p className="text-xs text-[#6B4F3F]">
                             Applied: {new Date(rancher.created_at).toLocaleDateString()}
                           </p>
-                          {!(rancher as any).call_scheduled && (
+                          {(!rancher.onboarding_status || rancher.onboarding_status === 'Call Scheduled' || rancher.onboarding_status === 'Call Complete') && (
                             <button
-                              onClick={() => updateRancherStatus(rancher.id, rancher.status, rancher.certified, true)}
-                              className="px-3 py-1 text-xs border bg-transparent text-[#0E0E0E] border-[#A7A29A] hover:bg-[#A7A29A]"
+                              onClick={() => {
+                                setOnboardingModal(rancher);
+                                setOnboardingForm({ callSummary: '', confirmedCapacity: 10, specialNotes: '', includeVerification: true });
+                              }}
+                              className="px-3 py-1 text-xs bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]"
                             >
-                              Mark Call Completed
+                              Send Onboarding Docs
+                            </button>
+                          )}
+                          {rancher.onboarding_status === 'Docs Sent' && (
+                            <button
+                              onClick={() => updateOnboardingStatus(rancher.id, 'Agreement Signed')}
+                              className="px-3 py-1 text-xs border border-blue-600 text-blue-700 hover:bg-blue-50"
+                            >
+                              Mark Agreement Signed
+                            </button>
+                          )}
+                          {rancher.onboarding_status === 'Agreement Signed' && (
+                            <button
+                              onClick={() => updateOnboardingStatus(rancher.id, 'Verification Complete')}
+                              className="px-3 py-1 text-xs border border-indigo-600 text-indigo-700 hover:bg-indigo-50"
+                            >
+                              Mark Verification Complete
+                            </button>
+                          )}
+                          {rancher.onboarding_status === 'Verification Complete' && (
+                            <button
+                              onClick={() => updateOnboardingStatus(rancher.id, 'Live')}
+                              className="px-3 py-1 text-xs bg-green-700 text-white hover:bg-green-800"
+                            >
+                              Mark Live
                             </button>
                           )}
                         </div>
@@ -609,6 +762,80 @@ export default function AdminPage() {
           </div>
         </div>
       </Container>
+
+      {/* Onboarding Docs Modal */}
+      {onboardingModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="font-[family-name:var(--font-serif)] text-xl">
+              Send Onboarding Package
+            </h3>
+            <p className="text-sm text-[#6B4F3F]">
+              Sending to <strong>{onboardingModal.operator_name || onboardingModal.ranch_name}</strong> ({onboardingModal.email})
+            </p>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium">Call Summary</label>
+                <textarea
+                  value={onboardingForm.callSummary}
+                  onChange={(e) => setOnboardingForm(p => ({ ...p, callSummary: e.target.value }))}
+                  placeholder="Summarize what you discussed on the call..."
+                  rows={4}
+                  className="w-full px-4 py-3 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium">Confirmed Capacity (orders/month)</label>
+                <input
+                  type="number"
+                  value={onboardingForm.confirmedCapacity}
+                  onChange={(e) => setOnboardingForm(p => ({ ...p, confirmedCapacity: parseInt(e.target.value) || 0 }))}
+                  className="w-full px-4 py-3 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium">Special Notes (goals, alignment)</label>
+                <textarea
+                  value={onboardingForm.specialNotes}
+                  onChange={(e) => setOnboardingForm(p => ({ ...p, specialNotes: e.target.value }))}
+                  placeholder="What makes them a great fit..."
+                  rows={3}
+                  className="w-full px-4 py-3 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
+                />
+              </div>
+
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={onboardingForm.includeVerification}
+                  onChange={(e) => setOnboardingForm(p => ({ ...p, includeVerification: e.target.checked }))}
+                  className="w-4 h-4"
+                />
+                <span className="text-sm">Include beef verification requirement</span>
+              </label>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => handleSendOnboarding(onboardingModal.id)}
+                disabled={sendingDocs}
+                className="flex-1 px-4 py-3 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium hover:bg-[#2A2A2A] disabled:opacity-50"
+              >
+                {sendingDocs ? 'Sending...' : 'Send Package'}
+              </button>
+              <button
+                onClick={() => setOnboardingModal(null)}
+                className="flex-1 px-4 py-3 border border-[#A7A29A] text-sm hover:bg-[#A7A29A]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
     </AdminAuthGuard>
   );

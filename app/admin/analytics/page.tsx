@@ -291,20 +291,100 @@ export default function AnalyticsPage() {
               )}
             </div>
 
+            {/* Referral Analytics */}
+            {(data as any).referralStats && (
+              <>
+                <Divider />
+                <div>
+                  <h2 className="font-[family-name:var(--font-serif)] text-2xl mb-4">
+                    Referral Pipeline
+                  </h2>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className="p-4 border border-[#A7A29A] bg-white text-center">
+                      <div className="text-2xl font-[family-name:var(--font-serif)]">{(data as any).referralStats.total}</div>
+                      <div className="text-xs text-[#6B4F3F]">Total Referrals</div>
+                    </div>
+                    <div className="p-4 border border-yellow-300 bg-yellow-50 text-center">
+                      <div className="text-2xl font-[family-name:var(--font-serif)] text-yellow-700">{(data as any).referralStats.pending}</div>
+                      <div className="text-xs text-yellow-700">Pending Approval</div>
+                    </div>
+                    <div className="p-4 border border-green-300 bg-green-50 text-center">
+                      <div className="text-2xl font-[family-name:var(--font-serif)] text-green-700">{(data as any).referralStats.closedWon}</div>
+                      <div className="text-xs text-green-700">Closed Won</div>
+                    </div>
+                    <div className="p-4 border border-[#A7A29A] bg-white text-center">
+                      <div className="text-2xl font-[family-name:var(--font-serif)]">{(data as any).referralStats.avgDaysToClose}d</div>
+                      <div className="text-xs text-[#6B4F3F]">Avg Days to Close</div>
+                    </div>
+                  </div>
+
+                  {(data as any).referralStats.revenueByState.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-medium mb-3">Revenue by State</h3>
+                      <div className="space-y-2">
+                        {(data as any).referralStats.revenueByState.slice(0, 10).map((s: any) => (
+                          <div key={s.state} className="flex items-center justify-between p-3 border border-[#A7A29A] bg-white">
+                            <span className="font-medium">{s.state}</span>
+                            <span className="font-[family-name:var(--font-serif)]">{formatCurrency(s.revenue)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <h3 className="text-lg font-medium mb-3">Intent Score Correlation</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="p-4 border border-green-300 bg-green-50">
+                        <div className="text-sm text-green-700 font-medium">High Intent</div>
+                        <div className="text-2xl font-[family-name:var(--font-serif)] text-green-800">
+                          {((data as any).referralStats.intentCorrelation.high.rate * 100).toFixed(0)}%
+                        </div>
+                        <div className="text-xs text-green-700">
+                          {(data as any).referralStats.intentCorrelation.high.closed}/{(data as any).referralStats.intentCorrelation.high.total} closed
+                        </div>
+                      </div>
+                      <div className="p-4 border border-yellow-300 bg-yellow-50">
+                        <div className="text-sm text-yellow-700 font-medium">Medium Intent</div>
+                        <div className="text-2xl font-[family-name:var(--font-serif)] text-yellow-800">
+                          {((data as any).referralStats.intentCorrelation.medium.rate * 100).toFixed(0)}%
+                        </div>
+                        <div className="text-xs text-yellow-700">
+                          {(data as any).referralStats.intentCorrelation.medium.closed}/{(data as any).referralStats.intentCorrelation.medium.total} closed
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
             {/* Quick Actions */}
             <div className="pt-8">
-              <div className="flex gap-4 justify-center">
+              <div className="flex flex-wrap gap-4 justify-center">
                 <Link
-                  href="/admin/broadcast"
-                  className="px-6 py-3 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                  href="/admin/referrals"
+                  className="px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors"
                 >
-                  Send Broadcast Email
+                  Referral Queue
                 </Link>
                 <Link
-                  href="/admin/inquiries"
+                  href="/admin/commissions"
+                  className="px-6 py-3 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                >
+                  Commission Ledger
+                </Link>
+                <Link
+                  href="/admin/heatmap"
                   className="px-6 py-3 border border-[#A7A29A] hover:bg-[#A7A29A] transition-colors"
                 >
-                  Manage Inquiries
+                  State Heatmap
+                </Link>
+                <Link
+                  href="/admin/broadcast"
+                  className="px-6 py-3 border border-[#A7A29A] hover:bg-[#A7A29A] transition-colors"
+                >
+                  Broadcast Email
                 </Link>
               </div>
             </div>

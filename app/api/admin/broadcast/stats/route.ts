@@ -10,7 +10,7 @@ export async function GET() {
     // Count consumers by state
     const byState: Record<string, number> = {};
     consumers.forEach((consumer: any) => {
-      const state = consumer.fields?.['State'];
+      const state = consumer['State'];
       if (state) {
         byState[state] = (byState[state] || 0) + 1;
       }
