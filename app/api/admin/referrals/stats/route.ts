@@ -4,11 +4,17 @@ import { TABLES } from '@/lib/airtable';
 
 export async function GET() {
   try {
-    const [consumers, ranchers, referrals] = await Promise.all([
+    const [consumers, ranchers] = await Promise.all([
       getAllRecords(TABLES.CONSUMERS),
       getAllRecords(TABLES.RANCHERS),
-      getAllRecords(TABLES.REFERRALS),
     ]);
+
+    let referrals: any[] = [];
+    try {
+      referrals = await getAllRecords(TABLES.REFERRALS);
+    } catch (e) {
+      console.warn('Referrals table not accessible');
+    }
 
     const pendingApproval = referrals.filter((r: any) => r['Status'] === 'Pending Approval').length;
 

@@ -81,7 +81,7 @@ export async function POST(request: Request) {
       'Order Type': orderType || '',
       'Budget Range': budgetRange || '',
       'Notes': notes || '',
-      'Lead Source': source || 'organic',
+      'Source': source || 'organic',
       'Intent Score': intentScore || 0,
       'Intent Classification': intentClassification || '',
       'Referral Status': 'Unmatched',
@@ -114,7 +114,7 @@ export async function POST(request: Request) {
     if (state) {
       try {
         const matchRes = await fetch(
-          `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/matching/suggest`,
+          `${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/api/matching/suggest`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

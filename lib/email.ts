@@ -244,7 +244,7 @@ export async function sendAdminAlert(data: {
             ${Object.entries(data.details).map(([key, value]) => 
               `<div class="field"><span class="label">${key}:</span> ${value}</div>`
             ).join('')}
-            <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/admin" class="button">Review in Admin</a>
+            <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/admin" class="button">Review in Admin</a>
           </div>
         </body>
         </html>
@@ -400,7 +400,7 @@ export async function sendInquiryAlertToAdmin(data: {
               Review and approve/reject in your admin dashboard.
             </p>
             
-            <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/admin/inquiries" class="button">Review & Approve in Admin →</a>
+            <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/admin/inquiries" class="button">Review & Approve in Admin →</a>
             
             <p style="margin-top: 30px; font-size: 12px; color: #6B4F3F;">
               The rancher will only receive contact info AFTER you approve this inquiry.

@@ -12,7 +12,13 @@ export async function GET(request: Request) {
       filter = `{Status} = "${status}"`;
     }
 
-    const records = await getAllRecords(TABLES.REFERRALS, filter || undefined);
+    let records: any[];
+    try {
+      records = await getAllRecords(TABLES.REFERRALS, filter || undefined);
+    } catch (e) {
+      console.warn('Referrals table not accessible');
+      return NextResponse.json([]);
+    }
 
     const referrals = records.map((record: any) => ({
       id: record.id,

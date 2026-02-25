@@ -31,7 +31,12 @@ export async function GET() {
       return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
     }
 
-    const allReferrals = await getAllRecords(TABLES.REFERRALS);
+    let allReferrals: any[] = [];
+    try {
+      allReferrals = await getAllRecords(TABLES.REFERRALS);
+    } catch (e) {
+      console.warn('Referrals table not accessible, returning empty referrals');
+    }
 
     // Filter referrals assigned to this rancher
     const myReferrals = allReferrals.filter((r: any) => {

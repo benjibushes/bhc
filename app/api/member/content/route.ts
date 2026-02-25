@@ -29,12 +29,18 @@ export async function GET() {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const [ranchers, landDeals, brands, referrals] = await Promise.all([
-      getAllRecords(TABLES.RANCHERS, "{Certified} = TRUE()"),
-      getAllRecords(TABLES.LAND_DEALS, "{Status} = 'Approved'"),
-      getAllRecords(TABLES.BRANDS, "{Featured} = TRUE()"),
-      getAllRecords(TABLES.REFERRALS),
+    const [ranchers, landDeals, brands] = await Promise.all([
+      getAllRecords(TABLES.RANCHERS, "{Certified} = TRUE()").catch(() => []),
+      getAllRecords(TABLES.LAND_DEALS, "{Status} = 'Approved'").catch(() => []),
+      getAllRecords(TABLES.BRANDS, "{Featured} = TRUE()").catch(() => []),
     ]);
+
+    let referrals: any[] = [];
+    try {
+      referrals = await getAllRecords(TABLES.REFERRALS);
+    } catch (e) {
+      console.warn('Referrals table not accessible, returning empty referrals');
+    }
 
     // Filter ranchers by member's state (show state matches first, then all)
     const stateRanchers = ranchers.filter((r: any) => {

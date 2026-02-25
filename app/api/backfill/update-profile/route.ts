@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     const buyerState = consumer['State'] || '';
     if (buyerState) {
       try {
-        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
         await fetch(`${siteUrl}/api/matching/suggest`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

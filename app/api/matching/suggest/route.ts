@@ -77,7 +77,22 @@ export async function POST(request: Request) {
       referralFields['Suggested Rancher State'] = topMatch['State'] || '';
     }
 
-    const referral = await createRecord(TABLES.REFERRALS, referralFields);
+    let referral: any;
+    try {
+      referral = await createRecord(TABLES.REFERRALS, referralFields);
+    } catch (e: any) {
+      console.warn('Could not create referral record:', e?.message);
+      return NextResponse.json({
+        success: false,
+        error: 'Referrals table not accessible. Please check Airtable API token permissions.',
+        matchFound: !!topMatch,
+        suggestedRancher: topMatch ? {
+          id: topMatch.id,
+          name: topMatch['Operator Name'] || topMatch['Ranch Name'],
+          state: topMatch['State'],
+        } : null,
+      }, { status: 503 });
+    }
 
     // Update consumer referral status
     try {
