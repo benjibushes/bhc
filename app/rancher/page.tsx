@@ -71,6 +71,7 @@ export default function RancherDashboardPage() {
   const [closeModal, setCloseModal] = useState<Referral | null>(null);
   const [closeForm, setCloseForm] = useState({ status: 'Closed Won', saleAmount: '', notes: '' });
   const [updating, setUpdating] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState('');
 
   useEffect(() => {
     fetchDashboard();
@@ -103,15 +104,20 @@ export default function RancherDashboardPage() {
 
   const updateReferralStatus = async (referralId: string, status: string) => {
     setUpdating(referralId);
+    setUpdateError('');
     try {
-      await fetch(`/api/rancher/referrals/${referralId}`, {
+      const res = await fetch(`/api/rancher/referrals/${referralId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setUpdateError(data.error || 'Failed to update status. Please try again.');
+      }
       await fetchDashboard();
-    } catch (err) {
-      console.error('Update error:', err);
+    } catch {
+      setUpdateError('Network error. Please check your connection.');
     } finally {
       setUpdating(null);
     }
@@ -119,9 +125,16 @@ export default function RancherDashboardPage() {
 
   const handleCloseDeal = async () => {
     if (!closeModal) return;
+
+    if (closeForm.status === 'Closed Won' && (!closeForm.saleAmount || parseFloat(closeForm.saleAmount) <= 0)) {
+      setUpdateError('Please enter a valid sale amount greater than $0.');
+      return;
+    }
+
     setUpdating(closeModal.id);
+    setUpdateError('');
     try {
-      await fetch(`/api/rancher/referrals/${closeModal.id}`, {
+      const res = await fetch(`/api/rancher/referrals/${closeModal.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -130,11 +143,16 @@ export default function RancherDashboardPage() {
           notes: closeForm.notes || undefined,
         }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setUpdateError(data.error || 'Failed to close deal. Please try again.');
+        return;
+      }
       setCloseModal(null);
       setCloseForm({ status: 'Closed Won', saleAmount: '', notes: '' });
       await fetchDashboard();
-    } catch (err) {
-      console.error('Close deal error:', err);
+    } catch {
+      setUpdateError('Network error. Please check your connection.');
     } finally {
       setUpdating(null);
     }
@@ -461,9 +479,15 @@ export default function RancherDashboardPage() {
               </div>
             </div>
 
+            {updateError && (
+              <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+                {updateError}
+              </div>
+            )}
+
             <div className="flex gap-3">
               <button
-                onClick={() => setCloseModal(null)}
+                onClick={() => { setCloseModal(null); setUpdateError(''); }}
                 className="flex-1 px-4 py-3 border border-charcoal-black text-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors font-medium uppercase text-sm tracking-wider"
               >
                 Cancel

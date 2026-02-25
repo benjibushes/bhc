@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin
+Disallow: /admin/*
+Disallow: /api/*
+Disallow: /update-profile
+
+Sitemap: https://buyhalfcow.com/sitemap.xml

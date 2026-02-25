@@ -2,6 +2,7 @@
 
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import Container from './components/Container';
 import Divider from './components/Divider';
 import Button from './components/Button';
@@ -67,10 +68,17 @@ export default function HomePage() {
         <Container>
           <div className="text-center space-y-8">
             <div className="flex justify-center mb-8">
-              <div className="w-32 h-32 md:w-40 md:h-40 relative">
-                <div className="w-full h-full flex items-center justify-center">
-                  <span className="font-serif text-6xl md:text-7xl">BHC</span>
-                </div>
+              <div className="w-32 h-32 md:w-40 md:h-40 relative flex items-center justify-center">
+                <Image
+                  src="/bhc-logo.png"
+                  alt="BuyHalfCow"
+                  width={160}
+                  height={160}
+                  className="object-contain"
+                  priority
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
+                />
+                <span className="font-serif text-6xl md:text-7xl hidden">BHC</span>
               </div>
             </div>
 

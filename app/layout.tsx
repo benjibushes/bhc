@@ -23,6 +23,7 @@ export const metadata: Metadata = {
   keywords: ["ranch beef", "grass-fed beef", "direct from rancher", "ranch land deals", "certified ranchers", "private network", "beef buying", "ranch partnerships"],
   authors: [{ name: "BuyHalfCow" }],
   creator: "BuyHalfCow",
+  metadataBase: new URL("https://buyhalfcow.com"),
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -30,12 +31,18 @@ export const metadata: Metadata = {
     title: "BuyHalfCow — Private Access Network",
     description: "Private network connecting verified ranchers, serious buyers, and partners.",
     siteName: "BuyHalfCow",
+    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "BuyHalfCow — Private Access Network" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "BuyHalfCow — Private Access Network",
     description: "Private network connecting verified ranchers with serious buyers.",
     creator: "@buyhalfcow",
+    images: ["/og-image.png"],
+  },
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/apple-touch-icon.png",
   },
   robots: {
     index: true,

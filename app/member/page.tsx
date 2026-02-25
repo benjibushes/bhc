@@ -60,6 +60,7 @@ const statusLabels: Record<string, { label: string; style: string }> = {
 function MemberDashboard({ member }: { member: { id: string; name: string; email: string; state: string } }) {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [data, setData] = useState<{
     memberState: string;
     stateRanchers: Rancher[];
@@ -74,14 +75,17 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   }, []);
 
   const fetchContent = async () => {
+    setFetchError(false);
     try {
       const response = await fetch('/api/member/content');
       if (response.ok) {
         const content = await response.json();
         setData(content);
+      } else {
+        setFetchError(true);
       }
-    } catch (err) {
-      console.error('Error fetching content:', err);
+    } catch {
+      setFetchError(true);
     } finally {
       setLoading(false);
     }
@@ -98,6 +102,22 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
         <Container>
           <div className="text-center">
             <div className="inline-block w-8 h-8 border-4 border-charcoal-black border-t-transparent rounded-full animate-spin" />
+          </div>
+        </Container>
+      </main>
+    );
+  }
+
+  if (fetchError && !data) {
+    return (
+      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
+        <Container>
+          <div className="max-w-md mx-auto text-center space-y-6">
+            <h1 className="font-serif text-3xl">Unable to Load</h1>
+            <p className="text-saddle-brown">We couldn&apos;t load your dashboard. Please check your connection and try again.</p>
+            <button onClick={fetchContent} className="px-6 py-3 bg-charcoal-black text-bone-white hover:bg-opacity-80 transition-colors uppercase tracking-wider text-sm font-semibold">
+              Retry
+            </button>
           </div>
         </Container>
       </main>
