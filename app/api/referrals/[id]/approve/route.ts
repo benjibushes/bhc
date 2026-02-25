@@ -15,12 +15,25 @@ export async function PATCH(
 
     const referral: any = await getRecordById(TABLES.REFERRALS, id);
 
+    if (referral['Status'] === 'Intro Sent' || referral['Status'] === 'Closed Won') {
+      return NextResponse.json({ error: 'This referral has already been approved' }, { status: 400 });
+    }
+
     const rancherId = overrideRancherId || referral['Suggested Rancher']?.[0];
     if (!rancherId) {
       return NextResponse.json({ error: 'No rancher assigned to this referral' }, { status: 400 });
     }
 
     const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+
+    // Capacity check
+    const currentRefs = rancher['Current Active Referrals'] || 0;
+    const maxRefs = rancher['Max Active Referrals'] || 5;
+    if (currentRefs >= maxRefs) {
+      return NextResponse.json({
+        error: `${rancher['Operator Name'] || 'Rancher'} is at capacity (${currentRefs}/${maxRefs}). Reassign to another rancher.`,
+      }, { status: 400 });
+    }
 
     const now = new Date().toISOString();
     await updateRecord(TABLES.REFERRALS, id, {
@@ -30,13 +43,11 @@ export async function PATCH(
       'Intro Sent At': now,
     });
 
-    const currentRefs = rancher['Current Active Referrals'] || 0;
     await updateRecord(TABLES.RANCHERS, rancherId, {
       'Last Assigned At': now,
       'Current Active Referrals': currentRefs + 1,
     });
 
-    // Send intro email to rancher
     const rancherEmail = rancher['Email'];
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
     const buyerName = referral['Buyer Name'] || 'Buyer';
@@ -91,7 +102,6 @@ export async function PATCH(
       });
     }
 
-    // Send Telegram confirmation
     try {
       await sendTelegramUpdate(
         `✅ <b>Approved!</b> Intro sent to <b>${rancherName}</b> for buyer <b>${buyerName}</b> in ${buyerState}`

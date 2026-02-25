@@ -30,6 +30,12 @@ export async function POST(request: Request) {
       if (action === 'approve') {
         try {
           const referral: any = await getRecordById(TABLES.REFERRALS, fullReferralId);
+
+          if (referral['Status'] === 'Intro Sent' || referral['Status'] === 'Closed Won') {
+            await answerCallbackQuery(queryId, 'Already approved');
+            return NextResponse.json({ ok: true });
+          }
+
           const rancherId = referral['Suggested Rancher']?.[0];
 
           if (!rancherId) {
@@ -38,6 +44,17 @@ export async function POST(request: Request) {
           }
 
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          const currentRefs = rancher['Current Active Referrals'] || 0;
+          const maxRefs = rancher['Max Active Referrals'] || 5;
+
+          if (currentRefs >= maxRefs) {
+            await answerCallbackQuery(queryId, `At capacity (${currentRefs}/${maxRefs}). Reassign instead.`);
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ ${rancher['Operator Name'] || 'Rancher'} is at capacity (${currentRefs}/${maxRefs}). Tap "Reassign" to pick a different rancher.`);
+            }
+            return NextResponse.json({ ok: true });
+          }
+
           const now = new Date().toISOString();
 
           await updateRecord(TABLES.REFERRALS, fullReferralId, {
@@ -47,7 +64,6 @@ export async function POST(request: Request) {
             'Intro Sent At': now,
           });
 
-          const currentRefs = rancher['Current Active Referrals'] || 0;
           await updateRecord(TABLES.RANCHERS, rancherId, {
             'Last Assigned At': now,
             'Current Active Referrals': currentRefs + 1,
@@ -159,12 +175,29 @@ export async function POST(request: Request) {
       }
 
       else if (action === 'assignto') {
-        // callbackData format: assignto_REFERRALID_RANCHERID
         const parts = callbackData.split('_');
         const refId = parts[1];
         const newRancherId = parts.slice(2).join('_');
 
         try {
+          const referral: any = await getRecordById(TABLES.REFERRALS, refId);
+
+          // Decrement old rancher's count if there was one
+          const oldRancherId = referral['Rancher']?.[0] || referral['Suggested Rancher']?.[0];
+          if (oldRancherId && oldRancherId !== newRancherId) {
+            try {
+              const oldRancher: any = await getRecordById(TABLES.RANCHERS, oldRancherId);
+              const oldCount = oldRancher['Current Active Referrals'] || 0;
+              if (oldCount > 0) {
+                await updateRecord(TABLES.RANCHERS, oldRancherId, {
+                  'Current Active Referrals': oldCount - 1,
+                });
+              }
+            } catch (e) {
+              console.error('Error decrementing old rancher count:', e);
+            }
+          }
+
           const rancher: any = await getRecordById(TABLES.RANCHERS, newRancherId);
           const now = new Date().toISOString();
 
@@ -184,14 +217,14 @@ export async function POST(request: Request) {
             'Current Active Referrals': currentRefs + 1,
           });
 
-          const referral: any = await getRecordById(TABLES.REFERRALS, refId);
+          const updatedReferral: any = await getRecordById(TABLES.REFERRALS, refId);
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'];
           const rancherEmail = rancher['Email'];
 
           if (rancherEmail) {
             await sendEmail({
               to: rancherEmail,
-              subject: `BuyHalfCow Introduction: ${referral['Buyer Name']} in ${referral['Buyer State']}`,
+              subject: `BuyHalfCow Introduction: ${updatedReferral['Buyer Name']} in ${updatedReferral['Buyer State']}`,
               html: `
                 <div style="font-family: -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px; border: 1px solid #A7A29A;">
                   <h1 style="font-family: Georgia, serif;">New Qualified Buyer Lead</h1>

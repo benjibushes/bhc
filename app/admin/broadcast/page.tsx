@@ -27,6 +27,8 @@ export default function BroadcastEmailPage() {
   const [recipientCount, setRecipientCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewData, setPreviewData] = useState<any>(null);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
@@ -73,7 +75,7 @@ export default function BroadcastEmailPage() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handlePreview = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -87,43 +89,49 @@ export default function BroadcastEmailPage() {
       return;
     }
 
-    if (recipientCount === 0) {
-      setError('No recipients match your criteria');
-      return;
-    }
-
-    if (!confirm(`Send to ${recipientCount} recipients? This action cannot be undone.`)) {
-      return;
-    }
-
-    setSending(true);
-
+    setPreviewing(true);
     try {
       const response = await fetch('/api/admin/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subject,
-          message,
-          campaignName,
-          audienceType,
-          selectedStates,
-          includeCTA,
-          ctaText,
-          ctaLink,
+          subject, message, campaignName, audienceType, selectedStates,
+          includeCTA, ctaText, ctaLink, preview: true,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to preview');
+      setPreviewData(data);
+    } catch (err: any) {
+      setError(err.message || 'Failed to preview');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const handleSend = async () => {
+    setError('');
+    if (!confirm(`Send "${subject}" to ${previewData?.recipientCount || recipientCount} recipients? This cannot be undone.`)) {
+      return;
+    }
+
+    setSending(true);
+    try {
+      const response = await fetch('/api/admin/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject, message, campaignName, audienceType, selectedStates,
+          includeCTA, ctaText, ctaLink,
         }),
       });
 
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to send emails');
-      }
-
+      if (!response.ok) throw new Error(data.error || 'Failed to send emails');
       setSuccess(true);
-      setSending(false);
     } catch (err: any) {
       setError(err.message || 'Failed to send emails');
+    } finally {
       setSending(false);
     }
   };
@@ -211,7 +219,7 @@ export default function BroadcastEmailPage() {
             <Divider />
 
             {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-8">
+            <form onSubmit={handlePreview} className="space-y-8">
               {/* Campaign Name */}
               <div>
                 <label className="block text-sm font-medium mb-2">
@@ -368,6 +376,49 @@ export default function BroadcastEmailPage() {
                 </div>
               </div>
 
+              {/* Preview Panel */}
+              {previewData && (
+                <div className="border-2 border-[#0E0E0E] bg-white p-6 space-y-4">
+                  <h3 className="font-[family-name:var(--font-serif)] text-xl">Preview</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div><strong>Campaign:</strong> {previewData.campaignName}</div>
+                    <div><strong>Subject:</strong> {previewData.subject}</div>
+                    <div><strong>Recipients:</strong> {previewData.recipientCount}</div>
+                  </div>
+                  {previewData.sampleRecipients?.length > 0 && (
+                    <div>
+                      <p className="text-sm font-medium mb-2">Sample recipients:</p>
+                      <div className="text-sm text-[#6B4F3F] space-y-1">
+                        {previewData.sampleRecipients.map((r: any, i: number) => (
+                          <div key={i}>{r.name} — {r.email}</div>
+                        ))}
+                        {previewData.recipientCount > 10 && (
+                          <div className="text-[#A7A29A]">...and {previewData.recipientCount - 10} more</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-4 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleSend}
+                      disabled={sending}
+                      className="flex-1 px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 uppercase font-semibold tracking-wider"
+                    >
+                      {sending ? 'Sending...' : `Confirm & Send to ${previewData.recipientCount}`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewData(null)}
+                      disabled={sending}
+                      className="px-6 py-4 border border-[#A7A29A] hover:bg-[#A7A29A] transition-colors"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Error Message */}
               {error && (
                 <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F]">
@@ -375,14 +426,16 @@ export default function BroadcastEmailPage() {
                 </div>
               )}
 
-              {/* Submit Button */}
-              <button
-                type="submit"
-                disabled={sending || recipientCount === 0}
-                className="w-full px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase font-semibold tracking-wider"
-              >
-                {sending ? 'Sending...' : `Send to ${recipientCount} Recipients`}
-              </button>
+              {/* Preview Button */}
+              {!previewData && (
+                <button
+                  type="submit"
+                  disabled={previewing || sending || recipientCount === 0}
+                  className="w-full px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase font-semibold tracking-wider"
+                >
+                  {previewing ? 'Loading Preview...' : `Preview — ${recipientCount} Recipients`}
+                </button>
+              )}
             </form>
           </div>
         </Container>

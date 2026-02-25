@@ -469,7 +469,10 @@ export async function sendBroadcastEmail(data: {
               <p>BuyHalfCow — Private Access Network<br>
               Not a marketplace. Not e-commerce.<br>
               Questions? Email ${ADMIN_EMAIL}</p>
-              <p style="margin-top: 20px; font-size: 10px;">
+              <p style="margin-top: 16px; font-size: 11px; color: #A7A29A;">
+                To stop receiving these emails, reply with "unsubscribe" or email ${ADMIN_EMAIL} with subject "Unsubscribe".
+              </p>
+              <p style="margin-top: 8px; font-size: 10px; color: #ccc;">
                 Campaign: ${data.campaignName}
               </p>
             </div>
