@@ -1,10 +1,18 @@
 import { Resend } from 'resend';
 
-// Initialize with placeholder during build if API key not set
 const resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
 
 const FROM_EMAIL = process.env.EMAIL_FROM || 'BuyHalfCow <noreply@buyhalfcow.com>';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@buyhalfcow.com';
+
+function esc(str: string): string {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 // =====================================================
 // CONSUMER EMAILS
@@ -36,14 +44,14 @@ export async function sendConsumerConfirmation(data: {
         <body>
           <div class="container">
             <h1>Welcome to The HERD</h1>
-            <p>Hi ${data.firstName},</p>
+            <p>Hi ${esc(data.firstName)},</p>
             <p>Thank you for applying. You're joining a growing community of people sourcing real beef directly from American ranchers.</p>
             <div class="divider"></div>
             <p><strong>What Happens Next:</strong></p>
             <p>I personally review every application. You'll hear back within <strong>24-48 hours</strong> with a matched rancher introduction in your area.</p>
             <p>Here's what you're getting access to:</p>
             <ul>
-              <li>Verified ranchers in <strong>${data.state}</strong></li>
+              <li>Verified ranchers in <strong>${esc(data.state)}</strong></li>
               <li>Direct, personal introductions</li>
               <li>A curated network — no spam, no middlemen</li>
             </ul>
@@ -92,7 +100,7 @@ export async function sendConsumerApproval(data: {
         <body>
           <div class="container">
             <h1>Welcome to BuyHalfCow</h1>
-            <p>Hi ${data.firstName},</p>
+            <p>Hi ${esc(data.firstName)},</p>
             <p><strong>Your application has been approved!</strong></p>
             <p>You now have access to our private network of verified ranchers, exclusive land deals, and trusted brand partners.</p>
             <a href="${data.loginUrl}" class="button">Access Your Dashboard</a>
@@ -157,7 +165,7 @@ export async function sendPartnerConfirmation(data: {
         <body>
           <div class="container">
             <h1>${typeLabels[data.type]} Application Received</h1>
-            <p>Hi ${data.name},</p>
+            <p>Hi ${esc(data.name)},</p>
             <p>Thank you for your interest in ${data.type === 'rancher' ? 'joining The HERD rancher network' : 'partnering with BuyHalfCow'}.</p>
             <p>I've received your application and will review it personally.</p>
             ${data.type === 'rancher' ? `
@@ -237,12 +245,12 @@ export async function sendAdminAlert(data: {
           <div class="container">
             <h1>NEW APPLICATION RECEIVED</h1>
             <p><strong>Type:</strong> ${data.type.toUpperCase()}</p>
-            <p><strong>Name:</strong> ${data.name}</p>
-            <p><strong>Email:</strong> ${data.email}</p>
+            <p><strong>Name:</strong> ${esc(data.name)}</p>
+            <p><strong>Email:</strong> ${esc(data.email)}</p>
             <hr>
             <h2>Details:</h2>
             ${Object.entries(data.details).map(([key, value]) => 
-              `<div class="field"><span class="label">${key}:</span> ${value}</div>`
+              `<div class="field"><span class="label">${esc(key)}:</span> ${esc(String(value))}</div>`
             ).join('')}
             <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/admin" class="button">Review in Admin</a>
           </div>
@@ -302,28 +310,28 @@ export async function sendInquiryToRancher(data: {
         </head>
         <body>
           <div class="container">
-            <h1>New Inquiry for ${data.ranchName}</h1>
-            <p>Hi ${data.rancherName},</p>
+            <h1>New Inquiry for ${esc(data.ranchName)}</h1>
+            <p>Hi ${esc(data.rancherName)},</p>
             <p>You have a new inquiry from a BuyHalfCow member:</p>
             
             <div class="divider"></div>
             
             <div class="field">
-              <span class="label">Name:</span> ${data.consumerName}
+              <span class="label">Name:</span> ${esc(data.consumerName)}
             </div>
             <div class="field">
-              <span class="label">Email:</span> ${data.consumerEmail}
+              <span class="label">Email:</span> ${esc(data.consumerEmail)}
             </div>
             <div class="field">
-              <span class="label">Phone:</span> ${data.consumerPhone}
+              <span class="label">Phone:</span> ${esc(data.consumerPhone)}
             </div>
             <div class="field">
-              <span class="label">Interested In:</span> ${interestLabels[data.interestType] || data.interestType}
+              <span class="label">Interested In:</span> ${esc(interestLabels[data.interestType] || data.interestType)}
             </div>
             
             <div class="message-box">
               <div class="label">Message:</div>
-              <p style="margin: 8px 0 0 0;">${data.message}</p>
+              <p style="margin: 8px 0 0 0;">${esc(data.message)}</p>
             </div>
             
             <div class="divider"></div>
@@ -384,15 +392,15 @@ export async function sendInquiryAlertToAdmin(data: {
           <div class="container">
             <h1>⚠️ NEW INQUIRY REQUIRES APPROVAL</h1>
             
-            <div class="field"><strong>Consumer:</strong> ${data.consumerName} (${data.consumerEmail})</div>
-            <div class="field"><strong>Rancher:</strong> ${data.ranchName} (${data.rancherEmail})</div>
-            <div class="field"><strong>Interest:</strong> ${interestLabels[data.interestType]}</div>
-            <div class="field"><strong>Inquiry ID:</strong> #${data.inquiryId.slice(0, 8)}</div>
+            <div class="field"><strong>Consumer:</strong> ${esc(data.consumerName)} (${esc(data.consumerEmail)})</div>
+            <div class="field"><strong>Rancher:</strong> ${esc(data.ranchName)} (${esc(data.rancherEmail)})</div>
+            <div class="field"><strong>Interest:</strong> ${esc(interestLabels[data.interestType])}</div>
+            <div class="field"><strong>Inquiry ID:</strong> #${esc(data.inquiryId.slice(0, 8))}</div>
             
             <hr>
             
             <p><strong>Message:</strong></p>
-            <p style="background: #F4F1EC; padding: 16px;">${data.message}</p>
+            <p style="background: #F4F1EC; padding: 16px;">${esc(data.message)}</p>
             
             <p style="background: #FFF3CD; padding: 16px; border-left: 4px solid #FFC107; margin: 20px 0;">
               <strong>⚠️ ACTION REQUIRED:</strong><br>
@@ -432,8 +440,7 @@ export async function sendBroadcastEmail(data: {
   ctaLink: string;
 }) {
   try {
-    // Convert line breaks to <br> tags
-    const formattedMessage = data.message.replace(/\n/g, '<br>');
+    const formattedMessage = esc(data.message).replace(/\n/g, '<br>');
 
     await resend.emails.send({
       from: FROM_EMAIL,
@@ -456,8 +463,8 @@ export async function sendBroadcastEmail(data: {
         </head>
         <body>
           <div class="container">
-            <h1>${data.subject}</h1>
-            <p>Hi ${data.name},</p>
+            <h1>${esc(data.subject)}</h1>
+            <p>Hi ${esc(data.name)},</p>
             <div class="message">
               <p>${formattedMessage}</p>
             </div>

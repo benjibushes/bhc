@@ -31,7 +31,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
-    // Create a session token
+    const status = consumer['Status'] || '';
+    if (status !== 'Approved' && status !== 'Active') {
+      return NextResponse.json({ error: 'Your account is not yet approved. Please wait for admin review.' }, { status: 403 });
+    }
+
     const sessionToken = jwt.sign(
       {
         type: 'member-session',
