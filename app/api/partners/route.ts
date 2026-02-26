@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
+import { sendTelegramPartnerAlert } from '@/lib/telegram';
 
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -91,6 +92,19 @@ export async function POST(request: Request) {
           'Monthly Capacity': monthlyCapacity,
         },
       });
+
+      try {
+        await sendTelegramPartnerAlert({
+          type: 'rancher',
+          recordId: record.id,
+          name: `${operatorName} — ${ranchName}`,
+          email,
+          state,
+          details: `🥩 <b>Beef:</b> ${beefTypes}\n📦 <b>Capacity:</b> ${monthlyCapacity || 'N/A'}/mo${callScheduled ? '\n📅 Call scheduled' : ''}`,
+        });
+      } catch (e) {
+        console.error('Telegram rancher alert error:', e);
+      }
     }
 
     // Handle Brand application
@@ -134,6 +148,18 @@ export async function POST(request: Request) {
           'Proposed Discount': proposedDiscount || 'Not specified',
         },
       });
+
+      try {
+        await sendTelegramPartnerAlert({
+          type: 'brand',
+          recordId: record.id,
+          name: `${brandName} (${contactName})`,
+          email,
+          details: `📦 <b>Category:</b> ${productCategory}\n🌐 ${website || 'No website'}\n💰 <b>Discount:</b> ${proposedDiscount || 'TBD'}`,
+        });
+      } catch (e) {
+        console.error('Telegram brand alert error:', e);
+      }
     }
 
     // Handle Land Seller application
@@ -177,6 +203,19 @@ export async function POST(request: Request) {
           Price: price ? `$${price}` : 'Not specified',
         },
       });
+
+      try {
+        await sendTelegramPartnerAlert({
+          type: 'land',
+          recordId: record.id,
+          name: sellerName,
+          email,
+          state,
+          details: `🏞️ <b>Type:</b> ${propertyType}\n📐 <b>Acreage:</b> ${acreage || 'N/A'}\n📍 ${state}${county ? `, ${county}` : ''}\n💰 ${price ? `$${parseInt(price).toLocaleString()}` : 'Price TBD'}`,
+        });
+      } catch (e) {
+        console.error('Telegram land alert error:', e);
+      }
     }
 
     else {

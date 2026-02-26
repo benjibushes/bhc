@@ -113,6 +113,84 @@ ${rancherLine}
   return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
 }
 
+export async function sendTelegramConsumerSignup(data: {
+  consumerId: string;
+  name: string;
+  email: string;
+  state: string;
+  segment: string;
+  intentScore: number;
+  intentClassification: string;
+  status: string;
+  orderType?: string;
+  budgetRange?: string;
+}) {
+  const statusEmoji = data.status === 'approved' ? '✅' : '⏳';
+  const segmentEmoji = data.segment === 'Beef Buyer' ? '🥩' : '🏷️';
+
+  const message = `👤 <b>NEW SIGNUP</b>
+
+${segmentEmoji} <b>Segment:</b> ${data.segment}
+📊 <b>Intent:</b> ${data.intentScore} (${data.intentClassification})
+${statusEmoji} <b>Status:</b> ${data.status === 'approved' ? 'Auto-Approved' : 'Pending Review'}
+
+<b>Name:</b> ${data.name}
+📧 ${data.email}
+📍 ${data.state}${data.orderType ? `\n🥩 Order: ${data.orderType}` : ''}${data.budgetRange ? `\n💵 Budget: ${data.budgetRange}` : ''}`;
+
+  if (data.status !== 'approved') {
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: '✅ Approve', callback_data: `capprove_${data.consumerId}` },
+          { text: '❌ Reject', callback_data: `creject_${data.consumerId}` },
+        ],
+        [
+          { text: '🔍 View Details', callback_data: `cdetails_${data.consumerId}` },
+        ],
+      ],
+    };
+    return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
+  }
+
+  return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message);
+}
+
+export async function sendTelegramPartnerAlert(data: {
+  type: 'rancher' | 'brand' | 'land';
+  recordId: string;
+  name: string;
+  email: string;
+  state?: string;
+  details: string;
+}) {
+  const typeEmoji = data.type === 'rancher' ? '🤠' : data.type === 'brand' ? '🛠️' : '🏞️';
+  const typeLabel = data.type.charAt(0).toUpperCase() + data.type.slice(1);
+
+  const message = `${typeEmoji} <b>NEW ${typeLabel.toUpperCase()} APPLICATION</b>
+
+<b>Name:</b> ${data.name}
+📧 ${data.email}${data.state ? `\n📍 ${data.state}` : ''}
+
+${data.details}`;
+
+  if (data.type === 'rancher') {
+    const calLink = process.env.NEXT_PUBLIC_CALENDLY_LINK || process.env.CALENDLY_LINK || '';
+    const keyboard: { inline_keyboard: Array<Array<{ text: string; callback_data?: string; url?: string }>> } = {
+      inline_keyboard: [],
+    };
+    if (calLink) {
+      keyboard.inline_keyboard.push([{ text: '📅 Schedule Call', url: calLink }]);
+    }
+    keyboard.inline_keyboard.push([
+      { text: '📦 Send Onboarding', callback_data: `ronboard_${data.recordId}` },
+    ]);
+    return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
+  }
+
+  return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message);
+}
+
 export async function sendTelegramUpdate(text: string) {
   return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, text);
 }

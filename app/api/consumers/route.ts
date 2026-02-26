@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert } from '@/lib/email';
+import { sendTelegramConsumerSignup } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -132,6 +133,23 @@ export async function POST(request: Request) {
         Notes: notes || 'None',
       },
     });
+
+    try {
+      await sendTelegramConsumerSignup({
+        consumerId: record.id,
+        name: fullName,
+        email,
+        state,
+        segment: consumerSegment,
+        intentScore: intentScore || 0,
+        intentClassification: intentClassification || '',
+        status,
+        orderType,
+        budgetRange,
+      });
+    } catch (e) {
+      console.error('Telegram consumer signup error:', e);
+    }
 
     // Only trigger matching for approved Beef Buyers
     const shouldMatch = status === 'approved' && consumerSegment === 'Beef Buyer' && state;
