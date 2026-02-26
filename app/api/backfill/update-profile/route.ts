@@ -7,7 +7,8 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-backfill-secret-change-me';
 
 function calculateIntentScore(data: { orderType: string; budgetRange: string; notes: string }) {
-  let score = 0;
+  let score = 10; // phone + email bonus (existing backfill users have both)
+
   if (data.orderType === 'Whole') score += 30;
   else if (data.orderType === 'Half') score += 20;
   else if (data.orderType === 'Quarter') score += 10;
@@ -17,7 +18,6 @@ function calculateIntentScore(data: { orderType: string; budgetRange: string; no
   else if (data.budgetRange === '$500-$1000') score += 10;
 
   if (data.notes && data.notes.length > 20) score += 15;
-  score += 10; // phone + email bonus (existing users have both)
 
   return score;
 }
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     const consumer: any = await getRecordById(TABLES.CONSUMERS, consumerId);
 
     const intentScore = calculateIntentScore({ orderType, budgetRange, notes });
-    const intentClassification = intentScore >= 70 ? 'High' : intentScore >= 40 ? 'Medium' : 'Low';
+    const intentClassification = intentScore >= 60 ? 'High' : intentScore >= 30 ? 'Medium' : 'Low';
 
     await updateRecord(TABLES.CONSUMERS, consumerId, {
       'Order Type': orderType || '',

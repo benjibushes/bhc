@@ -58,7 +58,7 @@ export async function GET(request: Request) {
               <p>If no sales were made through BuyHalfCow referrals, reply <strong>"No sales"</strong>.</p>
               <p>This helps us track commissions and improve the matching process.</p>
               <div class="footer">
-                <p>— Benji, BuyHalfCow</p>
+                <p>— Benjamin, BuyHalfCow</p>
               </div>
             </div>
           </body>

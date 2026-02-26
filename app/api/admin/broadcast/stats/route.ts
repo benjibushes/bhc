@@ -7,19 +7,27 @@ export async function GET() {
     const consumers = await getAllRecords(TABLES.CONSUMERS);
     const ranchers = await getAllRecords(TABLES.RANCHERS);
 
-    // Count consumers by state
     const byState: Record<string, number> = {};
+    let beefBuyers = 0;
+    let community = 0;
+
     consumers.forEach((consumer: any) => {
       const state = consumer['State'];
       if (state) {
         byState[state] = (byState[state] || 0) + 1;
       }
+      const segment = consumer['Segment'] || '';
+      if (segment === 'Beef Buyer') beefBuyers++;
+      else if (segment === 'Community') community++;
+      else community++; // Default unsegmented consumers to community count
     });
 
     return NextResponse.json({
       allConsumers: consumers.length,
       allRanchers: ranchers.length,
       byState,
+      beefBuyers,
+      community,
     });
   } catch (error: any) {
     console.error('Error fetching broadcast stats:', error);

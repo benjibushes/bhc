@@ -94,10 +94,9 @@ export async function POST(request: Request) {
       }, { status: 503 });
     }
 
-    // Update consumer referral status
     try {
       await updateRecord(TABLES.CONSUMERS, buyerId, {
-        'Referral Status': 'Pending Approval',
+        'Referral Status': topMatch ? 'Pending Approval' : 'Waitlisted',
       });
     } catch (e) {
       console.error('Error updating consumer referral status:', e);

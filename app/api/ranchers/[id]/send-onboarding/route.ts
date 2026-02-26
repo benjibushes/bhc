@@ -5,6 +5,10 @@ import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function POST(
   request: Request,
@@ -36,9 +40,9 @@ export async function POST(
     const attachments: { filename: string; content: Buffer }[] = [];
     const docsDir = join(process.cwd(), 'public', 'docs');
     const docFiles = [
-      { name: 'BHC_Partnership_Agreement.pdf', label: 'Partnership Agreement' },
-      { name: 'BHC_Marketing_Guidelines.pdf', label: 'Marketing Guidelines' },
-      { name: 'Rancher_Onboarding_Checklist.pdf', label: 'Onboarding Checklist' },
+      { name: 'BHC_Commission_Agreement.docx', label: 'Commission Agreement' },
+      { name: 'BHC_Media_Agreement.docx', label: 'Media Agreement' },
+      { name: 'BHC_Rancher_Info_Packet.pdf', label: 'Rancher Info Packet' },
     ];
 
     for (const doc of docFiles) {
@@ -50,19 +54,30 @@ export async function POST(
       }
     }
 
+    const signingToken = jwt.sign(
+      { type: 'agreement-signing', rancherId: id },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+    const signingLink = `${SITE_URL}/rancher/sign-agreement?token=${signingToken}`;
+
     const verificationHtml = includeVerification
       ? `
-        <h3 style="margin: 20px 0 10px;">3. Verification Process</h3>
+        <h3 style="margin: 20px 0 10px;">3. Verification (Product Sample)</h3>
         <ul style="color: #6B4F3F; line-height: 1.8;">
-          <li>Ship 1 sample cut to our verification address (details in checklist)</li>
-          <li>We'll verify quality and document the results</li>
-          <li>Estimated timeline: 2-3 weeks</li>
+          <li>Ship a representative product sample from your processor</li>
+          <li>Properly packaged and clearly labeled</li>
+          <li>Ship to: 420 N Walnut St, Colorado Springs, CO</li>
+          <li>We review packaging, marbling, cut accuracy, and presentation</li>
+          <li>Estimated timeline: 2-3 weeks after receipt</li>
         </ul>
       `
       : `
-        <h3 style="margin: 20px 0 10px;">3. Verification Process</h3>
+        <h3 style="margin: 20px 0 10px;">3. Verification (In-Person Visit)</h3>
         <ul style="color: #6B4F3F; line-height: 1.8;">
-          <li>We'll schedule a ranch tour during our visit to your state</li>
+          <li>We'll schedule an on-site ranch visit</li>
+          <li>Includes walkthrough, feeding program review, and processing partner verification</li>
+          <li>Optional media documentation during the visit</li>
           <li>I'll reach out to coordinate timing</li>
         </ul>
       `;
@@ -112,18 +127,25 @@ export async function POST(
 
           <h2 style="font-family: Georgia, serif; font-size: 22px;">Next Steps</h2>
 
-          <h3 style="margin: 20px 0 10px;">1. Review & Sign Agreement (attached)</h3>
+          <h3 style="margin: 20px 0 10px;">1. Review & Sign Commission Agreement</h3>
           <ul style="color: #6B4F3F; line-height: 1.8;">
-            <li>Commission terms: 10% on BHC referrals</li>
-            <li>Direct payment from buyer to you</li>
-            <li>We invoice monthly for closed deals</li>
+            <li>10% commission on all verified referred sales</li>
+            <li>Buyers pay you directly — you control pricing</li>
+            <li>24-month commission term from first referral</li>
+            <li>No upfront fees</li>
           </ul>
+          <div style="text-align: center; margin: 24px 0;">
+            <a href="${signingLink}" style="display: inline-block; padding: 16px 40px; background: #0E0E0E; color: #F4F1EC; text-decoration: none; font-weight: bold; font-size: 14px; letter-spacing: 1px; text-transform: uppercase;">
+              REVIEW & SIGN AGREEMENT
+            </a>
+          </div>
+          <p style="font-size: 12px; color: #A7A29A; text-align: center;">This link is valid for 30 days. Full agreement attached for your records.</p>
 
-          <h3 style="margin: 20px 0 10px;">2. Complete Your Profile</h3>
+          <h3 style="margin: 20px 0 10px;">2. Review the Info Packet & Media Agreement</h3>
           <ul style="color: #6B4F3F; line-height: 1.8;">
-            <li>High-quality ranch photos</li>
-            <li>Beef type details and pricing</li>
-            <li>Any certifications</li>
+            <li>Rancher Info Packet covers the full process from verification to listing</li>
+            <li>Media Agreement covers content usage and marketing guidelines</li>
+            <li>We'll need: ranch photos, beef type details, pricing, certifications</li>
           </ul>
 
           ${verificationHtml}
@@ -139,7 +161,7 @@ export async function POST(
             <div class="divider"></div>
             <p><strong>Documents Attached:</strong></p>
             <ul style="color: #6B4F3F;">
-              ${attachments.map(a => `<li>${a.filename.replace('BHC_', '').replace('.pdf', '').replace(/_/g, ' ')}</li>`).join('')}
+              ${attachments.map(a => `<li>${a.filename.replace('BHC_', '').replace('.pdf', '').replace('.docx', '').replace(/_/g, ' ')}</li>`).join('')}
             </ul>
           ` : ''}
 
@@ -150,7 +172,7 @@ export async function POST(
           <p>Looking forward to working with you!</p>
 
           <div class="footer">
-            <p>— Benji, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+            <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
           </div>
         </div>
       </body>

@@ -37,7 +37,7 @@ export default function CompliancePage() {
         body: JSON.stringify({
           recipients: [{ email, name }],
           subject: `BuyHalfCow Sales Report Reminder - ${month}`,
-          message: `Hi ${name},\n\nThis is a reminder to submit your monthly sales report for BuyHalfCow referrals.\n\nPlease reply with your sales from last month, or "No sales" if none.\n\nThanks,\nBenji`,
+          message: `Hi ${name},\n\nThis is a reminder to submit your monthly sales report for BuyHalfCow referrals.\n\nPlease reply with your sales from last month, or "No sales" if none.\n\nThanks,\nBenjamin`,
           campaignName: 'compliance-reminder-manual',
         }),
       });

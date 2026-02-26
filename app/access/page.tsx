@@ -87,8 +87,15 @@ function calculateIntentScore(data: {
   notes: string;
   phone: string;
   email: string;
+  interestBeef: boolean;
+  interestMerch: boolean;
+  interestAll: boolean;
 }) {
   let score = 0;
+
+  if (data.interestBeef) score += 30;
+  if (data.interestAll) score += 15;
+  if (data.interestMerch && !data.interestBeef && !data.interestAll) score -= 10;
 
   if (data.orderType === 'Whole') score += 30;
   else if (data.orderType === 'Half') score += 20;
@@ -101,13 +108,17 @@ function calculateIntentScore(data: {
   if (data.notes && data.notes.length > 20) score += 15;
   if (data.phone && data.email) score += 10;
 
-  return score;
+  return Math.max(score, 0);
 }
 
 function classifyIntent(score: number): string {
-  if (score >= 70) return 'High';
-  if (score >= 40) return 'Medium';
+  if (score >= 60) return 'High';
+  if (score >= 30) return 'Medium';
   return 'Low';
+}
+
+function deriveSegment(interestBeef: boolean, interestAll: boolean): string {
+  return (interestBeef || interestAll) ? 'Beef Buyer' : 'Community';
 }
 
 function validateEmail(email: string): boolean {
@@ -148,6 +159,7 @@ export default function AccessPage() {
   });
 
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submittedSegment, setSubmittedSegment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [formLoadedAt] = useState(Date.now());
@@ -218,8 +230,12 @@ export default function AccessPage() {
       notes: formData.notes,
       phone: formData.phone,
       email: formData.email,
+      interestBeef: formData.interestBeef,
+      interestMerch: formData.interestMerch,
+      interestAll: formData.interestAll,
     });
     const intentClassification = classifyIntent(intentScore);
+    const segment = deriveSegment(formData.interestBeef, formData.interestAll);
 
     setIsSubmitting(true);
 
@@ -241,6 +257,7 @@ export default function AccessPage() {
           interestAll: formData.interestAll,
           intentScore,
           intentClassification,
+          segment,
           source: campaignData.source,
           campaign: campaignData.campaign,
           utmParams: campaignData.utmParams,
@@ -252,6 +269,7 @@ export default function AccessPage() {
         throw new Error(data.error || 'Submission failed');
       }
 
+      setSubmittedSegment(segment);
       setIsSubmitted(true);
     } catch (err: any) {
       setError(err.message || 'Something went wrong. Please try again.');
@@ -260,6 +278,7 @@ export default function AccessPage() {
   };
 
   if (isSubmitted) {
+    const isBeef = submittedSegment === 'Beef Buyer';
     return (
       <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
         <Container>
@@ -269,20 +288,23 @@ export default function AccessPage() {
             </h1>
             <Divider />
             <p className="text-xl leading-relaxed">
-              Your application is being matched with a verified rancher in your state. You&apos;ll receive an email within 24-48 hours with your personal introduction.
+              {isBeef
+                ? "Check your email — you'll find your login link and next steps for getting matched with a verified rancher in your area."
+                : "Check your email — you'll find your login link and access to the BuyHalfCow network, including merch, brand deals, and community events."
+              }
             </p>
             <div className="space-y-3 text-left max-w-md mx-auto pt-4">
               <div className="flex items-center gap-3 text-base">
                 <span className="w-6 h-6 bg-[#0E0E0E] text-[#F4F1EC] rounded-full flex items-center justify-center text-xs font-bold">1</span>
-                <span>Application received</span>
+                <span>Application approved</span>
               </div>
               <div className="flex items-center gap-3 text-base text-[#6B4F3F]">
                 <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold">2</span>
-                <span>Matching you with a rancher...</span>
+                <span>{isBeef ? 'Matching you with a rancher...' : 'Explore the network'}</span>
               </div>
               <div className="flex items-center gap-3 text-base text-[#A7A29A]">
                 <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold">3</span>
-                <span>Personal introduction via email</span>
+                <span>{isBeef ? 'Personal introduction via email' : 'Access member-only perks'}</span>
               </div>
             </div>
             <div className="pt-8">

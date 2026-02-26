@@ -14,6 +14,7 @@ export async function GET() {
 
     let memberState = '';
     let memberId = '';
+    let memberSegment = '';
 
     if (sessionCookie?.value) {
       try {
@@ -27,6 +28,17 @@ export async function GET() {
       }
     } else {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
+    // Fetch member's segment from their consumer record
+    if (memberId) {
+      try {
+        const { getRecordById } = await import('@/lib/airtable');
+        const consumer: any = await getRecordById(TABLES.CONSUMERS, memberId);
+        memberSegment = consumer['Segment'] || '';
+      } catch {
+        // Non-fatal, segment will be empty
+      }
     }
 
     const [ranchers, landDeals, brands] = await Promise.all([
@@ -64,6 +76,7 @@ export async function GET() {
 
     return NextResponse.json({
       memberState,
+      memberSegment,
       stateRanchers,
       otherRanchers,
       landDeals,

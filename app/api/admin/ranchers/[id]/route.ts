@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { updateRecord, deleteRecord } from '@/lib/airtable';
+import { getRecordById, updateRecord, deleteRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { sendRancherApproval } from '@/lib/email';
 
 export async function PATCH(
   request: NextRequest,
@@ -35,8 +36,38 @@ export async function PATCH(
     if (body.performance_score !== undefined) fields['Performance Score'] = parseInt(body.performance_score);
     if (body.verification_status) fields['Verification Status'] = body.verification_status;
     if (body.call_notes) fields['Call Notes'] = body.call_notes;
+    if (body.featured === true) fields['Featured'] = true;
+    else if (body.featured === false) fields['Featured'] = false;
+    if (body.release_date !== undefined) fields['Release Date'] = body.release_date || null;
+
+    let shouldSendApproval = false;
+    if (body.status === 'approved') {
+      try {
+        const current: any = await getRecordById(TABLES.RANCHERS, id);
+        const currentStatus = (current['Status'] || '').toLowerCase();
+        if (currentStatus !== 'approved') {
+          shouldSendApproval = true;
+        }
+      } catch { /* proceed */ }
+    }
 
     const updatedRecord = await updateRecord(TABLES.RANCHERS, id, fields);
+
+    if (shouldSendApproval) {
+      try {
+        const rancher: any = await getRecordById(TABLES.RANCHERS, id);
+        const email = rancher['Email'];
+        const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
+        const ranchName = rancher['Ranch Name'] || '';
+
+        if (email) {
+          await sendRancherApproval({ operatorName, ranchName, email });
+        }
+      } catch (emailErr) {
+        console.error('Failed to send rancher approval email (non-fatal):', emailErr);
+      }
+    }
+
     return NextResponse.json(updatedRecord);
   } catch (error: any) {
     console.error('API error updating rancher:', error);

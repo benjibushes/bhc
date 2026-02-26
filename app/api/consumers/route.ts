@@ -1,7 +1,17 @@
 import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendConsumerConfirmation, sendAdminAlert } from '@/lib/email';
+import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert } from '@/lib/email';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+
+function deriveStatus(segment: string, intentClassification: string): string {
+  if (segment === 'Community') return 'approved';
+  if (segment === 'Beef Buyer' && (intentClassification === 'High' || intentClassification === 'Medium')) return 'approved';
+  return 'Pending';
+}
 
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -31,7 +41,7 @@ export async function POST(request: Request) {
       fullName, email, phone, state,
       orderType, budgetRange, notes,
       interestBeef, interestLand, interestMerch, interestAll,
-      intentScore, intentClassification,
+      intentScore, intentClassification, segment,
       source, campaign, utmParams,
     } = body;
 
@@ -71,29 +81,40 @@ export async function POST(request: Request) {
     if (interestMerch) interests.push('Merch');
     if (interestAll) interests.push('All');
 
+    const consumerSegment = segment || 'Community';
+    const status = deriveStatus(consumerSegment, intentClassification || '');
+    const firstName = fullName.split(' ')[0];
+
     const record = await createRecord(TABLES.CONSUMERS, {
       'Full Name': fullName,
       'Email': email,
       'Phone': phone || '',
       'State': state,
       'Interests': interests,
-      'Status': 'Pending',
+      'Status': status,
+      'Segment': consumerSegment,
       'Order Type': orderType || '',
       'Budget Range': budgetRange || '',
       'Notes': notes || '',
       'Source': source || 'organic',
       'Intent Score': intentScore || 0,
       'Intent Classification': intentClassification || '',
-      'Referral Status': 'Unmatched',
+      'Referral Status': consumerSegment === 'Community' ? 'Community' : 'Unmatched',
       'Campaign': campaign || '',
       'UTM Parameters': utmParams || '',
     });
 
-    await sendConsumerConfirmation({
-      firstName: fullName.split(' ')[0],
-      email,
-      state,
-    });
+    if (status === 'approved') {
+      const token = jwt.sign(
+        { type: 'member-login', consumerId: record.id, email: email.trim().toLowerCase() },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      const loginUrl = `${SITE_URL}/member/verify?token=${token}`;
+      await sendConsumerApproval({ firstName, email, loginUrl, segment: consumerSegment });
+    } else {
+      await sendConsumerConfirmation({ firstName, email, state });
+    }
 
     await sendAdminAlert({
       type: 'consumer',
@@ -101,6 +122,8 @@ export async function POST(request: Request) {
       email,
       details: {
         State: state,
+        Segment: consumerSegment,
+        Status: status,
         'Order Type': orderType || 'Not specified',
         'Budget': budgetRange || 'Not specified',
         'Intent Score': `${intentScore || 0} (${intentClassification || 'N/A'})`,
@@ -110,11 +133,12 @@ export async function POST(request: Request) {
       },
     });
 
-    // Trigger matching engine
-    if (state) {
+    // Only trigger matching for approved Beef Buyers
+    const shouldMatch = status === 'approved' && consumerSegment === 'Beef Buyer' && state;
+    if (shouldMatch) {
       try {
         const matchRes = await fetch(
-          `${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/api/matching/suggest`,
+          `${SITE_URL}/api/matching/suggest`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

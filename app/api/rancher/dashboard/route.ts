@@ -86,6 +86,24 @@ export async function GET() {
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
 
+    let networkBenefits: any[] = [];
+    try {
+      const allBrands = await getAllRecords(TABLES.BRANDS);
+      networkBenefits = allBrands
+        .filter((b: any) => (b['Status'] === 'approved' || b['Active'] === true))
+        .map((b: any) => ({
+          id: b.id,
+          brand_name: b['Brand Name'] || '',
+          product_type: b['Product Type'] || '',
+          discount_offered: b['Discount Offered'] || 0,
+          description: b['Description'] || '',
+          website: b['Website'] || '',
+          contact_email: b['Email'] || '',
+        }));
+    } catch {
+      // Brands table may not be accessible
+    }
+
     return NextResponse.json({
       rancher: {
         id: rancher.id,
@@ -111,6 +129,7 @@ export async function GET() {
         netEarnings: totalRevenue - totalCommission,
       },
       referrals: referralsList,
+      networkBenefits,
     });
   } catch (error: any) {
     console.error('Rancher dashboard error:', error);

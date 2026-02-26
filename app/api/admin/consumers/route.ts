@@ -15,6 +15,7 @@ export async function GET() {
       interests: record['Interests'] || [],
       status: record['Status'] || 'Pending',
       membership: record['Membership'] || 'none',
+      segment: record['Segment'] || '',
       order_type: record['Order Type'] || '',
       budget_range: record['Budget Range'] || '',
       notes: record['Notes'] || '',
@@ -22,6 +23,9 @@ export async function GET() {
       intent_score: record['Intent Score'] || 0,
       intent_classification: record['Intent Classification'] || '',
       referral_status: record['Referral Status'] || 'Unmatched',
+      admin_notes: record['Admin Notes'] || '',
+      last_contacted: record['Last Contacted'] || '',
+      campaign: record['Campaign'] || '',
       created_at: record['Created'] || record.createdTime || new Date().toISOString(),
     }));
     

@@ -202,7 +202,7 @@ export default function BackfillPage() {
                   </span>
                 </p>
                 <p>Takes 30 seconds. You&apos;ll hear from us within 48 hours.</p>
-                <p className="text-xs text-[#A7A29A]">— Benji, Founder, BuyHalfCow</p>
+                <p className="text-xs text-[#A7A29A]">— Benjamin, Founder, BuyHalfCow</p>
               </div>
             </div>
           </div>

@@ -25,6 +25,17 @@ interface Consumer {
   interests: string[];
   status: string;
   membership: string;
+  segment: string;
+  order_type: string;
+  budget_range: string;
+  notes: string;
+  intent_score: number;
+  intent_classification: string;
+  lead_source: string;
+  referral_status: string;
+  admin_notes: string;
+  last_contacted: string;
+  campaign: string;
   created_at: string;
 }
 
@@ -48,6 +59,8 @@ interface Rancher {
   agreement_signed?: boolean;
   docs_sent_at?: string;
   verification_status?: string;
+  featured?: boolean;
+  release_date?: string;
   created_at: string;
 }
 
@@ -84,7 +97,12 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [rancherStateFilter, setRancherStateFilter] = useState<string>('');
   const [consumerStateFilter, setConsumerStateFilter] = useState<string>('');
+  const [intentFilter, setIntentFilter] = useState<string>('');
+  const [segmentFilter, setSegmentFilter] = useState<string>('');
   const [refStats, setRefStats] = useState<ReferralStats | null>(null);
+  const [notesModal, setNotesModal] = useState<Consumer | null>(null);
+  const [notesText, setNotesText] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
   const [onboardingModal, setOnboardingModal] = useState<Rancher | null>(null);
   const [onboardingForm, setOnboardingForm] = useState({
     callSummary: '',
@@ -93,6 +111,8 @@ export default function AdminPage() {
     includeVerification: true,
   });
   const [sendingDocs, setSendingDocs] = useState(false);
+  const [releaseModal, setReleaseModal] = useState<Rancher | null>(null);
+  const [releaseAnnounce, setReleaseAnnounce] = useState(true);
 
   useEffect(() => {
     fetchAllData();
@@ -140,6 +160,36 @@ export default function AdminPage() {
       fetchAllData();
     } catch (error) {
       console.error('Error updating consumer:', error);
+    }
+  };
+
+  const saveAdminNotes = async (id: string, notes: string) => {
+    setSavingNotes(true);
+    try {
+      await fetch(`/api/admin/consumers/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ admin_notes: notes }),
+      });
+      setNotesModal(null);
+      fetchAllData();
+    } catch {
+      alert('Failed to save notes');
+    }
+    setSavingNotes(false);
+  };
+
+  const logCall = async (consumer: Consumer) => {
+    const now = new Date().toISOString();
+    try {
+      await fetch(`/api/admin/consumers/${consumer.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ last_contacted: now }),
+      });
+      fetchAllData();
+    } catch {
+      alert('Failed to log call');
     }
   };
 
@@ -219,6 +269,38 @@ export default function AdminPage() {
       fetchAllData();
     } catch {
       alert('Error updating onboarding status');
+    }
+  };
+
+  const handleRelease = async (rancher: Rancher) => {
+    try {
+      await fetch(`/api/admin/ranchers/${rancher.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          onboarding_status: 'Live',
+          active_status: 'Active',
+          featured: true,
+          release_date: new Date().toISOString(),
+        }),
+      });
+      if (releaseAnnounce) {
+        const rName = rancher.operator_name || rancher.ranch_name;
+        const state = rancher.state;
+        window.open(
+          `/admin/broadcast?prefill=${encodeURIComponent(JSON.stringify({
+            campaignName: `rancher-release-${rName.toLowerCase().replace(/\s/g, '-')}`,
+            subject: `New Rancher Available: ${rName} — ${state}`,
+            message: `We're excited to announce a new verified rancher has joined the BuyHalfCow network.\n\n${rName} from ${state} is now accepting orders. As a member, you have exclusive early access.\n\nLog in to your member dashboard to learn more and connect.`,
+          }))}`,
+          '_self'
+        );
+      } else {
+        setReleaseModal(null);
+        fetchAllData();
+      }
+    } catch {
+      alert('Error releasing rancher');
     }
   };
 
@@ -383,7 +465,26 @@ export default function AdminPage() {
                 <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
                   <h2 className="font-[family-name:var(--font-serif)] text-2xl">Consumer Applications</h2>
                   
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <select
+                      value={segmentFilter}
+                      onChange={(e) => setSegmentFilter(e.target.value)}
+                      className="px-4 py-2 border-2 border-[#0E0E0E] bg-[#F4F1EC] text-sm font-medium"
+                    >
+                      <option value="">All Segments</option>
+                      <option value="Beef Buyer">Beef Buyers</option>
+                      <option value="Community">Community</option>
+                    </select>
+                    <select
+                      value={intentFilter}
+                      onChange={(e) => setIntentFilter(e.target.value)}
+                      className="px-4 py-2 border-2 border-[#0E0E0E] bg-[#F4F1EC] text-sm font-medium"
+                    >
+                      <option value="">All Intent</option>
+                      <option value="High">High Intent</option>
+                      <option value="Medium">Medium Intent</option>
+                      <option value="Low">Low Intent</option>
+                    </select>
                     <select
                       value={consumerStateFilter}
                       onChange={(e) => setConsumerStateFilter(e.target.value)}
@@ -412,7 +513,7 @@ export default function AdminPage() {
                         }}
                         className="px-4 py-2 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] text-sm font-medium whitespace-nowrap"
                       >
-                        ✓ Approve All Pending
+                        Approve All Pending
                       </button>
                     )}
                   </div>
@@ -422,24 +523,63 @@ export default function AdminPage() {
                   <p className="text-[#6B4F3F]">No consumers yet.</p>
                 ) : (
                   <>
-                    {consumerStateFilter && (
-                      <p className="text-sm text-[#6B4F3F] mb-4">
-                        Showing {consumers.filter(c => c.state === consumerStateFilter).length} consumer(s) in {consumerStateFilter}
-                      </p>
-                    )}
                     <div className="space-y-4">
                       {consumers
                         .filter(c => !consumerStateFilter || c.state === consumerStateFilter)
+                        .filter(c => !intentFilter || c.intent_classification === intentFilter)
+                        .filter(c => !segmentFilter || c.segment === segmentFilter)
+                        .sort((a, b) => b.intent_score - a.intent_score)
                         .map((consumer) => (
                       <div key={consumer.id} className="p-4 border border-[#A7A29A] space-y-3">
                         <div className="flex flex-wrap items-start justify-between gap-4">
-                          <div>
-                            <h3 className="font-medium text-lg">{consumer.first_name}</h3>
-                            <p className="text-sm text-[#6B4F3F]">{consumer.email} · {consumer.phone}</p>
+                          <div className="flex-1 min-w-[200px]">
+                            <div className="flex items-center gap-2 mb-1">
+                              <h3 className="font-medium text-lg">{consumer.first_name}</h3>
+                              {consumer.segment && (
+                                <span className={`px-2 py-0.5 text-xs font-bold border ${
+                                  consumer.segment === 'Beef Buyer' ? 'bg-red-50 text-red-800 border-red-300' :
+                                  'bg-purple-50 text-purple-800 border-purple-300'
+                                }`}>
+                                  {consumer.segment}
+                                </span>
+                              )}
+                              {consumer.intent_classification && (
+                                <span className={`px-2 py-0.5 text-xs font-medium border ${
+                                  consumer.intent_classification === 'High' ? 'bg-green-100 text-green-800 border-green-300' :
+                                  consumer.intent_classification === 'Medium' ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
+                                  'bg-gray-100 text-gray-600 border-gray-300'
+                                }`}>
+                                  {consumer.intent_classification} ({consumer.intent_score})
+                                </span>
+                              )}
+                              {consumer.referral_status && consumer.referral_status !== 'Unmatched' && consumer.referral_status !== 'Community' && (
+                                <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 border border-blue-300">
+                                  {consumer.referral_status}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-[#6B4F3F]">
+                              {consumer.email}
+                              {consumer.phone && (
+                                <> · <a href={`tel:${consumer.phone}`} className="underline hover:text-[#0E0E0E]">{consumer.phone}</a></>
+                              )}
+                            </p>
                             <p className="text-sm">State: {consumer.state}</p>
-                            <p className="text-sm">Interests: {consumer.interests?.join(', ') || 'N/A'}</p>
+                            {consumer.order_type && <p className="text-sm">Order: {consumer.order_type} · Budget: {consumer.budget_range || 'N/A'}</p>}
+                            {consumer.notes && <p className="text-sm text-[#6B4F3F] italic truncate max-w-md">&quot;{consumer.notes}&quot;</p>}
+                            {consumer.campaign && <p className="text-xs text-[#A7A29A]">Source: {consumer.campaign}</p>}
+                            {consumer.admin_notes && (
+                              <p className="text-xs mt-1 px-2 py-1 bg-yellow-50 border-l-2 border-yellow-400 text-yellow-800">
+                                Notes: {consumer.admin_notes}
+                              </p>
+                            )}
+                            {consumer.last_contacted && (
+                              <p className="text-xs text-green-700 mt-1">
+                                Last contacted: {new Date(consumer.last_contacted).toLocaleDateString()}
+                              </p>
+                            )}
                           </div>
-                          <div className="flex gap-2 flex-wrap">
+                          <div className="flex flex-col gap-2">
                             <select
                               value={consumer.status}
                               onChange={(e) => updateConsumerStatus(consumer.id, e.target.value, consumer.membership)}
@@ -460,9 +600,31 @@ export default function AdminPage() {
                             </select>
                           </div>
                         </div>
-                        <p className="text-xs text-[#6B4F3F]">
-                          Applied: {new Date(consumer.created_at).toLocaleDateString()}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[#A7A29A]/30">
+                          <p className="text-xs text-[#6B4F3F]">
+                            Applied: {new Date(consumer.created_at).toLocaleDateString()}
+                          </p>
+                          <button
+                            onClick={() => { setNotesModal(consumer); setNotesText(consumer.admin_notes || ''); }}
+                            className="px-3 py-1 text-xs border border-[#A7A29A] hover:bg-[#A7A29A] hover:text-white"
+                          >
+                            {consumer.admin_notes ? 'Edit Notes' : 'Add Notes'}
+                          </button>
+                          {consumer.phone && (
+                            <button
+                              onClick={() => { logCall(consumer); window.open(`tel:${consumer.phone}`); }}
+                              className="px-3 py-1 text-xs bg-green-700 text-white hover:bg-green-800"
+                            >
+                              Log Call
+                            </button>
+                          )}
+                          <a
+                            href={`/admin/consumers/${consumer.id}`}
+                            className="px-3 py-1 text-xs border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC]"
+                          >
+                            View Details
+                          </a>
+                        </div>
                       </div>
                       ))}
                     </div>
@@ -560,6 +722,11 @@ export default function AdminPage() {
                                   {rancher.onboarding_status}
                                 </span>
                               )}
+                              {rancher.featured && (
+                                <span className="px-2 py-0.5 text-xs font-bold bg-amber-100 text-amber-800 border border-amber-400">
+                                  FEATURED
+                                </span>
+                              )}
                               {rancher.active_status && rancher.active_status !== 'Pending Onboarding' && (
                                 <span className={`px-2 py-0.5 text-xs border ${
                                   rancher.active_status === 'Active' ? 'bg-green-100 text-green-800 border-green-300' :
@@ -644,11 +811,49 @@ export default function AdminPage() {
                             </button>
                           )}
                           {rancher.onboarding_status === 'Verification Complete' && (
+                            <>
+                              <button
+                                onClick={() => updateOnboardingStatus(rancher.id, 'Live')}
+                                className="px-3 py-1 text-xs bg-green-700 text-white hover:bg-green-800"
+                              >
+                                Mark Live
+                              </button>
+                              <button
+                                onClick={() => { setReleaseModal(rancher); setReleaseAnnounce(true); }}
+                                className="px-3 py-1 text-xs bg-amber-600 text-white hover:bg-amber-700"
+                              >
+                                Release + Announce
+                              </button>
+                            </>
+                          )}
+                          {rancher.onboarding_status === 'Live' && !rancher.featured && (
                             <button
-                              onClick={() => updateOnboardingStatus(rancher.id, 'Live')}
-                              className="px-3 py-1 text-xs bg-green-700 text-white hover:bg-green-800"
+                              onClick={async () => {
+                                await fetch(`/api/admin/ranchers/${rancher.id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ featured: true }),
+                                });
+                                fetchAllData();
+                              }}
+                              className="px-3 py-1 text-xs border border-amber-600 text-amber-700 hover:bg-amber-50"
                             >
-                              Mark Live
+                              Feature
+                            </button>
+                          )}
+                          {rancher.featured && (
+                            <button
+                              onClick={async () => {
+                                await fetch(`/api/admin/ranchers/${rancher.id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ featured: false }),
+                                });
+                                fetchAllData();
+                              }}
+                              className="px-3 py-1 text-xs border border-gray-400 text-gray-600 hover:bg-gray-100"
+                            >
+                              Unfeature
                             </button>
                           )}
                         </div>
@@ -763,6 +968,42 @@ export default function AdminPage() {
         </div>
       </Container>
 
+      {/* Admin Notes Modal */}
+      {notesModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white max-w-lg w-full p-6 space-y-4">
+            <h3 className="font-[family-name:var(--font-serif)] text-xl">
+              Admin Notes — {notesModal.first_name}
+            </h3>
+            <p className="text-sm text-[#6B4F3F]">
+              {notesModal.email} · {notesModal.phone || 'No phone'}
+            </p>
+            <textarea
+              value={notesText}
+              onChange={(e) => setNotesText(e.target.value)}
+              placeholder="Call outcome, next steps, verification notes..."
+              rows={6}
+              className="w-full px-4 py-3 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => saveAdminNotes(notesModal.id, notesText)}
+                disabled={savingNotes}
+                className="flex-1 px-4 py-3 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium hover:bg-[#2A2A2A] disabled:opacity-50"
+              >
+                {savingNotes ? 'Saving...' : 'Save Notes'}
+              </button>
+              <button
+                onClick={() => setNotesModal(null)}
+                className="flex-1 px-4 py-3 border border-[#A7A29A] text-sm hover:bg-[#A7A29A]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Onboarding Docs Modal */}
       {onboardingModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -828,6 +1069,42 @@ export default function AdminPage() {
               </button>
               <button
                 onClick={() => setOnboardingModal(null)}
+                className="flex-1 px-4 py-3 border border-[#A7A29A] text-sm hover:bg-[#A7A29A]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Release + Announce Modal */}
+      {releaseModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white max-w-lg w-full p-6 space-y-4">
+            <h3 className="font-[family-name:var(--font-serif)] text-xl">
+              Release Rancher
+            </h3>
+            <p className="text-sm text-[#6B4F3F]">
+              This will mark <strong>{releaseModal.operator_name || releaseModal.ranch_name}</strong> as Live, Featured, and set their release date to today.
+            </p>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={releaseAnnounce}
+                onChange={(e) => setReleaseAnnounce(e.target.checked)}
+                className="w-4 h-4"
+              />
+              <span className="text-sm">Draft a broadcast email announcing this rancher</span>
+            </label>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => handleRelease(releaseModal)}
+                className="flex-1 px-4 py-3 bg-amber-600 text-white text-sm font-medium hover:bg-amber-700"
+              >
+                {releaseAnnounce ? 'Release & Draft Email' : 'Release Now'}
+              </button>
+              <button
+                onClick={() => setReleaseModal(null)}
                 className="flex-1 px-4 py-3 border border-[#A7A29A] text-sm hover:bg-[#A7A29A]"
               >
                 Cancel

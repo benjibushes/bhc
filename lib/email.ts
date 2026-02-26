@@ -43,23 +43,14 @@ export async function sendConsumerConfirmation(data: {
         </head>
         <body>
           <div class="container">
-            <h1>Welcome to The HERD</h1>
+            <h1>Application Received</h1>
             <p>Hi ${esc(data.firstName)},</p>
-            <p>Thank you for applying. You're joining a growing community of people sourcing real beef directly from American ranchers.</p>
+            <p>Thanks for your interest in BuyHalfCow. We've received your application and are reviewing it.</p>
             <div class="divider"></div>
-            <p><strong>What Happens Next:</strong></p>
-            <p>I personally review every application. You'll hear back within <strong>24-48 hours</strong> with a matched rancher introduction in your area.</p>
-            <p>Here's what you're getting access to:</p>
-            <ul>
-              <li>Verified ranchers in <strong>${esc(data.state)}</strong></li>
-              <li>Direct, personal introductions</li>
-              <li>A curated network — no spam, no middlemen</li>
-            </ul>
-            <div class="divider"></div>
-            <p><strong>While you wait:</strong> Check out our <a href="https://buyhalfcow.com/faq" style="color: #0E0E0E; text-decoration: underline;">FAQ</a> to learn how The HERD works!</p>
+            <p>You'll hear back from us within <strong>24-48 hours</strong> with next steps.</p>
             <p>Questions? Reply to this email or contact <a href="mailto:support@buyhalfcow.com" style="color: #0E0E0E;">support@buyhalfcow.com</a></p>
             <div class="footer">
-              <p>— Benji, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
             </div>
           </div>
         </body>
@@ -77,12 +68,58 @@ export async function sendConsumerApproval(data: {
   firstName: string;
   email: string;
   loginUrl: string;
+  segment?: string;
 }) {
+  const isBeef = data.segment === 'Beef Buyer';
+
+  const beefBody = `
+    <h1>Welcome to BuyHalfCow</h1>
+    <p>Hi ${esc(data.firstName)},</p>
+    <p><strong>You're approved.</strong> Welcome to The HERD — a private network that connects you directly with certified local ranchers for bulk beef purchases.</p>
+    <div class="divider"></div>
+    <p><strong>How It Works:</strong></p>
+    <ol style="color: #6B4F3F; line-height: 2;">
+      <li><strong>We match you</strong> — Based on your location and preferences, we pair you with a verified rancher in your area</li>
+      <li><strong>Personal introduction</strong> — Your rancher will reach out to discuss cuts, pricing, and delivery timeline</li>
+      <li><strong>Buy direct</strong> — You purchase directly from the rancher at their price. No middlemen, no markup</li>
+    </ol>
+    <div class="divider"></div>
+    <p><strong>What you get access to:</strong></p>
+    <ul style="color: #6B4F3F; line-height: 2;">
+      <li>Verified ranchers in your state</li>
+      <li>Direct, personal introductions</li>
+      <li>Exclusive land deals and brand promotions</li>
+      <li>A curated network — no spam, no middlemen</li>
+    </ul>
+    <a href="${data.loginUrl}" class="button">Access Your Dashboard</a>
+    <p style="font-size: 13px; color: #A7A29A;">We're matching you with a rancher now. You'll receive an introduction soon.</p>
+  `;
+
+  const communityBody = `
+    <h1>Welcome to the BHC Network</h1>
+    <p>Hi ${esc(data.firstName)},</p>
+    <p><strong>You're in.</strong> Welcome to the BuyHalfCow community — a curated network built around American agriculture.</p>
+    <div class="divider"></div>
+    <p><strong>What you have access to:</strong></p>
+    <ul style="color: #6B4F3F; line-height: 2;">
+      <li>Early access to merch drops and branded gear</li>
+      <li>Exclusive brand deals and partner discounts</li>
+      <li>Community events and land deal listings</li>
+      <li>Weekly updates from the network</li>
+    </ul>
+    <a href="${data.loginUrl}" class="button">Explore the Network</a>
+    <div class="divider"></div>
+    <p><strong>Interested in sourcing beef?</strong></p>
+    <p>When you're ready to explore buying direct from a rancher, you can upgrade anytime from your member dashboard. We'll match you personally.</p>
+  `;
+
   try {
     await resend.emails.send({
       from: FROM_EMAIL,
       to: data.email,
-      subject: 'Welcome to BuyHalfCow — You\'re Approved!',
+      subject: isBeef
+        ? "You're Approved — Let's Find Your Rancher"
+        : 'Welcome to the BHC Network',
       html: `
         <!DOCTYPE html>
         <html>
@@ -99,23 +136,9 @@ export async function sendConsumerApproval(data: {
         </head>
         <body>
           <div class="container">
-            <h1>Welcome to BuyHalfCow</h1>
-            <p>Hi ${esc(data.firstName)},</p>
-            <p><strong>Your application has been approved!</strong></p>
-            <p>You now have access to our private network of verified ranchers, exclusive land deals, and trusted brand partners.</p>
-            <a href="${data.loginUrl}" class="button">Access Your Dashboard</a>
-            <div class="divider"></div>
-            <p><strong>What You Can Do Now:</strong></p>
-            <ul>
-              <li>Browse certified ranchers in your state</li>
-              <li>View exclusive land deals</li>
-              <li>Access member-only promotions</li>
-              <li>Receive weekly updates</li>
-            </ul>
-            <div class="divider"></div>
-            <p>Welcome to the network.</p>
+            ${isBeef ? beefBody : communityBody}
             <div class="footer">
-              <p>BuyHalfCow — Private Access Network<br>Questions? Email ${ADMIN_EMAIL}</p>
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef<br>Questions? Email ${ADMIN_EMAIL}</p>
             </div>
           </div>
         </body>
@@ -125,6 +148,64 @@ export async function sendConsumerApproval(data: {
     return { success: true };
   } catch (error) {
     console.error('Error sending consumer approval:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// RANCHER APPROVAL EMAIL
+// =====================================================
+
+export async function sendRancherApproval(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: 'You\'re Approved — BuyHalfCow Partnership',
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 28px; margin: 0 0 20px 0; }
+            p { margin: 16px 0; color: #6B4F3F; }
+            .divider { height: 1px; background: #2A2A2A; margin: 30px 0; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>You're In</h1>
+            <p>Hi ${esc(data.operatorName)},</p>
+            <p><strong>Great news — ${esc(data.ranchName)} has been approved to join the BuyHalfCow network.</strong></p>
+            <p>Thanks for taking the time to talk through your operation. We're confident this is a strong fit.</p>
+            <div class="divider"></div>
+            <p><strong>What Happens Next:</strong></p>
+            <ol style="color: #6B4F3F; line-height: 2;">
+              <li><strong>Onboarding docs coming soon</strong> — You'll receive the Commission Agreement, Media Agreement, and Rancher Info Packet to review and sign digitally</li>
+              <li><strong>Verification</strong> — Product sample shipment or scheduled ranch visit (we discussed this on the call)</li>
+              <li><strong>Profile goes live</strong> — Once verified, we activate your profile and start sending you qualified buyers</li>
+            </ol>
+            <div class="divider"></div>
+            <p>Keep an eye on your inbox — the onboarding package will arrive shortly.</p>
+            <p>If you have any questions in the meantime, just reply to this email.</p>
+            <div class="footer">
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef<br>Questions? Email ${ADMIN_EMAIL}</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher approval email:', error);
     return { success: false, error };
   }
 }
@@ -199,7 +280,7 @@ export async function sendPartnerConfirmation(data: {
             <div class="divider"></div>
             <p>Questions? Reply to this email or contact <a href="mailto:support@buyhalfcow.com" style="color: #0E0E0E;">support@buyhalfcow.com</a></p>
             <div class="footer">
-              <p>— Benji, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
             </div>
           </div>
         </body>

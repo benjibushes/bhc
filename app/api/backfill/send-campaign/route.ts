@@ -67,7 +67,7 @@ export async function POST(request: Request) {
                 <div class="divider"></div>
                 <p>Takes 30 seconds. You'll hear from us within 48 hours.</p>
                 <div class="footer">
-                  <p>— Benji, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+                  <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
                 </div>
               </div>
             </body>

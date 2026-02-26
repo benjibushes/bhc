@@ -35,6 +35,8 @@ export async function GET() {
       docs_sent_at: record['Docs Sent At'] || '',
       agreement_signed_at: record['Agreement Signed At'] || '',
       verification_status: record['Verification Status'] || 'Not Started',
+      featured: record['Featured'] || false,
+      release_date: record['Release Date'] || '',
       created_at: record['Created'] || record.createdTime || new Date().toISOString(),
     }));
     

@@ -50,6 +50,7 @@ type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
 
 const statusLabels: Record<string, { label: string; style: string }> = {
   'Pending Approval': { label: 'Being Matched', style: 'bg-yellow-100 text-yellow-800' },
+  'Waitlisted': { label: 'Waitlisted — No Rancher Yet', style: 'bg-orange-100 text-orange-800' },
   'Intro Sent': { label: 'Rancher Introduced', style: 'bg-blue-100 text-blue-800' },
   'In Progress': { label: 'In Progress', style: 'bg-purple-100 text-purple-800' },
   'Closed Won': { label: 'Completed', style: 'bg-green-100 text-green-800' },
@@ -61,8 +62,12 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
+  const [upgradeForm, setUpgradeForm] = useState({ orderType: '', budgetRange: '' });
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgradeSuccess, setUpgradeSuccess] = useState(false);
   const [data, setData] = useState<{
     memberState: string;
+    memberSegment: string;
     stateRanchers: Rancher[];
     otherRanchers: Rancher[];
     landDeals: LandDeal[];
@@ -94,6 +99,25 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   const handleLogout = async () => {
     await fetch('/api/auth/member/session', { method: 'DELETE' });
     window.location.href = '/';
+  };
+
+  const handleUpgradeIntent = async () => {
+    if (!upgradeForm.orderType) return;
+    setUpgrading(true);
+    try {
+      const res = await fetch('/api/member/upgrade-intent', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(upgradeForm),
+      });
+      if (res.ok) {
+        setUpgradeSuccess(true);
+        fetchContent();
+      }
+    } catch {
+      // Silently fail
+    }
+    setUpgrading(false);
   };
 
   if (loading) {
@@ -204,6 +228,11 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                             We&apos;re finding the best rancher match for you. You&apos;ll receive an email introduction soon.
                           </p>
                         )}
+                        {ref.status === 'Waitlisted' && (
+                          <p className="mt-3 text-sm text-saddle-brown">
+                            We don&apos;t have a certified rancher in your area yet, but we&apos;re actively onboarding. You&apos;ll be first to know when one goes live.
+                          </p>
+                        )}
                         {ref.status === 'Intro Sent' && (
                           <p className="mt-3 text-sm text-saddle-brown">
                             Your rancher has been introduced. Check your email for their contact details.
@@ -221,6 +250,61 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   <p className="text-sm text-dust-gray">
                     You&apos;ll receive an email when a match is found.
                   </p>
+                </div>
+              )}
+
+              {/* Upgrade to Beef Buyer card for Community members */}
+              {data?.memberSegment && data.memberSegment !== 'Beef Buyer' && !upgradeSuccess && (
+                <div className="p-6 border-2 border-charcoal-black bg-white space-y-4">
+                  <h3 className="font-serif text-xl">Interested in Sourcing Beef?</h3>
+                  <p className="text-sm text-saddle-brown">
+                    Get matched directly with a verified rancher in your area. Tell us what you&apos;re looking for and we&apos;ll find the right fit.
+                  </p>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-saddle-brown mb-1 uppercase tracking-wider">Order Size</label>
+                      <select
+                        value={upgradeForm.orderType}
+                        onChange={(e) => setUpgradeForm(prev => ({ ...prev, orderType: e.target.value }))}
+                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white text-sm"
+                      >
+                        <option value="">Select...</option>
+                        <option value="Quarter">Quarter Cow</option>
+                        <option value="Half">Half Cow</option>
+                        <option value="Whole">Whole Cow</option>
+                        <option value="Not Sure">Not Sure Yet</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-saddle-brown mb-1 uppercase tracking-wider">Budget</label>
+                      <select
+                        value={upgradeForm.budgetRange}
+                        onChange={(e) => setUpgradeForm(prev => ({ ...prev, budgetRange: e.target.value }))}
+                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white text-sm"
+                      >
+                        <option value="">Select...</option>
+                        <option value="<$500">Under $500</option>
+                        <option value="$500-$1000">$500 - $1,000</option>
+                        <option value="$1000-$2000">$1,000 - $2,000</option>
+                        <option value="$2000+">$2,000+</option>
+                        <option value="Unsure">Unsure</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleUpgradeIntent}
+                    disabled={!upgradeForm.orderType || upgrading}
+                    className="px-6 py-3 bg-charcoal-black text-bone-white hover:bg-opacity-80 transition-colors uppercase tracking-wider text-sm font-semibold disabled:opacity-50"
+                  >
+                    {upgrading ? 'Submitting...' : 'Match Me With a Rancher'}
+                  </button>
+                </div>
+              )}
+
+              {upgradeSuccess && (
+                <div className="p-6 border-2 border-green-600 bg-green-50 text-center">
+                  <p className="font-serif text-xl text-green-800">You&apos;re on the list!</p>
+                  <p className="text-sm text-green-700 mt-2">We&apos;re matching you with a rancher in {data?.memberState || 'your area'}. You&apos;ll hear from us soon.</p>
                 </div>
               )}
 

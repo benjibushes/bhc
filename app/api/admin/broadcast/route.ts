@@ -13,11 +13,16 @@ function sleep(ms: number) {
 async function getRecipients(audienceType: string, selectedStates?: string[]) {
   let recipients: Array<{ email: string; name: string }> = [];
 
-  if (audienceType === 'consumers' || audienceType === 'consumers-by-state') {
+  if (audienceType === 'consumers' || audienceType === 'consumers-by-state' || audienceType === 'consumers-beef' || audienceType === 'consumers-community') {
     const consumers = await getAllRecords(TABLES.CONSUMERS);
-    const filtered = audienceType === 'consumers-by-state'
-      ? consumers.filter((c: any) => selectedStates?.includes(c['State']))
-      : consumers;
+    let filtered = consumers;
+    if (audienceType === 'consumers-by-state') {
+      filtered = consumers.filter((c: any) => selectedStates?.includes(c['State']));
+    } else if (audienceType === 'consumers-beef') {
+      filtered = consumers.filter((c: any) => c['Segment'] === 'Beef Buyer');
+    } else if (audienceType === 'consumers-community') {
+      filtered = consumers.filter((c: any) => !c['Segment'] || c['Segment'] === 'Community');
+    }
     recipients = filtered.map((c: any) => ({
       email: (c['Email'] || '').trim().toLowerCase(),
       name: c['Full Name'] || 'Member',
@@ -41,7 +46,7 @@ async function getRecipients(audienceType: string, selectedStates?: string[]) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { subject, message, campaignName, audienceType, selectedStates, includeCTA, ctaText, ctaLink, preview } = body;
+    const { subject, message, campaignName, audienceType, selectedStates, includeCTA, ctaText, ctaLink, preview, scheduledFor } = body;
 
     if (!subject || !message || !campaignName) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -53,7 +58,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No recipients found' }, { status: 400 });
     }
 
-    // Preview mode: return recipient list + count without sending
     if (preview) {
       return NextResponse.json({
         preview: true,
@@ -72,6 +76,40 @@ export async function POST(request: Request) {
       }
     } catch {
       // If campaigns table doesn't exist, skip dupe check
+    }
+
+    // Schedule for later instead of sending now
+    if (scheduledFor) {
+      const sendAt = new Date(scheduledFor);
+      if (sendAt.getTime() <= Date.now()) {
+        return NextResponse.json({ error: 'Scheduled time must be in the future' }, { status: 400 });
+      }
+      try {
+        await createRecord(TABLES.CAMPAIGNS, {
+          'Campaign Name': campaignName,
+          'Subject': subject,
+          'Message': message,
+          'Audience': audienceType === 'consumers-by-state'
+            ? `state:${selectedStates?.join(',')}`
+            : audienceType,
+          'Scheduled For': sendAt.toISOString(),
+          'Status': 'Scheduled',
+          'Recipients': recipients.length,
+          'Include CTA': includeCTA || false,
+          'CTA Text': ctaText || '',
+          'CTA Link': ctaLink || '',
+        });
+      } catch (e) {
+        console.error('Failed to schedule campaign:', e);
+        return NextResponse.json({ error: 'Failed to schedule campaign' }, { status: 500 });
+      }
+      return NextResponse.json({
+        success: true,
+        scheduled: true,
+        scheduledFor: sendAt.toISOString(),
+        recipientCount: recipients.length,
+        campaignName,
+      });
     }
 
     // Build CTA link with campaign tracking

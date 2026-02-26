@@ -49,7 +49,17 @@ interface Referral {
   closed_at: string;
 }
 
-type Tab = 'overview' | 'referrals' | 'earnings';
+interface NetworkBenefit {
+  id: string;
+  brand_name: string;
+  product_type: string;
+  discount_offered: number;
+  description: string;
+  website: string;
+  contact_email: string;
+}
+
+type Tab = 'overview' | 'referrals' | 'earnings' | 'benefits';
 
 const statusStyles: Record<string, string> = {
   'Intro Sent': 'bg-blue-100 text-blue-800',
@@ -69,6 +79,7 @@ export default function RancherDashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [referrals, setReferrals] = useState<Referral[]>([]);
   const [closeModal, setCloseModal] = useState<Referral | null>(null);
+  const [benefits, setBenefits] = useState<NetworkBenefit[]>([]);
   const [closeForm, setCloseForm] = useState({ status: 'Closed Won', saleAmount: '', notes: '' });
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState('');
@@ -95,6 +106,7 @@ export default function RancherDashboardPage() {
       setRancherInfo(data.rancher);
       setStats(data.stats);
       setReferrals(data.referrals);
+      setBenefits(data.networkBenefits || []);
     } catch {
       router.push('/rancher/login');
     } finally {
@@ -185,6 +197,7 @@ export default function RancherDashboardPage() {
     { key: 'overview', label: 'Overview' },
     { key: 'referrals', label: `Active Leads (${activeRefs.length})` },
     { key: 'earnings', label: 'Earnings' },
+    { key: 'benefits', label: `Network Benefits${benefits.length > 0 ? ` (${benefits.length})` : ''}` },
   ];
 
   return (
@@ -415,12 +428,69 @@ export default function RancherDashboardPage() {
             </div>
           )}
 
+          {/* Network Benefits Tab */}
+          {activeTab === 'benefits' && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="font-serif text-2xl">Network Benefits</h2>
+                <p className="text-sm text-saddle-brown mt-1">
+                  Exclusive deals and partnerships available to BuyHalfCow ranchers.
+                </p>
+              </div>
+
+              {benefits.length > 0 ? (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {benefits.map((benefit) => (
+                    <div key={benefit.id} className="p-6 border border-dust-gray bg-white space-y-3">
+                      <div className="flex items-start justify-between">
+                        <h3 className="font-serif text-lg">{benefit.brand_name}</h3>
+                        {benefit.discount_offered > 0 && (
+                          <span className="px-2 py-1 text-xs font-bold bg-green-100 text-green-800">
+                            {benefit.discount_offered}% OFF
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-saddle-brown">{benefit.product_type}</p>
+                      {benefit.description && (
+                        <p className="text-sm">{benefit.description}</p>
+                      )}
+                      <div className="flex gap-3 pt-2">
+                        {benefit.website && (
+                          <a
+                            href={benefit.website.startsWith('http') ? benefit.website : `https://${benefit.website}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2 text-xs border border-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors"
+                          >
+                            Visit Website
+                          </a>
+                        )}
+                        {benefit.contact_email && (
+                          <a
+                            href={`mailto:${benefit.contact_email}`}
+                            className="px-4 py-2 text-xs border border-dust-gray hover:bg-dust-gray hover:text-bone-white transition-colors"
+                          >
+                            Contact
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-8 border border-dust-gray text-center bg-white">
+                  <p className="text-saddle-brown">Partner benefits are being finalized. Check back soon for exclusive deals on insurance, equipment, and more.</p>
+                </div>
+              )}
+            </div>
+          )}
+
           <Divider />
 
           <div className="text-center text-sm text-dust-gray space-y-2">
             <p>Questions? Email <a href="mailto:support@buyhalfcow.com" className="text-charcoal-black hover:text-saddle-brown transition-colors">support@buyhalfcow.com</a></p>
             <Link href="/" className="text-saddle-brown hover:text-charcoal-black transition-colors">
-              ← Back to home
+              &larr; Back to home
             </Link>
           </div>
         </div>

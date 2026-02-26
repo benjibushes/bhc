@@ -20,6 +20,14 @@ export default function TermsPage() {
             Last Updated: January 27, 2026
           </p>
 
+          <a
+            href="/docs/BHC_Customer_TOS.docx"
+            download
+            className="inline-block px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+          >
+            Download Full Terms (DOCX)
+          </a>
+
           <Divider />
 
           <div className="space-y-8 leading-relaxed">

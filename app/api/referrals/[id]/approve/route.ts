@@ -93,7 +93,7 @@ export async function PATCH(
               <p>Please reach out to them directly to discuss availability and pricing.</p>
               <p><strong>Reply-all to this email to keep me in the loop.</strong></p>
               <div class="footer">
-                <p>— Benji, BuyHalfCow<br>Remember: 10% commission applies to sales made through BuyHalfCow referrals.</p>
+                <p>— Benjamin, BuyHalfCow<br>Remember: 10% commission applies to sales made through BuyHalfCow referrals.</p>
               </div>
             </div>
           </body>

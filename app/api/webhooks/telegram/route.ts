@@ -91,7 +91,7 @@ export async function POST(request: Request) {
                   ${referral['Notes'] ? `<p><strong>Notes:</strong> ${referral['Notes']}</p>` : ''}
                   <hr style="border: none; height: 1px; background: #A7A29A; margin: 20px 0;">
                   <p>Please reach out to them directly. Reply-all to keep me in the loop.</p>
-                  <p style="font-size: 12px; color: #A7A29A; margin-top: 30px;">— Benji, BuyHalfCow | 10% commission on BHC referral sales.</p>
+                  <p style="font-size: 12px; color: #A7A29A; margin-top: 30px;">— Benjamin, BuyHalfCow | 10% commission on BHC referral sales.</p>
                 </div>
               `,
             });
@@ -237,7 +237,7 @@ export async function POST(request: Request) {
                   <p><strong>Order:</strong> ${referral['Order Type']}</p>
                   <p><strong>Budget:</strong> ${referral['Budget Range']}</p>
                   <p>Reach out directly. Reply-all to keep me in the loop.</p>
-                  <p style="font-size: 12px; color: #A7A29A;">— Benji, BuyHalfCow</p>
+                  <p style="font-size: 12px; color: #A7A29A;">— Benjamin, BuyHalfCow</p>
                 </div>
               `,
             });

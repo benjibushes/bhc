@@ -31,9 +31,8 @@ export async function POST(request: Request) {
 
     const consumer = consumers[0] as any;
 
-    // Only allow approved members to log in
-    const status = consumer['Status'] || '';
-    if (status !== 'Approved' && status !== 'Active') {
+    const status = (consumer['Status'] || '').toLowerCase();
+    if (status !== 'approved' && status !== 'active') {
       return NextResponse.json({
         success: true,
         message: 'If this email is registered, you will receive a login link.',

@@ -3,8 +3,17 @@ import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+      const { searchParams } = new URL(request.url);
+      const secret = searchParams.get('secret');
+      if (secret !== process.env.CRON_SECRET || !process.env.CRON_SECRET) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+
     const ranchers = await getAllRecords(TABLES.RANCHERS);
     const updates: { name: string; oldStatus: string; newStatus: string }[] = [];
 

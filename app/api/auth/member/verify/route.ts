@@ -31,8 +31,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
-    const status = consumer['Status'] || '';
-    if (status !== 'Approved' && status !== 'Active') {
+    const status = (consumer['Status'] || '').toLowerCase();
+    if (status !== 'approved' && status !== 'active') {
       return NextResponse.json({ error: 'Your account is not yet approved. Please wait for admin review.' }, { status: 403 });
     }
 
