@@ -64,7 +64,6 @@ type Tab = 'overview' | 'referrals' | 'earnings' | 'benefits';
 const statusStyles: Record<string, string> = {
   'Intro Sent': 'bg-blue-100 text-blue-800',
   'Rancher Contacted': 'bg-indigo-100 text-indigo-800',
-  'In Progress': 'bg-purple-100 text-purple-800',
   'Negotiation': 'bg-yellow-100 text-yellow-800',
   'Closed Won': 'bg-green-100 text-green-800',
   'Closed Lost': 'bg-gray-100 text-gray-600',
@@ -190,7 +189,7 @@ export default function RancherDashboardPage() {
 
   if (!rancherInfo || !stats) return null;
 
-  const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'In Progress', 'Negotiation'].includes(r.status));
+  const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r.status));
   const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost'].includes(r.status));
 
   const tabs: { key: Tab; label: string }[] = [

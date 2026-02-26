@@ -47,7 +47,7 @@ export async function GET() {
     });
 
     const activeReferrals = myReferrals.filter((r: any) =>
-      ['Intro Sent', 'In Progress', 'Rancher Contacted', 'Negotiation'].includes(r['Status'])
+      ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r['Status'])
     );
 
     const closedWon = myReferrals.filter((r: any) => r['Status'] === 'Closed Won');
@@ -72,7 +72,7 @@ export async function GET() {
       sale_amount: r['Sale Amount'] || 0,
       commission_due: r['Commission Due'] || 0,
       commission_paid: r['Commission Paid'] || false,
-      created_at: r['Created At'] || '',
+      created_at: r['Created At'] || r.createdTime || '',
       intro_sent_at: r['Intro Sent At'] || '',
       closed_at: r['Closed At'] || '',
     }));

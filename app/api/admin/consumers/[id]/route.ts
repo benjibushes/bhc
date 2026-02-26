@@ -24,7 +24,7 @@ export async function GET(
       phone: record['Phone'] || '',
       state: record['State'] || '',
       interests: record['Interests'] || [],
-      status: record['Status'] || 'Pending',
+      status: (record['Status'] || 'pending').toLowerCase(),
       membership: record['Membership'] || 'none',
       segment: record['Segment'] || '',
       order_type: record['Order Type'] || '',
@@ -65,7 +65,7 @@ export async function PATCH(
 
     // Check if this is an approval — need current record to detect status change
     let shouldSendApproval = false;
-    if (body.status === 'approved') {
+    if ((body.status || '').toLowerCase() === 'approved') {
       try {
         const current: any = await getRecordById(TABLES.CONSUMERS, id);
         const currentStatus = (current['Status'] || '').toLowerCase();

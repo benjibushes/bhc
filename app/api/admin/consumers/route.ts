@@ -13,7 +13,7 @@ export async function GET() {
       phone: record['Phone'] || '',
       state: record['State'] || '',
       interests: record['Interests'] || [],
-      status: record['Status'] || 'Pending',
+      status: (record['Status'] || 'pending').toLowerCase(),
       membership: record['Membership'] || 'none',
       segment: record['Segment'] || '',
       order_type: record['Order Type'] || '',

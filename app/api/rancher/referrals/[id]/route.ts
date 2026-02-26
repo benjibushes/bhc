@@ -74,7 +74,8 @@ export async function PATCH(
 
     if (saleAmount !== undefined && saleAmount > 0) {
       fields['Sale Amount'] = saleAmount;
-      fields['Commission Due'] = Math.round(saleAmount * 0.10 * 100) / 100;
+      const commissionRate = Number(process.env.NEXT_PUBLIC_COMMISSION_RATE || '0.10');
+      fields['Commission Due'] = Math.round(saleAmount * commissionRate * 100) / 100;
     }
 
     if (notes !== undefined) {

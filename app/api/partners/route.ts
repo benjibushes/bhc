@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     let tableName;
 
     if (partnerType === 'rancher') {
-      const { ranchName, operatorName, email, phone, state, beefTypes, monthlyCapacity, certifications, operationDetails, callScheduled, ranchTourInterested, ranchTourAvailability } = body;
+      const { ranchName, operatorName, email, phone, state, acreage, beefTypes, monthlyCapacity, certifications, operationDetails, callScheduled, ranchTourInterested, ranchTourAvailability } = body;
 
       if (!ranchName || !operatorName || !email || !state || !beefTypes) {
         return NextResponse.json({ error: 'Missing required fields for rancher' }, { status: 400 });
@@ -55,6 +55,7 @@ export async function POST(request: Request) {
         'Monthly Capacity': parseInt(monthlyCapacity) || 0,
         'Certifications': certifications || '',
         'Operation Details': operationDetails || '',
+        'Acreage': parseInt(acreage) || 0,
         'Status': 'Pending',
       };
 
@@ -109,9 +110,9 @@ export async function POST(request: Request) {
 
     // Handle Brand application
     else if (partnerType === 'brand') {
-      const { brandName, contactName, email, phone, website, productCategory, proposedDiscount, partnershipGoals } = body;
+      const { brandName, contactName, email, phone, website, productType, discountOffered, promotionDetails } = body;
 
-      if (!brandName || !contactName || !email || !productCategory) {
+      if (!brandName || !contactName || !email || !productType) {
         return NextResponse.json({ error: 'Missing required fields for brand' }, { status: 400 });
       }
 
@@ -122,9 +123,9 @@ export async function POST(request: Request) {
         'Email': email,
         'Phone': phone || '',
         'Website': website || '',
-        'Product Category': productCategory,
-        'Proposed Discount': proposedDiscount || '',
-        'Partnership Goals': partnershipGoals || '',
+        'Product Type': productType,
+        'Discount Offered (%)': discountOffered ? parseInt(discountOffered) : 0,
+        'Partnership Goals': promotionDetails || '',
         'Featured': false,
         'Status': 'Pending',
       });
@@ -143,9 +144,9 @@ export async function POST(request: Request) {
         email,
         details: {
           Contact: contactName,
-          Category: productCategory,
+          Category: productType,
           Website: website || 'Not provided',
-          'Proposed Discount': proposedDiscount || 'Not specified',
+          'Discount Offered': discountOffered ? `${discountOffered}%` : 'Not specified',
         },
       });
 
@@ -155,7 +156,7 @@ export async function POST(request: Request) {
           recordId: record.id,
           name: `${brandName} (${contactName})`,
           email,
-          details: `📦 <b>Category:</b> ${productCategory}\n🌐 ${website || 'No website'}\n💰 <b>Discount:</b> ${proposedDiscount || 'TBD'}`,
+          details: `📦 <b>Category:</b> ${productType}\n🌐 ${website || 'No website'}\n💰 <b>Discount:</b> ${discountOffered ? `${discountOffered}%` : 'TBD'}`,
         });
       } catch (e) {
         console.error('Telegram brand alert error:', e);
@@ -164,7 +165,7 @@ export async function POST(request: Request) {
 
     // Handle Land Seller application
     else if (partnerType === 'land') {
-      const { sellerName, email, phone, propertyType, acreage, state, county, price, propertyDescription } = body;
+      const { sellerName, email, phone, propertyType, acreage, state, propertyLocation, askingPrice, description, zoning, utilities } = body;
 
       if (!sellerName || !email || !propertyType || !state) {
         return NextResponse.json({ error: 'Missing required fields for land seller' }, { status: 400 });
@@ -178,9 +179,11 @@ export async function POST(request: Request) {
         'Property Type': propertyType,
         'Acreage': parseInt(acreage) || 0,
         'State': state,
-        'County': county || '',
-        'Price': parseInt(price) || 0,
-        'Description': propertyDescription || '',
+        'Property Location': propertyLocation || '',
+        'Asking Price': askingPrice || '',
+        'Description': description || '',
+        'Zoning': zoning || '',
+        'Utilities': utilities || '',
         'Status': 'Pending',
       });
 
@@ -199,8 +202,8 @@ export async function POST(request: Request) {
         details: {
           'Property Type': propertyType,
           Acreage: acreage,
-          Location: `${state}, ${county}`,
-          Price: price ? `$${price}` : 'Not specified',
+          Location: `${state}${propertyLocation ? `, ${propertyLocation}` : ''}`,
+          Price: askingPrice || 'Not specified',
         },
       });
 
@@ -211,7 +214,7 @@ export async function POST(request: Request) {
           name: sellerName,
           email,
           state,
-          details: `🏞️ <b>Type:</b> ${propertyType}\n📐 <b>Acreage:</b> ${acreage || 'N/A'}\n📍 ${state}${county ? `, ${county}` : ''}\n💰 ${price ? `$${parseInt(price).toLocaleString()}` : 'Price TBD'}`,
+          details: `🏞️ <b>Type:</b> ${propertyType}\n📐 <b>Acreage:</b> ${acreage || 'N/A'}\n📍 ${state}${propertyLocation ? `, ${propertyLocation}` : ''}\n💰 ${askingPrice || 'Price TBD'}`,
         });
       } catch (e) {
         console.error('Telegram land alert error:', e);

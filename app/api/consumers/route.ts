@@ -11,7 +11,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 function deriveStatus(segment: string, intentClassification: string): string {
   if (segment === 'Community') return 'approved';
   if (segment === 'Beef Buyer' && (intentClassification === 'High' || intentClassification === 'Medium')) return 'approved';
-  return 'Pending';
+  return 'pending';
 }
 
 function isValidEmail(email: string): boolean {

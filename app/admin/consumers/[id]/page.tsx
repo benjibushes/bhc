@@ -16,6 +16,7 @@ interface ConsumerDetail {
   interests: string[];
   status: string;
   membership: string;
+  segment: string;
   order_type: string;
   budget_range: string;
   notes: string;
@@ -150,6 +151,11 @@ export default function ConsumerDetailPage() {
                 </h1>
               </div>
               <div className="flex items-center gap-2">
+                {consumer.segment && (
+                  <span className={`px-3 py-1 text-sm font-medium border ${consumer.segment === 'Beef Buyer' ? 'bg-red-100 text-red-800 border-red-300' : 'bg-blue-100 text-blue-800 border-blue-300'}`}>
+                    {consumer.segment}
+                  </span>
+                )}
                 {consumer.intent_classification && (
                   <span className={`px-3 py-1 text-sm font-medium border ${intentColor}`}>
                     {consumer.intent_classification} Intent ({consumer.intent_score})

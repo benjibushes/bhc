@@ -117,15 +117,29 @@ export async function POST(request: Request) {
 
       else if (action === 'reject') {
         try {
+          const referral: any = await getRecordById(TABLES.REFERRALS, fullReferralId);
+
           await updateRecord(TABLES.REFERRALS, fullReferralId, {
             'Status': 'Closed Lost',
             'Closed At': new Date().toISOString(),
           });
 
+          const assignedRancherIds = referral['Rancher'] || referral['Suggested Rancher'] || [];
+          if (Array.isArray(assignedRancherIds) && assignedRancherIds.length > 0) {
+            try {
+              const rancher: any = await getRecordById(TABLES.RANCHERS, assignedRancherIds[0]);
+              const currentRefs = rancher['Current Active Referrals'] || 0;
+              if (currentRefs > 0) {
+                await updateRecord(TABLES.RANCHERS, assignedRancherIds[0], {
+                  'Current Active Referrals': currentRefs - 1,
+                });
+              }
+            } catch { /* rancher lookup failed, skip decrement */ }
+          }
+
           await answerCallbackQuery(queryId, 'Rejected');
 
           if (chatId && messageId) {
-            const referral: any = await getRecordById(TABLES.REFERRALS, fullReferralId);
             await editTelegramMessage(
               chatId,
               messageId,
@@ -626,7 +640,7 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
           stages[status] = (stages[status] || 0) + 1;
         }
 
-        const order = ['Pending Approval', 'Intro Sent', 'In Conversation', 'Tour Scheduled', 'Negotiating', 'Closed Won', 'Closed Lost', 'Dormant', 'Waitlisted'];
+        const order = ['Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Negotiation', 'Closed Won', 'Closed Lost', 'Dormant', 'Reassigned'];
         let msg = `📊 <b>Referral Pipeline</b>\n\nTotal: ${referrals.length}\n`;
 
         for (const stage of order) {

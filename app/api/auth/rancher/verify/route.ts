@@ -31,8 +31,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
-    const activeStatus = rancher['Active Status'] || '';
-    if (activeStatus === 'Suspended' || activeStatus === 'Rejected') {
+    const activeStatus = (rancher['Active Status'] || '').toLowerCase();
+    if (activeStatus === 'suspended' || activeStatus === 'rejected') {
       return NextResponse.json({ error: 'Your account has been deactivated. Contact support@buyhalfcow.com.' }, { status: 403 });
     }
 
