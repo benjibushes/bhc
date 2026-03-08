@@ -114,7 +114,7 @@ export async function GET() {
         onboardingStatus: rancher['Onboarding Status'] || '',
         agreementSigned: rancher['Agreement Signed'] || false,
         currentActiveReferrals: rancher['Current Active Referrals'] || 0,
-        maxActiveReferrals: rancher['Max Active Referrals'] || 5,
+        maxActiveReferrals: rancher['Max Active Referalls'] || 5,
         monthlyCapacity: rancher['Monthly Capacity'] || 0,
         beefTypes: rancher['Beef Types'] || '',
       },

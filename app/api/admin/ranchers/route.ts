@@ -24,7 +24,7 @@ export async function GET() {
       agreement_signed: record['Agreement Signed'] || false,
       active_status: record['Active Status'] || 'Pending Onboarding',
       monthly_capacity: record['Monthly Capacity'] || 0,
-      max_active_referrals: record['Max Active Referrals'] || 5,
+      max_active_referrals: record['Max Active Referalls'] || 5,
       current_active_referrals: record['Current Active Referrals'] || 0,
       last_assigned_at: record['Last Assigned At'] || '',
       performance_score: record['Performance Score'] || 50,

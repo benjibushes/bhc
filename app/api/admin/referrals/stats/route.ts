@@ -35,7 +35,7 @@ export async function GET() {
         name: r['Operator Name'] || r['Ranch Name'] || 'Unknown',
         state: r['State'] || '',
         count: r['Current Active Referrals'] || 0,
-        max: r['Max Active Referrals'] || 5,
+        max: r['Max Active Referalls'] || 5,
       }))
       .sort((a: any, b: any) => b.count - a.count);
 

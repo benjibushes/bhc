@@ -125,7 +125,7 @@ export async function POST(request: Request) {
 
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           const currentRefs = rancher['Current Active Referrals'] || 0;
-          const maxRefs = rancher['Max Active Referrals'] || 5;
+          const maxRefs = rancher['Max Active Referalls'] || 5;
 
           if (currentRefs >= maxRefs) {
             await answerCallbackQuery(queryId, `At capacity (${currentRefs}/${maxRefs}). Reassign instead.`);
@@ -238,7 +238,7 @@ export async function POST(request: Request) {
             const agreed = r['Agreement Signed'] === true;
             const state = r['State'] || '';
             const served = r['States Served'] || '';
-            const maxRefs = r['Max Active Referrals'] || 5;
+            const maxRefs = r['Max Active Referalls'] || 5;
             const currentRefs = r['Current Active Referrals'] || 0;
             const servesState = state === buyerState ||
               (typeof served === 'string' && served.includes(buyerState));
@@ -252,7 +252,7 @@ export async function POST(request: Request) {
             }
           } else {
             const keyboard = available.slice(0, 8).map((r: any) => [{
-              text: `${r['Operator Name'] || r['Ranch Name']} (${r['Current Active Referrals'] || 0}/${r['Max Active Referrals'] || 5})`,
+              text: `${r['Operator Name'] || r['Ranch Name']} (${r['Current Active Referrals'] || 0}/${r['Max Active Referalls'] || 5})`,
               callback_data: `assignto_${fullReferralId}_${r.id}`,
             }]);
 
@@ -558,7 +558,7 @@ Source: ${c['Source'] || 'organic'}`;
         const ranchers = await getAllRecords(TABLES.RANCHERS);
         const nearCapacity = ranchers.filter((r: any) => {
           const current = r['Current Active Referrals'] || 0;
-          const max = r['Max Active Referrals'] || 5;
+          const max = r['Max Active Referalls'] || 5;
           return current >= max * 0.8 && r['Active Status'] === 'Active';
         });
 
@@ -567,7 +567,7 @@ Source: ${c['Source'] || 'organic'}`;
         } else {
           let msg = `⚠️ <b>Ranchers Near Capacity</b>\n\n`;
           for (const r of nearCapacity as any[]) {
-            msg += `• ${r['Operator Name'] || r['Ranch Name']} — ${r['Current Active Referrals']}/${r['Max Active Referrals']} (${r['State']})\n`;
+            msg += `• ${r['Operator Name'] || r['Ranch Name']} — ${r['Current Active Referrals']}/${r['Max Active Referalls']} (${r['State']})\n`;
           }
           await sendTelegramMessage(chatId, msg);
         }
@@ -606,7 +606,7 @@ Source: ${c['Source'] || 'organic'}`;
 
         const capacityWarnings = ranchers.filter((r: any) => {
           const cur = r['Current Active Referrals'] || 0;
-          const max = r['Max Active Referrals'] || 5;
+          const max = r['Max Active Referalls'] || 5;
           return cur >= max * 0.8 && r['Active Status'] === 'Active';
         }).length;
 

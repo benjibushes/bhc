@@ -19,7 +19,7 @@ export async function POST(request: Request) {
 
     for (const rancher of ranchers as any[]) {
       const current = rancher['Current Active Referrals'] || 0;
-      const max = rancher['Max Active Referrals'] || 5;
+      const max = rancher['Max Active Referalls'] || 5;
       const currentStatus = rancher['Active Status'] || '';
 
       if (current >= max && currentStatus === 'Active') {

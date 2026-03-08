@@ -46,7 +46,7 @@ export async function POST(request: Request) {
 
     const capacityWarnings = ranchers.filter((r: any) => {
       const cur = r['Current Active Referrals'] || 0;
-      const max = r['Max Active Referrals'] || 5;
+      const max = r['Max Active Referalls'] || 5;
       return cur >= max * 0.8 && r['Active Status'] === 'Active';
     }).length;
 

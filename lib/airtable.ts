@@ -20,7 +20,7 @@ export const TABLES = {
   NEWS_POSTS: 'News',
   INQUIRIES: 'Inquiries',
   CAMPAIGNS: 'Campaigns',
-  REFERRALS: 'referrals',
+  REFERRALS: 'Referrals',
   AFFILIATES: 'Affiliates',
 };
 

@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     // Get all pending consumers
     const pending = await getAllRecords(
       TABLES.CONSUMERS,
-      `{Status} = "pending"`
+      `{Status} = "Pending"`
     );
 
     if (pending.length === 0) {
@@ -39,8 +39,12 @@ export async function POST(request: Request) {
 
     for (const consumer of pending as any[]) {
       try {
-        const segment = consumer['Segment'] || 'Community';
         const intentClassification = consumer['Intent Classification'] || '';
+        // Derive segment: use stored Segment field if present, otherwise infer from Order Type/Budget
+        // (existing records pre-date the Segment field being added to Airtable)
+        const rawSegment = consumer['Segment'] || '';
+        const hasBeefBuyerSignals = !!(consumer['Order Type'] || consumer['Budget']);
+        const segment = rawSegment || (hasBeefBuyerSignals ? 'Beef Buyer' : 'Community');
         const email = consumer['Email'];
         const firstName = (consumer['Full Name'] || '').split(' ')[0];
         const consumerId = consumer['id'];
@@ -57,7 +61,7 @@ export async function POST(request: Request) {
         }
 
         // Approve the consumer
-        await updateRecord(TABLES.CONSUMERS, consumerId, { 'Status': 'approved' });
+        await updateRecord(TABLES.CONSUMERS, consumerId, { 'Status': 'Approved' });
 
         // Send magic link email
         if (email) {
@@ -85,7 +89,7 @@ export async function POST(request: Request) {
                 buyerEmail: email,
                 buyerPhone: consumer['Phone'],
                 orderType: consumer['Order Type'],
-                budgetRange: consumer['Budget Range'],
+                budgetRange: consumer['Budget'],
                 intentScore: consumer['Intent Score'],
                 intentClassification,
                 notes: consumer['Notes'],

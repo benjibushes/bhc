@@ -21,9 +21,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 function deriveStatus(segment: string, intentClassification: string): string {
-  if (segment === 'Community') return 'approved';
-  if (segment === 'Beef Buyer' && (intentClassification === 'High' || intentClassification === 'Medium')) return 'approved';
-  return 'pending';
+  if (segment === 'Community') return 'Approved';
+  if (segment === 'Beef Buyer' && (intentClassification === 'High' || intentClassification === 'Medium')) return 'Approved';
+  return 'Pending';
 }
 
 function isValidEmail(email: string): boolean {
@@ -109,12 +109,12 @@ export async function POST(request: Request) {
       'Status': status,
       'Segment': consumerSegment,
       'Order Type': orderType || '',
-      'Budget Range': budgetRange || '',
+      'Budget': budgetRange || '',
       'Notes': notes || '',
       'Source': source || 'organic',
       'Intent Score': intentScore || 0,
       'Intent Classification': intentClassification || '',
-      'Referral Status': consumerSegment === 'Community' ? 'Community' : 'Unmatched',
+      'Referral Status': 'Unmatched',
       'Campaign': campaign || '',
       'UTM Parameters': utmParams || '',
     };
@@ -122,7 +122,7 @@ export async function POST(request: Request) {
 
     const record = await createRecord(TABLES.CONSUMERS, consumerFields);
 
-    if (status === 'approved') {
+    if (status === 'Approved') {
       const token = jwt.sign(
         { type: 'member-login', consumerId: record.id, email: email.trim().toLowerCase() },
         JWT_SECRET,

@@ -23,7 +23,7 @@ export async function POST(request: Request) {
       const onboardingStatus = r['Onboarding Status'] || '';
       const state = r['State'] || '';
       const statesServed = r['States Served'] || '';
-      const maxReferrals = r['Max Active Referrals'] || 5;
+      const maxReferrals = r['Max Active Referalls'] || 5;
       const currentReferrals = r['Current Active Referrals'] || 0;
 
       if (activeStatus !== 'Active') return false;
@@ -116,7 +116,7 @@ export async function POST(request: Request) {
         suggestedRancher: topMatch ? {
           name: topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown',
           activeReferrals: topMatch['Current Active Referrals'] || 0,
-          maxReferrals: topMatch['Max Active Referrals'] || 5,
+          maxReferrals: topMatch['Max Active Referalls'] || 5,
         } : null,
       });
     } catch (e) {
@@ -132,7 +132,7 @@ export async function POST(request: Request) {
         name: topMatch['Operator Name'] || topMatch['Ranch Name'],
         state: topMatch['State'],
         activeReferrals: topMatch['Current Active Referrals'] || 0,
-        maxReferrals: topMatch['Max Active Referrals'] || 5,
+        maxReferrals: topMatch['Max Active Referalls'] || 5,
       } : null,
     });
   } catch (error: any) {

@@ -5,6 +5,10 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
 // Runs every Monday at 9am MT — finds ranchers stalled at each onboarding stage
 // and sends Telegram alerts with action buttons
+//
+// Airtable Onboarding Status options:
+// "Call Scheduled", "Call Complete", "Docs Sent", "Agreement Signed",
+// "Verification Pending", "Verification Complete", "Live"
 export async function POST(request: Request) {
   try {
     const authHeader = request.headers.get('authorization');
@@ -21,50 +25,55 @@ export async function POST(request: Request) {
     const DAY_MS = 24 * 60 * 60 * 1000;
 
     // Stage thresholds in days — escalate if stuck this long
+    // Keys match actual Airtable Onboarding Status singleSelect values
     const STALL_THRESHOLDS: Record<string, number> = {
-      'Applied':         3,   // Should be called within 3 days
-      'Call Scheduled':  2,   // Call overdue
-      'Docs Sent':       7,   // Agreement not signed in 7 days
-      'Agreement Signed': 5,  // Verification not started in 5 days
-      'In Verification': 14,  // Verification taking too long
+      'Call Scheduled':      2,   // Call overdue — check in immediately
+      'Call Complete':       3,   // Docs not sent within 3 days of call
+      'Docs Sent':           7,   // Agreement not signed in 7 days
+      'Agreement Signed':    5,   // Verification not started in 5 days
+      'Verification Pending': 14, // Verification taking too long
     };
 
     const stalled: Array<{
       rancher: any;
       stage: string;
       daysStuck: number;
-      dateField: string;
+      isNewApplicant: boolean;
     }> = [];
 
     for (const rancher of ranchers as any[]) {
       const status = rancher['Onboarding Status'] || '';
       const activeStatus = rancher['Active Status'] || '';
 
-      // Skip live and inactive ranchers
-      if (activeStatus === 'Inactive' || status === 'Live' || status === 'Rejected') continue;
-      if (!status) continue;
+      // Skip live, paused, non-compliant ranchers
+      if (['Paused', 'Non-Compliant'].includes(activeStatus)) continue;
+      if (status === 'Live' || status === 'Verification Complete') continue;
+
+      // Handle new applicants: ranchers with NO onboarding status set (just applied)
+      if (!status) {
+        const created = new Date(rancher.createdTime || 0);
+        const daysOld = Math.floor((now.getTime() - created.getTime()) / DAY_MS);
+        if (daysOld >= 2) {
+          stalled.push({ rancher, stage: 'New Applicant', daysStuck: daysOld, isNewApplicant: true });
+        }
+        continue;
+      }
 
       const threshold = STALL_THRESHOLDS[status];
       if (!threshold) continue;
 
       // Figure out which date field to check per stage
-      let dateField = '';
       let dateValue = '';
-      if (status === 'Applied') {
-        dateField = 'Created';
+      if (status === 'Call Scheduled') {
         dateValue = rancher['Created'] || rancher.createdTime || '';
-      } else if (status === 'Call Scheduled') {
-        dateField = 'Call Scheduled At';
-        dateValue = rancher['Call Scheduled At'] || '';
+      } else if (status === 'Call Complete') {
+        dateValue = rancher['Call Completed At'] || rancher['Created'] || rancher.createdTime || '';
       } else if (status === 'Docs Sent') {
-        dateField = 'Docs Sent At';
         dateValue = rancher['Docs Sent At'] || '';
       } else if (status === 'Agreement Signed') {
-        dateField = 'Agreement Signed At';
         dateValue = rancher['Agreement Signed At'] || '';
-      } else if (status === 'In Verification') {
-        dateField = 'Verification Started At';
-        dateValue = rancher['Verification Started At'] || rancher['Docs Sent At'] || '';
+      } else if (status === 'Verification Pending') {
+        dateValue = rancher['Docs Sent At'] || rancher['Agreement Signed At'] || '';
       }
 
       if (!dateValue) continue;
@@ -74,7 +83,7 @@ export async function POST(request: Request) {
 
       const daysStuck = Math.floor((now.getTime() - stageDate.getTime()) / DAY_MS);
       if (daysStuck >= threshold) {
-        stalled.push({ rancher, stage: status, daysStuck, dateField });
+        stalled.push({ rancher, stage: status, daysStuck, isNewApplicant: false });
       }
     }
 
@@ -87,21 +96,24 @@ export async function POST(request: Request) {
     }
 
     // Send one Telegram alert per stalled rancher
-    for (const { rancher, stage, daysStuck } of stalled) {
+    const thresholdMap: Record<string, number> = { ...STALL_THRESHOLDS, 'New Applicant': 2 };
+
+    for (const { rancher, stage, daysStuck, isNewApplicant } of stalled) {
       const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown Rancher';
       const state = rancher['State'] || '?';
       const email = rancher['Email'] || 'no email';
       const phone = rancher['Phone'] || '';
 
       const stageEmoji: Record<string, string> = {
-        'Applied':          '📬',
-        'Call Scheduled':   '📅',
-        'Docs Sent':        '📄',
-        'Agreement Signed': '✍️',
-        'In Verification':  '🔬',
+        'New Applicant':       '📬',
+        'Call Scheduled':      '📅',
+        'Call Complete':       '📞',
+        'Docs Sent':           '📄',
+        'Agreement Signed':    '✍️',
+        'Verification Pending': '🔬',
       };
 
-      const urgency = daysStuck >= (STALL_THRESHOLDS[stage] || 7) * 2 ? '🚨' : '⚠️';
+      const urgency = daysStuck >= (thresholdMap[stage] || 7) * 2 ? '🚨' : '⚠️';
 
       const msg = `${urgency} <b>STALLED RANCHER</b>
 
@@ -114,12 +126,14 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
         inline_keyboard: [],
       };
 
-      // Stage-specific action buttons
-      if (stage === 'Applied' || stage === 'Call Scheduled') {
+      if (isNewApplicant || stage === 'Call Scheduled') {
         const calLink = process.env.NEXT_PUBLIC_CALENDLY_LINK || '';
         if (calLink) {
           keyboard.inline_keyboard.push([{ text: '📅 Schedule Call', url: calLink }]);
         }
+      }
+
+      if (stage === 'Call Complete' || isNewApplicant) {
         keyboard.inline_keyboard.push([
           { text: '📦 Send Onboarding Docs', callback_data: `ronboard_${rancher.id}` },
         ]);
@@ -127,13 +141,13 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
         keyboard.inline_keyboard.push([
           { text: '📧 Re-send Onboarding', callback_data: `ronboard_${rancher.id}` },
         ]);
-      } else if (stage === 'Agreement Signed' || stage === 'In Verification') {
-        keyboard.inline_keyboard.push([
-          { text: '📋 View Rancher', callback_data: `rdetails_${rancher.id}` },
-        ]);
       }
 
-      await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, msg, keyboard.inline_keyboard.length > 0 ? keyboard : undefined);
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        msg,
+        keyboard.inline_keyboard.length > 0 ? keyboard : undefined
+      );
     }
 
     // Summary message
