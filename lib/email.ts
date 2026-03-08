@@ -738,6 +738,188 @@ export async function sendBroadcastEmail(data: {
 }
 
 // =====================================================
+// AI SEQUENCE EMAILS
+// =====================================================
+
+export async function sendSequenceEmail_BeefDay3(data: {
+  firstName: string;
+  email: string;
+  state: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `We're finding your rancher — here's what's happening`,
+      html: `
+        <!DOCTYPE html><html><head>
+        <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#2A2A2A;margin:30px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+        </head><body><div class="container">
+        <h1>Your match is in progress</h1>
+        <p>Hi ${esc(data.firstName)},</p>
+        <p>You were approved for BuyHalfCow a few days ago — I wanted to give you a quick update on where things stand.</p>
+        <p>We're actively working on finding you the right rancher in ${esc(data.state)}. Our matching process is hands-on: I personally review rancher availability and fit before making any introduction. That's what keeps the quality high.</p>
+        <div class="divider"></div>
+        <p><strong>What happens next:</strong></p>
+        <ul style="color:#0E0E0E;line-height:2">
+          <li>We confirm a rancher has capacity and matches your order type</li>
+          <li>I make a personal introduction via email</li>
+          <li>You connect directly — no middleman in the conversation</li>
+        </ul>
+        <a href="${data.loginUrl}" class="button">Check Your Dashboard →</a>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p></div>
+        </div></body></html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending sequence email (beef day 3):', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendSequenceEmail_BeefDay7(data: {
+  firstName: string;
+  email: string;
+  rancherName: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `Did you hear from ${esc(data.rancherName)}?`,
+      html: `
+        <!DOCTYPE html><html><head>
+        <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+        </head><body><div class="container">
+        <h1>Quick check-in</h1>
+        <p>Hi ${esc(data.firstName)},</p>
+        <p>We introduced you to <strong>${esc(data.rancherName)}</strong> earlier this week. I wanted to follow up — did you hear from them? Did you get a chance to connect?</p>
+        <p>If you haven't heard back within 24 hours, reply to this email and I'll follow up on my end. Every rancher in our network is vetted and responsive — if something isn't working, I want to know.</p>
+        <p>If you've already connected, that's great — just ignore this.</p>
+        <a href="${data.loginUrl}" class="button">View Your Dashboard →</a>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply here if you need anything.</p></div>
+        </div></body></html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending sequence email (beef day 7):', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendSequenceEmail_CommunityDay7(data: {
+  firstName: string;
+  email: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `Inside BHC: what your membership actually gets you`,
+      html: `
+        <!DOCTYPE html><html><head>
+        <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#2A2A2A;margin:30px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+        </head><body><div class="container">
+        <h1>Welcome to the network</h1>
+        <p>Hi ${esc(data.firstName)},</p>
+        <p>It's been about a week since you joined BuyHalfCow. I wanted to take a moment to share what being a Community member actually means.</p>
+        <div class="divider"></div>
+        <p><strong>What we do at BHC:</strong></p>
+        <ul style="color:#0E0E0E;line-height:2">
+          <li>We verify American ranchers — only operators with real capacity, real beef, and real ethics make the list</li>
+          <li>We source exclusive land deals for members interested in owning acreage</li>
+          <li>We curate brand partnerships from suppliers we actually trust</li>
+          <li>Community members get early access to announcements, drops, and content before anyone else</li>
+        </ul>
+        <p>This is not a marketplace. We don't take advertising. We don't sell your data. We just connect the right people.</p>
+        <a href="${data.loginUrl}" class="button">Explore Your Dashboard →</a>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply with questions anytime.</p></div>
+        </div></body></html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending sequence email (community day 7):', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendSequenceEmail_CommunityDay14(data: {
+  firstName: string;
+  email: string;
+  upgradeUrl: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `Ready to source beef directly from a rancher?`,
+      html: `
+        <!DOCTYPE html><html><head>
+        <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#2A2A2A;margin:30px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+        </head><body><div class="container">
+        <h1>The beef buyer path</h1>
+        <p>Hi ${esc(data.firstName)},</p>
+        <p>You've been part of the BHC community for a couple weeks now. I wanted to check in on something — have you thought about sourcing beef directly from a rancher?</p>
+        <div class="divider"></div>
+        <p><strong>Here's how it works for Beef Buyers:</strong></p>
+        <ol style="color:#0E0E0E;line-height:2">
+          <li>Tell us what you want — whole, half, or quarter cow, your budget, your state</li>
+          <li>We match you with a verified rancher in your area who has availability</li>
+          <li>We make a personal introduction — you buy direct, at the rancher's price</li>
+        </ol>
+        <p>No subscription, no markup, no middleman in the transaction. Just clean beef from a rancher you know by name.</p>
+        <a href="${data.upgradeUrl}" class="button">Become a Beef Buyer →</a>
+        <p style="font-size:13px;color:#A7A29A">Or <a href="${data.loginUrl}" style="color:#0E0E0E">log in to your dashboard</a> if you've already done this.</p>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply if you have questions about the process.</p></div>
+        </div></body></html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending sequence email (community day 14):', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendChaseUpEmail(data: {
+  firstName: string;
+  email: string;
+  rancherName: string;
+  loginUrl: string;
+  aiDraftedMessage: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `Quick check-in from BuyHalfCow`,
+      html: `
+        <!DOCTYPE html><html><head>
+        <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+        </head><body><div class="container">
+        <h1>Quick check-in</h1>
+        <p>Hi ${esc(data.firstName)},</p>
+        ${data.aiDraftedMessage.split('\n').filter(Boolean).map(p => `<p>${esc(p)}</p>`).join('')}
+        <a href="${data.loginUrl}" class="button">View Your Dashboard →</a>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p></div>
+        </div></body></html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending chase-up email:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
 // UTILITY FUNCTIONS
 // =====================================================
 

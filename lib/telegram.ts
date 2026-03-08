@@ -75,14 +75,16 @@ export async function sendTelegramReferralNotification(data: {
   intentScore: number;
   intentClassification: string;
   notes: string;
+  matchType?: 'local' | 'nationwide';
   suggestedRancher: {
     name: string;
     activeReferrals: number;
     maxReferrals: number;
   } | null;
 }) {
+  const matchLabel = data.matchType === 'nationwide' ? ' 🌎 NATIONWIDE' : data.matchType === 'local' ? ' 📍 LOCAL' : '';
   const rancherLine = data.suggestedRancher
-    ? `\n🤠 <b>Suggested:</b> ${data.suggestedRancher.name}\n   Load: ${data.suggestedRancher.activeReferrals}/${data.suggestedRancher.maxReferrals}`
+    ? `\n🤠 <b>Suggested:</b> ${data.suggestedRancher.name}${matchLabel}\n   Load: ${data.suggestedRancher.activeReferrals}/${data.suggestedRancher.maxReferrals}`
     : '\n⚠️ <b>No rancher match found</b>';
 
   const message = `🔔 <b>NEW BUYER LEAD</b>

@@ -17,29 +17,42 @@ export async function POST(request: Request) {
 
     const allRanchers: any[] = await getAllRecords(TABLES.RANCHERS);
 
-    const eligible = allRanchers.filter((r: any) => {
+    // Helper: check if rancher is active, signed, and under capacity
+    const isEligibleBase = (r: any) => {
       const activeStatus = r['Active Status'] || '';
       const agreementSigned = r['Agreement Signed'] || false;
       const onboardingStatus = r['Onboarding Status'] || '';
-      const state = r['State'] || '';
-      const statesServed = r['States Served'] || '';
       const maxReferrals = r['Max Active Referalls'] || 5;
       const currentReferrals = r['Current Active Referrals'] || 0;
-
       if (activeStatus !== 'Active') return false;
       if (!agreementSigned) return false;
       if (onboardingStatus && onboardingStatus !== 'Live') return false;
+      if (currentReferrals >= maxReferrals) return false;
+      return true;
+    };
 
-      const servesState =
+    // Local ranchers: serve the buyer's specific state
+    const localEligible = allRanchers.filter((r: any) => {
+      if (!isEligibleBase(r)) return false;
+      const state = r['State'] || '';
+      const statesServed = r['States Served'] || '';
+      return (
         state === buyerState ||
         (typeof statesServed === 'string' && statesServed.split(',').map((s: string) => s.trim()).includes(buyerState)) ||
-        (Array.isArray(statesServed) && statesServed.includes(buyerState));
-
-      if (!servesState) return false;
-      if (currentReferrals >= maxReferrals) return false;
-
-      return true;
+        (Array.isArray(statesServed) && statesServed.includes(buyerState))
+      );
     });
+
+    // Nationwide ranchers: ships to all states (fallback if no local match)
+    const nationwideEligible = allRanchers.filter((r: any) => {
+      if (!isEligibleBase(r)) return false;
+      return r['Ships Nationwide'] === true || r['Ships Nationwide'] === 1;
+    });
+
+    // Prefer local; fall back to nationwide
+    const eligible = localEligible.length > 0 ? localEligible : nationwideEligible;
+    const matchType: 'local' | 'nationwide' | null =
+      localEligible.length > 0 ? 'local' : nationwideEligible.length > 0 ? 'nationwide' : null;
 
     eligible.sort((a: any, b: any) => {
       const aRefs = a['Current Active Referrals'] || 0;
@@ -75,6 +88,11 @@ export async function POST(request: Request) {
       referralFields['Suggested Rancher'] = [topMatch.id];
       referralFields['Suggested Rancher Name'] = topMatch['Operator Name'] || topMatch['Ranch Name'] || '';
       referralFields['Suggested Rancher State'] = topMatch['State'] || '';
+      if (matchType === 'nationwide') {
+        referralFields['Match Type'] = 'Nationwide';
+      } else {
+        referralFields['Match Type'] = 'Local';
+      }
     }
 
     let referral: any;
@@ -113,6 +131,7 @@ export async function POST(request: Request) {
         intentScore: intentScore || 0,
         intentClassification: intentClassification || 'N/A',
         notes: notes || '',
+        matchType: matchType || undefined,
         suggestedRancher: topMatch ? {
           name: topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown',
           activeReferrals: topMatch['Current Active Referrals'] || 0,
@@ -127,10 +146,12 @@ export async function POST(request: Request) {
       success: true,
       referralId: referral.id,
       matchFound: !!topMatch,
+      matchType,
       suggestedRancher: topMatch ? {
         id: topMatch.id,
         name: topMatch['Operator Name'] || topMatch['Ranch Name'],
         state: topMatch['State'],
+        shipsNationwide: topMatch['Ships Nationwide'] === true,
         activeReferrals: topMatch['Current Active Referrals'] || 0,
         maxReferrals: topMatch['Max Active Referalls'] || 5,
       } : null,
