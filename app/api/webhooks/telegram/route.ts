@@ -15,6 +15,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || '';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 
 // BHC business context injected into every AI conversation
 const BHC_SYSTEM_PROMPT = `You are Ben's AI business assistant for BuyHalfCow (BHC), embedded in his Telegram admin bot.
@@ -35,7 +36,7 @@ Your role:
 - Available bot commands for quick data: /stats, /today, /pending, /pipeline, /revenue, /capacity, /lookup [name].
 - Always be direct, practical, and focused on helping Ben close deals and grow revenue.`;
 
-const AI_CONFIGURED = !!(ANTHROPIC_API_KEY || OLLAMA_BASE_URL);
+const AI_CONFIGURED = !!(ANTHROPIC_API_KEY || OLLAMA_BASE_URL || GROQ_API_KEY);
 
 async function handleAIChat(chatId: string, userMessage: string) {
   if (!AI_CONFIGURED) {
