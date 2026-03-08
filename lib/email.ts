@@ -211,6 +211,67 @@ export async function sendRancherApproval(data: {
 }
 
 // =====================================================
+// RANCHER GO LIVE EMAIL
+// =====================================================
+
+export async function sendRancherGoLiveEmail(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+  dashboardUrl?: string;
+}) {
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const dashboardUrl = data.dashboardUrl || `${baseUrl}/rancher`;
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: "You're Live — Buyer Leads Are Coming",
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 28px; margin: 0 0 20px 0; }
+            p { margin: 16px 0; color: #6B4F3F; }
+            .divider { height: 1px; background: #2A2A2A; margin: 30px 0; }
+            .button { display: inline-block; padding: 12px 24px; background: #2A2A2A; color: white; text-decoration: none; font-weight: 600; margin: 16px 0; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>You're Live</h1>
+            <p>Hi ${esc(data.operatorName)},</p>
+            <p><strong>${esc(data.ranchName)} is now live on BuyHalfCow.</strong> Buyer leads will appear in your dashboard as we match approved buyers to your operation.</p>
+            <div class="divider"></div>
+            <p><strong>How it works:</strong></p>
+            <ol style="color: #6B4F3F; line-height: 2;">
+              <li>When we find a buyer in your area, we'll send you an intro email with their contact details</li>
+              <li>Reach out directly to discuss their order and close the deal</li>
+              <li>Mark the referral as "Closed Won" in your dashboard and enter the sale amount — we'll handle the rest</li>
+            </ol>
+            <div class="divider"></div>
+            <p><a href="${esc(dashboardUrl)}" class="button">View Your Dashboard</a></p>
+            <p>Questions? Just reply to this email.</p>
+            <div class="footer">
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef<br>Questions? Email ${ADMIN_EMAIL}</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher go-live email:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
 // PARTNER EMAILS
 // =====================================================
 
@@ -290,6 +351,106 @@ export async function sendPartnerConfirmation(data: {
     return { success: true };
   } catch (error) {
     console.error('Error sending partner confirmation:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// AFFILIATE EMAILS
+// =====================================================
+
+export async function sendAffiliateLoginLink(data: {
+  email: string;
+  loginUrl: string;
+  name?: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: 'Your BuyHalfCow Affiliate Login Link',
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 24px; margin: 0 0 20px 0; }
+            .button { display: inline-block; padding: 16px 32px; background: #0E0E0E; color: white !important; text-decoration: none; text-transform: uppercase; font-weight: 600; letter-spacing: 1px; margin: 20px 0; }
+            .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Your Affiliate Login Link</h1>
+            <p>Hi ${esc(data.name || 'there')},</p>
+            <p>Click the button below to access your BuyHalfCow affiliate dashboard:</p>
+            <a href="${data.loginUrl}" class="button">Log In to Dashboard</a>
+            <p style="color: #6B4F3F; font-size: 14px;">This link expires in 24 hours. If you didn't request this, you can ignore this email.</p>
+            <div class="footer">
+              <p>BuyHalfCow — Private Network for American Ranch Beef</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending affiliate login link:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendAffiliateInvite(data: {
+  email: string;
+  name: string;
+  code: string;
+  loginRequestUrl: string;
+  buyerLink: string;
+  rancherLink: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: "You're a BuyHalfCow Affiliate — Here Are Your Links",
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 24px; margin: 0 0 20px 0; }
+            .link-box { background: #F4F1EC; padding: 12px 16px; margin: 8px 0; font-size: 14px; word-break: break-all; }
+            .button { display: inline-block; padding: 16px 32px; background: #0E0E0E; color: white !important; text-decoration: none; text-transform: uppercase; font-weight: 600; letter-spacing: 1px; margin: 20px 0; }
+            .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Welcome to the BHC Affiliate Program</h1>
+            <p>Hi ${esc(data.name)},</p>
+            <p>You're now a BuyHalfCow affiliate. Share your links to refer buyers and ranchers — we'll track every signup.</p>
+            <p><strong>Your buyer link:</strong></p>
+            <div class="link-box">${esc(data.buyerLink)}</div>
+            <p><strong>Your rancher link:</strong></p>
+            <div class="link-box">${esc(data.rancherLink)}</div>
+            <p>To view your dashboard and referral counts, request a login link:</p>
+            <a href="${data.loginRequestUrl}" class="button">Get Your Login Link</a>
+            <div class="footer">
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending affiliate invite:', error);
     return { success: false, error };
   }
 }

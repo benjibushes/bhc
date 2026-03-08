@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
 import Input from '../components/Input';
@@ -142,7 +143,7 @@ function validateName(name: string): boolean {
   return true;
 }
 
-export default function AccessPage() {
+function AccessPageContent() {
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -167,14 +168,19 @@ export default function AccessPage() {
     campaign: '',
     source: 'organic',
     utmParams: '',
+    ref: '',
   });
 
+  const searchParams = useSearchParams();
   useEffect(() => {
+    const refFromUrl = searchParams.get('ref') || searchParams.get('aff');
+    if (refFromUrl) localStorage.setItem('bhc_ref', refFromUrl);
     const campaign = localStorage.getItem('bhc_campaign') || '';
     const source = localStorage.getItem('bhc_source') || 'organic';
     const utmParams = localStorage.getItem('bhc_utm_params') || '';
-    setCampaignData({ campaign, source, utmParams });
-  }, []);
+    const ref = refFromUrl || localStorage.getItem('bhc_ref') || '';
+    setCampaignData({ campaign, source, utmParams, ref });
+  }, [searchParams]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -261,6 +267,7 @@ export default function AccessPage() {
           source: campaignData.source,
           campaign: campaignData.campaign,
           utmParams: campaignData.utmParams,
+          ref: campaignData.ref || undefined,
         }),
       });
 
@@ -466,5 +473,13 @@ export default function AccessPage() {
         </div>
       </Container>
     </main>
+  );
+}
+
+export default function AccessPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen py-24 bg-[#F4F1EC] flex items-center justify-center"><p className="text-[#6B4F3F]">Loading...</p></main>}>
+      <AccessPageContent />
+    </Suspense>
   );
 }

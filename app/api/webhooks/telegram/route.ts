@@ -12,10 +12,86 @@ import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+
+// BHC business context injected into every AI conversation
+const BHC_SYSTEM_PROMPT = `You are Ben's AI business assistant for BuyHalfCow (BHC), embedded in his Telegram admin bot.
+
+BuyHalfCow is a private, curated beef brokerage that connects pre-verified consumers (Beef Buyers) with verified American ranchers. Ben earns a 10% commission on every sale he facilitates. This is NOT a public marketplace — it's relationship-based and invitation-only.
+
+Key business context:
+- Consumers sign up and are scored by intent (High/Medium/Low). Beef Buyers with High/Medium intent are auto-approved and matched to ranchers in their state.
+- Ranchers apply, go through an onboarding process (call → docs/agreement → verification → live), and pay no upfront fees.
+- Rancher matching: active ranchers with signed agreements, sorted by lowest load first.
+- Revenue model: ranchers pay Ben 10% commission on all sales made to BHC-referred buyers. 24-month commission term.
+- Current pipeline: ~245 consumers, ~26 ranchers (most still onboarding), ~80 referrals.
+
+Your role:
+- Answer Ben's questions about his business, pipeline, strategy, rancher negotiations, buyer follow-up, etc.
+- You can suggest actions he should take, help draft emails/messages, analyze situations, and give business advice.
+- Keep responses concise and actionable — Ben is running a business from his phone.
+- Available bot commands for quick data: /stats, /today, /pending, /pipeline, /revenue, /capacity, /lookup [name].
+- Always be direct, practical, and focused on helping Ben close deals and grow revenue.`;
+
+async function handleAIChat(chatId: string, userMessage: string) {
+  if (!ANTHROPIC_API_KEY) {
+    await sendTelegramMessage(
+      chatId,
+      '⚠️ AI chat not configured. Add ANTHROPIC_API_KEY to your Vercel environment variables, then redeploy.\n\nFor commands, send /help'
+    );
+    return;
+  }
+
+  try {
+    // Show typing indicator
+    await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendChatAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, action: 'typing' }),
+    });
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        system: BHC_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.error('Anthropic API error:', err);
+      await sendTelegramMessage(chatId, '⚠️ AI request failed. Try again or use /help for commands.');
+      return;
+    }
+
+    const data: any = await response.json();
+    const reply = data?.content?.[0]?.text || 'No response from AI.';
+
+    // Telegram HTML parse mode — strip markdown bold/italic that might break parsing
+    const cleaned = reply
+      .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+      .replace(/\*(.*?)\*/g, '<i>$1</i>')
+      .replace(/`(.*?)`/g, '<code>$1</code>');
+
+    await sendTelegramMessage(chatId, cleaned);
+  } catch (err: any) {
+    console.error('AI chat error:', err);
+    await sendTelegramMessage(chatId, `⚠️ AI error: ${err.message}. Use /help for commands.`);
+  }
+}
 
 export async function POST(request: Request) {
+  let update: any;
   try {
-    const update = await request.json();
+    update = await request.json();
 
     // Handle callback queries (button presses)
     if (update.callback_query) {
@@ -719,6 +795,11 @@ Segments: beef, community, all, ranchers`;
 
         await sendTelegramMessage(chatId, msg);
       }
+
+      else {
+        // Route to Claude AI for natural language questions
+        await handleAIChat(chatId, text);
+      }
     }
 
     // Handle broadcast confirmation callbacks
@@ -806,6 +887,12 @@ Segments: beef, community, all, ranchers`;
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     console.error('Telegram webhook error:', error);
+    try {
+      const chatId = update?.message?.chat?.id?.toString();
+      if (chatId) {
+        await sendTelegramMessage(chatId, `⚠️ Something went wrong: ${error?.message || 'Unknown error'}. Check server logs.`);
+      }
+    } catch (_) { /* ignore */ }
     return NextResponse.json({ ok: true });
   }
 }

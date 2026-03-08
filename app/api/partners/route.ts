@@ -4,6 +4,18 @@ import { TABLES } from '@/lib/airtable';
 import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
 import { sendTelegramPartnerAlert } from '@/lib/telegram';
 
+async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
+  if (!ref || typeof ref !== 'string' || ref.length > 50) return false;
+  const code = ref.trim().replace(/"/g, '');
+  if (!code) return false;
+  try {
+    const affiliates = await getAllRecords(TABLES.AFFILIATES, `AND({Code} = "${code}", {Status} = "Active")`);
+    return affiliates.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   if (!re.test(email)) return false;
@@ -15,7 +27,8 @@ function isValidEmail(email: string): boolean {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { partnerType } = body;
+    const { partnerType, ref } = body;
+    const referredBy = ref && (await validateAffiliateRef(ref)) ? ref.trim() : '';
 
     if (!partnerType) {
       return NextResponse.json({ error: 'Partner type is required' }, { status: 400 });
@@ -58,6 +71,7 @@ export async function POST(request: Request) {
         'Acreage': parseInt(acreage) || 0,
         'Status': 'Pending',
       };
+      if (referredBy) rancherFields['Referred By'] = referredBy;
 
       // Add call scheduled if confirmed
       if (callScheduled) {
@@ -117,7 +131,7 @@ export async function POST(request: Request) {
       }
 
       tableName = TABLES.BRANDS;
-      record = await createRecord(tableName, {
+      const brandFields: Record<string, unknown> = {
         'Brand Name': brandName,
         'Contact Name': contactName,
         'Email': email,
@@ -128,7 +142,9 @@ export async function POST(request: Request) {
         'Partnership Goals': promotionDetails || '',
         'Featured': false,
         'Status': 'Pending',
-      });
+      };
+      if (referredBy) brandFields['Referred By'] = referredBy;
+      record = await createRecord(tableName, brandFields);
 
       // Send confirmation email
       await sendPartnerConfirmation({
@@ -172,7 +188,7 @@ export async function POST(request: Request) {
       }
 
       tableName = TABLES.LAND_DEALS;
-      record = await createRecord(tableName, {
+      const landFields: Record<string, unknown> = {
         'Seller Name': sellerName,
         'Email': email,
         'Phone': phone || '',
@@ -185,7 +201,9 @@ export async function POST(request: Request) {
         'Zoning': zoning || '',
         'Utilities': utilities || '',
         'Status': 'Pending',
-      });
+      };
+      if (referredBy) landFields['Referred By'] = referredBy;
+      record = await createRecord(tableName, landFields);
 
       // Send confirmation email
       await sendPartnerConfirmation({

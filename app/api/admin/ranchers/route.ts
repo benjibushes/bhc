@@ -37,6 +37,7 @@ export async function GET() {
       verification_status: record['Verification Status'] || 'Not Started',
       featured: record['Featured'] || false,
       release_date: record['Release Date'] || '',
+      referred_by: record['Referred By'] || '',
       created_at: record['Created'] || record.createdTime || new Date().toISOString(),
     }));
     

@@ -231,10 +231,23 @@ export default function RancherDashboardPage() {
               <p className="font-medium">Onboarding Status: {rancherInfo.onboardingStatus}</p>
               <p className="text-sm text-saddle-brown mt-1">
                 {rancherInfo.onboardingStatus === 'Docs Sent' && 'Please review and sign the agreement documents sent to your email.'}
-                {rancherInfo.onboardingStatus === 'Agreement Signed' && 'Your agreement is signed. Verification is pending.'}
-                {rancherInfo.onboardingStatus === 'Verification Pending' && 'We are verifying your operation. You will be notified when you go live.'}
-                {!['Docs Sent', 'Agreement Signed', 'Verification Pending'].includes(rancherInfo.onboardingStatus) && 'Complete your onboarding to start receiving buyer leads.'}
+                {rancherInfo.onboardingStatus === 'Agreement Signed' && "Verification in progress. We'll email you when you're live and ready to receive leads."}
+                {rancherInfo.onboardingStatus === 'Verification Complete' && "You're approved! We're activating your profile. You'll receive an email when you're live."}
+                {rancherInfo.onboardingStatus === 'Verification Pending' && "We're reviewing your operation. You'll get an email when you're live."}
+                {!['Docs Sent', 'Agreement Signed', 'Verification Complete', 'Verification Pending'].includes(rancherInfo.onboardingStatus) && "Complete your onboarding to start receiving buyer leads."}
               </p>
+              <div className="mt-3 pt-3 border-t border-yellow-300">
+                <p className="text-xs font-medium text-saddle-brown uppercase tracking-wider mb-2">Steps to go live</p>
+                <ol className="text-sm text-saddle-brown space-y-1">
+                  <li className={['Docs Sent', 'Agreement Signed', 'Verification Complete', 'Verification Pending', 'Live'].includes(rancherInfo.onboardingStatus) ? 'line-through text-gray-500' : ''}>
+                    1. Sign agreement {['Agreement Signed', 'Verification Complete', 'Verification Pending', 'Live'].includes(rancherInfo.onboardingStatus) && '✓'}
+                  </li>
+                  <li className={['Verification Complete', 'Verification Pending', 'Live'].includes(rancherInfo.onboardingStatus) ? 'line-through text-gray-500' : ''}>
+                    2. Verification {['Verification Complete', 'Live'].includes(rancherInfo.onboardingStatus) && '✓'}
+                  </li>
+                  <li>3. Go live</li>
+                </ol>
+              </div>
             </div>
           )}
 

@@ -48,6 +48,17 @@ You'll create 6 tables. For each one, click **"+ Add or import"** → **"Create 
 | Interests | Multiple select | Options: `Beef`, `Land`, `Merch`, `All` |
 | Status | Single select | Options: `Pending`, `Approved`, `Rejected` |
 | Created | Created time | (auto) |
+| Order Type | Single select | e.g. `Whole`, `Half`, `Quarter` |
+| Budget Range | Single select | e.g. `$500-$1000`, `$1000-$2000`, `$2000+` |
+| Segment | Single select | `Beef Buyer`, `Community` |
+| Intent Score | Number | Integer 0–100 |
+| Intent Classification | Single select | `High`, `Medium`, `Low` |
+| Referral Status | Single line text | e.g. `Unmatched`, `Pending Approval`, `Waitlisted` |
+| Admin Notes | Long text | - |
+| Last Contacted | Date (include time) | When we last emailed/called |
+| Backfill Email Sent | Checkbox | Set when backfill campaign email is sent |
+| Backfill Email Sent At | Date (include time) | Timestamp of backfill email send |
+| Referred By | Single line text | Affiliate code (e.g. `jane-d`) when signup came from affiliate link |
 
 **Default view:** Grid view is perfect
 
@@ -72,7 +83,26 @@ You'll create 6 tables. For each one, click **"+ Add or import"** → **"Create 
 | Operation Details | Long text | - |
 | Certified | Checkbox | - |
 | Status | Single select | Options: `Pending`, `Approved`, `Rejected` |
+| Referred By | Single line text | Affiliate code when application came from affiliate link |
 | Created | Created time | (auto) |
+
+---
+
+### **TABLE 2b: Affiliates** (for brand promoters)
+
+**Table Name:** `Affiliates`
+
+**Fields:**
+
+| Field Name | Type | Options |
+|------------|------|---------|
+| Name | Single line text | Display name |
+| Email | Email | Login + contact |
+| Code | Single line text | Unique slug for URL (e.g. `jane-d`) |
+| Status | Single select | `Active`, `Paused` |
+| Created | Created time | (auto) |
+
+**Default view:** Grid view
 
 ---
 

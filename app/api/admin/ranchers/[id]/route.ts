@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { getRecordById, updateRecord, deleteRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendRancherApproval } from '@/lib/email';
+import { sendRancherApproval, sendRancherGoLiveEmail } from '@/lib/email';
 
 export async function PATCH(
   request: NextRequest,
@@ -41,12 +41,22 @@ export async function PATCH(
     if (body.release_date !== undefined) fields['Release Date'] = body.release_date || null;
 
     let shouldSendApproval = false;
+    let shouldSendGoLive = false;
     if (body.status === 'approved') {
       try {
         const current: any = await getRecordById(TABLES.RANCHERS, id);
         const currentStatus = (current['Status'] || '').toLowerCase();
         if (currentStatus !== 'approved') {
           shouldSendApproval = true;
+        }
+      } catch { /* proceed */ }
+    }
+    if (body.onboarding_status === 'Live' && (body.active_status === 'Active' || fields['Active Status'] === 'Active')) {
+      try {
+        const current: any = await getRecordById(TABLES.RANCHERS, id);
+        const currentOnboarding = (current['Onboarding Status'] || '').trim();
+        if (currentOnboarding !== 'Live') {
+          shouldSendGoLive = true;
         }
       } catch { /* proceed */ }
     }
@@ -65,6 +75,27 @@ export async function PATCH(
         }
       } catch (emailErr) {
         console.error('Failed to send rancher approval email (non-fatal):', emailErr);
+      }
+    }
+
+    if (shouldSendGoLive) {
+      try {
+        const rancher: any = await getRecordById(TABLES.RANCHERS, id);
+        const email = rancher['Email'];
+        const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
+        const ranchName = rancher['Ranch Name'] || '';
+        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+
+        if (email) {
+          await sendRancherGoLiveEmail({
+            operatorName,
+            ranchName,
+            email,
+            dashboardUrl: `${baseUrl}/rancher`,
+          });
+        }
+      } catch (emailErr) {
+        console.error('Failed to send rancher go-live email (non-fatal):', emailErr);
       }
     }
 

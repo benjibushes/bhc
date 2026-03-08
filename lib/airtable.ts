@@ -21,6 +21,7 @@ export const TABLES = {
   INQUIRIES: 'Inquiries',
   CAMPAIGNS: 'Campaigns',
   REFERRALS: 'referrals',
+  AFFILIATES: 'Affiliates',
 };
 
 // Helper function to create a record (auto-strips problematic Airtable fields)

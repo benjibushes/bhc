@@ -13,6 +13,7 @@ function CampaignTracker() {
   useEffect(() => {
     const campaign = searchParams.get('campaign');
     const source = searchParams.get('source') || searchParams.get('utm_source');
+    const ref = searchParams.get('ref') || searchParams.get('aff');
     const utmParams = searchParams.toString();
 
     if (campaign) {
@@ -20,6 +21,10 @@ function CampaignTracker() {
       localStorage.setItem('bhc_source', source || 'email');
     } else if (source) {
       localStorage.setItem('bhc_source', source);
+    }
+
+    if (ref) {
+      localStorage.setItem('bhc_ref', ref);
     }
 
     if (utmParams) {

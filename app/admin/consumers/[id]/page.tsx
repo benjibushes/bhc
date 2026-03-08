@@ -26,6 +26,7 @@ interface ConsumerDetail {
   referral_status: string;
   admin_notes: string;
   last_contacted: string;
+  referred_by: string;
   campaign: string;
   created_at: string;
 }
@@ -204,6 +205,7 @@ export default function ConsumerDetailPage() {
                   <p><span className="text-saddle-brown">Interests:</span> {consumer.interests?.join(', ') || 'N/A'}</p>
                   {consumer.lead_source && <p><span className="text-saddle-brown">Lead Source:</span> {consumer.lead_source}</p>}
                   {consumer.campaign && <p><span className="text-saddle-brown">Campaign:</span> {consumer.campaign}</p>}
+                  {consumer.referred_by && <p><span className="text-saddle-brown">Referred by:</span> {consumer.referred_by}</p>}
                   <p><span className="text-saddle-brown">Referral Status:</span> {consumer.referral_status}</p>
                 </div>
                 {consumer.notes && (

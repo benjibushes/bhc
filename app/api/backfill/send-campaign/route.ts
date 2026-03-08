@@ -75,9 +75,11 @@ export async function POST(request: Request) {
           `,
         });
 
+        const now = new Date().toISOString();
         await updateRecord(TABLES.CONSUMERS, consumer.id, {
           'Backfill Email Sent': true,
-          'Backfill Email Sent At': new Date().toISOString(),
+          'Backfill Email Sent At': now,
+          'Last Contacted': now,
         });
 
         sentCount++;

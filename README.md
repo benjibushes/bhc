@@ -172,6 +172,22 @@ vercel --prod          # deploy to production
 
 After deploying, set **all** env vars in the Vercel dashboard under Settings → Environment Variables.
 
+### Telegram webhook (for bot commands)
+
+For slash commands (`/today`, `/help`, etc.) to work, Telegram must send updates to your app with the same secret you use in `TELEGRAM_WEBHOOK_SECRET`. Set the webhook **after** deploy:
+
+```bash
+# Replace YOUR_BOT_TOKEN and YOUR_WEBHOOK_SECRET with your real values.
+# URL must be your production URL, e.g. https://www.buyhalfcow.com
+curl -X POST "https://api.telegram.org/botYOUR_BOT_TOKEN/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://YOUR_DOMAIN/api/webhooks/telegram","secret_token":"YOUR_WEBHOOK_SECRET"}'
+```
+
+- Use the **exact** same value for `secret_token` as in Vercel env `TELEGRAM_WEBHOOK_SECRET`.
+- Check that it’s set: `curl "https://api.telegram.org/botYOUR_BOT_TOKEN/getWebhookInfo"`.
+- If commands still do nothing, confirm `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ADMIN_CHAT_ID` are set in Vercel (same env as production).
+
 ### Post-Deploy Smoke Test
 
 - `/access` — submit test signup as Beef Buyer, verify auto-approval email

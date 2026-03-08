@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
 import Input from '../components/Input';
@@ -33,11 +34,19 @@ const US_STATES = [
   { value: 'WI', label: 'Wisconsin' }, { value: 'WY', label: 'Wyoming' },
 ];
 
-export default function PartnerPage() {
+function PartnerPageContent() {
   const [partnerType, setPartnerType] = useState<PartnerType>('');
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [ref, setRef] = useState('');
+
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const refFromUrl = searchParams.get('ref') || searchParams.get('aff');
+    if (refFromUrl) localStorage.setItem('bhc_ref', refFromUrl);
+    setRef(refFromUrl || localStorage.getItem('bhc_ref') || '');
+  }, [searchParams]);
 
   // Rancher form data
   const [rancherData, setRancherData] = useState({
@@ -133,16 +142,16 @@ export default function PartnerPage() {
           setIsSubmitting(false);
           return;
         }
-        payload = { partnerType: 'rancher', ...rancherData };
+        payload = { partnerType: 'rancher', ...rancherData, ref: ref || undefined };
       } else if (partnerType === 'brand') {
         if (!brandData.exclusivityAgreed) {
           setError('You must agree to the exclusivity terms.');
           setIsSubmitting(false);
           return;
         }
-        payload = { partnerType: 'brand', ...brandData };
+        payload = { partnerType: 'brand', ...brandData, ref: ref || undefined };
       } else if (partnerType === 'land') {
-        payload = { partnerType: 'land', ...landData };
+        payload = { partnerType: 'land', ...landData, ref: ref || undefined };
       }
 
       const response = await fetch('/api/partners', {
@@ -627,6 +636,14 @@ export default function PartnerPage() {
         </div>
       </Container>
     </main>
+  );
+}
+
+export default function PartnerPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen py-24 bg-[#F4F1EC] flex items-center justify-center"><p className="text-[#6B4F3F]">Loading...</p></main>}>
+      <PartnerPageContent />
+    </Suspense>
   );
 }
 

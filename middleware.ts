@@ -23,6 +23,14 @@ export function middleware(request: NextRequest) {
     }
   }
 
+  // Protect affiliate dashboard API (requires affiliate session cookie)
+  if (pathname.startsWith('/api/affiliate/')) {
+    const affiliateCookie = request.cookies.get('bhc-affiliate-auth');
+    if (!affiliateCookie?.value) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+  }
+
   // Protect Telegram webhook with secret token
   if (pathname === '/api/webhooks/telegram') {
     const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
@@ -55,6 +63,7 @@ export const config = {
   matcher: [
     '/api/admin/:path*',
     '/api/referrals/:path*',
+    '/api/affiliate/:path*',
     '/api/webhooks/telegram',
     '/((?!_next/static|_next/image|favicon.ico).*)',
   ],

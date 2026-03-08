@@ -33,6 +33,7 @@ interface Consumer {
   intent_classification: string;
   lead_source: string;
   referral_status: string;
+  referred_by: string;
   admin_notes: string;
   last_contacted: string;
   campaign: string;
@@ -61,6 +62,7 @@ interface Rancher {
   verification_status?: string;
   featured?: boolean;
   release_date?: string;
+  referred_by?: string;
   created_at: string;
 }
 
@@ -96,6 +98,7 @@ export default function AdminPage() {
   const [landDeals, setLandDeals] = useState<LandDeal[]>([]);
   const [loading, setLoading] = useState(true);
   const [rancherStateFilter, setRancherStateFilter] = useState<string>('');
+  const [rancherViewFilter, setRancherViewFilter] = useState<string>('');
   const [consumerStateFilter, setConsumerStateFilter] = useState<string>('');
   const [intentFilter, setIntentFilter] = useState<string>('');
   const [segmentFilter, setSegmentFilter] = useState<string>('');
@@ -261,10 +264,12 @@ export default function AdminPage() {
 
   const updateOnboardingStatus = async (rancherId: string, newStatus: string) => {
     try {
+      const body: Record<string, string> = { onboarding_status: newStatus };
+      if (newStatus === 'Live') body.active_status = 'Active';
       await fetch(`/api/admin/ranchers/${rancherId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ onboarding_status: newStatus }),
+        body: JSON.stringify(body),
       });
       fetchAllData();
     } catch {
@@ -410,6 +415,9 @@ export default function AdminPage() {
             </Button>
             <Button href="/admin/inquiries" variant="secondary">
               📨 Inquiries
+            </Button>
+            <Button href="/admin/affiliates" variant="secondary">
+              🔗 Affiliates
             </Button>
           </div>
 
@@ -568,6 +576,7 @@ export default function AdminPage() {
                             {consumer.order_type && <p className="text-sm">Order: {consumer.order_type} · Budget: {consumer.budget_range || 'N/A'}</p>}
                             {consumer.notes && <p className="text-sm text-[#6B4F3F] italic truncate max-w-md">&quot;{consumer.notes}&quot;</p>}
                             {consumer.campaign && <p className="text-xs text-[#A7A29A]">Source: {consumer.campaign}</p>}
+                            {consumer.referred_by && <p className="text-xs text-blue-700">Referred by: {consumer.referred_by}</p>}
                             {consumer.admin_notes && (
                               <p className="text-xs mt-1 px-2 py-1 bg-yellow-50 border-l-2 border-yellow-400 text-yellow-800">
                                 Notes: {consumer.admin_notes}
@@ -636,10 +645,23 @@ export default function AdminPage() {
             {/* RANCHERS TAB */}
             {activeTab === 'ranchers' && (
               <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
                   <h2 className="font-[family-name:var(--font-serif)] text-2xl">Rancher Applications</h2>
                   
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <select
+                      value={rancherViewFilter}
+                      onChange={(e) => setRancherViewFilter(e.target.value)}
+                      className="px-4 py-2 border-2 border-[#0E0E0E] bg-[#F4F1EC] text-sm font-medium"
+                    >
+                      <option value="">All Ranchers</option>
+                      <option value="ready">
+                        Ready to go live ({ranchers.filter(r => r.agreement_signed && r.onboarding_status === 'Verification Complete').length})
+                      </option>
+                      <option value="broken">
+                        Live but not receiving ({ranchers.filter(r => r.onboarding_status === 'Live' && r.active_status !== 'Active').length})
+                      </option>
+                    </select>
                     <select
                       value={rancherStateFilter}
                       onChange={(e) => setRancherStateFilter(e.target.value)}
@@ -697,14 +719,27 @@ export default function AdminPage() {
                   <p className="text-[#6B4F3F]">No rancher applications yet.</p>
                 ) : (
                   <>
-                    {rancherStateFilter && (
+                    {(rancherStateFilter || rancherViewFilter) && (
                       <p className="text-sm text-[#6B4F3F] mb-4">
-                        Showing {ranchers.filter(r => r.state === rancherStateFilter).length} rancher(s) in {rancherStateFilter}
+                        Showing {ranchers.filter(r => {
+                          if (rancherStateFilter && r.state !== rancherStateFilter) return false;
+                          if (rancherViewFilter === 'ready') return !!(r.agreement_signed && r.onboarding_status === 'Verification Complete');
+                          if (rancherViewFilter === 'broken') return !!(r.onboarding_status === 'Live' && r.active_status !== 'Active');
+                          return true;
+                        }).length} rancher(s)
+                        {rancherViewFilter === 'ready' && ' (ready to go live)'}
+                        {rancherViewFilter === 'broken' && ' (Live but not receiving leads)'}
+                        {rancherStateFilter && ` in ${rancherStateFilter}`}
                       </p>
                     )}
                     <div className="space-y-4">
                       {ranchers
-                        .filter(r => !rancherStateFilter || r.state === rancherStateFilter)
+                        .filter(r => {
+                          if (rancherStateFilter && r.state !== rancherStateFilter) return false;
+                          if (rancherViewFilter === 'ready') return !!(r.agreement_signed && r.onboarding_status === 'Verification Complete');
+                          if (rancherViewFilter === 'broken') return !!(r.onboarding_status === 'Live' && r.active_status !== 'Active');
+                          return true;
+                        })
                         .map((rancher) => (
                       <div key={rancher.id} className="p-4 border border-[#A7A29A] space-y-3">
                         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -780,6 +815,7 @@ export default function AdminPage() {
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[#A7A29A]/30">
+                          {rancher.referred_by && <p className="text-xs text-blue-700">Referred by: {rancher.referred_by}</p>}
                           <p className="text-xs text-[#6B4F3F]">
                             Applied: {new Date(rancher.created_at).toLocaleDateString()}
                           </p>

@@ -36,6 +36,9 @@ export async function GET(
       referral_status: record['Referral Status'] || 'Unmatched',
       admin_notes: record['Admin Notes'] || '',
       last_contacted: record['Last Contacted'] || '',
+      backfill_email_sent: !!record['Backfill Email Sent'],
+      backfill_email_sent_at: record['Backfill Email Sent At'] || '',
+      referred_by: record['Referred By'] || '',
       campaign: record['Campaign'] || '',
       created_at: record['Created'] || record.createdTime || new Date().toISOString(),
     });

@@ -1,6 +1,18 @@
 import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+
+async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
+  if (!ref || typeof ref !== 'string' || ref.length > 50) return false;
+  const code = ref.trim().replace(/"/g, '');
+  if (!code) return false;
+  try {
+    const affiliates = await getAllRecords(TABLES.AFFILIATES, `AND({Code} = "${code}", {Status} = "Active")`);
+    return affiliates.length > 0;
+  } catch {
+    return false;
+  }
+}
 import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert } from '@/lib/email';
 import { sendTelegramConsumerSignup } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
@@ -43,7 +55,7 @@ export async function POST(request: Request) {
       orderType, budgetRange, notes,
       interestBeef, interestLand, interestMerch, interestAll,
       intentScore, intentClassification, segment,
-      source, campaign, utmParams,
+      source, campaign, utmParams, ref,
     } = body;
 
     if (!fullName || !email || !state) {
@@ -86,7 +98,9 @@ export async function POST(request: Request) {
     const status = deriveStatus(consumerSegment, intentClassification || '');
     const firstName = fullName.split(' ')[0];
 
-    const record = await createRecord(TABLES.CONSUMERS, {
+    const referredBy = ref && (await validateAffiliateRef(ref)) ? ref.trim() : '';
+
+    const consumerFields: Record<string, unknown> = {
       'Full Name': fullName,
       'Email': email,
       'Phone': phone || '',
@@ -103,7 +117,10 @@ export async function POST(request: Request) {
       'Referral Status': consumerSegment === 'Community' ? 'Community' : 'Unmatched',
       'Campaign': campaign || '',
       'UTM Parameters': utmParams || '',
-    });
+    };
+    if (referredBy) consumerFields['Referred By'] = referredBy;
+
+    const record = await createRecord(TABLES.CONSUMERS, consumerFields);
 
     if (status === 'approved') {
       const token = jwt.sign(
