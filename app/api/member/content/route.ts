@@ -15,6 +15,7 @@ export async function GET() {
     let memberState = '';
     let memberId = '';
     let memberSegment = '';
+    let memberOrderType = '';
 
     if (sessionCookie?.value) {
       try {
@@ -36,6 +37,7 @@ export async function GET() {
         const { getRecordById } = await import('@/lib/airtable');
         const consumer: any = await getRecordById(TABLES.CONSUMERS, memberId);
         memberSegment = consumer['Segment'] || '';
+        memberOrderType = consumer['Order Type'] || '';
       } catch {
         // Non-fatal, segment will be empty
       }
@@ -77,6 +79,7 @@ export async function GET() {
     return NextResponse.json({
       memberState,
       memberSegment,
+      hasOrderDetails: !!memberOrderType,
       stateRanchers,
       otherRanchers,
       landDeals,

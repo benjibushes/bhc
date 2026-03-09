@@ -1464,31 +1464,22 @@ export async function sendBackfillEmail(data: {
   loginUrl: string;
 }) {
   const { firstName, email, loginUrl } = data;
-  const subject = `Quick question from Ben — what are you looking for?`;
+  const subject = `One quick thing before we match you`;
   const html = `
     <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a1a1a; line-height: 1.7;">
       <p>Hey ${firstName},</p>
 
-      <p>You signed up for BuyHalfCow — I just approved your account and wanted to reach out personally.</p>
+      <p>I just approved your BuyHalfCow account. Welcome.</p>
 
-      <p>I'm Ben. I run this thing. And I'm in the middle of locking down rancher supply across the country right now — driving to ranches, signing agreements, building the network from the ground up.</p>
+      <p>I'm Ben. I built this. Right now I'm on the road locking down rancher supply — driving to ranches, signing agreements, building the network from scratch. I'm dead serious about this and so is everyone who's been waiting.</p>
 
-      <p>Before I match you with a rancher or put you on a waitlist, I want to make sure I understand what you're actually looking for. Takes 30 seconds to reply:</p>
-
-      <ol style="padding-left: 1.5em;">
-        <li><strong>What do you want to buy?</strong> (quarter cow, half cow, whole cow, ground beef subscription, not sure yet?)</li>
-        <li><strong>What's your rough budget?</strong> (under $500, $500–$1,500, $1,500+, flexible?)</li>
-        <li><strong>How soon do you want it?</strong> (ASAP, next few months, just exploring for now?)</li>
-        <li><strong>What state are you in?</strong></li>
-      </ol>
-
-      <p>Just hit reply. I read every one of these.</p>
-
-      <p>If you're not here to buy beef — if you're more interested in the mission, following along, or helping spread the word — that's great too. Just let me know and I'll make sure you're getting the right updates.</p>
+      <p>Before I can match you with a rancher, I need to know what you're looking for. Takes 30 seconds on your profile — quarter cow, half, whole, your budget, when you want it.</p>
 
       <p>
-        <a href="${loginUrl}" style="display: inline-block; background: #8B1A1A; color: white; padding: 12px 28px; border-radius: 4px; text-decoration: none; font-weight: bold; font-family: Arial, sans-serif; font-size: 14px;">View Your Member Dashboard</a>
+        <a href="${loginUrl}" style="display: inline-block; background: #8B1A1A; color: white; padding: 12px 28px; border-radius: 4px; text-decoration: none; font-weight: bold; font-family: Arial, sans-serif; font-size: 14px;">Complete My Profile →</a>
       </p>
+
+      <p>If you're not here to buy beef right now — just following the mission, interested in ranching, or want to help spread the word — update your profile and I'll make sure you get the right updates.</p>
 
       <p style="margin-top: 2em;">— Ben<br>
       <span style="color: #666; font-size: 0.9em;">BuyHalfCow | <a href="https://buyhalfcow.com" style="color: #8B1A1A; text-decoration: none;">buyhalfcow.com</a></span></p>

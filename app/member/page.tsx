@@ -68,6 +68,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   const [data, setData] = useState<{
     memberState: string;
     memberSegment: string;
+    hasOrderDetails: boolean;
     stateRanchers: Rancher[];
     otherRanchers: Rancher[];
     landDeals: LandDeal[];
@@ -253,12 +254,12 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 </div>
               )}
 
-              {/* Upgrade to Beef Buyer card for Community members */}
-              {data?.memberSegment && data.memberSegment !== 'Beef Buyer' && !upgradeSuccess && (
+              {/* Order details card — shows for anyone who hasn't told us what they want */}
+              {data && !data.hasOrderDetails && !upgradeSuccess && (
                 <div className="p-6 border-2 border-charcoal-black bg-white space-y-4">
-                  <h3 className="font-serif text-xl">Interested in Sourcing Beef?</h3>
+                  <h3 className="font-serif text-xl">What Are You Looking For?</h3>
                   <p className="text-sm text-saddle-brown">
-                    Get matched directly with a verified rancher in your area. Tell us what you&apos;re looking for and we&apos;ll find the right fit.
+                    Tell us what you want and we&apos;ll match you with the right rancher. Takes 30 seconds.
                   </p>
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div>
