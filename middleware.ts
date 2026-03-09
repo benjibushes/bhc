@@ -31,18 +31,6 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // Protect Telegram webhook with secret token
-  if (pathname === '/api/webhooks/telegram') {
-    const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-    if (!expectedSecret) {
-      return NextResponse.json({ error: 'Webhook not configured' }, { status: 503 });
-    }
-    const secretToken = request.headers.get('x-telegram-bot-api-secret-token');
-    if (secretToken !== expectedSecret) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-  }
-
   const response = NextResponse.next();
 
   // Security headers
@@ -64,7 +52,6 @@ export const config = {
     '/api/admin/:path*',
     '/api/referrals/:path*',
     '/api/affiliate/:path*',
-    '/api/webhooks/telegram',
     '/((?!_next/static|_next/image|favicon.ico).*)',
   ],
 };
