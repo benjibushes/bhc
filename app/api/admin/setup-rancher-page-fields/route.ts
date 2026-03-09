@@ -85,6 +85,10 @@ export async function GET(request: Request) {
       { name: 'Reserve Link', type: 'url' },
       // ── Extras ────────────────────────────────────────────────────────────
       { name: 'Custom Notes', type: 'multilineText' },
+      // ── Attribution tracking ──────────────────────────────────────────────
+      { name: 'Quarter Clicks', type: 'number', options: { precision: 0 } },
+      { name: 'Half Clicks', type: 'number', options: { precision: 0 } },
+      { name: 'Whole Clicks', type: 'number', options: { precision: 0 } },
     ];
 
     for (const field of fields) {

@@ -49,13 +49,13 @@ function ShareCard({
   label,
   lbs,
   price,
-  paymentLink,
+  trackingUrl,
   highlighted = false,
 }: {
   label: string;
   lbs: string;
   price: number;
-  paymentLink: string;
+  trackingUrl: string; // /ranchers/[slug]/pay/[tier] — always BHC-routed
   highlighted?: boolean;
 }) {
   return (
@@ -78,31 +78,16 @@ function ShareCard({
         </p>
       )}
       <div className="mt-auto">
-        {paymentLink ? (
-          <a
-            href={paymentLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`block w-full text-center py-3 text-sm font-medium tracking-wide transition-colors ${
-              highlighted
-                ? 'bg-[#F4F1EC] text-[#6B4F3F] hover:bg-white'
-                : 'bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]'
-            }`}
-          >
-            Buy {label} →
-          </a>
-        ) : (
-          <a
-            href="/access"
-            className={`block w-full text-center py-3 text-sm font-medium tracking-wide transition-colors ${
-              highlighted
-                ? 'bg-[#F4F1EC] text-[#6B4F3F] hover:bg-white'
-                : 'bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]'
-            }`}
-          >
-            Inquire →
-          </a>
-        )}
+        <a
+          href={trackingUrl}
+          className={`block w-full text-center py-3 text-sm font-medium tracking-wide transition-colors ${
+            highlighted
+              ? 'bg-[#F4F1EC] text-[#6B4F3F] hover:bg-white'
+              : 'bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]'
+          }`}
+        >
+          Buy {label} →
+        </a>
       </div>
     </div>
   );
@@ -325,7 +310,7 @@ export default async function RancherPage(
                     label="Quarter"
                     lbs={quarterLbs}
                     price={quarterPrice}
-                    paymentLink={quarterLink}
+                    trackingUrl={quarterLink ? `/ranchers/${slug}/pay/quarter` : '/access'}
                   />
                 )}
                 {halfPrice && (
@@ -333,7 +318,7 @@ export default async function RancherPage(
                     label="Half"
                     lbs={halfLbs}
                     price={halfPrice}
-                    paymentLink={halfLink}
+                    trackingUrl={halfLink ? `/ranchers/${slug}/pay/half` : '/access'}
                     highlighted
                   />
                 )}
@@ -342,7 +327,7 @@ export default async function RancherPage(
                     label="Whole"
                     lbs={wholeLbs}
                     price={wholePrice}
-                    paymentLink={wholeLink}
+                    trackingUrl={wholeLink ? `/ranchers/${slug}/pay/whole` : '/access'}
                   />
                 )}
               </div>
