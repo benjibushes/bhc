@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
+import { sendRancherLeadNudge } from '@/lib/email';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
@@ -161,7 +162,57 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
       `📊 <b>Follow-Up Summary</b>: ${stalled.length} rancher${stalled.length !== 1 ? 's' : ''} need attention\n\n${summaryLines.join('\n')}`
     );
 
-    return NextResponse.json({ success: true, stalled: stalled.length });
+    // ── Stale lead nudge emails to active ranchers ─────────────────────────
+    let nudgesSent = 0;
+    try {
+      const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      const staleReferrals = await getAllRecords(
+        TABLES.REFERRALS,
+        'OR({Status} = "Intro Sent", {Status} = "Rancher Contacted")'
+      ) as any[];
+
+      const fiveDaysAgo = now.getTime() - 5 * DAY_MS;
+      const staleOnes = staleReferrals.filter(r => {
+        const ts = r['Intro Sent At'] || r['Created'] || r.createdTime;
+        return ts && new Date(ts).getTime() < fiveDaysAgo;
+      });
+
+      // Group by rancher
+      const byRancher: Record<string, { rancherId: string; leads: Array<{ buyerName: string; status: string; daysSince: number }> }> = {};
+      for (const r of staleOnes) {
+        const rancherIds: string[] = r['Rancher'] || r['Suggested Rancher'] || [];
+        if (!Array.isArray(rancherIds) || rancherIds.length === 0) continue;
+        const rancherId = rancherIds[0];
+        const ts = r['Intro Sent At'] || r['Created'] || r.createdTime;
+        const daysSince = Math.floor((now.getTime() - new Date(ts).getTime()) / DAY_MS);
+        if (!byRancher[rancherId]) byRancher[rancherId] = { rancherId, leads: [] };
+        byRancher[rancherId].leads.push({
+          buyerName: r['Buyer Name'] || 'Unknown Buyer',
+          status: r['Status'] || 'Unknown',
+          daysSince,
+        });
+      }
+
+      // Send nudge to each rancher with stale leads
+      for (const [rancherId, { leads }] of Object.entries(byRancher)) {
+        try {
+          const rancher = ranchers.find((r: any) => r.id === rancherId) as any;
+          if (!rancher) continue;
+          const rancherEmail = rancher['Email'] || '';
+          if (!rancherEmail) continue;
+          const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+          const dashboardUrl = `${SITE_URL}/rancher`;
+          await sendRancherLeadNudge({ rancherName, email: rancherEmail, leads, dashboardUrl });
+          nudgesSent++;
+        } catch (e: any) {
+          console.error('Lead nudge error:', e.message);
+        }
+      }
+    } catch (e: any) {
+      console.error('Stale lead nudge error:', e.message);
+    }
+
+    return NextResponse.json({ success: true, stalled: stalled.length, nudgesSent });
   } catch (error: any) {
     console.error('Rancher follow-up error:', error);
     await sendTelegramMessage(

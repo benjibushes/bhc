@@ -7,7 +7,13 @@ import {
   sendSequenceEmail_BeefDay7,
   sendSequenceEmail_CommunityDay7,
   sendSequenceEmail_CommunityDay14,
+  sendIntroCheckInEmail,
+  sendNurtureDay3,
+  sendNurtureDay10,
+  sendMerchEmail,
+  sendNurtureAffiliate,
 } from '@/lib/email';
+
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -38,10 +44,21 @@ export async function POST(request: Request) {
 
     const now = Date.now();
 
-    // Fetch all approved consumers once
+    // Fetch all approved consumers + active ranchers once
     const approved = await getAllRecords(TABLES.CONSUMERS, '{Status} = "Approved"') as any[];
+    const activeRanchers = await getAllRecords(TABLES.RANCHERS, '{Active Status} = "Active"') as any[];
 
-    let beefDay3 = 0, beefDay7 = 0, community7 = 0, community14 = 0, errors = 0;
+    // Helper: does this consumer have a rancher available?
+    function hasRancherAvailable(consumerState: string): boolean {
+      return activeRanchers.some((r: any) =>
+        r['Ships Nationwide'] === true ||
+        r['Match Type'] === 'Nationwide' ||
+        (r['State'] || '').toLowerCase() === (consumerState || '').toLowerCase()
+      );
+    }
+
+    let beefDay3 = 0, beefDay7 = 0, community7 = 0, community14 = 0, introCheckin = 0,
+        nurture3 = 0, nurture10 = 0, nurtureMerch = 0, nurtureAffiliate = 0, errors = 0;
 
     for (const consumer of approved) {
       try {
@@ -59,6 +76,57 @@ export async function POST(request: Request) {
 
         const daysSinceApproval = (now - approvedAt) / DAY_MS;
         const loginUrl = makeLoginUrl(consumerId, email);
+
+        // ── Phase 1 vs Phase 2 determined per consumer by rancher availability ──
+        const consumerState = consumer['State'] || '';
+        const rancherAvailable = hasRancherAvailable(consumerState);
+
+        if (!rancherAvailable) {
+          // Day 3: "What's actually happening right now" — mission update + Instagram
+          if (daysSinceApproval >= 3 && daysSinceApproval < 4 && sequenceStage === 'none') {
+            await sendNurtureDay3({ firstName, email, loginUrl });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'nurture_3d_sent',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            nurture3++;
+          }
+
+          // Day 10: "I drove to Texas with $500 in my account" — raw story
+          if (daysSinceApproval >= 10 && daysSinceApproval < 11 && sequenceStage === 'nurture_3d_sent') {
+            await sendNurtureDay10({ firstName, email, loginUrl });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'nurture_10d_sent',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            nurture10++;
+          }
+
+          // Day 21: Merch email — wear the mission
+          if (daysSinceApproval >= 21 && daysSinceApproval < 22 && sequenceStage === 'nurture_10d_sent') {
+            await sendMerchEmail({ firstName, email });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'nurture_merch_sent',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            nurtureMerch++;
+          }
+
+          // Day 35: Affiliate ask — one link, buyers and ranchers welcome
+          if (daysSinceApproval >= 35 && daysSinceApproval < 36 && sequenceStage === 'nurture_merch_sent') {
+            const referralLink = `${SITE_URL}/access`;
+            await sendNurtureAffiliate({ firstName, email, referralLink, loginUrl });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'nurture_affiliate_sent',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            nurtureAffiliate++;
+          }
+        }
+
+        // ── Phase 2: Rancher available — run closing sequences ────────────────
+
+        if (rancherAvailable) {
 
         // ── Beef Buyer sequences ──────────────────────────────────────────
 
@@ -135,24 +203,86 @@ export async function POST(request: Request) {
             community14++;
           }
         }
+
+        } // end if (rancherAvailable)
+
       } catch (err: any) {
         console.error(`Sequence error for consumer ${consumer.id}:`, err.message);
         errors++;
       }
     }
 
-    const total = beefDay3 + beefDay7 + community7 + community14;
+    // ── Intro check-in: 3 days after Intro Sent At ────────────────────────
+    // Query referrals that are in "Intro Sent" status with Intro Sent At > 3 days ago
+    try {
+      const introReferrals = await getAllRecords(
+        TABLES.REFERRALS,
+        '{Status} = "Intro Sent"'
+      ) as any[];
+
+      for (const referral of introReferrals) {
+        try {
+          const introSentAt = referral['Intro Sent At'];
+          if (!introSentAt) continue;
+
+          const daysSinceIntro = (now - new Date(introSentAt).getTime()) / DAY_MS;
+          if (daysSinceIntro < 3) continue;
+
+          // Find the consumer
+          const consumerIds = referral['Buyer'] || [];
+          if (!Array.isArray(consumerIds) || consumerIds.length === 0) continue;
+          const consumerId = consumerIds[0];
+
+          // Find consumer in approved list
+          const consumer = approved.find(c => c.id === consumerId);
+          if (!consumer) continue;
+
+          const stage = consumer['Sequence Stage'] || 'none';
+          if (stage === 'intro_checkin_sent') continue;
+
+          const email = consumer['Email'];
+          if (!email) continue;
+
+          const firstName = (consumer['Full Name'] || '').split(' ')[0] || 'there';
+          const loginUrl = makeLoginUrl(consumerId, email);
+
+          // Get rancher contact info
+          const rancherName = referral['Suggested Rancher Name'] || 'your rancher';
+          const rancherEmail = referral['Rancher Email'] || '';
+          const rancherPhone = referral['Rancher Phone'] || '';
+
+          await sendIntroCheckInEmail({ firstName, email, rancherName, rancherEmail, rancherPhone, loginUrl });
+          await updateRecord(TABLES.CONSUMERS, consumerId, {
+            'Sequence Stage': 'intro_checkin_sent',
+            'Sequence Sent At': new Date().toISOString(),
+          });
+          introCheckin++;
+        } catch (err: any) {
+          console.error(`Intro check-in error for referral ${referral.id}:`, err.message);
+          errors++;
+        }
+      }
+    } catch (err: any) {
+      console.error('Intro check-in query error:', err.message);
+    }
+
+    const total = beefDay3 + beefDay7 + community7 + community14 + introCheckin + nurture3 + nurture10 + nurtureMerch + nurtureAffiliate;
 
     if (total > 0) {
       await sendTelegramUpdate(
-        `📧 <b>Email Sequences</b>\n\n✅ ${total} sequence email${total > 1 ? 's' : ''} sent\n` +
-        `🥩 Beef day-3: ${beefDay3} | day-7: ${beefDay7}\n` +
-        `🏷️ Community day-7: ${community7} | day-14: ${community14}` +
-        (errors > 0 ? `\n⚠️ ${errors} errors` : '')
+        `📧 <b>Email Sequences</b>\n\n✅ ${total} email${total > 1 ? 's' : ''} sent\n` +
+        (nurture3 + nurture10 + nurtureMerch + nurtureAffiliate > 0
+          ? `🌱 Nurture: day-3 ${nurture3} | day-10 ${nurture10} | merch ${nurtureMerch} | affiliate ${nurtureAffiliate}\n`
+          : '') +
+        (beefDay3 + beefDay7 + community7 + community14 > 0
+          ? `🥩 Closing: beef d3 ${beefDay3} | d7 ${beefDay7} | community d7 ${community7} | d14 ${community14}\n`
+          : '') +
+        (introCheckin > 0 ? `🔔 Intro check-ins: ${introCheckin}\n` : '') +
+        (errors > 0 ? `⚠️ ${errors} errors` : '')
       );
     }
 
-    return NextResponse.json({ success: true, sent: total, beefDay3, beefDay7, community7, community14, errors });
+    return NextResponse.json({ success: true, sent: total, nurture3, nurture10, nurtureMerch, nurtureAffiliate, beefDay3, beefDay7, community7, community14, introCheckin, errors });
   } catch (error: any) {
     console.error('Email sequences cron error:', error);
     await sendTelegramUpdate(`⚠️ Email sequences cron failed: ${error.message}`).catch(() => {});

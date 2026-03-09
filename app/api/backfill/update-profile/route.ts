@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
     await updateRecord(TABLES.CONSUMERS, consumerId, {
       'Order Type': orderType || '',
-      'Budget Range': budgetRange || '',
+      'Budget': budgetRange || '',
       'Notes': notes || '',
       'Intent Score': intentScore,
       'Intent Classification': intentClassification,

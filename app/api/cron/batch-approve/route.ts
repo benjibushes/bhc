@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendConsumerApproval } from '@/lib/email';
+import { sendConsumerApproval, sendWaitlistEmail } from '@/lib/email';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
 import jwt from 'jsonwebtoken';
@@ -134,7 +134,27 @@ export async function POST(request: Request) {
                 notes: consumer['Notes'],
               }),
             });
-            if (matchRes.ok) matched++;
+            if (matchRes.ok) {
+              const matchData = await matchRes.json().catch(() => ({}));
+              const didMatch = !!(matchData.rancherId || matchData.referralId || matchData.rancher || matchData.matched);
+              if (didMatch) {
+                matched++;
+              } else {
+                // No rancher available in their state — waitlist them
+                const currentStage = consumer['Sequence Stage'] || 'none';
+                if (currentStage !== 'waitlisted' && email) {
+                  await sendWaitlistEmail({ firstName, email, state: consumer['State'] });
+                  await updateRecord(TABLES.CONSUMERS, consumerId, { 'Sequence Stage': 'waitlisted' });
+                }
+              }
+            } else {
+              // Match API error — still no rancher, notify via waitlist
+              const currentStage = consumer['Sequence Stage'] || 'none';
+              if (currentStage !== 'waitlisted' && email) {
+                await sendWaitlistEmail({ firstName, email, state: consumer['State'] });
+                await updateRecord(TABLES.CONSUMERS, consumerId, { 'Sequence Stage': 'waitlisted' });
+              }
+            }
           } catch (matchErr) {
             console.error(`Matching error for consumer ${consumerId}:`, matchErr);
           }

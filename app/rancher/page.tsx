@@ -18,6 +18,25 @@ interface RancherInfo {
   maxActiveReferrals: number;
   monthlyCapacity: number;
   beefTypes: string;
+  // Landing page fields
+  slug: string;
+  pageLive: boolean;
+  logoUrl: string;
+  tagline: string;
+  aboutText: string;
+  videoUrl: string;
+  quarterPrice: string | number;
+  quarterLbs: string;
+  quarterPaymentLink: string;
+  halfPrice: string | number;
+  halfLbs: string;
+  halfPaymentLink: string;
+  wholePrice: string | number;
+  wholeLbs: string;
+  wholePaymentLink: string;
+  nextProcessingDate: string;
+  reserveLink: string;
+  customNotes: string;
 }
 
 interface Stats {
@@ -59,7 +78,7 @@ interface NetworkBenefit {
   contact_email: string;
 }
 
-type Tab = 'overview' | 'referrals' | 'earnings' | 'benefits';
+type Tab = 'overview' | 'referrals' | 'earnings' | 'benefits' | 'my_page';
 
 const statusStyles: Record<string, string> = {
   'Intro Sent': 'bg-blue-100 text-blue-800',
@@ -82,6 +101,10 @@ export default function RancherDashboardPage() {
   const [closeForm, setCloseForm] = useState({ status: 'Closed Won', saleAmount: '', notes: '' });
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState('');
+  const [pageForm, setPageForm] = useState<Record<string, string>>({});
+  const [pageSaving, setPageSaving] = useState(false);
+  const [pageSaved, setPageSaved] = useState(false);
+  const [pageError, setPageError] = useState('');
 
   useEffect(() => {
     fetchDashboard();
@@ -106,6 +129,27 @@ export default function RancherDashboardPage() {
       setStats(data.stats);
       setReferrals(data.referrals);
       setBenefits(data.networkBenefits || []);
+      // Populate landing page form with current values
+      const r = data.rancher;
+      setPageForm({
+        'Slug': r.slug || '',
+        'Logo URL': r.logoUrl || '',
+        'Tagline': r.tagline || '',
+        'About Text': r.aboutText || '',
+        'Video URL': r.videoUrl || '',
+        'Quarter Price': r.quarterPrice ? String(r.quarterPrice) : '',
+        'Quarter lbs': r.quarterLbs || '',
+        'Quarter Payment Link': r.quarterPaymentLink || '',
+        'Half Price': r.halfPrice ? String(r.halfPrice) : '',
+        'Half lbs': r.halfLbs || '',
+        'Half Payment Link': r.halfPaymentLink || '',
+        'Whole Price': r.wholePrice ? String(r.wholePrice) : '',
+        'Whole lbs': r.wholeLbs || '',
+        'Whole Payment Link': r.wholePaymentLink || '',
+        'Next Processing Date': r.nextProcessingDate || '',
+        'Reserve Link': r.reserveLink || '',
+        'Custom Notes': r.customNotes || '',
+      });
     } catch {
       router.push('/rancher/login');
     } finally {
@@ -174,6 +218,36 @@ export default function RancherDashboardPage() {
     router.push('/');
   };
 
+  const handleSavePage = async () => {
+    setPageSaving(true);
+    setPageError('');
+    setPageSaved(false);
+    try {
+      // Convert price fields to numbers
+      const body: Record<string, any> = { ...pageForm };
+      for (const key of ['Quarter Price', 'Half Price', 'Whole Price']) {
+        if (body[key]) body[key] = parseFloat(body[key]) || null;
+        else body[key] = null;
+      }
+      const res = await fetch('/api/rancher/landing-page', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setPageError(data.error || 'Failed to save. Please try again.');
+        return;
+      }
+      setPageSaved(true);
+      setTimeout(() => setPageSaved(false), 3000);
+    } catch {
+      setPageError('Network error. Please check your connection.');
+    } finally {
+      setPageSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <main className="min-h-screen py-24 bg-bone-white text-charcoal-black flex items-center justify-center">
@@ -197,6 +271,7 @@ export default function RancherDashboardPage() {
     { key: 'referrals', label: `Active Leads (${activeRefs.length})` },
     { key: 'earnings', label: 'Earnings' },
     { key: 'benefits', label: `Network Benefits${benefits.length > 0 ? ` (${benefits.length})` : ''}` },
+    { key: 'my_page', label: 'My Page' },
   ];
 
   return (
@@ -494,6 +569,280 @@ export default function RancherDashboardPage() {
                   <p className="text-saddle-brown">Partner benefits are being finalized. Check back soon for exclusive deals on insurance, equipment, and more.</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* My Page Tab */}
+          {activeTab === 'my_page' && (
+            <div className="space-y-8">
+              <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
+                <div>
+                  <h2 className="font-serif text-2xl">My Landing Page</h2>
+                  <p className="text-sm text-saddle-brown mt-1">
+                    Fill this out to publish your public ranch page on BuyHalfCow.
+                  </p>
+                </div>
+                {rancherInfo.slug && (
+                  <a
+                    href={`/ranchers/${rancherInfo.slug}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm px-4 py-2 border border-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors"
+                  >
+                    Preview Page →
+                  </a>
+                )}
+              </div>
+
+              {!rancherInfo.pageLive && (
+                <div className="p-4 bg-yellow-50 border border-yellow-400 text-sm text-saddle-brown">
+                  Your page is not live yet. Fill out the fields below and contact{' '}
+                  <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>{' '}
+                  when you're ready to publish.
+                </div>
+              )}
+
+              <div className="grid md:grid-cols-2 gap-8">
+
+                {/* Left column: Brand & Story */}
+                <div className="space-y-5">
+                  <h3 className="font-serif text-lg border-b border-dust-gray pb-2">Brand &amp; Story</h3>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Page URL Slug <span className="text-dust-gray font-normal">(e.g. rocking-r-ranch)</span></label>
+                    <input
+                      type="text"
+                      value={pageForm['Slug'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Slug': e.target.value }))}
+                      placeholder="your-ranch-name"
+                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                    />
+                    {pageForm['Slug'] && (
+                      <p className="text-xs text-dust-gray">buyhalfcow.com/ranchers/{pageForm['Slug'].toLowerCase().replace(/[^a-z0-9-]/g, '-')}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Logo URL <span className="text-dust-gray font-normal">(paste a link to your logo image)</span></label>
+                    <input
+                      type="url"
+                      value={pageForm['Logo URL'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Logo URL': e.target.value }))}
+                      placeholder="https://..."
+                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Tagline <span className="text-dust-gray font-normal">(one sentence)</span></label>
+                    <input
+                      type="text"
+                      value={pageForm['Tagline'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Tagline': e.target.value }))}
+                      placeholder="Grass-fed Angus raised on open pasture in Colorado"
+                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">About Your Ranch</label>
+                    <textarea
+                      rows={6}
+                      value={pageForm['About Text'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'About Text': e.target.value }))}
+                      placeholder="Tell buyers your story — how long you've been ranching, your practices, what makes you different..."
+                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Interview Video URL <span className="text-dust-gray font-normal">(YouTube link)</span></label>
+                    <input
+                      type="url"
+                      value={pageForm['Video URL'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Video URL': e.target.value }))}
+                      placeholder="https://youtube.com/watch?v=..."
+                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Custom Notes <span className="text-dust-gray font-normal">(optional — anything extra buyers should know)</span></label>
+                    <textarea
+                      rows={3}
+                      value={pageForm['Custom Notes'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Custom Notes': e.target.value }))}
+                      placeholder="e.g. We do on-farm pickup only. Delivery available within 50 miles..."
+                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Right column: Pricing */}
+                <div className="space-y-5">
+                  <h3 className="font-serif text-lg border-b border-dust-gray pb-2">Pricing &amp; Payment</h3>
+                  <p className="text-xs text-dust-gray">Leave a section blank if you don't offer that cut size. Payment links go to your Square, PayPal, or Stripe checkout.</p>
+
+                  {/* Quarter */}
+                  <div className="p-4 border border-dust-gray bg-white space-y-3">
+                    <p className="text-sm font-medium uppercase tracking-wider">Quarter</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs text-dust-gray">Price ($)</label>
+                        <input
+                          type="number"
+                          value={pageForm['Quarter Price'] || ''}
+                          onChange={e => setPageForm(p => ({ ...p, 'Quarter Price': e.target.value }))}
+                          placeholder="450"
+                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-dust-gray">Approx. lbs</label>
+                        <input
+                          type="text"
+                          value={pageForm['Quarter lbs'] || ''}
+                          onChange={e => setPageForm(p => ({ ...p, 'Quarter lbs': e.target.value }))}
+                          placeholder="~85 lbs"
+                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-dust-gray">Payment Link</label>
+                      <input
+                        type="url"
+                        value={pageForm['Quarter Payment Link'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Quarter Payment Link': e.target.value }))}
+                        placeholder="https://square.com/pay/..."
+                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Half */}
+                  <div className="p-4 border-2 border-saddle-brown bg-white space-y-3">
+                    <p className="text-sm font-medium uppercase tracking-wider text-saddle-brown">Half <span className="text-xs font-normal normal-case text-dust-gray">(most popular)</span></p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs text-dust-gray">Price ($)</label>
+                        <input
+                          type="number"
+                          value={pageForm['Half Price'] || ''}
+                          onChange={e => setPageForm(p => ({ ...p, 'Half Price': e.target.value }))}
+                          placeholder="875"
+                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-dust-gray">Approx. lbs</label>
+                        <input
+                          type="text"
+                          value={pageForm['Half lbs'] || ''}
+                          onChange={e => setPageForm(p => ({ ...p, 'Half lbs': e.target.value }))}
+                          placeholder="~170 lbs"
+                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-dust-gray">Payment Link</label>
+                      <input
+                        type="url"
+                        value={pageForm['Half Payment Link'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Half Payment Link': e.target.value }))}
+                        placeholder="https://square.com/pay/..."
+                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Whole */}
+                  <div className="p-4 border border-dust-gray bg-white space-y-3">
+                    <p className="text-sm font-medium uppercase tracking-wider">Whole</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs text-dust-gray">Price ($)</label>
+                        <input
+                          type="number"
+                          value={pageForm['Whole Price'] || ''}
+                          onChange={e => setPageForm(p => ({ ...p, 'Whole Price': e.target.value }))}
+                          placeholder="1600"
+                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-dust-gray">Approx. lbs</label>
+                        <input
+                          type="text"
+                          value={pageForm['Whole lbs'] || ''}
+                          onChange={e => setPageForm(p => ({ ...p, 'Whole lbs': e.target.value }))}
+                          placeholder="~340 lbs"
+                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-dust-gray">Payment Link</label>
+                      <input
+                        type="url"
+                        value={pageForm['Whole Payment Link'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Whole Payment Link': e.target.value }))}
+                        placeholder="https://square.com/pay/..."
+                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <Divider />
+
+                  {/* Reservation */}
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium">Reservation / Deposit</p>
+                    <div className="space-y-1">
+                      <label className="text-xs text-dust-gray">Next Processing Date</label>
+                      <input
+                        type="date"
+                        value={pageForm['Next Processing Date'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Next Processing Date': e.target.value }))}
+                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-dust-gray">Reserve Link <span className="text-dust-gray">(deposit / waitlist link)</span></label>
+                      <input
+                        type="url"
+                        value={pageForm['Reserve Link'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Reserve Link': e.target.value }))}
+                        placeholder="https://..."
+                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Save button */}
+              {pageError && (
+                <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">{pageError}</div>
+              )}
+              {pageSaved && (
+                <div className="p-3 border border-green-600 text-green-700 bg-green-50 text-sm">Changes saved! {rancherInfo.slug && <span>Your page: <a href={`/ranchers/${rancherInfo.slug}`} target="_blank" className="underline">/ranchers/{rancherInfo.slug}</a></span>}</div>
+              )}
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={handleSavePage}
+                  disabled={pageSaving}
+                  className="px-8 py-3 bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+                >
+                  {pageSaving ? 'Saving...' : 'Save Page'}
+                </button>
+                {!rancherInfo.pageLive && (
+                  <p className="text-xs text-dust-gray">
+                    After saving, email us to go live: <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
+                  </p>
+                )}
+              </div>
             </div>
           )}
 

@@ -187,6 +187,34 @@ export async function deleteRecord(tableName: string, recordId: string) {
   }
 }
 
+// Get all ranchers with active landing pages (Page Live = true)
+export async function getActiveRancherPages() {
+  try {
+    const records = await base(TABLES.RANCHERS)
+      .select({ filterByFormula: '{Page Live} = 1' })
+      .all();
+    return records.map((record) => ({
+      id: record.id,
+      ...record.fields,
+    }));
+  } catch (error) {
+    console.error('Error fetching active rancher pages:', error);
+    throw error;
+  }
+}
+
+// Get a single rancher by their URL slug
+export async function getRancherBySlug(slug: string) {
+  try {
+    const records = await base(TABLES.RANCHERS)
+      .select({ filterByFormula: `AND({Slug} = "${slug}", {Page Live} = 1)`, maxRecords: 1 })
+      .all();
+    if (records.length === 0) return null;
+    return { id: records[0].id, ...records[0].fields };
+  } catch (error) {
+    console.error(`Error fetching rancher by slug "${slug}":`, error);
+    throw error;
+  }
+}
+
 export default base;
-
-

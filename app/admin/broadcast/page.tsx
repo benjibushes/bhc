@@ -48,6 +48,9 @@ function BroadcastEmailInner() {
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('09:00');
   const [sending, setSending] = useState(false);
+  const [htmlMode, setHtmlMode] = useState(false);
+  const [htmlBody, setHtmlBody] = useState('');
+  const [showHtmlPreview, setShowHtmlPreview] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [previewData, setPreviewData] = useState<any>(null);
   const [success, setSuccess] = useState(false);
@@ -114,7 +117,7 @@ function BroadcastEmailInner() {
     e.preventDefault();
     setError('');
 
-    if (!subject || !message || !campaignName) {
+    if (!subject || !campaignName || (htmlMode ? !htmlBody : !message)) {
       setError('Please fill in all required fields');
       return;
     }
@@ -130,7 +133,7 @@ function BroadcastEmailInner() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subject, message, campaignName, audienceType, selectedStates,
+          subject, message, htmlBody: htmlMode ? htmlBody : undefined, campaignName, audienceType, selectedStates,
           includeCTA, ctaText, ctaLink, preview: true,
         }),
       });
@@ -171,7 +174,7 @@ function BroadcastEmailInner() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subject, message, campaignName, audienceType, selectedStates,
+          subject, message, htmlBody: htmlMode ? htmlBody : undefined, campaignName, audienceType, selectedStates,
           includeCTA, ctaText, ctaLink, scheduledFor,
         }),
       });
@@ -241,6 +244,9 @@ function BroadcastEmailInner() {
                     setScheduledDate('');
                     setScheduledTime('09:00');
                     setPreviewData(null);
+                    setHtmlMode(false);
+                    setHtmlBody('');
+                    setShowHtmlPreview(false);
                   }}
                   className="px-6 py-3 border border-[#A7A29A] hover:bg-[#A7A29A] transition-colors"
                 >
@@ -314,22 +320,71 @@ function BroadcastEmailInner() {
                 />
               </div>
 
-              {/* Message */}
+              {/* Message Mode Toggle */}
               <div>
-                <label className="block text-sm font-medium mb-2">
-                  Message <span className="text-[#8C2F2F]">*</span>
-                </label>
-                <textarea
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="Write your message here... (supports line breaks)"
-                  rows={10}
-                  className="w-full px-4 py-3 border border-[#A7A29A] bg-white focus:outline-none focus:border-[#0E0E0E]"
-                  required
-                />
+                <div className="flex items-center justify-between mb-3">
+                  <label className="block text-sm font-medium">
+                    Message <span className="text-[#8C2F2F]">*</span>
+                  </label>
+                  <div className="flex border border-[#A7A29A] overflow-hidden text-sm">
+                    <button
+                      type="button"
+                      onClick={() => setHtmlMode(false)}
+                      className={`px-4 py-1.5 transition-colors ${!htmlMode ? 'bg-[#0E0E0E] text-[#F4F1EC]' : 'bg-white hover:bg-[#F4F1EC]'}`}
+                    >
+                      Plain Text
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setHtmlMode(true)}
+                      className={`px-4 py-1.5 transition-colors ${htmlMode ? 'bg-[#0E0E0E] text-[#F4F1EC]' : 'bg-white hover:bg-[#F4F1EC]'}`}
+                    >
+                      Custom HTML
+                    </button>
+                  </div>
+                </div>
+
+                {!htmlMode ? (
+                  <textarea
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder="Write your message here... (supports line breaks)"
+                    rows={10}
+                    className="w-full px-4 py-3 border border-[#A7A29A] bg-white focus:outline-none focus:border-[#0E0E0E]"
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    <textarea
+                      value={htmlBody}
+                      onChange={(e) => setHtmlBody(e.target.value)}
+                      placeholder="Paste your full HTML email here..."
+                      rows={16}
+                      className="w-full px-4 py-3 border border-[#A7A29A] bg-white focus:outline-none focus:border-[#0E0E0E] font-mono text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowHtmlPreview(!showHtmlPreview)}
+                      className="text-sm underline text-[#6B4F3F]"
+                    >
+                      {showHtmlPreview ? 'Hide Preview' : 'Show Preview'}
+                    </button>
+                    {showHtmlPreview && htmlBody && (
+                      <div className="border border-[#A7A29A]">
+                        <p className="text-xs text-[#6B4F3F] px-3 py-1 bg-[#F4F1EC] border-b border-[#A7A29A]">Email Preview</p>
+                        <iframe
+                          srcDoc={htmlBody}
+                          className="w-full"
+                          style={{ height: '600px', border: 'none' }}
+                          title="Email Preview"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {/* CTA Button */}
+              {/* CTA Button (plain text mode only) */}
+              {!htmlMode && (
               <div className="border border-[#A7A29A] p-6 bg-white">
                 <div className="flex items-center gap-3 mb-4">
                   <input
@@ -362,6 +417,7 @@ function BroadcastEmailInner() {
                   </div>
                 )}
               </div>
+              )}
 
               <Divider />
 

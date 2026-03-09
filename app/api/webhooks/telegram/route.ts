@@ -176,6 +176,125 @@ Status: ${referral['Status']} | ${daysStale} days stale
   }
 }
 
+// ─── /setuppage wizard session store ──────────────────────────────────────
+// In-memory per serverless instance — acceptable for a live admin wizard
+interface SetupSession {
+  rancherId: string;
+  rancherName: string;
+  awaitingField: string | null; // short field key, e.g. 'slug', 'about'
+}
+const setupPageSessions = new Map<string, SetupSession>();
+
+const SP_FIELD_LABELS: Record<string, string> = {
+  slug:   'Page URL Slug',
+  logo:   'Logo URL',
+  tag:    'Tagline',
+  about:  'About Text',
+  video:  'Video URL',
+  notes:  'Custom Notes',
+  qp:     'Quarter Price ($)',
+  ql:     'Quarter lbs (e.g. ~85 lbs)',
+  qlink:  'Quarter Payment Link',
+  hp:     'Half Price ($)',
+  hl:     'Half lbs (e.g. ~170 lbs)',
+  hlink:  'Half Payment Link',
+  wp:     'Whole Price ($)',
+  wl:     'Whole lbs (e.g. ~340 lbs)',
+  wlink:  'Whole Payment Link',
+  date:   'Next Processing Date (YYYY-MM-DD)',
+  rlink:  'Reserve / Deposit Link',
+};
+
+const SP_AIRTABLE_KEY: Record<string, string> = {
+  slug:   'Slug',
+  logo:   'Logo URL',
+  tag:    'Tagline',
+  about:  'About Text',
+  video:  'Video URL',
+  notes:  'Custom Notes',
+  qp:     'Quarter Price',
+  ql:     'Quarter lbs',
+  qlink:  'Quarter Payment Link',
+  hp:     'Half Price',
+  hl:     'Half lbs',
+  hlink:  'Half Payment Link',
+  wp:     'Whole Price',
+  wl:     'Whole lbs',
+  wlink:  'Whole Payment Link',
+  date:   'Next Processing Date',
+  rlink:  'Reserve Link',
+};
+
+async function sendPageMenu(chatId: string, rancherId: string) {
+  const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+  const name = rancher['Ranch Name'] || rancher['Operator Name'] || 'Ranch';
+  const slug = rancher['Slug'] || '—';
+  const live = rancher['Page Live'] ? '🟢 LIVE' : '🔴 Draft';
+  const url = rancher['Slug'] ? `${SITE_URL}/ranchers/${rancher['Slug']}` : 'No slug yet';
+
+  const priceSummary = [
+    rancher['Quarter Price'] ? `Q: $${rancher['Quarter Price']}` : '',
+    rancher['Half Price'] ? `H: $${rancher['Half Price']}` : '',
+    rancher['Whole Price'] ? `W: $${rancher['Whole Price']}` : '',
+  ].filter(Boolean).join(' · ') || 'No pricing set';
+
+  const msg = `🏡 <b>${name}</b> — Page Setup
+${live}
+
+📍 Slug: <code>${slug}</code>
+🖼 Logo: ${rancher['Logo URL'] ? '✓' : '—'}
+💬 Tagline: ${rancher['Tagline'] ? `"${rancher['Tagline']}"` : '—'}
+📖 About: ${rancher['About Text'] ? '✓ (filled)' : '—'}
+🎬 Video: ${rancher['Video URL'] ? '✓' : '—'}
+💰 Pricing: ${priceSummary}
+📅 Next date: ${rancher['Next Processing Date'] || '—'}
+
+Tap a button to fill in that field:`;
+
+  const kb = {
+    inline_keyboard: [
+      [
+        { text: '📝 URL Slug', callback_data: 'spf_slug' },
+        { text: '🖼 Logo URL', callback_data: 'spf_logo' },
+      ],
+      [
+        { text: '💬 Tagline', callback_data: 'spf_tag' },
+        { text: '📖 About', callback_data: 'spf_about' },
+      ],
+      [
+        { text: '🎬 Video URL', callback_data: 'spf_video' },
+        { text: '📒 Notes', callback_data: 'spf_notes' },
+      ],
+      [
+        { text: '💲 Q Price', callback_data: 'spf_qp' },
+        { text: '⚖️ Q lbs', callback_data: 'spf_ql' },
+        { text: '🔗 Q Link', callback_data: 'spf_qlink' },
+      ],
+      [
+        { text: '💲 H Price', callback_data: 'spf_hp' },
+        { text: '⚖️ H lbs', callback_data: 'spf_hl' },
+        { text: '🔗 H Link', callback_data: 'spf_hlink' },
+      ],
+      [
+        { text: '💲 W Price', callback_data: 'spf_wp' },
+        { text: '⚖️ W lbs', callback_data: 'spf_wl' },
+        { text: '🔗 W Link', callback_data: 'spf_wlink' },
+      ],
+      [
+        { text: '📅 Processing Date', callback_data: 'spf_date' },
+        { text: '🔗 Reserve Link', callback_data: 'spf_rlink' },
+      ],
+      [
+        { text: '🚀 GO LIVE', callback_data: 'spgolive' },
+        { text: '👁 Preview Page', callback_data: 'sppreview' },
+        { text: '✅ Done', callback_data: 'spdone' },
+      ],
+    ],
+  };
+
+  await sendTelegramMessage(chatId, msg, kb);
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
@@ -505,7 +624,7 @@ Suggested: ${referral['Suggested Rancher Name'] || 'None'}`;
                   buyerEmail: consumerEmail,
                   buyerPhone: consumer['Phone'],
                   orderType: consumer['Order Type'],
-                  budgetRange: consumer['Budget Range'],
+                  budgetRange: consumer['Budget'],
                   intentScore: consumer['Intent Score'],
                   intentClassification: consumer['Intent Classification'],
                   notes: consumer['Notes'],
@@ -554,7 +673,7 @@ Suggested: ${referral['Suggested Rancher Name'] || 'None'}`;
 ${c['Segment'] === 'Beef Buyer' ? '🥩' : '🏷️'} Segment: ${c['Segment'] || 'Unknown'}
 📊 Intent: ${c['Intent Score'] || 0} (${c['Intent Classification'] || 'N/A'})
 🥩 Order: ${c['Order Type'] || 'N/A'}
-💵 Budget: ${c['Budget Range'] || 'N/A'}
+💵 Budget: ${c['Budget'] || 'N/A'}
 📝 Notes: ${c['Notes'] || 'None'}
 
 Status: ${c['Status'] || 'Unknown'}
@@ -631,7 +750,7 @@ Source: ${c['Source'] || 'organic'}`;
                   buyerEmail: consumerEmail,
                   buyerPhone: consumer['Phone'],
                   orderType: consumer['Order Type'],
-                  budgetRange: consumer['Budget Range'],
+                  budgetRange: consumer['Budget'],
                   intentScore: consumer['Intent Score'],
                   intentClassification: consumer['Intent Classification'],
                   notes: consumer['Notes'],
@@ -910,6 +1029,80 @@ Source: ${c['Source'] || 'organic'}`;
         }
       }
 
+      // ─── /setuppage wizard callbacks ──────────────────────────────────────
+
+      else if (callbackData?.startsWith('spf_')) {
+        const fieldKey = callbackData.replace('spf_', '');
+        const session = chatId ? setupPageSessions.get(chatId) : null;
+        if (!session) {
+          await answerCallbackQuery(queryId, 'Session expired. Run /setuppage again.');
+          return NextResponse.json({ ok: true });
+        }
+        const label = SP_FIELD_LABELS[fieldKey] || fieldKey;
+        session.awaitingField = fieldKey;
+        await answerCallbackQuery(queryId, `Enter ${label}`);
+        if (chatId) {
+          await sendTelegramMessage(chatId, `✏️ <b>${label}</b>\n\nType the value and send it:`);
+        }
+      }
+
+      else if (callbackData === 'spgolive') {
+        const session = chatId ? setupPageSessions.get(chatId) : null;
+        if (!session) {
+          await answerCallbackQuery(queryId, 'Session expired. Run /setuppage again.');
+          return NextResponse.json({ ok: true });
+        }
+        try {
+          const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
+          if (!rancher['Slug']) {
+            await answerCallbackQuery(queryId, 'Set a URL slug first!');
+            if (chatId) await sendTelegramMessage(chatId, '⚠️ Set a <b>URL Slug</b> before going live.');
+            return NextResponse.json({ ok: true });
+          }
+          await updateRecord(TABLES.RANCHERS, session.rancherId, { 'Page Live': true });
+          await answerCallbackQuery(queryId, '🚀 Page is live!');
+          const liveUrl = `${SITE_URL}/ranchers/${rancher['Slug']}`;
+          if (chatId) {
+            await sendTelegramMessage(chatId,
+              `🚀 <b>${session.rancherName} is LIVE!</b>\n\n🔗 ${liveUrl}\n\nShare this link with the rancher and run ads to it.`
+            );
+          }
+          setupPageSessions.delete(chatId!);
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
+      else if (callbackData === 'sppreview') {
+        const session = chatId ? setupPageSessions.get(chatId) : null;
+        if (!session) {
+          await answerCallbackQuery(queryId, 'Session expired. Run /setuppage again.');
+          return NextResponse.json({ ok: true });
+        }
+        try {
+          const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
+          const slug = rancher['Slug'];
+          if (!slug) {
+            await answerCallbackQuery(queryId, 'Set a slug first');
+            return NextResponse.json({ ok: true });
+          }
+          await answerCallbackQuery(queryId, 'Here\'s the preview link');
+          if (chatId) {
+            await sendTelegramMessage(chatId, `👁 <b>Preview:</b>\n${SITE_URL}/ranchers/${slug}\n\n<i>Note: page only shows publicly once Page Live is set to ✅</i>`);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
+      else if (callbackData === 'spdone') {
+        if (chatId) {
+          setupPageSessions.delete(chatId);
+          await answerCallbackQuery(queryId, 'Done!');
+          await sendTelegramMessage(chatId, '✅ Page setup saved. Run /setuppage [name] anytime to edit.');
+        }
+      }
+
       return NextResponse.json({ ok: true });
     }
 
@@ -918,6 +1111,27 @@ Source: ${c['Source'] || 'organic'}`;
     if (update.message?.text) {
       const text = update.message.text.trim();
       const chatId = update.message.chat.id.toString();
+
+      // ─── /setuppage wizard: intercept replies for active sessions ──────────
+      const spSession = setupPageSessions.get(chatId);
+      if (spSession?.awaitingField && !text.startsWith('/')) {
+        const fieldKey = spSession.awaitingField;
+        const airtableKey = SP_AIRTABLE_KEY[fieldKey];
+        spSession.awaitingField = null;
+
+        try {
+          // Convert price fields to numbers
+          const priceFields = ['qp', 'hp', 'wp'];
+          const value = priceFields.includes(fieldKey) ? (parseFloat(text) || null) : text;
+          await updateRecord(TABLES.RANCHERS, spSession.rancherId, { [airtableKey]: value });
+          await sendTelegramMessage(chatId, `✅ <b>${SP_FIELD_LABELS[fieldKey]}</b> saved.\n\nWhat's next?`);
+          await sendPageMenu(chatId, spSession.rancherId);
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ Save failed: ${e.message}. Try again.`);
+          await sendPageMenu(chatId, spSession.rancherId);
+        }
+        return NextResponse.json({ ok: true });
+      }
 
       if (text === '/pending' || text === '/start') {
         const referrals = await getAllRecords(TABLES.REFERRALS, '{Status} = "Pending Approval"');
@@ -1499,6 +1713,88 @@ Confirm send?`;
         }
       }
 
+      // ─── /makeaffiliate ───────────────────────────────────────────────────
+
+      else if (text.startsWith('/makeaffiliate')) {
+        const emailArg = text.replace('/makeaffiliate', '').trim();
+        if (!emailArg) {
+          await sendTelegramMessage(chatId, `Usage: <code>/makeaffiliate email@example.com</code>\n\nLooks up the consumer and makes them an affiliate with a unique referral link.`);
+          return NextResponse.json({ ok: true });
+        }
+
+        await sendTelegramMessage(chatId, `🔍 Looking up <code>${emailArg}</code>...`);
+
+        try {
+          // Look up consumer to get their name
+          const consumers = await getAllRecords(TABLES.CONSUMERS,
+            `LOWER({Email}) = "${emailArg.toLowerCase()}"`
+          );
+          const consumer = consumers[0] as any;
+          const name = consumer ? (consumer['Full Name'] || emailArg) : emailArg;
+
+          const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+          const res = await fetch(`${siteUrl}/api/admin/affiliates`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': `bhc-admin-auth=authenticated`,
+            },
+            body: JSON.stringify({ name, email: emailArg }),
+          });
+          const data = await res.json();
+
+          if (data.success || data.exists) {
+            const status = data.exists ? '⚠️ Already an affiliate' : '✅ Affiliate created';
+            await sendTelegramMessage(chatId,
+              `${status}\n\n👤 <b>${name}</b>\n📧 ${emailArg}\n\n🔑 Code: <code>${data.code}</code>\n\n🛒 Buyer link:\n<code>${data.buyerLink || `${siteUrl}/access?ref=${data.code}`}</code>\n\n${data.exists ? '' : '📧 Welcome email sent!'}`
+            );
+          } else {
+            await sendTelegramMessage(chatId, `❌ Failed: ${data.error}`);
+          }
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ Error: ${e.message}`);
+        }
+      }
+
+      // ─── /setuppage — Rancher Landing Page Wizard ─────────────────────────
+
+      else if (text.startsWith('/setuppage')) {
+        const query = text.replace('/setuppage', '').trim();
+        if (!query) {
+          await sendTelegramMessage(chatId, `Usage: <code>/setuppage [ranch name or email]</code>\n\nExample: <code>/setuppage Rocking R Ranch</code>`);
+          return NextResponse.json({ ok: true });
+        }
+
+        await sendTelegramMessage(chatId, `🔍 Looking up <b>${query}</b>...`);
+
+        try {
+          const ranchers = await getAllRecords(TABLES.RANCHERS);
+          const q = query.toLowerCase();
+          const match = (ranchers as any[]).find(r =>
+            (r['Ranch Name'] || '').toLowerCase().includes(q) ||
+            (r['Operator Name'] || '').toLowerCase().includes(q) ||
+            (r['Email'] || '').toLowerCase().includes(q)
+          );
+
+          if (!match) {
+            await sendTelegramMessage(chatId, `❌ No rancher found for "<b>${query}</b>". Check spelling or use their email.`);
+            return NextResponse.json({ ok: true });
+          }
+
+          const name = match['Ranch Name'] || match['Operator Name'] || 'Unknown Ranch';
+          // Store session
+          setupPageSessions.set(chatId, {
+            rancherId: match.id,
+            rancherName: name,
+            awaitingField: null,
+          });
+
+          await sendPageMenu(chatId, match.id);
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ Error: ${e.message}`);
+        }
+      }
+
       else if (text === '/help') {
         const msg = `📖 <b>BuyHalfCow Bot Commands</b>
 
@@ -1517,6 +1813,10 @@ Confirm send?`;
 
 <b>Actions</b>
 /broadcast [segment] [msg] — Quick broadcast
+/makeaffiliate [email] — Make someone an affiliate
+
+<b>🏡 Rancher Pages</b>
+/setuppage [name or email] — Build rancher landing page (live wizard)
 
 <b>🤖 AI Skills</b>
 /qualify — AI reviews & scores pending leads

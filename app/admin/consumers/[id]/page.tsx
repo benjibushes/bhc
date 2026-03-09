@@ -39,6 +39,10 @@ export default function ConsumerDetailPage() {
   const [adminNotes, setAdminNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [makingAffiliate, setMakingAffiliate] = useState(false);
+  const [affiliateResult, setAffiliateResult] = useState<{ code: string; buyerLink: string; message: string } | null>(null);
+  const [sendingMerch, setSendingMerch] = useState(false);
+  const [merchSent, setMerchSent] = useState(false);
 
   useEffect(() => {
     fetchConsumer();
@@ -87,6 +91,44 @@ export default function ConsumerDetailPage() {
     } catch {
       alert('Failed to log call');
     }
+  };
+
+  const makeAffiliate = async () => {
+    if (!consumer) return;
+    setMakingAffiliate(true);
+    try {
+      const res = await fetch('/api/admin/affiliates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: consumer.first_name, email: consumer.email }),
+      });
+      const data = await res.json();
+      setAffiliateResult({ code: data.code, buyerLink: data.buyerLink, message: data.message });
+    } catch {
+      alert('Failed to create affiliate');
+    }
+    setMakingAffiliate(false);
+  };
+
+  const sendMerch = async () => {
+    if (!consumer) return;
+    setSendingMerch(true);
+    try {
+      const res = await fetch('/api/admin/send-merch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: consumer.first_name, email: consumer.email }),
+      });
+      if (res.ok) {
+        setMerchSent(true);
+        setTimeout(() => setMerchSent(false), 3000);
+      } else {
+        alert('Failed to send merch email');
+      }
+    } catch {
+      alert('Failed to send merch email');
+    }
+    setSendingMerch(false);
   };
 
   const updateStatus = async (field: string, value: string) => {
@@ -244,6 +286,36 @@ export default function ConsumerDetailPage() {
                   </select>
                 </div>
               </div>
+            </div>
+
+            <div className="p-6 border border-dust-gray bg-white space-y-4">
+              <h2 className="font-serif text-xl">Quick Actions</h2>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={makeAffiliate}
+                  disabled={makingAffiliate}
+                  className="px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors disabled:opacity-50"
+                >
+                  {makingAffiliate ? 'Creating...' : '🤝 Make Affiliate'}
+                </button>
+                <button
+                  onClick={sendMerch}
+                  disabled={sendingMerch || merchSent}
+                  className="px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors disabled:opacity-50"
+                >
+                  {sendingMerch ? 'Sending...' : merchSent ? 'Sent!' : '👕 Send Merch Email'}
+                </button>
+              </div>
+              {affiliateResult && (
+                <div className="p-4 bg-green-50 border border-green-200 text-sm space-y-1">
+                  <p className="font-medium text-green-800">{affiliateResult.message}</p>
+                  <p className="text-green-700">Code: <code className="font-mono font-bold">{affiliateResult.code}</code></p>
+                  {affiliateResult.buyerLink && (
+                    <p className="text-green-700 break-all">Buyer link: <span className="font-mono text-xs">{affiliateResult.buyerLink}</span></p>
+                  )}
+                  <p className="text-xs text-green-600">Welcome email sent to {consumer?.email}</p>
+                </div>
+              )}
             </div>
 
             <div className="p-6 border border-dust-gray bg-white space-y-4">

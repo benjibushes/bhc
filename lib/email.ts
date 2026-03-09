@@ -680,8 +680,19 @@ export async function sendBroadcastEmail(data: {
   includeCTA: boolean;
   ctaText: string;
   ctaLink: string;
+  htmlBody?: string;
 }) {
   try {
+    if (data.htmlBody) {
+      await resend.emails.send({
+        from: FROM_EMAIL,
+        to: data.to,
+        subject: data.subject,
+        html: data.htmlBody,
+      });
+      return { success: true };
+    }
+
     const formattedMessage = esc(data.message).replace(/\n/g, '<br>');
 
     await resend.emails.send({
@@ -915,6 +926,530 @@ export async function sendChaseUpEmail(data: {
     return { success: true };
   } catch (error) {
     console.error('Error sending chase-up email:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// MERCH EMAIL
+// =====================================================
+
+export async function sendMerchEmail(data: {
+  firstName: string;
+  email: string;
+}) {
+  const merchUrl = process.env.MERCH_URL || 'https://buyhalfcow.com/merch';
+  const firstName = esc(data.firstName);
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: 'Represent American Ranch Beef — BuyHalfCow Merch',
+      html: `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
+p { color: #6B4F3F; margin: 12px 0; }
+.cta { display: inline-block; padding: 16px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
+.divider { height: 1px; background: #A7A29A; margin: 24px 0; }
+.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Wear the Mission</h1>
+  <p>Hi ${firstName},</p>
+  <p>You're part of the BuyHalfCow community — people who care about where their food comes from and want to support American ranchers directly.</p>
+  <p>While we work on building supply in your area, you can rep the movement. Our merch is designed for people who give a damn about real beef from real ranches.</p>
+  <div class="divider"></div>
+  <div style="text-align: center;">
+    <a href="${merchUrl}" class="cta">Shop BuyHalfCow Merch</a>
+  </div>
+  <div class="divider"></div>
+  <p>And when ranchers become available in your area, you'll be first to know.</p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div>
+</body>
+</html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending merch email:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// AFFILIATE EMAILS
+// =====================================================
+
+export async function sendAffiliateWelcome(data: {
+  name: string;
+  email: string;
+  code: string;
+  dashboardUrl: string;
+  buyerLink: string;
+  rancherLink: string;
+}) {
+  const firstName = esc(data.name.split(' ')[0] || data.name);
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: "You're a BuyHalfCow Affiliate — Here Are Your Links",
+      html: `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
+h3 { font-family: Georgia, serif; font-size: 18px; margin: 20px 0 8px; }
+p { color: #6B4F3F; margin: 12px 0; }
+.cta { display: inline-block; padding: 16px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
+.link-box { background: #F4F1EC; border: 1px solid #A7A29A; padding: 12px 16px; font-family: monospace; font-size: 13px; word-break: break-all; margin: 8px 0; color: #0E0E0E; }
+.code-badge { display: inline-block; background: #0E0E0E; color: #F4F1EC; padding: 4px 12px; font-family: monospace; font-size: 18px; letter-spacing: 2px; }
+.divider { height: 1px; background: #A7A29A; margin: 24px 0; }
+.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Welcome to the Program, ${firstName}</h1>
+  <p>You're now an official BuyHalfCow affiliate. Every buyer or rancher who signs up through your link is tracked to you automatically.</p>
+  <div class="divider"></div>
+  <p><strong>Your affiliate code:</strong></p>
+  <p><span class="code-badge">${esc(data.code)}</span></p>
+  <h3>Your Referral Links</h3>
+  <p><strong>Buyer link</strong> — share with people who want to buy beef direct:</p>
+  <div class="link-box">${esc(data.buyerLink)}</div>
+  <p><strong>Rancher link</strong> — share with ranchers who want to sell:</p>
+  <div class="link-box">${esc(data.rancherLink)}</div>
+  <div class="divider"></div>
+  <div style="text-align: center;">
+    <a href="${esc(data.dashboardUrl)}" class="cta">View Your Dashboard</a>
+  </div>
+  <div class="divider"></div>
+  <p style="font-size: 13px;">Questions? Just reply to this email.</p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div>
+</body>
+</html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending affiliate welcome email:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// AUTOMATION LAYER EMAILS
+// =====================================================
+
+export async function sendWaitlistEmail(data: {
+  firstName: string;
+  email: string;
+  state: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: "You're on the BuyHalfCow waitlist",
+      html: `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
+p { color: #6B4F3F; margin: 12px 0; }
+.highlight { background: #F4F1EC; border-left: 3px solid #0E0E0E; padding: 12px 16px; margin: 20px 0; color: #0E0E0E; }
+.divider { height: 1px; background: #A7A29A; margin: 24px 0; }
+.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>You're Approved — Now on the Waitlist</h1>
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>Great news: your application has been approved. We just don't have a rancher available in <strong>${esc(data.state)}</strong> at the moment.</p>
+  <div class="highlight">
+    <strong>What happens next:</strong> The moment a rancher opens up in your state, we'll email you immediately and get you connected within 24 hours.
+  </div>
+  <p>We're actively expanding our rancher network. Most waitlisted buyers get matched within a few weeks.</p>
+  <p>In the meantime, if you know anyone who'd want to buy direct from a rancher — or a rancher who wants more buyers — send them to <a href="https://buyhalfcow.com" style="color:#0E0E0E;">buyhalfcow.com</a>.</p>
+  <div class="divider"></div>
+  <p style="font-size: 13px;">Questions? Just reply to this email.</p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div>
+</body>
+</html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending waitlist email:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendIntroCheckInEmail(data: {
+  firstName: string;
+  email: string;
+  rancherName: string;
+  rancherEmail: string;
+  rancherPhone: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `Did you connect with ${esc(data.rancherName)}?`,
+      html: `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
+p { color: #6B4F3F; margin: 12px 0; }
+.contact-box { background: #F4F1EC; border: 1px solid #A7A29A; padding: 16px 20px; margin: 20px 0; }
+.contact-box p { margin: 6px 0; color: #0E0E0E; }
+.cta { display: inline-block; padding: 14px 28px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
+.divider { height: 1px; background: #A7A29A; margin: 24px 0; }
+.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Checking in on your rancher intro</h1>
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>A few days ago we introduced you to <strong>${esc(data.rancherName)}</strong>. We wanted to check in — did you two connect?</p>
+  <p>If you haven't heard from them yet, here's how to reach them directly:</p>
+  <div class="contact-box">
+    <p><strong>${esc(data.rancherName)}</strong></p>
+    ${data.rancherEmail ? `<p>Email: <a href="mailto:${esc(data.rancherEmail)}" style="color:#0E0E0E;">${esc(data.rancherEmail)}</a></p>` : ''}
+    ${data.rancherPhone ? `<p>Phone: <a href="tel:${esc(data.rancherPhone)}" style="color:#0E0E0E;">${esc(data.rancherPhone)}</a></p>` : ''}
+  </div>
+  <p>If there's been an issue or you'd like us to follow up on your behalf, just reply to this email and we'll handle it.</p>
+  <div style="text-align: center;">
+    <a href="${esc(data.loginUrl)}" class="cta">View Your Dashboard →</a>
+  </div>
+  <div class="divider"></div>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div>
+</body>
+</html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending intro check-in email:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendRancherLeadNudge(data: {
+  rancherName: string;
+  email: string;
+  leads: Array<{ buyerName: string; status: string; daysSince: number }>;
+  dashboardUrl: string;
+}) {
+  const leadRows = data.leads.map(l =>
+    `<tr><td style="padding:8px 12px;border-bottom:1px solid #A7A29A;">${esc(l.buyerName)}</td><td style="padding:8px 12px;border-bottom:1px solid #A7A29A;">${esc(l.status)}</td><td style="padding:8px 12px;border-bottom:1px solid #A7A29A;color:#6B4F3F;">${l.daysSince}d ago</td></tr>`
+  ).join('');
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `You have ${data.leads.length} lead${data.leads.length === 1 ? '' : 's'} waiting on an update`,
+      html: `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
+p { color: #6B4F3F; margin: 12px 0; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+th { text-align: left; padding: 8px 12px; background: #F4F1EC; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #6B4F3F; }
+.cta { display: inline-block; padding: 14px 28px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
+.divider { height: 1px; background: #A7A29A; margin: 24px 0; }
+.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Your leads need a status update</h1>
+  <p>Hi ${esc(data.rancherName)},</p>
+  <p>You have <strong>${data.leads.length} lead${data.leads.length === 1 ? '' : 's'}</strong> that haven't been updated in over 5 days. A quick status update helps us keep buyers engaged and slots filled.</p>
+  <table>
+    <thead><tr>
+      <th>Buyer</th><th>Status</th><th>Last Updated</th>
+    </tr></thead>
+    <tbody>${leadRows}</tbody>
+  </table>
+  <p>Just log in and mark each lead as Closed Won, Closed Lost, or add a note if still in progress.</p>
+  <div style="text-align: center;">
+    <a href="${esc(data.dashboardUrl)}" class="cta">Update My Leads →</a>
+  </div>
+  <div class="divider"></div>
+  <p style="font-size: 13px;">Questions? Just reply to this email.</p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div>
+</body>
+</html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher lead nudge email:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendRepeatPurchaseEmail(data: {
+  firstName: string;
+  email: string;
+  rancherName: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `Time for another half, ${esc(data.firstName)}?`,
+      html: `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
+p { color: #6B4F3F; margin: 12px 0; }
+.cta { display: inline-block; padding: 16px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
+.highlight { background: #F4F1EC; border-left: 3px solid #0E0E0E; padding: 12px 16px; margin: 20px 0; color: #0E0E0E; }
+.divider { height: 1px; background: #A7A29A; margin: 24px 0; }
+.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Ready for Another Round?</h1>
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>It's been about a month since you picked up beef from <strong>${esc(data.rancherName)}</strong>. If the freezer is running low, now's a great time to lock in another order.</p>
+  <div class="highlight">
+    <strong>${esc(data.rancherName)}</strong> is still taking buyers. Same quality, same rancher, no middleman markup.
+  </div>
+  <p>Log in to let us know you want to be matched again — we'll get you connected within 24 hours.</p>
+  <div style="text-align: center;">
+    <a href="${esc(data.loginUrl)}" class="cta">Order Again →</a>
+  </div>
+  <div class="divider"></div>
+  <p style="font-size: 13px;">Not ready yet? No worries — you'll stay in our network and we'll check in again when the time is right.</p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div>
+</body>
+</html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending repeat purchase email:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// UTILITY FUNCTIONS
+// =====================================================
+
+// =====================================================
+// PHASE 1 NURTURE SEQUENCE
+// =====================================================
+
+const INSTAGRAM_URL = 'https://www.instagram.com/buyhalfcow';
+const YOUTUBE_URL = 'https://www.youtube.com/@buyhalfcow';
+
+export async function sendNurtureDay3(data: {
+  firstName: string;
+  email: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: "What's actually happening right now",
+      html: `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.7; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 24px; }
+p { color: #3a3a3a; margin: 14px 0; }
+.divider { height: 1px; background: #A7A29A; margin: 28px 0; }
+.links { display: flex; gap: 12px; margin: 20px 0; }
+.link-btn { display: inline-block; padding: 12px 22px; border: 1px solid #0E0E0E; color: #0E0E0E !important; text-decoration: none; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-right: 10px; }
+.footer { margin-top: 36px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>What's actually happening right now</h1>
+  <p>Hey ${esc(data.firstName)},</p>
+  <p>I want to give you a real update — not marketing copy, just what's going on.</p>
+  <p>I'm on the road. I've been driving to ranches, getting on calls, visiting processing facilities, negotiating with partners who believe in this mission. I'm building the supply chain from the ground up — ranch by ranch — so that when I match you with someone, it's the right fit, not just whoever's available.</p>
+  <p>Here's what I'm working on right now:</p>
+  <p>→ Locking down ranching partners across multiple states<br>
+  → Building relationships with processing facilities<br>
+  → Getting deals with companies that want to support direct-to-consumer beef<br>
+  → Running a podcast to document the whole build</p>
+  <p>This is taking longer than I'd like. But I'd rather do it right.</p>
+  <div class="divider"></div>
+  <p>I'm posting everything in real time — inside ranches, on the road, in negotiations. If you want to see what building a real supply chain actually looks like, follow along:</p>
+  <div>
+    <a href="${INSTAGRAM_URL}" class="link-btn">Instagram @buyhalfcow</a>
+    <a href="${YOUTUBE_URL}" class="link-btn">YouTube</a>
+  </div>
+  <div class="divider"></div>
+  <p>You'll hear from me the moment there's a rancher ready in your area. You're already in.</p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Taking back American ranching, one half cow at a time</p>
+  </div>
+</div>
+</body>
+</html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending nurture day-3 email:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendNurtureDay10(data: {
+  firstName: string;
+  email: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: "I drove to Texas with $500 in my account",
+      html: `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.7; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 24px; }
+p { color: #3a3a3a; margin: 14px 0; }
+.pullquote { border-left: 3px solid #0E0E0E; padding: 12px 20px; margin: 24px 0; font-style: italic; color: #0E0E0E; background: #F4F1EC; }
+.divider { height: 1px; background: #A7A29A; margin: 28px 0; }
+.link-btn { display: inline-block; padding: 12px 22px; border: 1px solid #0E0E0E; color: #0E0E0E !important; text-decoration: none; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-right: 10px; }
+.footer { margin-top: 36px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>I drove to Texas with $500 in my account</h1>
+  <p>Hey ${esc(data.firstName)},</p>
+  <p>I'll be straight with you: I don't have this all figured out yet. I'm building it in real time.</p>
+  <p>I just drove to Texas to meet with ranchers face to face. Not because it was the easy move — it was practically everything I had — but because I believe the community we're building deserves a real supply chain, not a website with no product behind it.</p>
+  <div class="pullquote">
+    "We're gonna take back American ranching and agriculture." That's not a tagline. That's why I'm doing this.
+  </div>
+  <p>The ranchers I'm talking to are the real deal. Families who've been raising cattle for generations and are getting squeezed out by the big processors. They want buyers who care. You're that buyer.</p>
+  <p>I'm also doing interviews, running a podcast, and documenting every step of building this supply chain. The content is raw because the process is raw. This is what it actually looks like to build something from scratch.</p>
+  <div class="divider"></div>
+  <p>Come follow the journey:</p>
+  <div>
+    <a href="${INSTAGRAM_URL}" class="link-btn">Instagram @buyhalfcow</a>
+    <a href="${YOUTUBE_URL}" class="link-btn">YouTube</a>
+  </div>
+  <div class="divider"></div>
+  <p>More soon. We're close.</p>
+  <div class="footer">
+    <p>— Benjamin<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div>
+</body>
+</html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending nurture day-10 email:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendNurtureAffiliate(data: {
+  firstName: string;
+  email: string;
+  referralLink: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: "Want to help close this faster?",
+      html: `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.7; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 24px; }
+p { color: #3a3a3a; margin: 14px 0; }
+.link-box { background: #F4F1EC; border: 1px solid #A7A29A; padding: 14px 18px; margin: 20px 0; font-family: monospace; font-size: 13px; word-break: break-all; color: #0E0E0E; }
+.cta { display: inline-block; padding: 14px 28px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
+.divider { height: 1px; background: #A7A29A; margin: 28px 0; }
+.footer { margin-top: 36px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Want to help close this faster?</h1>
+  <p>Hey ${esc(data.firstName)},</p>
+  <p>I've been on the road building supply. Visiting ranches. Closing partnerships. Doing the hard work to make this real.</p>
+  <p>The people who believe in this early are the ones who help it move faster. Not with money — just by sending the right people our way.</p>
+  <p>That could be a neighbor who complains about grocery store meat. A farmer who wants guaranteed buyers. A friend who's been talking about buying local but never knew how.</p>
+  <p>One link. Send it to whoever comes to mind:</p>
+  <div class="link-box">${esc(data.referralLink)}</div>
+  <p>Everyone who signs up through your link is tracked to you. I want the people who helped build this to be rewarded when it's running.</p>
+  <div style="text-align: center;">
+    <a href="${esc(data.loginUrl)}" class="cta">View Your Affiliate Dashboard →</a>
+  </div>
+  <div class="divider"></div>
+  <p style="font-size: 13px; color: #6B4F3F;">Haven't set up your affiliate account yet? Just reply and I'll get you sorted directly.</p>
+  <div class="footer">
+    <p>— Benjamin<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div>
+</body>
+</html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending nurture affiliate email:', error);
     return { success: false, error };
   }
 }

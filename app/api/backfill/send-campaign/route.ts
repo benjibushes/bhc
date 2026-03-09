@@ -17,9 +17,9 @@ export async function POST(request: Request) {
 
     const needsBackfill = consumers.filter((c: any) =>
       !c['Order Type'] &&
-      !c['Budget Range'] &&
+      !c['Budget'] &&
       c['Email'] &&
-      !c['Backfill Email Sent']
+      !c['Backfill Emails Sent']
     );
 
     const batch = needsBackfill.slice(0, batchSize);
@@ -77,9 +77,8 @@ export async function POST(request: Request) {
 
         const now = new Date().toISOString();
         await updateRecord(TABLES.CONSUMERS, consumer.id, {
-          'Backfill Email Sent': true,
-          'Backfill Email Sent At': now,
-          'Last Contacted': now,
+          'Backfill Emails Sent': true,
+          'Backfill Emails Sent At': now,
         });
 
         sentCount++;

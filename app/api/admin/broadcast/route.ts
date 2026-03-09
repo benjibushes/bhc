@@ -46,9 +46,9 @@ async function getRecipients(audienceType: string, selectedStates?: string[]) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { subject, message, campaignName, audienceType, selectedStates, includeCTA, ctaText, ctaLink, preview, scheduledFor } = body;
+    const { subject, message, htmlBody, campaignName, audienceType, selectedStates, includeCTA, ctaText, ctaLink, preview, scheduledFor } = body;
 
-    if (!subject || !message || !campaignName) {
+    if (!subject || !campaignName || (htmlBody ? false : !message)) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
@@ -134,11 +134,12 @@ export async function POST(request: Request) {
             to: recipient.email,
             name: recipient.name,
             subject,
-            message,
+            message: message || '',
             campaignName,
-            includeCTA,
+            includeCTA: htmlBody ? false : includeCTA,
             ctaText: ctaText || 'Learn More',
             ctaLink: fullCtaLink,
+            htmlBody: htmlBody || undefined,
           })
         )
       );

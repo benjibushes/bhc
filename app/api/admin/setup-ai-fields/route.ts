@@ -22,6 +22,20 @@ async function getTableIds(): Promise<Record<string, string>> {
   return map;
 }
 
+async function createTable(name: string, fields: any[]): Promise<{ created: boolean; name: string; error?: string }> {
+  const res = await fetch(`https://api.airtable.com/v0/meta/bases/${AIRTABLE_BASE_ID}/tables`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name, fields }),
+  });
+  if (res.ok) return { created: true, name };
+  const err = await res.text();
+  return { created: false, name, error: err };
+}
+
 async function createField(tableId: string, field: any): Promise<{ created: boolean; name: string; error?: string }> {
   const res = await fetch(`https://api.airtable.com/v0/meta/bases/${AIRTABLE_BASE_ID}/tables/${tableId}/fields`, {
     method: 'POST',
@@ -79,6 +93,12 @@ export async function GET(request: Request) {
             { name: 'day7_sent' },
             { name: 'community_7d_sent' },
             { name: 'community_14d_sent' },
+            { name: 'waitlisted' },
+            { name: 'intro_checkin_sent' },
+            { name: 'nurture_3d_sent' },
+            { name: 'nurture_10d_sent' },
+            { name: 'nurture_merch_sent' },
+            { name: 'nurture_affiliate_sent' },
           ],
         },
       },
@@ -151,6 +171,21 @@ export async function GET(request: Request) {
         name: 'AI Chase Draft',
         type: 'multilineText',
       },
+      {
+        name: 'Repeat Outreach Sent',
+        type: 'checkbox',
+        options: { icon: 'check', color: 'greenBright' },
+      },
+      {
+        name: 'Closed At',
+        type: 'dateTime',
+        options: { dateFormat: { name: 'iso' }, timeFormat: { name: '24hour' }, timeZone: 'America/Denver' },
+      },
+      {
+        name: 'Intro Sent At',
+        type: 'dateTime',
+        options: { dateFormat: { name: 'iso' }, timeFormat: { name: '24hour' }, timeZone: 'America/Denver' },
+      },
     ];
 
     for (const field of referralFields) {
@@ -196,6 +231,25 @@ export async function GET(request: Request) {
         status: result.created ? 'created' : 'error',
         error: result.error,
       });
+    }
+
+    // ─── Affiliates Table (create if missing) ──────────────────────────────
+
+    if (!tableMap['Affiliates']) {
+      const affResult = await createTable('Affiliates', [
+        { name: 'Name', type: 'singleLineText' },
+        { name: 'Email', type: 'email' },
+        { name: 'Code', type: 'singleLineText' },
+        { name: 'Status', type: 'singleSelect', options: { choices: [{ name: 'Active' }, { name: 'Inactive' }] } },
+      ]);
+      results.push({
+        table: 'Affiliates',
+        field: '(table)',
+        status: affResult.created ? 'created' : 'error',
+        error: affResult.error,
+      });
+    } else {
+      results.push({ table: 'Affiliates', field: '(table)', status: 'already_exists' });
     }
 
     const created = results.filter(r => r.status === 'created').length;

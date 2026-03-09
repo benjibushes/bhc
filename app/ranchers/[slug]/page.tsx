@@ -1,0 +1,437 @@
+import { Metadata } from 'next';
+import { notFound } from 'next/navigation';
+import Link from 'next/link';
+import Image from 'next/image';
+import Container from '../../components/Container';
+import Divider from '../../components/Divider';
+import { getRancherBySlug, getActiveRancherPages } from '@/lib/airtable';
+
+// Revalidate every 10 minutes
+export const revalidate = 600;
+
+// Pre-generate pages for known slugs at build time
+export async function generateStaticParams() {
+  try {
+    const ranchers = await getActiveRancherPages();
+    return ranchers
+      .map((r: any) => ({ slug: r['Slug'] || '' }))
+      .filter((p: { slug: string }) => p.slug);
+  } catch {
+    return [];
+  }
+}
+
+export async function generateMetadata(
+  { params }: { params: Promise<{ slug: string }> }
+): Promise<Metadata> {
+  const { slug } = await params;
+  const rancher: any = await getRancherBySlug(slug);
+  if (!rancher) return { title: 'Rancher Not Found' };
+
+  const name = rancher['Ranch Name'] || rancher['Operator Name'] || 'Ranch';
+  const tagline = rancher['Tagline'] || `Buy direct from ${name} on BuyHalfCow`;
+  const logo = rancher['Logo URL'] || '';
+
+  return {
+    title: name,
+    description: tagline,
+    openGraph: {
+      title: `${name} — BuyHalfCow`,
+      description: tagline,
+      ...(logo && { images: [{ url: logo, width: 800, height: 600, alt: name }] }),
+    },
+  };
+}
+
+// ─── Share Option Card ──────────────────────────────────────────────────────
+
+function ShareCard({
+  label,
+  lbs,
+  price,
+  paymentLink,
+  highlighted = false,
+}: {
+  label: string;
+  lbs: string;
+  price: number;
+  paymentLink: string;
+  highlighted?: boolean;
+}) {
+  return (
+    <div
+      className={`flex flex-col p-6 border ${
+        highlighted
+          ? 'border-[#6B4F3F] bg-[#6B4F3F] text-[#F4F1EC]'
+          : 'border-[#A7A29A] bg-white text-[#0E0E0E]'
+      }`}
+    >
+      <p className={`text-xs uppercase tracking-widest mb-3 ${highlighted ? 'text-[#F4F1EC]/70' : 'text-[#A7A29A]'}`}>
+        {label}
+      </p>
+      <p className="font-[family-name:var(--font-playfair)] text-4xl font-bold mb-1">
+        ${price.toLocaleString()}
+      </p>
+      {lbs && (
+        <p className={`text-sm mb-6 ${highlighted ? 'text-[#F4F1EC]/80' : 'text-[#A7A29A]'}`}>
+          {lbs} of beef
+        </p>
+      )}
+      <div className="mt-auto">
+        {paymentLink ? (
+          <a
+            href={paymentLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`block w-full text-center py-3 text-sm font-medium tracking-wide transition-colors ${
+              highlighted
+                ? 'bg-[#F4F1EC] text-[#6B4F3F] hover:bg-white'
+                : 'bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]'
+            }`}
+          >
+            Buy {label} →
+          </a>
+        ) : (
+          <a
+            href="/access"
+            className={`block w-full text-center py-3 text-sm font-medium tracking-wide transition-colors ${
+              highlighted
+                ? 'bg-[#F4F1EC] text-[#6B4F3F] hover:bg-white'
+                : 'bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]'
+            }`}
+          >
+            Inquire →
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── YouTube embed helper ───────────────────────────────────────────────────
+
+function getYouTubeEmbedUrl(url: string): string | null {
+  if (!url) return null;
+  // Handle youtu.be short links
+  const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  if (shortMatch) return `https://www.youtube.com/embed/${shortMatch[1]}`;
+  // Handle youtube.com/watch?v=
+  const longMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  if (longMatch) return `https://www.youtube.com/embed/${longMatch[1]}`;
+  // Already an embed URL or other format — return as-is
+  if (url.includes('youtube.com/embed') || url.includes('vimeo.com')) return url;
+  return null;
+}
+
+// ─── Page ──────────────────────────────────────────────────────────────────
+
+export default async function RancherPage(
+  { params }: { params: Promise<{ slug: string }> }
+) {
+  const { slug } = await params;
+  const rancherRaw: any = await getRancherBySlug(slug);
+  if (!rancherRaw) notFound();
+
+  const r = rancherRaw;
+  const name = r['Ranch Name'] || r['Operator Name'] || 'Ranch';
+  const operatorName = r['Operator Name'] || '';
+  const tagline = r['Tagline'] || '';
+  const logoUrl = r['Logo URL'] || '';
+  const aboutText = r['About Text'] || '';
+  const videoUrl = r['Video URL'] || '';
+  const state = r['State'] || '';
+  const beefTypes = r['Beef Types'] || '';
+  const statesServed = r['States Served'] || '';
+  const certifications = r['Certifications'] || '';
+  const nextProcessingDate = r['Next Processing Date'] || '';
+  const reserveLink = r['Reserve Link'] || '';
+  const customNotes = r['Custom Notes'] || '';
+
+  const quarterPrice = r['Quarter Price'];
+  const quarterLbs = r['Quarter lbs'] || '';
+  const quarterLink = r['Quarter Payment Link'] || '';
+  const halfPrice = r['Half Price'];
+  const halfLbs = r['Half lbs'] || '';
+  const halfLink = r['Half Payment Link'] || '';
+  const wholePrice = r['Whole Price'];
+  const wholeLbs = r['Whole lbs'] || '';
+  const wholeLink = r['Whole Payment Link'] || '';
+
+  const hasPricing = quarterPrice || halfPrice || wholePrice;
+  const embedUrl = getYouTubeEmbedUrl(videoUrl);
+
+  const processingDateDisplay = nextProcessingDate
+    ? new Date(nextProcessingDate).toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: 'UTC',
+      })
+    : null;
+
+  return (
+    <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+
+      {/* ── Hero ─────────────────────────────────────────────────────────── */}
+      <section className="py-20 border-b border-[#2A2A2A]/10">
+        <Container>
+          <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center gap-10">
+            {/* Logo */}
+            <div className="flex-shrink-0">
+              {logoUrl ? (
+                <Image
+                  src={logoUrl}
+                  alt={`${name} logo`}
+                  width={180}
+                  height={180}
+                  className="object-contain max-h-40"
+                  unoptimized
+                />
+              ) : (
+                <div className="w-32 h-32 border border-[#A7A29A] flex items-center justify-center">
+                  <span className="font-[family-name:var(--font-playfair)] text-5xl text-[#A7A29A]">
+                    {name.charAt(0)}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Name + meta */}
+            <div className="space-y-4 text-center md:text-left">
+              <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+                BuyHalfCow Verified Partner
+              </p>
+              <h1 className="font-[family-name:var(--font-playfair)] text-4xl md:text-5xl">
+                {name}
+              </h1>
+              {tagline && (
+                <p className="text-xl text-[#6B4F3F]">{tagline}</p>
+              )}
+              <div className="flex flex-wrap justify-center md:justify-start gap-2 pt-1">
+                {state && (
+                  <span className="text-xs border border-[#A7A29A] px-3 py-1 text-[#6B4F3F]">
+                    {state}
+                  </span>
+                )}
+                {beefTypes && (
+                  <span className="text-xs border border-[#A7A29A] px-3 py-1 text-[#6B4F3F]">
+                    {beefTypes}
+                  </span>
+                )}
+                {statesServed && statesServed !== state && (
+                  <span className="text-xs border border-[#A7A29A] px-3 py-1 text-[#6B4F3F]">
+                    Ships to: {statesServed}
+                  </span>
+                )}
+                {certifications && (
+                  <span className="text-xs border border-[#8C2F2F] px-3 py-1 text-[#8C2F2F]">
+                    ✓ {certifications}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </Container>
+      </section>
+
+      {/* ── About + Video ─────────────────────────────────────────────────── */}
+      {(aboutText || embedUrl) && (
+        <section className="py-16">
+          <Container>
+            <div className="max-w-4xl mx-auto space-y-10">
+              {aboutText && (
+                <div className="space-y-4">
+                  <h2 className="font-[family-name:var(--font-playfair)] text-3xl">
+                    About {name}
+                  </h2>
+                  <div className="prose prose-lg max-w-none text-[#0E0E0E]/80 leading-relaxed whitespace-pre-line">
+                    {aboutText}
+                  </div>
+                </div>
+              )}
+
+              {embedUrl && (
+                <div className="space-y-4">
+                  <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+                    Watch Our Interview{operatorName ? ` with ${operatorName}` : ''}
+                  </h2>
+                  <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
+                    <iframe
+                      src={embedUrl}
+                      title={`${name} interview`}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      className="absolute inset-0 w-full h-full border border-[#A7A29A]"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── How It Works ─────────────────────────────────────────────────── */}
+      <section className="py-14 bg-white border-y border-[#A7A29A]/40">
+        <Container>
+          <div className="max-w-4xl mx-auto space-y-8">
+            <h2 className="font-[family-name:var(--font-playfair)] text-3xl text-center">
+              How It Works
+            </h2>
+            <div className="grid md:grid-cols-3 gap-6">
+              <div className="p-6 border border-[#A7A29A] space-y-2">
+                <p className="text-2xl font-[family-name:var(--font-playfair)] text-[#6B4F3F]">01</p>
+                <h3 className="font-medium">Choose Your Share</h3>
+                <p className="text-sm text-[#A7A29A] leading-relaxed">
+                  Select a quarter, half, or whole cow based on your family's needs and freezer space.
+                </p>
+              </div>
+              <div className="p-6 border border-[#A7A29A] space-y-2">
+                <p className="text-2xl font-[family-name:var(--font-playfair)] text-[#6B4F3F]">02</p>
+                <h3 className="font-medium">Pay &amp; Confirm</h3>
+                <p className="text-sm text-[#A7A29A] leading-relaxed">
+                  Secure your share with a payment or deposit. {name} will reach out to confirm details.
+                </p>
+              </div>
+              <div className="p-6 border border-[#A7A29A] space-y-2">
+                <p className="text-2xl font-[family-name:var(--font-playfair)] text-[#6B4F3F]">03</p>
+                <h3 className="font-medium">Pick Up or Deliver</h3>
+                <p className="text-sm text-[#A7A29A] leading-relaxed">
+                  Your beef is custom butchered and ready for pickup or delivery on processing day.
+                </p>
+              </div>
+            </div>
+          </div>
+        </Container>
+      </section>
+
+      {/* ── Pricing ──────────────────────────────────────────────────────── */}
+      {hasPricing && (
+        <section className="py-16">
+          <Container>
+            <div className="max-w-4xl mx-auto space-y-8">
+              <div className="text-center space-y-3">
+                <h2 className="font-[family-name:var(--font-playfair)] text-3xl">
+                  Choose Your Share
+                </h2>
+                <p className="text-[#A7A29A]">
+                  All prices include processing. Custom cuts available at no extra charge.
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-4">
+                {quarterPrice && (
+                  <ShareCard
+                    label="Quarter"
+                    lbs={quarterLbs}
+                    price={quarterPrice}
+                    paymentLink={quarterLink}
+                  />
+                )}
+                {halfPrice && (
+                  <ShareCard
+                    label="Half"
+                    lbs={halfLbs}
+                    price={halfPrice}
+                    paymentLink={halfLink}
+                    highlighted
+                  />
+                )}
+                {wholePrice && (
+                  <ShareCard
+                    label="Whole"
+                    lbs={wholeLbs}
+                    price={wholePrice}
+                    paymentLink={wholeLink}
+                  />
+                )}
+              </div>
+
+              <p className="text-center text-sm text-[#A7A29A]">
+                Prices listed in USD. Questions?{' '}
+                <Link href="/access" className="underline hover:text-[#0E0E0E]">
+                  Contact BuyHalfCow
+                </Link>
+              </p>
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── Reserve ──────────────────────────────────────────────────────── */}
+      {(processingDateDisplay || reserveLink) && (
+        <>
+          <Divider />
+          <section className="py-14">
+            <Container>
+              <div className="max-w-2xl mx-auto text-center space-y-5">
+                <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+                  Not Ready to Commit?
+                </h2>
+                {processingDateDisplay && (
+                  <p className="text-[#6B4F3F]">
+                    Next processing date: <strong>{processingDateDisplay}</strong>
+                  </p>
+                )}
+                <p className="text-[#A7A29A] text-sm leading-relaxed">
+                  Reserve your spot before the processing date fills up. A small deposit holds your share.
+                </p>
+                {reserveLink ? (
+                  <a
+                    href={reserveLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block px-8 py-3 border border-[#6B4F3F] text-[#6B4F3F] text-sm tracking-wide hover:bg-[#6B4F3F] hover:text-[#F4F1EC] transition-colors"
+                  >
+                    Reserve Your Share →
+                  </a>
+                ) : (
+                  <Link
+                    href="/access"
+                    className="inline-block px-8 py-3 border border-[#6B4F3F] text-[#6B4F3F] text-sm tracking-wide hover:bg-[#6B4F3F] hover:text-[#F4F1EC] transition-colors"
+                  >
+                    Get In Touch →
+                  </Link>
+                )}
+              </div>
+            </Container>
+          </section>
+        </>
+      )}
+
+      {/* ── Custom Notes ─────────────────────────────────────────────────── */}
+      {customNotes && (
+        <>
+          <Divider />
+          <section className="py-14">
+            <Container>
+              <div className="max-w-3xl mx-auto space-y-4">
+                <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+                  A Note from {name}
+                </h2>
+                <p className="text-[#0E0E0E]/80 leading-relaxed whitespace-pre-line">
+                  {customNotes}
+                </p>
+              </div>
+            </Container>
+          </section>
+        </>
+      )}
+
+      {/* ── Footer Nav ───────────────────────────────────────────────────── */}
+      <div className="border-t border-[#2A2A2A]/10 py-10">
+        <Container>
+          <div className="max-w-4xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-[#A7A29A]">
+            <Link href="/ranchers" className="hover:text-[#0E0E0E] transition-colors">
+              ← Browse All Ranchers
+            </Link>
+            <Link href="/" className="hover:text-[#0E0E0E] transition-colors">
+              BuyHalfCow
+            </Link>
+          </div>
+        </Container>
+      </div>
+
+    </main>
+  );
+}

@@ -64,7 +64,7 @@ export async function PATCH(request: Request) {
       'Intent Score': intentScore,
       'Intent Classification': intentClassification,
       'Order Type': orderType,
-      'Budget Range': budgetRange || '',
+      'Budget': budgetRange || '',
     });
 
     const consumer: any = await getRecordById(TABLES.CONSUMERS, memberId);

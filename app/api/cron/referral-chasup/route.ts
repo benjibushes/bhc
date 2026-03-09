@@ -3,8 +3,12 @@ import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
+import { sendRepeatPurchaseEmail } from '@/lib/email';
+import jwt from 'jsonwebtoken';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const OLLAMA_URL = process.env.OLLAMA_BASE_URL || '';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
 const AI_CONFIGURED = !!(OLLAMA_URL || ANTHROPIC_KEY);
@@ -103,7 +107,59 @@ Status: ${referral['Status']} | ${daysStale} days stale
       await sendTelegramUpdate(`🎯 <b>Referral Chase-Up Complete</b>\n\n${stale.length} stalled referrals found\n${drafted} drafts sent for review${errors > 0 ? `\n⚠️ ${errors} errors` : ''}`);
     }
 
-    return NextResponse.json({ success: true, stale: stale.length, drafted, errors });
+    // ── Repeat purchase emails — 30 days post-close ────────────────────────
+    let repeatSent = 0;
+    try {
+      const closedReferrals = await getAllRecords(
+        TABLES.REFERRALS,
+        '{Status} = "Closed Won"'
+      ) as any[];
+
+      const thirtyDaysAgo = Date.now() - 30 * DAY_MS;
+      const repeatCandidates = closedReferrals.filter(r => {
+        if (r['Repeat Outreach Sent']) return false;
+        const closedAt = r['Closed At'];
+        if (!closedAt) return false;
+        return new Date(closedAt).getTime() < thirtyDaysAgo;
+      });
+
+      for (const referral of repeatCandidates) {
+        try {
+          const buyerEmail = referral['Buyer Email'] || '';
+          const buyerName = referral['Buyer Name'] || '';
+          if (!buyerEmail) continue;
+
+          const firstName = buyerName.split(' ')[0] || 'there';
+          const rancherName = referral['Suggested Rancher Name'] || 'your rancher';
+
+          // Build a magic login link for the consumer
+          const consumerIds: string[] = referral['Buyer'] || [];
+          const consumerId = consumerIds[0] || '';
+          const token = consumerId
+            ? jwt.sign(
+                { type: 'member-login', consumerId, email: buyerEmail.trim().toLowerCase() },
+                JWT_SECRET,
+                { expiresIn: '7d' }
+              )
+            : '';
+          const loginUrl = token ? `${SITE_URL}/member/verify?token=${token}` : `${SITE_URL}/member`;
+
+          await sendRepeatPurchaseEmail({ firstName, email: buyerEmail, rancherName, loginUrl });
+          await updateRecord(TABLES.REFERRALS, referral.id, { 'Repeat Outreach Sent': true });
+          repeatSent++;
+        } catch (e: any) {
+          console.error('Repeat purchase email error:', e.message);
+        }
+      }
+    } catch (e: any) {
+      console.error('Repeat purchase query error:', e.message);
+    }
+
+    if (repeatSent > 0) {
+      await sendTelegramUpdate(`🔄 <b>Repeat Purchase Emails</b>: ${repeatSent} sent to past buyers`);
+    }
+
+    return NextResponse.json({ success: true, stale: stale.length, drafted, errors, repeatSent });
   } catch (error: any) {
     console.error('Referral chase-up cron error:', error);
     await sendTelegramUpdate(`⚠️ Referral chase-up cron failed: ${error.message}`).catch(() => {});

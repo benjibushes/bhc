@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getRecordById, updateRecord } from '@/lib/airtable';
+import { getRecordById, updateRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
@@ -59,13 +59,46 @@ export async function PATCH(
       if (status === 'Closed Won' || status === 'Closed Lost') {
         fields['Closed At'] = new Date().toISOString();
 
-        // Decrement active referral count
+        // Decrement active referral count + auto-match waiting consumers
         try {
           const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
           const currentCount = rancher['Current Active Referrals'] || 0;
           await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
             'Current Active Referrals': Math.max(0, currentCount - 1),
           });
+
+          // Auto-match: find top waiting consumers in this rancher's state
+          const rancherState = rancher['State'] || '';
+          const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+          if (rancherState) {
+            const waiting = await getAllRecords(TABLES.CONSUMERS, `AND({Status} = "Approved", {Referral Status} = "Unmatched", {Segment} = "Beef Buyer", {State} = "${rancherState}")`) as any[];
+            const sorted = waiting
+              .sort((a, b) => (b['Intent Score'] || 0) - (a['Intent Score'] || 0))
+              .slice(0, 3);
+
+            for (const consumer of sorted) {
+              try {
+                await fetch(`${SITE_URL}/api/matching/suggest`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    buyerState: rancherState,
+                    buyerId: consumer.id,
+                    buyerName: consumer['Full Name'],
+                    buyerEmail: consumer['Email'],
+                    buyerPhone: consumer['Phone'],
+                    orderType: consumer['Order Type'],
+                    budgetRange: consumer['Budget'],
+                    intentScore: consumer['Intent Score'],
+                    intentClassification: consumer['Intent Classification'],
+                    notes: consumer['Notes'],
+                  }),
+                });
+              } catch (autoMatchErr) {
+                console.error('Auto-match error:', autoMatchErr);
+              }
+            }
+          }
         } catch (e) {
           console.error('Error updating rancher referral count:', e);
         }

@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     const consumers = await getAllRecords(TABLES.CONSUMERS);
 
     const needsBackfill = consumers.filter((c: any) =>
-      !c['Order Type'] && !c['Budget Range'] && c['Email']
+      !c['Order Type'] && !c['Budget'] && c['Email']
     );
 
     const toProcess = limit ? needsBackfill.slice(0, limit) : needsBackfill;
