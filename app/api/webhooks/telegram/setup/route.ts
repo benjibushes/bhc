@@ -40,6 +40,7 @@ export async function GET(request: Request) {
 
   // Register the webhook
   const webhookUrl = `${SITE_URL}/api/webhooks/telegram`;
+  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
   const res = await fetch(`${telegramApi}/setWebhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -47,6 +48,7 @@ export async function GET(request: Request) {
       url: webhookUrl,
       allowed_updates: ['message', 'callback_query'],
       drop_pending_updates: true,
+      ...(webhookSecret ? { secret_token: webhookSecret } : {}),
     }),
   });
 
