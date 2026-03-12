@@ -112,6 +112,19 @@ export async function POST(request: Request) {
       }, { status: 503 });
     }
 
+    // Increment rancher's active referral count so capacity limit works in real-time
+    if (topMatch) {
+      try {
+        const currentRefs = topMatch['Current Active Referrals'] || 0;
+        await updateRecord(TABLES.RANCHERS, topMatch.id, {
+          'Current Active Referrals': currentRefs + 1,
+          'Last Assigned At': new Date().toISOString(),
+        });
+      } catch (e) {
+        console.error('Error incrementing rancher referral count:', e);
+      }
+    }
+
     try {
       await updateRecord(TABLES.CONSUMERS, buyerId, {
         'Referral Status': topMatch ? 'Pending Approval' : 'Waitlisted',

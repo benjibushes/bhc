@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
-import { createRecord, getAllRecords } from '@/lib/airtable';
+import { createRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 
 async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
   if (!ref || typeof ref !== 'string' || ref.length > 50) return false;
-  const code = ref.trim().replace(/"/g, '');
+  const code = ref.trim();
   if (!code) return false;
   try {
-    const affiliates = await getAllRecords(TABLES.AFFILIATES, `AND({Code} = "${code}", {Status} = "Active")`);
+    const affiliates = await getAllRecords(TABLES.AFFILIATES, `AND({Code} = "${escapeAirtableValue(code)}", {Status} = "Active")`);
     return affiliates.length > 0;
   } catch {
     return false;
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
 
     // Check for duplicate email
     try {
-      const existing = await getAllRecords(TABLES.CONSUMERS, `{Email} = "${email.trim().toLowerCase()}"`);
+      const existing = await getAllRecords(TABLES.CONSUMERS, `{Email} = "${escapeAirtableValue(email.trim().toLowerCase())}"`);
       if (existing.length > 0) {
         return NextResponse.json({ error: 'This email is already registered. Check your inbox for your confirmation.' }, { status: 409 });
       }

@@ -67,12 +67,20 @@ async function handler(request: Request) {
             { expiresIn: '7d' }
           );
           const loginUrl = `${SITE_URL}/member/verify?token=${token}`;
-          await sendConsumerApproval({ firstName, email, loginUrl, segment });
+          try {
+            await sendConsumerApproval({ firstName, email, loginUrl, segment });
+          } catch (emailErr) {
+            console.error(`Failed to send approval email to ${email}:`, emailErr);
+          }
 
           // Send backfill survey if we don't know what they want yet
           const missingOrderDetails = !consumer['Order Type'] && !consumer['Budget'];
           if (missingOrderDetails) {
-            await sendBackfillEmail({ firstName, email, loginUrl });
+            try {
+              await sendBackfillEmail({ firstName, email, loginUrl });
+            } catch (emailErr) {
+              console.error(`Failed to send backfill email to ${email}:`, emailErr);
+            }
           }
         }
 

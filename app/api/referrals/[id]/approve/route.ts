@@ -43,9 +43,10 @@ export async function PATCH(
       'Intro Sent At': now,
     });
 
+    // Note: Current Active Referrals is incremented at match creation time
+    // in /api/matching/suggest — only update Last Assigned At here to avoid double-counting
     await updateRecord(TABLES.RANCHERS, rancherId, {
       'Last Assigned At': now,
-      'Current Active Referrals': currentRefs + 1,
     });
 
     const rancherEmail = rancher['Email'];
@@ -59,6 +60,7 @@ export async function PATCH(
     const buyerNotes = referral['Notes'] || '';
 
     if (rancherEmail) {
+      try {
       await sendEmail({
         to: rancherEmail,
         subject: `BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
@@ -100,6 +102,9 @@ export async function PATCH(
           </html>
         `,
       });
+      } catch (emailErr) {
+        console.error(`Failed to send intro email to ${rancherEmail}:`, emailErr);
+      }
     }
 
     try {

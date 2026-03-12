@@ -24,6 +24,11 @@ export const TABLES = {
   AFFILIATES: 'Affiliates',
 };
 
+// Escape a string value for use in Airtable filterByFormula to prevent injection
+export function escapeAirtableValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -232,8 +237,9 @@ export async function getActiveRancherPages() {
 // Get a single rancher by their URL slug
 export async function getRancherBySlug(slug: string) {
   try {
+    const safeSlug = escapeAirtableValue(slug);
     const records = await base(TABLES.RANCHERS)
-      .select({ filterByFormula: `AND({Slug} = "${slug}", {Page Live} = 1)`, maxRecords: 1 })
+      .select({ filterByFormula: `AND({Slug} = "${safeSlug}", {Page Live} = 1)`, maxRecords: 1 })
       .all();
     if (records.length === 0) return null;
     return { id: records[0].id, ...records[0].fields };
