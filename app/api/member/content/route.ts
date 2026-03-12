@@ -46,7 +46,7 @@ export async function GET() {
     const [ranchers, landDeals, brands] = await Promise.all([
       getAllRecords(TABLES.RANCHERS, "{Certified} = TRUE()").catch(() => []),
       getAllRecords(TABLES.LAND_DEALS, "{Status} = 'Approved'").catch(() => []),
-      getAllRecords(TABLES.BRANDS, "{Featured} = TRUE()").catch(() => []),
+      getAllRecords(TABLES.BRANDS, "AND({Featured} = TRUE(), {Payment Status} = 'Paid')").catch(() => []),
     ]);
 
     let referrals: any[] = [];

@@ -90,7 +90,7 @@ export async function GET() {
     try {
       const allBrands = await getAllRecords(TABLES.BRANDS);
       networkBenefits = allBrands
-        .filter((b: any) => (b['Status'] === 'approved' || b['Active'] === true))
+        .filter((b: any) => (b['Status'] === 'Approved' && b['Payment Status'] === 'Paid'))
         .map((b: any) => ({
           id: b.id,
           brand_name: b['Brand Name'] || '',

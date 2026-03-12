@@ -16,6 +16,7 @@ export async function GET() {
       discount_offered: record['Discount Offered (%)'] || 0,
       status: record['Status'] || 'Pending',
       active: record['Active'] || false,
+      payment_status: record['Payment Status'] || '',
       created_at: record['Created'] || record.createdTime || new Date().toISOString(),
     }));
     

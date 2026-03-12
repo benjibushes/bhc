@@ -77,6 +77,7 @@ interface Brand {
   discount_offered: number;
   status: string;
   active: boolean;
+  payment_status: string;
   created_at: string;
 }
 
@@ -990,6 +991,11 @@ export default function AdminPage() {
                             <p className="text-sm">{brand.email}</p>
                             <p className="text-sm">Product: {brand.product_type}</p>
                             <p className="text-sm">Discount: {brand.discount_offered}%</p>
+                            {brand.payment_status === 'Paid' ? (
+                              <span className="inline-block mt-1 px-2 py-0.5 bg-green-100 text-green-800 text-xs font-medium">PAID</span>
+                            ) : brand.status === 'Approved' ? (
+                              <span className="inline-block mt-1 px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs font-medium">PAYMENT PENDING</span>
+                            ) : null}
                           </div>
                           <div className="flex gap-2 flex-wrap">
                             <select

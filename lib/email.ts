@@ -356,6 +356,123 @@ export async function sendPartnerConfirmation(data: {
 }
 
 // =====================================================
+// BRAND PAYMENT EMAILS
+// =====================================================
+
+export async function sendBrandApprovalWithPayment(data: {
+  brandName: string;
+  contactName: string;
+  email: string;
+  paymentUrl: string;
+  listingPrice: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `You're Approved — Complete Your Brand Listing on BuyHalfCow`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 28px; margin: 0 0 20px 0; }
+            p { margin: 16px 0; color: #6B4F3F; }
+            .divider { height: 1px; background: #2A2A2A; margin: 30px 0; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>You're Approved</h1>
+            <p>Hi ${esc(data.contactName)},</p>
+            <p>Great news — <strong>${esc(data.brandName)}</strong> has been approved for the BuyHalfCow partner network.</p>
+            <p>Your brand will be featured to our verified beef buyers and rancher network once your listing payment is complete.</p>
+            <div class="divider"></div>
+            <p><strong>What Your Listing Includes:</strong></p>
+            <ul style="line-height: 2; color: #6B4F3F;">
+              <li>Featured placement on the member dashboard</li>
+              <li>Direct exposure to verified beef buyers and ranch families</li>
+              <li>Your exclusive discount displayed to all active members</li>
+              <li>Brand profile visible to the entire rancher network</li>
+            </ul>
+            <div style="background: #0E0E0E; color: #F4F1EC; padding: 30px; margin: 30px 0; text-align: center;">
+              <p style="margin: 0 0 10px 0; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Annual Listing Fee</p>
+              <p style="margin: 0 0 20px 0; font-family: Georgia, serif; font-size: 36px;">${esc(data.listingPrice)}</p>
+              <a href="${data.paymentUrl}" style="display: inline-block; padding: 16px 32px; background: #F4F1EC; color: #0E0E0E !important; text-decoration: none; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; font-size: 14px; border: 2px solid #F4F1EC;">Complete Payment &amp; Go Live</a>
+              <p style="margin: 20px 0 0 0; font-size: 12px; color: #A7A29A;">Secure checkout powered by Stripe</p>
+            </div>
+            <p><strong>Note:</strong> Your brand will not be visible to members until payment is completed. This link expires in 30 days.</p>
+            <div class="divider"></div>
+            <p>Questions? Reply to this email or contact <a href="mailto:support@buyhalfcow.com" style="color: #0E0E0E;">support@buyhalfcow.com</a></p>
+            <div class="footer">
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending brand approval with payment:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendBrandListingConfirmation(data: {
+  brandName: string;
+  email: string;
+  amountPaid: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.email,
+      subject: `You're Live — ${data.brandName} is Now on BuyHalfCow`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 28px; margin: 0 0 20px 0; }
+            p { margin: 16px 0; color: #6B4F3F; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Your Brand is Live</h1>
+            <p>Hi there,</p>
+            <p>Payment of <strong>${esc(data.amountPaid)}</strong> has been received. <strong>${esc(data.brandName)}</strong> is now featured across the BuyHalfCow network.</p>
+            <div style="background: #F4F1EC; padding: 20px; margin: 20px 0; border-left: 3px solid #0E0E0E;">
+              <p style="margin: 0; font-size: 14px;"><strong>Your listing is now visible to:</strong></p>
+              <ul style="margin: 8px 0 0 0; color: #6B4F3F; font-size: 14px;">
+                <li>All verified beef buyers on the member dashboard</li>
+                <li>Certified ranchers in the network benefits section</li>
+              </ul>
+            </div>
+            <p>We'll be in touch with any member engagement updates. If you'd like to update your listing details, discount, or website link at any time, just reply to this email.</p>
+            <div class="footer">
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending brand listing confirmation:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
 // AFFILIATE EMAILS
 // =====================================================
 
