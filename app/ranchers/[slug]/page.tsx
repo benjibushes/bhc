@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import { getRancherBySlug, getActiveRancherPages } from '@/lib/airtable';
+import RancherLeadModal from './RancherLeadModal';
 
 // Revalidate every 10 minutes
 export const revalidate = 600;
@@ -41,56 +42,6 @@ export async function generateMetadata(
       ...(logo && { images: [{ url: logo, width: 800, height: 600, alt: name }] }),
     },
   };
-}
-
-// ─── Share Option Card ──────────────────────────────────────────────────────
-
-function ShareCard({
-  label,
-  lbs,
-  price,
-  trackingUrl,
-  highlighted = false,
-}: {
-  label: string;
-  lbs: string;
-  price: number;
-  trackingUrl: string; // /ranchers/[slug]/pay/[tier] — always BHC-routed
-  highlighted?: boolean;
-}) {
-  return (
-    <div
-      className={`flex flex-col p-6 border ${
-        highlighted
-          ? 'border-[#6B4F3F] bg-[#6B4F3F] text-[#F4F1EC]'
-          : 'border-[#A7A29A] bg-white text-[#0E0E0E]'
-      }`}
-    >
-      <p className={`text-xs uppercase tracking-widest mb-3 ${highlighted ? 'text-[#F4F1EC]/70' : 'text-[#A7A29A]'}`}>
-        {label}
-      </p>
-      <p className="font-[family-name:var(--font-playfair)] text-4xl font-bold mb-1">
-        ${price.toLocaleString()}
-      </p>
-      {lbs && (
-        <p className={`text-sm mb-6 ${highlighted ? 'text-[#F4F1EC]/80' : 'text-[#A7A29A]'}`}>
-          {lbs} of beef
-        </p>
-      )}
-      <div className="mt-auto">
-        <a
-          href={trackingUrl}
-          className={`block w-full text-center py-3 text-sm font-medium tracking-wide transition-colors ${
-            highlighted
-              ? 'bg-[#F4F1EC] text-[#6B4F3F] hover:bg-white'
-              : 'bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]'
-          }`}
-        >
-          Buy {label} →
-        </a>
-      </div>
-    </div>
-  );
 }
 
 // ─── YouTube embed helper ───────────────────────────────────────────────────
@@ -304,33 +255,13 @@ export default async function RancherPage(
                 </p>
               </div>
 
-              <div className="grid md:grid-cols-3 gap-4">
-                {quarterPrice && (
-                  <ShareCard
-                    label="Quarter"
-                    lbs={quarterLbs}
-                    price={quarterPrice}
-                    trackingUrl={quarterLink ? `/ranchers/${slug}/pay/quarter` : '/access'}
-                  />
-                )}
-                {halfPrice && (
-                  <ShareCard
-                    label="Half"
-                    lbs={halfLbs}
-                    price={halfPrice}
-                    trackingUrl={halfLink ? `/ranchers/${slug}/pay/half` : '/access'}
-                    highlighted
-                  />
-                )}
-                {wholePrice && (
-                  <ShareCard
-                    label="Whole"
-                    lbs={wholeLbs}
-                    price={wholePrice}
-                    trackingUrl={wholeLink ? `/ranchers/${slug}/pay/whole` : '/access'}
-                  />
-                )}
-              </div>
+              <RancherLeadModal
+                slug={slug}
+                rancherName={name}
+                quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs, hasLink: !!quarterLink } : undefined}
+                half={halfPrice ? { price: halfPrice, lbs: halfLbs, hasLink: !!halfLink } : undefined}
+                whole={wholePrice ? { price: wholePrice, lbs: wholeLbs, hasLink: !!wholeLink } : undefined}
+              />
 
               <p className="text-center text-sm text-[#A7A29A]">
                 Prices listed in USD. Questions?{' '}

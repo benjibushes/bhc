@@ -38,6 +38,8 @@ interface Consumer {
   last_contacted: string;
   campaign: string;
   created_at: string;
+  sequence_stage: string;
+  ai_recommended_action: string;
 }
 
 interface Rancher {
@@ -399,8 +401,8 @@ export default function AdminPage() {
             <Button href="/admin/commissions" variant="secondary">
               💰 Commissions
             </Button>
-            <Button href="/admin/backfill" variant="secondary">
-              📧 Backfill Campaign
+            <Button href="/admin/affiliates" variant="secondary">
+              🔗 Affiliates
             </Button>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -416,9 +418,54 @@ export default function AdminPage() {
             <Button href="/admin/inquiries" variant="secondary">
               📨 Inquiries
             </Button>
-            <Button href="/admin/affiliates" variant="secondary">
-              🔗 Affiliates
+            <Button href="/admin/backfill" variant="secondary">
+              📧 Backfill Campaign
             </Button>
+          </div>
+
+          {/* AI & Automation Reference */}
+          <div className="border border-[#A7A29A] bg-white p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-[family-name:var(--font-serif)] text-xl">AI & Automation (Telegram)</h2>
+              <button
+                onClick={() => {
+                  const pw = prompt('Enter admin password:');
+                  if (pw) window.open(`/api/admin/setup-ai-fields?password=${encodeURIComponent(pw)}`, '_blank');
+                }}
+                className="px-3 py-1.5 text-xs border border-[#A7A29A] hover:bg-[#A7A29A] hover:text-white transition-colors"
+              >
+                Run AI Field Setup →
+              </button>
+            </div>
+            <p className="text-sm text-[#6B4F3F]">
+              These commands run via the BuyHalfCow Telegram bot. Use them to manage leads hands-free.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              <div className="p-3 bg-[#F4F1EC] border border-[#A7A29A]">
+                <p className="font-medium font-mono">/qualify</p>
+                <p className="text-[#6B4F3F] mt-0.5">AI reviews 3 pending leads, sends approve/reject/watch buttons</p>
+              </div>
+              <div className="p-3 bg-[#F4F1EC] border border-[#A7A29A]">
+                <p className="font-medium font-mono">/brief</p>
+                <p className="text-[#6B4F3F] mt-0.5">AI-generated priority action list for today</p>
+              </div>
+              <div className="p-3 bg-[#F4F1EC] border border-[#A7A29A]">
+                <p className="font-medium font-mono">/chasup</p>
+                <p className="text-[#6B4F3F] mt-0.5">Find stalled referrals (5+ days), draft re-engagement emails to approve</p>
+              </div>
+              <div className="p-3 bg-[#F4F1EC] border border-[#A7A29A]">
+                <p className="font-medium font-mono">/draft followup [name]</p>
+                <p className="text-[#6B4F3F] mt-0.5">AI drafts a personalized follow-up email for a consumer</p>
+              </div>
+              <div className="p-3 bg-[#F4F1EC] border border-[#A7A29A]">
+                <p className="font-medium font-mono">/draft campaign [segment] [topic]</p>
+                <p className="text-[#6B4F3F] mt-0.5">AI drafts a broadcast email — sends to Broadcast page pre-filled</p>
+              </div>
+              <div className="p-3 bg-[#F4F1EC] border border-[#A7A29A]">
+                <p className="font-medium font-mono">Auto: Email Sequences</p>
+                <p className="text-[#6B4F3F] mt-0.5">Runs daily 10am MT — drip emails to approved consumers (Day 3, 7, 14...)</p>
+              </div>
+            </div>
           </div>
 
           {/* Tab Navigation */}
@@ -577,6 +624,14 @@ export default function AdminPage() {
                             {consumer.notes && <p className="text-sm text-[#6B4F3F] italic truncate max-w-md">&quot;{consumer.notes}&quot;</p>}
                             {consumer.campaign && <p className="text-xs text-[#A7A29A]">Source: {consumer.campaign}</p>}
                             {consumer.referred_by && <p className="text-xs text-blue-700">Referred by: {consumer.referred_by}</p>}
+                            {consumer.sequence_stage && (
+                              <p className="text-xs text-purple-700">Sequence: {consumer.sequence_stage}</p>
+                            )}
+                            {consumer.ai_recommended_action && (
+                              <p className="text-xs px-2 py-1 bg-yellow-50 border-l-2 border-yellow-400 text-yellow-800 mt-1">
+                                AI: {consumer.ai_recommended_action}
+                              </p>
+                            )}
                             {consumer.admin_notes && (
                               <p className="text-xs mt-1 px-2 py-1 bg-yellow-50 border-l-2 border-yellow-400 text-yellow-800">
                                 Notes: {consumer.admin_notes}

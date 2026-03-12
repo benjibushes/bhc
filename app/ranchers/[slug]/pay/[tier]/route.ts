@@ -50,11 +50,15 @@ export async function GET(
 
     const paymentLink: string = rancher[config.linkField] || '';
 
-    // ── Log the click (fire-and-forget, don't block the redirect) ──────────
+    // ── Log the click before returning (Vercel terminates after response) ──
     const currentClicks: number = rancher[config.clickField] || 0;
-    updateRecord(TABLES.RANCHERS, rancher.id, {
-      [config.clickField]: currentClicks + 1,
-    }).catch(err => console.error('Click log failed:', err));
+    try {
+      await updateRecord(TABLES.RANCHERS, rancher.id, {
+        [config.clickField]: currentClicks + 1,
+      });
+    } catch (err) {
+      console.error('Click log failed:', err);
+    }
 
     // ── If no payment link configured, send to ranch page ─────────────────
     if (!paymentLink) {

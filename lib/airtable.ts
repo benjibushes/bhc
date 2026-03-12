@@ -24,6 +24,30 @@ export const TABLES = {
   AFFILIATES: 'Affiliates',
 };
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const maxWait = 32000;
+  let delay = 1000;
+  while (true) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      const msg = error?.message || error?.error?.message || String(error);
+      const isRateLimit = error?.statusCode === 429 || msg.includes('429') || msg.toLowerCase().includes('rate limit');
+      if (isRateLimit && delay <= maxWait) {
+        console.warn(`Airtable rate limit hit, retrying in ${delay}ms...`);
+        await sleep(delay);
+        delay *= 2;
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 // Helper function to create a record (auto-strips problematic Airtable fields)
 export async function createRecord(tableName: string, fields: any) {
   let currentFields = { ...fields };
@@ -31,7 +55,7 @@ export async function createRecord(tableName: string, fields: any) {
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const records = await base(tableName).create([{ fields: currentFields }]);
+      const records = await withRateLimitRetry(() => base(tableName).create([{ fields: currentFields }]));
       return records[0];
     } catch (error: any) {
       const msg = error?.message || error?.error?.message || String(error);
@@ -79,12 +103,14 @@ export async function createRecord(tableName: string, fields: any) {
 // Helper function to get all records from a table
 export async function getAllRecords(tableName: string, filterByFormula?: string) {
   try {
-    const records = await base(tableName)
-      .select({
-        ...(filterByFormula && { filterByFormula }),
-      })
-      .all();
-    
+    const records = await withRateLimitRetry(() =>
+      base(tableName)
+        .select({
+          ...(filterByFormula && { filterByFormula }),
+        })
+        .all()
+    );
+
     return records.map((record) => ({
       id: record.id,
       ...record.fields,
@@ -98,7 +124,7 @@ export async function getAllRecords(tableName: string, filterByFormula?: string)
 // Helper function to get a single record by ID
 export async function getRecordById(tableName: string, recordId: string) {
   try {
-    const record = await base(tableName).find(recordId);
+    const record = await withRateLimitRetry(() => base(tableName).find(recordId));
     return {
       id: record.id,
       ...record.fields,
@@ -130,12 +156,12 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const records = await base(tableName).update([
+      const records = await withRateLimitRetry(() => base(tableName).update([
         {
           id: recordId,
           fields: currentFields,
         },
-      ]);
+      ]));
       return {
         id: records[0].id,
         ...records[0].fields,

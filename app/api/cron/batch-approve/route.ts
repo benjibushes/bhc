@@ -8,6 +8,10 @@ import jwt from 'jsonwebtoken';
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // Runs daily at 9am MT — processes pending consumers who qualify for auto-approval
 // and kicks off rancher matching for approved Beef Buyers
 export async function POST(request: Request) {
@@ -119,6 +123,9 @@ export async function POST(request: Request) {
         console.error(`Error processing consumer ${consumer['id']}:`, err);
         errors.push(consumer['Full Name'] || consumer['id']);
       }
+
+      // Respect Airtable's 5 req/sec limit — each consumer makes ~3-4 calls
+      await sleep(250);
     }
 
     const summary = `✅ <b>Batch Approval Complete</b>

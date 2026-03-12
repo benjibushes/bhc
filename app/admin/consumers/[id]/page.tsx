@@ -29,6 +29,13 @@ interface ConsumerDetail {
   referred_by: string;
   campaign: string;
   created_at: string;
+  sequence_stage: string;
+  sequence_sent_at: string;
+  approved_at: string;
+  ai_qualification_summary: string;
+  ai_recommended_action: string;
+  ai_email_draft: string;
+  ai_email_draft_subject: string;
 }
 
 export default function ConsumerDetailPage() {
@@ -317,6 +324,68 @@ export default function ConsumerDetailPage() {
                 </div>
               )}
             </div>
+
+            {/* AI & Email Sequence */}
+            {(consumer.sequence_stage || consumer.ai_qualification_summary || consumer.ai_recommended_action || consumer.ai_email_draft) && (
+              <div className="p-6 border border-dust-gray bg-white space-y-4">
+                <h2 className="font-serif text-xl">AI & Email Sequence</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                  {consumer.sequence_stage && (
+                    <div>
+                      <span className="text-saddle-brown">Sequence Stage:</span>
+                      <span className="ml-2 px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-800 font-medium">
+                        {consumer.sequence_stage}
+                      </span>
+                    </div>
+                  )}
+                  {consumer.approved_at && (
+                    <div>
+                      <span className="text-saddle-brown">Approved At:</span>
+                      <span className="ml-2">{new Date(consumer.approved_at).toLocaleDateString()}</span>
+                    </div>
+                  )}
+                  {consumer.sequence_sent_at && (
+                    <div>
+                      <span className="text-saddle-brown">Last Sequence Email:</span>
+                      <span className="ml-2">{new Date(consumer.sequence_sent_at).toLocaleDateString()}</span>
+                    </div>
+                  )}
+                </div>
+                {consumer.ai_qualification_summary && (
+                  <div>
+                    <p className="text-sm font-medium text-saddle-brown mb-1">AI Qualification Summary</p>
+                    <p className="text-sm bg-bone-white p-3 border-l-2 border-saddle-brown">{consumer.ai_qualification_summary}</p>
+                  </div>
+                )}
+                {consumer.ai_recommended_action && (
+                  <div>
+                    <p className="text-sm font-medium text-saddle-brown mb-1">AI Recommended Action</p>
+                    <p className="text-sm bg-yellow-50 p-3 border-l-2 border-yellow-400 text-yellow-800">{consumer.ai_recommended_action}</p>
+                  </div>
+                )}
+                {consumer.ai_email_draft && (
+                  <div>
+                    <p className="text-sm font-medium text-saddle-brown mb-1">
+                      AI Email Draft
+                      {consumer.ai_email_draft_subject && (
+                        <span className="ml-2 font-normal text-charcoal-black">— {consumer.ai_email_draft_subject}</span>
+                      )}
+                    </p>
+                    <pre className="text-sm bg-bone-white p-3 border border-dust-gray whitespace-pre-wrap font-sans">{consumer.ai_email_draft}</pre>
+                    <button
+                      onClick={() => {
+                        const subject = encodeURIComponent(consumer.ai_email_draft_subject || 'Follow-up');
+                        const body = encodeURIComponent(consumer.ai_email_draft);
+                        window.open(`mailto:${consumer.email}?subject=${subject}&body=${body}`);
+                      }}
+                      className="mt-2 px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                    >
+                      Open in Mail Client
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="p-6 border border-dust-gray bg-white space-y-4">
               <h2 className="font-serif text-xl">Admin Notes</h2>

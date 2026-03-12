@@ -169,7 +169,7 @@ export async function POST(request: Request) {
     }
 
     // Only trigger matching for approved Beef Buyers
-    const shouldMatch = status === 'approved' && consumerSegment === 'Beef Buyer' && state;
+    const shouldMatch = status.toLowerCase() === 'approved' && consumerSegment === 'Beef Buyer' && state;
     if (shouldMatch) {
       try {
         const matchRes = await fetch(

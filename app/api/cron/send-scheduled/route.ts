@@ -52,7 +52,11 @@ export async function GET(request: Request) {
 
     let campaigns: any[] = [];
     try {
-      campaigns = await getAllRecords(TABLES.CAMPAIGNS, `{Status} = "Scheduled"`);
+      const all = await getAllRecords(TABLES.CAMPAIGNS);
+      campaigns = all.filter((c: any) => {
+        const status = (c['Status'] || c['Campaign Status'] || '').toLowerCase();
+        return status === 'scheduled';
+      });
     } catch {
       return NextResponse.json({ message: 'No campaigns table or no scheduled campaigns', sent: 0 });
     }

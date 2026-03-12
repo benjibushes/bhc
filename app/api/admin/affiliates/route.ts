@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     // Check if affiliate already exists
     let existing: any[] = [];
     try {
-      existing = await getAllRecords(TABLES.AFFILIATES, `LOWER({Email}) = "${normalizedEmail}"`);
+      existing = await getAllRecords(TABLES.AFFILIATES, `{Email} = "${normalizedEmail}"`);
     } catch {
       // Affiliates table may not exist yet
     }

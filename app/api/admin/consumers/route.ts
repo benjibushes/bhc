@@ -30,6 +30,12 @@ export async function GET() {
       referred_by: record['Referred By'] || '',
       campaign: record['Campaign'] || '',
       created_at: record['Created'] || record.createdTime || new Date().toISOString(),
+      // AI / sequence fields
+      sequence_stage: record['Sequence Stage'] || '',
+      sequence_sent_at: record['Sequence Sent At'] || '',
+      approved_at: record['Approved At'] || '',
+      ai_qualification_summary: record['AI Qualification Summary'] || '',
+      ai_recommended_action: record['AI Recommended Action'] || '',
     }));
     
     return NextResponse.json(consumers);

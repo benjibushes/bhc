@@ -20,6 +20,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function makeLoginUrl(consumerId: string, email: string) {
   const token = jwt.sign(
     { type: 'member-login', consumerId, email: email.trim().toLowerCase() },
@@ -210,6 +214,9 @@ export async function POST(request: Request) {
         console.error(`Sequence error for consumer ${consumer.id}:`, err.message);
         errors++;
       }
+
+      // Respect Airtable's 5 req/sec limit — each consumer makes up to 2 calls
+      await sleep(250);
     }
 
     // ── Intro check-in: 3 days after Intro Sent At ────────────────────────

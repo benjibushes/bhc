@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/send-scheduled",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron/daily-digest",
