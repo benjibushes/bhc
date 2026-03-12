@@ -579,7 +579,7 @@ export default function AdminPage() {
                           }
                           if (!confirm(`Approve ${filtered.length} pending consumer(s) in ${consumerStateFilter}?`)) return;
                           for (const consumer of filtered) {
-                            await updateConsumerStatus(consumer.id, 'approved', consumer.membership);
+                            await updateConsumerStatus(consumer.id, 'Approved', consumer.membership);
                           }
                           fetchAllData();
                         }}
@@ -666,9 +666,9 @@ export default function AdminPage() {
                               onChange={(e) => updateConsumerStatus(consumer.id, e.target.value, consumer.membership)}
                               className="px-3 py-1 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
                             >
-                              <option value="pending">Pending</option>
-                              <option value="approved">Approved</option>
-                              <option value="rejected">Rejected</option>
+                              <option value="Pending">Pending</option>
+                              <option value="Approved">Approved</option>
+                              <option value="Rejected">Rejected</option>
                             </select>
                             <select
                               value={consumer.membership}
@@ -757,7 +757,7 @@ export default function AdminPage() {
                             }
                             if (!confirm(`Approve ${filtered.length} pending rancher(s) in ${rancherStateFilter}?`)) return;
                             for (const rancher of filtered) {
-                              await updateRancherStatus(rancher.id, 'approved', rancher.certified);
+                              await updateRancherStatus(rancher.id, 'Approved', rancher.certified);
                             }
                             fetchAllData();
                           }}
@@ -767,14 +767,14 @@ export default function AdminPage() {
                         </button>
                         <button
                           onClick={async () => {
-                            const filtered = ranchers.filter(r => r.state === rancherStateFilter && r.status === 'approved' && !r.certified);
+                            const filtered = ranchers.filter(r => r.state === rancherStateFilter && r.status === 'Approved' && !r.certified);
                             if (filtered.length === 0) {
                               alert('No uncertified approved ranchers in this state');
                               return;
                             }
                             if (!confirm(`Certify ${filtered.length} rancher(s) in ${rancherStateFilter}?`)) return;
                             for (const rancher of filtered) {
-                              await updateRancherStatus(rancher.id, 'approved', true);
+                              await updateRancherStatus(rancher.id, 'Approved', true);
                             }
                             fetchAllData();
                           }}
@@ -870,9 +870,9 @@ export default function AdminPage() {
                               onChange={(e) => updateRancherStatus(rancher.id, e.target.value, rancher.certified)}
                               className="px-3 py-1 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
                             >
-                              <option value="pending">Pending</option>
-                              <option value="approved">Approved</option>
-                              <option value="rejected">Rejected</option>
+                              <option value="Pending">Pending</option>
+                              <option value="Approved">Approved</option>
+                              <option value="Rejected">Rejected</option>
                             </select>
                             <button
                               onClick={() => updateRancherStatus(rancher.id, rancher.status, !rancher.certified)}
@@ -997,9 +997,9 @@ export default function AdminPage() {
                               onChange={(e) => updateBrandStatus(brand.id, e.target.value, brand.active)}
                               className="px-3 py-1 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
                             >
-                              <option value="pending">Pending</option>
-                              <option value="approved">Approved</option>
-                              <option value="rejected">Rejected</option>
+                              <option value="Pending">Pending</option>
+                              <option value="Approved">Approved</option>
+                              <option value="Rejected">Rejected</option>
                             </select>
                             <button
                               onClick={() => updateBrandStatus(brand.id, brand.status, !brand.active)}
@@ -1047,9 +1047,9 @@ export default function AdminPage() {
                               onChange={(e) => updateLandDealStatus(deal.id, e.target.value, deal.visible_to_members)}
                               className="px-3 py-1 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
                             >
-                              <option value="pending">Pending</option>
-                              <option value="approved">Approved</option>
-                              <option value="rejected">Rejected</option>
+                              <option value="Pending">Pending</option>
+                              <option value="Approved">Approved</option>
+                              <option value="Rejected">Rejected</option>
                             </select>
                             <button
                               onClick={() => updateLandDealStatus(deal.id, deal.status, !deal.visible_to_members)}

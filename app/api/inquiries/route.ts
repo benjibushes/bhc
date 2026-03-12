@@ -6,27 +6,53 @@ import { sendInquiryToRancher, sendInquiryAlertToAdmin } from '@/lib/email';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { consumerId, rancherId, consumerName, consumerEmail, consumerPhone, rancherEmail, ranchName, message, interestType } = body;
+    const { consumerId, rancherId, consumerName, consumerEmail, consumerPhone, message, interestType } = body;
 
-    if (!consumerId || !rancherId || !consumerName || !consumerEmail || !rancherEmail || !ranchName || !message) {
+    if (!rancherId || !consumerName || !consumerEmail || !message) {
       return NextResponse.json({ error: 'Missing required fields for inquiry' }, { status: 400 });
     }
 
-    // Fetch consumer to inherit campaign/source
-    let source = 'direct';
+    // Look up rancher to get verified email and ranch name
+    let rancherEmail = '';
+    let ranchName = '';
     try {
-      const consumer: any = await getRecordById(TABLES.CONSUMERS, consumerId);
-      if (consumer?.['Campaign']) {
-        source = consumer['Campaign'] as string;
-      } else if (consumer?.['Source']) {
-        source = consumer['Source'] as string;
-      }
+      const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+      rancherEmail = rancher['Email'] || '';
+      ranchName = rancher['Ranch Name'] || '';
     } catch (err) {
-      console.log('Could not fetch consumer for campaign tracking:', err);
+      console.error('Could not fetch rancher for inquiry:', err);
+      return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
+    }
+
+    if (!rancherEmail || !ranchName) {
+      return NextResponse.json({ error: 'Rancher data incomplete' }, { status: 400 });
+    }
+
+    // Map interest type to title case for Airtable select field
+    const interestLabels: Record<string, string> = {
+      half_cow: 'Half Cow',
+      quarter_cow: 'Quarter Cow',
+      whole_cow: 'Whole Cow',
+      custom: 'Custom Order',
+    };
+    const normalizedInterestType = interestType ? (interestLabels[interestType] || interestType) : '';
+
+    // Optionally fetch consumer for campaign tracking
+    let source = 'direct';
+    if (consumerId) {
+      try {
+        const consumer: any = await getRecordById(TABLES.CONSUMERS, consumerId);
+        if (consumer?.['Campaign']) {
+          source = consumer['Campaign'] as string;
+        } else if (consumer?.['Source']) {
+          source = consumer['Source'] as string;
+        }
+      } catch (err) {
+        console.log('Could not fetch consumer for campaign tracking:', err);
+      }
     }
 
     const inquiryFields: any = {
-      'Consumer ID': consumerId,
       'Rancher ID': rancherId,
       'Consumer Name': consumerName,
       'Consumer Email': consumerEmail,
@@ -34,16 +60,18 @@ export async function POST(request: Request) {
       'Rancher Email': rancherEmail,
       'Ranch Name': ranchName,
       'Message': message,
-      'Status': 'Pending', // Changed from 'Sent' - requires admin approval
+      'Status': 'Pending',
       'Sale Amount': 0,
       'Commission Amount': 0,
-      // Omit 'Commission Paid' - Airtable checkbox defaults to unchecked
-      'Source': source, // Track campaign attribution
+      'Source': source,
     };
 
-    // Only add Interest Type if provided
-    if (interestType) {
-      inquiryFields['Interest Type'] = interestType;
+    if (consumerId) {
+      inquiryFields['Consumer ID'] = consumerId;
+    }
+
+    if (normalizedInterestType) {
+      inquiryFields['Interest Type'] = normalizedInterestType;
     }
 
     const record = await createRecord(TABLES.INQUIRIES, inquiryFields);
@@ -54,7 +82,7 @@ export async function POST(request: Request) {
       rancherEmail,
       consumerName,
       consumerEmail,
-      interestType: interestType || '',
+      interestType: normalizedInterestType,
       message,
       inquiryId: record.id,
     });

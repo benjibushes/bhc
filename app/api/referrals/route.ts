@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords } from '@/lib/airtable';
+import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 
 export async function GET(request: Request) {
@@ -9,7 +9,7 @@ export async function GET(request: Request) {
 
     let filter = '';
     if (status) {
-      filter = `{Status} = "${status}"`;
+      filter = `{Status} = "${escapeAirtableValue(status)}"`;
     }
 
     let records: any[];

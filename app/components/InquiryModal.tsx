@@ -65,9 +65,9 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
         <div className="bg-[#F4F1EC] p-8 max-w-md w-full">
-          <h2 className="font-[family-name:var(--font-serif)] text-2xl mb-4">Inquiry Sent!</h2>
+          <h2 className="font-[family-name:var(--font-serif)] text-2xl mb-4">Inquiry Received!</h2>
           <p className="text-[#6B4F3F]">
-            Your inquiry has been sent to {rancher.ranch_name}. They'll reply directly to your email.
+            Your inquiry about {rancher.ranch_name} has been received. We&apos;ll review it and connect you with the rancher shortly.
           </p>
         </div>
       </div>

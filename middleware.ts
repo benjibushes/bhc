@@ -23,6 +23,14 @@ export function middleware(request: NextRequest) {
     }
   }
 
+  // Protect inquiry management (GET/PATCH/DELETE) — POST is the public contact form
+  if (pathname.startsWith('/api/inquiries') && request.method !== 'POST') {
+    const authCookie = request.cookies.get(ADMIN_AUTH_COOKIE);
+    if (authCookie?.value !== 'authenticated') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+  }
+
   // Protect affiliate dashboard API (requires affiliate session cookie)
   if (pathname.startsWith('/api/affiliate/')) {
     const affiliateCookie = request.cookies.get('bhc-affiliate-auth');
@@ -51,6 +59,7 @@ export const config = {
   matcher: [
     '/api/admin/:path*',
     '/api/referrals/:path*',
+    '/api/inquiries/:path*',
     '/api/affiliate/:path*',
     '/((?!_next/static|_next/image|favicon.ico).*)',
   ],

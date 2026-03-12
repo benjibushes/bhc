@@ -13,14 +13,16 @@ export async function PATCH(
     // Build update fields object
     const fields: any = {};
     if (body.status) fields['Status'] = body.status;
+    if (body.visible_to_members !== undefined) fields['Visible to Members'] = body.visible_to_members;
     if (body.sellerName) fields['Seller Name'] = body.sellerName;
     if (body.email) fields['Email'] = body.email;
     if (body.phone !== undefined) fields['Phone'] = body.phone;
     if (body.propertyType) fields['Property Type'] = body.propertyType;
-    if (body.acreage !== undefined) fields['Acreage'] = parseInt(body.acreage);
+    if (body.acreage !== undefined) fields['Acreage'] = parseInt(body.acreage) || 0;
     if (body.state) fields['State'] = body.state;
+    if (body.propertyLocation !== undefined) fields['Property Location'] = body.propertyLocation;
     if (body.county !== undefined) fields['County'] = body.county;
-    if (body.price !== undefined) fields['Price'] = parseInt(body.price);
+    if (body.price !== undefined || body.askingPrice !== undefined) fields['Asking Price'] = body.askingPrice || body.price;
     if (body.description !== undefined) fields['Description'] = body.description;
 
     const updatedRecord = await updateRecord(TABLES.LAND_DEALS, id, fields);

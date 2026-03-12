@@ -130,6 +130,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Missing required fields for brand' }, { status: 400 });
       }
 
+      if (!isValidEmail(email)) {
+        return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
+      }
+
       tableName = TABLES.BRANDS;
       const brandFields: Record<string, unknown> = {
         'Brand Name': brandName,
@@ -185,6 +189,10 @@ export async function POST(request: Request) {
 
       if (!sellerName || !email || !propertyType || !state) {
         return NextResponse.json({ error: 'Missing required fields for land seller' }, { status: 400 });
+      }
+
+      if (!isValidEmail(email)) {
+        return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
       }
 
       tableName = TABLES.LAND_DEALS;

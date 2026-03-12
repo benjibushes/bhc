@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords } from '@/lib/airtable';
+import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
 import { sendAffiliateLoginLink } from '@/lib/email';
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
 
     const affiliates = await getAllRecords(
       TABLES.AFFILIATES,
-      `LOWER({Email}) = "${normalizedEmail}"`
+      `LOWER({Email}) = "${escapeAirtableValue(normalizedEmail)}"`
     );
 
     if (affiliates.length === 0) {

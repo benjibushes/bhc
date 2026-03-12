@@ -94,15 +94,24 @@ export async function POST(request: Request) {
     if (interestMerch) interests.push('Merch');
     if (interestAll) interests.push('All');
 
-    const consumerSegment = segment || 'Community';
-    const status = deriveStatus(consumerSegment, intentClassification || '');
+    // Server-side segment + intent calculation (don't trust client-supplied values)
+    const consumerSegment = (interestBeef || interestAll) && orderType ? 'Beef Buyer' : 'Community';
+    let serverIntentScore = 0;
+    if (interestBeef || interestAll) serverIntentScore += 30;
+    if (orderType) serverIntentScore += 20;
+    if (budgetRange) serverIntentScore += 20;
+    if (phone) serverIntentScore += 15;
+    if (notes) serverIntentScore += 15;
+    const serverIntentClassification = serverIntentScore >= 70 ? 'High' : serverIntentScore >= 40 ? 'Medium' : 'Low';
+
+    const status = deriveStatus(consumerSegment, serverIntentClassification);
     const firstName = fullName.split(' ')[0];
 
     const referredBy = ref && (await validateAffiliateRef(ref)) ? ref.trim() : '';
 
     const consumerFields: Record<string, unknown> = {
-      'Full Name': fullName,
-      'Email': email,
+      'Full Name': fullName.trim(),
+      'Email': email.trim().toLowerCase(),
       'Phone': phone || '',
       'State': state,
       'Interests': interests,
@@ -112,8 +121,8 @@ export async function POST(request: Request) {
       'Budget': budgetRange || '',
       'Notes': notes || '',
       'Source': source || 'organic',
-      'Intent Score': intentScore || 0,
-      'Intent Classification': intentClassification || '',
+      'Intent Score': serverIntentScore,
+      'Intent Classification': serverIntentClassification,
       'Referral Status': 'Unmatched',
       'Campaign': campaign || '',
       'UTM Parameters': utmParams || '',

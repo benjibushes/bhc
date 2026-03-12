@@ -275,9 +275,9 @@ export default function ConsumerDetailPage() {
                     onChange={(e) => updateStatus('status', e.target.value)}
                     className="px-4 py-2 border border-dust-gray bg-bone-white text-sm"
                   >
-                    <option value="pending">Pending</option>
-                    <option value="approved">Approved</option>
-                    <option value="rejected">Rejected</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Approved">Approved</option>
+                    <option value="Rejected">Rejected</option>
                   </select>
                 </div>
                 <div>
