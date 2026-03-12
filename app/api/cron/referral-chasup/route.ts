@@ -15,14 +15,17 @@ const AI_CONFIGURED = !!(OLLAMA_URL || ANTHROPIC_KEY);
 
 // Runs daily at 11am MT (17:00 UTC)
 // Finds referrals stalled for 5+ days, drafts AI re-engagement emails, sends to Telegram for approval
-export async function POST(request: Request) {
+async function handler(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      const { searchParams } = new URL(request.url);
-      const secret = searchParams.get('secret');
-      if (secret !== process.env.CRON_SECRET || !process.env.CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+      const authHeader = request.headers.get('authorization');
+      if (authHeader !== `Bearer ${cronSecret}`) {
+        const { searchParams } = new URL(request.url);
+        const secret = searchParams.get('secret');
+        if (secret !== cronSecret) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
       }
     }
 
@@ -165,4 +168,12 @@ Status: ${referral['Status']} | ${daysStale} days stale
     await sendTelegramUpdate(`⚠️ Referral chase-up cron failed: ${error.message}`).catch(() => {});
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
+}
+
+export async function GET(request: Request) {
+  return handler(request);
+}
+
+export async function POST(request: Request) {
+  return handler(request);
 }

@@ -425,17 +425,34 @@ export default function AdminPage() {
 
           {/* AI & Automation Reference */}
           <div className="border border-[#A7A29A] bg-white p-6 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="font-[family-name:var(--font-serif)] text-xl">AI & Automation (Telegram)</h2>
-              <button
-                onClick={() => {
-                  const pw = prompt('Enter admin password:');
-                  if (pw) window.open(`/api/admin/setup-ai-fields?password=${encodeURIComponent(pw)}`, '_blank');
-                }}
-                className="px-3 py-1.5 text-xs border border-[#A7A29A] hover:bg-[#A7A29A] hover:text-white transition-colors"
-              >
-                Run AI Field Setup →
-              </button>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={async () => {
+                    if (!confirm('Run batch-approve now? This will process all pending consumers.')) return;
+                    try {
+                      const res = await fetch('/api/cron/batch-approve', { method: 'POST' });
+                      const data = await res.json();
+                      alert(res.ok ? `Done: ${JSON.stringify(data)}` : `Error: ${data.error}`);
+                    } catch (e: any) {
+                      alert(`Failed: ${e.message}`);
+                    }
+                  }}
+                  className="px-3 py-1.5 text-xs border border-[#6B4F3F] text-[#6B4F3F] hover:bg-[#6B4F3F] hover:text-white transition-colors"
+                >
+                  Run Batch Approve →
+                </button>
+                <button
+                  onClick={() => {
+                    const pw = prompt('Enter admin password:');
+                    if (pw) window.open(`/api/admin/setup-ai-fields?password=${encodeURIComponent(pw)}`, '_blank');
+                  }}
+                  className="px-3 py-1.5 text-xs border border-[#A7A29A] hover:bg-[#A7A29A] hover:text-white transition-colors"
+                >
+                  Run AI Field Setup →
+                </button>
+              </div>
             </div>
             <p className="text-sm text-[#6B4F3F]">
               These commands run via the BuyHalfCow Telegram bot. Use them to manage leads hands-free.

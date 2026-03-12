@@ -35,14 +35,17 @@ function makeLoginUrl(consumerId: string, email: string) {
 
 // Runs daily at 10am MT (16:00 UTC) — after batch-approve at 9am MT
 // Sends drip emails to consumers based on how long they've been approved
-export async function POST(request: Request) {
+async function handler(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      const { searchParams } = new URL(request.url);
-      const secret = searchParams.get('secret');
-      if (secret !== process.env.CRON_SECRET || !process.env.CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+      const authHeader = request.headers.get('authorization');
+      if (authHeader !== `Bearer ${cronSecret}`) {
+        const { searchParams } = new URL(request.url);
+        const secret = searchParams.get('secret');
+        if (secret !== cronSecret) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
       }
     }
 
@@ -295,4 +298,12 @@ export async function POST(request: Request) {
     await sendTelegramUpdate(`⚠️ Email sequences cron failed: ${error.message}`).catch(() => {});
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
+}
+
+export async function GET(request: Request) {
+  return handler(request);
+}
+
+export async function POST(request: Request) {
+  return handler(request);
 }
