@@ -1609,14 +1609,19 @@ export async function sendEmail(params: {
   to: string;
   subject: string;
   html: string;
+  attachments?: { filename: string; content: Buffer }[];
 }) {
   try {
-    await resend.emails.send({
+    const emailData: any = {
       from: FROM_EMAIL,
       to: params.to,
       subject: params.subject,
       html: params.html,
-    });
+    };
+    if (params.attachments && params.attachments.length > 0) {
+      emailData.attachments = params.attachments;
+    }
+    await resend.emails.send(emailData);
     return { success: true };
   } catch (error) {
     console.error('Error sending email:', error);

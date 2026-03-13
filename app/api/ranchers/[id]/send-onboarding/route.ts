@@ -183,6 +183,7 @@ export async function POST(
       to: rancherEmail,
       subject: 'BuyHalfCow Partnership - Next Steps & Agreement',
       html: emailHtml,
+      attachments: attachments.length > 0 ? attachments : undefined,
     });
 
     try {

@@ -691,14 +691,21 @@ Source: ${c['Source'] || 'organic'}`;
 
       else if (action === 'ronboard') {
         try {
+          // Fetch rancher to include their call notes and capacity
+          const rancher: any = await getRecordById(TABLES.RANCHERS, fullReferralId);
           const res = await fetch(`${SITE_URL}/api/ranchers/${fullReferralId}/send-onboarding`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              callSummary: rancher['Call Notes'] || rancher['Operation Details'] || '',
+              confirmedCapacity: rancher['Monthly Capacity'] || 10,
+              specialNotes: rancher['Certifications'] || '',
+              includeVerification: true,
+            }),
           });
           if (res.ok) {
             await answerCallbackQuery(queryId, 'Onboarding docs sent!');
             if (chatId && messageId) {
-              const rancher: any = await getRecordById(TABLES.RANCHERS, fullReferralId);
               await editTelegramMessage(chatId, messageId,
                 `📦 <b>ONBOARDING SENT</b>\n\n${rancher['Operator Name'] || rancher['Ranch Name']} — docs and agreement link sent`
               );

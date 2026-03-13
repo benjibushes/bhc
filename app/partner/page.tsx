@@ -160,13 +160,17 @@ function PartnerPageContent() {
         body: JSON.stringify(payload),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        throw new Error('Submission failed');
+        setError(data.error || 'Submission failed. Please try again.');
+        setIsSubmitting(false);
+        return;
       }
 
       setIsSubmitted(true);
     } catch (err) {
-      setError('Something went wrong. Please try again.');
+      setError('Network error — please check your connection and try again.');
       setIsSubmitting(false);
     }
   };

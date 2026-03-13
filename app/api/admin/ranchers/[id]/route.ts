@@ -42,7 +42,7 @@ export async function PATCH(
 
     let shouldSendApproval = false;
     let shouldSendGoLive = false;
-    if (body.status === 'approved') {
+    if (body.status && body.status.toLowerCase() === 'approved') {
       try {
         const current: any = await getRecordById(TABLES.RANCHERS, id);
         const currentStatus = (current['Status'] || '').toLowerCase();
