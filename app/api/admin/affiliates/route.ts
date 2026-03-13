@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, createRecord } from '@/lib/airtable';
+import { getAllRecords, createRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendAffiliateWelcome } from '@/lib/email';
 
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     // Check if affiliate already exists
     let existing: any[] = [];
     try {
-      existing = await getAllRecords(TABLES.AFFILIATES, `{Email} = "${normalizedEmail}"`);
+      existing = await getAllRecords(TABLES.AFFILIATES, `{Email} = "${escapeAirtableValue(normalizedEmail)}"`);
     } catch {
       // Affiliates table may not exist yet
     }

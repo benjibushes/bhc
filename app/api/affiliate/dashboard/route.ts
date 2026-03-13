@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getAllRecords, getRecordById } from '@/lib/airtable';
+import { getAllRecords, getRecordById, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
 
@@ -42,7 +42,7 @@ export async function GET() {
       return NextResponse.json({ error: 'Affiliate code not configured' }, { status: 400 });
     }
 
-    const safeCode = String(code).replace(/"/g, '');
+    const safeCode = escapeAirtableValue(String(code));
     const consumerFilter = `{Referred By} = "${safeCode}"`;
     const rancherFilter = `{Referred By} = "${safeCode}"`;
 

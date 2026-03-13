@@ -4,6 +4,10 @@ import { TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
+function esc(str: string): string {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -81,16 +85,16 @@ export async function PATCH(
           <body>
             <div class="container">
               <h1>New Qualified Buyer Lead</h1>
-              <p>Hi ${rancherName},</p>
+              <p>Hi ${esc(rancherName)},</p>
               <p>You have a new qualified buyer lead from BuyHalfCow:</p>
               <div class="divider"></div>
-              <div class="field"><span class="label">Buyer:</span> ${buyerName}</div>
-              <div class="field"><span class="label">Email:</span> ${buyerEmail}</div>
-              <div class="field"><span class="label">Phone:</span> ${buyerPhone}</div>
-              <div class="field"><span class="label">Location:</span> ${buyerState}</div>
-              <div class="field"><span class="label">Order:</span> ${orderType}</div>
-              <div class="field"><span class="label">Budget:</span> ${budgetRange}</div>
-              ${buyerNotes ? `<div class="field"><span class="label">Notes:</span> ${buyerNotes}</div>` : ''}
+              <div class="field"><span class="label">Buyer:</span> ${esc(buyerName)}</div>
+              <div class="field"><span class="label">Email:</span> ${esc(buyerEmail)}</div>
+              <div class="field"><span class="label">Phone:</span> ${esc(buyerPhone)}</div>
+              <div class="field"><span class="label">Location:</span> ${esc(buyerState)}</div>
+              <div class="field"><span class="label">Order:</span> ${esc(orderType)}</div>
+              <div class="field"><span class="label">Budget:</span> ${esc(budgetRange)}</div>
+              ${buyerNotes ? `<div class="field"><span class="label">Notes:</span> ${esc(buyerNotes)}</div>` : ''}
               <div class="divider"></div>
               <p>Please reach out to them directly to discuss availability and pricing.</p>
               <p><strong>Reply-all to this email to keep me in the loop.</strong></p>

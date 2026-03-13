@@ -95,7 +95,7 @@ export async function GET() {
           id: b.id,
           brand_name: b['Brand Name'] || '',
           product_type: b['Product Type'] || '',
-          discount_offered: b['Discount Offered'] || 0,
+          discount_offered: b['Discount Offered (%)'] || 0,
           description: b['Description'] || '',
           website: b['Website'] || '',
           contact_email: b['Email'] || '',

@@ -10,6 +10,10 @@ import jwt from 'jsonwebtoken';
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
+function esc(str: string): string {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -100,26 +104,26 @@ export async function POST(
       <body>
         <div class="container">
           <h1>BuyHalfCow Partnership - Next Steps</h1>
-          <p>Hi ${rancherName},</p>
+          <p>Hi ${esc(rancherName)},</p>
           <p>Great talking with you today! Here's what we discussed:</p>
 
           ${callSummary ? `
             <div class="highlight">
               <strong>Your Operation:</strong><br>
-              ${callSummary.replace(/\n/g, '<br>')}
+              ${esc(callSummary).replace(/\n/g, '<br>')}
             </div>
           ` : ''}
 
           ${confirmedCapacity ? `
             <div class="highlight">
-              <strong>Capacity Confirmed:</strong> ${confirmedCapacity} orders/month
+              <strong>Capacity Confirmed:</strong> ${esc(String(confirmedCapacity))} orders/month
             </div>
           ` : ''}
 
           ${specialNotes ? `
             <div class="highlight">
               <strong>What Makes You A Great Fit:</strong><br>
-              ${specialNotes.replace(/\n/g, '<br>')}
+              ${esc(specialNotes).replace(/\n/g, '<br>')}
             </div>
           ` : ''}
 

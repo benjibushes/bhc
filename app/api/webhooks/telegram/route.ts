@@ -603,7 +603,7 @@ Suggested: ${referral['Suggested Rancher Name'] || 'None'}`;
           const segment = consumer['Segment'] || 'Community';
           const now = new Date().toISOString();
 
-          await updateRecord(TABLES.CONSUMERS, fullReferralId, { 'Status': 'approved', 'Approved At': now });
+          await updateRecord(TABLES.CONSUMERS, fullReferralId, { 'Status': 'Approved', 'Approved At': now });
 
           const token = jwt.sign(
             { type: 'member-login', consumerId: fullReferralId, email: consumerEmail?.trim().toLowerCase() },
@@ -736,7 +736,7 @@ Source: ${c['Source'] || 'organic'}`;
           const segment = consumer['Segment'] || 'Community';
           const now = new Date().toISOString();
 
-          await updateRecord(TABLES.CONSUMERS, fullReferralId, { 'Status': 'approved', 'Approved At': now });
+          await updateRecord(TABLES.CONSUMERS, fullReferralId, { 'Status': 'Approved', 'Approved At': now });
 
           const token = jwt.sign(
             { type: 'member-login', consumerId: fullReferralId, email: consumerEmail?.trim().toLowerCase() },
@@ -926,10 +926,11 @@ Source: ${c['Source'] || 'organic'}`;
               const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
               const { createRecord } = await import('@/lib/airtable');
               await createRecord(TABLES.CAMPAIGNS, {
+                'Campaign Name': `Followup: ${consumer['Full Name'] || consumerEmail}`,
                 'Subject': subject,
-                'Body': draft,
-                'Segment': `single:${consumerEmail}`,
-                'Scheduled At': tomorrow,
+                'Message': draft,
+                'Audience': `single:${consumerEmail}`,
+                'Scheduled For': tomorrow,
                 'Status': 'Scheduled',
               });
               await updateRecord(TABLES.CONSUMERS, consumerId, { 'AI Email Draft': '', 'AI Email Draft Subject': '' });

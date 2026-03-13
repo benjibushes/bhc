@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, createRecord } from '@/lib/airtable';
+import { getAllRecords, createRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendBroadcastEmail } from '@/lib/email';
 
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
 
     // Duplicate campaign protection
     try {
-      const existing = await getAllRecords(TABLES.CAMPAIGNS, `{Campaign Name} = "${campaignName}"`);
+      const existing = await getAllRecords(TABLES.CAMPAIGNS, `{Campaign Name} = "${escapeAirtableValue(campaignName)}"`);
       if (existing.length > 0) {
         return NextResponse.json({ error: `Campaign "${campaignName}" has already been sent. Use a different campaign name.` }, { status: 409 });
       }

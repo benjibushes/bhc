@@ -573,7 +573,7 @@ export default function AdminPage() {
                     {consumerStateFilter && (
                       <button
                         onClick={async () => {
-                          const filtered = consumers.filter(c => c.state === consumerStateFilter && c.status === 'pending');
+                          const filtered = consumers.filter(c => c.state === consumerStateFilter && c.status === 'Pending');
                           if (filtered.length === 0) {
                             alert('No pending consumers in this state');
                             return;
@@ -751,7 +751,7 @@ export default function AdminPage() {
                       <>
                         <button
                           onClick={async () => {
-                            const filtered = ranchers.filter(r => r.state === rancherStateFilter && r.status === 'pending');
+                            const filtered = ranchers.filter(r => r.state === rancherStateFilter && r.status === 'Pending');
                             if (filtered.length === 0) {
                               alert('No pending ranchers in this state');
                               return;

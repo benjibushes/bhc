@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { getAllRecords, updateRecord } from '@/lib/airtable';
+import { getAllRecords, updateRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 
 export async function GET(
@@ -10,7 +10,7 @@ export async function GET(
     const { slug } = await context.params;
     
     // Get all posts and filter by slug
-    const posts = await getAllRecords(TABLES.NEWS_POSTS, `{Slug} = "${slug}"`);
+    const posts = await getAllRecords(TABLES.NEWS_POSTS, `{Slug} = "${escapeAirtableValue(slug)}"`);
     
     if (posts.length === 0) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
@@ -32,7 +32,7 @@ export async function PATCH(
     const body = await request.json();
 
     // First, get the post by slug to get its ID
-    const posts = await getAllRecords(TABLES.NEWS_POSTS, `{Slug} = "${slug}"`);
+    const posts = await getAllRecords(TABLES.NEWS_POSTS, `{Slug} = "${escapeAirtableValue(slug)}"`);
     
     if (posts.length === 0) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 });
