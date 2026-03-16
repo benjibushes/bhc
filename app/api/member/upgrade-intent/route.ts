@@ -77,7 +77,10 @@ export async function PATCH(request: Request) {
       try {
         await fetch(`${SITE_URL}/api/matching/suggest`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+          },
           body: JSON.stringify({
             buyerState: state,
             buyerId: memberId,

@@ -6,7 +6,9 @@ const AUTH_TOKEN = 'bhc-admin-auth';
 
 export async function POST(request: Request) {
   try {
-    const { password } = await request.json();
+    let parsedBody: any;
+    try { parsedBody = await request.json(); } catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
+    const { password } = parsedBody;
 
     if (password === ADMIN_PASSWORD) {
       // Set secure HTTP-only cookie (expires in 7 days)

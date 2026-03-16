@@ -19,9 +19,22 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Auth: require admin password or internal secret
     const { id } = await params;
     const body = await request.json();
-    const { callSummary, confirmedCapacity, specialNotes, includeVerification } = body;
+    const { callSummary, confirmedCapacity, specialNotes, includeVerification, password } = body;
+
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    const internalSecret = process.env.INTERNAL_API_SECRET;
+    const authHeader = request.headers.get('x-internal-secret');
+
+    const isAuthed =
+      (adminPassword && password === adminPassword) ||
+      (internalSecret && authHeader === internalSecret);
+
+    if (!isAuthed) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
     const rancher: any = await getRecordById(TABLES.RANCHERS, id);
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';

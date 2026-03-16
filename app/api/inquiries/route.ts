@@ -5,7 +5,12 @@ import { sendInquiryToRancher, sendInquiryAlertToAdmin } from '@/lib/email';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
     const { consumerId, rancherId, consumerName, consumerEmail, consumerPhone, message, interestType } = body;
 
     if (!rancherId || !consumerName || !consumerEmail || !message) {

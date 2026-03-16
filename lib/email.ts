@@ -2,8 +2,43 @@ import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
 
-const FROM_EMAIL = process.env.EMAIL_FROM || 'BuyHalfCow <noreply@buyhalfcow.com>';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const CALENDLY_LINK = process.env.CALENDLY_LINK || 'https://buyhalfcow.com/call';
+const MERCH_URL = process.env.MERCH_URL || 'https://buyhalfcow.com/merch';
+
+// =====================================================
+// DOMAIN ROTATION — cycle sends across multiple domains
+// to protect deliverability and warm up new domains.
+// Set SEND_DOMAINS as comma-separated list in env:
+//   SEND_DOMAINS=buyhalfcow.com,mail.buyhalfcow.com,bhcbeef.com
+// Each domain should be verified in Resend.
+// =====================================================
+const SEND_DOMAINS = (process.env.SEND_DOMAINS || 'buyhalfcow.com').split(',').map(d => d.trim()).filter(Boolean);
+let domainIndex = 0;
+
+function getFromEmail(): string {
+  const domain = SEND_DOMAINS[domainIndex % SEND_DOMAINS.length];
+  domainIndex++;
+  return `BuyHalfCow <noreply@${domain}>`;
+}
+
+function getUnsubscribeHeaders(email: string) {
+  return {
+    'List-Unsubscribe': `<mailto:unsubscribe@${SEND_DOMAINS[0]}?subject=Unsubscribe%20${encodeURIComponent(email)}>, <${SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}>`,
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+  };
+}
+
+// =====================================================
+// UTM TRACKING — append UTM params to all email links
+// =====================================================
+function utm(url: string, campaign: string, content?: string): string {
+  const sep = url.includes('?') ? '&' : '?';
+  let params = `${sep}utm_source=email&utm_medium=drip&utm_campaign=${encodeURIComponent(campaign)}`;
+  if (content) params += `&utm_content=${encodeURIComponent(content)}`;
+  return url + params;
+}
 
 function esc(str: string): string {
   return String(str || '')
@@ -25,9 +60,10 @@ export async function sendConsumerConfirmation(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: 'Application Received — BuyHalfCow',
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
         <html>
@@ -47,10 +83,11 @@ export async function sendConsumerConfirmation(data: {
             <p>Hi ${esc(data.firstName)},</p>
             <p>Thanks for your interest in BuyHalfCow. We've received your application and are reviewing it.</p>
             <div class="divider"></div>
-            <p>You'll hear back from us within <strong>24-48 hours</strong> with next steps.</p>
-            <p>Questions? Reply to this email or contact <a href="mailto:support@buyhalfcow.com" style="color: #0E0E0E;">support@buyhalfcow.com</a></p>
+            <p>You'll hear back from us within <strong>24 hours</strong> with next steps. We review every application personally.</p>
+            <p>Questions? Reply to this email or contact <a href="mailto:${ADMIN_EMAIL}" style="color: #0E0E0E;">${ADMIN_EMAIL}</a></p>
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -72,6 +109,8 @@ export async function sendConsumerApproval(data: {
 }) {
   const isBeef = data.segment === 'Beef Buyer';
 
+  const loginUtm = utm(data.loginUrl, 'approval', data.segment === 'Beef Buyer' ? 'beef-dashboard' : 'community-dashboard');
+
   const beefBody = `
     <h1>Welcome to BuyHalfCow</h1>
     <p>Hi ${esc(data.firstName)},</p>
@@ -91,8 +130,8 @@ export async function sendConsumerApproval(data: {
       <li>Exclusive land deals and brand promotions</li>
       <li>A curated network — no spam, no middlemen</li>
     </ul>
-    <a href="${data.loginUrl}" class="button">Access Your Dashboard</a>
-    <p style="font-size: 13px; color: #A7A29A;">We're matching you with a rancher now. You'll receive an introduction soon.</p>
+    <a href="${loginUtm}" class="button">Access Your Dashboard</a>
+    <p style="font-size: 13px; color: #A7A29A;">We're matching you with a rancher now. You'll receive an introduction within 48 hours.</p>
   `;
 
   const communityBody = `
@@ -107,7 +146,7 @@ export async function sendConsumerApproval(data: {
       <li>Community events and land deal listings</li>
       <li>Weekly updates from the network</li>
     </ul>
-    <a href="${data.loginUrl}" class="button">Explore the Network</a>
+    <a href="${loginUtm}" class="button">Explore the Network</a>
     <div class="divider"></div>
     <p><strong>Interested in sourcing beef?</strong></p>
     <p>When you're ready to explore buying direct from a rancher, you can upgrade anytime from your member dashboard. We'll match you personally.</p>
@@ -115,11 +154,12 @@ export async function sendConsumerApproval(data: {
 
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: isBeef
         ? "You're Approved — Let's Find Your Rancher"
         : 'Welcome to the BHC Network',
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
         <html>
@@ -139,6 +179,7 @@ export async function sendConsumerApproval(data: {
             ${isBeef ? beefBody : communityBody}
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef<br>Questions? Email ${ADMIN_EMAIL}</p>
+              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -148,6 +189,108 @@ export async function sendConsumerApproval(data: {
     return { success: true };
   } catch (error) {
     console.error('Error sending consumer approval:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// BUYER MATCH + INTRO NOTIFICATION EMAILS
+// =====================================================
+
+export async function sendBuyerMatchNotification(data: {
+  firstName: string;
+  email: string;
+  rancherName: string;
+  ranchState: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `We found your rancher — ${esc(data.rancherName)}`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.highlight{background:#F4F1EC;border-left:3px solid #0E0E0E;padding:16px 20px;margin:20px 0;color:#0E0E0E}.cta{display:inline-block;padding:16px 32px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>We Found Your Rancher</h1>
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>Great news — we've matched you with a rancher who fits your preferences.</p>
+  <div class="highlight">
+    <strong>${esc(data.rancherName)}</strong> — ${esc(data.ranchState)}<br>
+    <span style="font-size:14px;color:#6B4F3F;">Verified and certified by BuyHalfCow</span>
+  </div>
+  <p><strong>What happens next:</strong></p>
+  <ol style="color:#6B4F3F;line-height:2">
+    <li>I'm reviewing the match to make sure it's the right fit</li>
+    <li>Once confirmed, I'll make a personal introduction via email</li>
+    <li>You and your rancher connect directly — no middleman</li>
+  </ol>
+  <p>You should receive your introduction within <strong>24-48 hours</strong>. Keep an eye on your inbox.</p>
+  <div style="text-align:center;">
+    <a href="${utm(data.loginUrl, 'match-notification', 'dashboard')}" class="cta">View Your Dashboard</a>
+  </div>
+  <div class="divider"></div>
+  <p style="font-size:13px;">Questions? Reply to this email.</p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+  </div>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending buyer match notification:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendBuyerIntroNotification(data: {
+  firstName: string;
+  email: string;
+  rancherName: string;
+  rancherEmail: string;
+  rancherPhone?: string;
+  loginUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `Meet your rancher — ${esc(data.rancherName)}`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.contact-box{background:#F4F1EC;border:1px solid #A7A29A;padding:20px 24px;margin:20px 0}.contact-box p{margin:6px 0;color:#0E0E0E}.cta{display:inline-block;padding:16px 32px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>Your Rancher Introduction</h1>
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They know you're coming — reach out whenever you're ready.</p>
+  <div class="contact-box">
+    <p><strong>${esc(data.rancherName)}</strong></p>
+    <p>Email: <a href="mailto:${esc(data.rancherEmail)}" style="color:#0E0E0E;">${esc(data.rancherEmail)}</a></p>
+    ${data.rancherPhone ? `<p>Phone: <a href="tel:${esc(data.rancherPhone)}" style="color:#0E0E0E;">${esc(data.rancherPhone)}</a></p>` : ''}
+  </div>
+  <p><strong>What to discuss:</strong></p>
+  <ul style="color:#6B4F3F;line-height:2">
+    <li>What cuts are available and current pricing</li>
+    <li>Processing timeline and delivery options</li>
+    <li>Any questions about their operation</li>
+  </ul>
+  <p>They'll walk you through everything. No pressure, no rush — this is a direct relationship between you and your rancher.</p>
+  <div style="text-align:center;">
+    <a href="${utm(data.loginUrl, 'intro-notification', 'dashboard')}" class="cta">View Your Dashboard</a>
+  </div>
+  <div class="divider"></div>
+  <p style="font-size:13px;">If you don't hear back within 48 hours, reply to this email and I'll follow up on my end.</p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+  </div>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending buyer intro notification:', error);
     return { success: false, error };
   }
 }
@@ -163,9 +306,10 @@ export async function sendRancherApproval(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: 'You\'re Approved — BuyHalfCow Partnership',
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
         <html>
@@ -224,9 +368,10 @@ export async function sendRancherGoLiveEmail(data: {
   const dashboardUrl = data.dashboardUrl || `${baseUrl}/rancher`;
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: "You're Live — Buyer Leads Are Coming",
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
         <html>
@@ -288,9 +433,10 @@ export async function sendPartnerConfirmation(data: {
 
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `${typeLabels[data.type]} Application Received — BuyHalfCow`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
         <html>
@@ -329,7 +475,7 @@ export async function sendPartnerConfirmation(data: {
                   <strong style="color: #F4F1EC;">Your application won't be reviewed until you book your onboarding call.</strong><br>
                   Click below to see my available times and book your 30-minute call:
                 </p>
-                <a href="${process.env.CALENDLY_LINK || 'https://calendly.com'}" style="display: inline-block; padding: 16px 32px; background: #F4F1EC; color: #0E0E0E !important; text-decoration: none; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; font-size: 14px; border: 2px solid #F4F1EC;">📅 View My Calendar & Book Now</a>
+                <a href="${CALENDLY_LINK}" style="display: inline-block; padding: 16px 32px; background: #F4F1EC; color: #0E0E0E !important; text-decoration: none; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; font-size: 14px; border: 2px solid #F4F1EC;">📅 View My Calendar & Book Now</a>
                 <p style="margin: 20px 0 0 0; font-size: 12px; color: #A7A29A;">
                   Can't find a time? Reply to this email and we'll figure it out.
                 </p>
@@ -368,9 +514,10 @@ export async function sendBrandApprovalWithPayment(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `You're Approved — Complete Your Brand Listing on BuyHalfCow`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
         <html>
@@ -429,9 +576,10 @@ export async function sendBrandListingConfirmation(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `You're Live — ${data.brandName} is Now on BuyHalfCow`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
         <html>
@@ -483,9 +631,10 @@ export async function sendAffiliateLoginLink(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: 'Your BuyHalfCow Affiliate Login Link',
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
         <html>
@@ -530,9 +679,10 @@ export async function sendAffiliateInvite(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: "You're a BuyHalfCow Affiliate — Here Are Your Links",
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
         <html>
@@ -584,7 +734,7 @@ export async function sendAdminAlert(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: ADMIN_EMAIL,
       subject: `New ${data.type.charAt(0).toUpperCase() + data.type.slice(1)} Application`,
       html: `
@@ -648,10 +798,11 @@ export async function sendInquiryToRancher(data: {
 
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.rancherEmail,
       replyTo: data.consumerEmail, // Rancher can reply directly to consumer
       subject: `New Inquiry from BuyHalfCow Member`,
+      headers: getUnsubscribeHeaders(data.rancherEmail),
       html: `
         <!DOCTYPE html>
         <html>
@@ -732,7 +883,7 @@ export async function sendInquiryAlertToAdmin(data: {
 
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: ADMIN_EMAIL,
       subject: `New Inquiry: ${data.consumerName} → ${data.ranchName}`,
       html: `
@@ -802,9 +953,10 @@ export async function sendBroadcastEmail(data: {
   try {
     if (data.htmlBody) {
       await resend.emails.send({
-        from: FROM_EMAIL,
+        from: getFromEmail(),
         to: data.to,
         subject: data.subject,
+        headers: getUnsubscribeHeaders(data.to),
         html: data.htmlBody,
       });
       return { success: true };
@@ -813,9 +965,10 @@ export async function sendBroadcastEmail(data: {
     const formattedMessage = esc(data.message).replace(/\n/g, '<br>');
 
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.to,
       subject: data.subject,
+      headers: getUnsubscribeHeaders(data.to),
       html: `
         <!DOCTYPE html>
         <html>
@@ -846,11 +999,8 @@ export async function sendBroadcastEmail(data: {
               <p>BuyHalfCow — Private Access Network<br>
               Not a marketplace. Not e-commerce.<br>
               Questions? Email ${ADMIN_EMAIL}</p>
-              <p style="margin-top: 16px; font-size: 11px; color: #A7A29A;">
-                To stop receiving these emails, reply with "unsubscribe" or email ${ADMIN_EMAIL} with subject "Unsubscribe".
-              </p>
-              <p style="margin-top: 8px; font-size: 10px; color: #ccc;">
-                Campaign: ${data.campaignName}
+              <p style="margin-top: 12px; font-size: 10px; color: #ccc;">
+                <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.to)}" style="color: #ccc;">Unsubscribe</a> | Campaign: ${data.campaignName}
               </p>
             </div>
           </div>
@@ -877,9 +1027,10 @@ export async function sendSequenceEmail_BeefDay3(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `We're finding your rancher — here's what's happening`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html><html><head>
         <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#2A2A2A;margin:30px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -895,8 +1046,8 @@ export async function sendSequenceEmail_BeefDay3(data: {
           <li>I make a personal introduction via email</li>
           <li>You connect directly — no middleman in the conversation</li>
         </ul>
-        <a href="${data.loginUrl}" class="button">Check Your Dashboard →</a>
-        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p></div>
+        <a href="${utm(data.loginUrl, 'beef-day3', 'dashboard')}" class="button">Check Your Dashboard →</a>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
     });
@@ -915,9 +1066,10 @@ export async function sendSequenceEmail_BeefDay7(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `Did you hear from ${esc(data.rancherName)}?`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html><html><head>
         <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -927,8 +1079,8 @@ export async function sendSequenceEmail_BeefDay7(data: {
         <p>We introduced you to <strong>${esc(data.rancherName)}</strong> earlier this week. I wanted to follow up — did you hear from them? Did you get a chance to connect?</p>
         <p>If you haven't heard back within 24 hours, reply to this email and I'll follow up on my end. Every rancher in our network is vetted and responsive — if something isn't working, I want to know.</p>
         <p>If you've already connected, that's great — just ignore this.</p>
-        <a href="${data.loginUrl}" class="button">View Your Dashboard →</a>
-        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply here if you need anything.</p></div>
+        <a href="${utm(data.loginUrl, 'beef-day7', 'dashboard')}" class="button">View Your Dashboard →</a>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply here if you need anything.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
     });
@@ -946,9 +1098,10 @@ export async function sendSequenceEmail_CommunityDay7(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `Inside BHC: what your membership actually gets you`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html><html><head>
         <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#2A2A2A;margin:30px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -965,8 +1118,8 @@ export async function sendSequenceEmail_CommunityDay7(data: {
           <li>Community members get early access to announcements, drops, and content before anyone else</li>
         </ul>
         <p>This is not a marketplace. We don't take advertising. We don't sell your data. We just connect the right people.</p>
-        <a href="${data.loginUrl}" class="button">Explore Your Dashboard →</a>
-        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply with questions anytime.</p></div>
+        <a href="${utm(data.loginUrl, 'community-day7', 'dashboard')}" class="button">Explore Your Dashboard →</a>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply with questions anytime.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
     });
@@ -985,9 +1138,10 @@ export async function sendSequenceEmail_CommunityDay14(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `Ready to source beef directly from a rancher?`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html><html><head>
         <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#2A2A2A;margin:30px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -1003,9 +1157,9 @@ export async function sendSequenceEmail_CommunityDay14(data: {
           <li>We make a personal introduction — you buy direct, at the rancher's price</li>
         </ol>
         <p>No subscription, no markup, no middleman in the transaction. Just clean beef from a rancher you know by name.</p>
-        <a href="${data.upgradeUrl}" class="button">Become a Beef Buyer →</a>
-        <p style="font-size:13px;color:#A7A29A">Or <a href="${data.loginUrl}" style="color:#0E0E0E">log in to your dashboard</a> if you've already done this.</p>
-        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply if you have questions about the process.</p></div>
+        <a href="${utm(data.upgradeUrl, 'community-day14', 'upgrade-cta')}" class="button">Become a Beef Buyer →</a>
+        <p style="font-size:13px;color:#A7A29A">Or <a href="${utm(data.loginUrl, 'community-day14', 'dashboard')}" style="color:#0E0E0E">log in to your dashboard</a> if you've already done this.</p>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply if you have questions about the process.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
     });
@@ -1025,9 +1179,10 @@ export async function sendChaseUpEmail(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `Quick check-in from BuyHalfCow`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html><html><head>
         <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -1035,8 +1190,8 @@ export async function sendChaseUpEmail(data: {
         <h1>Quick check-in</h1>
         <p>Hi ${esc(data.firstName)},</p>
         ${data.aiDraftedMessage.split('\n').filter(Boolean).map(p => `<p>${esc(p)}</p>`).join('')}
-        <a href="${data.loginUrl}" class="button">View Your Dashboard →</a>
-        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p></div>
+        <a href="${utm(data.loginUrl, 'chase-up', 'dashboard')}" class="button">View Your Dashboard →</a>
+        <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
     });
@@ -1055,13 +1210,13 @@ export async function sendMerchEmail(data: {
   firstName: string;
   email: string;
 }) {
-  const merchUrl = process.env.MERCH_URL || 'https://buyhalfcow.com/merch';
   const firstName = esc(data.firstName);
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: 'Represent American Ranch Beef — BuyHalfCow Merch',
+      headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
 <head>
@@ -1083,12 +1238,13 @@ p { color: #6B4F3F; margin: 12px 0; }
   <p>While we work on building supply in your area, you can rep the movement. Our merch is designed for people who give a damn about real beef from real ranches.</p>
   <div class="divider"></div>
   <div style="text-align: center;">
-    <a href="${merchUrl}" class="cta">Shop BuyHalfCow Merch</a>
+    <a href="${utm(MERCH_URL, 'nurture-merch', 'shop-cta')}" class="cta">Shop BuyHalfCow Merch</a>
   </div>
   <div class="divider"></div>
   <p>And when ranchers become available in your area, you'll be first to know.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -1116,9 +1272,10 @@ export async function sendAffiliateWelcome(data: {
   const firstName = esc(data.name.split(' ')[0] || data.name);
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: "You're a BuyHalfCow Affiliate — Here Are Your Links",
+      headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
 <head>
@@ -1175,12 +1332,14 @@ export async function sendWaitlistEmail(data: {
   firstName: string;
   email: string;
   state: string;
+  loginUrl?: string;
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
-      subject: "You're on the BuyHalfCow waitlist",
+      subject: "You're Approved — We're Expanding to Your Area",
+      headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
 <head>
@@ -1190,24 +1349,31 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; l
 h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
 p { color: #6B4F3F; margin: 12px 0; }
 .highlight { background: #F4F1EC; border-left: 3px solid #0E0E0E; padding: 12px 16px; margin: 20px 0; color: #0E0E0E; }
+.cta { display: inline-block; padding: 14px 28px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
 .divider { height: 1px; background: #A7A29A; margin: 24px 0; }
 .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>You're Approved — Now on the Waitlist</h1>
+  <h1>You're Approved</h1>
   <p>Hi ${esc(data.firstName)},</p>
-  <p>Great news: your application has been approved. We just don't have a rancher available in <strong>${esc(data.state)}</strong> at the moment.</p>
+  <p>Your application has been approved — you're in the network. We're actively expanding our rancher partnerships in <strong>${esc(data.state)}</strong> and you're at the front of the line.</p>
   <div class="highlight">
-    <strong>What happens next:</strong> The moment a rancher opens up in your state, we'll email you immediately and get you connected within 24 hours.
+    <strong>You're first in line.</strong> The moment a rancher is ready in your state, we'll email you and make a personal introduction within 24 hours. No action needed on your end.
   </div>
-  <p>We're actively expanding our rancher network. Most waitlisted buyers get matched within a few weeks.</p>
-  <p>In the meantime, if you know anyone who'd want to buy direct from a rancher — or a rancher who wants more buyers — send them to <a href="https://buyhalfcow.com" style="color:#0E0E0E;">buyhalfcow.com</a>.</p>
+  <p><strong>While you wait, here's what you can do:</strong></p>
+  <ul style="color: #6B4F3F; line-height: 2;">
+    <li>Follow us on <a href="https://www.instagram.com/buyhalfcow" style="color:#0E0E0E;">Instagram</a> for real-time ranch visit updates</li>
+    <li>Know a rancher who sells direct? Send them to <a href="${SITE_URL}/partners" style="color:#0E0E0E;">buyhalfcow.com/partners</a> — it speeds things up in your area</li>
+    <li>Tell a friend who wants better beef — more demand in your state = faster supply</li>
+  </ul>
+  ${data.loginUrl ? `<div style="text-align:center;"><a href="${utm(data.loginUrl, 'waitlist', 'dashboard')}" class="cta">Explore Your Dashboard</a></div>` : ''}
   <div class="divider"></div>
   <p style="font-size: 13px;">Questions? Just reply to this email.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -1230,9 +1396,10 @@ export async function sendIntroCheckInEmail(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `Did you connect with ${esc(data.rancherName)}?`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
 <head>
@@ -1261,11 +1428,12 @@ p { color: #6B4F3F; margin: 12px 0; }
   </div>
   <p>If there's been an issue or you'd like us to follow up on your behalf, just reply to this email and we'll handle it.</p>
   <div style="text-align: center;">
-    <a href="${esc(data.loginUrl)}" class="cta">View Your Dashboard →</a>
+    <a href="${utm(data.loginUrl, 'intro-checkin', 'dashboard')}" class="cta">View Your Dashboard →</a>
   </div>
   <div class="divider"></div>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -1289,9 +1457,10 @@ export async function sendRancherLeadNudge(data: {
   ).join('');
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `You have ${data.leads.length} lead${data.leads.length === 1 ? '' : 's'} waiting on an update`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
 <head>
@@ -1346,9 +1515,10 @@ export async function sendRepeatPurchaseEmail(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: `Time for another half, ${esc(data.firstName)}?`,
+      headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
 <head>
@@ -1373,12 +1543,13 @@ p { color: #6B4F3F; margin: 12px 0; }
   </div>
   <p>Log in to let us know you want to be matched again — we'll get you connected within 24 hours.</p>
   <div style="text-align: center;">
-    <a href="${esc(data.loginUrl)}" class="cta">Order Again →</a>
+    <a href="${utm(data.loginUrl, 'repeat-purchase', 'order-again')}" class="cta">Order Again →</a>
   </div>
   <div class="divider"></div>
   <p style="font-size: 13px;">Not ready yet? No worries — you'll stay in our network and we'll check in again when the time is right.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -1409,9 +1580,10 @@ export async function sendNurtureDay3(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: "What's actually happening right now",
+      headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
 <head>
@@ -1430,24 +1602,29 @@ p { color: #3a3a3a; margin: 14px 0; }
 <div class="container">
   <h1>What's actually happening right now</h1>
   <p>Hey ${esc(data.firstName)},</p>
-  <p>I want to give you a real update — not marketing copy, just what's going on.</p>
-  <p>I'm on the road. I've been driving to ranches, getting on calls, visiting processing facilities, negotiating with partners who believe in this mission. I'm building the supply chain from the ground up — ranch by ranch — so that when I match you with someone, it's the right fit, not just whoever's available.</p>
-  <p>Here's what I'm working on right now:</p>
-  <p>→ Locking down ranching partners across multiple states<br>
-  → Building relationships with processing facilities<br>
-  → Getting deals with companies that want to support direct-to-consumer beef<br>
-  → Running a podcast to document the whole build</p>
-  <p>This is taking longer than I'd like. But I'd rather do it right.</p>
+  <p>Quick update — not marketing, just the real situation.</p>
+  <p>I'm on the road right now visiting ranches, signing new partners, and building the supply chain so that when we match you, it's the right rancher — not just whoever's available.</p>
+  <p><strong>What's happening this week:</strong></p>
+  <ul style="color:#3a3a3a;line-height:2">
+    <li>Locking down rancher partnerships across multiple states</li>
+    <li>Processing facility tours and agreements</li>
+    <li>Brand partners joining the network with member-only deals</li>
+  </ul>
   <div class="divider"></div>
-  <p>I'm posting everything in real time — inside ranches, on the road, in negotiations. If you want to see what building a real supply chain actually looks like, follow along:</p>
+  <p><strong>Two things you can do right now:</strong></p>
+  <ol style="color:#3a3a3a;line-height:2">
+    <li><strong>Follow the build</strong> — I'm documenting everything in real time. Ranch visits, negotiations, the whole thing.</li>
+    <li><strong>Help us expand faster</strong> — Know a rancher who sells direct? Send them to <a href="${SITE_URL}/partners" style="color:#0E0E0E;">buyhalfcow.com/partners</a></li>
+  </ol>
   <div>
-    <a href="${INSTAGRAM_URL}" class="link-btn">Instagram @buyhalfcow</a>
-    <a href="${YOUTUBE_URL}" class="link-btn">YouTube</a>
+    <a href="${utm(INSTAGRAM_URL, 'nurture-day3', 'instagram')}" class="link-btn">Instagram @buyhalfcow</a>
+    <a href="${utm(YOUTUBE_URL, 'nurture-day3', 'youtube')}" class="link-btn">YouTube</a>
   </div>
   <div class="divider"></div>
   <p>You'll hear from me the moment there's a rancher ready in your area. You're already in.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow — Taking back American ranching, one half cow at a time</p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -1467,9 +1644,10 @@ export async function sendNurtureDay10(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
-      subject: "I drove to Texas with $500 in my account",
+      subject: "The ranchers I'm meeting are the real deal",
+      headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
 <head>
@@ -1486,25 +1664,29 @@ p { color: #3a3a3a; margin: 14px 0; }
 </head>
 <body>
 <div class="container">
-  <h1>I drove to Texas with $500 in my account</h1>
+  <h1>The ranchers I'm meeting are the real deal</h1>
   <p>Hey ${esc(data.firstName)},</p>
-  <p>I'll be straight with you: I don't have this all figured out yet. I'm building it in real time.</p>
-  <p>I just drove to Texas to meet with ranchers face to face. Not because it was the easy move — it was practically everything I had — but because I believe the community we're building deserves a real supply chain, not a website with no product behind it.</p>
+  <p>Quick update from the road. I've been visiting ranches, meeting families who've been raising cattle for generations. These aren't factory farms — these are real operations getting squeezed out by big processors.</p>
   <div class="pullquote">
     "We're gonna take back American ranching and agriculture." That's not a tagline. That's why I'm doing this.
   </div>
-  <p>The ranchers I'm talking to are the real deal. Families who've been raising cattle for generations and are getting squeezed out by the big processors. They want buyers who care. You're that buyer.</p>
-  <p>I'm also doing interviews, running a podcast, and documenting every step of building this supply chain. The content is raw because the process is raw. This is what it actually looks like to build something from scratch.</p>
+  <p>The ranchers I'm partnering with want buyers who care about where their beef comes from. That's you.</p>
+  <p><strong>Here's what I need from you:</strong></p>
+  <ul style="color:#3a3a3a;line-height:2">
+    <li><strong>Reply to this email</strong> and tell me what state you're in and what you're looking for (quarter, half, or whole cow). It helps me prioritize which areas to build supply in first.</li>
+    <li><strong>Know a rancher?</strong> Send them to <a href="${SITE_URL}/partners" style="color:#0E0E0E;">buyhalfcow.com/partners</a></li>
+  </ul>
   <div class="divider"></div>
-  <p>Come follow the journey:</p>
+  <p>I'm documenting everything — ranch visits, negotiations, the whole build. Follow along:</p>
   <div>
-    <a href="${INSTAGRAM_URL}" class="link-btn">Instagram @buyhalfcow</a>
-    <a href="${YOUTUBE_URL}" class="link-btn">YouTube</a>
+    <a href="${utm(INSTAGRAM_URL, 'nurture-day10', 'instagram')}" class="link-btn">Instagram @buyhalfcow</a>
+    <a href="${utm(YOUTUBE_URL, 'nurture-day10', 'youtube')}" class="link-btn">YouTube</a>
   </div>
   <div class="divider"></div>
-  <p>More soon. We're close.</p>
+  <p>We're close. More soon.</p>
   <div class="footer">
     <p>— Benjamin<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -1525,9 +1707,10 @@ export async function sendNurtureAffiliate(data: {
 }) {
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: data.email,
       subject: "Want to help close this faster?",
+      headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
 <head>
@@ -1553,12 +1736,13 @@ p { color: #3a3a3a; margin: 14px 0; }
   <div class="link-box">${esc(data.referralLink)}</div>
   <p>Everyone who signs up through your link is tracked to you. I want the people who helped build this to be rewarded when it's running.</p>
   <div style="text-align: center;">
-    <a href="${esc(data.loginUrl)}" class="cta">View Your Affiliate Dashboard →</a>
+    <a href="${utm(data.loginUrl, 'nurture-affiliate', 'dashboard')}" class="cta">View Your Affiliate Dashboard →</a>
   </div>
   <div class="divider"></div>
   <p style="font-size: 13px; color: #6B4F3F;">Haven't set up your affiliate account yet? Just reply and I'll get you sorted directly.</p>
   <div class="footer">
     <p>— Benjamin<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -1582,27 +1766,39 @@ export async function sendBackfillEmail(data: {
 }) {
   const { firstName, email, loginUrl } = data;
   const subject = `One quick thing before we match you`;
-  const html = `
-    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a1a1a; line-height: 1.7;">
-      <p>Hey ${firstName},</p>
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
+p { color: #6B4F3F; margin: 12px 0; }
+.cta { display: inline-block; padding: 16px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
+.divider { height: 1px; background: #A7A29A; margin: 24px 0; }
+.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>One quick thing</h1>
+  <p>Hey ${esc(firstName)},</p>
+  <p>Your BuyHalfCow account is approved. Before I can match you with a rancher, I need to know what you're looking for.</p>
+  <p><strong>Takes 30 seconds:</strong> Tell us whether you want a quarter, half, or whole cow, your budget, and when you want it.</p>
+  <div style="text-align: center;">
+    <a href="${utm(loginUrl, 'backfill', 'complete-profile')}" class="cta">Complete My Profile →</a>
+  </div>
+  <div class="divider"></div>
+  <p>Not here to buy beef right now? Update your profile anyway — we'll make sure you get the right updates for community members, land deals, and brand partnerships.</p>
 
-      <p>I just approved your BuyHalfCow account. Welcome.</p>
-
-      <p>I'm Ben. I built this. Right now I'm on the road locking down rancher supply — driving to ranches, signing agreements, building the network from scratch. I'm dead serious about this and so is everyone who's been waiting.</p>
-
-      <p>Before I can match you with a rancher, I need to know what you're looking for. Takes 30 seconds on your profile — quarter cow, half, whole, your budget, when you want it.</p>
-
-      <p>
-        <a href="${loginUrl}" style="display: inline-block; background: #8B1A1A; color: white; padding: 12px 28px; border-radius: 4px; text-decoration: none; font-weight: bold; font-family: Arial, sans-serif; font-size: 14px;">Complete My Profile →</a>
-      </p>
-
-      <p>If you're not here to buy beef right now — just following the mission, interested in ranching, or want to help spread the word — update your profile and I'll make sure you get the right updates.</p>
-
-      <p style="margin-top: 2em;">— Ben<br>
-      <span style="color: #666; font-size: 0.9em;">BuyHalfCow | <a href="https://buyhalfcow.com" style="color: #8B1A1A; text-decoration: none;">buyhalfcow.com</a></span></p>
-    </div>
-  `;
-  await resend.emails.send({ from: FROM_EMAIL, to: email, subject, html });
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(email)}" style="color: #ccc;">Unsubscribe</a></p>
+  </div>
+</div>
+</body>
+</html>`;
+  await resend.emails.send({ from: getFromEmail(), to: email, subject, html, headers: getUnsubscribeHeaders(email) });
 }
 
 export async function sendEmail(params: {
@@ -1613,7 +1809,7 @@ export async function sendEmail(params: {
 }) {
   try {
     const emailData: any = {
-      from: FROM_EMAIL,
+      from: getFromEmail(),
       to: params.to,
       subject: params.subject,
       html: params.html,

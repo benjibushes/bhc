@@ -7,7 +7,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'bhc-backfill-secret-change-me';
 
 export async function POST(request: Request) {
   try {
-    const { token } = await request.json();
+    let parsedBody: any;
+    try { parsedBody = await request.json(); } catch { return NextResponse.json({ valid: false, error: 'Invalid request body' }); }
+    const { token } = parsedBody;
 
     if (!token) {
       return NextResponse.json({ valid: false, error: 'No token provided' });

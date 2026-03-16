@@ -9,7 +9,9 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function POST(request: Request) {
   try {
-    const { token } = await request.json();
+    let parsedBody: any;
+    try { parsedBody = await request.json(); } catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
+    const { token } = parsedBody;
 
     if (!token) {
       return NextResponse.json({ error: 'Missing payment token' }, { status: 400 });

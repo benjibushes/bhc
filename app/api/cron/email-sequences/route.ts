@@ -52,7 +52,9 @@ async function handler(request: Request) {
     const now = Date.now();
 
     // Fetch all approved consumers + active ranchers once
-    const approved = await getAllRecords(TABLES.CONSUMERS, '{Status} = "Approved"') as any[];
+    const approvedRaw = await getAllRecords(TABLES.CONSUMERS, '{Status} = "Approved"') as any[];
+    // Skip unsubscribed consumers
+    const approved = approvedRaw.filter((c: any) => !c['Unsubscribed']);
     const activeRanchers = await getAllRecords(TABLES.RANCHERS, '{Active Status} = "Active"') as any[];
 
     // Helper: does this consumer have a rancher available?

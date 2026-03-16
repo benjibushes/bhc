@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { updateRecord, TABLES } from '@/lib/airtable';
+import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
+import { sendTelegramUpdate } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -49,10 +50,42 @@ export async function PATCH(request: Request) {
       'Custom Notes',
     ];
 
+    // Handle special actions
+    if (body._action === 'update-capacity') {
+      const maxReferrals = parseInt(body.maxActiveReferrals);
+      if (isNaN(maxReferrals) || maxReferrals < 1 || maxReferrals > 50) {
+        return NextResponse.json({ error: 'Capacity must be between 1 and 50' }, { status: 400 });
+      }
+      await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
+        'Max Active Referalls': maxReferrals,
+      });
+      // If they were at capacity but increased the limit, set back to Active
+      const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+      const current = rancher['Current Active Referrals'] || 0;
+      if (rancher['Active Status'] === 'At Capacity' && current < maxReferrals) {
+        await updateRecord(TABLES.RANCHERS, decoded.rancherId, { 'Active Status': 'Active' });
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    if (body._action === 'request-go-live') {
+      const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+      const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown';
+      const slug = rancher['Slug'] || '(no slug set)';
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      try {
+        await sendTelegramUpdate(
+          `🟢 <b>GO LIVE REQUEST</b>\n\n🤠 ${name} wants their page published\nSlug: ${slug}\nPreview: ${siteUrl}/ranchers/${slug}\n\nTo approve, set <b>Page Live = true</b> in Airtable.`
+        );
+      } catch (e) {
+        console.error('Telegram go-live notification error:', e);
+      }
+      return NextResponse.json({ success: true, message: 'Go-live request sent to admin' });
+    }
+
     const fields: Record<string, any> = {};
     for (const key of allowed) {
       if (key in body) {
-        // Convert empty strings to null for URL/number fields, keep text as-is
         const val = body[key];
         fields[key] = val === '' ? null : val;
       }
@@ -66,6 +99,29 @@ export async function PATCH(request: Request) {
     if (fields['Slug'] !== undefined && fields['Slug'] !== null) {
       const slug = String(fields['Slug']).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
       fields['Slug'] = slug;
+    }
+
+    // Validate URL fields
+    const urlFields = ['Logo URL', 'Video URL', 'Quarter Payment Link', 'Half Payment Link', 'Whole Payment Link', 'Reserve Link'];
+    for (const key of urlFields) {
+      if (fields[key] !== undefined && fields[key] !== null) {
+        const url = String(fields[key]).trim();
+        if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+          fields[key] = `https://${url}`;
+        }
+      }
+    }
+
+    // Validate price fields are numbers
+    const priceFields = ['Quarter Price', 'Half Price', 'Whole Price'];
+    for (const key of priceFields) {
+      if (fields[key] !== undefined && fields[key] !== null) {
+        const num = parseFloat(fields[key]);
+        if (isNaN(num) || num < 0) {
+          return NextResponse.json({ error: `${key} must be a valid positive number` }, { status: 400 });
+        }
+        fields[key] = num;
+      }
     }
 
     await updateRecord(TABLES.RANCHERS, decoded.rancherId, fields);

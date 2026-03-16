@@ -48,13 +48,17 @@ export async function POST(request: Request) {
     const intentScore = calculateIntentScore({ orderType, budgetRange, notes });
     const intentClassification = intentScore >= 60 ? 'High' : intentScore >= 30 ? 'Medium' : 'Low';
 
+    // Only reset referral status if consumer doesn't already have an active referral
+    const currentReferralStatus = consumer['Referral Status'] || '';
+    const hasActiveReferral = ['Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Closed Won'].includes(currentReferralStatus);
+
     await updateRecord(TABLES.CONSUMERS, consumerId, {
       'Order Type': orderType || '',
       'Budget': budgetRange || '',
       'Notes': notes || '',
       'Intent Score': intentScore,
       'Intent Classification': intentClassification,
-      'Referral Status': 'Unmatched',
+      ...(hasActiveReferral ? {} : { 'Referral Status': 'Unmatched' }),
     });
 
     // Trigger matching engine
@@ -64,7 +68,10 @@ export async function POST(request: Request) {
         const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
         await fetch(`${siteUrl}/api/matching/suggest`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+          },
           body: JSON.stringify({
             buyerState,
             buyerId: consumerId,

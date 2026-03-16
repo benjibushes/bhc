@@ -136,6 +136,10 @@ export async function GET() {
         nextProcessingDate: rancher['Next Processing Date'] || '',
         reserveLink: rancher['Reserve Link'] || '',
         customNotes: rancher['Custom Notes'] || '',
+        // Click tracking stats
+        quarterClicks: rancher['Quarter Clicks'] || 0,
+        halfClicks: rancher['Half Clicks'] || 0,
+        wholeClicks: rancher['Whole Clicks'] || 0,
       },
       stats: {
         totalReferrals: myReferrals.length,

@@ -8,7 +8,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 
 export async function POST(request: Request) {
   try {
-    const { email } = await request.json();
+    let parsedBody: any;
+    try { parsedBody = await request.json(); } catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
+    const { email } = parsedBody;
 
     if (!email) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });

@@ -49,7 +49,12 @@ function isValidName(name: string): boolean {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
     const {
       fullName, email, phone, state,
       orderType, budgetRange, notes,
@@ -185,7 +190,10 @@ export async function POST(request: Request) {
           `${SITE_URL}/api/matching/suggest`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+            },
             body: JSON.stringify({
               buyerState: state,
               buyerId: record.id,

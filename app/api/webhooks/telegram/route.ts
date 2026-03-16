@@ -7,12 +7,16 @@ import {
   answerCallbackQuery,
   TELEGRAM_ADMIN_CHAT_ID,
 } from '@/lib/telegram';
-import { sendEmail, sendConsumerApproval, sendBroadcastEmail } from '@/lib/email';
+import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification } from '@/lib/email';
 import { callClaude } from '@/lib/ai';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+
+function escHtml(str: string): string {
+  return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || '';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
@@ -363,6 +367,7 @@ export async function POST(request: Request) {
 
           const rancherEmail = rancher['Email'];
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+          const rancherPhone = rancher['Phone'] || '';
           if (rancherEmail) {
             await sendEmail({
               to: rancherEmail,
@@ -388,7 +393,41 @@ export async function POST(request: Request) {
             });
           }
 
-          await answerCallbackQuery(queryId, 'Approved! Intro sent.');
+          // Notify the buyer they've been connected to a rancher
+          const buyerEmail = referral['Buyer Email'];
+          const consumerId = referral['Buyer']?.[0] || '';
+          if (buyerEmail && consumerId) {
+            try {
+              const buyerToken = jwt.sign(
+                { type: 'member-login', consumerId, email: buyerEmail.trim().toLowerCase() },
+                JWT_SECRET,
+                { expiresIn: '7d' }
+              );
+              const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
+              const buyerFirstName = (referral['Buyer Name'] || '').split(' ')[0] || 'there';
+              await sendBuyerIntroNotification({
+                firstName: buyerFirstName,
+                email: buyerEmail,
+                rancherName,
+                rancherEmail: rancherEmail || '',
+                rancherPhone,
+                loginUrl: buyerLoginUrl,
+              });
+            } catch (e) {
+              console.error('Error sending buyer intro notification:', e);
+            }
+
+            // Update consumer's referral status
+            try {
+              await updateRecord(TABLES.CONSUMERS, consumerId, {
+                'Referral Status': 'Intro Sent',
+              });
+            } catch (e) {
+              console.error('Error updating consumer referral status:', e);
+            }
+          }
+
+          await answerCallbackQuery(queryId, 'Approved! Intro sent to both.');
 
           if (chatId && messageId) {
             await editTelegramMessage(
@@ -617,7 +656,10 @@ Suggested: ${referral['Suggested Rancher Name'] || 'None'}`;
             try {
               await fetch(`${SITE_URL}/api/matching/suggest`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+                },
                 body: JSON.stringify({
                   buyerState: consumer['State'],
                   buyerId: fullReferralId,
@@ -750,7 +792,10 @@ Source: ${c['Source'] || 'organic'}`;
             try {
               await fetch(`${SITE_URL}/api/matching/suggest`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+                },
                 body: JSON.stringify({
                   buyerState: consumer['State'],
                   buyerId: fullReferralId,
@@ -878,9 +923,15 @@ Source: ${c['Source'] || 'organic'}`;
       }
 
       else if (action === 'chaskip') {
+        // Update Last Chased At so this referral doesn't reappear in tomorrow's cron
+        try {
+          await updateRecord(TABLES.REFERRALS, fullReferralId, {
+            'Last Chased At': new Date().toISOString(),
+          });
+        } catch { /* non-critical */ }
         await answerCallbackQuery(queryId, 'Skipped');
         if (chatId && messageId) {
-          await editTelegramMessage(chatId, messageId, `⏭️ <b>SKIPPED</b>`);
+          await editTelegramMessage(chatId, messageId, `⏭️ <b>SKIPPED</b> — won't reappear for 5 days`);
         }
       }
 
@@ -945,9 +996,9 @@ Source: ${c['Source'] || 'organic'}`;
                   <!DOCTYPE html><html><head>
                   <style>body{font-family:-apple-system,sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
                   </head><body><div class="container">
-                  <h1>${subject}</h1>
-                  <p>Hi ${firstName},</p>
-                  ${draft.split('\n').filter(Boolean).map((p: string) => `<p>${p}</p>`).join('')}
+                  <h1>${escHtml(subject)}</h1>
+                  <p>Hi ${escHtml(firstName)},</p>
+                  ${draft.split('\n').filter(Boolean).map((p: string) => `<p>${escHtml(p)}</p>`).join('')}
                   <a href="${loginUrl}" class="button">View Your Dashboard →</a>
                   <div class="footer"><p>— Benjamin, BuyHalfCow</p></div>
                   </div></body></html>
@@ -989,11 +1040,12 @@ Source: ${c['Source'] || 'organic'}`;
             })).filter(r => r.email);
           } else {
             const consumers = await getAllRecords(TABLES.CONSUMERS);
-            let filtered = consumers;
+            // Filter out unsubscribed consumers from broadcasts
+            let filtered = consumers.filter((c: any) => !c['Unsubscribed']);
             if (audienceType === 'consumers-beef') {
-              filtered = consumers.filter((c: any) => c['Segment'] === 'Beef Buyer');
+              filtered = filtered.filter((c: any) => c['Segment'] === 'Beef Buyer');
             } else if (audienceType === 'consumers-community') {
-              filtered = consumers.filter((c: any) => !c['Segment'] || c['Segment'] === 'Community');
+              filtered = filtered.filter((c: any) => !c['Segment'] || c['Segment'] === 'Community');
             }
             recipients = filtered.map((c: any) => ({
               email: (c['Email'] || '').trim().toLowerCase(),
@@ -1634,10 +1686,10 @@ BODY:
 
             const previewMsg = `✍️ <b>EMAIL DRAFT</b>
 
-👤 To: ${match['Full Name']} (${match['Email']})
-📌 Subject: <b>${subject}</b>
+👤 To: ${escHtml(match['Full Name'])} (${escHtml(match['Email'])})
+📌 Subject: <b>${escHtml(subject)}</b>
 
-<i>${preview}</i>`;
+<i>${escHtml(preview)}</i>`;
 
             const keyboard = {
               inline_keyboard: [[

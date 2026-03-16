@@ -9,7 +9,9 @@ const AFFILIATE_AUTH_COOKIE = 'bhc-affiliate-auth';
 
 export async function POST(request: Request) {
   try {
-    const { token } = await request.json();
+    let parsedBody: any;
+    try { parsedBody = await request.json(); } catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
+    const { token } = parsedBody;
 
     if (!token) {
       return NextResponse.json({ error: 'Token is required' }, { status: 400 });

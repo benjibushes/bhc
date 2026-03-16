@@ -38,9 +38,20 @@ async function handler(request: Request) {
       'OR({Status} = "Intro Sent", {Status} = "Rancher Contacted")'
     ) as any[];
 
+    // Fetch unsubscribed emails to skip them
+    const consumers = await getAllRecords(TABLES.CONSUMERS) as any[];
+    const unsubscribedEmails = new Set(
+      consumers
+        .filter((c: any) => c['Unsubscribed'])
+        .map((c: any) => (c['Email'] || '').trim().toLowerCase())
+    );
+
     const stale = referrals.filter(r => {
       const lastActivity = r['Last Chased At'] || r['Intro Sent At'] || r['Approved At'];
       if (!lastActivity) return false;
+      // Skip if buyer has unsubscribed
+      const buyerEmail = (r['Buyer Email'] || '').trim().toLowerCase();
+      if (unsubscribedEmails.has(buyerEmail)) return false;
       return (Date.now() - new Date(lastActivity).getTime()) >= 5 * DAY_MS;
     });
 
@@ -65,7 +76,6 @@ Rancher introduced: ${rancherName}
 Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Budget Range'] || 'not specified'}`;
 
         const draft = await callClaude({
-          model: 'claude-sonnet-4-6',
           system: `You are Ben's AI business assistant for BuyHalfCow, a private beef brokerage. Write warm, direct emails that feel personal.`,
           user: draftPrompt,
           maxTokens: 500,

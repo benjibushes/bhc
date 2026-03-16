@@ -37,6 +37,10 @@ interface RancherInfo {
   nextProcessingDate: string;
   reserveLink: string;
   customNotes: string;
+  // Click tracking
+  quarterClicks: number;
+  halfClicks: number;
+  wholeClicks: number;
 }
 
 interface Stats {
@@ -105,6 +109,13 @@ export default function RancherDashboardPage() {
   const [pageSaving, setPageSaving] = useState(false);
   const [pageSaved, setPageSaved] = useState(false);
   const [pageError, setPageError] = useState('');
+  // Capacity editor
+  const [editingCapacity, setEditingCapacity] = useState(false);
+  const [capacityValue, setCapacityValue] = useState('');
+  const [capacitySaving, setCapacitySaving] = useState(false);
+  // Go-live request
+  const [goLiveRequested, setGoLiveRequested] = useState(false);
+  const [goLiveLoading, setGoLiveLoading] = useState(false);
 
   useEffect(() => {
     fetchDashboard();
@@ -248,6 +259,51 @@ export default function RancherDashboardPage() {
     }
   };
 
+  const handleUpdateCapacity = async () => {
+    const val = parseInt(capacityValue);
+    if (isNaN(val) || val < 1 || val > 50) {
+      setUpdateError('Capacity must be between 1 and 50');
+      return;
+    }
+    setCapacitySaving(true);
+    try {
+      const res = await fetch('/api/rancher/landing-page', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ _action: 'update-capacity', maxActiveReferrals: val }),
+      });
+      if (res.ok) {
+        setEditingCapacity(false);
+        await fetchDashboard();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setUpdateError(data.error || 'Failed to update capacity');
+      }
+    } catch {
+      setUpdateError('Network error');
+    } finally {
+      setCapacitySaving(false);
+    }
+  };
+
+  const handleRequestGoLive = async () => {
+    setGoLiveLoading(true);
+    try {
+      const res = await fetch('/api/rancher/landing-page', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ _action: 'request-go-live' }),
+      });
+      if (res.ok) {
+        setGoLiveRequested(true);
+      }
+    } catch {
+      // silent
+    } finally {
+      setGoLiveLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <main className="min-h-screen py-24 bg-bone-white text-charcoal-black flex items-center justify-center">
@@ -357,7 +413,17 @@ export default function RancherDashboardPage() {
 
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="p-6 border border-dust-gray bg-white">
-                  <h3 className="font-serif text-xl mb-4">Capacity</h3>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-serif text-xl">Capacity</h3>
+                    {!editingCapacity && (
+                      <button
+                        onClick={() => { setEditingCapacity(true); setCapacityValue(String(rancherInfo.maxActiveReferrals)); }}
+                        className="text-xs text-saddle-brown hover:text-charcoal-black transition-colors"
+                      >
+                        Edit Max
+                      </button>
+                    )}
+                  </div>
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-saddle-brown">Active Referrals</span>
@@ -374,6 +440,35 @@ export default function RancherDashboardPage() {
                         ? 'At capacity — new leads paused until a deal closes'
                         : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} more leads available`}
                     </p>
+                    {editingCapacity && (
+                      <div className="pt-2 border-t border-dust-gray space-y-2">
+                        <label className="text-xs text-saddle-brown">Max active leads at a time</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={capacityValue}
+                            onChange={e => setCapacityValue(e.target.value)}
+                            className="flex-1 px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black"
+                          />
+                          <button
+                            onClick={handleUpdateCapacity}
+                            disabled={capacitySaving}
+                            className="px-4 py-2 text-xs bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors disabled:opacity-50"
+                          >
+                            {capacitySaving ? '...' : 'Save'}
+                          </button>
+                          <button
+                            onClick={() => setEditingCapacity(false)}
+                            className="px-3 py-2 text-xs border border-dust-gray hover:bg-dust-gray hover:text-bone-white transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <p className="text-xs text-dust-gray">Set how many buyer leads you can handle at once. We&apos;ll pause new leads when you hit this limit.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -595,10 +690,37 @@ export default function RancherDashboardPage() {
               </div>
 
               {!rancherInfo.pageLive && (
-                <div className="p-4 bg-yellow-50 border border-yellow-400 text-sm text-saddle-brown">
-                  Your page is not live yet. Fill out the fields below and contact{' '}
-                  <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>{' '}
-                  when you're ready to publish.
+                <div className="p-4 bg-yellow-50 border border-yellow-400 text-sm text-saddle-brown flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <p>Your page is not live yet. Fill out the fields below and request to go live when you&apos;re ready.</p>
+                  {goLiveRequested ? (
+                    <span className="text-xs bg-green-100 text-green-800 px-3 py-1.5 whitespace-nowrap">Request sent!</span>
+                  ) : (
+                    <button
+                      onClick={handleRequestGoLive}
+                      disabled={goLiveLoading || !rancherInfo.slug}
+                      className="px-4 py-2 text-xs bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors whitespace-nowrap disabled:opacity-50"
+                    >
+                      {goLiveLoading ? 'Requesting...' : 'Request Go Live'}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Page Click Stats */}
+              {rancherInfo.pageLive && (rancherInfo.quarterClicks > 0 || rancherInfo.halfClicks > 0 || rancherInfo.wholeClicks > 0) && (
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-4 border border-dust-gray bg-white text-center">
+                    <div className="font-serif text-2xl">{rancherInfo.quarterClicks}</div>
+                    <p className="text-xs text-saddle-brown mt-1 uppercase tracking-wider">Quarter Clicks</p>
+                  </div>
+                  <div className="p-4 border border-dust-gray bg-white text-center">
+                    <div className="font-serif text-2xl">{rancherInfo.halfClicks}</div>
+                    <p className="text-xs text-saddle-brown mt-1 uppercase tracking-wider">Half Clicks</p>
+                  </div>
+                  <div className="p-4 border border-dust-gray bg-white text-center">
+                    <div className="font-serif text-2xl">{rancherInfo.wholeClicks}</div>
+                    <p className="text-xs text-saddle-brown mt-1 uppercase tracking-wider">Whole Clicks</p>
+                  </div>
                 </div>
               )}
 
@@ -837,9 +959,9 @@ export default function RancherDashboardPage() {
                 >
                   {pageSaving ? 'Saving...' : 'Save Page'}
                 </button>
-                {!rancherInfo.pageLive && (
+                {!rancherInfo.pageLive && rancherInfo.slug && (
                   <p className="text-xs text-dust-gray">
-                    After saving, email us to go live: <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
+                    After saving, click &quot;Request Go Live&quot; above to notify us.
                   </p>
                 )}
               </div>

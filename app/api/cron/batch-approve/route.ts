@@ -59,14 +59,15 @@ async function handler(request: Request) {
         const now = new Date().toISOString();
         await updateRecord(TABLES.CONSUMERS, consumerId, { 'Status': 'Approved', 'Approved At': now });
 
+        // Generate login URL for all consumers with email
+        const loginUrl = email ? `${SITE_URL}/member/verify?token=${jwt.sign(
+          { type: 'member-login', consumerId, email: email.trim().toLowerCase() },
+          JWT_SECRET,
+          { expiresIn: '7d' }
+        )}` : '';
+
         // Send magic link email + backfill survey for anyone missing order details
         if (email) {
-          const token = jwt.sign(
-            { type: 'member-login', consumerId, email: email.trim().toLowerCase() },
-            JWT_SECRET,
-            { expiresIn: '7d' }
-          );
-          const loginUrl = `${SITE_URL}/member/verify?token=${token}`;
           try {
             await sendConsumerApproval({ firstName, email, loginUrl, segment });
           } catch (emailErr) {
@@ -91,7 +92,10 @@ async function handler(request: Request) {
           try {
             const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+              },
               body: JSON.stringify({
                 buyerState: consumer['State'],
                 buyerId: consumerId,
@@ -114,7 +118,7 @@ async function handler(request: Request) {
                 // No rancher available in their state — waitlist them
                 const currentStage = consumer['Sequence Stage'] || 'none';
                 if (currentStage !== 'waitlisted' && email) {
-                  await sendWaitlistEmail({ firstName, email, state: consumer['State'] });
+                  await sendWaitlistEmail({ firstName, email, state: consumer['State'], loginUrl });
                   await updateRecord(TABLES.CONSUMERS, consumerId, { 'Sequence Stage': 'waitlisted' });
                 }
               }
@@ -122,7 +126,7 @@ async function handler(request: Request) {
               // Match API error — still no rancher, notify via waitlist
               const currentStage = consumer['Sequence Stage'] || 'none';
               if (currentStage !== 'waitlisted' && email) {
-                await sendWaitlistEmail({ firstName, email, state: consumer['State'] });
+                await sendWaitlistEmail({ firstName, email, state: consumer['State'], loginUrl });
                 await updateRecord(TABLES.CONSUMERS, consumerId, { 'Sequence Stage': 'waitlisted' });
               }
             }

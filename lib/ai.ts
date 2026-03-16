@@ -15,14 +15,15 @@ const GROQ_MODELS: Record<string, string> = {
 };
 
 export async function callClaude(params: {
-  model: 'claude-sonnet-4-6' | 'claude-haiku-4-5-20251001';
+  model?: 'claude-sonnet-4-6' | 'claude-haiku-4-5-20251001';
   system: string;
   user: string;
   maxTokens?: number;
 }): Promise<string> {
-  if (OLLAMA_BASE_URL) return callOllama(params);
-  if (GROQ_API_KEY) return callGroq(params);
-  return callAnthropic(params);
+  const withModel = { ...params, model: params.model || 'claude-sonnet-4-6' as const };
+  if (OLLAMA_BASE_URL) return callOllama(withModel);
+  if (GROQ_API_KEY) return callGroq(withModel);
+  return callAnthropic(withModel);
 }
 
 async function callOllama(params: {

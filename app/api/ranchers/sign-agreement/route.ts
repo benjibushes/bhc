@@ -58,7 +58,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    let body: any;
+    try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
     const { token, signatureName, agreedToTerms } = body;
 
     if (!token || !signatureName || !agreedToTerms) {

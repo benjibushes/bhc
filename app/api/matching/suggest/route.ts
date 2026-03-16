@@ -2,9 +2,22 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, createRecord, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramReferralNotification } from '@/lib/telegram';
+import { cookies } from 'next/headers';
 
 export async function POST(request: Request) {
   try {
+    // Allow admin (via cookie) or internal calls (via shared secret header)
+    const internalSecret = process.env.INTERNAL_API_SECRET || '';
+    const authHeader = request.headers.get('x-internal-secret') || '';
+    const cookieStore = await cookies();
+    const adminCookie = cookieStore.get('bhc-admin-auth');
+    const isAdmin = adminCookie?.value === 'authenticated';
+    const isInternal = internalSecret && authHeader === internalSecret;
+
+    if (!isAdmin && !isInternal) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await request.json();
     const {
       buyerState, buyerId, buyerName, buyerEmail, buyerPhone,
