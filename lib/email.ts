@@ -1801,6 +1801,248 @@ p { color: #6B4F3F; margin: 12px 0; }
   await resend.emails.send({ from: getFromEmail(), to: email, subject, html, headers: getUnsubscribeHeaders(email) });
 }
 
+// =====================================================
+// RANCHER CHECK-IN EMAIL
+// Sent to pipeline ranchers to confirm they're still in
+// =====================================================
+
+export async function sendRancherCheckIn(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+  rancherId: string;
+  onboardingStatus: string;
+  token: string;
+}) {
+  const confirmUrl = `${SITE_URL}/api/rancher/checkin-response?token=${data.token}&action=confirm`;
+  const callUrl = `${SITE_URL}/api/rancher/checkin-response?token=${data.token}&action=call`;
+  const outUrl = `${SITE_URL}/api/rancher/checkin-response?token=${data.token}&action=out`;
+
+  const statusNote = data.onboardingStatus === 'Docs Sent'
+    ? "We sent over the partnership agreement — haven't heard back yet."
+    : data.onboardingStatus === 'Agreement Signed'
+    ? "You've signed the agreement — we're working on getting you verified."
+    : data.onboardingStatus === 'Verification Pending'
+    ? "Your verification is in progress."
+    : "We'd love to get you up and running.";
+
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `Quick check-in — ${data.ranchName} + BuyHalfCow`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px 0; }
+            p { margin: 14px 0; color: #6B4F3F; }
+            .divider { height: 1px; background: #A7A29A; margin: 28px 0; }
+            .btn { display: inline-block; padding: 14px 32px; text-decoration: none; font-weight: 600; font-size: 14px; letter-spacing: 0.5px; margin: 6px 8px 6px 0; }
+            .btn-primary { background: #0E0E0E; color: #F4F1EC; }
+            .btn-secondary { background: #F4F1EC; color: #0E0E0E; border: 1px solid #A7A29A; }
+            .btn-muted { background: transparent; color: #A7A29A; border: 1px solid #A7A29A; font-size: 12px; padding: 10px 20px; }
+            .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Quick Check-In</h1>
+            <p>Hi ${esc(data.operatorName)},</p>
+            <p>Ben here from BuyHalfCow. Just wanted to reach out and see where things stand with ${esc(data.ranchName)} joining the network.</p>
+            <p>${statusNote}</p>
+            <p>We've got buyers in the pipeline looking for ranchers like you, and I want to make sure we don't lose momentum.</p>
+
+            <div class="divider"></div>
+
+            <p><strong>Click one option below to let me know where you're at:</strong></p>
+
+            <div style="text-align: center; margin: 24px 0;">
+              <a href="${confirmUrl}" class="btn btn-primary">I'm Still In — Let's Move Forward</a>
+            </div>
+            <div style="text-align: center; margin: 12px 0;">
+              <a href="${callUrl}" class="btn btn-secondary">I Have Questions — Schedule a Call</a>
+            </div>
+            <div style="text-align: center; margin: 16px 0;">
+              <a href="${outUrl}" class="btn btn-muted">Not interested right now</a>
+            </div>
+
+            <div class="divider"></div>
+
+            <p>No pressure either way — just want to stay in the loop so we can send the right buyers to the right ranchers.</p>
+
+            <div class="footer">
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef<br>Questions? Reply directly or email ${ADMIN_EMAIL}</p>
+              <p style="font-size: 10px; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher check-in email:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// PIPELINE BLITZ — personalized update email per stage
+// Used by /blitz Telegram command to re-engage ALL
+// pipeline ranchers at once with clear next-step CTAs.
+// =====================================================
+export async function sendPipelineUpdateEmail(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+  rancherId: string;
+  onboardingStatus: string;
+  signingLink?: string;
+  dashboardLink?: string;
+}) {
+  const esc = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const firstName = esc(data.operatorName.split(' ')[0]);
+  const ranchName = esc(data.ranchName);
+  const status = data.onboardingStatus || '';
+
+  // Stage-specific content
+  let subject = '';
+  let headline = '';
+  let bodyHtml = '';
+  let ctaText = '';
+  let ctaUrl = '';
+
+  if (!status || status === 'Call Scheduled' || status === 'Call Complete') {
+    // Haven't received docs yet — send them the agreement link
+    subject = `${firstName}, let's get ${ranchName} live on BuyHalfCow`;
+    headline = 'Your Spot Is Waiting';
+    bodyHtml = `
+      <p>Hi ${firstName},</p>
+      <p>We spoke about getting <strong>${ranchName}</strong> listed on BuyHalfCow — a private network connecting independent ranchers directly with qualified beef buyers.</p>
+      <p>We have buyers actively looking for ranch-direct beef in your area. Here's what's needed to get you live:</p>
+      <div class="step"><strong>1. Sign the Commission Agreement</strong> — 10% on referred sales, no upfront fees, buyers pay you directly</div>
+      <div class="step"><strong>2. Set up your ranch page</strong> — Logo, pricing, about text (takes 5 minutes)</div>
+      <div class="step"><strong>3. Verification</strong> — Product sample or ranch visit</div>
+      <div class="step"><strong>4. Go live</strong> — Start receiving buyer leads</div>
+      <p>The first step is reviewing and signing the agreement. Everything else flows from there.</p>
+    `;
+    ctaText = 'REVIEW & SIGN AGREEMENT';
+    ctaUrl = data.signingLink || `${SITE_URL}/rancher/sign-agreement`;
+  } else if (status === 'Docs Sent') {
+    // Docs sent but haven't signed — nudge to sign
+    subject = `${firstName}, your agreement is ready to sign`;
+    headline = 'One Signature Away';
+    bodyHtml = `
+      <p>Hi ${firstName},</p>
+      <p>Just checking in — your BuyHalfCow Commission Agreement for <strong>${ranchName}</strong> is still waiting for your signature.</p>
+      <p><strong>Quick recap:</strong></p>
+      <ul style="color: #6B4F3F; line-height: 2;">
+        <li>10% commission on referred sales only — no upfront fees</li>
+        <li>Buyers pay you directly — you control your pricing</li>
+        <li>24-month term from first referral</li>
+        <li>We handle marketing, you handle the beef</li>
+      </ul>
+      <p>Once signed, you can immediately start setting up your ranch page. We have buyers looking for ranch-direct beef right now.</p>
+    `;
+    ctaText = 'SIGN AGREEMENT NOW';
+    ctaUrl = data.signingLink || `${SITE_URL}/rancher/sign-agreement`;
+  } else if (status === 'Agreement Signed') {
+    // Signed but not verified — push them to set up page + start verification
+    subject = `${firstName}, set up your ranch page while we verify`;
+    headline = 'Agreement Signed — Let\'s Get You Live';
+    bodyHtml = `
+      <p>Hi ${firstName},</p>
+      <p>Your agreement is signed and on file — great! While we handle verification, you can get a head start on your ranch page.</p>
+      <p><strong>What you can do right now:</strong></p>
+      <div class="step step-done">✅ <strong>Agreement signed</strong> — Done</div>
+      <div class="step"><strong>🖥️ Set up your ranch page</strong> — Add logo, tagline, pricing, and payment links</div>
+      <div class="step"><strong>🔍 Start verification</strong> — Ship a product sample or request a ranch visit</div>
+      <div class="step"><strong>🟢 Go live</strong> — Once verified, buyers start coming in</div>
+      <p>Log in to your dashboard to set up your page and request verification — both can be done in under 10 minutes.</p>
+    `;
+    ctaText = 'SET UP YOUR RANCH PAGE';
+    ctaUrl = data.dashboardLink || `${SITE_URL}/rancher/login`;
+  } else if (status === 'Verification Pending') {
+    // Waiting on verification — reassure and push page setup
+    subject = `${firstName}, verification update for ${ranchName}`;
+    headline = 'Verification In Progress';
+    bodyHtml = `
+      <p>Hi ${firstName},</p>
+      <p>Quick update — your verification for <strong>${ranchName}</strong> is in progress. We'll let you know as soon as it's complete.</p>
+      <p><strong>In the meantime:</strong> Make sure your ranch page is fully set up so we can go live the moment verification clears.</p>
+      <div class="step step-done">✅ Agreement signed</div>
+      <div class="step">🖥️ <strong>Finish your ranch page</strong> — pricing, photos, about text</div>
+      <div class="step">🔍 Verification in progress...</div>
+      <div class="step">🟢 Go live — almost there!</div>
+      <p>If your page is already set up, sit tight — we're working on getting you live ASAP.</p>
+    `;
+    ctaText = 'CHECK YOUR DASHBOARD';
+    ctaUrl = data.dashboardLink || `${SITE_URL}/rancher/login`;
+  } else {
+    // Fallback
+    subject = `${firstName}, update from BuyHalfCow`;
+    headline = 'Quick Update';
+    bodyHtml = `
+      <p>Hi ${firstName},</p>
+      <p>Just checking in on <strong>${ranchName}</strong>. Log in to your dashboard to see your current status and next steps.</p>
+    `;
+    ctaText = 'GO TO DASHBOARD';
+    ctaUrl = data.dashboardLink || `${SITE_URL}/rancher/login`;
+  }
+
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px 0; }
+            p { margin: 14px 0; color: #6B4F3F; }
+            .divider { height: 1px; background: #A7A29A; margin: 28px 0; }
+            .btn { display: inline-block; padding: 16px 40px; background: #0E0E0E; color: #F4F1EC; text-decoration: none; font-weight: bold; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; }
+            .step { padding: 12px 16px; border-left: 3px solid #0E0E0E; margin: 12px 0; background: #F4F1EC; color: #0E0E0E; }
+            .step-done { border-left-color: #22c55e; }
+            ul { color: #6B4F3F; }
+            .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>${headline}</h1>
+            ${bodyHtml}
+            <div style="text-align: center; margin: 32px 0;">
+              <a href="${ctaUrl}" class="btn">${ctaText}</a>
+            </div>
+            <div class="divider"></div>
+            <p>Questions? Reply to this email or call me directly.</p>
+            <div class="footer">
+              <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+              <p style="font-size: 10px; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending pipeline update email:', error);
+    return { success: false, error };
+  }
+}
+
 export async function sendEmail(params: {
   to: string;
   subject: string;

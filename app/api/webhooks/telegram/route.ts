@@ -7,7 +7,7 @@ import {
   answerCallbackQuery,
   TELEGRAM_ADMIN_CHAT_ID,
 } from '@/lib/telegram';
-import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification } from '@/lib/email';
+import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification, sendRancherCheckIn, sendPipelineUpdateEmail } from '@/lib/email';
 import { callClaude } from '@/lib/ai';
 import jwt from 'jsonwebtoken';
 
@@ -737,12 +737,16 @@ Source: ${c['Source'] || 'organic'}`;
           const rancher: any = await getRecordById(TABLES.RANCHERS, fullReferralId);
           const res = await fetch(`${SITE_URL}/api/ranchers/${fullReferralId}/send-onboarding`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+            },
             body: JSON.stringify({
               callSummary: rancher['Call Notes'] || rancher['Operation Details'] || '',
               confirmedCapacity: rancher['Monthly Capacity'] || 10,
               specialNotes: rancher['Certifications'] || '',
               includeVerification: true,
+              password: process.env.ADMIN_PASSWORD || '',
             }),
           });
           if (res.ok) {
@@ -1020,6 +1024,215 @@ Source: ${c['Source'] || 'organic'}`;
         await answerCallbackQuery(queryId, 'Cancelled');
         if (chatId && messageId) {
           await editTelegramMessage(chatId, messageId, '❌ Broadcast cancelled.');
+        }
+      }
+
+      // ─── Rancher check-in callbacks ────────────────────────────────────
+      else if (callbackData === 'rcheckin_cancel') {
+        await answerCallbackQuery(queryId, 'Cancelled');
+        if (chatId && messageId) {
+          await editTelegramMessage(chatId, messageId, '❌ Check-in cancelled.');
+        }
+      }
+
+      else if (callbackData === 'rcheckin_send') {
+        try {
+          await answerCallbackQuery(queryId, 'Sending check-in emails...');
+
+          const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+          const stalled = allRanchers.filter((r: any) => {
+            const status = r['Active Status'] || '';
+            const email = r['Email'] || '';
+            const pageLive = r['Page Live'] || false;
+            if (pageLive) return false;
+            if (['Suspended', 'Rejected'].includes(status)) return false;
+            if (!email) return false;
+            if (r['Last Check In']) {
+              const lastCheckin = new Date(r['Last Check In']);
+              const daysSince = (Date.now() - lastCheckin.getTime()) / (1000 * 60 * 60 * 24);
+              if (daysSince < 7) return false;
+            }
+            return true;
+          });
+
+          let sentCount = 0;
+          for (const r of stalled) {
+            try {
+              const token = jwt.sign(
+                { type: 'rancher-checkin', rancherId: r.id },
+                JWT_SECRET,
+                { expiresIn: '30d' }
+              );
+              await sendRancherCheckIn({
+                operatorName: r['Operator Name'] || r['Ranch Name'] || 'Rancher',
+                ranchName: r['Ranch Name'] || r['Operator Name'] || 'Your Ranch',
+                email: r['Email'],
+                rancherId: r.id,
+                onboardingStatus: r['Onboarding Status'] || 'Pending',
+                token,
+              });
+              sentCount++;
+            } catch (e) {
+              console.error(`Check-in email error for ${r['Email']}:`, e);
+            }
+          }
+
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId,
+              `✅ <b>CHECK-IN EMAILS SENT</b>\n\n📧 ${sentCount}/${stalled.length} ranchers contacted\n\nEach got 3 buttons:\n✅ "I'm still in" → notifies you\n📞 "Questions" → sends to Calendly\n🔴 "Not interested" → marks Inactive\n\nResponses will ping this chat in real time.`
+            );
+          }
+        } catch (e: any) {
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId, `❌ Error sending check-ins: ${e.message}`);
+          }
+        }
+      }
+
+      // ── BLITZ: bulk pipeline update emails ──────────────────────────
+      else if (callbackData === 'blitz_cancel') {
+        await answerCallbackQuery(queryId, 'Cancelled');
+        if (chatId && messageId) {
+          await editTelegramMessage(chatId, messageId, '❌ Pipeline blitz cancelled.');
+        }
+      }
+
+      else if (callbackData === 'blitz_send') {
+        try {
+          await answerCallbackQuery(queryId, 'Sending pipeline update emails...');
+
+          const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+          const pipeline = allRanchers.filter((r: any) => {
+            const onboarding = r['Onboarding Status'] || '';
+            const active = r['Active Status'] || '';
+            const email = r['Email'] || '';
+            if (!email) return false;
+            if (['Suspended', 'Rejected'].includes(active)) return false;
+            if (onboarding === 'Live') return false;
+            return true;
+          });
+
+          let sentCount = 0;
+          const byStage: Record<string, number> = {};
+
+          for (const r of pipeline) {
+            try {
+              const status = r['Onboarding Status'] || '';
+              byStage[status || 'New'] = (byStage[status || 'New'] || 0) + 1;
+
+              // Generate signing link for ranchers who need to sign
+              let signingLink: string | undefined;
+              if (!status || status === 'Call Scheduled' || status === 'Call Complete' || status === 'Docs Sent') {
+                const signingToken = jwt.sign(
+                  { type: 'agreement-signing', rancherId: r.id },
+                  JWT_SECRET,
+                  { expiresIn: '30d' }
+                );
+                signingLink = `${SITE_URL}/rancher/sign-agreement?token=${signingToken}`;
+              }
+
+              // Generate dashboard link for signed ranchers
+              let dashboardLink: string | undefined;
+              if (status === 'Agreement Signed' || status === 'Verification Pending') {
+                const loginToken = jwt.sign(
+                  { type: 'rancher-login', rancherId: r.id, email: r['Email'] },
+                  JWT_SECRET,
+                  { expiresIn: '7d' }
+                );
+                dashboardLink = `${SITE_URL}/rancher/verify?token=${loginToken}`;
+              }
+
+              await sendPipelineUpdateEmail({
+                operatorName: r['Operator Name'] || r['Ranch Name'] || 'Rancher',
+                ranchName: r['Ranch Name'] || r['Operator Name'] || 'Your Ranch',
+                email: r['Email'],
+                rancherId: r.id,
+                onboardingStatus: status,
+                signingLink,
+                dashboardLink,
+              });
+              sentCount++;
+            } catch (e) {
+              console.error(`Blitz email error for ${r['Email']}:`, e);
+            }
+          }
+
+          const stageBreakdown = Object.entries(byStage)
+            .map(([stage, count]) => `  ${stage || 'New'}: ${count}`)
+            .join('\n');
+
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId,
+              `🚀 <b>PIPELINE BLITZ SENT</b>\n\n📧 ${sentCount}/${pipeline.length} ranchers emailed\n\n<b>By stage:</b>\n${stageBreakdown}\n\nEach rancher got a personalized email with their specific next step and a direct action link (sign agreement / set up page / dashboard).`
+            );
+          }
+        } catch (e: any) {
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId, `❌ Error sending blitz: ${e.message}`);
+          }
+        }
+      }
+
+      // ── BULK ONBOARD: send onboarding docs to all eligible ─────────
+      else if (callbackData === 'bulkonboard_cancel') {
+        await answerCallbackQuery(queryId, 'Cancelled');
+        if (chatId && messageId) {
+          await editTelegramMessage(chatId, messageId, '❌ Bulk onboard cancelled.');
+        }
+      }
+
+      else if (callbackData === 'bulkonboard_send') {
+        try {
+          await answerCallbackQuery(queryId, 'Sending onboarding packages...');
+
+          const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+          const eligible = allRanchers.filter((r: any) => {
+            const status = r['Onboarding Status'] || '';
+            const active = r['Active Status'] || '';
+            const email = r['Email'] || '';
+            if (!email) return false;
+            if (['Suspended', 'Rejected'].includes(active)) return false;
+            // Only send to those who haven't received docs yet
+            if (['Docs Sent', 'Agreement Signed', 'Verification Pending', 'Verification Complete', 'Live'].includes(status)) return false;
+            return true;
+          });
+
+          let sentCount = 0;
+
+          for (const r of eligible) {
+            try {
+              const internalSecret = process.env.INTERNAL_API_SECRET;
+              const adminPassword = process.env.ADMIN_PASSWORD || '';
+              const res = await fetch(`${SITE_URL}/api/ranchers/${r.id}/send-onboarding`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(internalSecret ? { 'x-internal-secret': internalSecret } : {}),
+                },
+                body: JSON.stringify({
+                  callSummary: r['Call Notes'] || r['Operation Details'] || '',
+                  confirmedCapacity: r['Monthly Capacity'] || 10,
+                  specialNotes: r['Certifications'] || '',
+                  includeVerification: true,
+                  password: adminPassword,
+                }),
+              });
+              if (res.ok) sentCount++;
+              else console.error(`Bulk onboard failed for ${r['Email']}: ${res.status}`);
+            } catch (e) {
+              console.error(`Bulk onboard error for ${r['Email']}:`, e);
+            }
+          }
+
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId,
+              `📦 <b>BULK ONBOARDING SENT</b>\n\n📧 ${sentCount}/${eligible.length} ranchers received onboarding docs\n\nEach got:\n• Commission Agreement\n• Media Agreement\n• Rancher Info Packet\n• 30-day signing link\n\nThey can sign immediately and start setting up their page.`
+            );
+          }
+        } catch (e: any) {
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId, `❌ Error with bulk onboard: ${e.message}`);
+          }
         }
       }
 
@@ -1856,6 +2069,224 @@ Confirm send?`;
         }
       }
 
+      // ─── /rancherpipeline — Show all ranchers by onboarding stage ──────
+      else if (text === '/rancherpipeline' || text === '/rp') {
+        try {
+          const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+
+          // Group by onboarding status
+          const stages: Record<string, any[]> = {};
+          for (const r of allRanchers) {
+            const status = r['Onboarding Status'] || r['Active Status'] || 'No Status';
+            if (!stages[status]) stages[status] = [];
+            stages[status].push(r);
+          }
+
+          const stageOrder = ['Live', 'Agreement Signed', 'Verification Complete', 'Verification Pending', 'Docs Sent', 'Approved', 'Pending', 'Inactive', 'No Status'];
+          const stageEmoji: Record<string, string> = {
+            'Live': '🟢', 'Agreement Signed': '📝', 'Verification Complete': '✅',
+            'Verification Pending': '🔍', 'Docs Sent': '📦', 'Approved': '👍',
+            'Pending': '⏳', 'Inactive': '🔴', 'No Status': '❓',
+          };
+
+          let msg = `🤠 <b>Rancher Pipeline</b> — ${allRanchers.length} total\n`;
+
+          for (const stage of stageOrder) {
+            if (!stages[stage]) continue;
+            const emoji = stageEmoji[stage] || '📋';
+            msg += `\n${emoji} <b>${stage}</b> (${stages[stage].length})\n`;
+            for (const r of stages[stage]) {
+              const name = r['Operator Name'] || r['Ranch Name'] || 'Unknown';
+              const state = r['State'] || '';
+              const email = r['Email'] || '';
+              const lastCheckin = r['Last Check In'] ? ` | Last check-in: ${new Date(r['Last Check In']).toLocaleDateString()}` : '';
+              msg += `  • ${name}${state ? ` (${state})` : ''}${lastCheckin}\n`;
+            }
+            delete stages[stage];
+          }
+
+          // Any stages not in our order
+          for (const [stage, ranchers] of Object.entries(stages)) {
+            msg += `\n📋 <b>${stage}</b> (${ranchers.length})\n`;
+            for (const r of ranchers) {
+              const name = r['Operator Name'] || r['Ranch Name'] || 'Unknown';
+              msg += `  • ${name} (${r['State'] || ''})\n`;
+            }
+          }
+
+          // Truncate if needed for Telegram 4096 char limit
+          if (msg.length > 4000) {
+            msg = msg.substring(0, 3950) + '\n\n<i>...truncated. Use /checkin to take action.</i>';
+          }
+
+          await sendTelegramMessage(chatId, msg);
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ Error: ${e.message}`);
+        }
+      }
+
+      // ─── /checkin — Bulk send check-in emails to stalled ranchers ──────
+      else if (text === '/checkin') {
+        try {
+          const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+
+          // Find ranchers who are in the pipeline but stalled
+          // (not Live, not Inactive, not Rejected, have an email)
+          const stalled = allRanchers.filter((r: any) => {
+            const status = r['Active Status'] || '';
+            const onboarding = r['Onboarding Status'] || '';
+            const email = r['Email'] || '';
+            const pageLive = r['Page Live'] || false;
+
+            // Skip if already live, inactive, rejected, or no email
+            if (pageLive) return false;
+            if (['Suspended', 'Rejected'].includes(status)) return false;
+            if (!email) return false;
+            // Skip if they already responded recently (within 7 days)
+            if (r['Last Check In']) {
+              const lastCheckin = new Date(r['Last Check In']);
+              const daysSince = (Date.now() - lastCheckin.getTime()) / (1000 * 60 * 60 * 24);
+              if (daysSince < 7) return false;
+            }
+            return true;
+          });
+
+          if (stalled.length === 0) {
+            await sendTelegramMessage(chatId, '✅ No stalled ranchers to check in with — everyone is either live or responded recently.');
+            return NextResponse.json({ ok: true });
+          }
+
+          // Show preview with confirm button
+          let preview = `📧 <b>Rancher Check-In</b>\n\nReady to send check-in emails to <b>${stalled.length} ranchers</b>:\n\n`;
+          for (const r of stalled.slice(0, 15)) {
+            const name = r['Operator Name'] || r['Ranch Name'] || 'Unknown';
+            const status = r['Onboarding Status'] || r['Active Status'] || 'Unknown';
+            preview += `• ${name} — ${status}\n`;
+          }
+          if (stalled.length > 15) {
+            preview += `\n<i>...and ${stalled.length - 15} more</i>`;
+          }
+          preview += `\n\nEach rancher gets 3 buttons:\n✅ "I'm still in"\n📞 "I have questions"\n🔴 "Not interested"`;
+
+          const keyboard = {
+            inline_keyboard: [
+              [
+                { text: `✅ Send to ${stalled.length} ranchers`, callback_data: 'rcheckin_send' },
+                { text: '❌ Cancel', callback_data: 'rcheckin_cancel' },
+              ],
+            ],
+          };
+
+          await sendTelegramMessage(chatId, preview, keyboard);
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ Error: ${e.message}`);
+        }
+      }
+
+      // ── /blitz — bulk pipeline update emails to all non-live ranchers ──
+      else if (text === '/blitz') {
+        try {
+          const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+          const pipeline = allRanchers.filter((r: any) => {
+            const onboarding = r['Onboarding Status'] || '';
+            const active = r['Active Status'] || '';
+            const email = r['Email'] || '';
+            if (!email) return false;
+            if (['Suspended', 'Rejected'].includes(active)) return false;
+            if (onboarding === 'Live') return false;
+            return true;
+          });
+
+          if (pipeline.length === 0) {
+            await sendTelegramMessage(chatId, '✅ No pipeline ranchers to blitz — everyone is either live or has no email.');
+          } else {
+            // Group by stage for preview
+            const byStage: Record<string, string[]> = {};
+            for (const r of pipeline) {
+              const stage = r['Onboarding Status'] || 'New Applicant';
+              if (!byStage[stage]) byStage[stage] = [];
+              byStage[stage].push(r['Operator Name'] || r['Ranch Name'] || 'Unknown');
+            }
+
+            const stageEmoji: Record<string, string> = {
+              'New Applicant': '📬', 'Call Scheduled': '📅', 'Call Complete': '📞',
+              'Docs Sent': '📄', 'Agreement Signed': '✍️', 'Verification Pending': '🔬',
+              'Verification Complete': '✅',
+            };
+
+            let preview = `🚀 <b>PIPELINE BLITZ</b>\n\n${pipeline.length} ranchers will receive personalized update emails:\n\n`;
+            for (const [stage, names] of Object.entries(byStage)) {
+              const emoji = stageEmoji[stage] || '⏳';
+              preview += `${emoji} <b>${stage}</b> (${names.length})\n`;
+              for (const n of names.slice(0, 5)) {
+                preview += `  • ${escHtml(n)}\n`;
+              }
+              if (names.length > 5) preview += `  ... and ${names.length - 5} more\n`;
+              preview += '\n';
+            }
+
+            preview += `Each rancher gets a <b>stage-specific email</b> with their exact next step and a direct action link.\n\nSend now?`;
+
+            const keyboard = {
+              inline_keyboard: [
+                [
+                  { text: `🚀 Send to ${pipeline.length} ranchers`, callback_data: 'blitz_send' },
+                  { text: '❌ Cancel', callback_data: 'blitz_cancel' },
+                ],
+              ],
+            };
+
+            await sendTelegramMessage(chatId, preview, keyboard);
+          }
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ Error: ${e.message}`);
+        }
+      }
+
+      // ── /bulkonboard — bulk send onboarding docs to all who haven't received them ──
+      else if (text === '/bulkonboard') {
+        try {
+          const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+          const eligible = allRanchers.filter((r: any) => {
+            const status = r['Onboarding Status'] || '';
+            const active = r['Active Status'] || '';
+            const email = r['Email'] || '';
+            if (!email) return false;
+            if (['Suspended', 'Rejected'].includes(active)) return false;
+            if (['Docs Sent', 'Agreement Signed', 'Verification Pending', 'Verification Complete', 'Live'].includes(status)) return false;
+            return true;
+          });
+
+          if (eligible.length === 0) {
+            await sendTelegramMessage(chatId, '✅ All ranchers have already received onboarding docs.');
+          } else {
+            let preview = `📦 <b>BULK ONBOARD</b>\n\n${eligible.length} ranchers have NOT received onboarding docs yet:\n\n`;
+            for (const r of eligible.slice(0, 15)) {
+              const name = r['Operator Name'] || r['Ranch Name'] || 'Unknown';
+              const state = r['State'] || '?';
+              const status = r['Onboarding Status'] || 'New';
+              preview += `• ${escHtml(name)} (${state}) — ${status}\n`;
+            }
+            if (eligible.length > 15) preview += `... and ${eligible.length - 15} more\n`;
+
+            preview += `\nEach will receive:\n• Commission Agreement\n• Media Agreement\n• Rancher Info Packet\n• 30-day signing link\n\nSend now?`;
+
+            const keyboard = {
+              inline_keyboard: [
+                [
+                  { text: `📦 Send to ${eligible.length} ranchers`, callback_data: 'bulkonboard_send' },
+                  { text: '❌ Cancel', callback_data: 'bulkonboard_cancel' },
+                ],
+              ],
+            };
+
+            await sendTelegramMessage(chatId, preview, keyboard);
+          }
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ Error: ${e.message}`);
+        }
+      }
+
       else if (text === '/help') {
         const msg = `📖 <b>BuyHalfCow Bot Commands</b>
 
@@ -1869,11 +2300,15 @@ Confirm send?`;
 
 <b>Pipeline</b>
 /pipeline — Referral stage breakdown
+/rancherpipeline — All ranchers by onboarding stage
 /capacity — Ranchers near capacity
 /revenue — Commission & revenue summary
 
 <b>Actions</b>
+/blitz — Send personalized update emails to ALL pipeline ranchers
+/bulkonboard — Bulk send onboarding docs to all who haven't received them
 /broadcast [segment] [msg] — Quick broadcast
+/checkin — Bulk check-in with stalled ranchers
 /makeaffiliate [email] — Make someone an affiliate
 
 <b>🏡 Rancher Pages</b>

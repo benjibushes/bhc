@@ -32,6 +32,7 @@ function SignAgreementInner() {
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [dashboardLink, setDashboardLink] = useState('');
 
   useEffect(() => {
     if (!token) {
@@ -86,6 +87,12 @@ function SignAgreementInner() {
       }
       setSuccess(true);
       setSignedAt(data.signed_at);
+      if (data.dashboardLink) {
+        setDashboardLink(data.dashboardLink);
+        setTimeout(() => {
+          window.location.href = data.dashboardLink;
+        }, 4000);
+      }
     } catch (err: any) {
       setError(err.message || 'Something went wrong');
     }
@@ -154,10 +161,19 @@ function SignAgreementInner() {
             <div className="p-6 border border-dust-gray bg-white text-left space-y-2 text-sm">
               <p><strong>Signed by:</strong> {signatureName}</p>
               <p><strong>Date:</strong> {new Date(signedAt).toLocaleString()}</p>
-              <p><strong>Status:</strong> Agreement Signed — Verification is next</p>
+              <p><strong>Status:</strong> Agreement Signed — Set up your ranch page next</p>
             </div>
-            <p className="text-sm text-saddle-brown">
-              We&apos;ll be in touch about the verification process. If you have questions, reply to your onboarding email or reach out to <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>.
+            <div className="space-y-2">
+              <p className="text-saddle-brown font-medium">
+                Redirecting you to your dashboard to set up your ranch page...
+              </p>
+              <div className="inline-block w-6 h-6 border-3 border-charcoal-black border-t-transparent rounded-full animate-spin" />
+            </div>
+            <p className="text-sm text-dust-gray">
+              Not redirecting? <a href={dashboardLink || '/rancher/login'} className="underline text-saddle-brown">Click here to go to your dashboard</a>
+            </p>
+            <p className="text-xs text-dust-gray">
+              Questions? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
             </p>
           </div>
         </Container>

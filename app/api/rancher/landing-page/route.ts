@@ -68,6 +68,38 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ success: true });
     }
 
+    if (body._action === 'request-verification') {
+      const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+      const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown';
+      const method = body.verificationMethod || 'sample'; // 'sample' or 'visit'
+      const trackingNumber = body.trackingNumber || '';
+
+      const updates: Record<string, any> = {
+        'Onboarding Status': 'Verification Pending',
+      };
+      if (trackingNumber) {
+        updates['Verification Tracking'] = trackingNumber;
+      }
+      updates['Verification Method'] = method === 'visit' ? 'Ranch Visit' : 'Product Sample';
+      updates['Verification Requested At'] = new Date().toISOString();
+
+      await updateRecord(TABLES.RANCHERS, decoded.rancherId, updates);
+
+      const methodText = method === 'visit'
+        ? 'Requesting a ranch visit'
+        : `Shipping product sample${trackingNumber ? ` (tracking: ${trackingNumber})` : ''}`;
+
+      try {
+        await sendTelegramUpdate(
+          `🔍 <b>VERIFICATION REQUEST</b>\n\n🤠 ${name}\n📋 Method: ${methodText}\nEmail: ${rancher['Email'] || 'N/A'}\nPhone: ${rancher['Phone'] || 'N/A'}\n\nFollow up to coordinate.`
+        );
+      } catch (e) {
+        console.error('Telegram verification notification error:', e);
+      }
+
+      return NextResponse.json({ success: true, message: 'Verification request submitted' });
+    }
+
     if (body._action === 'request-go-live') {
       const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
       const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown';
