@@ -3,8 +3,6 @@ import { updateRecord, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
-import { readFile } from 'fs/promises';
-import { join } from 'path';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -19,7 +17,6 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Auth: require admin password or internal secret
     const { id } = await params;
     const body = await request.json();
     const { callSummary, confirmedCapacity, specialNotes, includeVerification, password } = body;
@@ -53,23 +50,12 @@ export async function POST(
       'Call Completed At': now,
     });
 
-    // Try to read PDF attachments
-    const attachments: { filename: string; content: Buffer }[] = [];
-    const docsDir = join(process.cwd(), 'public', 'docs');
-    const docFiles = [
+    // Document download links (served from public/docs/ as static files)
+    const docs = [
       { name: 'BHC_Commission_Agreement.docx', label: 'Commission Agreement' },
       { name: 'BHC_Media_Agreement.docx', label: 'Media Agreement' },
       { name: 'BHC_Rancher_Info_Packet.pdf', label: 'Rancher Info Packet' },
     ];
-
-    for (const doc of docFiles) {
-      try {
-        const content = await readFile(join(docsDir, doc.name));
-        attachments.push({ filename: doc.name, content });
-      } catch {
-        // PDF not found, skip attachment
-      }
-    }
 
     const signingToken = jwt.sign(
       { type: 'agreement-signing', rancherId: id },
@@ -77,6 +63,8 @@ export async function POST(
       { expiresIn: '30d' }
     );
     const signingLink = `${SITE_URL}/rancher/sign-agreement?token=${signingToken}`;
+
+    const hasCallContext = !!(callSummary || confirmedCapacity || specialNotes);
 
     const verificationHtml = includeVerification
       ? `
@@ -112,13 +100,18 @@ export async function POST(
           .highlight { background: #F4F1EC; padding: 16px; margin: 16px 0; border-left: 3px solid #0E0E0E; }
           .divider { height: 1px; background: #A7A29A; margin: 24px 0; }
           .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          .doc-link { display: inline-block; padding: 8px 16px; margin: 4px 0; background: #F4F1EC; color: #0E0E0E; text-decoration: none; font-size: 13px; border: 1px solid #A7A29A; }
+          .doc-link:hover { background: #E8E4DD; }
         </style>
       </head>
       <body>
         <div class="container">
           <h1>BuyHalfCow Partnership - Next Steps</h1>
           <p>Hi ${esc(rancherName)},</p>
-          <p>Great talking with you today! Here's what we discussed:</p>
+          ${hasCallContext
+            ? `<p>Thanks for connecting with us! Here's everything you need to get started:</p>`
+            : `<p>We're excited to have you in the BuyHalfCow network! Here's everything you need to get started:</p>`
+          }
 
           ${callSummary ? `
             <div class="highlight">
@@ -156,7 +149,7 @@ export async function POST(
               REVIEW & SIGN AGREEMENT
             </a>
           </div>
-          <p style="font-size: 12px; color: #A7A29A; text-align: center;">This link is valid for 30 days. Full agreement attached for your records.</p>
+          <p style="font-size: 12px; color: #A7A29A; text-align: center;">This link is valid for 30 days.</p>
 
           <h3 style="margin: 20px 0 10px;">2. Review the Info Packet & Media Agreement</h3>
           <ul style="color: #6B4F3F; line-height: 1.8;">
@@ -164,23 +157,18 @@ export async function POST(
             <li>Media Agreement covers content usage and marketing guidelines</li>
             <li>We'll need: ranch photos, beef type details, pricing, certifications</li>
           </ul>
+          <div style="margin: 12px 0;">
+            ${docs.map(d => `<a href="${SITE_URL}/docs/${d.name}" class="doc-link">${d.label}</a><br>`).join('')}
+          </div>
 
           ${verificationHtml}
 
           <h3 style="margin: 20px 0 10px;">4. Go Live</h3>
           <ul style="color: #6B4F3F; line-height: 1.8;">
-            <li>Profile activated on platform</li>
-            <li>Start receiving qualified buyer leads</li>
-            <li>We'll stay in close contact</li>
+            <li>After signing, you'll be taken straight to your dashboard to set up your ranch page</li>
+            <li>Once verified, your profile goes live and you start receiving qualified buyer leads</li>
+            <li>We'll stay in close contact throughout the process</li>
           </ul>
-
-          ${attachments.length > 0 ? `
-            <div class="divider"></div>
-            <p><strong>Documents Attached:</strong></p>
-            <ul style="color: #6B4F3F;">
-              ${attachments.map(a => `<li>${a.filename.replace('BHC_', '').replace('.pdf', '').replace('.docx', '').replace(/_/g, ' ')}</li>`).join('')}
-            </ul>
-          ` : ''}
 
           <div class="divider"></div>
 
@@ -200,7 +188,6 @@ export async function POST(
       to: rancherEmail,
       subject: 'BuyHalfCow Partnership - Next Steps & Agreement',
       html: emailHtml,
-      attachments: attachments.length > 0 ? attachments : undefined,
     });
 
     try {
