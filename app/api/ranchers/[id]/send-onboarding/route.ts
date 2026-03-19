@@ -3,6 +3,7 @@ import { updateRecord, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -25,7 +26,13 @@ export async function POST(
     const internalSecret = process.env.INTERNAL_API_SECRET;
     const authHeader = request.headers.get('x-internal-secret');
 
+    // Check admin cookie (from admin dashboard)
+    const cookieStore = await cookies();
+    const adminCookie = cookieStore.get('bhc-admin-auth');
+    const hasAdminCookie = adminCookie?.value === 'authenticated';
+
     const isAuthed =
+      hasAdminCookie ||
       (adminPassword && password === adminPassword) ||
       (internalSecret && authHeader === internalSecret);
 

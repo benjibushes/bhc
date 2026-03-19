@@ -824,6 +824,7 @@ export default function AdminPage() {
                                   rancher.onboarding_status === 'Live' ? 'bg-green-100 text-green-800 border-green-300' :
                                   rancher.onboarding_status === 'Docs Sent' ? 'bg-orange-100 text-orange-800 border-orange-300' :
                                   rancher.onboarding_status === 'Agreement Signed' ? 'bg-blue-100 text-blue-800 border-blue-300' :
+                                  rancher.onboarding_status === 'Verification Pending' ? 'bg-purple-100 text-purple-800 border-purple-300' :
                                   rancher.onboarding_status === 'Verification Complete' ? 'bg-indigo-100 text-indigo-800 border-indigo-300' :
                                   'bg-gray-100 text-gray-600 border-gray-300'
                                 }`}>
@@ -900,18 +901,40 @@ export default function AdminPage() {
                               }}
                               className="px-3 py-1 text-xs bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]"
                             >
-                              Send Onboarding Docs
+                              Send Agreement
                             </button>
                           )}
                           {rancher.onboarding_status === 'Docs Sent' && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setOnboardingModal(rancher);
+                                  setOnboardingForm({ callSummary: '', confirmedCapacity: rancher.monthly_capacity || 10, specialNotes: '', includeVerification: true });
+                                }}
+                                className="px-3 py-1 text-xs border border-orange-600 text-orange-700 hover:bg-orange-50"
+                              >
+                                Resend Agreement
+                              </button>
+                              <button
+                                onClick={() => updateOnboardingStatus(rancher.id, 'Agreement Signed')}
+                                className="px-3 py-1 text-xs border border-blue-600 text-blue-700 hover:bg-blue-50"
+                              >
+                                Mark Agreement Signed
+                              </button>
+                            </>
+                          )}
+                          {(rancher.onboarding_status === 'Agreement Signed' || rancher.onboarding_status === 'Verification Pending') && (
                             <button
-                              onClick={() => updateOnboardingStatus(rancher.id, 'Agreement Signed')}
-                              className="px-3 py-1 text-xs border border-blue-600 text-blue-700 hover:bg-blue-50"
+                              onClick={() => {
+                                setOnboardingModal(rancher);
+                                setOnboardingForm({ callSummary: '', confirmedCapacity: rancher.monthly_capacity || 10, specialNotes: '', includeVerification: true });
+                              }}
+                              className="px-3 py-1 text-xs border border-orange-600 text-orange-700 hover:bg-orange-50"
                             >
-                              Mark Agreement Signed
+                              Resend Agreement
                             </button>
                           )}
-                          {rancher.onboarding_status === 'Agreement Signed' && (
+                          {(rancher.onboarding_status === 'Agreement Signed' || rancher.onboarding_status === 'Verification Pending') && (
                             <button
                               onClick={() => updateOnboardingStatus(rancher.id, 'Verification Complete')}
                               className="px-3 py-1 text-xs border border-indigo-600 text-indigo-700 hover:bg-indigo-50"
