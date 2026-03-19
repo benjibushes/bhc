@@ -184,11 +184,16 @@ export async function POST(
       </html>
     `;
 
-    await sendEmail({
+    const emailResult = await sendEmail({
       to: rancherEmail,
       subject: 'BuyHalfCow Partnership - Next Steps & Agreement',
       html: emailHtml,
     });
+
+    if (!emailResult.success) {
+      console.error('Email send failed for', rancherEmail, emailResult.error);
+      return NextResponse.json({ error: `Email failed to send to ${rancherEmail}` }, { status: 500 });
+    }
 
     try {
       await sendTelegramUpdate(
