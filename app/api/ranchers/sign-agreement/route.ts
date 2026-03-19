@@ -37,10 +37,21 @@ export async function GET(request: Request) {
     }
 
     if (rancher['Agreement Signed']) {
+      // Give them a fresh dashboard link so they're not stuck
+      const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      const rancherEmail = rancher['Email'] || '';
+      const loginToken = jwt.sign(
+        { type: 'rancher-login', rancherId: decoded.rancherId, email: rancherEmail },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+      const dashboardLink = `${SITE_URL}/rancher/verify?token=${loginToken}`;
+
       return NextResponse.json({
         already_signed: true,
         signed_at: rancher['Agreement Signed At'] || '',
         rancher_name: rancher['Operator Name'] || rancher['Ranch Name'] || '',
+        dashboardLink,
       });
     }
 
@@ -103,7 +114,7 @@ export async function POST(request: Request) {
     const loginToken = jwt.sign(
       { type: 'rancher-login', rancherId: decoded.rancherId, email: rancherEmail },
       JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '7d' }
     );
     const dashboardLink = `${SITE_URL}/rancher/verify?token=${loginToken}`;
 
@@ -148,7 +159,7 @@ export async function POST(request: Request) {
     <div style="text-align: center; margin: 32px 0;">
       <a href="${dashboardLink}" class="btn">SET UP YOUR RANCH PAGE</a>
     </div>
-    <p style="font-size: 12px; color: #A7A29A; text-align: center;">This link logs you in automatically. Valid for 1 hour.</p>
+    <p style="font-size: 12px; color: #A7A29A; text-align: center;">This link logs you in automatically. Valid for 7 days.</p>
 
     <div class="divider"></div>
 

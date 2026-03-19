@@ -1198,6 +1198,7 @@ Source: ${c['Source'] || 'organic'}`;
           });
 
           let sentCount = 0;
+          const failures: string[] = [];
 
           for (const r of eligible) {
             try {
@@ -1217,17 +1218,28 @@ Source: ${c['Source'] || 'organic'}`;
                   password: adminPassword,
                 }),
               });
-              if (res.ok) sentCount++;
-              else console.error(`Bulk onboard failed for ${r['Email']}: ${res.status}`);
-            } catch (e) {
-              console.error(`Bulk onboard error for ${r['Email']}:`, e);
+              if (res.ok) {
+                sentCount++;
+              } else {
+                const errBody = await res.json().catch(() => ({ error: 'Unknown' }));
+                failures.push(`${r['Operator Name'] || r['Email']}: ${errBody.error || res.status}`);
+              }
+            } catch (e: any) {
+              failures.push(`${r['Operator Name'] || r['Email']}: ${e.message}`);
             }
           }
 
+          let resultMsg = `📦 <b>BULK ONBOARDING COMPLETE</b>\n\n📧 ${sentCount}/${eligible.length} ranchers received onboarding docs`;
+          if (sentCount > 0) {
+            resultMsg += `\n\nEach got:\n• Commission Agreement\n• Media Agreement\n• Rancher Info Packet\n• 30-day signing link\n\nThey can sign immediately and start setting up their page.`;
+          }
+          if (failures.length > 0) {
+            resultMsg += `\n\n❌ <b>${failures.length} failed:</b>\n${failures.slice(0, 10).map(f => `• ${f}`).join('\n')}`;
+            if (failures.length > 10) resultMsg += `\n...and ${failures.length - 10} more`;
+          }
+
           if (chatId && messageId) {
-            await editTelegramMessage(chatId, messageId,
-              `📦 <b>BULK ONBOARDING SENT</b>\n\n📧 ${sentCount}/${eligible.length} ranchers received onboarding docs\n\nEach got:\n• Commission Agreement\n• Media Agreement\n• Rancher Info Packet\n• 30-day signing link\n\nThey can sign immediately and start setting up their page.`
-            );
+            await editTelegramMessage(chatId, messageId, resultMsg);
           }
         } catch (e: any) {
           if (chatId && messageId) {

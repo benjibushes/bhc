@@ -137,8 +137,22 @@ function SignAgreementInner() {
             <h1 className="font-serif text-3xl">Agreement Already Signed</h1>
             <p className="text-saddle-brown">
               This agreement was signed{signedAt ? ` on ${new Date(signedAt).toLocaleDateString()}` : ''}.
-              Your onboarding is in progress.
             </p>
+            {rancherData?.dashboardLink ? (
+              <a
+                href={rancherData.dashboardLink}
+                className="inline-block px-8 py-4 bg-charcoal-black text-bone-white font-semibold uppercase tracking-wider text-sm hover:bg-saddle-brown transition-colors"
+              >
+                Go to Your Dashboard
+              </a>
+            ) : (
+              <Link
+                href="/rancher/login"
+                className="inline-block px-8 py-4 bg-charcoal-black text-bone-white font-semibold uppercase tracking-wider text-sm hover:bg-saddle-brown transition-colors"
+              >
+                Log In to Dashboard
+              </Link>
+            )}
             <p className="text-sm text-dust-gray">
               Questions? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
             </p>
