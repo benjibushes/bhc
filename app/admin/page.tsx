@@ -65,6 +65,8 @@ interface Rancher {
   featured?: boolean;
   release_date?: string;
   referred_by?: string;
+  slug?: string;
+  page_live?: boolean;
   created_at: string;
 }
 
@@ -986,6 +988,23 @@ export default function AdminPage() {
                               className="px-3 py-1 text-xs border border-gray-400 text-gray-600 hover:bg-gray-100"
                             >
                               Unfeature
+                            </button>
+                          )}
+                          {rancher.slug && !rancher.page_live && (
+                            <button
+                              onClick={async () => {
+                                if (!confirm(`Publish ${rancher.ranch_name || rancher.operator_name}'s landing page at /ranchers/${rancher.slug}?`)) return;
+                                const res = await fetch(`/api/admin/ranchers/${rancher.id}/go-live`, { method: 'POST' });
+                                if (res.ok) {
+                                  alert('Page is now live!');
+                                  fetchAllData();
+                                } else {
+                                  alert('Failed to go live');
+                                }
+                              }}
+                              className="px-3 py-1 text-xs bg-emerald-600 text-white hover:bg-emerald-700"
+                            >
+                              Go Live
                             </button>
                           )}
                         </div>

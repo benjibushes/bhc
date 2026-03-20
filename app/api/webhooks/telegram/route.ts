@@ -1381,6 +1381,38 @@ Source: ${c['Source'] || 'organic'}`;
         }
       }
 
+      else if (callbackData.startsWith('rverify_')) {
+        const rancherId = callbackData.substring('rverify_'.length);
+        try {
+          await updateRecord(TABLES.RANCHERS, rancherId, { 'Onboarding Status': 'Verification Complete' });
+          await answerCallbackQuery(queryId, '✅ Verification approved!');
+          if (chatId) {
+            const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+            const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+            await editTelegramMessage(chatId, messageId!, `✅ <b>VERIFICATION APPROVED</b>\n\n🤠 ${escHtml(name)} — Onboarding Status set to "Verification Complete".`);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
+      else if (callbackData.startsWith('rgolive_')) {
+        const rancherId = callbackData.substring('rgolive_'.length);
+        try {
+          await updateRecord(TABLES.RANCHERS, rancherId, { 'Page Live': true });
+          await answerCallbackQuery(queryId, '🟢 Page is live!');
+          if (chatId) {
+            const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+            const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+            const slug = rancher['Slug'] || '';
+            const liveUrl = slug ? `${SITE_URL}/ranchers/${slug}` : '(no slug set)';
+            await editTelegramMessage(chatId, messageId!, `🟢 <b>PAGE IS LIVE</b>\n\n🤠 ${escHtml(name)}\n🔗 ${liveUrl}`);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
       else if (callbackData === 'spdone') {
         if (chatId) {
           setupPageSessions.delete(chatId);

@@ -38,6 +38,8 @@ export async function GET() {
       featured: record['Featured'] || false,
       release_date: record['Release Date'] || '',
       referred_by: record['Referred By'] || '',
+      slug: record['Slug'] || '',
+      page_live: record['Page Live'] || false,
       created_at: record['Created'] || record.createdTime || new Date().toISOString(),
     }));
     

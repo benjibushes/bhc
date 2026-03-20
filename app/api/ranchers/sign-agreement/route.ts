@@ -101,7 +101,7 @@ export async function POST(request: Request) {
       'Agreement Signed': true,
       'Agreement Signed At': now,
       'Signature Name': signatureName.trim(),
-      'Onboarding Status': 'Verification Pending',
+      'Onboarding Status': 'Agreement Signed',
     });
 
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';

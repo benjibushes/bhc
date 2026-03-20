@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
-import { sendTelegramUpdate } from '@/lib/telegram';
+import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -90,8 +90,14 @@ export async function PATCH(request: Request) {
         : `Shipping product sample${trackingNumber ? ` (tracking: ${trackingNumber})` : ''}`;
 
       try {
-        await sendTelegramUpdate(
-          `🔍 <b>VERIFICATION REQUEST</b>\n\n🤠 ${name}\n📋 Method: ${methodText}\nEmail: ${rancher['Email'] || 'N/A'}\nPhone: ${rancher['Phone'] || 'N/A'}\n\nFollow up to coordinate.`
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🔍 <b>VERIFICATION REQUEST</b>\n\n🤠 ${name}\n📋 Method: ${methodText}\nEmail: ${rancher['Email'] || 'N/A'}\nPhone: ${rancher['Phone'] || 'N/A'}\n\nFollow up to coordinate.`,
+          {
+            inline_keyboard: [
+              [{ text: '✅ Approve Verification', callback_data: `rverify_${decoded.rancherId}` }],
+            ],
+          }
         );
       } catch (e) {
         console.error('Telegram verification notification error:', e);
@@ -106,8 +112,14 @@ export async function PATCH(request: Request) {
       const slug = rancher['Slug'] || '(no slug set)';
       const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
       try {
-        await sendTelegramUpdate(
-          `🟢 <b>GO LIVE REQUEST</b>\n\n🤠 ${name} wants their page published\nSlug: ${slug}\nPreview: ${siteUrl}/ranchers/${slug}\n\nTo approve, set <b>Page Live = true</b> in Airtable.`
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🟢 <b>GO LIVE REQUEST</b>\n\n🤠 ${name} wants their page published\nSlug: ${slug}\nPreview: ${siteUrl}/ranchers/${slug}`,
+          {
+            inline_keyboard: [
+              [{ text: '🟢 Set Live', callback_data: `rgolive_${decoded.rancherId}` }],
+            ],
+          }
         );
       } catch (e) {
         console.error('Telegram go-live notification error:', e);
