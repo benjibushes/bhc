@@ -1,8 +1,45 @@
 import { Resend } from 'resend';
 
-const resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
+const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@buyhalfcow.com';
+
+// Strip HTML to plain text for multipart emails (critical for spam filters)
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '  • ')
+    .replace(/<\/h[1-6]>/gi, '\n\n')
+    .replace(/<h[1-6][^>]*>/gi, '')
+    .replace(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/gi, '$2 ($1)')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// Wrapper that auto-adds replyTo + plain text to EVERY email
+// This is the #1 fix for spam filtering — missing plain text = spam
+const resend = {
+  emails: {
+    send: async (params: any) => {
+      if (!params.replyTo) {
+        params.replyTo = process.env.ADMIN_EMAIL || 'ben@buyhalfcow.com';
+      }
+      if (!params.text && params.html) {
+        params.text = htmlToPlainText(params.html);
+      }
+      return _resend.emails.send(params);
+    }
+  }
+};
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const CALENDLY_LINK = process.env.CALENDLY_LINK || 'https://buyhalfcow.com/call';
 const MERCH_URL = process.env.MERCH_URL || 'https://buyhalfcow.com/merch';
