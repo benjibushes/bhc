@@ -14,13 +14,13 @@ const MERCH_URL = process.env.MERCH_URL || 'https://buyhalfcow.com/merch';
 //   SEND_DOMAINS=buyhalfcow.com,mail.buyhalfcow.com,bhcbeef.com
 // Each domain should be verified in Resend.
 // =====================================================
-const SEND_DOMAINS = (process.env.SEND_DOMAINS || 'buyhalfcow.com').split(',').map(d => d.trim()).filter(Boolean);
+const SEND_DOMAINS = (process.env.SEND_DOMAINS || 'mail.buyhalfcow.com').split(',').map(d => d.trim()).filter(Boolean);
 let domainIndex = 0;
 
 function getFromEmail(): string {
   const domain = SEND_DOMAINS[domainIndex % SEND_DOMAINS.length];
   domainIndex++;
-  return `BuyHalfCow <noreply@${domain}>`;
+  return `BuyHalfCow <ben@${domain}>`;
 }
 
 function getUnsubscribeHeaders(email: string) {
@@ -2055,6 +2055,7 @@ export async function sendEmail(params: {
       to: params.to,
       subject: params.subject,
       html: params.html,
+      headers: getUnsubscribeHeaders(params.to),
     };
     if (params.attachments && params.attachments.length > 0) {
       emailData.attachments = params.attachments;
