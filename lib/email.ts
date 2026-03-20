@@ -14,7 +14,7 @@ const MERCH_URL = process.env.MERCH_URL || 'https://buyhalfcow.com/merch';
 //   SEND_DOMAINS=buyhalfcow.com,mail.buyhalfcow.com,bhcbeef.com
 // Each domain should be verified in Resend.
 // =====================================================
-const SEND_DOMAINS = (process.env.SEND_DOMAINS || 'mail.buyhalfcow.com').split(',').map(d => d.trim()).filter(Boolean);
+const SEND_DOMAINS = (process.env.SEND_DOMAINS || 'buyhalfcow.com').split(',').map(d => d.trim()).filter(Boolean);
 let domainIndex = 0;
 
 function getFromEmail(): string {
