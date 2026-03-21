@@ -101,12 +101,18 @@ export async function POST(request: Request) {
 
     // Server-side segment + intent calculation (don't trust client-supplied values)
     const consumerSegment = (interestBeef || interestAll) && orderType ? 'Beef Buyer' : 'Community';
+    const isRancherPageLead = source === 'rancher-page' && campaign?.startsWith('rancher-');
     let serverIntentScore = 0;
-    if (interestBeef || interestAll) serverIntentScore += 30;
-    if (orderType) serverIntentScore += 20;
-    if (budgetRange) serverIntentScore += 20;
-    if (phone) serverIntentScore += 15;
-    if (notes) serverIntentScore += 15;
+    if (isRancherPageLead) {
+      // Rancher page leads clicked "Buy" on a specific rancher — they're high intent by definition
+      serverIntentScore = 85;
+    } else {
+      if (interestBeef || interestAll) serverIntentScore += 30;
+      if (orderType) serverIntentScore += 20;
+      if (budgetRange) serverIntentScore += 20;
+      if (phone) serverIntentScore += 15;
+      if (notes) serverIntentScore += 15;
+    }
     const serverIntentClassification = serverIntentScore >= 70 ? 'High' : serverIntentScore >= 40 ? 'Medium' : 'Low';
 
     const status = deriveStatus(consumerSegment, serverIntentClassification);
@@ -202,9 +208,10 @@ export async function POST(request: Request) {
               buyerPhone: phone,
               orderType,
               budgetRange,
-              intentScore,
-              intentClassification,
+              intentScore: serverIntentScore,
+              intentClassification: serverIntentClassification,
               notes,
+              campaign: campaign || '',
             }),
           }
         );

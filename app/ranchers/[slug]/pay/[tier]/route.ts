@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getRancherBySlug, updateRecord, TABLES } from '@/lib/airtable';
+import { sendEmail } from '@/lib/email';
+import { sendTelegramMessage } from '@/lib/telegram';
 
 // Tracking redirect: /ranchers/[slug]/pay/[tier]
 // Logs the click, appends UTM params, then redirects to the rancher's payment link.
@@ -58,6 +60,43 @@ export async function GET(
       });
     } catch (err) {
       console.error('Click log failed:', err);
+    }
+
+    // ── Notify rancher + Ben via Telegram that someone clicked ────────────
+    const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || slug;
+    const rancherEmail = rancher['Email'];
+    const totalClicks = (currentClicks + 1);
+    try {
+      const chatId = process.env.TELEGRAM_CHAT_ID;
+      if (chatId) {
+        await sendTelegramMessage(chatId,
+          `🛒 <b>PAYMENT CLICK</b>\n\n` +
+          `Someone clicked <b>${config.label}</b> on <b>${rancherName}</b>'s page\n` +
+          `Total ${tier} clicks: ${totalClicks}\n` +
+          `${paymentLink ? '→ Redirecting to payment' : '⚠️ No payment link set'}`
+        );
+      }
+    } catch (e) {
+      console.error('Telegram click notification error:', e);
+    }
+
+    // Notify the rancher they have a potential buyer
+    if (rancherEmail && paymentLink) {
+      try {
+        await sendEmail({
+          to: rancherEmail,
+          subject: `New buyer interest — ${config.label} on BuyHalfCow`,
+          html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+            <h1 style="font-family:Georgia,serif;font-size:22px;">New Buyer Interest</h1>
+            <p>Hi ${rancherName},</p>
+            <p>Someone just clicked to purchase a <strong>${config.label}</strong> through your BuyHalfCow page. They've been redirected to your payment link.</p>
+            <p>Keep an eye on your payment processor for the incoming order. If they don't complete payment, we'll follow up with them automatically.</p>
+            <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
+          </div>`,
+        });
+      } catch (e) {
+        console.error('Rancher click email error:', e);
+      }
     }
 
     // ── If no payment link configured, send to ranch page ─────────────────

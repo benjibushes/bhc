@@ -22,6 +22,7 @@ export async function POST(request: Request) {
     const {
       buyerState, buyerId, buyerName, buyerEmail, buyerPhone,
       orderType, budgetRange, intentScore, intentClassification, notes,
+      campaign,
     } = body;
 
     if (!buyerState || !buyerId) {
@@ -44,44 +45,62 @@ export async function POST(request: Request) {
       return true;
     };
 
-    // Local ranchers: serve the buyer's specific state
-    const localEligible = allRanchers.filter((r: any) => {
-      if (!isEligibleBase(r)) return false;
-      const state = r['State'] || '';
-      const statesServed = r['States Served'] || '';
-      return (
-        state === buyerState ||
-        (typeof statesServed === 'string' && statesServed.split(',').map((s: string) => s.trim()).includes(buyerState)) ||
-        (Array.isArray(statesServed) && statesServed.includes(buyerState))
-      );
-    });
+    // ── PRIORITY: If lead came from a specific rancher's page, assign to THAT rancher ──
+    let directMatchRancher: any = null;
+    let matchType: string | null = null;
+    if (campaign && campaign.startsWith('rancher-')) {
+      const rancherSlug = campaign.replace('rancher-', '');
+      directMatchRancher = allRanchers.find((r: any) => {
+        const slug = r['Slug'] || '';
+        return slug === rancherSlug && isEligibleBase(r);
+      });
+      if (directMatchRancher) {
+        matchType = 'direct';
+      }
+    }
 
-    // Nationwide ranchers: ships to all states (fallback if no local match)
-    const nationwideEligible = allRanchers.filter((r: any) => {
-      if (!isEligibleBase(r)) return false;
-      return r['Ships Nationwide'] === true || r['Ships Nationwide'] === 1;
-    });
+    let topMatch: any = null;
 
-    // Prefer local; fall back to nationwide
-    const eligible = localEligible.length > 0 ? localEligible : nationwideEligible;
-    const matchType: 'local' | 'nationwide' | null =
-      localEligible.length > 0 ? 'local' : nationwideEligible.length > 0 ? 'nationwide' : null;
+    if (directMatchRancher) {
+      // Lead came from this rancher's page — assign directly to them
+      topMatch = directMatchRancher;
+    } else {
+      // Standard matching: local first, then nationwide
+      const localEligible = allRanchers.filter((r: any) => {
+        if (!isEligibleBase(r)) return false;
+        const state = r['State'] || '';
+        const statesServed = r['States Served'] || '';
+        return (
+          state === buyerState ||
+          (typeof statesServed === 'string' && statesServed.split(',').map((s: string) => s.trim()).includes(buyerState)) ||
+          (Array.isArray(statesServed) && statesServed.includes(buyerState))
+        );
+      });
 
-    eligible.sort((a: any, b: any) => {
-      const aRefs = a['Current Active Referrals'] || 0;
-      const bRefs = b['Current Active Referrals'] || 0;
-      if (aRefs !== bRefs) return aRefs - bRefs;
+      const nationwideEligible = allRanchers.filter((r: any) => {
+        if (!isEligibleBase(r)) return false;
+        return r['Ships Nationwide'] === true || r['Ships Nationwide'] === 1;
+      });
 
-      const aDate = a['Last Assigned At'] ? new Date(a['Last Assigned At']).getTime() : 0;
-      const bDate = b['Last Assigned At'] ? new Date(b['Last Assigned At']).getTime() : 0;
-      if (aDate !== bDate) return aDate - bDate;
+      const eligible = localEligible.length > 0 ? localEligible : nationwideEligible;
+      matchType = localEligible.length > 0 ? 'local' : nationwideEligible.length > 0 ? 'nationwide' : null;
 
-      const aScore = a['Performance Score'] || 50;
-      const bScore = b['Performance Score'] || 50;
-      return bScore - aScore;
-    });
+      eligible.sort((a: any, b: any) => {
+        const aRefs = a['Current Active Referrals'] || 0;
+        const bRefs = b['Current Active Referrals'] || 0;
+        if (aRefs !== bRefs) return aRefs - bRefs;
 
-    const topMatch = eligible.length > 0 ? eligible[0] : null;
+        const aDate = a['Last Assigned At'] ? new Date(a['Last Assigned At']).getTime() : 0;
+        const bDate = b['Last Assigned At'] ? new Date(b['Last Assigned At']).getTime() : 0;
+        if (aDate !== bDate) return aDate - bDate;
+
+        const aScore = a['Performance Score'] || 50;
+        const bScore = b['Performance Score'] || 50;
+        return bScore - aScore;
+      });
+
+      topMatch = eligible.length > 0 ? eligible[0] : null;
+    }
 
     const referralFields: Record<string, any> = {
       'Buyer': [buyerId],
@@ -101,7 +120,9 @@ export async function POST(request: Request) {
       referralFields['Suggested Rancher'] = [topMatch.id];
       referralFields['Suggested Rancher Name'] = topMatch['Operator Name'] || topMatch['Ranch Name'] || '';
       referralFields['Suggested Rancher State'] = topMatch['State'] || '';
-      if (matchType === 'nationwide') {
+      if (matchType === 'direct') {
+        referralFields['Match Type'] = 'Direct (Rancher Page)';
+      } else if (matchType === 'nationwide') {
         referralFields['Match Type'] = 'Nationwide';
       } else {
         referralFields['Match Type'] = 'Local';

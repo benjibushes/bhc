@@ -586,13 +586,46 @@ export async function POST(request: Request) {
             });
           }
 
+          // Also notify the buyer about their new rancher connection
+          const buyerEmail = referral['Buyer Email'];
+          const buyerConsumerId = referral['Buyer']?.[0] || '';
+          if (buyerEmail && buyerConsumerId) {
+            try {
+              const buyerToken = jwt.sign(
+                { type: 'member-login', consumerId: buyerConsumerId, email: buyerEmail.trim().toLowerCase() },
+                JWT_SECRET,
+                { expiresIn: '7d' }
+              );
+              const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
+              const buyerFirstName = (referral['Buyer Name'] || '').split(' ')[0] || 'there';
+              await sendBuyerIntroNotification({
+                firstName: buyerFirstName,
+                email: buyerEmail,
+                rancherName: rancher['Operator Name'] || rancher['Ranch Name'] || '',
+                rancherEmail: rancherEmail || '',
+                rancherPhone: rancher['Phone'] || '',
+                loginUrl: buyerLoginUrl,
+              });
+            } catch (e) {
+              console.error('Error sending buyer intro on reassignment:', e);
+            }
+
+            try {
+              await updateRecord(TABLES.CONSUMERS, buyerConsumerId, {
+                'Referral Status': 'Intro Sent',
+              });
+            } catch (e) {
+              console.error('Error updating consumer referral status on reassignment:', e);
+            }
+          }
+
           await answerCallbackQuery(queryId, `Reassigned to ${rancherName}`);
 
           if (chatId && messageId) {
             await editTelegramMessage(
               chatId,
               messageId,
-              `🔄 <b>REASSIGNED</b>\n\nIntro sent to <b>${rancherName}</b> for <b>${referral['Buyer Name']}</b>`
+              `🔄 <b>REASSIGNED</b>\n\nIntro sent to <b>${rancherName}</b> AND buyer for <b>${referral['Buyer Name']}</b>`
             );
           }
         } catch (e: any) {
