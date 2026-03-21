@@ -46,13 +46,19 @@ export async function POST(request: Request) {
     };
 
     // ── PRIORITY: If lead came from a specific rancher's page, assign to THAT rancher ──
+    // Always assign to the page rancher — even at capacity. They clicked "Buy" on THIS rancher.
+    // Only require Active + Agreement Signed (skip capacity check for direct page leads).
     let directMatchRancher: any = null;
     let matchType: string | null = null;
     if (campaign && campaign.startsWith('rancher-')) {
       const rancherSlug = campaign.replace('rancher-', '');
       directMatchRancher = allRanchers.find((r: any) => {
         const slug = r['Slug'] || '';
-        return slug === rancherSlug && isEligibleBase(r);
+        const activeStatus = r['Active Status'] || '';
+        const agreementSigned = r['Agreement Signed'] || false;
+        const onboardingStatus = r['Onboarding Status'] || '';
+        return slug === rancherSlug && activeStatus === 'Active' && agreementSigned &&
+          (!onboardingStatus || onboardingStatus === 'Live');
       });
       if (directMatchRancher) {
         matchType = 'direct';
