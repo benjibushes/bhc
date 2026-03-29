@@ -18,6 +18,9 @@ interface RancherInfo {
   maxActiveReferrals: number;
   monthlyCapacity: number;
   beefTypes: string;
+  statesServed: string;
+  shipsNationwide: boolean;
+  certifications: string;
   // Landing page fields
   slug: string;
   pageLive: boolean;
@@ -165,6 +168,10 @@ export default function RancherDashboardPage() {
         'Next Processing Date': r.nextProcessingDate || '',
         'Reserve Link': r.reserveLink || '',
         'Custom Notes': r.customNotes || '',
+        'States Served': r.statesServed || '',
+        'Ships Nationwide': r.shipsNationwide ? 'true' : '',
+        'Beef Types': r.beefTypes || '',
+        'Certifications': r.certifications || '',
       });
     } catch {
       router.push('/rancher/login');
@@ -560,6 +567,10 @@ export default function RancherDashboardPage() {
                       <span>{rancherInfo.beefTypes || 'Not set'}</span>
                     </div>
                     <div className="flex justify-between">
+                      <span className="text-saddle-brown">Delivers To</span>
+                      <span>{rancherInfo.shipsNationwide ? 'Nationwide' : (rancherInfo.statesServed || rancherInfo.state || 'Not set')}</span>
+                    </div>
+                    <div className="flex justify-between">
                       <span className="text-saddle-brown">Monthly Capacity</span>
                       <span>{rancherInfo.monthlyCapacity} head</span>
                     </div>
@@ -873,6 +884,53 @@ export default function RancherDashboardPage() {
                       placeholder="e.g. We do on-farm pickup only. Delivery available within 50 miles..."
                       className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
                     />
+                  </div>
+
+                  <h3 className="font-serif text-lg border-b border-dust-gray pb-2 pt-4">Delivery &amp; Details</h3>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Beef Types <span className="text-dust-gray font-normal">(e.g. Angus, Hereford, Wagyu)</span></label>
+                    <input
+                      type="text"
+                      value={pageForm['Beef Types'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Beef Types': e.target.value }))}
+                      placeholder="Angus, Hereford"
+                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Certifications <span className="text-dust-gray font-normal">(e.g. USDA, Grass-Fed, Organic)</span></label>
+                    <input
+                      type="text"
+                      value={pageForm['Certifications'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Certifications': e.target.value }))}
+                      placeholder="USDA Inspected, Grass-Fed, No Hormones"
+                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">States You Deliver To <span className="text-dust-gray font-normal">(comma-separated)</span></label>
+                    <input
+                      type="text"
+                      value={pageForm['States Served'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'States Served': e.target.value }))}
+                      placeholder="Colorado, Wyoming, Nebraska, Kansas"
+                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                    />
+                    <p className="text-xs text-dust-gray">We&apos;ll match buyers from these states to you automatically.</p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id="shipsNationwide"
+                      checked={pageForm['Ships Nationwide'] === 'true'}
+                      onChange={e => setPageForm(p => ({ ...p, 'Ships Nationwide': e.target.checked ? 'true' : '' }))}
+                      className="w-4 h-4"
+                    />
+                    <label htmlFor="shipsNationwide" className="text-sm">We ship nationwide</label>
                   </div>
                 </div>
 

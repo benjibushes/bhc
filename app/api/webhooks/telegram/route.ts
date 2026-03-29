@@ -1373,17 +1373,66 @@ Source: ${c['Source'] || 'organic'}`;
         }
         try {
           const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
-          if (!rancher['Slug']) {
+          const slug = rancher['Slug'] || '';
+
+          // Validate minimum content
+          if (!slug) {
             await answerCallbackQuery(queryId, 'Set a URL slug first!');
             if (chatId) await sendTelegramMessage(chatId, '⚠️ Set a <b>URL Slug</b> before going live.');
             return NextResponse.json({ ok: true });
           }
-          await updateRecord(TABLES.RANCHERS, session.rancherId, { 'Page Live': true });
+          const hasAbout = !!(rancher['About Text'] || '').trim();
+          const hasAnyPricing = !!(rancher['Quarter Price'] || rancher['Half Price'] || rancher['Whole Price']);
+          const hasAnyPaymentLink = !!(rancher['Quarter Payment Link'] || rancher['Half Payment Link'] || rancher['Whole Payment Link']);
+          const missing: string[] = [];
+          if (!hasAbout) missing.push('About Text');
+          if (!hasAnyPricing) missing.push('at least 1 price');
+          if (!hasAnyPaymentLink) missing.push('at least 1 payment link');
+          if (missing.length > 0) {
+            await answerCallbackQuery(queryId, 'Missing required content');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ Can't go live yet. Missing:\n${missing.map(m => `• ${m}`).join('\n')}`);
+            }
+            return NextResponse.json({ ok: true });
+          }
+
+          await updateRecord(TABLES.RANCHERS, session.rancherId, {
+            'Page Live': true,
+            'Onboarding Status': 'Live',
+          });
           await answerCallbackQuery(queryId, '🚀 Page is live!');
-          const liveUrl = `${SITE_URL}/ranchers/${rancher['Slug']}`;
+          const liveUrl = `${SITE_URL}/ranchers/${slug}`;
+
+          // Notify the rancher they're live
+          const rancherEmail = rancher['Email'];
+          if (rancherEmail) {
+            const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+            await sendEmail({
+              to: rancherEmail,
+              subject: 'You\'re Live on BuyHalfCow!',
+              html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+                <h1 style="font-family:Georgia,serif;font-size:22px;">You're Live!</h1>
+                <p>Hi ${escHtml(name)},</p>
+                <p>Your ranch page is now live on BuyHalfCow. Buyers can find you, learn about your operation, and purchase directly.</p>
+                <div style="margin:30px 0;text-align:center;">
+                  <a href="${liveUrl}" style="background:#2D5016;color:#fff;padding:14px 28px;text-decoration:none;font-weight:600;display:inline-block;">View Your Page</a>
+                </div>
+                <p><strong>What happens now:</strong></p>
+                <ul style="line-height:1.8;">
+                  <li>Buyers in your area will see your page in our directory</li>
+                  <li>When a buyer clicks to purchase, you'll get an email</li>
+                  <li>We'll send you qualified leads directly via email</li>
+                  <li>BuyHalfCow earns 10% commission on referred sales</li>
+                </ul>
+                <p>Share your page: <a href="${liveUrl}">${liveUrl}</a></p>
+                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
+              </div>`,
+            });
+          }
+
           if (chatId) {
             await sendTelegramMessage(chatId,
-              `🚀 <b>${session.rancherName} is LIVE!</b>\n\n🔗 ${liveUrl}\n\nShare this link with the rancher and run ads to it.`
+              `🚀 <b>${session.rancherName} is LIVE!</b>\n\n🔗 ${liveUrl}\n📧 Rancher notified\n✅ Status → Live\n\nShare this link and run ads to it.`
             );
           }
           setupPageSessions.delete(chatId!);
@@ -1419,10 +1468,38 @@ Source: ${c['Source'] || 'organic'}`;
         try {
           await updateRecord(TABLES.RANCHERS, rancherId, { 'Onboarding Status': 'Verification Complete' });
           await answerCallbackQuery(queryId, '✅ Verification approved!');
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+          const rancherEmail = rancher['Email'];
+
+          // Notify the rancher their verification passed
+          if (rancherEmail) {
+            const slug = rancher['Slug'] || '';
+            const dashToken = jwt.sign(
+              { type: 'rancher-login', rancherId, email: rancherEmail.trim().toLowerCase() },
+              JWT_SECRET,
+              { expiresIn: '7d' }
+            );
+            const dashUrl = `${SITE_URL}/rancher/verify?token=${dashToken}`;
+            await sendEmail({
+              to: rancherEmail,
+              subject: 'Verification Complete — Ready to Go Live on BuyHalfCow',
+              html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+                <h1 style="font-family:Georgia,serif;font-size:22px;">Verification Complete</h1>
+                <p>Hi ${escHtml(name)},</p>
+                <p>Your product verification has been approved. You're almost live on BuyHalfCow.</p>
+                <p><strong>Next step:</strong> Make sure your landing page has your pricing, payment links, and about text filled in. Then hit "Request Go Live" on your dashboard.</p>
+                <div style="margin:30px 0;text-align:center;">
+                  <a href="${dashUrl}" style="background:#2D5016;color:#fff;padding:14px 28px;text-decoration:none;font-weight:600;display:inline-block;">Open Dashboard</a>
+                </div>
+                <p>Once your page is live, buyers in your area will start seeing your ranch and can purchase directly.</p>
+                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
+              </div>`,
+            });
+          }
+
           if (chatId) {
-            const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
-            const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
-            await editTelegramMessage(chatId, messageId!, `✅ <b>VERIFICATION APPROVED</b>\n\n🤠 ${escHtml(name)} — Onboarding Status set to "Verification Complete".`);
+            await editTelegramMessage(chatId, messageId!, `✅ <b>VERIFICATION APPROVED</b>\n\n🤠 ${escHtml(name)} — Onboarding Status set to "Verification Complete".\n📧 Rancher notified via email.`);
           }
         } catch (e: any) {
           await answerCallbackQuery(queryId, `Error: ${e.message}`);
@@ -1432,14 +1509,66 @@ Source: ${c['Source'] || 'organic'}`;
       else if (callbackData.startsWith('rgolive_')) {
         const rancherId = callbackData.substring('rgolive_'.length);
         try {
-          await updateRecord(TABLES.RANCHERS, rancherId, { 'Page Live': true });
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+          const slug = rancher['Slug'] || '';
+          const rancherEmail = rancher['Email'];
+
+          // Validate minimum content before going live
+          if (!slug) {
+            await answerCallbackQuery(queryId, 'Set a URL slug first!');
+            return NextResponse.json({ ok: true });
+          }
+          const hasAbout = !!(rancher['About Text'] || '').trim();
+          const hasAnyPricing = !!(rancher['Quarter Price'] || rancher['Half Price'] || rancher['Whole Price']);
+          const hasAnyPaymentLink = !!(rancher['Quarter Payment Link'] || rancher['Half Payment Link'] || rancher['Whole Payment Link']);
+          const missing: string[] = [];
+          if (!hasAbout) missing.push('About Text');
+          if (!hasAnyPricing) missing.push('at least 1 price (quarter/half/whole)');
+          if (!hasAnyPaymentLink) missing.push('at least 1 payment link');
+          if (missing.length > 0) {
+            await answerCallbackQuery(queryId, 'Missing required content');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ Can't go live yet. Missing:\n${missing.map(m => `• ${m}`).join('\n')}\n\nUse /setuppage ${name} or have the rancher fill these in on their dashboard.`);
+            }
+            return NextResponse.json({ ok: true });
+          }
+
+          await updateRecord(TABLES.RANCHERS, rancherId, {
+            'Page Live': true,
+            'Onboarding Status': 'Live',
+          });
           await answerCallbackQuery(queryId, '🟢 Page is live!');
+
+          // Notify the rancher they're live
+          if (rancherEmail) {
+            const liveUrl = `${SITE_URL}/ranchers/${slug}`;
+            await sendEmail({
+              to: rancherEmail,
+              subject: 'You\'re Live on BuyHalfCow!',
+              html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+                <h1 style="font-family:Georgia,serif;font-size:22px;">You're Live!</h1>
+                <p>Hi ${escHtml(name)},</p>
+                <p>Your ranch page is now live on BuyHalfCow. Buyers can find you, learn about your operation, and purchase directly.</p>
+                <div style="margin:30px 0;text-align:center;">
+                  <a href="${liveUrl}" style="background:#2D5016;color:#fff;padding:14px 28px;text-decoration:none;font-weight:600;display:inline-block;">View Your Page</a>
+                </div>
+                <p><strong>What happens now:</strong></p>
+                <ul style="line-height:1.8;">
+                  <li>Buyers in your area will see your page in our rancher directory</li>
+                  <li>When a buyer clicks to purchase, you'll get an email notification</li>
+                  <li>We'll also send you qualified buyer leads directly via email</li>
+                  <li>BuyHalfCow earns 10% commission on referred sales — that's it</li>
+                </ul>
+                <p>Share your page link with your own customers too: <a href="${liveUrl}">${liveUrl}</a></p>
+                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
+              </div>`,
+            });
+          }
+
           if (chatId) {
-            const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
-            const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
-            const slug = rancher['Slug'] || '';
-            const liveUrl = slug ? `${SITE_URL}/ranchers/${slug}` : '(no slug set)';
-            await editTelegramMessage(chatId, messageId!, `🟢 <b>PAGE IS LIVE</b>\n\n🤠 ${escHtml(name)}\n🔗 ${liveUrl}`);
+            const liveUrl = `${SITE_URL}/ranchers/${slug}`;
+            await editTelegramMessage(chatId, messageId!, `🟢 <b>PAGE IS LIVE</b>\n\n🤠 ${escHtml(name)}\n🔗 ${liveUrl}\n📧 Rancher notified via email\n✅ Onboarding Status → Live`);
           }
         } catch (e: any) {
           await answerCallbackQuery(queryId, `Error: ${e.message}`);

@@ -117,6 +117,9 @@ export async function GET() {
         maxActiveReferrals: rancher['Max Active Referalls'] || 5,
         monthlyCapacity: rancher['Monthly Capacity'] || 0,
         beefTypes: rancher['Beef Types'] || '',
+        statesServed: rancher['States Served'] || '',
+        shipsNationwide: rancher['Ships Nationwide'] || false,
+        certifications: rancher['Certifications'] || '',
         // Landing page fields
         slug: rancher['Slug'] || '',
         pageLive: rancher['Page Live'] || false,

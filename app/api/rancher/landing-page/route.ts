@@ -48,6 +48,10 @@ export async function PATCH(request: Request) {
       'Next Processing Date',
       'Reserve Link',
       'Custom Notes',
+      'States Served',
+      'Ships Nationwide',
+      'Beef Types',
+      'Certifications',
     ];
 
     // Handle special actions
@@ -137,6 +141,11 @@ export async function PATCH(request: Request) {
 
     if (Object.keys(fields).length === 0) {
       return NextResponse.json({ error: 'No valid fields provided' }, { status: 400 });
+    }
+
+    // Convert Ships Nationwide to boolean for Airtable
+    if ('Ships Nationwide' in fields) {
+      fields['Ships Nationwide'] = fields['Ships Nationwide'] === 'true' || fields['Ships Nationwide'] === true;
     }
 
     // Validate slug: lowercase alphanumeric + hyphens only
