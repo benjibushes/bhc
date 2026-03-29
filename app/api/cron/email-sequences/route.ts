@@ -68,8 +68,12 @@ async function handler(request: Request) {
 
     let beefDay3 = 0, beefDay7 = 0, community7 = 0, community14 = 0, introCheckin = 0,
         nurture3 = 0, nurture10 = 0, nurtureMerch = 0, nurtureAffiliate = 0, errors = 0;
+    // Cap at 50 emails per run to avoid Resend rate limits and spam flags
+    const MAX_EMAILS_PER_RUN = 50;
+    let totalSent = 0;
 
     for (const consumer of approved) {
+      if (totalSent >= MAX_EMAILS_PER_RUN) break;
       try {
         const email = consumer['Email'];
         const firstName = (consumer['Full Name'] || '').split(' ')[0] || 'there';
@@ -91,45 +95,45 @@ async function handler(request: Request) {
         const rancherAvailable = hasRancherAvailable(consumerState);
 
         if (!rancherAvailable) {
-          // Day 3: "What's actually happening right now" — mission update + Instagram
-          if (daysSinceApproval >= 3 && daysSinceApproval < 4 && sequenceStage === 'none') {
+          // Day 3+: "What's actually happening right now" — mission update + Instagram
+          if (daysSinceApproval >= 3 && sequenceStage === 'none') {
             await sendNurtureDay3({ firstName, email, loginUrl });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'nurture_3d_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
-            nurture3++;
+            nurture3++; totalSent++;
           }
 
-          // Day 10: "I drove to Texas with $500 in my account" — raw story
-          if (daysSinceApproval >= 10 && daysSinceApproval < 11 && sequenceStage === 'nurture_3d_sent') {
+          // Day 10+: "I drove to Texas with $500 in my account" — raw story
+          if (daysSinceApproval >= 10 && sequenceStage === 'nurture_3d_sent') {
             await sendNurtureDay10({ firstName, email, loginUrl });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'nurture_10d_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
-            nurture10++;
+            nurture10++; totalSent++;
           }
 
-          // Day 21: Merch email — wear the mission
-          if (daysSinceApproval >= 21 && daysSinceApproval < 22 && sequenceStage === 'nurture_10d_sent') {
+          // Day 21+: Merch email — wear the mission
+          if (daysSinceApproval >= 21 && sequenceStage === 'nurture_10d_sent') {
             await sendMerchEmail({ firstName, email });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'nurture_merch_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
-            nurtureMerch++;
+            nurtureMerch++; totalSent++;
           }
 
-          // Day 35: Affiliate ask — one link, buyers and ranchers welcome
-          if (daysSinceApproval >= 35 && daysSinceApproval < 36 && sequenceStage === 'nurture_merch_sent') {
+          // Day 35+: Affiliate ask — one link, buyers and ranchers welcome
+          if (daysSinceApproval >= 35 && sequenceStage === 'nurture_merch_sent') {
             const referralLink = `${SITE_URL}/access`;
             await sendNurtureAffiliate({ firstName, email, referralLink, loginUrl });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'nurture_affiliate_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
-            nurtureAffiliate++;
+            nurtureAffiliate++; totalSent++;
           }
         }
 
@@ -140,8 +144,8 @@ async function handler(request: Request) {
         // ── Beef Buyer sequences ──────────────────────────────────────────
 
         if (segment === 'Beef Buyer') {
-          // Day 3: No referral yet, haven't sent day3 email
-          if (daysSinceApproval >= 3 && daysSinceApproval < 4 && sequenceStage === 'none') {
+          // Day 3+: No referral yet, haven't sent day3 email
+          if (daysSinceApproval >= 3 && sequenceStage === 'none') {
             const noReferral = !consumer['Referral Status'] ||
               consumer['Referral Status'] === 'Unmatched' ||
               consumer['Referral Status'] === 'Waitlisted';
@@ -157,12 +161,12 @@ async function handler(request: Request) {
                 'Sequence Stage': 'day3_sent',
                 'Sequence Sent At': new Date().toISOString(),
               });
-              beefDay3++;
+              beefDay3++; totalSent++;
             }
           }
 
-          // Day 7: Follow-up on rancher introduction
-          if (daysSinceApproval >= 7 && daysSinceApproval < 8 && sequenceStage === 'day3_sent') {
+          // Day 7+: Follow-up on rancher introduction
+          if (daysSinceApproval >= 7 && sequenceStage === 'day3_sent') {
             // Find their active referral to get rancher name
             const referrals = await getAllRecords(
               TABLES.REFERRALS,
@@ -181,7 +185,7 @@ async function handler(request: Request) {
               'Sequence Stage': 'day7_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
-            beefDay7++;
+            beefDay7++; totalSent++;
           }
         }
 
@@ -191,25 +195,25 @@ async function handler(request: Request) {
           const createdAt = new Date(consumer['Created'] || consumer.createdTime || 0).getTime();
           const daysSinceCreation = (now - createdAt) / DAY_MS;
 
-          // Day 7: Educational content
-          if (daysSinceCreation >= 7 && daysSinceCreation < 8 && sequenceStage === 'none') {
+          // Day 7+: Educational content
+          if (daysSinceCreation >= 7 && sequenceStage === 'none') {
             await sendSequenceEmail_CommunityDay7({ firstName, email, loginUrl });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'community_7d_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
-            community7++;
+            community7++; totalSent++;
           }
 
-          // Day 14: Upgrade prompt
-          if (daysSinceCreation >= 14 && daysSinceCreation < 15 && sequenceStage === 'community_7d_sent') {
+          // Day 14+: Upgrade prompt
+          if (daysSinceCreation >= 14 && sequenceStage === 'community_7d_sent') {
             const upgradeUrl = `${SITE_URL}/member`;
             await sendSequenceEmail_CommunityDay14({ firstName, email, upgradeUrl, loginUrl });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'community_14d_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
-            community14++;
+            community14++; totalSent++;
           }
         }
 
@@ -268,7 +272,7 @@ async function handler(request: Request) {
             'Sequence Stage': 'intro_checkin_sent',
             'Sequence Sent At': new Date().toISOString(),
           });
-          introCheckin++;
+          introCheckin++; totalSent++;
         } catch (err: any) {
           console.error(`Intro check-in error for referral ${referral.id}:`, err.message);
           errors++;
