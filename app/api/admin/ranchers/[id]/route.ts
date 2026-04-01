@@ -39,6 +39,36 @@ export async function PATCH(
     if (body.featured === true) fields['Featured'] = true;
     else if (body.featured === false) fields['Featured'] = false;
     if (body.release_date !== undefined) fields['Release Date'] = body.release_date || null;
+    // ── Landing page fields (for admin page editor) ──
+    if (body.slug !== undefined) fields['Slug'] = body.slug;
+    if (body.tagline !== undefined) fields['Tagline'] = body.tagline;
+    if (body.about_text !== undefined) fields['About Text'] = body.about_text;
+    if (body.logo_url !== undefined) fields['Logo URL'] = body.logo_url;
+    if (body.video_url !== undefined) fields['Video URL'] = body.video_url;
+    if (body.custom_notes !== undefined) fields['Custom Notes'] = body.custom_notes;
+    if (body.quarter_price !== undefined) fields['Quarter Price'] = body.quarter_price ? parseFloat(body.quarter_price) : null;
+    if (body.quarter_lbs !== undefined) fields['Quarter lbs'] = body.quarter_lbs;
+    if (body.quarter_payment_link !== undefined) fields['Quarter Payment Link'] = body.quarter_payment_link;
+    if (body.half_price !== undefined) fields['Half Price'] = body.half_price ? parseFloat(body.half_price) : null;
+    if (body.half_lbs !== undefined) fields['Half lbs'] = body.half_lbs;
+    if (body.half_payment_link !== undefined) fields['Half Payment Link'] = body.half_payment_link;
+    if (body.whole_price !== undefined) fields['Whole Price'] = body.whole_price ? parseFloat(body.whole_price) : null;
+    if (body.whole_lbs !== undefined) fields['Whole lbs'] = body.whole_lbs;
+    if (body.whole_payment_link !== undefined) fields['Whole Payment Link'] = body.whole_payment_link;
+    if (body.next_processing_date !== undefined) fields['Next Processing Date'] = body.next_processing_date || null;
+    if (body.reserve_link !== undefined) fields['Reserve Link'] = body.reserve_link;
+    if (body.testimonials !== undefined) fields['Testimonials'] = body.testimonials;
+    if (body.gallery_photos !== undefined) fields['Gallery Photos'] = body.gallery_photos;
+    if (body.google_reviews_url !== undefined) fields['Google Reviews URL'] = body.google_reviews_url;
+    if (body.facebook_url !== undefined) fields['Facebook URL'] = body.facebook_url;
+    if (body.instagram_url !== undefined) fields['Instagram URL'] = body.instagram_url;
+    if (body.processing_facility !== undefined) fields['Processing Facility'] = body.processing_facility;
+    if (body.verification_method !== undefined) fields['Verification Method'] = body.verification_method;
+    if (body.verification_notes !== undefined) fields['Verification Notes'] = body.verification_notes;
+    if (body.page_live === true) fields['Page Live'] = true;
+    else if (body.page_live === false) fields['Page Live'] = false;
+    if (body.ships_nationwide === true) fields['Ships Nationwide'] = true;
+    else if (body.ships_nationwide === false) fields['Ships Nationwide'] = false;
 
     let shouldSendApproval = false;
     let shouldSendGoLive = false;

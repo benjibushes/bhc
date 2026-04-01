@@ -52,6 +52,12 @@ export async function PATCH(request: Request) {
       'Ships Nationwide',
       'Beef Types',
       'Certifications',
+      'Testimonials',
+      'Gallery Photos',
+      'Google Reviews URL',
+      'Facebook URL',
+      'Instagram URL',
+      'Processing Facility',
     ];
 
     // Handle special actions
@@ -75,28 +81,37 @@ export async function PATCH(request: Request) {
     if (body._action === 'request-verification') {
       const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
       const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown';
-      const method = body.verificationMethod || 'sample'; // 'sample' or 'visit'
-      const trackingNumber = body.trackingNumber || '';
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      const slug = rancher['Slug'] || '';
 
+      // Save any verification materials submitted with the request
       const updates: Record<string, any> = {
         'Onboarding Status': 'Verification Pending',
+        'Verification Requested At': new Date().toISOString(),
       };
-      if (trackingNumber) {
-        updates['Verification Tracking'] = trackingNumber;
-      }
-      updates['Verification Method'] = method === 'visit' ? 'Ranch Visit' : 'Product Sample';
-      updates['Verification Requested At'] = new Date().toISOString();
+      if (body.testimonials) updates['Testimonials'] = body.testimonials;
+      if (body.galleryPhotos) updates['Gallery Photos'] = body.galleryPhotos;
+      if (body.googleReviewsUrl) updates['Google Reviews URL'] = body.googleReviewsUrl;
+      if (body.facebookUrl) updates['Facebook URL'] = body.facebookUrl;
+      if (body.instagramUrl) updates['Instagram URL'] = body.instagramUrl;
+      if (body.processingFacility) updates['Processing Facility'] = body.processingFacility;
+
+      // Build verification method summary
+      const methods: string[] = [];
+      if (body.testimonials) methods.push('Testimonials');
+      if (body.galleryPhotos) methods.push('Photos');
+      if (body.googleReviewsUrl) methods.push('Google Reviews');
+      if (body.facebookUrl) methods.push('Facebook');
+      if (body.instagramUrl) methods.push('Instagram');
+      if (body.processingFacility) methods.push('Processing Facility');
+      updates['Verification Method'] = methods.join(', ') || 'Digital Proof';
 
       await updateRecord(TABLES.RANCHERS, decoded.rancherId, updates);
-
-      const methodText = method === 'visit'
-        ? 'Requesting a ranch visit'
-        : `Shipping product sample${trackingNumber ? ` (tracking: ${trackingNumber})` : ''}`;
 
       try {
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
-          `🔍 <b>VERIFICATION REQUEST</b>\n\n🤠 ${name}\n📋 Method: ${methodText}\nEmail: ${rancher['Email'] || 'N/A'}\nPhone: ${rancher['Phone'] || 'N/A'}\n\nFollow up to coordinate.`,
+          `🔍 <b>VERIFICATION REQUEST</b>\n\n🤠 ${name}\n📋 Proof: ${methods.join(', ') || 'Submitted'}\nEmail: ${rancher['Email'] || 'N/A'}\nPhone: ${rancher['Phone'] || 'N/A'}\n${slug ? `Preview: ${siteUrl}/ranchers/${slug}` : ''}\n\nReview their materials and approve.`,
           {
             inline_keyboard: [
               [{ text: '✅ Approve Verification', callback_data: `rverify_${decoded.rancherId}` }],

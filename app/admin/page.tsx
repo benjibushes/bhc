@@ -990,6 +990,21 @@ export default function AdminPage() {
                               Unfeature
                             </button>
                           )}
+                          <a
+                            href={`/admin/ranchers/${rancher.id}`}
+                            className="px-3 py-1 text-xs border border-[#6B4F3F] text-[#6B4F3F] hover:bg-[#6B4F3F] hover:text-white transition-colors"
+                          >
+                            Edit Page
+                          </a>
+                          {rancher.slug && rancher.page_live && (
+                            <a
+                              href={`/ranchers/${rancher.slug}`}
+                              target="_blank"
+                              className="px-3 py-1 text-xs border border-green-600 text-green-700 hover:bg-green-50"
+                            >
+                              View Live →
+                            </a>
+                          )}
                           {rancher.slug && !rancher.page_live && (
                             <button
                               onClick={async () => {
