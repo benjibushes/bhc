@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, createRecord, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendTelegramReferralNotification } from '@/lib/telegram';
+import { sendTelegramReferralNotification, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
 import { cookies } from 'next/headers';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function POST(request: Request) {
   try {
@@ -153,46 +158,127 @@ export async function POST(request: Request) {
     }
 
     // Increment rancher's active referral count so capacity limit works in real-time
+    const now = new Date().toISOString();
     if (topMatch) {
       try {
         const currentRefs = topMatch['Current Active Referrals'] || 0;
         await updateRecord(TABLES.RANCHERS, topMatch.id, {
           'Current Active Referrals': currentRefs + 1,
-          'Last Assigned At': new Date().toISOString(),
+          'Last Assigned At': now,
         });
       } catch (e) {
         console.error('Error incrementing rancher referral count:', e);
       }
     }
 
-    try {
-      await updateRecord(TABLES.CONSUMERS, buyerId, {
-        'Referral Status': topMatch ? 'Pending Approval' : 'Waitlisted',
-      });
-    } catch (e) {
-      console.error('Error updating consumer referral status:', e);
-    }
+    // ── AUTO-APPROVE: Direct rancher page leads get instant intro (no Telegram wait) ──
+    if (matchType === 'direct' && topMatch) {
+      try {
+        // Update referral to Intro Sent immediately
+        await updateRecord(TABLES.REFERRALS, referral.id, {
+          'Status': 'Intro Sent',
+          'Rancher': [topMatch.id],
+          'Approved At': now,
+          'Intro Sent At': now,
+        });
 
-    // Send Telegram notification
-    try {
-      await sendTelegramReferralNotification({
-        referralId: referral.id,
-        buyerName: buyerName || 'Unknown',
-        buyerState,
-        orderType: orderType || 'Not specified',
-        budgetRange: budgetRange || 'Not specified',
-        intentScore: intentScore || 0,
-        intentClassification: intentClassification || 'N/A',
-        notes: notes || '',
-        matchType: matchType || undefined,
-        suggestedRancher: topMatch ? {
-          name: topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown',
-          activeReferrals: topMatch['Current Active Referrals'] || 0,
-          maxReferrals: topMatch['Max Active Referalls'] || 5,
-        } : null,
-      });
-    } catch (e) {
-      console.error('Error sending Telegram notification:', e);
+        // Update consumer status
+        await updateRecord(TABLES.CONSUMERS, buyerId, {
+          'Referral Status': 'Intro Sent',
+        });
+
+        const rancherName = topMatch['Operator Name'] || topMatch['Ranch Name'] || '';
+        const rancherEmail = topMatch['Email'] || '';
+        const rancherPhone = topMatch['Phone'] || '';
+
+        // Send rancher the buyer's info
+        if (rancherEmail) {
+          await sendEmail({
+            to: rancherEmail,
+            subject: `BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+            html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+              <h1 style="font-family:Georgia,serif;">New Qualified Buyer Lead</h1>
+              <p>Hi ${rancherName},</p>
+              <p>A buyer just clicked to purchase through your BuyHalfCow page and has been automatically connected to you:</p>
+              <p><strong>Buyer:</strong> ${buyerName}</p>
+              <p><strong>Email:</strong> ${buyerEmail}</p>
+              ${buyerPhone ? `<p><strong>Phone:</strong> ${buyerPhone}</p>` : ''}
+              <p><strong>State:</strong> ${buyerState}</p>
+              <p><strong>Order:</strong> ${orderType || 'Not specified'}</p>
+              ${budgetRange ? `<p><strong>Budget:</strong> ${budgetRange}</p>` : ''}
+              ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
+              <p>Reach out directly to close the sale. Reply-all to keep me in the loop.</p>
+              <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
+            </div>`,
+          });
+        }
+
+        // Send buyer the rancher's info
+        if (buyerEmail) {
+          const buyerToken = jwt.sign(
+            { type: 'member-login', consumerId: buyerId, email: buyerEmail.trim().toLowerCase() },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+          );
+          const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
+          const buyerFirstName = (buyerName || '').split(' ')[0] || 'there';
+          await sendBuyerIntroNotification({
+            firstName: buyerFirstName,
+            email: buyerEmail,
+            rancherName,
+            rancherEmail,
+            rancherPhone,
+            loginUrl: buyerLoginUrl,
+          });
+        }
+
+        // Info-only Telegram notification (no buttons)
+        try {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `✅ <b>AUTO-APPROVED (Direct Page Lead)</b>\n\n` +
+            `👤 ${buyerName} in ${buyerState}\n` +
+            `🤠 → ${rancherName}\n` +
+            `📦 ${orderType || 'Not specified'}\n` +
+            `Intro emails sent to both parties automatically.`
+          );
+        } catch (e) {
+          console.error('Telegram auto-approve notification error:', e);
+        }
+      } catch (e) {
+        console.error('Error auto-approving direct page lead:', e);
+      }
+    } else {
+      // Standard flow: set to Pending Approval and wait for Telegram approval
+      try {
+        await updateRecord(TABLES.CONSUMERS, buyerId, {
+          'Referral Status': topMatch ? 'Pending Approval' : 'Waitlisted',
+        });
+      } catch (e) {
+        console.error('Error updating consumer referral status:', e);
+      }
+
+      // Send Telegram notification with approval buttons
+      try {
+        await sendTelegramReferralNotification({
+          referralId: referral.id,
+          buyerName: buyerName || 'Unknown',
+          buyerState,
+          orderType: orderType || 'Not specified',
+          budgetRange: budgetRange || 'Not specified',
+          intentScore: intentScore || 0,
+          intentClassification: intentClassification || 'N/A',
+          notes: notes || '',
+          matchType: matchType || undefined,
+          suggestedRancher: topMatch ? {
+            name: topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown',
+            activeReferrals: topMatch['Current Active Referrals'] || 0,
+            maxReferrals: topMatch['Max Active Referalls'] || 5,
+          } : null,
+        });
+      } catch (e) {
+        console.error('Error sending Telegram notification:', e);
+      }
     }
 
     return NextResponse.json({

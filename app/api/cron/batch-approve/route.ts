@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail } from '@/lib/email';
+import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
@@ -143,15 +143,58 @@ async function handler(request: Request) {
       await sleep(250);
     }
 
+    // ── Auto-go-live for verified ranchers with complete pages ──────────────
+    let ranchersGoLive = 0;
+    try {
+      const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+      const readyToGoLive = allRanchers.filter((r: any) => {
+        if (r['Onboarding Status'] !== 'Verification Complete') return false;
+        if (r['Page Live'] === true) return false;
+        // Required: Slug + About Text + at least 1 payment link
+        if (!r['Slug']) return false;
+        if (!r['About Text']) return false;
+        const hasPaymentLink = !!(r['Quarter Payment Link'] || r['Half Payment Link'] || r['Whole Payment Link']);
+        if (!hasPaymentLink) return false;
+        return true;
+      });
+
+      for (const rancher of readyToGoLive) {
+        try {
+          await updateRecord(TABLES.RANCHERS, rancher.id, {
+            'Page Live': true,
+            'Onboarding Status': 'Live',
+            'Active Status': 'Active',
+          });
+
+          const email = rancher['Email'];
+          const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
+          const ranchName = rancher['Ranch Name'] || '';
+          if (email) {
+            await sendRancherGoLiveEmail({
+              operatorName,
+              ranchName,
+              email,
+              dashboardUrl: `${SITE_URL}/rancher`,
+            });
+          }
+          ranchersGoLive++;
+        } catch (e: any) {
+          console.error('Auto-go-live error:', e.message);
+        }
+      }
+    } catch (e: any) {
+      console.error('Auto-go-live query error:', e.message);
+    }
+
     const summary = `✅ <b>Batch Approval Complete</b>
 
 📥 Pending reviewed: ${pending.length}
 ✅ Approved: ${approved}
-🤝 Matched to ranchers: ${matched}${errors.length > 0 ? `\n⚠️ Errors: ${errors.length} (${errors.slice(0, 3).join(', ')})` : ''}`;
+🤝 Matched to ranchers: ${matched}${ranchersGoLive > 0 ? `\n🚀 Ranchers auto-published: ${ranchersGoLive}` : ''}${errors.length > 0 ? `\n⚠️ Errors: ${errors.length} (${errors.slice(0, 3).join(', ')})` : ''}`;
 
     await sendTelegramUpdate(summary);
 
-    return NextResponse.json({ success: true, approved, matched, errors: errors.length });
+    return NextResponse.json({ success: true, approved, matched, ranchersGoLive, errors: errors.length });
   } catch (error: any) {
     console.error('Batch approve error:', error);
     await sendTelegramUpdate(`⚠️ Batch approval cron failed: ${error.message}`).catch(() => {});

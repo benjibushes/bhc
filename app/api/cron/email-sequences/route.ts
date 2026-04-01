@@ -12,6 +12,7 @@ import {
   sendNurtureDay10,
   sendMerchEmail,
   sendNurtureAffiliate,
+  sendEmail,
 } from '@/lib/email';
 
 import jwt from 'jsonwebtoken';
@@ -82,6 +83,10 @@ async function handler(request: Request) {
         const sequenceStage = consumer['Sequence Stage'] || 'none';
 
         if (!email) continue;
+
+        // 24-hour email frequency gate — skip if we sent an automated email in the last 24 hours
+        const lastSentAt = consumer['Sequence Sent At'];
+        if (lastSentAt && (now - new Date(lastSentAt).getTime()) < DAY_MS) continue;
 
         const approvedAt = consumer['Approved At']
           ? new Date(consumer['Approved At']).getTime()
@@ -298,7 +303,87 @@ async function handler(request: Request) {
       );
     }
 
-    return NextResponse.json({ success: true, sent: total, nurture3, nurture10, nurtureMerch, nurtureAffiliate, beefDay3, beefDay7, community7, community14, introCheckin, errors });
+    // ── Rancher agreement reminder drip ─────────────────────────────────────
+    // Day 3, 7, 14 after docs sent — nudge to sign agreement
+    let rancherReminders = 0;
+    try {
+      const pipelineRanchers = await getAllRecords(TABLES.RANCHERS, '{Onboarding Status} = "Docs Sent"') as any[];
+
+      for (const rancher of pipelineRanchers) {
+        if (totalSent >= MAX_EMAILS_PER_RUN) break;
+        const email = rancher['Email'];
+        const docsSentAt = rancher['Docs Sent At'];
+        if (!email || !docsSentAt) continue;
+        if (rancher['Agreement Signed']) continue;
+
+        const daysSinceDocsSent = (now - new Date(docsSentAt).getTime()) / DAY_MS;
+        const firstName = (rancher['Operator Name'] || rancher['Ranch Name'] || '').split(' ')[0] || 'there';
+        const ranchName = rancher['Ranch Name'] || rancher['Operator Name'] || 'your ranch';
+        const rancherState = rancher['State'] || '';
+
+        // Only send at day 3, 7, 14 milestones (check if already sent via Rancher Sequence Stage)
+        const stage = rancher['Rancher Sequence Stage'] || 'none';
+        let shouldSend = false;
+        let subject = '';
+        let bodyHtml = '';
+        let newStage = '';
+
+        if (daysSinceDocsSent >= 3 && daysSinceDocsSent < 7 && stage === 'none') {
+          shouldSend = true;
+          newStage = 'reminder_day3';
+          subject = `${firstName}, your agreement is ready to sign`;
+          bodyHtml = `<p>Hi ${firstName},</p>
+            <p>Just a quick reminder — your BuyHalfCow Commission Agreement for <strong>${ranchName}</strong> is ready for your signature.</p>
+            <p>Once signed, you can immediately start setting up your ranch page and we can begin sending buyers your way.</p>
+            <p><strong>Quick recap:</strong> 10% commission on referred sales only. No upfront fees. Buyers pay you directly.</p>
+            <p>If you have any questions, just reply to this email.</p>`;
+        } else if (daysSinceDocsSent >= 7 && daysSinceDocsSent < 14 && stage === 'reminder_day3') {
+          shouldSend = true;
+          newStage = 'reminder_day7';
+          subject = `Need help with your agreement, ${firstName}?`;
+          bodyHtml = `<p>Hi ${firstName},</p>
+            <p>I noticed you haven't signed the BuyHalfCow agreement yet for <strong>${ranchName}</strong>. No pressure — just want to make sure everything makes sense.</p>
+            <p>If you have questions about the commission structure, the process, or anything else, just reply to this email and I'll get back to you personally.</p>
+            <p>We have buyers actively looking for ranch-direct beef${rancherState ? ` in ${rancherState}` : ''}, and I'd love to get you connected with them.</p>`;
+        } else if (daysSinceDocsSent >= 14 && stage === 'reminder_day7') {
+          shouldSend = true;
+          newStage = 'reminder_day14';
+          subject = `Last check-in — buyers waiting in ${rancherState || 'your area'}`;
+          bodyHtml = `<p>Hi ${firstName},</p>
+            <p>This is my last follow-up about the BuyHalfCow partnership for <strong>${ranchName}</strong>.</p>
+            <p>We currently have buyers looking for ranch-direct beef${rancherState ? ` in ${rancherState}` : ''} and your operation would be a great fit. The agreement takes about 2 minutes to review and sign.</p>
+            <p>If now isn't the right time, no worries at all. Just reply and let me know, and I'll reach out again when it makes sense.</p>`;
+        }
+
+        if (shouldSend) {
+          try {
+            await sendEmail({
+              to: email,
+              subject,
+              html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+                ${bodyHtml}
+                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, Founder<br>BuyHalfCow</p>
+              </div>`,
+            });
+            await updateRecord(TABLES.RANCHERS, rancher.id, {
+              'Rancher Sequence Stage': newStage,
+            });
+            rancherReminders++;
+            totalSent++;
+          } catch (e: any) {
+            console.error('Rancher reminder error:', e.message);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error('Rancher drip query error:', e.message);
+    }
+
+    if (rancherReminders > 0) {
+      await sendTelegramUpdate(`📋 <b>Rancher Agreement Reminders</b>: ${rancherReminders} sent`);
+    }
+
+    return NextResponse.json({ success: true, sent: total + rancherReminders, nurture3, nurture10, nurtureMerch, nurtureAffiliate, beefDay3, beefDay7, community7, community14, introCheckin, rancherReminders, errors });
   } catch (error: any) {
     console.error('Email sequences cron error:', error);
     await sendTelegramUpdate(`⚠️ Email sequences cron failed: ${error.message}`).catch(() => {});

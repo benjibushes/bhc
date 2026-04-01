@@ -97,6 +97,8 @@ export async function GET(request: Request) {
       { name: 'Facebook URL', type: 'url' },
       { name: 'Instagram URL', type: 'url' },
       { name: 'Processing Facility', type: 'singleLineText' },
+      // ── Sequence tracking ──────────────────────────────────────────────────
+      { name: 'Rancher Sequence Stage', type: 'singleLineText' },
       // ── Attribution tracking ──────────────────────────────────────────────
       { name: 'Quarter Clicks', type: 'number', options: { precision: 0 } },
       { name: 'Half Clicks', type: 'number', options: { precision: 0 } },
