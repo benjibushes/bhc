@@ -82,6 +82,24 @@ export default async function RancherPage(
   const nextProcessingDate = r['Next Processing Date'] || '';
   const reserveLink = r['Reserve Link'] || '';
   const customNotes = r['Custom Notes'] || '';
+  const googleReviewsUrl = r['Google Reviews URL'] || '';
+  const facebookUrl = r['Facebook URL'] || '';
+  const instagramUrl = r['Instagram URL'] || '';
+  const processingFacility = r['Processing Facility'] || '';
+
+  // Parse testimonials JSON: [{name, quote, location?, photo?}]
+  let testimonials: { name: string; quote: string; location?: string; photo?: string }[] = [];
+  try {
+    const raw = r['Testimonials'] || '';
+    if (raw) testimonials = JSON.parse(raw);
+  } catch { /* ignore parse errors */ }
+
+  // Parse gallery photos JSON: string[]
+  let galleryPhotos: string[] = [];
+  try {
+    const raw = r['Gallery Photos'] || '';
+    if (raw) galleryPhotos = JSON.parse(raw);
+  } catch { /* ignore parse errors */ }
 
   const quarterPrice = r['Quarter Price'];
   const quarterLbs = r['Quarter lbs'] || '';
@@ -201,6 +219,109 @@ export default async function RancherPage(
                     />
                   </div>
                 </div>
+              )}
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── Photo Gallery ─────────────────────────────────────────────── */}
+      {galleryPhotos.length > 0 && (
+        <section className="py-16 border-b border-[#2A2A2A]/10">
+          <Container>
+            <div className="max-w-5xl mx-auto space-y-8">
+              <h2 className="font-[family-name:var(--font-playfair)] text-3xl text-center">
+                Our Operation
+              </h2>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {galleryPhotos.map((url, i) => (
+                  <div key={i} className="relative aspect-square overflow-hidden border border-[#A7A29A]">
+                    <Image
+                      src={url}
+                      alt={`${name} ranch photo ${i + 1}`}
+                      fill
+                      className="object-cover"
+                      unoptimized
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── Testimonials ───────────────────────────────────────────────── */}
+      {testimonials.length > 0 && (
+        <section className="py-16 bg-white border-b border-[#A7A29A]/40">
+          <Container>
+            <div className="max-w-4xl mx-auto space-y-8">
+              <h2 className="font-[family-name:var(--font-playfair)] text-3xl text-center">
+                What Customers Say
+              </h2>
+              <div className="grid md:grid-cols-2 gap-6">
+                {testimonials.map((t, i) => (
+                  <div key={i} className="p-6 border border-[#A7A29A] space-y-4">
+                    <p className="text-[#0E0E0E]/80 leading-relaxed italic">
+                      &ldquo;{t.quote}&rdquo;
+                    </p>
+                    <div className="flex items-center gap-3">
+                      {t.photo ? (
+                        <Image
+                          src={t.photo}
+                          alt={t.name}
+                          width={40}
+                          height={40}
+                          className="rounded-full object-cover"
+                          unoptimized
+                        />
+                      ) : (
+                        <div className="w-10 h-10 border border-[#A7A29A] flex items-center justify-center rounded-full">
+                          <span className="text-sm text-[#A7A29A]">{t.name.charAt(0)}</span>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-sm font-medium">{t.name}</p>
+                        {t.location && (
+                          <p className="text-xs text-[#A7A29A]">{t.location}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── Social Proof + Facility ─────────────────────────────────────── */}
+      {(processingFacility || googleReviewsUrl || facebookUrl || instagramUrl) && (
+        <section className="py-10 border-b border-[#2A2A2A]/10">
+          <Container>
+            <div className="max-w-4xl mx-auto flex flex-wrap justify-center items-center gap-6 text-sm">
+              {processingFacility && (
+                <span className="text-[#6B4F3F]">
+                  🏭 USDA Inspected: {processingFacility}
+                </span>
+              )}
+              {googleReviewsUrl && (
+                <a href={googleReviewsUrl} target="_blank" rel="noopener noreferrer"
+                   className="text-[#6B4F3F] hover:text-[#0E0E0E] underline transition-colors">
+                  ⭐ Google Reviews
+                </a>
+              )}
+              {facebookUrl && (
+                <a href={facebookUrl} target="_blank" rel="noopener noreferrer"
+                   className="text-[#6B4F3F] hover:text-[#0E0E0E] underline transition-colors">
+                  Facebook
+                </a>
+              )}
+              {instagramUrl && (
+                <a href={instagramUrl} target="_blank" rel="noopener noreferrer"
+                   className="text-[#6B4F3F] hover:text-[#0E0E0E] underline transition-colors">
+                  Instagram
+                </a>
               )}
             </div>
           </Container>

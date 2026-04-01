@@ -85,6 +85,18 @@ export async function GET(request: Request) {
       { name: 'Reserve Link', type: 'url' },
       // ── Extras ────────────────────────────────────────────────────────────
       { name: 'Custom Notes', type: 'multilineText' },
+      // ── Testimonials (JSON array: [{name, quote, location?, photo?}]) ───
+      { name: 'Testimonials', type: 'multilineText' },
+      // ── Photo Gallery (JSON array of image URLs) ────────────────────────
+      { name: 'Gallery Photos', type: 'multilineText' },
+      // ── Verification ────────────────────────────────────────────────────
+      { name: 'Verification Method', type: 'singleLineText' },
+      { name: 'Verification Notes', type: 'multilineText' },
+      { name: 'Verification Status', type: 'singleLineText' },
+      { name: 'Google Reviews URL', type: 'url' },
+      { name: 'Facebook URL', type: 'url' },
+      { name: 'Instagram URL', type: 'url' },
+      { name: 'Processing Facility', type: 'singleLineText' },
       // ── Attribution tracking ──────────────────────────────────────────────
       { name: 'Quarter Clicks', type: 'number', options: { precision: 0 } },
       { name: 'Half Clicks', type: 'number', options: { precision: 0 } },

@@ -370,7 +370,7 @@ export async function sendRancherApproval(data: {
             <p><strong>What Happens Next:</strong></p>
             <ol style="color: #6B4F3F; line-height: 2;">
               <li><strong>Onboarding docs coming soon</strong> — You'll receive the Commission Agreement, Media Agreement, and Rancher Info Packet to review and sign digitally</li>
-              <li><strong>Verification</strong> — Product sample shipment or scheduled ranch visit (we discussed this on the call)</li>
+              <li><strong>Verification</strong> — Provide customer testimonials, operation photos, and/or social proof (Google Reviews, social media, certifications)</li>
               <li><strong>Profile goes live</strong> — Once verified, we activate your profile and start sending you qualified buyers</li>
             </ol>
             <div class="divider"></div>
@@ -503,8 +503,8 @@ export async function sendPartnerConfirmation(data: {
               <ol style="line-height: 1.8; color: #6B4F3F;">
                 <li><strong>Schedule your call</strong> — Book your 30-minute onboarding call on my calendar (see below)</li>
                 <li><strong>Onboarding call</strong> — We discuss your operation, answer questions, explain The HERD network</li>
-                <li><strong>Ranch tour</strong> — I'll visit your ranch in person for verification (if you indicated interest)</li>
-                <li><strong>Certification</strong> — Once verified, you start receiving qualified buyer introductions</li>
+                <li><strong>Verification</strong> — Share customer testimonials, operation photos, social proof (Google Reviews, social media), and processing facility info</li>
+                <li><strong>Certification</strong> — Once verified, your page goes live and you start receiving qualified buyer introductions</li>
               </ol>
               <div style="background: #0E0E0E; color: #F4F1EC; padding: 30px; margin: 30px 0; text-align: center;">
                 <h3 style="margin: 0 0 15px 0; font-size: 20px; color: #F4F1EC;">📞 NEXT STEP: Schedule Your Call</h3>
@@ -1964,7 +1964,7 @@ export async function sendPipelineUpdateEmail(data: {
       <p>We have buyers actively looking for ranch-direct beef in your area. Here's what's needed to get you live:</p>
       <div class="step"><strong>1. Sign the Commission Agreement</strong> — 10% on referred sales, no upfront fees, buyers pay you directly</div>
       <div class="step"><strong>2. Set up your ranch page</strong> — Logo, pricing, about text (takes 5 minutes)</div>
-      <div class="step"><strong>3. Verification</strong> — Product sample or ranch visit</div>
+      <div class="step"><strong>3. Verification</strong> — Customer testimonials, operation photos, and social proof</div>
       <div class="step"><strong>4. Go live</strong> — Start receiving buyer leads</div>
       <p>The first step is reviewing and signing the agreement. Everything else flows from there.</p>
     `;
@@ -1998,7 +1998,7 @@ export async function sendPipelineUpdateEmail(data: {
       <p><strong>What you can do right now:</strong></p>
       <div class="step step-done">✅ <strong>Agreement signed</strong> — Done</div>
       <div class="step"><strong>🖥️ Set up your ranch page</strong> — Add logo, tagline, pricing, and payment links</div>
-      <div class="step"><strong>🔍 Start verification</strong> — Ship a product sample or request a ranch visit</div>
+      <div class="step"><strong>🔍 Start verification</strong> — Upload customer testimonials, operation photos, and social proof</div>
       <div class="step"><strong>🟢 Go live</strong> — Once verified, buyers start coming in</div>
       <p>Log in to your dashboard to set up your page and request verification — both can be done in under 10 minutes.</p>
     `;
@@ -2010,11 +2010,11 @@ export async function sendPipelineUpdateEmail(data: {
     headline = 'Verification In Progress';
     bodyHtml = `
       <p>Hi ${firstName},</p>
-      <p>Quick update — your verification for <strong>${ranchName}</strong> is in progress. We'll let you know as soon as it's complete.</p>
-      <p><strong>In the meantime:</strong> Make sure your ranch page is fully set up so we can go live the moment verification clears.</p>
+      <p>Quick update — we're reviewing the verification materials for <strong>${ranchName}</strong>. We'll let you know as soon as it's complete.</p>
+      <p><strong>In the meantime:</strong> Make sure your ranch page is fully set up with testimonials, photos, and pricing so we can go live the moment verification clears.</p>
       <div class="step step-done">✅ Agreement signed</div>
-      <div class="step">🖥️ <strong>Finish your ranch page</strong> — pricing, photos, about text</div>
-      <div class="step">🔍 Verification in progress...</div>
+      <div class="step">🖥️ <strong>Finish your ranch page</strong> — pricing, photos, testimonials, about text</div>
+      <div class="step">🔍 Verification materials under review...</div>
       <div class="step">🟢 Go live — almost there!</div>
       <p>If your page is already set up, sit tight — we're working on getting you live ASAP.</p>
     `;
