@@ -87,6 +87,43 @@ async function handler(request: Request) {
             }
           } catch (e) { console.error('Error decrementing rancher count:', e); }
         }
+
+        // Re-route the buyer to another rancher
+        const buyerIds = referral['Buyer'] || [];
+        const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+        if (buyerId) {
+          try {
+            const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+            if (buyer && buyer['Email']) {
+              await updateRecord(TABLES.CONSUMERS, buyerId, {
+                'Referral Status': 'Unmatched',
+                'Sequence Stage': 'rerouted',
+              });
+              await fetch(`${SITE_URL}/api/matching/suggest`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+                },
+                body: JSON.stringify({
+                  buyerState: buyer['State'] || '',
+                  buyerId,
+                  buyerName: buyer['Full Name'] || '',
+                  buyerEmail: buyer['Email'],
+                  buyerPhone: buyer['Phone'] || '',
+                  orderType: buyer['Order Type'] || '',
+                  budgetRange: buyer['Budget'] || '',
+                  intentScore: buyer['Intent Score'] || 50,
+                  intentClassification: buyer['Intent Classification'] || 'Medium',
+                  notes: buyer['Notes'] || '',
+                }),
+              });
+            }
+          } catch (rerouteErr) {
+            console.error('Re-route error on auto-close:', rerouteErr);
+          }
+        }
+
         autoClosed++;
       } catch (e: any) {
         console.error('Auto-close error:', e.message);
@@ -175,12 +212,12 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
         '{Status} = "Closed Won"'
       ) as any[];
 
-      const thirtyDaysAgo = Date.now() - 30 * DAY_MS;
+      const reorderWindow = Date.now() - 250 * DAY_MS;
       const repeatCandidates = closedReferrals.filter(r => {
         if (r['Repeat Outreach Sent']) return false;
         const closedAt = r['Closed At'];
         if (!closedAt) return false;
-        return new Date(closedAt).getTime() < thirtyDaysAgo;
+        return new Date(closedAt).getTime() < reorderWindow;
       });
 
       for (const referral of repeatCandidates) {

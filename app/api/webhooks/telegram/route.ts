@@ -13,6 +13,73 @@ import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
+
+// ─── Waitlist-to-matched blast: when a rancher goes live, auto-match waiting buyers ──
+async function runWaitlistBlast(rancherId: string): Promise<{ matched: number; ranchName: string; state: string }> {
+  const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+  const ranchName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+  const rancherState = rancher['State'] || '';
+  const statesServedRaw = rancher['States Served'] || '';
+  const statesServed: string[] = Array.isArray(statesServedRaw)
+    ? statesServedRaw
+    : typeof statesServedRaw === 'string'
+      ? statesServedRaw.split(',').map((s: string) => s.trim()).filter(Boolean)
+      : [];
+
+  // Combine primary state + states served for matching
+  const allStates = new Set<string>();
+  if (rancherState) allStates.add(rancherState);
+  statesServed.forEach((s: string) => allStates.add(s));
+
+  if (allStates.size === 0) {
+    return { matched: 0, ranchName, state: rancherState };
+  }
+
+  // Find waiting consumers in those states
+  const allConsumers: any[] = await getAllRecords(TABLES.CONSUMERS);
+  const waitingBuyers = allConsumers.filter((c: any) => {
+    const status = c['Status'] || '';
+    const refStatus = c['Referral Status'] || '';
+    const consumerState = c['State'] || '';
+    if (status !== 'Approved') return false;
+    if (refStatus !== 'Unmatched' && refStatus !== 'Waitlisted') return false;
+    return allStates.has(consumerState);
+  }).slice(0, 50); // Cap at 50
+
+  let matched = 0;
+  for (const buyer of waitingBuyers) {
+    try {
+      const res = await fetch(`${SITE_URL}/api/matching/suggest`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(INTERNAL_API_SECRET ? { 'x-internal-secret': INTERNAL_API_SECRET } : {}),
+        },
+        body: JSON.stringify({
+          buyerId: buyer.id,
+          buyerState: buyer['State'] || '',
+          buyerName: buyer['Full Name'] || '',
+          buyerEmail: buyer['Email'] || '',
+          buyerPhone: buyer['Phone'] || '',
+          orderType: buyer['Order Type'] || '',
+          budgetRange: buyer['Budget'] || buyer['Budget Range'] || '',
+          intentScore: buyer['Intent Score'] || 0,
+          intentClassification: buyer['Intent Classification'] || '',
+          notes: buyer['Notes'] || '',
+        }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        if (result.matchFound) matched++;
+      }
+    } catch (e) {
+      console.error(`Waitlist blast: error matching ${buyer['Full Name'] || buyer.id}:`, e);
+    }
+  }
+
+  return { matched, ranchName, state: rancherState };
+}
 
 function escHtml(str: string): string {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -411,6 +478,7 @@ export async function POST(request: Request) {
                 rancherName,
                 rancherEmail: rancherEmail || '',
                 rancherPhone,
+                rancherSlug: rancher['Slug'] || '',
                 loginUrl: buyerLoginUrl,
               });
             } catch (e) {
@@ -604,6 +672,7 @@ export async function POST(request: Request) {
                 rancherName: rancher['Operator Name'] || rancher['Ranch Name'] || '',
                 rancherEmail: rancherEmail || '',
                 rancherPhone: rancher['Phone'] || '',
+                rancherSlug: rancher['Slug'] || '',
                 loginUrl: buyerLoginUrl,
               });
             } catch (e) {
@@ -1435,6 +1504,17 @@ Source: ${c['Source'] || 'organic'}`;
               `🚀 <b>${session.rancherName} is LIVE!</b>\n\n🔗 ${liveUrl}\n📧 Rancher notified\n✅ Status → Live\n\nShare this link and run ads to it.`
             );
           }
+
+          // Waitlist blast: auto-match waiting buyers in this rancher's state(s)
+          try {
+            const blast = await runWaitlistBlast(session.rancherId);
+            if (blast.matched > 0 && chatId) {
+              await sendTelegramMessage(chatId, `🚀 <b>${escHtml(blast.ranchName)}</b> is LIVE in <b>${escHtml(blast.state)}</b> — auto-matched <b>${blast.matched}</b> waiting buyer${blast.matched === 1 ? '' : 's'}`);
+            }
+          } catch (e) {
+            console.error('Waitlist blast error (spgolive):', e);
+          }
+
           setupPageSessions.delete(chatId!);
         } catch (e: any) {
           await answerCallbackQuery(queryId, `Error: ${e.message}`);
@@ -1569,6 +1649,16 @@ Source: ${c['Source'] || 'organic'}`;
           if (chatId) {
             const liveUrl = `${SITE_URL}/ranchers/${slug}`;
             await editTelegramMessage(chatId, messageId!, `🟢 <b>PAGE IS LIVE</b>\n\n🤠 ${escHtml(name)}\n🔗 ${liveUrl}\n📧 Rancher notified via email\n✅ Onboarding Status → Live`);
+          }
+
+          // Waitlist blast: auto-match waiting buyers in this rancher's state(s)
+          try {
+            const blast = await runWaitlistBlast(rancherId);
+            if (blast.matched > 0 && chatId) {
+              await sendTelegramMessage(chatId, `🚀 <b>${escHtml(blast.ranchName)}</b> is LIVE in <b>${escHtml(blast.state)}</b> — auto-matched <b>${blast.matched}</b> waiting buyer${blast.matched === 1 ? '' : 's'}`);
+            }
+          } catch (e) {
+            console.error('Waitlist blast error (rgolive):', e);
           }
         } catch (e: any) {
           await answerCallbackQuery(queryId, `Error: ${e.message}`);

@@ -8,10 +8,11 @@ import {
   sendSequenceEmail_CommunityDay7,
   sendSequenceEmail_CommunityDay14,
   sendIntroCheckInEmail,
-  sendNurtureDay3,
-  sendNurtureDay10,
   sendMerchEmail,
-  sendNurtureAffiliate,
+  sendNurtureWhy,
+  sendNurtureHow,
+  sendNurtureUrgency,
+  sendNurtureReferral,
   sendEmail,
 } from '@/lib/email';
 
@@ -100,28 +101,38 @@ async function handler(request: Request) {
         const rancherAvailable = hasRancherAvailable(consumerState);
 
         if (!rancherAvailable) {
-          // Day 3+: "What's actually happening right now" — mission update + Instagram
+          // Day 3: Why buying direct matters
           if (daysSinceApproval >= 3 && sequenceStage === 'none') {
-            await sendNurtureDay3({ firstName, email, loginUrl });
+            await sendNurtureWhy({ firstName, email, loginUrl });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'nurture_3d_sent',
+              'Sequence Stage': 'nurture_why_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
             nurture3++; totalSent++;
           }
 
-          // Day 10+: "I drove to Texas with $500 in my account" — raw story
-          if (daysSinceApproval >= 10 && sequenceStage === 'nurture_3d_sent') {
-            await sendNurtureDay10({ firstName, email, loginUrl });
+          // Day 7: How buying a half cow actually works
+          if (daysSinceApproval >= 7 && sequenceStage === 'nurture_why_sent') {
+            await sendNurtureHow({ firstName, email, loginUrl });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'nurture_10d_sent',
+              'Sequence Stage': 'nurture_how_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
             nurture10++; totalSent++;
           }
 
-          // Day 21+: Merch email — wear the mission
-          if (daysSinceApproval >= 21 && sequenceStage === 'nurture_10d_sent') {
+          // Day 14: Processing dates fill up — soft urgency
+          if (daysSinceApproval >= 14 && sequenceStage === 'nurture_how_sent') {
+            await sendNurtureUrgency({ firstName, email, loginUrl });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'nurture_urgency_sent',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            nurtureMerch++; totalSent++;
+          }
+
+          // Day 21: Merch email — wear the mission
+          if (daysSinceApproval >= 21 && sequenceStage === 'nurture_urgency_sent') {
             await sendMerchEmail({ firstName, email });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'nurture_merch_sent',
@@ -130,12 +141,12 @@ async function handler(request: Request) {
             nurtureMerch++; totalSent++;
           }
 
-          // Day 35+: Affiliate ask — one link, buyers and ranchers welcome
-          if (daysSinceApproval >= 35 && sequenceStage === 'nurture_merch_sent') {
+          // Day 30: Referral ask — know someone who'd love this?
+          if (daysSinceApproval >= 30 && sequenceStage === 'nurture_merch_sent') {
             const referralLink = `${SITE_URL}/access`;
-            await sendNurtureAffiliate({ firstName, email, referralLink, loginUrl });
+            await sendNurtureReferral({ firstName, email, referralLink, loginUrl });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'nurture_affiliate_sent',
+              'Sequence Stage': 'nurture_referral_sent',
               'Sequence Sent At': new Date().toISOString(),
             });
             nurtureAffiliate++; totalSent++;

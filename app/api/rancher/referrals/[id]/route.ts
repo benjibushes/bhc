@@ -59,7 +59,7 @@ export async function PATCH(
       if (status === 'Closed Won' || status === 'Closed Lost') {
         fields['Closed At'] = new Date().toISOString();
 
-        // Decrement active referral count + auto-match waiting consumers
+        // Decrement active referral count
         try {
           const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
           const currentCount = rancher['Current Active Referrals'] || 0;
@@ -67,9 +67,50 @@ export async function PATCH(
             'Current Active Referrals': Math.max(0, currentCount - 1),
           });
 
-          // Auto-match: find top waiting consumers in this rancher's state
           const rancherState = rancher['State'] || '';
           const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+
+          // ── CLOSED LOST: Re-route this buyer to another rancher ──
+          if (status === 'Closed Lost') {
+            const buyerIds = referral['Buyer'] || [];
+            const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+            if (buyerId) {
+              try {
+                const buyer = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+                if (buyer && buyer['Email']) {
+                  // Reset buyer's referral status so matching picks them up
+                  await updateRecord(TABLES.CONSUMERS, buyerId, {
+                    'Referral Status': 'Unmatched',
+                    'Sequence Stage': 'rerouted',
+                  });
+                  // Re-trigger matching for this specific buyer
+                  await fetch(`${SITE_URL}/api/matching/suggest`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+                    },
+                    body: JSON.stringify({
+                      buyerState: buyer['State'] || '',
+                      buyerId: buyerId,
+                      buyerName: buyer['Full Name'] || '',
+                      buyerEmail: buyer['Email'],
+                      buyerPhone: buyer['Phone'] || '',
+                      orderType: buyer['Order Type'] || '',
+                      budgetRange: buyer['Budget'] || '',
+                      intentScore: buyer['Intent Score'] || 50,
+                      intentClassification: buyer['Intent Classification'] || 'Medium',
+                      notes: buyer['Notes'] || '',
+                    }),
+                  });
+                }
+              } catch (rerouteErr) {
+                console.error('Re-route buyer error:', rerouteErr);
+              }
+            }
+          }
+
+          // ── CLOSED WON or LOST: Auto-match waiting consumers to freed-up capacity ──
           if (rancherState) {
             const waiting = await getAllRecords(TABLES.CONSUMERS, `AND({Status} = "Approved", {Referral Status} = "Unmatched", {Segment} = "Beef Buyer", {State} = "${rancherState}")`) as any[];
             const sorted = waiting

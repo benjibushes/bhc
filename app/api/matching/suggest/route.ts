@@ -162,10 +162,40 @@ export async function POST(request: Request) {
     if (topMatch) {
       try {
         const currentRefs = topMatch['Current Active Referrals'] || 0;
+        const newRefs = currentRefs + 1;
         await updateRecord(TABLES.RANCHERS, topMatch.id, {
-          'Current Active Referrals': currentRefs + 1,
+          'Current Active Referrals': newRefs,
           'Last Assigned At': now,
         });
+
+        // Capacity alerts
+        const maxRefs = topMatch['Max Active Referalls'] || 5;
+        const rancherName = topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown';
+        const rancherState = topMatch['State'] || 'Unknown';
+        if (maxRefs > 0) {
+          const capacityPct = newRefs / maxRefs;
+          if (newRefs >= maxRefs) {
+            // 100% — at capacity
+            try {
+              await sendTelegramMessage(
+                TELEGRAM_ADMIN_CHAT_ID,
+                `🔴 <b>AT CAPACITY:</b> ${rancherName} in ${rancherState} is FULL (${newRefs}/${maxRefs}). New leads in ${rancherState} will waitlist until capacity frees up.`
+              );
+            } catch (e) {
+              console.error('Error sending capacity-full Telegram alert:', e);
+            }
+          } else if (capacityPct >= 0.8) {
+            // 80%+ — warning
+            try {
+              await sendTelegramMessage(
+                TELEGRAM_ADMIN_CHAT_ID,
+                `⚠️ <b>CAPACITY ALERT:</b> ${rancherName} in ${rancherState} is at ${newRefs}/${maxRefs} referrals (80%+). Consider recruiting another rancher in ${rancherState}.`
+              );
+            } catch (e) {
+              console.error('Error sending capacity-warning Telegram alert:', e);
+            }
+          }
+        }
       } catch (e) {
         console.error('Error incrementing rancher referral count:', e);
       }
@@ -228,6 +258,7 @@ export async function POST(request: Request) {
             rancherName,
             rancherEmail,
             rancherPhone,
+            rancherSlug: topMatch['Slug'] || '',
             loginUrl: buyerLoginUrl,
           });
         }

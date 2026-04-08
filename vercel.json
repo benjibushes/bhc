@@ -27,6 +27,10 @@
     {
       "path": "/api/cron/referral-chasup",
       "schedule": "0 17 * * *"
+    },
+    {
+      "path": "/api/cron/commission-invoices",
+      "schedule": "0 16 1 * *"
     }
   ]
 }
