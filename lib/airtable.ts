@@ -60,7 +60,7 @@ export async function createRecord(tableName: string, fields: any) {
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const records = await withRateLimitRetry(() => base(tableName).create([{ fields: currentFields }]));
+      const records = await withRateLimitRetry(() => base(tableName).create([{ fields: currentFields }], { typecast: true }));
       return records[0];
     } catch (error: any) {
       const msg = error?.message || error?.error?.message || String(error);
@@ -166,7 +166,7 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
           id: recordId,
           fields: currentFields,
         },
-      ]));
+      ], { typecast: true }));
       return {
         id: records[0].id,
         ...records[0].fields,
