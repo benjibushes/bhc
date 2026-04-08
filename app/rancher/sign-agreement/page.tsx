@@ -244,7 +244,7 @@ function SignAgreementInner() {
               <ol className="list-decimal pl-6 space-y-1 text-saddle-brown">
                 <li>Alignment call to confirm production capacity, goals, and standards</li>
                 <li>Commission Agreement signed (this document)</li>
-                <li>Verification via product sample or in-person ranch visit</li>
+                <li>Verification via customer references, reviews, or social proof</li>
                 <li>Ranch profile created and buyer matching begins</li>
                 <li>Qualified buyer introductions sent directly to you</li>
                 <li>You complete the sale and control pricing</li>
@@ -266,8 +266,8 @@ function SignAgreementInner() {
             <section className="space-y-3">
               <h2 className="font-serif text-xl">5. Verification Requirement</h2>
               <p>
-                Before listing, ranchers must complete verification through either a product sample
-                shipment (shipped to BuyHalfCow for quality review) or an in-person ranch visit.
+                Before listing, ranchers must complete verification by providing at least two of the following:
+                customer references, Google/Facebook reviews, social media presence, USDA processor info, or certifications.
                 Approval is at BuyHalfCow&apos;s discretion.
               </p>
             </section>
@@ -335,7 +335,7 @@ function SignAgreementInner() {
                 />
                 <span className="text-sm">
                   I have read and agree to the BuyHalfCow Commission Agreement terms outlined above,
-                  including the 10% commission on referred sales for a 24-month term, verification requirements,
+                  including the 10% commission on referred sales for a 24-month term, verification via references and social proof,
                   and rancher expectations. I understand that all fulfillment and product liability remain my responsibility.
                 </span>
               </label>

@@ -89,21 +89,28 @@ export async function PATCH(request: Request) {
         'Onboarding Status': 'Verification Pending',
         'Verification Requested At': new Date().toISOString(),
       };
+      // Support both old field names and new form field names
       if (body.testimonials) updates['Testimonials'] = body.testimonials;
+      if (body.customerReferences) updates['Customer References'] = body.customerReferences;
       if (body.galleryPhotos) updates['Gallery Photos'] = body.galleryPhotos;
-      if (body.googleReviewsUrl) updates['Google Reviews URL'] = body.googleReviewsUrl;
+      if (body.googleReviewsUrl || body.reviewsLink) updates['Google Reviews URL'] = body.googleReviewsUrl || body.reviewsLink;
       if (body.facebookUrl) updates['Facebook URL'] = body.facebookUrl;
-      if (body.instagramUrl) updates['Instagram URL'] = body.instagramUrl;
-      if (body.processingFacility) updates['Processing Facility'] = body.processingFacility;
+      if (body.instagramUrl || body.socialMedia) {
+        const social = body.instagramUrl || body.socialMedia;
+        if (social.includes('facebook')) updates['Facebook URL'] = social;
+        else updates['Instagram URL'] = social;
+      }
+      if (body.processingFacility || body.processorName) updates['Processing Facility'] = body.processingFacility || body.processorName;
+      if (body.certifications) updates['Certifications'] = body.certifications;
 
       // Build verification method summary
       const methods: string[] = [];
-      if (body.testimonials) methods.push('Testimonials');
+      if (body.customerReferences || body.testimonials) methods.push('Customer References');
       if (body.galleryPhotos) methods.push('Photos');
-      if (body.googleReviewsUrl) methods.push('Google Reviews');
-      if (body.facebookUrl) methods.push('Facebook');
-      if (body.instagramUrl) methods.push('Instagram');
-      if (body.processingFacility) methods.push('Processing Facility');
+      if (body.reviewsLink || body.googleReviewsUrl) methods.push('Reviews Link');
+      if (body.socialMedia || body.facebookUrl || body.instagramUrl) methods.push('Social Media');
+      if (body.processorName || body.processingFacility) methods.push('USDA Processor');
+      if (body.certifications) methods.push('Certifications');
       updates['Verification Method'] = methods.join(', ') || 'Digital Proof';
 
       await updateRecord(TABLES.RANCHERS, decoded.rancherId, updates);

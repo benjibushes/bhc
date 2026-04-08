@@ -120,7 +120,12 @@ export default function RancherDashboardPage() {
   const [goLiveRequested, setGoLiveRequested] = useState(false);
   const [goLiveLoading, setGoLiveLoading] = useState(false);
   // Verification
-  const [verificationMethod, setVerificationMethod] = useState<'sample' | 'visit'>('sample');
+  const [verificationRefs, setVerificationRefs] = useState('');
+  const [verificationReviewsLink, setVerificationReviewsLink] = useState('');
+  const [verificationSocial, setVerificationSocial] = useState('');
+  const [verificationProcessor, setVerificationProcessor] = useState('');
+  const [verificationCerts, setVerificationCerts] = useState('');
+  const [verificationMethod, setVerificationMethod] = useState<'sample' | 'visit' | 'digital'>('digital');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [verificationSubmitting, setVerificationSubmitting] = useState(false);
   const [verificationSubmitted, setVerificationSubmitted] = useState(false);
@@ -375,9 +380,9 @@ export default function RancherDashboardPage() {
               <p className="text-sm text-saddle-brown">
                 {rancherInfo.onboardingStatus === 'Docs Sent' && 'Please review and sign the agreement documents sent to your email.'}
                 {rancherInfo.onboardingStatus === 'Verification Complete' && "You're approved! We're activating your profile. You'll receive an email when you're live."}
-                {rancherInfo.onboardingStatus === 'Verification Pending' && !verificationSubmitted && "Ship a product sample to get verified and go live."}
-                {rancherInfo.onboardingStatus === 'Verification Pending' && verificationSubmitted && "Verification request submitted! We'll follow up shortly."}
-                {(rancherInfo.onboardingStatus === 'Agreement Signed') && "Next step: start verification so we can get you live."}
+                {rancherInfo.onboardingStatus === 'Verification Pending' && !verificationSubmitted && "Submit your verification info to get approved and go live."}
+                {rancherInfo.onboardingStatus === 'Verification Pending' && verificationSubmitted && "Verification submitted! We'll review and get back to you shortly."}
+                {(rancherInfo.onboardingStatus === 'Agreement Signed') && "Next step: complete verification so we can get you live."}
                 {!['Docs Sent', 'Agreement Signed', 'Verification Complete', 'Verification Pending'].includes(rancherInfo.onboardingStatus) && "Complete your onboarding to start receiving buyer leads."}
               </p>
               <div className="pt-3 border-t border-yellow-300">
@@ -397,45 +402,73 @@ export default function RancherDashboardPage() {
               {/* Self-service verification form */}
               {['Agreement Signed', 'Verification Pending'].includes(rancherInfo.onboardingStatus) && !verificationSubmitted && (
                 <div className="mt-3 pt-3 border-t border-yellow-300 space-y-3">
-                  <p className="text-sm font-medium">Start Verification</p>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setVerificationMethod('sample')}
-                      className={`flex-1 py-2 px-3 text-xs font-medium border ${verificationMethod === 'sample' ? 'bg-charcoal-black text-bone-white border-charcoal-black' : 'border-dust-gray hover:bg-gray-100'}`}
-                    >
-                      Ship Product Sample
-                    </button>
-                    <button
-                      onClick={() => setVerificationMethod('visit')}
-                      className={`flex-1 py-2 px-3 text-xs font-medium border ${verificationMethod === 'visit' ? 'bg-charcoal-black text-bone-white border-charcoal-black' : 'border-dust-gray hover:bg-gray-100'}`}
-                    >
-                      Request Ranch Visit
-                    </button>
-                  </div>
+                  <p className="text-sm font-medium">Complete Verification</p>
+                  <p className="text-xs text-saddle-brown">Provide at least 2 of the following to get verified and go live. This helps us build trust with buyers.</p>
 
-                  {verificationMethod === 'sample' && (
-                    <div className="space-y-2">
-                      <div className="text-xs text-saddle-brown bg-white p-3 border border-dust-gray">
-                        <p className="font-medium mb-1">Ship to:</p>
-                        <p>BuyHalfCow Verification<br/>420 N Walnut St<br/>Colorado Springs, CO 80905</p>
-                        <p className="mt-2">Include a few representative cuts. We review packaging, marbling, and presentation.</p>
-                      </div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs font-medium block mb-1">Customer References (names &amp; contact info)</label>
+                      <textarea
+                        placeholder="e.g. John Smith, johnsmith@email.com — bought a half beef in March, very happy with the quality"
+                        value={verificationRefs}
+                        onChange={(e) => setVerificationRefs(e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-dust-gray min-h-[80px]"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">We may reach out to confirm. 2-3 references recommended.</p>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium block mb-1">Google Reviews or Facebook Reviews Link</label>
                       <input
-                        type="text"
-                        placeholder="Tracking number (optional)"
-                        value={trackingNumber}
-                        onChange={(e) => setTrackingNumber(e.target.value)}
+                        type="url"
+                        placeholder="https://g.page/your-ranch/review or Facebook page URL"
+                        value={verificationReviewsLink}
+                        onChange={(e) => setVerificationReviewsLink(e.target.value)}
                         className="w-full px-3 py-2 text-sm border border-dust-gray"
                       />
                     </div>
-                  )}
 
-                  {verificationMethod === 'visit' && (
-                    <p className="text-xs text-saddle-brown">We&apos;ll coordinate an on-site visit to your ranch. This includes a walkthrough, feeding program review, and optional media documentation.</p>
-                  )}
+                    <div>
+                      <label className="text-xs font-medium block mb-1">Social Media (Instagram, Facebook, etc.)</label>
+                      <input
+                        type="url"
+                        placeholder="https://instagram.com/your-ranch"
+                        value={verificationSocial}
+                        onChange={(e) => setVerificationSocial(e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-dust-gray"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium block mb-1">USDA Processing Facility Name</label>
+                      <input
+                        type="text"
+                        placeholder="Name of your USDA-inspected processor"
+                        value={verificationProcessor}
+                        onChange={(e) => setVerificationProcessor(e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-dust-gray"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium block mb-1">Certifications (USDA, organic, grass-fed, etc.)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. USDA Inspected, Certified Angus, Grass-Fed"
+                        value={verificationCerts}
+                        onChange={(e) => setVerificationCerts(e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-dust-gray"
+                      />
+                    </div>
+                  </div>
 
                   <button
                     onClick={async () => {
+                      const filled = [verificationRefs, verificationReviewsLink, verificationSocial, verificationProcessor, verificationCerts].filter(v => v.trim()).length;
+                      if (filled < 2) {
+                        alert('Please fill in at least 2 verification fields to submit.');
+                        return;
+                      }
                       setVerificationSubmitting(true);
                       try {
                         const res = await fetch('/api/rancher/landing-page', {
@@ -443,8 +476,12 @@ export default function RancherDashboardPage() {
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
                             _action: 'request-verification',
-                            verificationMethod,
-                            trackingNumber: trackingNumber.trim(),
+                            verificationMethod: 'digital',
+                            customerReferences: verificationRefs.trim(),
+                            reviewsLink: verificationReviewsLink.trim(),
+                            socialMedia: verificationSocial.trim(),
+                            processorName: verificationProcessor.trim(),
+                            certifications: verificationCerts.trim(),
                           }),
                         });
                         if (res.ok) {
@@ -458,7 +495,7 @@ export default function RancherDashboardPage() {
                     disabled={verificationSubmitting}
                     className="w-full py-3 bg-charcoal-black text-bone-white text-sm font-medium uppercase tracking-wider hover:bg-saddle-brown transition-colors disabled:opacity-50"
                   >
-                    {verificationSubmitting ? 'Submitting...' : verificationMethod === 'sample' ? 'I\'ve Shipped My Sample' : 'Request Ranch Visit'}
+                    {verificationSubmitting ? 'Submitting...' : 'Submit Verification'}
                   </button>
                 </div>
               )}

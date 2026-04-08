@@ -73,25 +73,17 @@ export async function POST(
 
     const hasCallContext = !!(callSummary || confirmedCapacity || specialNotes);
 
-    const verificationHtml = includeVerification
-      ? `
-        <h3 style="margin: 20px 0 10px;">3. Verification (Product Sample)</h3>
+    const verificationHtml = `
+        <h3 style="margin: 20px 0 10px;">3. Verification</h3>
+        <p style="color: #6B4F3F;">After signing, you'll complete a quick verification on your dashboard. Just provide at least 2 of the following:</p>
         <ul style="color: #6B4F3F; line-height: 1.8;">
-          <li>Ship a representative product sample from your processor</li>
-          <li>Properly packaged and clearly labeled</li>
-          <li>Ship to: 420 N Walnut St, Colorado Springs, CO</li>
-          <li>We review packaging, marbling, cut accuracy, and presentation</li>
-          <li>Estimated timeline: 2-3 weeks after receipt</li>
+          <li>2-3 customer references (name + contact info)</li>
+          <li>Google Reviews or Facebook Reviews link</li>
+          <li>Social media presence (Instagram, Facebook, etc.)</li>
+          <li>USDA processing facility name</li>
+          <li>Certifications (USDA, organic, grass-fed, etc.)</li>
         </ul>
-      `
-      : `
-        <h3 style="margin: 20px 0 10px;">3. Verification (In-Person Visit)</h3>
-        <ul style="color: #6B4F3F; line-height: 1.8;">
-          <li>We'll schedule an on-site ranch visit</li>
-          <li>Includes walkthrough, feeding program review, and processing partner verification</li>
-          <li>Optional media documentation during the visit</li>
-          <li>I'll reach out to coordinate timing</li>
-        </ul>
+        <p style="color: #6B4F3F; font-size: 13px;">No product samples needed — we verify through references and social proof.</p>
       `;
 
     const emailHtml = `
