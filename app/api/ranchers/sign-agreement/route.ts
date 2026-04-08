@@ -164,19 +164,15 @@ export async function POST(request: Request) {
     <div class="divider"></div>
 
     <p><strong>🔍 Verification — Here's How:</strong></p>
-    <p>Ship a representative product sample from your processor to:</p>
-    <div style="background: #F4F1EC; padding: 16px; margin: 12px 0; border-left: 3px solid #0E0E0E;">
-      <strong>BuyHalfCow Verification</strong><br>
-      420 N Walnut St<br>
-      Colorado Springs, CO 80905
-    </div>
+    <p>Complete a quick verification on your dashboard by providing at least 2 of the following:</p>
     <ul style="color: #6B4F3F; line-height: 2;">
-      <li>Include a few representative cuts (steaks, roast, ground — your choice)</li>
-      <li>Properly packaged and clearly labeled</li>
-      <li>We review packaging, marbling, cut accuracy, and presentation</li>
-      <li>Turnaround: 5-7 days after receipt</li>
+      <li>2-3 customer references (name + contact info)</li>
+      <li>Google Reviews or Facebook Reviews link</li>
+      <li>Social media presence (Instagram, Facebook, etc.)</li>
+      <li>USDA processing facility name</li>
+      <li>Certifications (USDA, organic, grass-fed, etc.)</li>
     </ul>
-    <p>Once your sample passes, we'll go live with your page immediately — no additional steps needed from you.</p>
+    <p>Once verified, we'll go live with your page immediately — no additional steps needed from you.</p>
 
     <div class="divider"></div>
 

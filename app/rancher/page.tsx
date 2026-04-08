@@ -885,7 +885,7 @@ export default function RancherDashboardPage() {
                       type="text"
                       value={pageForm['Tagline'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'Tagline': e.target.value }))}
-                      placeholder="Grass-fed Angus raised on open pasture in Colorado"
+                      placeholder="Grass-fed Angus raised on open pasture in Montana"
                       className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
                     />
                   </div>
@@ -953,7 +953,7 @@ export default function RancherDashboardPage() {
                       type="text"
                       value={pageForm['States Served'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'States Served': e.target.value }))}
-                      placeholder="Colorado, Wyoming, Nebraska, Kansas"
+                      placeholder="Montana, Wyoming, Idaho, Washington"
                       className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
                     />
                     <p className="text-xs text-dust-gray">We&apos;ll match buyers from these states to you automatically.</p>
