@@ -368,6 +368,8 @@ Tap a button to fill in that field:`;
 
 // ──────────────────────────────────────────────────────────────────────────
 
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   let update: any;
   try {
@@ -376,15 +378,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Respond to Telegram IMMEDIATELY — process in background
-  // Telegram times out after 60s; our Airtable calls can take longer on cold start
-  processUpdate(update).catch(err => {
-    console.error('Telegram background processing error:', err);
+  // Process the update and respond — Vercel kills the function after response
+  // so we must await the processing, not fire-and-forget
+  try {
+    await processUpdate(update);
+  } catch (err: any) {
+    console.error('Telegram processing error:', err);
     const chatId = update?.message?.chat?.id?.toString() || update?.callback_query?.message?.chat?.id?.toString();
     if (chatId) {
-      sendTelegramMessage(chatId, `⚠️ Error: ${err?.message || 'Unknown'}`).catch(() => {});
+      try { await sendTelegramMessage(chatId, `⚠️ Error: ${err?.message || 'Unknown'}`); } catch {}
     }
-  });
+  }
 
   return NextResponse.json({ ok: true });
 }
