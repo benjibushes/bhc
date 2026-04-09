@@ -372,7 +372,24 @@ export async function POST(request: Request) {
   let update: any;
   try {
     update = await request.json();
+  } catch {
+    return NextResponse.json({ ok: true });
+  }
 
+  // Respond to Telegram IMMEDIATELY — process in background
+  // Telegram times out after 60s; our Airtable calls can take longer on cold start
+  processUpdate(update).catch(err => {
+    console.error('Telegram background processing error:', err);
+    const chatId = update?.message?.chat?.id?.toString() || update?.callback_query?.message?.chat?.id?.toString();
+    if (chatId) {
+      sendTelegramMessage(chatId, `⚠️ Error: ${err?.message || 'Unknown'}`).catch(() => {});
+    }
+  });
+
+  return NextResponse.json({ ok: true });
+}
+
+async function processUpdate(update: any) {
     // Handle callback queries (button presses)
     if (update.callback_query) {
       const { id: queryId, data: callbackData, message } = update.callback_query;
@@ -2628,15 +2645,11 @@ Segments: beef, community, all, ranchers`;
       }
     }
 
-    return NextResponse.json({ ok: true });
   } catch (error: any) {
     console.error('Telegram webhook error:', error);
-    try {
-      const chatId = update?.message?.chat?.id?.toString();
-      if (chatId) {
-        await sendTelegramMessage(chatId, `⚠️ Something went wrong: ${error?.message || 'Unknown error'}. Check server logs.`);
-      }
-    } catch (_) { /* ignore */ }
-    return NextResponse.json({ ok: true });
+    const chatId = update?.message?.chat?.id?.toString();
+    if (chatId) {
+      await sendTelegramMessage(chatId, `⚠️ Something went wrong: ${error?.message || 'Unknown error'}`).catch(() => {});
+    }
   }
 }
