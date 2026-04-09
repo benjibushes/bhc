@@ -390,6 +390,7 @@ export async function POST(request: Request) {
 }
 
 async function processUpdate(update: any) {
+  try {
     // Handle callback queries (button presses)
     if (update.callback_query) {
       const { id: queryId, data: callbackData, message } = update.callback_query;
