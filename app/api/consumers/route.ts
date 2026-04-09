@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       console.error('Error checking duplicate email:', e);
     }
 
-    const interests = [];
+    const interests: string[] = [];
     if (interestBeef) interests.push('Beef');
     if (interestLand) interests.push('Land');
     if (interestMerch) interests.push('Merch');
@@ -142,6 +142,7 @@ export async function POST(request: Request) {
 
     const record = await createRecord(TABLES.CONSUMERS, consumerFields);
 
+    // Send the buyer their confirmation/approval email (must complete before responding)
     if (status === 'Approved') {
       const token = jwt.sign(
         { type: 'member-login', consumerId: record.id, email: email.trim().toLowerCase() },
@@ -154,74 +155,79 @@ export async function POST(request: Request) {
       await sendConsumerConfirmation({ firstName, email, state });
     }
 
-    await sendAdminAlert({
-      type: 'consumer',
-      name: fullName,
-      email,
-      details: {
-        State: state,
-        Segment: consumerSegment,
-        Status: status,
-        'Order Type': orderType || 'Not specified',
-        'Budget': budgetRange || 'Not specified',
-        'Intent Score': `${serverIntentScore} (${serverIntentClassification})`,
-        Interests: interests.join(', '),
-        Phone: phone || 'Not provided',
-        Notes: notes || 'None',
-      },
-    });
-
-    try {
-      await sendTelegramConsumerSignup({
-        consumerId: record.id,
-        name: fullName,
-        email,
-        state,
-        segment: consumerSegment,
-        intentScore: serverIntentScore,
-        intentClassification: serverIntentClassification,
-        status,
-        orderType,
-        budgetRange,
-      });
-    } catch (e) {
-      console.error('Telegram consumer signup error:', e);
-    }
-
-    // Only trigger matching for approved Beef Buyers
-    const shouldMatch = status.toLowerCase() === 'approved' && consumerSegment === 'Beef Buyer' && state;
-    if (shouldMatch) {
+    // ── RESPOND TO BUYER IMMEDIATELY — everything below runs without blocking ──
+    // Fire-and-forget: admin notifications, Telegram, and matching engine
+    // These can take 5-10 seconds combined and don't affect the buyer's experience
+    const backgroundTasks = async () => {
       try {
-        const matchRes = await fetch(
-          `${SITE_URL}/api/matching/suggest`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
-            },
-            body: JSON.stringify({
-              buyerState: state,
-              buyerId: record.id,
-              buyerName: fullName,
-              buyerEmail: email,
-              buyerPhone: phone,
-              orderType,
-              budgetRange,
-              intentScore: serverIntentScore,
-              intentClassification: serverIntentClassification,
-              notes,
-              campaign: campaign || '',
-            }),
-          }
-        );
-        if (!matchRes.ok) {
-          console.error('Matching engine returned non-OK status');
+        await sendAdminAlert({
+          type: 'consumer',
+          name: fullName,
+          email,
+          details: {
+            State: state,
+            Segment: consumerSegment,
+            Status: status,
+            'Order Type': orderType || 'Not specified',
+            'Budget': budgetRange || 'Not specified',
+            'Intent Score': `${serverIntentScore} (${serverIntentClassification})`,
+            Interests: interests.join(', '),
+            Phone: phone || 'Not provided',
+            Notes: notes || 'None',
+          },
+        });
+      } catch (e) { console.error('Admin alert error:', e); }
+
+      try {
+        await sendTelegramConsumerSignup({
+          consumerId: record.id,
+          name: fullName,
+          email,
+          state,
+          segment: consumerSegment,
+          intentScore: serverIntentScore,
+          intentClassification: serverIntentClassification,
+          status,
+          orderType,
+          budgetRange,
+        });
+      } catch (e) { console.error('Telegram consumer signup error:', e); }
+
+      // Trigger matching for approved Beef Buyers
+      const shouldMatch = status.toLowerCase() === 'approved' && consumerSegment === 'Beef Buyer' && state;
+      if (shouldMatch) {
+        try {
+          await fetch(
+            `${SITE_URL}/api/matching/suggest`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+              },
+              body: JSON.stringify({
+                buyerState: state,
+                buyerId: record.id,
+                buyerName: fullName,
+                buyerEmail: email,
+                buyerPhone: phone,
+                orderType,
+                budgetRange,
+                intentScore: serverIntentScore,
+                intentClassification: serverIntentClassification,
+                notes,
+                campaign: campaign || '',
+              }),
+            }
+          );
+        } catch (matchError) {
+          console.error('Error calling matching engine:', matchError);
         }
-      } catch (matchError) {
-        console.error('Error calling matching engine:', matchError);
       }
-    }
+    };
+
+    // Don't await — let it run in the background after response is sent
+    backgroundTasks().catch(e => console.error('Background tasks error:', e));
 
     return NextResponse.json({ success: true, consumer: record }, { status: 201 });
   } catch (error: any) {

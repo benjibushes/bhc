@@ -59,6 +59,7 @@ export async function PATCH(
     if (body.reserve_link !== undefined) fields['Reserve Link'] = body.reserve_link;
     if (body.testimonials !== undefined) fields['Testimonials'] = body.testimonials;
     if (body.gallery_photos !== undefined) fields['Gallery Photos'] = body.gallery_photos;
+    if (body.custom_products !== undefined) fields['Custom Products'] = body.custom_products;
     if (body.google_reviews_url !== undefined) fields['Google Reviews URL'] = body.google_reviews_url;
     if (body.facebook_url !== undefined) fields['Facebook URL'] = body.facebook_url;
     if (body.instagram_url !== undefined) fields['Instagram URL'] = body.instagram_url;

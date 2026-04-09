@@ -101,6 +101,13 @@ export default async function RancherPage(
     if (raw) galleryPhotos = JSON.parse(raw);
   } catch { /* ignore parse errors */ }
 
+  // Parse custom products JSON: [{name, price, description, link}]
+  let customProducts: { name: string; price: number; description: string; link: string }[] = [];
+  try {
+    const raw = r['Custom Products'] || '';
+    if (raw) customProducts = JSON.parse(raw);
+  } catch { /* ignore parse errors */ }
+
   const quarterPrice = r['Quarter Price'];
   const quarterLbs = r['Quarter lbs'] || '';
   const quarterLink = r['Quarter Payment Link'] || '';
@@ -390,6 +397,53 @@ export default async function RancherPage(
                   Contact BuyHalfCow
                 </Link>
               </p>
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── Custom Products ─────────────────────────────────────────────── */}
+      {customProducts.length > 0 && (
+        <section className="py-16 border-t border-[#2A2A2A]/10">
+          <Container>
+            <div className="max-w-4xl mx-auto space-y-8">
+              <div className="text-center space-y-3">
+                <h2 className="font-[family-name:var(--font-playfair)] text-3xl">
+                  Other Products
+                </h2>
+                <p className="text-[#A7A29A]">
+                  Additional products available from {name}.
+                </p>
+              </div>
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {customProducts.map((product, i) => (
+                  <div key={i} className="p-6 border border-[#A7A29A] space-y-4 flex flex-col">
+                    <div className="flex-1 space-y-2">
+                      <h3 className="font-[family-name:var(--font-playfair)] text-xl">
+                        {product.name}
+                      </h3>
+                      <p className="text-2xl font-[family-name:var(--font-playfair)] text-[#6B4F3F]">
+                        ${product.price}
+                      </p>
+                      {product.description && (
+                        <p className="text-sm text-[#A7A29A] leading-relaxed">
+                          {product.description}
+                        </p>
+                      )}
+                    </div>
+                    {product.link && (
+                      <a
+                        href={product.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block w-full text-center px-6 py-3 border border-[#0E0E0E] text-sm tracking-wide hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                      >
+                        Buy Now
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </Container>
         </section>

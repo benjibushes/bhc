@@ -112,6 +112,9 @@ export default function RancherDashboardPage() {
   const [pageSaving, setPageSaving] = useState(false);
   const [pageSaved, setPageSaved] = useState(false);
   const [pageError, setPageError] = useState('');
+  // Custom products
+  const [customProducts, setCustomProducts] = useState<{ name: string; price: number | string; description: string; link: string }[]>([]);
+  const [newProduct, setNewProduct] = useState({ name: '', price: '', description: '', link: '' });
   // Capacity editor
   const [editingCapacity, setEditingCapacity] = useState(false);
   const [capacityValue, setCapacityValue] = useState('');
@@ -178,6 +181,10 @@ export default function RancherDashboardPage() {
         'Beef Types': r.beefTypes || '',
         'Certifications': r.certifications || '',
       });
+      // Parse custom products
+      try {
+        setCustomProducts(r.customProducts ? JSON.parse(r.customProducts) : []);
+      } catch { setCustomProducts([]); }
     } catch {
       router.push('/rancher/login');
     } finally {
@@ -257,6 +264,8 @@ export default function RancherDashboardPage() {
         if (body[key]) body[key] = parseFloat(body[key]) || null;
         else body[key] = null;
       }
+      // Include custom products as JSON
+      body['Custom Products'] = JSON.stringify(customProducts);
       const res = await fetch('/api/rancher/landing-page', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1112,6 +1121,44 @@ export default function RancherDashboardPage() {
                       />
                     </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Custom Products */}
+              <div className="space-y-4">
+                <h3 className="font-serif text-lg border-b border-dust-gray pb-2">Additional Products</h3>
+                <p className="text-xs text-dust-gray">List extra products beyond quarter/half/whole beef (sampler boxes, jerky, bones, etc.).</p>
+                {customProducts.map((p, i) => (
+                  <div key={i} className="p-3 border border-dust-gray bg-white flex justify-between items-start">
+                    <div>
+                      <p className="text-sm font-medium">{p.name} — ${p.price}</p>
+                      {p.description && <p className="text-xs text-saddle-brown mt-0.5">{p.description}</p>}
+                      {p.link && <p className="text-xs text-dust-gray mt-0.5 truncate max-w-xs">{p.link}</p>}
+                    </div>
+                    <button onClick={() => setCustomProducts(customProducts.filter((_, idx) => idx !== i))} className="text-red-500 text-xs hover:underline ml-2">Remove</button>
+                  </div>
+                ))}
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={newProduct.name} onChange={e => setNewProduct({ ...newProduct, name: e.target.value })}
+                    className="px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black" placeholder="Product name" />
+                  <input value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: e.target.value })}
+                    type="number" className="px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black" placeholder="Price ($)" />
+                </div>
+                <input value={newProduct.description} onChange={e => setNewProduct({ ...newProduct, description: e.target.value })}
+                  className="w-full px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black" placeholder="Short description (e.g. 10 lbs of mixed cuts)" />
+                <div className="flex gap-2">
+                  <input value={newProduct.link} onChange={e => setNewProduct({ ...newProduct, link: e.target.value })}
+                    className="flex-1 px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black" placeholder="Payment link (https://...)" />
+                  <button
+                    onClick={() => {
+                      if (!newProduct.name || !newProduct.price) return;
+                      setCustomProducts([...customProducts, { ...newProduct, price: parseFloat(newProduct.price) || 0 }]);
+                      setNewProduct({ name: '', price: '', description: '', link: '' });
+                    }}
+                    className="px-4 py-2 text-sm bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors"
+                  >
+                    + Add
+                  </button>
                 </div>
               </div>
 

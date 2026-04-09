@@ -59,6 +59,7 @@ export async function GET() {
       reserve_link: record['Reserve Link'] || '',
       testimonials: record['Testimonials'] || '',
       gallery_photos: record['Gallery Photos'] || '',
+      custom_products: record['Custom Products'] || '',
       google_reviews_url: record['Google Reviews URL'] || '',
       facebook_url: record['Facebook URL'] || '',
       instagram_url: record['Instagram URL'] || '',

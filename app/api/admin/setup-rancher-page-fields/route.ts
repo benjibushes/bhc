@@ -89,6 +89,8 @@ export async function GET(request: Request) {
       { name: 'Testimonials', type: 'multilineText' },
       // ── Photo Gallery (JSON array of image URLs) ────────────────────────
       { name: 'Gallery Photos', type: 'multilineText' },
+      // ── Custom Products (JSON array: [{name, price, description, link}]) ─
+      { name: 'Custom Products', type: 'multilineText' },
       // ── Verification ────────────────────────────────────────────────────
       { name: 'Verification Method', type: 'singleLineText' },
       { name: 'Verification Notes', type: 'multilineText' },

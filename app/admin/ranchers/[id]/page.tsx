@@ -12,6 +12,13 @@ interface Testimonial {
   photo?: string;
 }
 
+interface CustomProduct {
+  name: string;
+  price: number | string;
+  description: string;
+  link: string;
+}
+
 export default function AdminRancherDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -58,8 +65,10 @@ export default function AdminRancherDetailPage() {
 
   const [testimonials, setTestimonials] = useState<Testimonial[]>([]);
   const [galleryPhotos, setGalleryPhotos] = useState<string[]>([]);
+  const [customProducts, setCustomProducts] = useState<CustomProduct[]>([]);
   const [newTestimonial, setNewTestimonial] = useState<Testimonial>({ name: '', quote: '', location: '' });
   const [newPhotoUrl, setNewPhotoUrl] = useState('');
+  const [newProduct, setNewProduct] = useState<CustomProduct>({ name: '', price: '', description: '', link: '' });
 
   useEffect(() => {
     fetchRancher();
@@ -118,6 +127,11 @@ export default function AdminRancherDetailPage() {
         setGalleryPhotos(r.gallery_photos ? JSON.parse(r.gallery_photos) : []);
       } catch { setGalleryPhotos([]); }
 
+      // Parse custom products
+      try {
+        setCustomProducts(r.custom_products ? JSON.parse(r.custom_products) : []);
+      } catch { setCustomProducts([]); }
+
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -133,6 +147,7 @@ export default function AdminRancherDetailPage() {
         ...form,
         testimonials: JSON.stringify(testimonials),
         gallery_photos: JSON.stringify(galleryPhotos),
+        custom_products: JSON.stringify(customProducts),
       };
       const res = await fetch(`/api/admin/ranchers/${id}`, {
         method: 'PATCH',
@@ -167,6 +182,16 @@ export default function AdminRancherDetailPage() {
 
   function removeGalleryPhoto(idx: number) {
     setGalleryPhotos(galleryPhotos.filter((_, i) => i !== idx));
+  }
+
+  function addCustomProduct() {
+    if (!newProduct.name || !newProduct.price) return;
+    setCustomProducts([...customProducts, { ...newProduct, price: parseFloat(String(newProduct.price)) || 0 }]);
+    setNewProduct({ name: '', price: '', description: '', link: '' });
+  }
+
+  function removeCustomProduct(idx: number) {
+    setCustomProducts(customProducts.filter((_, i) => i !== idx));
   }
 
   function updateForm(key: string, value: any) {
@@ -374,6 +399,37 @@ export default function AdminRancherDetailPage() {
                   className="flex-1 px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Image URL (https://...)" />
                 <button onClick={addGalleryPhoto} className="px-4 py-2 text-sm bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]">
                   + Add Photo
+                </button>
+              </div>
+            </section>
+
+            {/* Custom Products */}
+            <section className="p-6 border border-[#A7A29A] bg-white space-y-4">
+              <h2 className="font-[family-name:var(--font-playfair)] text-xl">Custom Products ({customProducts.length})</h2>
+              <p className="text-xs text-[#A7A29A]">Add additional products beyond quarter/half/whole beef (e.g. sampler boxes, jerky, bones).</p>
+              {customProducts.map((p, i) => (
+                <div key={i} className="p-3 border border-[#A7A29A]/50 flex justify-between items-start">
+                  <div>
+                    <p className="text-sm font-medium">{p.name} — ${p.price}</p>
+                    {p.description && <p className="text-xs text-[#6B4F3F] mt-0.5">{p.description}</p>}
+                    {p.link && <p className="text-xs text-[#A7A29A] mt-0.5 truncate max-w-md">{p.link}</p>}
+                  </div>
+                  <button onClick={() => removeCustomProduct(i)} className="text-red-500 text-xs hover:underline ml-2">Remove</button>
+                </div>
+              ))}
+              <div className="grid md:grid-cols-2 gap-2">
+                <input value={newProduct.name} onChange={e => setNewProduct({ ...newProduct, name: e.target.value })}
+                  className="px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Product name" />
+                <input value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: e.target.value })}
+                  type="number" className="px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Price ($)" />
+              </div>
+              <input value={newProduct.description} onChange={e => setNewProduct({ ...newProduct, description: e.target.value })}
+                className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Short description (e.g. 10 lbs of mixed cuts)" />
+              <div className="flex gap-2">
+                <input value={newProduct.link} onChange={e => setNewProduct({ ...newProduct, link: e.target.value })}
+                  className="flex-1 px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Payment link (https://...)" />
+                <button onClick={addCustomProduct} className="px-4 py-2 text-sm bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]">
+                  + Add Product
                 </button>
               </div>
             </section>

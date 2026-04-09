@@ -54,6 +54,7 @@ export async function PATCH(request: Request) {
       'Certifications',
       'Testimonials',
       'Gallery Photos',
+      'Custom Products',
       'Google Reviews URL',
       'Facebook URL',
       'Instagram URL',
