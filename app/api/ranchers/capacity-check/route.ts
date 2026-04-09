@@ -3,6 +3,8 @@ import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   try {
     const authHeader = request.headers.get('authorization');

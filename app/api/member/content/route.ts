@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 
+export const maxDuration = 60;
+
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 
 export async function GET() {

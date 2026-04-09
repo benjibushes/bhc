@@ -3,6 +3,8 @@ import { getAllRecords, createRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { cookies } from 'next/headers';
 
+export const maxDuration = 60;
+
 export async function GET() {
   try {
     const news = await getAllRecords(TABLES.NEWS_POSTS, "{Status} = 'Published'");

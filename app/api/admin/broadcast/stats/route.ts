@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 
+export const maxDuration = 60;
+
 export async function GET() {
   try {
     const consumers = await getAllRecords(TABLES.CONSUMERS);

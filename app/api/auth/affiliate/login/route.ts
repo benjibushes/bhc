@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
 import { sendAffiliateLoginLink } from '@/lib/email';
 
+export const maxDuration = 60;
+
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 

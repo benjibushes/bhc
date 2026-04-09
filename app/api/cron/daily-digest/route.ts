@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
 
+export const maxDuration = 60;
+
 const BHC_SYSTEM_PROMPT = `You are Ben's AI business assistant for BuyHalfCow (BHC). BHC is a private beef brokerage connecting verified consumers with American ranchers. Ben earns 10% commission on every sale. Be concise and direct — Ben reads this on his phone.`;
 
 async function handler(request: Request) {

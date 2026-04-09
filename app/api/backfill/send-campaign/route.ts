@@ -5,6 +5,8 @@ import { sendEmail } from '@/lib/email';
 import jwt from 'jsonwebtoken';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
+export const maxDuration = 60;
+
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-backfill-secret-change-me';
 const EXPIRY_DAYS = parseInt(process.env.BACKFILL_LINK_EXPIRY_DAYS || '30');
 

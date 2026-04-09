@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 
+export const maxDuration = 60;
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);

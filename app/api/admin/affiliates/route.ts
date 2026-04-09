@@ -3,6 +3,8 @@ import { getAllRecords, createRecord, escapeAirtableValue } from '@/lib/airtable
 import { TABLES } from '@/lib/airtable';
 import { sendAffiliateWelcome } from '@/lib/email';
 
+export const maxDuration = 60;
+
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 function generateCode(name: string): string {

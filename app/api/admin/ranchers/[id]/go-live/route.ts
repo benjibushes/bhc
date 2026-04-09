@@ -4,6 +4,8 @@ import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
+export const maxDuration = 60;
+
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 
+export const maxDuration = 60;
+
 async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
   if (!ref || typeof ref !== 'string' || ref.length > 50) return false;
   const code = ref.trim();

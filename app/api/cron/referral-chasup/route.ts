@@ -6,6 +6,8 @@ import { callClaude } from '@/lib/ai';
 import { sendEmail, sendRepeatPurchaseEmail } from '@/lib/email';
 import jwt from 'jsonwebtoken';
 
+export const maxDuration = 60;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_CHASE_UPS = 3;
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';

@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
 import { sendTelegramPartnerAlert } from '@/lib/telegram';
 
+export const maxDuration = 60;
+
 async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
   if (!ref || typeof ref !== 'string' || ref.length > 50) return false;
   const code = ref.trim();

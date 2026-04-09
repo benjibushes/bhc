@@ -4,6 +4,8 @@ import { sendRancherLeadNudge } from '@/lib/email';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
+export const maxDuration = 60;
+
 // Runs every Monday at 9am MT — finds ranchers stalled at each onboarding stage
 // and sends Telegram alerts with action buttons
 //

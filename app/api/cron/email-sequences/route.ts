@@ -18,6 +18,8 @@ import {
 
 import jwt from 'jsonwebtoken';
 
+export const maxDuration = 60;
+
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const DAY_MS = 24 * 60 * 60 * 1000;

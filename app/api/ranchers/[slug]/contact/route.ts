@@ -3,6 +3,8 @@ import { getRancherBySlug, getAllRecords, updateRecord, escapeAirtableValue, TAB
 import { sendTrackedContactEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
+export const maxDuration = 60;
+
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   return re.test(email);

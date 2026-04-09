@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
+export const maxDuration = 60;
+
 export async function GET(request: Request) {
   try {
     const authHeader = request.headers.get('authorization');

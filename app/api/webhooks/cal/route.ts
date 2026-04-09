@@ -3,6 +3,8 @@ import { getAllRecords, updateRecord, escapeAirtableValue } from '@/lib/airtable
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
+export const maxDuration = 60;
+
 // Cal.com webhook handler
 // Set this URL in Cal.com: Settings → Webhooks → https://buyhalfcow.com/api/webhooks/cal
 // Subscribe to: BOOKING_CREATED, BOOKING_CANCELLED, BOOKING_RESCHEDULED

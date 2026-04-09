@@ -3,6 +3,8 @@ import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendBroadcastEmail } from '@/lib/email';
 
+export const maxDuration = 60;
+
 const BATCH_SIZE = 10;
 const BATCH_DELAY_MS = 1000;
 

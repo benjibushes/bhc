@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendMonthlyCommissionInvoice } from '@/lib/email';
 
+export const maxDuration = 60;
+
 // Runs on the 1st of each month at 10am MT (16:00 UTC)
 // Sends commission invoices to ranchers with unpaid commissions
 async function handler(request: Request) {

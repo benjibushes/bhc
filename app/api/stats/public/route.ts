@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 
+export const maxDuration = 60;
+
 let cachedStats: { rancherCount: number; buyerCount: number; timestamp: number } | null = null;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 

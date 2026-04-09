@@ -3,6 +3,8 @@ import { createRecord, getAllRecords, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendInquiryToRancher, sendInquiryAlertToAdmin } from '@/lib/email';
 
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   try {
     let body: any;
