@@ -67,7 +67,7 @@ export async function GET(
     const rancherEmail = rancher['Email'];
     const totalClicks = (currentClicks + 1);
     try {
-      const chatId = process.env.TELEGRAM_CHAT_ID;
+      const chatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
       if (chatId) {
         await sendTelegramMessage(chatId,
           `🛒 <b>PAYMENT CLICK</b>\n\n` +
