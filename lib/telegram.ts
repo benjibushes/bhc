@@ -15,6 +15,9 @@ async function sendTelegramMessage(chatId: string, text: string, replyMarkup?: a
     parse_mode: 'HTML',
   };
 
+  // If HTML parsing fails, retry without parse_mode (plain text fallback)
+  // This prevents user-submitted data with <, >, & from breaking notifications
+
   if (replyMarkup) {
     body.reply_markup = JSON.stringify(replyMarkup);
   }
@@ -28,6 +31,23 @@ async function sendTelegramMessage(chatId: string, text: string, replyMarkup?: a
   if (!res.ok) {
     const err = await res.text();
     console.error('Telegram send error:', err);
+    // Retry without HTML parsing — handles user data with <, >, & characters
+    try {
+      const fallbackBody: any = {
+        chat_id: chatId,
+        text: text.replace(/<[^>]*>/g, ''), // strip HTML tags for plain text
+      };
+      if (replyMarkup) fallbackBody.reply_markup = JSON.stringify(replyMarkup);
+      const retryRes = await fetch(`${TELEGRAM_API}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fallbackBody),
+      });
+      if (retryRes.ok) return retryRes.json();
+      console.error('Telegram fallback also failed:', await retryRes.text());
+    } catch (retryErr) {
+      console.error('Telegram fallback error:', retryErr);
+    }
     return null;
   }
 
