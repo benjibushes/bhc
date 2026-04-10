@@ -186,6 +186,11 @@ export async function GET(request: Request) {
         type: 'dateTime',
         options: { dateFormat: { name: 'iso' }, timeFormat: { name: '24hour' }, timeZone: 'America/Denver' },
       },
+      {
+        name: 'Stalled Alert Sent At',
+        type: 'dateTime',
+        options: { dateFormat: { name: 'iso' }, timeFormat: { name: '24hour' }, timeZone: 'America/Denver' },
+      },
     ];
 
     for (const field of referralFields) {

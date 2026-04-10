@@ -854,6 +854,90 @@ Source: ${c['Source'] || 'organic'}`;
         }
       }
 
+      // ─── Stalled deal nudge actions (L2c) ───────────────────────────────
+      // Send a polite "hey, the buyer's waiting" email to the rancher
+      else if (action === 'nudgerancher') {
+        try {
+          const refId = fullReferralId;
+          await answerCallbackQuery(queryId, 'Sending nudge…');
+          const ref: any = await getRecordById(TABLES.REFERRALS, refId);
+          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+          const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+          if (!rancherId) {
+            await sendTelegramMessage(chatId!, '⚠️ No rancher linked to this referral.');
+            return NextResponse.json({ ok: true });
+          }
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          const rancherEmail = rancher['Email'];
+          const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
+          const buyerName = ref['Buyer Name'] || 'the buyer';
+          const buyerState = ref['Buyer State'] || '';
+          const buyerEmail = ref['Buyer Email'] || '';
+          const buyerPhone = ref['Buyer Phone'] || '';
+          const orderType = ref['Order Type'] || 'bulk beef';
+          const introAt = ref['Intro Sent At'] || ref['Approved At'];
+          const days = introAt ? Math.floor((Date.now() - new Date(introAt).getTime()) / (24 * 60 * 60 * 1000)) : 0;
+
+          if (!rancherEmail) {
+            await sendTelegramMessage(chatId!, `⚠️ ${rancherName} has no email on file.`);
+            return NextResponse.json({ ok: true });
+          }
+
+          await sendEmail({
+            to: rancherEmail,
+            subject: `Quick nudge — ${buyerName} is still waiting`,
+            html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+              <p>Hi ${rancherName},</p>
+              <p>Just checking in — I introduced you to <b>${buyerName}</b> from ${buyerState} ${days} days ago and haven't seen any movement yet.</p>
+              <p><b>Buyer details:</b><br>
+              📧 ${buyerEmail}<br>
+              ${buyerPhone ? `📱 ${buyerPhone}<br>` : ''}
+              🥩 Wants: ${orderType}</p>
+              <p>If you can shoot them a quick note today — even a "got your inquiry, here's when I can deliver" — that usually gets the ball rolling. If you're slammed and need me to reroute, just reply and let me know.</p>
+              <p>Thanks,<br>— Benjamin</p>
+              <p style="font-size:12px;color:#A7A29A;margin-top:30px;">BuyHalfCow | 10% commission on closed referrals</p>
+            </div>`,
+          });
+
+          await answerCallbackQuery(queryId, '✅ Nudge sent');
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId, `📞 <b>RANCHER NUDGED</b>\n\n${rancherName} just got a polite ping about ${buyerName}.`);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
+      // Mark a stalled referral as Closed Lost (and free up rancher capacity)
+      else if (action === 'closelost') {
+        try {
+          const refId = fullReferralId;
+          const ref: any = await getRecordById(TABLES.REFERRALS, refId);
+          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+          await updateRecord(TABLES.REFERRALS, refId, {
+            'Status': 'Closed Lost',
+            'Closed At': new Date().toISOString(),
+            'Notes': `${ref['Notes'] || ''}\n[Closed Lost via Telegram — stalled, no engagement]`.trim(),
+          });
+          // Free up rancher capacity
+          if (Array.isArray(rancherIds) && rancherIds[0]) {
+            try {
+              const rancher: any = await getRecordById(TABLES.RANCHERS, rancherIds[0]);
+              const count = rancher['Current Active Referrals'] || 0;
+              if (count > 0) {
+                await updateRecord(TABLES.RANCHERS, rancherIds[0], { 'Current Active Referrals': count - 1 });
+              }
+            } catch { /* non-critical */ }
+          }
+          await answerCallbackQuery(queryId, '🔒 Closed Lost');
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId, `🔒 <b>CLOSED LOST</b>\n\n${ref['Buyer Name'] || 'Referral'} marked closed. Rancher capacity freed.`);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
       // ─── Hot lead actions (L2b) ─────────────────────────────────────────
       // Mark a 🔥 hot lead as personally contacted — appends a timestamp to Notes
       else if (action === 'hotcontact') {

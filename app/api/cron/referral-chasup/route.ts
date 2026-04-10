@@ -136,8 +136,73 @@ async function handler(request: Request) {
       await sendTelegramUpdate(`🔒 <b>Auto-Closed ${autoClosed} Stale Referrals</b>\nNo response after ${MAX_CHASE_UPS} follow-ups. Rancher capacity freed.`);
     }
 
+    // ── L2c: STALLED RANCHER NUDGE ─────────────────────────────────────────
+    // Detect referrals where the rancher hasn't moved in 3+ days (Intro Sent stage).
+    // Fires a Telegram alert (max once per 3-day window) so Ben can nudge or reassign.
+    let stalledNudges = 0;
+    try {
+      const introSentRefs = referrals.filter(r => r['Status'] === 'Intro Sent');
+      const now = Date.now();
+      const stalledForNudge = introSentRefs.filter(r => {
+        const introAt = r['Intro Sent At'] || r['Approved At'];
+        if (!introAt) return false;
+        const daysSinceIntro = (now - new Date(introAt).getTime()) / DAY_MS;
+        if (daysSinceIntro < 3) return false;
+        // Throttle: don't re-alert if we already alerted within the last 3 days
+        const lastAlert = r['Stalled Alert Sent At'];
+        if (lastAlert) {
+          const daysSinceAlert = (now - new Date(lastAlert).getTime()) / DAY_MS;
+          if (daysSinceAlert < 3) return false;
+        }
+        return true;
+      });
+
+      for (const ref of stalledForNudge.slice(0, 6)) {
+        try {
+          const buyerName = ref['Buyer Name'] || 'Unknown buyer';
+          const buyerState = ref['Buyer State'] || '?';
+          const rancherName = ref['Suggested Rancher Name'] || 'Unknown rancher';
+          const introAt = ref['Intro Sent At'] || ref['Approved At'];
+          const days = Math.floor((now - new Date(introAt).getTime()) / DAY_MS);
+
+          const alertMsg = `🔕 <b>STALLED RANCHER</b> — ${days}d no activity\n\n` +
+            `👤 Buyer: <b>${buyerName}</b> (${buyerState})\n` +
+            `🤠 Rancher: <b>${rancherName}</b>\n` +
+            `📊 Status: Intro Sent (rancher hasn't engaged)\n\n` +
+            `<i>Tap a button to act:</i>`;
+
+          const keyboard = {
+            inline_keyboard: [
+              [
+                { text: '📞 Nudge Rancher', callback_data: `nudgerancher_${ref.id}` },
+                { text: '🔄 Reassign', callback_data: `reassign_${ref.id}` },
+              ],
+              [
+                { text: '🔒 Close Lost', callback_data: `closelost_${ref.id}` },
+                { text: '👁 Details', callback_data: `details_${ref.id}` },
+              ],
+            ],
+          };
+
+          await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, alertMsg, keyboard);
+          await updateRecord(TABLES.REFERRALS, ref.id, {
+            'Stalled Alert Sent At': new Date().toISOString(),
+          });
+          stalledNudges++;
+        } catch (e: any) {
+          console.error(`Stalled nudge error for referral ${ref.id}:`, e.message);
+        }
+      }
+
+      if (stalledNudges > 0) {
+        await sendTelegramUpdate(`🔕 <b>${stalledNudges} stalled deal alert${stalledNudges > 1 ? 's' : ''} sent</b>\nNudge or reassign before they go cold.`);
+      }
+    } catch (e: any) {
+      console.error('Stalled nudge query error:', e.message);
+    }
+
     if (stale.length === 0) {
-      return NextResponse.json({ success: true, stale: 0, sent: 0, autoClosed });
+      return NextResponse.json({ success: true, stale: 0, sent: 0, autoClosed, stalledNudges });
     }
 
     let sent = 0;
@@ -258,7 +323,7 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
       await sendTelegramUpdate(`🔄 <b>Repeat Purchase Emails</b>: ${repeatSent} sent to past buyers`);
     }
 
-    return NextResponse.json({ success: true, stale: stale.length, sent, autoClosed, errors, repeatSent });
+    return NextResponse.json({ success: true, stale: stale.length, sent, autoClosed, stalledNudges, errors, repeatSent });
   } catch (error: any) {
     console.error('Referral chase-up cron error:', error);
     await sendTelegramUpdate(`⚠️ Referral chase-up cron failed: ${error.message}`).catch(() => {});
