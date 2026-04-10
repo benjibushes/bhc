@@ -1702,7 +1702,28 @@ Source: ${c['Source'] || 'organic'}`;
     // ─── Text commands ──────────────────────────────────────────────────────
 
     if (update.message?.text) {
-      const text = update.message.text.trim();
+      const rawText = update.message.text.trim();
+      // Normalize new categorized command names → existing handlers (zero-risk aliasing).
+      // This lets us reorganize commands without rewriting any handler logic.
+      const text = (() => {
+        const t = rawText;
+        // Multi-word /email subcommands → existing handlers
+        if (t === '/email blitz') return '/blitz';
+        if (t === '/email checkin') return '/checkin';
+        if (t === '/email onboard') return '/bulkonboard';
+        if (t === '/email broadcast' || t.startsWith('/email broadcast ')) return '/broadcast' + t.slice('/email broadcast'.length);
+        if (t === '/email draft' || t.startsWith('/email draft ')) return '/draft' + t.slice('/email draft'.length);
+        // Single-word renames → legacy command name
+        if (t === '/leads') return '/pending';
+        if (t === '/money') return '/revenue';
+        if (t === '/refs') return '/pipeline';
+        if (t === '/ranchers') return '/rancherpipeline';
+        // Prefix renames (commands with args)
+        if (t === '/find' || t.startsWith('/find ')) return '/lookup' + t.slice('/find'.length);
+        if (t === '/route' || t.startsWith('/route ')) return '/routestate' + t.slice('/route'.length);
+        if (t === '/affiliate' || t.startsWith('/affiliate ')) return '/makeaffiliate' + t.slice('/affiliate'.length);
+        return t;
+      })();
       const chatId = update.message.chat.id.toString();
 
       // ─── /setuppage wizard: intercept replies for active sessions ──────────
@@ -1726,7 +1747,44 @@ Source: ${c['Source'] || 'organic'}`;
         return NextResponse.json({ ok: true });
       }
 
-      if (text === '/pending' || text === '/start') {
+      // ─── /start — proper welcome (no longer aliases /pending) ─────────────
+      if (text === '/start') {
+        const welcome = `👋 <b>Welcome to BuyHalfCow Bot</b>
+
+I'm your operations assistant — I run the daily ops so you can focus on closing deals and growing the business.
+
+<b>📊 SEE</b> what's happening
+/today — Daily brief (numbers + AI priorities)
+/leads — Pending consumers awaiting review
+/ranchers — Rancher onboarding pipeline
+/money — Revenue + commission summary
+/find [name] — Search consumers/ranchers
+
+<b>🎯 DO</b> single actions
+/route CO the-high-lonesome-ranch [dry|morning] — Bulk-route stuck buyers
+/setuppage [name] — Build a rancher landing page
+/affiliate [email] — Make an affiliate
+
+<b>📨 EMAIL</b> bulk sends
+/email checkin — Nudge stalled ranchers
+/email onboard — Send onboarding docs
+/email blitz — Personalized updates to all pipeline ranchers
+/email broadcast [seg] [msg] — Quick broadcast
+/email draft followup [name] — AI-drafted follow-up
+/email draft campaign [seg] [topic] — AI-drafted broadcast
+
+<b>🧠 AI</b> autonomous tasks
+/qualify — AI scores pending leads (with approve buttons)
+/chasup — AI drafts re-engagement for stalled deals
+
+<b>❓ HELP</b>
+/help — This menu
+
+You can also just ask me anything in plain English — I'll figure it out.`;
+        await sendTelegramMessage(chatId, welcome);
+      }
+
+      else if (text === '/pending') {
         const referrals = await getAllRecords(TABLES.REFERRALS, '{Status} = "Pending Approval"');
         const count = referrals.length;
 
@@ -2679,40 +2737,41 @@ Confirm send?`;
       }
 
       else if (text === '/help') {
-        const msg = `📖 <b>BuyHalfCow Bot Commands</b>
+        const msg = `📖 <b>BuyHalfCow Bot — Command Reference</b>
 
-<b>Dashboard</b>
-/today — Morning digest (signups, pipeline, revenue)
-/stats — Overall platform stats
-/pending — List pending referrals
-
-<b>Lookup</b>
-/lookup [name or email] — Search consumers
-
-<b>Pipeline</b>
-/pipeline — Referral stage breakdown
-/rancherpipeline — All ranchers by onboarding stage
+<b>📊 SEE</b> — what's happening
+/today — Daily brief (numbers + AI top 3 priorities)
+/leads — Pending consumers awaiting review
+/ranchers — Rancher onboarding pipeline
+/money — Revenue + commission summary
+/find [name] — Search consumers/ranchers
 /capacity — Ranchers near capacity
-/revenue — Commission & revenue summary
+/refs — Referral stage breakdown
 
-<b>Actions</b>
-/blitz — Send personalized update emails to ALL pipeline ranchers
-/bulkonboard — Bulk send onboarding docs to all who haven't received them
-/broadcast [segment] [msg] — Quick broadcast
-/checkin — Bulk check-in with stalled ranchers
-/makeaffiliate [email] — Make someone an affiliate
+<b>🎯 DO</b> — single actions
+/route CO the-high-lonesome-ranch [dry|morning] — Bulk-route stuck buyers
+/setuppage [name] — Build a rancher landing page (interactive wizard)
+/affiliate [email] — Make someone an affiliate
 
-<b>🏡 Rancher Pages</b>
-/setuppage [name or email] — Build rancher landing page (live wizard)
+<b>📨 EMAIL</b> — bulk sends, all in one namespace
+/email checkin — Nudge stalled ranchers
+/email onboard — Send onboarding docs to ranchers missing them
+/email blitz — Personalized update emails to all pipeline ranchers
+/email broadcast [seg] [msg] — Quick broadcast (segments: beef, community, all, ranchers)
+/email draft followup [name] — AI drafts a personalized follow-up
+/email draft campaign [seg] [topic] — AI drafts a broadcast campaign
 
-<b>🤖 AI Skills</b>
-/qualify — AI reviews & scores pending leads
-/brief — AI-generated priority action list for today
-/chasup — Find stalled referrals, draft re-engagement emails
-/draft followup [name] — AI drafts personalized follow-up email
-/draft campaign [segment] [topic] — AI drafts broadcast campaign
+<b>🧠 AI</b> — autonomous tasks
+/qualify — AI scores pending leads (3 at a time, with approve/reject/watch buttons)
+/chasup — Find stalled referrals + AI-draft re-engagement emails
 
-Segments: beef, community, all, ranchers`;
+<b>❓ HELP</b>
+/start — Welcome + quick tour
+/help — This menu
+
+<i>Tip: just type anything in plain English. I'll figure out what you mean.</i>
+
+<i>Legacy command names still work — /pending, /stats, /lookup, /pipeline, /rancherpipeline, /revenue, /broadcast, /blitz, /checkin, /bulkonboard, /makeaffiliate, /draft, /routestate.</i>`;
 
         await sendTelegramMessage(chatId, msg);
       }
