@@ -290,6 +290,7 @@ export async function sendBuyerIntroNotification(data: {
   rancherPhone?: string;
   rancherSlug?: string;
   loginUrl: string;
+  scheduledAt?: string; // ISO date string — Resend holds + delivers at this time
 }) {
   const contactBlock = data.rancherSlug
     ? `<div class="contact-box">
@@ -305,12 +306,16 @@ export async function sendBuyerIntroNotification(data: {
   </div>`;
 
   try {
-    await resend.emails.send({
+    const introEmailData: any = {
       from: getFromEmail(),
       to: data.email,
       subject: `Meet your rancher — ${esc(data.rancherName)}`,
       headers: getUnsubscribeHeaders(data.email),
-      html: `<!DOCTYPE html><html><head>
+    };
+    if (data.scheduledAt) {
+      introEmailData.scheduledAt = data.scheduledAt;
+    }
+    introEmailData.html = `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.contact-box{background:#F4F1EC;border:1px solid #A7A29A;padding:20px 24px;margin:20px 0}.contact-box p{margin:6px 0;color:#0E0E0E}.cta{display:inline-block;padding:16px 32px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
 </head><body><div class="container">
   <h1>Your Rancher Introduction</h1>
@@ -333,8 +338,8 @@ export async function sendBuyerIntroNotification(data: {
     <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
     <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
-</div></body></html>`,
-    });
+</div></body></html>`;
+    await resend.emails.send(introEmailData);
     return { success: true };
   } catch (error) {
     console.error('Error sending buyer intro notification:', error);
@@ -2404,6 +2409,7 @@ export async function sendEmail(params: {
   subject: string;
   html: string;
   attachments?: { filename: string; content: Buffer }[];
+  scheduledAt?: string; // ISO date string — Resend holds + delivers at this time
 }) {
   try {
     const emailData: any = {
@@ -2415,6 +2421,9 @@ export async function sendEmail(params: {
     };
     if (params.attachments && params.attachments.length > 0) {
       emailData.attachments = params.attachments;
+    }
+    if (params.scheduledAt) {
+      emailData.scheduledAt = params.scheduledAt;
     }
     await resend.emails.send(emailData);
     return { success: true };

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
-import { sendTelegramUpdate } from '@/lib/telegram';
+import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { bulkRouteStateToRancher, getRancherServedStates } from '@/lib/bulkRoute';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 60;
@@ -180,6 +181,46 @@ async function handler(request: Request) {
             });
           }
           ranchersGoLive++;
+
+          // ── AUTO-ROUTE STUCK BUYERS to this newly-live rancher ─────────
+          // For every state this rancher serves, find stuck buyers and connect them.
+          // Schedules emails for 9am MT next morning so we never spam buyers at 3am.
+          try {
+            const servedStates = getRancherServedStates({ ...rancher, 'Active Status': 'Active' });
+            const tomorrow9amMT = (() => {
+              const d = new Date();
+              // 9am MT = 15:00 UTC (MDT) or 16:00 UTC (MST). Use 15:00 UTC as the safe slot.
+              d.setUTCDate(d.getUTCDate() + 1);
+              d.setUTCHours(15, 0, 0, 0);
+              return d.toISOString();
+            })();
+            for (const stateCode of servedStates) {
+              try {
+                const result = await bulkRouteStateToRancher({
+                  state: stateCode,
+                  rancherSlug: rancher['Slug'] || '',
+                  dryRun: false,
+                  scheduledAt: tomorrow9amMT,
+                });
+                if (result.ok && (result.summary.processed > 0)) {
+                  await sendTelegramMessage(
+                    TELEGRAM_ADMIN_CHAT_ID,
+                    `🚀 <b>AUTO-ROUTED on go-live</b>\n\n` +
+                    `${operatorName} (${ranchName}) just went LIVE in ${stateCode}\n\n` +
+                    `✅ Processed: ${result.summary.processed} stuck buyers\n` +
+                    `🔄 Updated stuck refs: ${result.summary.updated_stuck_referral}\n` +
+                    `🆕 New refs: ${result.summary.created_new_referral}\n` +
+                    `📧 Emails scheduled for 9am MT tomorrow\n` +
+                    `${result.summary.errors.length > 0 ? `⚠️ Errors: ${result.summary.errors.length}` : '✨ No errors'}`
+                  );
+                }
+              } catch (e: any) {
+                console.error(`Auto-route on go-live (${stateCode}) error:`, e.message);
+              }
+            }
+          } catch (e: any) {
+            console.error('Auto-route on go-live (outer) error:', e.message);
+          }
         } catch (e: any) {
           console.error('Auto-go-live error:', e.message);
         }

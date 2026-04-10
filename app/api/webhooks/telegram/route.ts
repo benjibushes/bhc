@@ -9,6 +9,7 @@ import {
 } from '@/lib/telegram';
 import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification, sendRancherCheckIn, sendPipelineUpdateEmail } from '@/lib/email';
 import { callClaude } from '@/lib/ai';
+import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -2382,6 +2383,78 @@ Confirm send?`;
           });
 
           await sendPageMenu(chatId, match.id);
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ Error: ${e.message}`);
+        }
+      }
+
+      // ─── /routestate — Bulk-route stuck buyers in a state to a specific rancher ──
+      // Usage: /routestate CO the-high-lonesome-ranch              (real run, sends emails now)
+      //        /routestate CO the-high-lonesome-ranch dry          (dry run, no writes/emails)
+      //        /routestate CO the-high-lonesome-ranch morning      (real run, emails scheduled for 9am MT tomorrow)
+      else if (text.startsWith('/routestate')) {
+        const args = text.replace('/routestate', '').trim().split(/\s+/).filter(Boolean);
+        if (args.length < 2) {
+          await sendTelegramMessage(
+            chatId,
+            `Usage: <code>/routestate STATE rancher-slug [dry|morning]</code>\n\n` +
+            `Examples:\n` +
+            `<code>/routestate CO the-high-lonesome-ranch dry</code> — preview\n` +
+            `<code>/routestate CO the-high-lonesome-ranch morning</code> — fire, emails arrive 9am MT tomorrow\n` +
+            `<code>/routestate UT the-high-lonesome-ranch</code> — fire, emails go now`
+          );
+          return NextResponse.json({ ok: true });
+        }
+        const stateArg = args[0].toUpperCase();
+        const slugArg = args[1];
+        const mode = (args[2] || '').toLowerCase();
+        const dryRun = mode === 'dry';
+        const morning = mode === 'morning';
+
+        let scheduledAt: string | undefined;
+        if (morning) {
+          const d = new Date();
+          d.setUTCDate(d.getUTCDate() + 1);
+          d.setUTCHours(15, 0, 0, 0); // 9am MT (MDT) = 15:00 UTC
+          scheduledAt = d.toISOString();
+        }
+
+        await sendTelegramMessage(
+          chatId,
+          `🔄 ${dryRun ? 'Dry-running' : 'Routing'} <b>${stateArg}</b> → <b>${slugArg}</b>${morning ? ' (emails scheduled for 9am MT tomorrow)' : ''}...`
+        );
+
+        try {
+          const result = await bulkRouteStateToRancher({
+            state: stateArg,
+            rancherSlug: slugArg,
+            dryRun,
+            scheduledAt,
+          });
+
+          if (!result.ok) {
+            await sendTelegramMessage(chatId, `❌ ${result.error}`);
+            return NextResponse.json({ ok: true });
+          }
+
+          const s = result.summary;
+          const headline = dryRun ? '🔍 <b>DRY RUN</b>' : '🚀 <b>ROUTED</b>';
+          await sendTelegramMessage(
+            chatId,
+            `${headline}\n\n` +
+            `${s.state} → ${s.targetRancher}\n` +
+            (scheduledAt ? `📅 Emails scheduled: ${new Date(scheduledAt).toLocaleString('en-US', { timeZone: 'America/Denver', dateStyle: 'medium', timeStyle: 'short' })} MT\n\n` : `\n`) +
+            `📊 Total approved buyers: ${s.totalConsumers}\n` +
+            `✅ Processed: ${s.processed}\n` +
+            `⏭ Skipped (already intro'd): ${s.skipped_already_intro_sent}\n` +
+            `🔄 Updated stuck refs: ${s.updated_stuck_referral}\n` +
+            `🆕 New refs: ${s.created_new_referral}\n` +
+            `🗑 Canceled dupes: ${s.canceled_duplicates}\n` +
+            (dryRun
+              ? `\n<i>Dry run — no Airtable writes, no emails sent. Run again without "dry" to fire.</i>`
+              : `\n📧 Rancher emails: ${s.emails_sent_rancher}\n📧 Buyer emails: ${s.emails_sent_buyer}`) +
+            `\n${s.errors.length > 0 ? `\n⚠️ Errors: ${s.errors.length}\n${s.errors.slice(0, 3).join('\n')}` : ''}`
+          );
         } catch (e: any) {
           await sendTelegramMessage(chatId, `❌ Error: ${e.message}`);
         }
