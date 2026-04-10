@@ -2372,6 +2372,52 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
 
       // ─── NEW: /qualify — AI Lead Analyst ─────────────────────────────────
 
+      // ─── /ask — AI with tool use (L3a) ───────────────────────────────────
+      // Lets Ben ask anything in plain English. AI uses read-only tools to
+      // investigate the business state and answer with current data.
+      else if (text === '/ask' || text.startsWith('/ask ')) {
+        const question = text.replace(/^\/ask\s*/, '').trim();
+        if (!question) {
+          await sendTelegramMessage(chatId, `🤔 <b>Usage:</b> <code>/ask [question]</code>\n\nExamples:\n• /ask which buyers in CO are still unmatched?\n• /ask how much commission is unpaid?\n• /ask is anyone near capacity right now?\n• /ask find Mandi`);
+          return NextResponse.json({ ok: true });
+        }
+
+        if (!process.env.ANTHROPIC_API_KEY) {
+          await sendTelegramMessage(chatId, '⚠️ /ask requires ANTHROPIC_API_KEY. Tool use isn\'t available with Ollama or Groq yet.');
+          return NextResponse.json({ ok: true });
+        }
+
+        await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendChatAction`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, action: 'typing' }),
+        }).catch(() => {});
+
+        try {
+          const { callClaudeWithTools } = await import('@/lib/ai');
+          const { text: answer, toolCalls } = await callClaudeWithTools({
+            model: 'claude-sonnet-4-6',
+            system: `You are Ben's AI assistant for BuyHalfCow. You have access to read-only tools to query the business state. Answer the user's question by calling tools to get fresh data, then summarize concisely. Always cite specific names, numbers, and IDs from the data. If the question is vague, make a reasonable assumption and proceed — don't ask for clarification.`,
+            user: question,
+            maxTokens: 2048,
+            maxIterations: 6,
+          });
+
+          const cleaned = (answer || '(no answer)')
+            .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+            .replace(/\*(.*?)\*/g, '<i>$1</i>')
+            .replace(/`(.*?)`/g, '<code>$1</code>');
+
+          const toolSummary = toolCalls.length > 0
+            ? `\n\n<i>🔧 used ${toolCalls.length} tool${toolCalls.length > 1 ? 's' : ''}: ${toolCalls.map(t => t.name).join(', ')}</i>`
+            : '';
+
+          await sendTelegramMessage(chatId, `🧠 <b>Answer</b>\n\n${cleaned}${toolSummary}`);
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /ask failed: ${e.message}`);
+        }
+      }
+
       else if (text === '/qualify') {
         if (!AI_CONFIGURED) {
           await sendTelegramMessage(chatId, '⚠️ AI not configured. Set OLLAMA_BASE_URL or ANTHROPIC_API_KEY.');
@@ -3085,6 +3131,7 @@ Confirm send?`;
 /email draft campaign [seg] [topic] — AI drafts a broadcast campaign
 
 <b>🧠 AI</b> — autonomous tasks
+/ask [question] — AI investigates the business and answers (uses tools)
 /qualify — AI scores pending leads (3 at a time, with approve/reject/watch buttons)
 /chasup — Find stalled referrals + AI-draft re-engagement emails
 
