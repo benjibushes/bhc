@@ -16,7 +16,7 @@ async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
   }
 }
 import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert } from '@/lib/email';
-import { sendTelegramConsumerSignup } from '@/lib/telegram';
+import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -194,6 +194,23 @@ export async function POST(request: Request) {
           budgetRange,
         });
       } catch (e) { console.error('Telegram consumer signup error:', e); }
+
+      // 🔥 HOT LEAD: score 80+ Beef Buyers get a loud second alert with 1-tap actions
+      if (serverIntentScore >= 80 && consumerSegment === 'Beef Buyer') {
+        try {
+          await sendTelegramHotLeadAlert({
+            consumerId: record.id,
+            name: fullName,
+            email,
+            phone,
+            state,
+            intentScore: serverIntentScore,
+            orderType,
+            budgetRange,
+            notes,
+          });
+        } catch (e) { console.error('Telegram hot lead alert error:', e); }
+      }
 
       // Trigger matching for approved Beef Buyers
       const shouldMatch = status.toLowerCase() === 'approved' && consumerSegment === 'Beef Buyer' && state;

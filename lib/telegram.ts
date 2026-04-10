@@ -213,6 +213,46 @@ ${data.details}`;
   return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message);
 }
 
+// Fired in addition to the standard signup notification when a buyer scores 80+.
+// Loud, distinctive, action-oriented — designed to make Ben (or his hires)
+// drop everything and reach out within minutes.
+export async function sendTelegramHotLeadAlert(data: {
+  consumerId: string;
+  name: string;
+  email: string;
+  phone?: string;
+  state: string;
+  intentScore: number;
+  orderType?: string;
+  budgetRange?: string;
+  notes?: string;
+}) {
+  const phoneLine = data.phone ? `📱 <b>${data.phone}</b>` : '📱 <i>No phone provided</i>';
+  const message = `🔥🔥🔥 <b>HOT LEAD — ACT NOW</b> 🔥🔥🔥
+
+📊 Intent: <b>${data.intentScore}/100</b> (high)
+⏱ Reach out within 5 min for best close rate
+
+👤 <b>${data.name}</b>
+📧 ${data.email}
+${phoneLine}
+📍 ${data.state}${data.orderType ? `\n🥩 Order: <b>${data.orderType}</b>` : ''}${data.budgetRange ? `\n💵 Budget: <b>${data.budgetRange}</b>` : ''}${data.notes ? `\n\n📝 <i>${data.notes}</i>` : ''}`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '📞 Mark Contacted', callback_data: `hotcontact_${data.consumerId}` },
+        { text: '✉️ Draft Email', callback_data: `hotemail_${data.consumerId}` },
+      ],
+      [
+        { text: '👁 Full Details', callback_data: `cdetails_${data.consumerId}` },
+      ],
+    ],
+  };
+
+  return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
+}
+
 export async function sendTelegramUpdate(text: string) {
   return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, text);
 }

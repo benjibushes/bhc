@@ -854,6 +854,79 @@ Source: ${c['Source'] || 'organic'}`;
         }
       }
 
+      // ─── Hot lead actions (L2b) ─────────────────────────────────────────
+      // Mark a 🔥 hot lead as personally contacted — appends a timestamp to Notes
+      else if (action === 'hotcontact') {
+        try {
+          const consumerId = fullReferralId;
+          const c: any = await getRecordById(TABLES.CONSUMERS, consumerId);
+          const stamp = new Date().toLocaleString('en-US', { timeZone: 'America/Denver', dateStyle: 'short', timeStyle: 'short' });
+          const existingNotes = c['Notes'] || '';
+          const newNotes = `${existingNotes}${existingNotes ? '\n' : ''}[Contacted via Telegram ${stamp}]`;
+          await updateRecord(TABLES.CONSUMERS, consumerId, { 'Notes': newNotes });
+          await answerCallbackQuery(queryId, '✅ Marked contacted');
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId, `✅ <b>CONTACTED</b> — ${c['Full Name']} marked as reached at ${stamp} MT`);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
+      // Hot lead email — uses the existing AI draft pipeline so the result lands
+      // in the same draftfollowup_send/sched/disc flow Ben already knows.
+      else if (action === 'hotemail') {
+        try {
+          const consumerId = fullReferralId;
+          await answerCallbackQuery(queryId, 'Drafting…');
+          const c: any = await getRecordById(TABLES.CONSUMERS, consumerId);
+          const firstName = (c['Full Name'] || '').split(' ')[0] || 'there';
+          const aiPrompt = `Draft a short, warm, personal follow-up email from Benjamin (founder of BuyHalfCow) to a brand-new HIGH-INTENT beef buyer lead.
+
+Buyer: ${c['Full Name']}
+State: ${c['State']}
+Order interest: ${c['Order Type'] || 'unspecified'}
+Budget: ${c['Budget'] || 'unspecified'}
+Notes: ${c['Notes'] || 'none'}
+
+The email should:
+- Open with their first name
+- Acknowledge they just signed up and we noticed they're serious
+- Ask 1-2 clarifying questions (timing, freezer space, processing preferences)
+- Promise to connect them with a vetted rancher fast
+- Sign off as "— Benjamin"
+- Be 4-6 short sentences, no fluff, no headers, no bullets
+
+Output ONLY the email body. First line should be the subject line prefixed with "SUBJECT: ".`;
+          const aiResponse = await callClaude({
+            model: 'claude-haiku-4-5-20251001',
+            system: `You are Benjamin's AI assistant for BuyHalfCow. Write like Benjamin: direct, warm, conversational. Never use exclamation points or sales-y language.`,
+            user: aiPrompt,
+            maxTokens: 400,
+          });
+          const lines = aiResponse.trim().split('\n');
+          const subjectLine = lines[0]?.replace(/^SUBJECT:\s*/i, '').trim() || `Quick question about your beef order, ${firstName}`;
+          const body = lines.slice(1).join('\n').trim();
+          await updateRecord(TABLES.CONSUMERS, consumerId, {
+            'AI Email Draft': body,
+            'AI Email Draft Subject': subjectLine,
+          });
+          if (chatId) {
+            const draftMsg = `✉️ <b>HOT LEAD DRAFT</b>\n\n<b>To:</b> ${c['Full Name']} &lt;${c['Email']}&gt;\n<b>Subject:</b> ${subjectLine}\n\n${body}`;
+            const keyboard = {
+              inline_keyboard: [[
+                { text: '📧 Send Now', callback_data: `draftfollowup_send_${consumerId}` },
+                { text: '⏰ Tomorrow', callback_data: `draftfollowup_sched_${consumerId}` },
+                { text: '🗑️ Discard', callback_data: `draftfollowup_disc_${consumerId}` },
+              ]],
+            };
+            await sendTelegramMessage(chatId, draftMsg, keyboard);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
       // ─── Rancher actions ────────────────────────────────────────────────
 
       else if (action === 'ronboard') {
