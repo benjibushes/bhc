@@ -8,6 +8,7 @@
 // sure the caller fires a Telegram confirmation button before executing.
 
 import { getAllRecords, getRecordById, updateRecord, escapeAirtableValue, TABLES } from './airtable';
+import { rememberFact, recallAllMemories, forgetMemory } from './aiMemory';
 
 export type ToolSchema = {
   name: string;
@@ -254,6 +255,23 @@ async function draftEmailForConsumer(input: { consumerId: string; subject: strin
   }
 }
 
+// ─── Memory tools ─────────────────────────────────────────────────────────
+
+async function rememberFactTool(input: { fact: string }) {
+  if (!input.fact) return { error: 'fact required' };
+  return await rememberFact(input.fact);
+}
+
+async function recallMemoriesTool() {
+  const lines = await recallAllMemories();
+  return { count: lines.length, memories: lines };
+}
+
+async function forgetMemoryTool(input: { query: string }) {
+  if (!input.query) return { error: 'query required' };
+  return await forgetMemory(input.query);
+}
+
 // ─── Schemas (Anthropic tool-use format) ──────────────────────────────────
 
 export const TOOLS: ToolSchema[] = [
@@ -373,6 +391,33 @@ export const TOOLS: ToolSchema[] = [
       required: ['consumerId', 'subject', 'body'],
     },
   },
+  {
+    name: 'remember_fact',
+    description: 'Save a durable fact about Ben, BuyHalfCow, or how he likes to work. Use sparingly — only for things that will remain true across many conversations (preferences, recurring patterns, names of people, recurring constraints). Do NOT save ephemeral state like current todo lists or one-off requests.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        fact: { type: 'string', description: 'A short, self-contained fact. E.g. "Ben prefers terse Telegram replies, no markdown headers." or "High Lonesome Beef can only sell halves and quarters, never wholes."' },
+      },
+      required: ['fact'],
+    },
+  },
+  {
+    name: 'recall_memories',
+    description: 'List all facts you have remembered about Ben and BuyHalfCow from prior conversations. Use when you need to check what you already know before answering, or when Ben asks "what do you remember about X".',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'forget_memory',
+    description: 'Remove memories matching a substring query. Use when Ben says "forget X" or when you discover a stored fact is wrong/outdated.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Substring to match — any memory containing this text (case-insensitive) will be deleted.' },
+      },
+      required: ['query'],
+    },
+  },
 ];
 
 const TOOL_IMPLS: Record<string, ToolImpl> = {
@@ -387,6 +432,9 @@ const TOOL_IMPLS: Record<string, ToolImpl> = {
   add_note_to_consumer: addNoteToConsumer,
   add_note_to_rancher: addNoteToRancher,
   draft_email_for_consumer: draftEmailForConsumer,
+  remember_fact: rememberFactTool,
+  recall_memories: recallMemoriesTool,
+  forget_memory: forgetMemoryTool,
 };
 
 export async function runTool(name: string, input: any): Promise<any> {

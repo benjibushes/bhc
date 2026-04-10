@@ -117,6 +117,7 @@ async function callAnthropic(params: {
 // Anthropic only — Groq tool-use schema differs and Ollama is unreliable.
 // Falls back gracefully: if no Anthropic key, throws.
 import { TOOLS as REGISTERED_TOOLS, runTool } from './aiTools';
+import { buildMemoryContextBlock } from './aiMemory';
 
 export async function callClaudeWithTools(params: {
   model?: 'claude-sonnet-4-6' | 'claude-haiku-4-5-20251001';
@@ -132,6 +133,16 @@ export async function callClaudeWithTools(params: {
   const maxIterations = params.maxIterations || 6;
   const toolCalls: { name: string; input: any; output: any }[] = [];
 
+  // Inject persistent memory facts into the system prompt so the model
+  // starts every tool-use conversation knowing what it learned previously.
+  let memoryBlock = '';
+  try {
+    memoryBlock = await buildMemoryContextBlock();
+  } catch (e) {
+    console.error('Failed to load memory block:', e);
+  }
+  const systemWithMemory = params.system + memoryBlock;
+
   // Anthropic messages history — starts with the user prompt
   const messages: any[] = [{ role: 'user', content: params.user }];
 
@@ -146,7 +157,7 @@ export async function callClaudeWithTools(params: {
       body: JSON.stringify({
         model,
         max_tokens: params.maxTokens || 2048,
-        system: params.system,
+        system: systemWithMemory,
         tools: REGISTERED_TOOLS,
         messages,
       }),
