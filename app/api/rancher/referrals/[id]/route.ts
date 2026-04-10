@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendTelegramUpdate } from '@/lib/telegram';
+import { sendTelegramUpdate, sendTelegramSaleCelebration } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 60;
@@ -171,9 +171,33 @@ export async function PATCH(
     try {
       const buyerName = referral['Buyer Name'] || 'Unknown';
       if (status === 'Closed Won') {
-        await sendTelegramUpdate(
-          `<b>DEAL CLOSED</b>\n\n${decoded.name} closed a deal with ${buyerName}\nSale: $${saleAmount || 0}\nCommission: $${Math.round((saleAmount || 0) * 0.10 * 100) / 100}`
-        );
+        // L2e: pull rancher's win history to show monthly + lifetime + first-sale milestone
+        const allRefs = await getAllRecords(TABLES.REFERRALS) as any[];
+        const rancherWins = allRefs.filter((r) => {
+          if (r['Status'] !== 'Closed Won') return false;
+          const ids = r['Rancher'] || r['Suggested Rancher'] || [];
+          return Array.isArray(ids) && ids.includes(decoded.rancherId);
+        });
+        // The current referral is already updated above, so it's in rancherWins
+        const isFirstSaleForRancher = rancherWins.length === 1;
+        const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+        const monthlyWinsForRancher = rancherWins.filter((r) => new Date(r['Closed At'] || 0).getTime() >= monthStart);
+        const monthlyCommission = monthlyWinsForRancher.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
+        const lifetimeCommission = rancherWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
+        const commission = Math.round((saleAmount || 0) * 0.10 * 100) / 100;
+
+        await sendTelegramSaleCelebration({
+          referralId: id,
+          buyerName,
+          rancherName: decoded.name,
+          saleAmount: saleAmount || 0,
+          commission,
+          isFirstSaleForRancher,
+          monthlyWins: monthlyWinsForRancher.length,
+          monthlyCommission,
+          lifetimeWins: rancherWins.length,
+          lifetimeCommission,
+        });
       } else if (status) {
         await sendTelegramUpdate(
           `${decoded.name} updated referral for ${buyerName} to: <b>${status}</b>`

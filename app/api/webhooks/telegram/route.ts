@@ -854,6 +854,64 @@ Source: ${c['Source'] || 'organic'}`;
         }
       }
 
+      // ─── Sale celebration actions (L2e) ─────────────────────────────────
+      // Mark commission as paid (writes Commission Paid = true on referral)
+      else if (action === 'markpaid') {
+        try {
+          const refId = fullReferralId;
+          const ref: any = await getRecordById(TABLES.REFERRALS, refId);
+          await updateRecord(TABLES.REFERRALS, refId, {
+            'Commission Paid': true,
+            'Notes': `${ref['Notes'] || ''}\n[Commission marked paid via Telegram ${new Date().toISOString().slice(0, 10)}]`.trim(),
+          });
+          await answerCallbackQuery(queryId, '💰 Marked paid');
+          if (chatId) {
+            await sendTelegramMessage(chatId, `💰 <b>COMMISSION PAID</b>\n\n$${(ref['Commission Due'] || 0).toLocaleString()} for ${ref['Buyer Name']} marked as paid.`);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
+      // Send a quick thank-you email to the rancher
+      else if (action === 'thankrancher') {
+        try {
+          const refId = fullReferralId;
+          await answerCallbackQuery(queryId, 'Sending thanks…');
+          const ref: any = await getRecordById(TABLES.REFERRALS, refId);
+          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+          const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+          if (!rancherId) {
+            await sendTelegramMessage(chatId!, '⚠️ No rancher linked to this referral.');
+            return NextResponse.json({ ok: true });
+          }
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          const rancherEmail = rancher['Email'];
+          const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
+          const buyerName = ref['Buyer Name'] || 'the buyer';
+          if (!rancherEmail) {
+            await sendTelegramMessage(chatId!, `⚠️ ${rancherName} has no email on file.`);
+            return NextResponse.json({ ok: true });
+          }
+          await sendEmail({
+            to: rancherEmail,
+            subject: `Thanks for closing ${buyerName}!`,
+            html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+              <p>Hey ${rancherName},</p>
+              <p>Just saw the deal with <b>${buyerName}</b> closed — congrats. Thanks for taking great care of them.</p>
+              <p>This is exactly what BuyHalfCow is built to do: connect serious buyers with operators who deliver. Keep me posted on how it goes from here.</p>
+              <p>If you've got more capacity opening up soon, let me know and I'll route more leads your way.</p>
+              <p>— Benjamin</p>
+            </div>`,
+          });
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId, `🙏 <b>THANK YOU SENT</b>\n\n${rancherName} just got a personal note from you.`);
+          }
+        } catch (e: any) {
+          await answerCallbackQuery(queryId, `Error: ${e.message}`);
+        }
+      }
+
       // ─── Stalled deal nudge actions (L2c) ───────────────────────────────
       // Send a polite "hey, the buyer's waiting" email to the rancher
       else if (action === 'nudgerancher') {

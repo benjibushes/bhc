@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { updateRecord, getRecordById } from '@/lib/airtable';
+import { updateRecord, getRecordById, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { sendTelegramSaleCelebration } from '@/lib/telegram';
 
 export async function PATCH(
   request: Request,
@@ -60,6 +61,50 @@ export async function PATCH(
     }
 
     const updated = await updateRecord(TABLES.REFERRALS, id, fields);
+
+    // L2e: fire celebration when admin marks something Closed Won
+    if (status === 'Closed Won') {
+      try {
+        const referral = await getRecordById(TABLES.REFERRALS, id) as any;
+        const rancherIds = referral['Rancher'] || referral['Suggested Rancher'] || [];
+        const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+        let rancherName = referral['Suggested Rancher Name'] || 'Rancher';
+        if (rancherId) {
+          try {
+            const r = await getRecordById(TABLES.RANCHERS, rancherId) as any;
+            rancherName = r['Operator Name'] || r['Ranch Name'] || rancherName;
+          } catch { /* keep default */ }
+        }
+        const allRefs = await getAllRecords(TABLES.REFERRALS) as any[];
+        const rancherWins = allRefs.filter((r) => {
+          if (r['Status'] !== 'Closed Won') return false;
+          const ids = r['Rancher'] || r['Suggested Rancher'] || [];
+          return rancherId ? Array.isArray(ids) && ids.includes(rancherId) : false;
+        });
+        const isFirstSaleForRancher = rancherWins.length === 1;
+        const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+        const monthlyWins = rancherWins.filter((r) => new Date(r['Closed At'] || 0).getTime() >= monthStart);
+        const monthlyCommission = monthlyWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
+        const lifetimeCommission = rancherWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
+        const commissionRate = Number(process.env.NEXT_PUBLIC_COMMISSION_RATE || '0.10');
+        const commission = Math.round((saleAmount || 0) * commissionRate * 100) / 100;
+
+        await sendTelegramSaleCelebration({
+          referralId: id,
+          buyerName: referral['Buyer Name'] || 'Unknown buyer',
+          rancherName,
+          saleAmount: saleAmount || 0,
+          commission,
+          isFirstSaleForRancher,
+          monthlyWins: monthlyWins.length,
+          monthlyCommission,
+          lifetimeWins: rancherWins.length,
+          lifetimeCommission,
+        });
+      } catch (e) {
+        console.error('Sale celebration notification error:', e);
+      }
+    }
 
     return NextResponse.json({ success: true, referral: updated });
   } catch (error: any) {

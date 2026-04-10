@@ -253,6 +253,51 @@ ${phoneLine}
   return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
 }
 
+// Big celebration when a referral closes won. If isFirstSaleForRancher is true,
+// the message goes extra loud — that's a milestone we want Ben to feel.
+export async function sendTelegramSaleCelebration(data: {
+  referralId: string;
+  buyerName: string;
+  rancherName: string;
+  saleAmount: number;
+  commission: number;
+  isFirstSaleForRancher: boolean;
+  monthlyWins: number;
+  monthlyCommission: number;
+  lifetimeWins: number;
+  lifetimeCommission: number;
+}) {
+  const banner = data.isFirstSaleForRancher
+    ? `🎉🎉🎉 <b>FIRST SALE — ${data.rancherName.toUpperCase()}</b> 🎉🎉🎉\n\nThis is their first closed deal on BuyHalfCow. Big moment.`
+    : `💰 <b>DEAL CLOSED</b> 💰`;
+
+  const message = `${banner}
+
+🤠 Rancher: <b>${data.rancherName}</b>
+👤 Buyer: <b>${data.buyerName}</b>
+💵 Sale: <b>$${data.saleAmount.toLocaleString()}</b>
+💰 Commission: <b>$${data.commission.toLocaleString()}</b>
+
+<b>This Month</b>
+✅ ${data.monthlyWins} deal${data.monthlyWins === 1 ? '' : 's'} closed
+💰 $${data.monthlyCommission.toLocaleString()} earned
+
+<b>Lifetime</b>
+✅ ${data.lifetimeWins} deals
+💰 $${data.lifetimeCommission.toLocaleString()} total commission`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '💰 Mark Paid', callback_data: `markpaid_${data.referralId}` },
+        { text: '🙏 Thank Rancher', callback_data: `thankrancher_${data.referralId}` },
+      ],
+    ],
+  };
+
+  return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
+}
+
 export async function sendTelegramUpdate(text: string) {
   return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, text);
 }
