@@ -2433,6 +2433,70 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
         }
       }
 
+      // ─── /scout — autonomous business sweep (L3b) ────────────────────────
+      // AI investigates the entire business state via tool calls and produces
+      // a prioritized action list. Designed to be run on demand or by cron.
+      else if (text === '/scout') {
+        if (!process.env.ANTHROPIC_API_KEY) {
+          await sendTelegramMessage(chatId, '⚠️ /scout requires ANTHROPIC_API_KEY.');
+          return NextResponse.json({ ok: true });
+        }
+
+        await sendTelegramMessage(chatId, '🔍 <b>Scouting…</b> AI is sweeping the business now. Hang on ~30s.');
+
+        try {
+          const { callClaudeWithTools } = await import('@/lib/ai');
+          const sweepPrompt = `Do a complete sweep of the BuyHalfCow business right now. Use your tools to investigate:
+
+1. How many pending consumers need approval?
+2. How many referrals are stalled (5+ days no movement)?
+3. What's revenue this month vs lifetime?
+4. Are any ranchers near capacity (80%+ utilization)?
+5. Are there approved Beef Buyers without an active referral? Which states?
+
+Then produce a prioritized action list in this exact format:
+
+🎯 TOP PRIORITY (do today)
+1. [specific action with name/ID]
+2. [specific action]
+3. [specific action]
+
+⚠️ AT RISK
+• [specific concerns with names/numbers]
+
+✅ ALL GOOD
+• [things that are healthy, brief]
+
+📊 BY THE NUMBERS
+• Pending: X | Stalled: X | Unmatched buyers: X
+• This month: $X commission, X deals
+• Capacity: X/Y ranchers near full
+
+Be specific. Cite real names and numbers from the tools, not generic advice.`;
+
+          const { text: report, toolCalls } = await callClaudeWithTools({
+            model: 'claude-sonnet-4-6',
+            system: `You are Ben's AI business operator for BuyHalfCow. You have read-only tools to investigate the business. Always use the tools to get fresh data — never speculate. Be specific, cite names and numbers, and recommend concrete next actions.`,
+            user: sweepPrompt,
+            maxTokens: 2048,
+            maxIterations: 8,
+          });
+
+          const cleaned = (report || '(no report)')
+            .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+            .replace(/\*(.*?)\*/g, '<i>$1</i>')
+            .replace(/`(.*?)`/g, '<code>$1</code>');
+
+          const toolsUsed = [...new Set(toolCalls.map(t => t.name))].join(', ');
+          await sendTelegramMessage(
+            chatId,
+            `🔍 <b>SCOUT REPORT</b>\n\n${cleaned}\n\n<i>🔧 Tools used: ${toolsUsed || 'none'}</i>`
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /scout failed: ${e.message}`);
+        }
+      }
+
       else if (text === '/qualify') {
         if (!AI_CONFIGURED) {
           await sendTelegramMessage(chatId, '⚠️ AI not configured. Set OLLAMA_BASE_URL or ANTHROPIC_API_KEY.');
@@ -3146,7 +3210,8 @@ Confirm send?`;
 /email draft campaign [seg] [topic] — AI drafts a broadcast campaign
 
 <b>🧠 AI</b> — autonomous tasks
-/ask [question] — AI investigates the business and answers (uses tools)
+/scout — AI sweeps the business and produces an action list (~30s)
+/ask [question] — AI investigates and answers in plain English
 /qualify — AI scores pending leads (3 at a time, with approve/reject/watch buttons)
 /chasup — Find stalled referrals + AI-draft re-engagement emails
 
