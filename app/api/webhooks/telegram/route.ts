@@ -2413,6 +2413,21 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
             : '';
 
           await sendTelegramMessage(chatId, `🧠 <b>Answer</b>\n\n${cleaned}${toolSummary}`);
+
+          // If the AI staged any email drafts, surface each one with confirm buttons
+          for (const tc of toolCalls) {
+            if (tc.name === 'draft_email_for_consumer' && tc.output?.requiresConfirmation) {
+              const draftMsg = `✉️ <b>AI DRAFTED EMAIL</b>\n\n<b>To:</b> ${tc.output.consumerName} &lt;${tc.output.consumerEmail}&gt;\n<b>Subject:</b> ${tc.output.subject}\n\n${tc.output.body}`;
+              const keyboard = {
+                inline_keyboard: [[
+                  { text: '📧 Send Now', callback_data: `draftfollowup_send_${tc.output.consumerId}` },
+                  { text: '⏰ Tomorrow', callback_data: `draftfollowup_sched_${tc.output.consumerId}` },
+                  { text: '🗑️ Discard', callback_data: `draftfollowup_disc_${tc.output.consumerId}` },
+                ]],
+              };
+              await sendTelegramMessage(chatId, draftMsg, keyboard);
+            }
+          }
         } catch (e: any) {
           await sendTelegramMessage(chatId, `⚠️ /ask failed: ${e.message}`);
         }

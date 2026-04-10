@@ -7,7 +7,7 @@
 // To add a write tool: define schema, implement, add to TOOLS — but make
 // sure the caller fires a Telegram confirmation button before executing.
 
-import { getAllRecords, getRecordById, escapeAirtableValue, TABLES } from './airtable';
+import { getAllRecords, getRecordById, updateRecord, escapeAirtableValue, TABLES } from './airtable';
 
 export type ToolSchema = {
   name: string;
@@ -198,6 +198,62 @@ async function getUnmatchedBuyers(input: { state?: string; limit?: number }) {
   };
 }
 
+// ─── Write tools (low-risk, reversible) ──────────────────────────────────
+
+async function addNoteToConsumer(input: { consumerId: string; note: string }) {
+  if (!input.consumerId || !input.note) return { error: 'consumerId and note required' };
+  try {
+    const c = await getRecordById(TABLES.CONSUMERS, input.consumerId) as any;
+    const stamp = new Date().toLocaleString('en-US', { timeZone: 'America/Denver', dateStyle: 'short' });
+    const newNotes = `${c['Notes'] || ''}${c['Notes'] ? '\n' : ''}[AI ${stamp}] ${input.note}`.trim();
+    await updateRecord(TABLES.CONSUMERS, input.consumerId, { 'Notes': newNotes });
+    return { ok: true, message: `Note added to ${c['Full Name'] || input.consumerId}` };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function addNoteToRancher(input: { rancherId: string; note: string }) {
+  if (!input.rancherId || !input.note) return { error: 'rancherId and note required' };
+  try {
+    const r = await getRecordById(TABLES.RANCHERS, input.rancherId) as any;
+    const stamp = new Date().toLocaleString('en-US', { timeZone: 'America/Denver', dateStyle: 'short' });
+    const newNotes = `${r['Notes'] || ''}${r['Notes'] ? '\n' : ''}[AI ${stamp}] ${input.note}`.trim();
+    await updateRecord(TABLES.RANCHERS, input.rancherId, { 'Notes': newNotes });
+    return { ok: true, message: `Note added to ${r['Operator Name'] || r['Ranch Name'] || input.rancherId}` };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+// Stages a personalized email in the consumer's AI Email Draft fields. The
+// caller (Telegram /ask handler) then surfaces it with the existing
+// draftfollowup_send/sched/disc buttons so Ben can review before sending.
+async function draftEmailForConsumer(input: { consumerId: string; subject: string; body: string }) {
+  if (!input.consumerId || !input.subject || !input.body) {
+    return { error: 'consumerId, subject, and body required' };
+  }
+  try {
+    const c = await getRecordById(TABLES.CONSUMERS, input.consumerId) as any;
+    await updateRecord(TABLES.CONSUMERS, input.consumerId, {
+      'AI Email Draft': input.body,
+      'AI Email Draft Subject': input.subject,
+    });
+    return {
+      ok: true,
+      message: `Draft staged for ${c['Full Name'] || input.consumerId}. Use the Send/Tomorrow/Discard buttons.`,
+      consumerId: input.consumerId,
+      consumerName: c['Full Name'],
+      consumerEmail: c['Email'],
+      subject: input.subject,
+      body: input.body,
+      requiresConfirmation: true,
+    };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
 // ─── Schemas (Anthropic tool-use format) ──────────────────────────────────
 
 export const TOOLS: ToolSchema[] = [
@@ -280,6 +336,43 @@ export const TOOLS: ToolSchema[] = [
       },
     },
   },
+  {
+    name: 'add_note_to_consumer',
+    description: 'Append a timestamped note to a consumer record. Use to log observations, follow-up reminders, or context. Reversible by editing Airtable.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        consumerId: { type: 'string', description: 'Airtable record ID (looks like recXXX)' },
+        note: { type: 'string', description: 'The note to append' },
+      },
+      required: ['consumerId', 'note'],
+    },
+  },
+  {
+    name: 'add_note_to_rancher',
+    description: 'Append a timestamped note to a rancher record. Use to log call notes, observations, or follow-up reminders.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        rancherId: { type: 'string', description: 'Airtable record ID (looks like recXXX)' },
+        note: { type: 'string', description: 'The note to append' },
+      },
+      required: ['rancherId', 'note'],
+    },
+  },
+  {
+    name: 'draft_email_for_consumer',
+    description: 'Stage a personalized email draft for a consumer. The draft is saved to Airtable AI Email Draft fields and a Telegram message will surface it with Send/Tomorrow/Discard buttons. The user MUST confirm before the email actually sends — never claim the email was sent.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        consumerId: { type: 'string', description: 'Airtable record ID' },
+        subject: { type: 'string', description: 'Email subject line' },
+        body: { type: 'string', description: 'Email body. Plain text, line breaks for paragraphs. Sign as "— Benjamin".' },
+      },
+      required: ['consumerId', 'subject', 'body'],
+    },
+  },
 ];
 
 const TOOL_IMPLS: Record<string, ToolImpl> = {
@@ -291,6 +384,9 @@ const TOOL_IMPLS: Record<string, ToolImpl> = {
   lookup_consumer: lookupConsumer,
   lookup_rancher: lookupRancher,
   get_unmatched_buyers: getUnmatchedBuyers,
+  add_note_to_consumer: addNoteToConsumer,
+  add_note_to_rancher: addNoteToRancher,
+  draft_email_for_consumer: draftEmailForConsumer,
 };
 
 export async function runTool(name: string, input: any): Promise<any> {
