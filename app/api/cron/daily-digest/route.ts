@@ -125,7 +125,21 @@ SUGGESTED ACTIONS:
         .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
         .replace(/^(TOP 3 PRIORITIES:|AT RISK:|SUGGESTED ACTIONS:)/gm, '<b>$1</b>')}`;
 
-      await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, briefMsg);
+      // Inline action buttons — one-tap drill-down from morning notification
+      const briefKeyboard = {
+        inline_keyboard: [
+          [
+            { text: '📋 Pending Leads', callback_data: 'brief_leads' },
+            { text: '🔥 Stalled Refs', callback_data: 'brief_stalled' },
+          ],
+          [
+            { text: '💰 Revenue', callback_data: 'brief_money' },
+            { text: '📊 Pipeline', callback_data: 'brief_pipeline' },
+          ],
+        ],
+      };
+
+      await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, briefMsg, briefKeyboard);
     } catch (aiErr: any) {
       console.warn('AI brief skipped:', aiErr.message);
     }

@@ -1696,6 +1696,114 @@ Source: ${c['Source'] || 'organic'}`;
         }
       }
 
+      // ─── Morning brief drill-down buttons ───────────────────────────────────
+      // Tapping a button on the daily AI brief fires a fresh fetch and replies inline.
+      else if (callbackData === 'brief_leads' && chatId) {
+        await answerCallbackQuery(queryId, 'Loading…');
+        try {
+          const refs = await getAllRecords(TABLES.REFERRALS, '{Status} = "Pending Approval"');
+          if (refs.length === 0) {
+            await sendTelegramMessage(chatId, '✅ No pending referrals — all caught up.');
+          } else {
+            let msg = `📋 <b>${refs.length} Pending Referral${refs.length > 1 ? 's' : ''}</b>\n\n`;
+            for (const ref of (refs as any[]).slice(0, 10)) {
+              msg += `• ${ref['Buyer Name']} (${ref['Buyer State']}) — ${ref['Intent Classification'] || 'unknown'} intent\n`;
+            }
+            if (refs.length > 10) msg += `\n…and ${refs.length - 10} more`;
+            msg += `\n\nFull list: ${SITE_URL}/admin/referrals`;
+            await sendTelegramMessage(chatId, msg);
+          }
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ Couldn't load leads: ${e.message}`);
+        }
+      }
+
+      else if (callbackData === 'brief_stalled' && chatId) {
+        await answerCallbackQuery(queryId, 'Loading…');
+        try {
+          const refs = await getAllRecords(TABLES.REFERRALS);
+          const fiveDaysMs = 5 * 24 * 60 * 60 * 1000;
+          const stalled = (refs as any[]).filter((r) => {
+            if (!['Intro Sent', 'Rancher Contacted'].includes(r['Status'])) return false;
+            const lastActivity = r['Last Chased At'] || r['Intro Sent At'] || r['Approved At'];
+            if (!lastActivity) return false;
+            return (Date.now() - new Date(lastActivity).getTime()) >= fiveDaysMs;
+          });
+          if (stalled.length === 0) {
+            await sendTelegramMessage(chatId, '✅ No stalled referrals — every active deal is fresh.');
+          } else {
+            let msg = `🔥 <b>${stalled.length} Stalled Referral${stalled.length > 1 ? 's' : ''}</b> (5+ days no movement)\n\n`;
+            for (const r of stalled.slice(0, 10)) {
+              const lastActivity = r['Last Chased At'] || r['Intro Sent At'] || r['Approved At'];
+              const days = Math.floor((Date.now() - new Date(lastActivity).getTime()) / (24 * 60 * 60 * 1000));
+              msg += `• ${r['Buyer Name']} (${r['Buyer State']}) — ${days}d, ${r['Status']}\n`;
+            }
+            if (stalled.length > 10) msg += `\n…and ${stalled.length - 10} more`;
+            msg += `\n\nRun /chasup to draft re-engagement emails.`;
+            await sendTelegramMessage(chatId, msg);
+          }
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ Couldn't load stalled refs: ${e.message}`);
+        }
+      }
+
+      else if (callbackData === 'brief_money' && chatId) {
+        await answerCallbackQuery(queryId, 'Loading…');
+        try {
+          const refs = await getAllRecords(TABLES.REFERRALS);
+          const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+          const monthWins = (refs as any[]).filter((r) => {
+            const closed = new Date(r['Closed At'] || 0);
+            return closed >= monthStart && r['Status'] === 'Closed Won';
+          });
+          const monthCommission = monthWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
+          const allWins = (refs as any[]).filter((r) => r['Status'] === 'Closed Won');
+          const lifetimeCommission = allWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
+          const unpaid = allWins.filter((r) => !r['Commission Paid']).reduce((s, r) => s + (r['Commission Due'] || 0), 0);
+          const msg = `💰 <b>Revenue</b>\n\n` +
+            `<b>This Month</b>\n` +
+            `• Deals closed: ${monthWins.length}\n` +
+            `• Commission earned: $${monthCommission.toLocaleString()}\n\n` +
+            `<b>Lifetime</b>\n` +
+            `• Total wins: ${allWins.length}\n` +
+            `• Total commission: $${lifetimeCommission.toLocaleString()}\n` +
+            `• Unpaid: $${unpaid.toLocaleString()}`;
+          await sendTelegramMessage(chatId, msg);
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ Couldn't load revenue: ${e.message}`);
+        }
+      }
+
+      else if (callbackData === 'brief_pipeline' && chatId) {
+        await answerCallbackQuery(queryId, 'Loading…');
+        try {
+          const refs = await getAllRecords(TABLES.REFERRALS);
+          const stages: Record<string, number> = {};
+          for (const r of refs as any[]) {
+            const status = r['Status'] || 'Unknown';
+            stages[status] = (stages[status] || 0) + 1;
+          }
+          const order = ['Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Negotiation', 'Closed Won', 'Closed Lost', 'Dormant', 'Reassigned'];
+          let msg = `📊 <b>Referral Pipeline</b>\n\nTotal: ${refs.length}\n`;
+          for (const stage of order) {
+            if (stages[stage]) {
+              const bar = '█'.repeat(Math.min(stages[stage], 20));
+              msg += `\n${stage}: <b>${stages[stage]}</b> ${bar}`;
+              delete stages[stage];
+            }
+          }
+          for (const [stage, count] of Object.entries(stages)) {
+            if (stage !== 'Unknown') {
+              const bar = '█'.repeat(Math.min(count, 20));
+              msg += `\n${stage}: <b>${count}</b> ${bar}`;
+            }
+          }
+          await sendTelegramMessage(chatId, msg);
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ Couldn't load pipeline: ${e.message}`);
+        }
+      }
+
       return NextResponse.json({ ok: true });
     }
 
