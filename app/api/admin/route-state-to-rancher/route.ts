@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { getAllRecords, updateRecord, createRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
@@ -16,10 +17,15 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 //   - Updates the latest stuck referral to Intro Sent, points at target rancher, sends intro emails
 //   - Creates fresh Intro Sent referrals for Unmatched/Waitlisted consumers, sends intro emails
 // Call: GET /api/admin/route-state-to-rancher?password=ADMIN_PASSWORD&state=CO&slug=the-high-lonesome-ranch
+// OR: visit in a browser tab where you're already logged into /admin (cookie auth)
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const pw = searchParams.get('password');
-  if (pw !== process.env.ADMIN_PASSWORD) {
+  const cookieStore = await cookies();
+  const adminCookie = cookieStore.get('bhc-admin-auth');
+  const isAdminCookie = adminCookie?.value === 'authenticated';
+  const isPasswordOk = !!pw && pw === process.env.ADMIN_PASSWORD;
+  if (!isAdminCookie && !isPasswordOk) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
