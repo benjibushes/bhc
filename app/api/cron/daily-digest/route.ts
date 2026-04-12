@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
 
 export const maxDuration = 60;
@@ -147,6 +147,7 @@ SUGGESTED ACTIONS:
     return NextResponse.json({ success: true, message: 'Daily digest sent' });
   } catch (error: any) {
     console.error('Daily digest error:', error);
+    await sendTelegramUpdate(`⚠️ Daily digest cron failed: ${error.message}`).catch(() => {});
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }

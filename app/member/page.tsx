@@ -123,10 +123,10 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
 
   if (loading) {
     return (
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="text-center">
-            <div className="inline-block w-8 h-8 border-4 border-charcoal-black border-t-transparent rounded-full animate-spin" />
+            <div className="inline-block w-8 h-8 border-4 border-charcoal border-t-transparent rounded-full animate-spin" />
           </div>
         </Container>
       </main>
@@ -135,12 +135,12 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
 
   if (fetchError && !data) {
     return (
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-md mx-auto text-center space-y-6">
             <h1 className="font-serif text-3xl">Unable to Load</h1>
-            <p className="text-saddle-brown">We couldn&apos;t load your dashboard. Please check your connection and try again.</p>
-            <button onClick={fetchContent} className="px-6 py-3 bg-charcoal-black text-bone-white hover:bg-opacity-80 transition-colors uppercase tracking-wider text-sm font-semibold">
+            <p className="text-saddle">We couldn&apos;t load your dashboard. Please check your connection and try again.</p>
+            <button onClick={fetchContent} className="px-6 py-3 bg-charcoal text-bone hover:bg-opacity-80 transition-colors uppercase tracking-wider text-sm font-semibold">
               Retry
             </button>
           </div>
@@ -157,7 +157,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   ];
 
   return (
-    <main className="min-h-screen py-12 bg-bone-white text-charcoal-black">
+    <main className="min-h-screen py-12 bg-bone text-charcoal">
       <Container>
         <div className="space-y-8">
           {/* Header */}
@@ -166,13 +166,13 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
               <h1 className="font-serif text-3xl md:text-4xl">
                 Welcome back, {member.name.split(' ')[0]}
               </h1>
-              <p className="text-saddle-brown mt-1">
+              <p className="text-saddle mt-1">
                 {member.state} Member
               </p>
             </div>
             <button
               onClick={handleLogout}
-              className="text-sm text-dust-gray hover:text-charcoal-black transition-colors"
+              className="text-sm text-dust hover:text-charcoal transition-colors"
             >
               Log out
             </button>
@@ -188,8 +188,8 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 onClick={() => setActiveTab(tab.key)}
                 className={`px-4 py-2 text-sm font-medium tracking-wider uppercase transition-colors ${
                   activeTab === tab.key
-                    ? 'bg-charcoal-black text-bone-white'
-                    : 'border border-dust-gray hover:bg-charcoal-black hover:text-bone-white'
+                    ? 'bg-charcoal text-bone'
+                    : 'border border-dust hover:bg-charcoal hover:text-bone'
                 }`}
               >
                 {tab.label}
@@ -207,35 +207,35 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   {data.memberReferrals.map((ref) => {
                     const statusInfo = statusLabels[ref.status] || { label: ref.status, style: 'bg-gray-100 text-gray-600' };
                     return (
-                      <div key={ref.id} className="p-6 border border-dust-gray bg-white">
+                      <div key={ref.id} className="p-6 border border-dust bg-white">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                           <div>
                             <span className={`inline-block px-3 py-1 text-xs font-medium uppercase tracking-wider ${statusInfo.style}`}>
                               {statusInfo.label}
                             </span>
                             {ref.rancher_name && (
-                              <p className="mt-2 text-sm text-saddle-brown">
-                                Matched with: <strong className="text-charcoal-black">{ref.rancher_name}</strong>
+                              <p className="mt-2 text-sm text-saddle">
+                                Matched with: <strong className="text-charcoal">{ref.rancher_name}</strong>
                               </p>
                             )}
                           </div>
-                          <p className="text-xs text-dust-gray">
+                          <p className="text-xs text-dust">
                             {ref.created_at ? new Date(ref.created_at).toLocaleDateString() : ''}
                           </p>
                         </div>
 
                         {ref.status === 'Pending Approval' && (
-                          <p className="mt-3 text-sm text-saddle-brown">
+                          <p className="mt-3 text-sm text-saddle">
                             We&apos;re finding the best rancher match for you. You&apos;ll receive an email introduction soon.
                           </p>
                         )}
                         {ref.status === 'Waitlisted' && (
-                          <p className="mt-3 text-sm text-saddle-brown">
+                          <p className="mt-3 text-sm text-saddle">
                             We don&apos;t have a certified rancher in your area yet, but we&apos;re actively onboarding. You&apos;ll be first to know when one goes live.
                           </p>
                         )}
                         {ref.status === 'Intro Sent' && (
-                          <p className="mt-3 text-sm text-saddle-brown">
+                          <p className="mt-3 text-sm text-saddle">
                             Your rancher has been introduced. Check your email for their contact details.
                           </p>
                         )}
@@ -244,11 +244,11 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   })}
                 </div>
               ) : (
-                <div className="p-8 border border-dust-gray text-center bg-white">
-                  <p className="text-saddle-brown mb-4">
+                <div className="p-8 border border-dust text-center bg-white">
+                  <p className="text-saddle mb-4">
                     No active referrals yet. We&apos;re working on matching you with a rancher in {data?.memberState || 'your state'}.
                   </p>
-                  <p className="text-sm text-dust-gray">
+                  <p className="text-sm text-dust">
                     You&apos;ll receive an email when a match is found.
                   </p>
                 </div>
@@ -256,18 +256,18 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
 
               {/* Order details card — shows for anyone who hasn't told us what they want */}
               {data && !data.hasOrderDetails && !upgradeSuccess && (
-                <div className="p-6 border-2 border-charcoal-black bg-white space-y-4">
+                <div className="p-6 border-2 border-charcoal bg-white space-y-4">
                   <h3 className="font-serif text-xl">What Are You Looking For?</h3>
-                  <p className="text-sm text-saddle-brown">
+                  <p className="text-sm text-saddle">
                     Tell us what you want and we&apos;ll match you with the right rancher. Takes 30 seconds.
                   </p>
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-saddle-brown mb-1 uppercase tracking-wider">Order Size</label>
+                      <label className="block text-xs font-medium text-saddle mb-1 uppercase tracking-wider">Order Size</label>
                       <select
                         value={upgradeForm.orderType}
                         onChange={(e) => setUpgradeForm(prev => ({ ...prev, orderType: e.target.value }))}
-                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white text-sm"
+                        className="w-full px-3 py-2 border border-dust bg-bone text-sm"
                       >
                         <option value="">Select...</option>
                         <option value="Quarter">Quarter Cow</option>
@@ -277,11 +277,11 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-saddle-brown mb-1 uppercase tracking-wider">Budget</label>
+                      <label className="block text-xs font-medium text-saddle mb-1 uppercase tracking-wider">Budget</label>
                       <select
                         value={upgradeForm.budgetRange}
                         onChange={(e) => setUpgradeForm(prev => ({ ...prev, budgetRange: e.target.value }))}
-                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white text-sm"
+                        className="w-full px-3 py-2 border border-dust bg-bone text-sm"
                       >
                         <option value="">Select...</option>
                         <option value="<$500">Under $500</option>
@@ -295,7 +295,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   <button
                     onClick={handleUpgradeIntent}
                     disabled={!upgradeForm.orderType || upgrading}
-                    className="px-6 py-3 bg-charcoal-black text-bone-white hover:bg-opacity-80 transition-colors uppercase tracking-wider text-sm font-semibold disabled:opacity-50"
+                    className="px-6 py-3 bg-charcoal text-bone hover:bg-opacity-80 transition-colors uppercase tracking-wider text-sm font-semibold disabled:opacity-50"
                   >
                     {upgrading ? 'Submitting...' : 'Match Me With a Rancher'}
                   </button>
@@ -312,17 +312,17 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
               <Divider />
 
               <div className="grid md:grid-cols-3 gap-6">
-                <div className="p-6 border border-dust-gray bg-white text-center">
+                <div className="p-6 border border-dust bg-white text-center">
                   <div className="font-serif text-3xl">{data?.stateRanchers?.length || 0}</div>
-                  <p className="text-sm text-saddle-brown mt-1">Ranchers in {data?.memberState}</p>
+                  <p className="text-sm text-saddle mt-1">Ranchers in {data?.memberState}</p>
                 </div>
-                <div className="p-6 border border-dust-gray bg-white text-center">
+                <div className="p-6 border border-dust bg-white text-center">
                   <div className="font-serif text-3xl">{data?.landDeals?.length || 0}</div>
-                  <p className="text-sm text-saddle-brown mt-1">Land Deals Available</p>
+                  <p className="text-sm text-saddle mt-1">Land Deals Available</p>
                 </div>
-                <div className="p-6 border border-dust-gray bg-white text-center">
+                <div className="p-6 border border-dust bg-white text-center">
                   <div className="font-serif text-3xl">{data?.brands?.length || 0}</div>
-                  <p className="text-sm text-saddle-brown mt-1">Active Promotions</p>
+                  <p className="text-sm text-saddle mt-1">Active Promotions</p>
                 </div>
               </div>
             </div>
@@ -343,8 +343,8 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
               )}
 
               {data?.stateRanchers?.length === 0 && (
-                <div className="p-8 border border-dust-gray text-center bg-white">
-                  <p className="text-saddle-brown">
+                <div className="p-8 border border-dust text-center bg-white">
+                  <p className="text-saddle">
                     No certified ranchers in {data.memberState} yet. We&apos;re actively onboarding ranchers in your area.
                   </p>
                 </div>
@@ -371,13 +371,13 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
               {data?.landDeals && data.landDeals.length > 0 ? (
                 <div className="space-y-6">
                   {data.landDeals.map((deal) => (
-                    <div key={deal.id} className="p-6 border border-dust-gray bg-white space-y-4">
+                    <div key={deal.id} className="p-6 border border-dust bg-white space-y-4">
                       <div className="flex justify-between items-start">
                         <div>
                           <h3 className="font-serif text-xl">
                             {deal.Acreage} Acres — {deal['Property Location'] || deal.State}
                           </h3>
-                          <p className="text-sm text-saddle-brown">{deal.State} &middot; {deal['Property Type']}</p>
+                          <p className="text-sm text-saddle">{deal.State} &middot; {deal['Property Type']}</p>
                         </div>
                         <span className="font-serif text-xl">{deal['Asking Price']}</span>
                       </div>
@@ -386,8 +386,8 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   ))}
                 </div>
               ) : (
-                <div className="p-8 border border-dust-gray text-center bg-white">
-                  <p className="text-saddle-brown">No land deals available right now. Check back soon.</p>
+                <div className="p-8 border border-dust text-center bg-white">
+                  <p className="text-saddle">No land deals available right now. Check back soon.</p>
                 </div>
               )}
             </div>
@@ -400,19 +400,19 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
               {data?.brands && data.brands.length > 0 ? (
                 <div className="grid md:grid-cols-2 gap-6">
                   {data.brands.map((brand) => (
-                    <div key={brand.id} className="p-6 border border-dust-gray bg-white space-y-4">
+                    <div key={brand.id} className="p-6 border border-dust bg-white space-y-4">
                       <h3 className="font-serif text-xl">{brand['Brand Name']}</h3>
-                      <p className="text-sm text-saddle-brown">{brand['Product Type']}</p>
+                      <p className="text-sm text-saddle">{brand['Product Type']}</p>
                       <Divider />
                       {brand['Promotion Details'] && <p className="text-sm leading-relaxed">{brand['Promotion Details']}</p>}
                       {brand['Discount Offered'] > 0 && (
-                        <span className="inline-block px-4 py-2 bg-charcoal-black text-bone-white font-medium text-sm">
+                        <span className="inline-block px-4 py-2 bg-charcoal text-bone font-medium text-sm">
                           {brand['Discount Offered']}% OFF
                         </span>
                       )}
                       {brand.Website && (
                         <div>
-                          <a href={brand.Website} target="_blank" rel="noopener noreferrer" className="text-sm text-charcoal-black hover:text-saddle-brown transition-colors">
+                          <a href={brand.Website} target="_blank" rel="noopener noreferrer" className="text-sm text-charcoal hover:text-saddle transition-colors">
                             Visit Website →
                           </a>
                         </div>
@@ -421,8 +421,8 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   ))}
                 </div>
               ) : (
-                <div className="p-8 border border-dust-gray text-center bg-white">
-                  <p className="text-saddle-brown">No active promotions right now. Check back soon.</p>
+                <div className="p-8 border border-dust text-center bg-white">
+                  <p className="text-saddle">No active promotions right now. Check back soon.</p>
                 </div>
               )}
             </div>
@@ -431,7 +431,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
           <Divider />
 
           <div className="text-center">
-            <Link href="/" className="text-saddle-brown hover:text-charcoal-black transition-colors text-sm">
+            <Link href="/" className="text-saddle hover:text-charcoal transition-colors text-sm">
               ← Back to home
             </Link>
           </div>
@@ -451,24 +451,24 @@ function RancherCard({ rancher }: { rancher: Rancher }) {
   };
 
   return (
-    <div className="p-6 border border-dust-gray bg-white space-y-4">
+    <div className="p-6 border border-dust bg-white space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="font-serif text-xl">{rancher['Ranch Name']}</h3>
-          <p className="text-sm text-saddle-brown">Operator: {rancher['Operator Name']}</p>
+          <p className="text-sm text-saddle">Operator: {rancher['Operator Name']}</p>
         </div>
         {rancher.Certified && (
-          <span className="px-3 py-1 bg-charcoal-black text-bone-white text-xs font-medium uppercase tracking-wider">
+          <span className="px-3 py-1 bg-charcoal text-bone text-xs font-medium uppercase tracking-wider">
             Certified
           </span>
         )}
       </div>
       <div className="grid md:grid-cols-2 gap-3 text-sm">
-        <div><span className="text-saddle-brown">Location:</span> {rancher.State}</div>
-        <div><span className="text-saddle-brown">Capacity:</span> {rancher['Monthly Capacity']} head/month</div>
-        <div className="md:col-span-2"><span className="text-saddle-brown">Beef Types:</span> {rancher['Beef Types']}</div>
+        <div><span className="text-saddle">Location:</span> {rancher.State}</div>
+        <div><span className="text-saddle">Capacity:</span> {rancher['Monthly Capacity']} head/month</div>
+        <div className="md:col-span-2"><span className="text-saddle">Beef Types:</span> {rancher['Beef Types']}</div>
         {rancher.Certifications && (
-          <div className="md:col-span-2"><span className="text-saddle-brown">Certifications:</span> {rancher.Certifications}</div>
+          <div className="md:col-span-2"><span className="text-saddle">Certifications:</span> {rancher.Certifications}</div>
         )}
       </div>
       <div className="pt-2">

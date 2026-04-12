@@ -2437,24 +2437,43 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
       // AI investigates the entire business state via tool calls and produces
       // a prioritized action list. Designed to be run on demand or by cron.
       else if (text === '/scout') {
-        if (!process.env.ANTHROPIC_API_KEY) {
-          await sendTelegramMessage(chatId, '⚠️ /scout requires ANTHROPIC_API_KEY.');
+        if (!AI_CONFIGURED) {
+          await sendTelegramMessage(chatId, '⚠️ AI not configured. Set OLLAMA_BASE_URL, GROQ_API_KEY, or ANTHROPIC_API_KEY.');
           return NextResponse.json({ ok: true });
         }
 
         await sendTelegramMessage(chatId, '🔍 <b>Scouting…</b> AI is sweeping the business now. Hang on ~30s.');
 
         try {
-          const { callClaudeWithTools } = await import('@/lib/ai');
-          const sweepPrompt = `Do a complete sweep of the BuyHalfCow business right now. Use your tools to investigate:
+          // Pre-fetch all data in parallel (no tool-use loop needed = works with free AI)
+          const { runTool } = await import('@/lib/aiTools');
+          const [pending, stalledRefs, revenue, capacity, unmatched] = await Promise.all([
+            runTool('get_pending_consumers', { limit: 20 }),
+            runTool('get_stalled_referrals', { minDays: 5, limit: 20 }),
+            runTool('get_revenue_summary', {}),
+            runTool('get_rancher_capacity', { onlyNearCapacity: false }),
+            runTool('get_unmatched_buyers', { limit: 30 }),
+          ]);
 
-1. How many pending consumers need approval?
-2. How many referrals are stalled (5+ days no movement)?
-3. What's revenue this month vs lifetime?
-4. Are any ranchers near capacity (80%+ utilization)?
-5. Are there approved Beef Buyers without an active referral? Which states?
+          const dataBlock = `
+PENDING CONSUMERS (Status=Pending, awaiting approval):
+${JSON.stringify(pending, null, 2)}
 
-Then produce a prioritized action list in this exact format:
+STALLED REFERRALS (5+ days no movement):
+${JSON.stringify(stalledRefs, null, 2)}
+
+REVENUE SUMMARY:
+${JSON.stringify(revenue, null, 2)}
+
+RANCHER CAPACITY:
+${JSON.stringify(capacity, null, 2)}
+
+UNMATCHED BEEF BUYERS (approved but no referral):
+${JSON.stringify(unmatched, null, 2)}`;
+
+          const report = await callClaude({
+            system: `You are Ben's AI business operator for BuyHalfCow. You have been given a fresh data dump of the entire business state. Analyze it and produce a prioritized action list. Be specific — cite real names, numbers, and IDs from the data. Do NOT ask for more data.`,
+            user: `Here is the current BuyHalfCow business state:\n${dataBlock}\n\nProduce your report in this exact format:
 
 🎯 TOP PRIORITY (do today)
 1. [specific action with name/ID]
@@ -2472,14 +2491,8 @@ Then produce a prioritized action list in this exact format:
 • This month: $X commission, X deals
 • Capacity: X/Y ranchers near full
 
-Be specific. Cite real names and numbers from the tools, not generic advice.`;
-
-          const { text: report, toolCalls } = await callClaudeWithTools({
-            model: 'claude-sonnet-4-6',
-            system: `You are Ben's AI business operator for BuyHalfCow. You have read-only tools to investigate the business. Always use the tools to get fresh data — never speculate. Be specific, cite names and numbers, and recommend concrete next actions.`,
-            user: sweepPrompt,
+Be specific and concise. No fluff.`,
             maxTokens: 2048,
-            maxIterations: 8,
           });
 
           const cleaned = (report || '(no report)')
@@ -2487,10 +2500,9 @@ Be specific. Cite real names and numbers from the tools, not generic advice.`;
             .replace(/\*(.*?)\*/g, '<i>$1</i>')
             .replace(/`(.*?)`/g, '<code>$1</code>');
 
-          const toolsUsed = [...new Set(toolCalls.map(t => t.name))].join(', ');
           await sendTelegramMessage(
             chatId,
-            `🔍 <b>SCOUT REPORT</b>\n\n${cleaned}\n\n<i>🔧 Tools used: ${toolsUsed || 'none'}</i>`
+            `🔍 <b>SCOUT REPORT</b>\n\n${cleaned}`
           );
         } catch (e: any) {
           await sendTelegramMessage(chatId, `⚠️ /scout failed: ${e.message}`);
@@ -3184,6 +3196,29 @@ Confirm send?`;
         }
       }
 
+      else if (text === '/status') {
+        try {
+          await sendTelegramMessage(chatId, '🔍 Running health checks...');
+          const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+          const cronSecret = process.env.CRON_SECRET || '';
+          const res = await fetch(`${SITE_URL}/api/health?secret=${encodeURIComponent(cronSecret)}`);
+          const data = await res.json();
+          const checks = data.checks || {};
+          const icon = (ok: boolean) => ok ? '✅' : '❌';
+          const ms = (c: any) => c?.ok ? `${c.ms}ms` : (c?.error || 'failed');
+          const statusIcon = data.status === 'healthy' ? '🟢' : data.status === 'degraded' ? '🟡' : '🔴';
+          await sendTelegramMessage(chatId,
+            `${statusIcon} <b>System Status: ${(data.status || 'unknown').toUpperCase()}</b>\n\n` +
+            `${icon(checks.airtable?.ok)} Airtable — ${ms(checks.airtable)}\n` +
+            `${icon(checks.resend?.ok)} Resend — ${ms(checks.resend)}\n` +
+            `${icon(checks.telegram?.ok)} Telegram — ${ms(checks.telegram)}\n` +
+            `${icon(checks.ai?.ok)} AI — ${ms(checks.ai)}`
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `❌ Health check failed: ${e.message}`);
+        }
+      }
+
       else if (text === '/help') {
         const msg = `📖 <b>BuyHalfCow Bot — Command Reference</b>
 
@@ -3215,7 +3250,8 @@ Confirm send?`;
 /qualify — AI scores pending leads (3 at a time, with approve/reject/watch buttons)
 /chasup — Find stalled referrals + AI-draft re-engagement emails
 
-<b>❓ HELP</b>
+<b>⚙️ SYSTEM</b>
+/status — Health check all dependencies (Airtable, Resend, Telegram, AI)
 /start — Welcome + quick tour
 /help — This menu
 

@@ -94,6 +94,7 @@ export async function GET(request: Request) {
     });
   } catch (error: any) {
     console.error('Compliance reminder error:', error);
+    await sendTelegramUpdate(`⚠️ Compliance reminders cron failed: ${error.message}`).catch(() => {});
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }

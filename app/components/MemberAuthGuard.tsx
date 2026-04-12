@@ -46,11 +46,11 @@ export default function MemberAuthGuard({
 
   if (isLoading) {
     return (
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black flex items-center justify-center">
+      <main className="min-h-screen py-24 bg-bone text-charcoal flex items-center justify-center">
         <Container>
           <div className="text-center">
-            <div className="inline-block w-8 h-8 border-4 border-charcoal-black border-t-transparent rounded-full animate-spin" />
-            <p className="mt-4 text-saddle-brown">Loading your dashboard...</p>
+            <div className="inline-block w-8 h-8 border-4 border-charcoal border-t-transparent rounded-full animate-spin" />
+            <p className="mt-4 text-saddle">Loading your dashboard...</p>
           </div>
         </Container>
       </main>

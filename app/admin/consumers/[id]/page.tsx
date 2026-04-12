@@ -155,8 +155,8 @@ export default function ConsumerDetailPage() {
   if (loading) {
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
-          <Container><p className="text-center text-saddle-brown">Loading...</p></Container>
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
+          <Container><p className="text-center text-saddle">Loading...</p></Container>
         </main>
       </AdminAuthGuard>
     );
@@ -165,12 +165,12 @@ export default function ConsumerDetailPage() {
   if (error || !consumer) {
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container>
             <div className="text-center space-y-4">
               <h1 className="font-serif text-3xl">Consumer Not Found</h1>
-              <p className="text-saddle-brown">{error || 'This consumer does not exist.'}</p>
-              <Link href="/admin" className="inline-block px-6 py-3 border border-charcoal-black hover:bg-charcoal-black hover:text-bone-white">
+              <p className="text-saddle">{error || 'This consumer does not exist.'}</p>
+              <Link href="/admin" className="inline-block px-6 py-3 border border-charcoal hover:bg-charcoal hover:text-bone">
                 Back to Admin
               </Link>
             </div>
@@ -188,12 +188,12 @@ export default function ConsumerDetailPage() {
 
   return (
     <AdminAuthGuard>
-      <main className="min-h-screen py-12 bg-bone-white text-charcoal-black">
+      <main className="min-h-screen py-12 bg-bone text-charcoal">
         <Container>
           <div className="max-w-4xl mx-auto space-y-8">
             <div className="flex justify-between items-start">
               <div>
-                <Link href="/admin" className="text-sm text-saddle-brown hover:text-charcoal-black mb-2 inline-block">
+                <Link href="/admin" className="text-sm text-saddle hover:text-charcoal mb-2 inline-block">
                   &larr; Back to Admin
                 </Link>
                 <h1 className="font-serif text-3xl md:text-4xl">
@@ -217,21 +217,21 @@ export default function ConsumerDetailPage() {
             <Divider />
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="p-6 border border-dust-gray bg-white space-y-3">
+              <div className="p-6 border border-dust bg-white space-y-3">
                 <h2 className="font-serif text-xl">Contact</h2>
                 <div className="space-y-2 text-sm">
-                  <p><span className="text-saddle-brown">Email:</span> <a href={`mailto:${consumer.email}`} className="underline">{consumer.email}</a></p>
+                  <p><span className="text-saddle">Email:</span> <a href={`mailto:${consumer.email}`} className="underline">{consumer.email}</a></p>
                   <p>
-                    <span className="text-saddle-brown">Phone:</span>{' '}
+                    <span className="text-saddle">Phone:</span>{' '}
                     {consumer.phone
                       ? <a href={`tel:${consumer.phone}`} className="underline font-medium">{consumer.phone}</a>
-                      : <span className="text-dust-gray">Not provided</span>
+                      : <span className="text-dust">Not provided</span>
                     }
                   </p>
-                  <p><span className="text-saddle-brown">State:</span> {consumer.state || 'N/A'}</p>
-                  <p><span className="text-saddle-brown">Applied:</span> {new Date(consumer.created_at).toLocaleDateString()}</p>
+                  <p><span className="text-saddle">State:</span> {consumer.state || 'N/A'}</p>
+                  <p><span className="text-saddle">Applied:</span> {new Date(consumer.created_at).toLocaleDateString()}</p>
                   {consumer.last_contacted && (
-                    <p><span className="text-saddle-brown">Last Contacted:</span> {new Date(consumer.last_contacted).toLocaleDateString()}</p>
+                    <p><span className="text-saddle">Last Contacted:</span> {new Date(consumer.last_contacted).toLocaleDateString()}</p>
                   )}
                 </div>
                 <div className="flex gap-2 pt-2">
@@ -246,34 +246,34 @@ export default function ConsumerDetailPage() {
                 </div>
               </div>
 
-              <div className="p-6 border border-dust-gray bg-white space-y-3">
+              <div className="p-6 border border-dust bg-white space-y-3">
                 <h2 className="font-serif text-xl">Purchase Intent</h2>
                 <div className="space-y-2 text-sm">
-                  <p><span className="text-saddle-brown">Order Type:</span> {consumer.order_type || 'N/A'}</p>
-                  <p><span className="text-saddle-brown">Budget:</span> {consumer.budget_range || 'N/A'}</p>
-                  <p><span className="text-saddle-brown">Interests:</span> {consumer.interests?.join(', ') || 'N/A'}</p>
-                  {consumer.lead_source && <p><span className="text-saddle-brown">Lead Source:</span> {consumer.lead_source}</p>}
-                  {consumer.campaign && <p><span className="text-saddle-brown">Campaign:</span> {consumer.campaign}</p>}
-                  {consumer.referred_by && <p><span className="text-saddle-brown">Referred by:</span> {consumer.referred_by}</p>}
-                  <p><span className="text-saddle-brown">Referral Status:</span> {consumer.referral_status}</p>
+                  <p><span className="text-saddle">Order Type:</span> {consumer.order_type || 'N/A'}</p>
+                  <p><span className="text-saddle">Budget:</span> {consumer.budget_range || 'N/A'}</p>
+                  <p><span className="text-saddle">Interests:</span> {consumer.interests?.join(', ') || 'N/A'}</p>
+                  {consumer.lead_source && <p><span className="text-saddle">Lead Source:</span> {consumer.lead_source}</p>}
+                  {consumer.campaign && <p><span className="text-saddle">Campaign:</span> {consumer.campaign}</p>}
+                  {consumer.referred_by && <p><span className="text-saddle">Referred by:</span> {consumer.referred_by}</p>}
+                  <p><span className="text-saddle">Referral Status:</span> {consumer.referral_status}</p>
                 </div>
                 {consumer.notes && (
-                  <div className="mt-2 p-3 bg-bone-white text-sm italic">
+                  <div className="mt-2 p-3 bg-bone text-sm italic">
                     &quot;{consumer.notes}&quot;
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="p-6 border border-dust-gray bg-white">
+            <div className="p-6 border border-dust bg-white">
               <h2 className="font-serif text-xl mb-4">Status</h2>
               <div className="flex flex-wrap gap-4">
                 <div>
-                  <label className="block text-xs text-saddle-brown mb-1">Application Status</label>
+                  <label className="block text-xs text-saddle mb-1">Application Status</label>
                   <select
                     value={consumer.status}
                     onChange={(e) => updateStatus('status', e.target.value)}
-                    className="px-4 py-2 border border-dust-gray bg-bone-white text-sm"
+                    className="px-4 py-2 border border-dust bg-bone text-sm"
                   >
                     <option value="Pending">Pending</option>
                     <option value="Approved">Approved</option>
@@ -281,11 +281,11 @@ export default function ConsumerDetailPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-saddle-brown mb-1">Membership</label>
+                  <label className="block text-xs text-saddle mb-1">Membership</label>
                   <select
                     value={consumer.membership}
                     onChange={(e) => updateStatus('membership', e.target.value)}
-                    className="px-4 py-2 border border-dust-gray bg-bone-white text-sm"
+                    className="px-4 py-2 border border-dust bg-bone text-sm"
                   >
                     <option value="none">No Access</option>
                     <option value="active">Active Member</option>
@@ -295,7 +295,7 @@ export default function ConsumerDetailPage() {
               </div>
             </div>
 
-            <div className="p-6 border border-dust-gray bg-white space-y-4">
+            <div className="p-6 border border-dust bg-white space-y-4">
               <h2 className="font-serif text-xl">Quick Actions</h2>
               <div className="flex flex-wrap gap-3">
                 <button
@@ -327,12 +327,12 @@ export default function ConsumerDetailPage() {
 
             {/* AI & Email Sequence */}
             {(consumer.sequence_stage || consumer.ai_qualification_summary || consumer.ai_recommended_action || consumer.ai_email_draft) && (
-              <div className="p-6 border border-dust-gray bg-white space-y-4">
+              <div className="p-6 border border-dust bg-white space-y-4">
                 <h2 className="font-serif text-xl">AI & Email Sequence</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                   {consumer.sequence_stage && (
                     <div>
-                      <span className="text-saddle-brown">Sequence Stage:</span>
+                      <span className="text-saddle">Sequence Stage:</span>
                       <span className="ml-2 px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-800 font-medium">
                         {consumer.sequence_stage}
                       </span>
@@ -340,38 +340,38 @@ export default function ConsumerDetailPage() {
                   )}
                   {consumer.approved_at && (
                     <div>
-                      <span className="text-saddle-brown">Approved At:</span>
+                      <span className="text-saddle">Approved At:</span>
                       <span className="ml-2">{new Date(consumer.approved_at).toLocaleDateString()}</span>
                     </div>
                   )}
                   {consumer.sequence_sent_at && (
                     <div>
-                      <span className="text-saddle-brown">Last Sequence Email:</span>
+                      <span className="text-saddle">Last Sequence Email:</span>
                       <span className="ml-2">{new Date(consumer.sequence_sent_at).toLocaleDateString()}</span>
                     </div>
                   )}
                 </div>
                 {consumer.ai_qualification_summary && (
                   <div>
-                    <p className="text-sm font-medium text-saddle-brown mb-1">AI Qualification Summary</p>
-                    <p className="text-sm bg-bone-white p-3 border-l-2 border-saddle-brown">{consumer.ai_qualification_summary}</p>
+                    <p className="text-sm font-medium text-saddle mb-1">AI Qualification Summary</p>
+                    <p className="text-sm bg-bone p-3 border-l-2 border-saddle">{consumer.ai_qualification_summary}</p>
                   </div>
                 )}
                 {consumer.ai_recommended_action && (
                   <div>
-                    <p className="text-sm font-medium text-saddle-brown mb-1">AI Recommended Action</p>
+                    <p className="text-sm font-medium text-saddle mb-1">AI Recommended Action</p>
                     <p className="text-sm bg-yellow-50 p-3 border-l-2 border-yellow-400 text-yellow-800">{consumer.ai_recommended_action}</p>
                   </div>
                 )}
                 {consumer.ai_email_draft && (
                   <div>
-                    <p className="text-sm font-medium text-saddle-brown mb-1">
+                    <p className="text-sm font-medium text-saddle mb-1">
                       AI Email Draft
                       {consumer.ai_email_draft_subject && (
-                        <span className="ml-2 font-normal text-charcoal-black">— {consumer.ai_email_draft_subject}</span>
+                        <span className="ml-2 font-normal text-charcoal">— {consumer.ai_email_draft_subject}</span>
                       )}
                     </p>
-                    <pre className="text-sm bg-bone-white p-3 border border-dust-gray whitespace-pre-wrap font-sans">{consumer.ai_email_draft}</pre>
+                    <pre className="text-sm bg-bone p-3 border border-dust whitespace-pre-wrap font-sans">{consumer.ai_email_draft}</pre>
                     <button
                       onClick={() => {
                         const subject = encodeURIComponent(consumer.ai_email_draft_subject || 'Follow-up');
@@ -387,20 +387,20 @@ export default function ConsumerDetailPage() {
               </div>
             )}
 
-            <div className="p-6 border border-dust-gray bg-white space-y-4">
+            <div className="p-6 border border-dust bg-white space-y-4">
               <h2 className="font-serif text-xl">Admin Notes</h2>
               <textarea
                 value={adminNotes}
                 onChange={(e) => setAdminNotes(e.target.value)}
                 placeholder="Call outcome, next steps, verification notes..."
                 rows={6}
-                className="w-full px-4 py-3 border border-dust-gray bg-bone-white text-sm"
+                className="w-full px-4 py-3 border border-dust bg-bone text-sm"
               />
               <div className="flex items-center gap-3">
                 <button
                   onClick={saveNotes}
                   disabled={saving}
-                  className="px-6 py-3 bg-charcoal-black text-bone-white text-sm font-medium hover:bg-divider disabled:opacity-50"
+                  className="px-6 py-3 bg-charcoal text-bone text-sm font-medium hover:bg-divider disabled:opacity-50"
                 >
                   {saving ? 'Saving...' : 'Save Notes'}
                 </button>

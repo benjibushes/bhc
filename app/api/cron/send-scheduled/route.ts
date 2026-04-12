@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendBroadcastEmail } from '@/lib/email';
+import { sendTelegramUpdate } from '@/lib/telegram';
 
 export const maxDuration = 60;
 
@@ -134,6 +135,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: `Processed ${due.length} campaign(s)`, totalSent });
   } catch (error: any) {
     console.error('Cron send-scheduled error:', error);
+    await sendTelegramUpdate(`⚠️ Send-scheduled cron failed: ${error.message}`).catch(() => {});
     return NextResponse.json({ error: error.message || 'Internal error' }, { status: 500 });
   }
 }

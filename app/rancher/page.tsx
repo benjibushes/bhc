@@ -332,11 +332,11 @@ export default function RancherDashboardPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black flex items-center justify-center">
+      <main className="min-h-screen py-24 bg-bone text-charcoal flex items-center justify-center">
         <Container>
           <div className="text-center">
-            <div className="inline-block w-8 h-8 border-4 border-charcoal-black border-t-transparent rounded-full animate-spin" />
-            <p className="mt-4 text-saddle-brown">Loading your dashboard...</p>
+            <div className="inline-block w-8 h-8 border-4 border-charcoal border-t-transparent rounded-full animate-spin" />
+            <p className="mt-4 text-saddle">Loading your dashboard...</p>
           </div>
         </Container>
       </main>
@@ -357,14 +357,14 @@ export default function RancherDashboardPage() {
   ];
 
   return (
-    <main className="min-h-screen py-12 bg-bone-white text-charcoal-black">
+    <main className="min-h-screen py-12 bg-bone text-charcoal">
       <Container>
         <div className="space-y-8">
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h1 className="font-serif text-3xl md:text-4xl">{rancherInfo.ranchName}</h1>
-              <p className="text-saddle-brown mt-1">{rancherInfo.name} &middot; {rancherInfo.state}</p>
+              <p className="text-saddle mt-1">{rancherInfo.name} &middot; {rancherInfo.state}</p>
             </div>
             <div className="flex items-center gap-4">
               <span className={`px-3 py-1 text-xs font-medium uppercase tracking-wider ${
@@ -374,7 +374,7 @@ export default function RancherDashboardPage() {
               }`}>
                 {rancherInfo.activeStatus || 'Pending'}
               </span>
-              <button onClick={handleLogout} className="text-sm text-dust-gray hover:text-charcoal-black transition-colors">
+              <button onClick={handleLogout} className="text-sm text-dust hover:text-charcoal transition-colors">
                 Log out
               </button>
             </div>
@@ -386,7 +386,7 @@ export default function RancherDashboardPage() {
           {rancherInfo.onboardingStatus && rancherInfo.onboardingStatus !== 'Live' && (
             <div className="p-4 border-2 border-yellow-400 bg-yellow-50 space-y-3">
               <p className="font-medium">Onboarding Status: {rancherInfo.onboardingStatus}</p>
-              <p className="text-sm text-saddle-brown">
+              <p className="text-sm text-saddle">
                 {rancherInfo.onboardingStatus === 'Docs Sent' && 'Please review and sign the agreement documents sent to your email.'}
                 {rancherInfo.onboardingStatus === 'Verification Complete' && "You're approved! We're activating your profile. You'll receive an email when you're live."}
                 {rancherInfo.onboardingStatus === 'Verification Pending' && !verificationSubmitted && "Submit your verification info to get approved and go live."}
@@ -395,8 +395,8 @@ export default function RancherDashboardPage() {
                 {!['Docs Sent', 'Agreement Signed', 'Verification Complete', 'Verification Pending'].includes(rancherInfo.onboardingStatus) && "Complete your onboarding to start receiving buyer leads."}
               </p>
               <div className="pt-3 border-t border-yellow-300">
-                <p className="text-xs font-medium text-saddle-brown uppercase tracking-wider mb-2">Steps to go live</p>
-                <ol className="text-sm text-saddle-brown space-y-1">
+                <p className="text-xs font-medium text-saddle uppercase tracking-wider mb-2">Steps to go live</p>
+                <ol className="text-sm text-saddle space-y-1">
                   <li className={['Docs Sent', 'Agreement Signed', 'Verification Complete', 'Verification Pending', 'Live'].includes(rancherInfo.onboardingStatus) ? 'line-through text-gray-500' : ''}>
                     1. Sign agreement {['Agreement Signed', 'Verification Complete', 'Verification Pending', 'Live'].includes(rancherInfo.onboardingStatus) && '✓'}
                   </li>
@@ -412,7 +412,7 @@ export default function RancherDashboardPage() {
               {['Agreement Signed', 'Verification Pending'].includes(rancherInfo.onboardingStatus) && !verificationSubmitted && (
                 <div className="mt-3 pt-3 border-t border-yellow-300 space-y-3">
                   <p className="text-sm font-medium">Complete Verification</p>
-                  <p className="text-xs text-saddle-brown">Provide at least 2 of the following to get verified and go live. This helps us build trust with buyers.</p>
+                  <p className="text-xs text-saddle">Provide at least 2 of the following to get verified and go live. This helps us build trust with buyers.</p>
 
                   <div className="space-y-3">
                     <div>
@@ -421,7 +421,7 @@ export default function RancherDashboardPage() {
                         placeholder="e.g. John Smith, johnsmith@email.com — bought a half beef in March, very happy with the quality"
                         value={verificationRefs}
                         onChange={(e) => setVerificationRefs(e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-dust-gray min-h-[80px]"
+                        className="w-full px-3 py-2 text-sm border border-dust min-h-[80px]"
                       />
                       <p className="text-xs text-gray-400 mt-1">We may reach out to confirm. 2-3 references recommended.</p>
                     </div>
@@ -433,7 +433,7 @@ export default function RancherDashboardPage() {
                         placeholder="https://g.page/your-ranch/review or Facebook page URL"
                         value={verificationReviewsLink}
                         onChange={(e) => setVerificationReviewsLink(e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-dust-gray"
+                        className="w-full px-3 py-2 text-sm border border-dust"
                       />
                     </div>
 
@@ -444,7 +444,7 @@ export default function RancherDashboardPage() {
                         placeholder="https://instagram.com/your-ranch"
                         value={verificationSocial}
                         onChange={(e) => setVerificationSocial(e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-dust-gray"
+                        className="w-full px-3 py-2 text-sm border border-dust"
                       />
                     </div>
 
@@ -455,7 +455,7 @@ export default function RancherDashboardPage() {
                         placeholder="Name of your USDA-inspected processor"
                         value={verificationProcessor}
                         onChange={(e) => setVerificationProcessor(e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-dust-gray"
+                        className="w-full px-3 py-2 text-sm border border-dust"
                       />
                     </div>
 
@@ -466,7 +466,7 @@ export default function RancherDashboardPage() {
                         placeholder="e.g. USDA Inspected, Certified Angus, Grass-Fed"
                         value={verificationCerts}
                         onChange={(e) => setVerificationCerts(e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-dust-gray"
+                        className="w-full px-3 py-2 text-sm border border-dust"
                       />
                     </div>
                   </div>
@@ -502,7 +502,7 @@ export default function RancherDashboardPage() {
                       setVerificationSubmitting(false);
                     }}
                     disabled={verificationSubmitting}
-                    className="w-full py-3 bg-charcoal-black text-bone-white text-sm font-medium uppercase tracking-wider hover:bg-saddle-brown transition-colors disabled:opacity-50"
+                    className="w-full py-3 bg-charcoal text-bone text-sm font-medium uppercase tracking-wider hover:bg-saddle transition-colors disabled:opacity-50"
                   >
                     {verificationSubmitting ? 'Submitting...' : 'Submit Verification'}
                   </button>
@@ -519,8 +519,8 @@ export default function RancherDashboardPage() {
                 onClick={() => setActiveTab(tab.key)}
                 className={`px-4 py-2 text-sm font-medium tracking-wider uppercase transition-colors ${
                   activeTab === tab.key
-                    ? 'bg-charcoal-black text-bone-white'
-                    : 'border border-dust-gray hover:bg-charcoal-black hover:text-bone-white'
+                    ? 'bg-charcoal text-bone'
+                    : 'border border-dust hover:bg-charcoal hover:text-bone'
                 }`}
               >
                 {tab.label}
@@ -541,13 +541,13 @@ export default function RancherDashboardPage() {
               <Divider />
 
               <div className="grid md:grid-cols-2 gap-6">
-                <div className="p-6 border border-dust-gray bg-white">
+                <div className="p-6 border border-dust bg-white">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="font-serif text-xl">Capacity</h3>
                     {!editingCapacity && (
                       <button
                         onClick={() => { setEditingCapacity(true); setCapacityValue(String(rancherInfo.maxActiveReferrals)); }}
-                        className="text-xs text-saddle-brown hover:text-charcoal-black transition-colors"
+                        className="text-xs text-saddle hover:text-charcoal transition-colors"
                       >
                         Edit Max
                       </button>
@@ -555,23 +555,23 @@ export default function RancherDashboardPage() {
                   </div>
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
-                      <span className="text-saddle-brown">Active Referrals</span>
+                      <span className="text-saddle">Active Referrals</span>
                       <span className="font-medium">{rancherInfo.currentActiveReferrals} / {rancherInfo.maxActiveReferrals}</span>
                     </div>
                     <div className="w-full bg-gray-200 h-2">
                       <div
-                        className={`h-2 transition-all ${rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals ? 'bg-weathered-red' : 'bg-charcoal-black'}`}
+                        className={`h-2 transition-all ${rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals ? 'bg-weathered' : 'bg-charcoal'}`}
                         style={{ width: `${Math.min(100, (rancherInfo.currentActiveReferrals / rancherInfo.maxActiveReferrals) * 100)}%` }}
                       />
                     </div>
-                    <p className="text-xs text-dust-gray">
+                    <p className="text-xs text-dust">
                       {rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals
                         ? 'At capacity — new leads paused until a deal closes'
                         : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} more leads available`}
                     </p>
                     {editingCapacity && (
-                      <div className="pt-2 border-t border-dust-gray space-y-2">
-                        <label className="text-xs text-saddle-brown">Max active leads at a time</label>
+                      <div className="pt-2 border-t border-dust space-y-2">
+                        <label className="text-xs text-saddle">Max active leads at a time</label>
                         <div className="flex gap-2">
                           <input
                             type="number"
@@ -579,49 +579,49 @@ export default function RancherDashboardPage() {
                             max="50"
                             value={capacityValue}
                             onChange={e => setCapacityValue(e.target.value)}
-                            className="flex-1 px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black"
+                            className="flex-1 px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
                           />
                           <button
                             onClick={handleUpdateCapacity}
                             disabled={capacitySaving}
-                            className="px-4 py-2 text-xs bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors disabled:opacity-50"
+                            className="px-4 py-2 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
                           >
                             {capacitySaving ? '...' : 'Save'}
                           </button>
                           <button
                             onClick={() => setEditingCapacity(false)}
-                            className="px-3 py-2 text-xs border border-dust-gray hover:bg-dust-gray hover:text-bone-white transition-colors"
+                            className="px-3 py-2 text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
                           >
                             Cancel
                           </button>
                         </div>
-                        <p className="text-xs text-dust-gray">Set how many buyer leads you can handle at once. We&apos;ll pause new leads when you hit this limit.</p>
+                        <p className="text-xs text-dust">Set how many buyer leads you can handle at once. We&apos;ll pause new leads when you hit this limit.</p>
                       </div>
                     )}
                   </div>
                 </div>
 
-                <div className="p-6 border border-dust-gray bg-white">
+                <div className="p-6 border border-dust bg-white">
                   <h3 className="font-serif text-xl mb-4">Your Operation</h3>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-saddle-brown">State</span>
+                      <span className="text-saddle">State</span>
                       <span>{rancherInfo.state}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-saddle-brown">Beef Types</span>
+                      <span className="text-saddle">Beef Types</span>
                       <span>{rancherInfo.beefTypes || 'Not set'}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-saddle-brown">Delivers To</span>
+                      <span className="text-saddle">Delivers To</span>
                       <span>{rancherInfo.shipsNationwide ? 'Nationwide' : (rancherInfo.statesServed || rancherInfo.state || 'Not set')}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-saddle-brown">Monthly Capacity</span>
+                      <span className="text-saddle">Monthly Capacity</span>
                       <span>{rancherInfo.monthlyCapacity} head</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-saddle-brown">Agreement</span>
+                      <span className="text-saddle">Agreement</span>
                       <span>{rancherInfo.agreementSigned ? 'Signed' : 'Pending'}</span>
                     </div>
                   </div>
@@ -637,7 +637,7 @@ export default function RancherDashboardPage() {
                       <ReferralRow key={ref.id} referral={ref} onUpdate={updateReferralStatus} onClose={() => setCloseModal(ref)} updating={updating} />
                     ))}
                     {activeRefs.length > 3 && (
-                      <button onClick={() => setActiveTab('referrals')} className="text-sm text-saddle-brown hover:text-charcoal-black transition-colors">
+                      <button onClick={() => setActiveTab('referrals')} className="text-sm text-saddle hover:text-charcoal transition-colors">
                         View all {activeRefs.length} active leads →
                       </button>
                     )}
@@ -658,8 +658,8 @@ export default function RancherDashboardPage() {
                   ))}
                 </div>
               ) : (
-                <div className="p-8 border border-dust-gray text-center bg-white">
-                  <p className="text-saddle-brown">No active leads right now. New buyer introductions will appear here.</p>
+                <div className="p-8 border border-dust text-center bg-white">
+                  <p className="text-saddle">No active leads right now. New buyer introductions will appear here.</p>
                 </div>
               )}
 
@@ -669,18 +669,18 @@ export default function RancherDashboardPage() {
                   <h2 className="font-serif text-2xl">Closed Deals</h2>
                   <div className="space-y-4">
                     {closedRefs.map((ref) => (
-                      <div key={ref.id} className="p-4 border border-dust-gray bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                      <div key={ref.id} className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                         <div>
                           <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-gray-100 text-gray-600'}`}>
                             {ref.status}
                           </span>
                           <p className="font-medium mt-1">{ref.buyer_name}</p>
-                          <p className="text-xs text-dust-gray">{ref.closed_at ? new Date(ref.closed_at).toLocaleDateString() : ''}</p>
+                          <p className="text-xs text-dust">{ref.closed_at ? new Date(ref.closed_at).toLocaleDateString() : ''}</p>
                         </div>
                         {ref.status === 'Closed Won' && (
                           <div className="text-right">
                             <p className="font-serif text-lg">${ref.sale_amount.toLocaleString()}</p>
-                            <p className="text-xs text-dust-gray">Commission: ${ref.commission_due.toLocaleString()}</p>
+                            <p className="text-xs text-dust">Commission: ${ref.commission_due.toLocaleString()}</p>
                           </div>
                         )}
                       </div>
@@ -710,7 +710,7 @@ export default function RancherDashboardPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-dust-gray text-left">
+                      <tr className="border-b border-dust text-left">
                         <th className="py-3 pr-4 font-medium">Buyer</th>
                         <th className="py-3 pr-4 font-medium">Sale</th>
                         <th className="py-3 pr-4 font-medium">Commission</th>
@@ -736,8 +736,8 @@ export default function RancherDashboardPage() {
                   </table>
                 </div>
               ) : (
-                <div className="p-8 border border-dust-gray text-center bg-white">
-                  <p className="text-saddle-brown">No completed sales yet. Close your first deal to see earnings here.</p>
+                <div className="p-8 border border-dust text-center bg-white">
+                  <p className="text-saddle">No completed sales yet. Close your first deal to see earnings here.</p>
                 </div>
               )}
             </div>
@@ -748,7 +748,7 @@ export default function RancherDashboardPage() {
             <div className="space-y-6">
               <div>
                 <h2 className="font-serif text-2xl">Network Benefits</h2>
-                <p className="text-sm text-saddle-brown mt-1">
+                <p className="text-sm text-saddle mt-1">
                   Exclusive deals and partnerships available to BuyHalfCow ranchers.
                 </p>
               </div>
@@ -756,7 +756,7 @@ export default function RancherDashboardPage() {
               {benefits.length > 0 ? (
                 <div className="grid gap-4 md:grid-cols-2">
                   {benefits.map((benefit) => (
-                    <div key={benefit.id} className="p-6 border border-dust-gray bg-white space-y-3">
+                    <div key={benefit.id} className="p-6 border border-dust bg-white space-y-3">
                       <div className="flex items-start justify-between">
                         <h3 className="font-serif text-lg">{benefit.brand_name}</h3>
                         {benefit.discount_offered > 0 && (
@@ -765,7 +765,7 @@ export default function RancherDashboardPage() {
                           </span>
                         )}
                       </div>
-                      <p className="text-sm text-saddle-brown">{benefit.product_type}</p>
+                      <p className="text-sm text-saddle">{benefit.product_type}</p>
                       {benefit.description && (
                         <p className="text-sm">{benefit.description}</p>
                       )}
@@ -775,7 +775,7 @@ export default function RancherDashboardPage() {
                             href={benefit.website.startsWith('http') ? benefit.website : `https://${benefit.website}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="px-4 py-2 text-xs border border-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors"
+                            className="px-4 py-2 text-xs border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
                           >
                             Visit Website
                           </a>
@@ -783,7 +783,7 @@ export default function RancherDashboardPage() {
                         {benefit.contact_email && (
                           <a
                             href={`mailto:${benefit.contact_email}`}
-                            className="px-4 py-2 text-xs border border-dust-gray hover:bg-dust-gray hover:text-bone-white transition-colors"
+                            className="px-4 py-2 text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
                           >
                             Contact
                           </a>
@@ -793,8 +793,8 @@ export default function RancherDashboardPage() {
                   ))}
                 </div>
               ) : (
-                <div className="p-8 border border-dust-gray text-center bg-white">
-                  <p className="text-saddle-brown">Partner benefits are being finalized. Check back soon for exclusive deals on insurance, equipment, and more.</p>
+                <div className="p-8 border border-dust text-center bg-white">
+                  <p className="text-saddle">Partner benefits are being finalized. Check back soon for exclusive deals on insurance, equipment, and more.</p>
                 </div>
               )}
             </div>
@@ -806,7 +806,7 @@ export default function RancherDashboardPage() {
               <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
                 <div>
                   <h2 className="font-serif text-2xl">My Landing Page</h2>
-                  <p className="text-sm text-saddle-brown mt-1">
+                  <p className="text-sm text-saddle mt-1">
                     Fill this out to publish your public ranch page on BuyHalfCow.
                   </p>
                 </div>
@@ -815,7 +815,7 @@ export default function RancherDashboardPage() {
                     href={`/ranchers/${rancherInfo.slug}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm px-4 py-2 border border-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors"
+                    className="text-sm px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
                   >
                     Preview Page →
                   </a>
@@ -823,7 +823,7 @@ export default function RancherDashboardPage() {
               </div>
 
               {!rancherInfo.pageLive && (
-                <div className="p-4 bg-yellow-50 border border-yellow-400 text-sm text-saddle-brown flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div className="p-4 bg-yellow-50 border border-yellow-400 text-sm text-saddle flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                   <p>Your page is not live yet. Fill out the fields below and request to go live when you&apos;re ready.</p>
                   {goLiveRequested ? (
                     <span className="text-xs bg-green-100 text-green-800 px-3 py-1.5 whitespace-nowrap">Request sent!</span>
@@ -831,7 +831,7 @@ export default function RancherDashboardPage() {
                     <button
                       onClick={handleRequestGoLive}
                       disabled={goLiveLoading || !rancherInfo.slug}
-                      className="px-4 py-2 text-xs bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors whitespace-nowrap disabled:opacity-50"
+                      className="px-4 py-2 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors whitespace-nowrap disabled:opacity-50"
                     >
                       {goLiveLoading ? 'Requesting...' : 'Request Go Live'}
                     </button>
@@ -842,17 +842,17 @@ export default function RancherDashboardPage() {
               {/* Page Click Stats */}
               {rancherInfo.pageLive && (rancherInfo.quarterClicks > 0 || rancherInfo.halfClicks > 0 || rancherInfo.wholeClicks > 0) && (
                 <div className="grid grid-cols-3 gap-4">
-                  <div className="p-4 border border-dust-gray bg-white text-center">
+                  <div className="p-4 border border-dust bg-white text-center">
                     <div className="font-serif text-2xl">{rancherInfo.quarterClicks}</div>
-                    <p className="text-xs text-saddle-brown mt-1 uppercase tracking-wider">Quarter Clicks</p>
+                    <p className="text-xs text-saddle mt-1 uppercase tracking-wider">Quarter Clicks</p>
                   </div>
-                  <div className="p-4 border border-dust-gray bg-white text-center">
+                  <div className="p-4 border border-dust bg-white text-center">
                     <div className="font-serif text-2xl">{rancherInfo.halfClicks}</div>
-                    <p className="text-xs text-saddle-brown mt-1 uppercase tracking-wider">Half Clicks</p>
+                    <p className="text-xs text-saddle mt-1 uppercase tracking-wider">Half Clicks</p>
                   </div>
-                  <div className="p-4 border border-dust-gray bg-white text-center">
+                  <div className="p-4 border border-dust bg-white text-center">
                     <div className="font-serif text-2xl">{rancherInfo.wholeClicks}</div>
-                    <p className="text-xs text-saddle-brown mt-1 uppercase tracking-wider">Whole Clicks</p>
+                    <p className="text-xs text-saddle mt-1 uppercase tracking-wider">Whole Clicks</p>
                   </div>
                 </div>
               )}
@@ -861,41 +861,41 @@ export default function RancherDashboardPage() {
 
                 {/* Left column: Brand & Story */}
                 <div className="space-y-5">
-                  <h3 className="font-serif text-lg border-b border-dust-gray pb-2">Brand &amp; Story</h3>
+                  <h3 className="font-serif text-lg border-b border-dust pb-2">Brand &amp; Story</h3>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Page URL Slug <span className="text-dust-gray font-normal">(e.g. rocking-r-ranch)</span></label>
+                    <label className="block text-sm font-medium">Page URL Slug <span className="text-dust font-normal">(e.g. rocking-r-ranch)</span></label>
                     <input
                       type="text"
                       value={pageForm['Slug'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'Slug': e.target.value }))}
                       placeholder="your-ranch-name"
-                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                     {pageForm['Slug'] && (
-                      <p className="text-xs text-dust-gray">buyhalfcow.com/ranchers/{pageForm['Slug'].toLowerCase().replace(/[^a-z0-9-]/g, '-')}</p>
+                      <p className="text-xs text-dust">buyhalfcow.com/ranchers/{pageForm['Slug'].toLowerCase().replace(/[^a-z0-9-]/g, '-')}</p>
                     )}
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Logo URL <span className="text-dust-gray font-normal">(paste a link to your logo image)</span></label>
+                    <label className="block text-sm font-medium">Logo URL <span className="text-dust font-normal">(paste a link to your logo image)</span></label>
                     <input
                       type="url"
                       value={pageForm['Logo URL'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'Logo URL': e.target.value }))}
                       placeholder="https://..."
-                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Tagline <span className="text-dust-gray font-normal">(one sentence)</span></label>
+                    <label className="block text-sm font-medium">Tagline <span className="text-dust font-normal">(one sentence)</span></label>
                     <input
                       type="text"
                       value={pageForm['Tagline'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'Tagline': e.target.value }))}
                       placeholder="Grass-fed Angus raised on open pasture in Montana"
-                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                   </div>
 
@@ -906,66 +906,66 @@ export default function RancherDashboardPage() {
                       value={pageForm['About Text'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'About Text': e.target.value }))}
                       placeholder="Tell buyers your story — how long you've been ranching, your practices, what makes you different..."
-                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Interview Video URL <span className="text-dust-gray font-normal">(YouTube link)</span></label>
+                    <label className="block text-sm font-medium">Interview Video URL <span className="text-dust font-normal">(YouTube link)</span></label>
                     <input
                       type="url"
                       value={pageForm['Video URL'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'Video URL': e.target.value }))}
                       placeholder="https://youtube.com/watch?v=..."
-                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Custom Notes <span className="text-dust-gray font-normal">(optional — anything extra buyers should know)</span></label>
+                    <label className="block text-sm font-medium">Custom Notes <span className="text-dust font-normal">(optional — anything extra buyers should know)</span></label>
                     <textarea
                       rows={3}
                       value={pageForm['Custom Notes'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'Custom Notes': e.target.value }))}
                       placeholder="e.g. We do on-farm pickup only. Delivery available within 50 miles..."
-                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                   </div>
 
-                  <h3 className="font-serif text-lg border-b border-dust-gray pb-2 pt-4">Delivery &amp; Details</h3>
+                  <h3 className="font-serif text-lg border-b border-dust pb-2 pt-4">Delivery &amp; Details</h3>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Beef Types <span className="text-dust-gray font-normal">(e.g. Angus, Hereford, Wagyu)</span></label>
+                    <label className="block text-sm font-medium">Beef Types <span className="text-dust font-normal">(e.g. Angus, Hereford, Wagyu)</span></label>
                     <input
                       type="text"
                       value={pageForm['Beef Types'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'Beef Types': e.target.value }))}
                       placeholder="Angus, Hereford"
-                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">Certifications <span className="text-dust-gray font-normal">(e.g. USDA, Grass-Fed, Organic)</span></label>
+                    <label className="block text-sm font-medium">Certifications <span className="text-dust font-normal">(e.g. USDA, Grass-Fed, Organic)</span></label>
                     <input
                       type="text"
                       value={pageForm['Certifications'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'Certifications': e.target.value }))}
                       placeholder="USDA Inspected, Grass-Fed, No Hormones"
-                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-sm font-medium">States You Deliver To <span className="text-dust-gray font-normal">(comma-separated)</span></label>
+                    <label className="block text-sm font-medium">States You Deliver To <span className="text-dust font-normal">(comma-separated)</span></label>
                     <input
                       type="text"
                       value={pageForm['States Served'] || ''}
                       onChange={e => setPageForm(p => ({ ...p, 'States Served': e.target.value }))}
                       placeholder="Montana, Wyoming, Idaho, Washington"
-                      className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
-                    <p className="text-xs text-dust-gray">We&apos;ll match buyers from these states to you automatically.</p>
+                    <p className="text-xs text-dust">We&apos;ll match buyers from these states to you automatically.</p>
                   </div>
 
                   <div className="flex items-center gap-3">
@@ -982,116 +982,116 @@ export default function RancherDashboardPage() {
 
                 {/* Right column: Pricing */}
                 <div className="space-y-5">
-                  <h3 className="font-serif text-lg border-b border-dust-gray pb-2">Pricing &amp; Payment</h3>
-                  <p className="text-xs text-dust-gray">Leave a section blank if you don't offer that cut size. Payment links go to your Square, PayPal, or Stripe checkout.</p>
+                  <h3 className="font-serif text-lg border-b border-dust pb-2">Pricing &amp; Payment</h3>
+                  <p className="text-xs text-dust">Leave a section blank if you don't offer that cut size. Payment links go to your Square, PayPal, or Stripe checkout.</p>
 
                   {/* Quarter */}
-                  <div className="p-4 border border-dust-gray bg-white space-y-3">
+                  <div className="p-4 border border-dust bg-white space-y-3">
                     <p className="text-sm font-medium uppercase tracking-wider">Quarter</p>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-xs text-dust-gray">Price ($)</label>
+                        <label className="text-xs text-dust">Price ($)</label>
                         <input
                           type="number"
                           value={pageForm['Quarter Price'] || ''}
                           onChange={e => setPageForm(p => ({ ...p, 'Quarter Price': e.target.value }))}
                           placeholder="450"
-                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs text-dust-gray">Approx. lbs</label>
+                        <label className="text-xs text-dust">Approx. lbs</label>
                         <input
                           type="text"
                           value={pageForm['Quarter lbs'] || ''}
                           onChange={e => setPageForm(p => ({ ...p, 'Quarter lbs': e.target.value }))}
                           placeholder="~85 lbs"
-                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                         />
                       </div>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs text-dust-gray">Payment Link</label>
+                      <label className="text-xs text-dust">Payment Link</label>
                       <input
                         type="url"
                         value={pageForm['Quarter Payment Link'] || ''}
                         onChange={e => setPageForm(p => ({ ...p, 'Quarter Payment Link': e.target.value }))}
                         placeholder="https://square.com/pay/..."
-                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                       />
                     </div>
                   </div>
 
                   {/* Half */}
-                  <div className="p-4 border-2 border-saddle-brown bg-white space-y-3">
-                    <p className="text-sm font-medium uppercase tracking-wider text-saddle-brown">Half <span className="text-xs font-normal normal-case text-dust-gray">(most popular)</span></p>
+                  <div className="p-4 border-2 border-saddle bg-white space-y-3">
+                    <p className="text-sm font-medium uppercase tracking-wider text-saddle">Half <span className="text-xs font-normal normal-case text-dust">(most popular)</span></p>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-xs text-dust-gray">Price ($)</label>
+                        <label className="text-xs text-dust">Price ($)</label>
                         <input
                           type="number"
                           value={pageForm['Half Price'] || ''}
                           onChange={e => setPageForm(p => ({ ...p, 'Half Price': e.target.value }))}
                           placeholder="875"
-                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs text-dust-gray">Approx. lbs</label>
+                        <label className="text-xs text-dust">Approx. lbs</label>
                         <input
                           type="text"
                           value={pageForm['Half lbs'] || ''}
                           onChange={e => setPageForm(p => ({ ...p, 'Half lbs': e.target.value }))}
                           placeholder="~170 lbs"
-                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                         />
                       </div>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs text-dust-gray">Payment Link</label>
+                      <label className="text-xs text-dust">Payment Link</label>
                       <input
                         type="url"
                         value={pageForm['Half Payment Link'] || ''}
                         onChange={e => setPageForm(p => ({ ...p, 'Half Payment Link': e.target.value }))}
                         placeholder="https://square.com/pay/..."
-                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                       />
                     </div>
                   </div>
 
                   {/* Whole */}
-                  <div className="p-4 border border-dust-gray bg-white space-y-3">
+                  <div className="p-4 border border-dust bg-white space-y-3">
                     <p className="text-sm font-medium uppercase tracking-wider">Whole</p>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-xs text-dust-gray">Price ($)</label>
+                        <label className="text-xs text-dust">Price ($)</label>
                         <input
                           type="number"
                           value={pageForm['Whole Price'] || ''}
                           onChange={e => setPageForm(p => ({ ...p, 'Whole Price': e.target.value }))}
                           placeholder="1600"
-                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs text-dust-gray">Approx. lbs</label>
+                        <label className="text-xs text-dust">Approx. lbs</label>
                         <input
                           type="text"
                           value={pageForm['Whole lbs'] || ''}
                           onChange={e => setPageForm(p => ({ ...p, 'Whole lbs': e.target.value }))}
                           placeholder="~340 lbs"
-                          className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                         />
                       </div>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs text-dust-gray">Payment Link</label>
+                      <label className="text-xs text-dust">Payment Link</label>
                       <input
                         type="url"
                         value={pageForm['Whole Payment Link'] || ''}
                         onChange={e => setPageForm(p => ({ ...p, 'Whole Payment Link': e.target.value }))}
                         placeholder="https://square.com/pay/..."
-                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                       />
                     </div>
                   </div>
@@ -1102,22 +1102,22 @@ export default function RancherDashboardPage() {
                   <div className="space-y-3">
                     <p className="text-sm font-medium">Reservation / Deposit</p>
                     <div className="space-y-1">
-                      <label className="text-xs text-dust-gray">Next Processing Date</label>
+                      <label className="text-xs text-dust">Next Processing Date</label>
                       <input
                         type="date"
                         value={pageForm['Next Processing Date'] || ''}
                         onChange={e => setPageForm(p => ({ ...p, 'Next Processing Date': e.target.value }))}
-                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs text-dust-gray">Reserve Link <span className="text-dust-gray">(deposit / waitlist link)</span></label>
+                      <label className="text-xs text-dust">Reserve Link <span className="text-dust">(deposit / waitlist link)</span></label>
                       <input
                         type="url"
                         value={pageForm['Reserve Link'] || ''}
                         onChange={e => setPageForm(p => ({ ...p, 'Reserve Link': e.target.value }))}
                         placeholder="https://..."
-                        className="w-full px-3 py-2 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black text-sm"
+                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                       />
                     </div>
                   </div>
@@ -1126,36 +1126,36 @@ export default function RancherDashboardPage() {
 
               {/* Custom Products */}
               <div className="space-y-4">
-                <h3 className="font-serif text-lg border-b border-dust-gray pb-2">Additional Products</h3>
-                <p className="text-xs text-dust-gray">List extra products beyond quarter/half/whole beef (sampler boxes, jerky, bones, etc.).</p>
+                <h3 className="font-serif text-lg border-b border-dust pb-2">Additional Products</h3>
+                <p className="text-xs text-dust">List extra products beyond quarter/half/whole beef (sampler boxes, jerky, bones, etc.).</p>
                 {customProducts.map((p, i) => (
-                  <div key={i} className="p-3 border border-dust-gray bg-white flex justify-between items-start">
+                  <div key={i} className="p-3 border border-dust bg-white flex justify-between items-start">
                     <div>
                       <p className="text-sm font-medium">{p.name} — ${p.price}</p>
-                      {p.description && <p className="text-xs text-saddle-brown mt-0.5">{p.description}</p>}
-                      {p.link && <p className="text-xs text-dust-gray mt-0.5 truncate max-w-xs">{p.link}</p>}
+                      {p.description && <p className="text-xs text-saddle mt-0.5">{p.description}</p>}
+                      {p.link && <p className="text-xs text-dust mt-0.5 truncate max-w-xs">{p.link}</p>}
                     </div>
                     <button onClick={() => setCustomProducts(customProducts.filter((_, idx) => idx !== i))} className="text-red-500 text-xs hover:underline ml-2">Remove</button>
                   </div>
                 ))}
                 <div className="grid grid-cols-2 gap-2">
                   <input value={newProduct.name} onChange={e => setNewProduct({ ...newProduct, name: e.target.value })}
-                    className="px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black" placeholder="Product name" />
+                    className="px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal" placeholder="Product name" />
                   <input value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: e.target.value })}
-                    type="number" className="px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black" placeholder="Price ($)" />
+                    type="number" className="px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal" placeholder="Price ($)" />
                 </div>
                 <input value={newProduct.description} onChange={e => setNewProduct({ ...newProduct, description: e.target.value })}
-                  className="w-full px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black" placeholder="Short description (e.g. 10 lbs of mixed cuts)" />
+                  className="w-full px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal" placeholder="Short description (e.g. 10 lbs of mixed cuts)" />
                 <div className="flex gap-2">
                   <input value={newProduct.link} onChange={e => setNewProduct({ ...newProduct, link: e.target.value })}
-                    className="flex-1 px-3 py-2 border border-dust-gray bg-bone-white text-sm focus:outline-none focus:border-charcoal-black" placeholder="Payment link (https://...)" />
+                    className="flex-1 px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal" placeholder="Payment link (https://...)" />
                   <button
                     onClick={() => {
                       if (!newProduct.name || !newProduct.price) return;
                       setCustomProducts([...customProducts, { ...newProduct, price: parseFloat(newProduct.price) || 0 }]);
                       setNewProduct({ name: '', price: '', description: '', link: '' });
                     }}
-                    className="px-4 py-2 text-sm bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors"
+                    className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors"
                   >
                     + Add
                   </button>
@@ -1173,12 +1173,12 @@ export default function RancherDashboardPage() {
                 <button
                   onClick={handleSavePage}
                   disabled={pageSaving}
-                  className="px-8 py-3 bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+                  className="px-8 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
                 >
                   {pageSaving ? 'Saving...' : 'Save Page'}
                 </button>
                 {!rancherInfo.pageLive && rancherInfo.slug && (
-                  <p className="text-xs text-dust-gray">
+                  <p className="text-xs text-dust">
                     After saving, click &quot;Request Go Live&quot; above to notify us.
                   </p>
                 )}
@@ -1188,9 +1188,9 @@ export default function RancherDashboardPage() {
 
           <Divider />
 
-          <div className="text-center text-sm text-dust-gray space-y-2">
-            <p>Questions? Email <a href="mailto:support@buyhalfcow.com" className="text-charcoal-black hover:text-saddle-brown transition-colors">support@buyhalfcow.com</a></p>
-            <Link href="/" className="text-saddle-brown hover:text-charcoal-black transition-colors">
+          <div className="text-center text-sm text-dust space-y-2">
+            <p>Questions? Email <a href="mailto:support@buyhalfcow.com" className="text-charcoal hover:text-saddle transition-colors">support@buyhalfcow.com</a></p>
+            <Link href="/" className="text-saddle hover:text-charcoal transition-colors">
               &larr; Back to home
             </Link>
           </div>
@@ -1200,12 +1200,12 @@ export default function RancherDashboardPage() {
       {/* Close Deal Modal */}
       {closeModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-bone-white p-8 max-w-md w-full space-y-6">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6">
             <div className="flex justify-between items-start">
               <h2 className="font-serif text-2xl">Close Deal</h2>
-              <button onClick={() => setCloseModal(null)} className="text-2xl leading-none hover:text-saddle-brown">×</button>
+              <button onClick={() => setCloseModal(null)} className="text-2xl leading-none hover:text-saddle">×</button>
             </div>
-            <p className="text-sm text-saddle-brown">Buyer: <strong className="text-charcoal-black">{closeModal.buyer_name}</strong></p>
+            <p className="text-sm text-saddle">Buyer: <strong className="text-charcoal">{closeModal.buyer_name}</strong></p>
 
             <div className="space-y-4">
               <div>
@@ -1213,7 +1213,7 @@ export default function RancherDashboardPage() {
                 <select
                   value={closeForm.status}
                   onChange={(e) => setCloseForm(prev => ({ ...prev, status: e.target.value }))}
-                  className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black"
+                  className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
                 >
                   <option value="Closed Won">Deal Closed (Sale Made)</option>
                   <option value="Closed Lost">No Sale (Lost)</option>
@@ -1228,10 +1228,10 @@ export default function RancherDashboardPage() {
                     value={closeForm.saleAmount}
                     onChange={(e) => setCloseForm(prev => ({ ...prev, saleAmount: e.target.value }))}
                     placeholder="e.g. 2500"
-                    className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black"
+                    className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
                   />
                   {closeForm.saleAmount && (
-                    <p className="text-xs text-saddle-brown mt-1">
+                    <p className="text-xs text-saddle mt-1">
                       Commission (10%): ${(parseFloat(closeForm.saleAmount) * 0.10).toFixed(2)} &middot; You keep: ${(parseFloat(closeForm.saleAmount) * 0.90).toFixed(2)}
                     </p>
                   )}
@@ -1245,7 +1245,7 @@ export default function RancherDashboardPage() {
                   onChange={(e) => setCloseForm(prev => ({ ...prev, notes: e.target.value }))}
                   rows={3}
                   placeholder="Any details about the deal..."
-                  className="w-full px-4 py-3 border border-dust-gray bg-bone-white focus:outline-none focus:border-charcoal-black"
+                  className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
                 />
               </div>
             </div>
@@ -1259,14 +1259,14 @@ export default function RancherDashboardPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => { setCloseModal(null); setUpdateError(''); }}
-                className="flex-1 px-4 py-3 border border-charcoal-black text-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors font-medium uppercase text-sm tracking-wider"
+                className="flex-1 px-4 py-3 border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium uppercase text-sm tracking-wider"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCloseDeal}
                 disabled={!!updating || (closeForm.status === 'Closed Won' && !closeForm.saleAmount)}
-                className="flex-1 px-4 py-3 bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+                className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
               >
                 {updating ? 'Saving...' : 'Confirm'}
               </button>
@@ -1280,37 +1280,37 @@ export default function RancherDashboardPage() {
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
-    <div className="p-4 border border-dust-gray bg-white text-center">
+    <div className="p-4 border border-dust bg-white text-center">
       <div className="font-serif text-2xl">{value}</div>
-      <p className="text-xs text-saddle-brown mt-1 uppercase tracking-wider">{label}</p>
-      {sub && <p className="text-xs text-dust-gray mt-0.5">{sub}</p>}
+      <p className="text-xs text-saddle mt-1 uppercase tracking-wider">{label}</p>
+      {sub && <p className="text-xs text-dust mt-0.5">{sub}</p>}
     </div>
   );
 }
 
 function ReferralRow({ referral, onUpdate, onClose, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; updating: string | null }) {
   return (
-    <div className="p-4 border border-dust-gray bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+    <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
       <div>
         <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
           {referral.status}
         </span>
         <p className="font-medium mt-1">{referral.buyer_name}</p>
-        <p className="text-xs text-dust-gray">{referral.buyer_state} &middot; {referral.order_type}</p>
+        <p className="text-xs text-dust">{referral.buyer_state} &middot; {referral.order_type}</p>
       </div>
       <div className="flex gap-2">
         {referral.status === 'Intro Sent' && (
           <button
             onClick={() => onUpdate(referral.id, 'Rancher Contacted')}
             disabled={updating === referral.id}
-            className="px-3 py-1.5 text-xs border border-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors disabled:opacity-50"
+            className="px-3 py-1.5 text-xs border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
             Mark Contacted
           </button>
         )}
         <button
           onClick={onClose}
-          className="px-3 py-1.5 text-xs bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors"
+          className="px-3 py-1.5 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors"
         >
           Close Deal
         </button>
@@ -1321,30 +1321,30 @@ function ReferralRow({ referral, onUpdate, onClose, updating }: { referral: Refe
 
 function ReferralCard({ referral, onUpdate, onClose, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; updating: string | null }) {
   return (
-    <div className="p-6 border border-dust-gray bg-white space-y-4">
+    <div className="p-6 border border-dust bg-white space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
         <div>
           <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
             {referral.status}
           </span>
           <h3 className="font-serif text-xl mt-2">{referral.buyer_name}</h3>
-          <p className="text-sm text-dust-gray">
+          <p className="text-sm text-dust">
             {referral.intro_sent_at ? `Introduced ${new Date(referral.intro_sent_at).toLocaleDateString()}` : ''}
           </p>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 text-sm">
-        <div><span className="text-saddle-brown">Email:</span> <a href={`mailto:${referral.buyer_email}`} className="text-charcoal-black hover:underline">{referral.buyer_email}</a></div>
-        <div><span className="text-saddle-brown">Phone:</span> <a href={`tel:${referral.buyer_phone}`} className="text-charcoal-black hover:underline">{referral.buyer_phone}</a></div>
-        <div><span className="text-saddle-brown">State:</span> {referral.buyer_state}</div>
-        <div><span className="text-saddle-brown">Looking for:</span> {referral.order_type}</div>
-        <div><span className="text-saddle-brown">Budget:</span> {referral.budget_range}</div>
+        <div><span className="text-saddle">Email:</span> <a href={`mailto:${referral.buyer_email}`} className="text-charcoal hover:underline">{referral.buyer_email}</a></div>
+        <div><span className="text-saddle">Phone:</span> <a href={`tel:${referral.buyer_phone}`} className="text-charcoal hover:underline">{referral.buyer_phone}</a></div>
+        <div><span className="text-saddle">State:</span> {referral.buyer_state}</div>
+        <div><span className="text-saddle">Looking for:</span> {referral.order_type}</div>
+        <div><span className="text-saddle">Budget:</span> {referral.budget_range}</div>
       </div>
 
       {referral.notes && (
-        <p className="text-sm p-3 bg-bone-white border border-dust-gray">
-          <span className="text-saddle-brown font-medium">Notes:</span> {referral.notes}
+        <p className="text-sm p-3 bg-bone border border-dust">
+          <span className="text-saddle font-medium">Notes:</span> {referral.notes}
         </p>
       )}
 
@@ -1353,7 +1353,7 @@ function ReferralCard({ referral, onUpdate, onClose, updating }: { referral: Ref
           <button
             onClick={() => onUpdate(referral.id, 'Rancher Contacted')}
             disabled={updating === referral.id}
-            className="px-4 py-2 text-sm border border-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
             {updating === referral.id ? 'Updating...' : "I've Contacted This Buyer"}
           </button>
@@ -1362,14 +1362,14 @@ function ReferralCard({ referral, onUpdate, onClose, updating }: { referral: Ref
           <button
             onClick={() => onUpdate(referral.id, 'Negotiation')}
             disabled={updating === referral.id}
-            className="px-4 py-2 text-sm border border-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
             {updating === referral.id ? 'Updating...' : 'In Negotiation'}
           </button>
         )}
         <button
           onClick={onClose}
-          className="px-4 py-2 text-sm bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors"
+          className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors"
         >
           Close Deal
         </button>

@@ -25,14 +25,26 @@ function htmlToPlainText(html: string): string {
     .trim();
 }
 
-// Wrapper that auto-adds replyTo + plain text to EVERY email
-// This is the #1 fix for spam filtering — missing plain text = spam
+// Wrapper that auto-adds replyTo, plain text, and CAN-SPAM footer
+// to EVERY email. This is the single enforcement point for deliverability.
+// IMPORTANT: replyTo MUST match the sending domain. Gmail/Outlook flag
+// emails where From: domain ≠ Reply-To: domain as phishing.
 const resend = {
   emails: {
     send: async (params: any) => {
       if (!params.replyTo) {
-        params.replyTo = process.env.ADMIN_EMAIL || 'ben@buyhalfcow.com';
+        params.replyTo = `ben@${SEND_DOMAINS[0]}`;
       }
+      // Auto-inject CAN-SPAM footer (physical address + unsubscribe link)
+      // into every HTML email unless explicitly opted out via _skipFooter.
+      if (params.html && !params._skipFooter) {
+        const recipientEmail = Array.isArray(params.to) ? params.to[0] : params.to;
+        if (recipientEmail) {
+          params.html = params.html + emailFooter(recipientEmail);
+        }
+      }
+      delete params._skipFooter;
+      // Plain text MUST be generated AFTER footer injection
       if (!params.text && params.html) {
         params.text = htmlToPlainText(params.html);
       }
@@ -62,9 +74,27 @@ function getFromEmail(): string {
 
 function getUnsubscribeHeaders(email: string) {
   return {
-    'List-Unsubscribe': `<mailto:unsubscribe@${SEND_DOMAINS[0]}?subject=Unsubscribe%20${encodeURIComponent(email)}>, <${SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}>`,
+    'List-Unsubscribe': `<${SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}>`,
     'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
   };
+}
+
+// Physical address required by CAN-SPAM Act. Update via BUSINESS_ADDRESS env var.
+const BUSINESS_ADDRESS = process.env.BUSINESS_ADDRESS || 'BuyHalfCow · PO Box 1234 · Denver, CO 80201';
+
+// Shared email footer — CAN-SPAM compliant: physical address + visible unsubscribe.
+// Append this to every outbound email HTML body.
+function emailFooter(recipientEmail: string): string {
+  const unsubUrl = `${SITE_URL}/unsubscribe?email=${encodeURIComponent(recipientEmail)}`;
+  return `
+    <div style="margin-top:40px;padding-top:20px;border-top:1px solid #E5E2DC;font-size:12px;color:#A7A29A;line-height:1.6;">
+      <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+      <p style="margin:8px 0 0;">
+        <a href="${unsubUrl}" style="color:#A7A29A;text-decoration:underline;">Unsubscribe</a>
+        &nbsp;·&nbsp;
+        <a href="${SITE_URL}/privacy" style="color:#A7A29A;text-decoration:underline;">Privacy Policy</a>
+      </p>
+    </div>`;
 }
 
 // =====================================================

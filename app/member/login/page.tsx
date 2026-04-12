@@ -39,21 +39,21 @@ export default function MemberLoginPage() {
 
   if (sent) {
     return (
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black flex items-center justify-center">
+      <main className="min-h-screen py-24 bg-bone text-charcoal flex items-center justify-center">
         <Container>
           <div className="max-w-md mx-auto text-center space-y-6">
             <h1 className="font-serif text-4xl">Check Your Email</h1>
             <Divider />
-            <p className="text-lg text-saddle-brown leading-relaxed">
-              If you have an approved account, you&apos;ll receive a login link at <strong className="text-charcoal-black">{email}</strong>.
+            <p className="text-lg text-saddle leading-relaxed">
+              If you have an approved account, you&apos;ll receive a login link at <strong className="text-charcoal">{email}</strong>.
             </p>
-            <p className="text-sm text-dust-gray">
+            <p className="text-sm text-dust">
               The link expires in 1 hour. Check spam if you don&apos;t see it.
             </p>
             <div className="pt-6">
               <button
                 onClick={() => { setSent(false); setEmail(''); }}
-                className="text-saddle-brown hover:text-charcoal-black transition-colors text-sm"
+                className="text-saddle hover:text-charcoal transition-colors text-sm"
               >
                 Try a different email
               </button>
@@ -65,13 +65,13 @@ export default function MemberLoginPage() {
   }
 
   return (
-    <main className="min-h-screen py-24 bg-bone-white text-charcoal-black flex items-center justify-center">
+    <main className="min-h-screen py-24 bg-bone text-charcoal flex items-center justify-center">
       <Container>
         <div className="max-w-md mx-auto">
           <div className="text-center space-y-6 mb-12">
             <h1 className="font-serif text-4xl">Member Login</h1>
             <Divider />
-            <p className="text-saddle-brown">
+            <p className="text-saddle">
               Enter your email to receive a login link. No password needed.
             </p>
           </div>
@@ -87,12 +87,12 @@ export default function MemberLoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="your@email.com"
                 required
-                className="w-full px-4 py-3 border border-dust-gray bg-bone-white text-charcoal-black focus:outline-none focus:border-charcoal-black transition-colors"
+                className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
               />
             </div>
 
             {error && (
-              <div className="p-4 border border-weathered-red text-weathered-red text-sm">
+              <div className="p-4 border border-weathered text-weathered text-sm">
                 {error}
               </div>
             )}
@@ -100,26 +100,26 @@ export default function MemberLoginPage() {
             <button
               type="submit"
               disabled={sending}
-              className="w-full px-6 py-4 bg-charcoal-black text-bone-white hover:bg-saddle-brown transition-colors duration-300 font-medium tracking-wider uppercase disabled:opacity-50"
+              className="w-full px-6 py-4 bg-charcoal text-bone hover:bg-saddle transition-colors duration-300 font-medium tracking-wider uppercase disabled:opacity-50"
             >
               {sending ? 'Sending...' : 'Send Login Link'}
             </button>
           </form>
 
           <div className="mt-8 text-center space-y-3">
-            <p className="text-sm text-dust-gray">
+            <p className="text-sm text-dust">
               Don&apos;t have an account?
             </p>
             <Link
               href="/access"
-              className="inline-block text-charcoal-black hover:text-saddle-brown transition-colors text-sm font-medium"
+              className="inline-block text-charcoal hover:text-saddle transition-colors text-sm font-medium"
             >
               Apply for Access →
             </Link>
           </div>
 
           <div className="mt-12 text-center">
-            <Link href="/" className="text-saddle-brown hover:text-charcoal-black transition-colors text-sm">
+            <Link href="/" className="text-saddle hover:text-charcoal transition-colors text-sm">
               ← Back to home
             </Link>
           </div>

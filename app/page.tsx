@@ -51,12 +51,12 @@ function LiveStats() {
     <div className="flex justify-center gap-8 pt-6">
       <div className="text-center">
         <div className="font-serif text-3xl md:text-4xl">{stats.rancherCount}</div>
-        <div className="text-xs uppercase tracking-wider text-saddle-brown">Ranchers in Pipeline</div>
+        <div className="text-xs uppercase tracking-wider text-saddle">Ranchers in Pipeline</div>
       </div>
-      <div className="w-px bg-dust-gray" />
+      <div className="w-px bg-dust" />
       <div className="text-center">
         <div className="font-serif text-3xl md:text-4xl">{stats.buyerCount}</div>
-        <div className="text-xs uppercase tracking-wider text-saddle-brown">Buyers Waiting</div>
+        <div className="text-xs uppercase tracking-wider text-saddle">Buyers Waiting</div>
       </div>
     </div>
   );
@@ -64,7 +64,7 @@ function LiveStats() {
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen bg-bone-white text-charcoal-black">
+    <main className="min-h-screen bg-bone text-charcoal">
       <Suspense fallback={null}>
         <CampaignTracker />
       </Suspense>
@@ -92,7 +92,7 @@ export default function HomePage() {
               Rebuilding Real Food
             </h1>
             
-            <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle-brown">
+            <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle">
               Direct rancher access. Local beef. No middleman.<br />
               This is how we take back the food system.
             </p>
@@ -113,18 +113,18 @@ export default function HomePage() {
             <h2 className="font-serif text-3xl md:text-4xl mb-4">
               Pick Your Path
             </h2>
-            <p className="text-lg text-saddle-brown">
+            <p className="text-lg text-saddle">
               Choose what describes you best
             </p>
           </div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-7xl mx-auto">
             {/* PATH 1: CONSUMERS / BUYERS */}
-            <div className="border-2 border-charcoal-black p-8 space-y-6 hover:bg-white transition-colors">
+            <div className="border-2 border-charcoal p-8 space-y-6 hover:bg-white transition-colors">
               <div className="text-center">
                 <div className="text-5xl mb-4">🥩</div>
                 <h3 className="font-serif text-2xl mb-2">I Want to Source Beef</h3>
-                <p className="text-sm text-saddle-brown mb-6">
+                <p className="text-sm text-saddle mb-6">
                   Join The HERD and source directly from verified American ranchers
                 </p>
               </div>
@@ -148,11 +148,11 @@ export default function HomePage() {
             </div>
 
             {/* PATH 2: RANCHERS */}
-            <div className="border-2 border-charcoal-black p-8 space-y-6 hover:bg-white transition-colors">
+            <div className="border-2 border-charcoal p-8 space-y-6 hover:bg-white transition-colors">
               <div className="text-center">
                 <div className="text-5xl mb-4">🤠</div>
                 <h3 className="font-serif text-2xl mb-2">I'm a Rancher</h3>
-                <p className="text-sm text-saddle-brown mb-6">
+                <p className="text-sm text-saddle mb-6">
                   Join American ranchers serving The HERD
                 </p>
               </div>
@@ -176,11 +176,11 @@ export default function HomePage() {
             </div>
 
             {/* PATH 3: LAND SELLERS */}
-            <div className="border-2 border-charcoal-black p-8 space-y-6 hover:bg-white transition-colors">
+            <div className="border-2 border-charcoal p-8 space-y-6 hover:bg-white transition-colors">
               <div className="text-center">
                 <div className="text-5xl mb-4">🏞️</div>
                 <h3 className="font-serif text-2xl mb-2">I Have Land</h3>
-                <p className="text-sm text-saddle-brown mb-6">
+                <p className="text-sm text-saddle mb-6">
                   Selling ranch property, hunting land, or acreage privately
                 </p>
               </div>
@@ -204,11 +204,11 @@ export default function HomePage() {
             </div>
 
             {/* PATH 4: BRANDS */}
-            <div className="border-2 border-charcoal-black p-8 space-y-6 hover:bg-white transition-colors">
+            <div className="border-2 border-charcoal p-8 space-y-6 hover:bg-white transition-colors">
               <div className="text-center">
                 <div className="text-5xl mb-4">🛠️</div>
                 <h3 className="font-serif text-2xl mb-2">I'm a Brand</h3>
-                <p className="text-sm text-saddle-brown mb-6">
+                <p className="text-sm text-saddle mb-6">
                   Western/ranch brand wanting to reach engaged members
                 </p>
               </div>
@@ -237,15 +237,15 @@ export default function HomePage() {
       <Divider />
 
       {/* MERCH SECTION - Signal of Belief */}
-      <section className="py-20 bg-charcoal-black text-bone-white">
+      <section className="py-20 bg-charcoal text-bone">
         <Container>
           <div className="text-center space-y-8">
             <h2 className="font-serif text-4xl md:text-5xl">
               Wear The Signal
             </h2>
-            <p className="text-xl text-dust-gray max-w-2xl mx-auto leading-relaxed">
+            <p className="text-xl text-dust max-w-2xl mx-auto leading-relaxed">
               Limited Sackett Ranch collab. If you're wearing this, you were early.<br />
-              <strong className="text-bone-white">This is how we prove demand to ranchers — and fund the first partnerships.</strong>
+              <strong className="text-bone">This is how we prove demand to ranchers — and fund the first partnerships.</strong>
             </p>
             
             <div className="pt-6">
@@ -253,13 +253,13 @@ export default function HomePage() {
                 href="https://www.sackett-ranch.com/pages/buy-half-cow" 
             target="_blank"
             rel="noopener noreferrer"
-                className="inline-block px-12 py-5 bg-bone-white text-charcoal-black hover:bg-dust-gray hover:text-bone-white transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone-white"
+                className="inline-block px-12 py-5 bg-bone text-charcoal hover:bg-dust hover:text-bone transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone"
               >
                 Get Yours →
               </a>
             </div>
 
-            <p className="text-sm text-dust-gray pt-4">
+            <p className="text-sm text-dust pt-4">
               HERD members only. Sells out fast.
             </p>
           </div>
@@ -276,8 +276,8 @@ export default function HomePage() {
               <h2 className="font-serif text-4xl md:text-5xl mb-6">
                 What BuyHalfCow Is
               </h2>
-              <p className="text-xl leading-relaxed text-saddle-brown">
-                A <strong className="text-charcoal-black">private membership network</strong> connecting people who want to source ranch beef directly — and ranchers who want qualified buyers without the noise.
+              <p className="text-xl leading-relaxed text-saddle">
+                A <strong className="text-charcoal">private membership network</strong> connecting people who want to source ranch beef directly — and ranchers who want qualified buyers without the noise.
               </p>
             </div>
 
@@ -286,22 +286,22 @@ export default function HomePage() {
             {/* The Problem */}
             <div className="grid md:grid-cols-2 gap-12">
               <div className="space-y-4">
-                <h3 className="font-serif text-2xl text-weathered-red">The Problem</h3>
+                <h3 className="font-serif text-2xl text-weathered">The Problem</h3>
                 <ul className="space-y-3 text-base leading-relaxed">
                   <li className="flex items-start">
-                    <span className="mr-3 text-weathered-red">✗</span>
+                    <span className="mr-3 text-weathered">✗</span>
                     <span>Public marketplaces are full of spam</span>
                   </li>
                   <li className="flex items-start">
-                    <span className="mr-3 text-weathered-red">✗</span>
+                    <span className="mr-3 text-weathered">✗</span>
                     <span>Buyers don't know who to trust</span>
                   </li>
                   <li className="flex items-start">
-                    <span className="mr-3 text-weathered-red">✗</span>
+                    <span className="mr-3 text-weathered">✗</span>
                     <span>Ranchers waste time on tire-kickers</span>
                   </li>
                   <li className="flex items-start">
-                    <span className="mr-3 text-weathered-red">✗</span>
+                    <span className="mr-3 text-weathered">✗</span>
                     <span>No accountability or vetting</span>
                   </li>
                 </ul>
@@ -311,19 +311,19 @@ export default function HomePage() {
                 <h3 className="font-serif text-2xl">Our Solution</h3>
                 <ul className="space-y-3 text-base leading-relaxed">
                   <li className="flex items-start">
-                    <span className="mr-3 text-charcoal-black font-bold">✓</span>
+                    <span className="mr-3 text-charcoal font-bold">✓</span>
                     <span><strong>Manual approval</strong> for all members</span>
                   </li>
                   <li className="flex items-start">
-                    <span className="mr-3 text-charcoal-black font-bold">✓</span>
+                    <span className="mr-3 text-charcoal font-bold">✓</span>
                     <span><strong>Certified ranchers</strong> only</span>
                   </li>
                   <li className="flex items-start">
-                    <span className="mr-3 text-charcoal-black font-bold">✓</span>
+                    <span className="mr-3 text-charcoal font-bold">✓</span>
                     <span><strong>Direct connections</strong> — we stay out</span>
                   </li>
                   <li className="flex items-start">
-                    <span className="mr-3 text-charcoal-black font-bold">✓</span>
+                    <span className="mr-3 text-charcoal font-bold">✓</span>
                     <span><strong>CRM-logged</strong> for accountability</span>
                   </li>
                 </ul>
@@ -337,23 +337,23 @@ export default function HomePage() {
               <h3 className="font-serif text-3xl">What We're NOT</h3>
               <div className="grid md:grid-cols-2 gap-4 max-w-2xl mx-auto text-left">
                 <p className="flex items-start text-base">
-                  <span className="mr-3 text-weathered-red text-xl">✗</span>
+                  <span className="mr-3 text-weathered text-xl">✗</span>
                   <span>An e-commerce site with checkout</span>
                 </p>
                 <p className="flex items-start text-base">
-                  <span className="mr-3 text-weathered-red text-xl">✗</span>
+                  <span className="mr-3 text-weathered text-xl">✗</span>
                   <span>Open to anyone with an email</span>
                 </p>
                 <p className="flex items-start text-base">
-                  <span className="mr-3 text-weathered-red text-xl">✗</span>
+                  <span className="mr-3 text-weathered text-xl">✗</span>
                   <span>A matching algorithm platform</span>
                 </p>
                 <p className="flex items-start text-base">
-                  <span className="mr-3 text-weathered-red text-xl">✗</span>
+                  <span className="mr-3 text-weathered text-xl">✗</span>
                   <span>Trying to scale at all costs</span>
                 </p>
               </div>
-              <p className="text-lg text-saddle-brown pt-4">
+              <p className="text-lg text-saddle pt-4">
                 We're small, intentional, and trust-first.
               </p>
             </div>
@@ -378,24 +378,24 @@ export default function HomePage() {
               <h3 className="font-serif text-3xl text-center mb-8">For Buyers (Consumers)</h3>
               <div className="grid md:grid-cols-4 gap-6">
                 <div className="text-center space-y-3">
-                  <div className="w-12 h-12 bg-charcoal-black text-bone-white rounded-full flex items-center justify-center font-serif text-xl mx-auto">1</div>
+                  <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">1</div>
                   <p className="font-medium">Apply</p>
-                  <p className="text-sm text-saddle-brown">Fill out 2-min form. We review manually.</p>
+                  <p className="text-sm text-saddle">Fill out 2-min form. We review manually.</p>
                 </div>
                 <div className="text-center space-y-3">
-                  <div className="w-12 h-12 bg-charcoal-black text-bone-white rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
+                  <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
                   <p className="font-medium">Get Approved</p>
-                  <p className="text-sm text-saddle-brown">Email confirmation + login access in 3-5 days.</p>
+                  <p className="text-sm text-saddle">Email confirmation + login access in 3-5 days.</p>
                 </div>
                 <div className="text-center space-y-3">
-                  <div className="w-12 h-12 bg-charcoal-black text-bone-white rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
+                  <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
                   <p className="font-medium">Browse Ranchers</p>
-                  <p className="text-sm text-saddle-brown">Filter by your state. See capacity, beef types.</p>
+                  <p className="text-sm text-saddle">Filter by your state. See capacity, beef types.</p>
                 </div>
                 <div className="text-center space-y-3">
-                  <div className="w-12 h-12 bg-charcoal-black text-bone-white rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
+                  <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
                   <p className="font-medium">Contact Direct</p>
-                  <p className="text-sm text-saddle-brown">Message rancher. Work out details. Done.</p>
+                  <p className="text-sm text-saddle">Message rancher. Work out details. Done.</p>
                 </div>
               </div>
             </div>
@@ -407,24 +407,24 @@ export default function HomePage() {
               <h3 className="font-serif text-3xl text-center mb-8">For Ranchers</h3>
               <div className="grid md:grid-cols-4 gap-6">
                 <div className="text-center space-y-3">
-                  <div className="w-12 h-12 bg-charcoal-black text-bone-white rounded-full flex items-center justify-center font-serif text-xl mx-auto">1</div>
+                  <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">1</div>
                   <p className="font-medium">Apply</p>
-                  <p className="text-sm text-saddle-brown">Submit ranch info, capacity, certifications.</p>
+                  <p className="text-sm text-saddle">Submit ranch info, capacity, certifications.</p>
                 </div>
                 <div className="text-center space-y-3">
-                  <div className="w-12 h-12 bg-charcoal-black text-bone-white rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
+                  <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
                   <p className="font-medium">Get Certified</p>
-                  <p className="text-sm text-saddle-brown">We verify and approve. Listed as "Certified".</p>
+                  <p className="text-sm text-saddle">We verify and approve. Listed as "Certified".</p>
                 </div>
                 <div className="text-center space-y-3">
-                  <div className="w-12 h-12 bg-charcoal-black text-bone-white rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
+                  <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
                   <p className="font-medium">Receive Inquiries</p>
-                  <p className="text-sm text-saddle-brown">Qualified buyers contact you directly via email.</p>
+                  <p className="text-sm text-saddle">Qualified buyers contact you directly via email.</p>
                 </div>
                 <div className="text-center space-y-3">
-                  <div className="w-12 h-12 bg-charcoal-black text-bone-white rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
+                  <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
                   <p className="font-medium">Complete Sale</p>
-                  <p className="text-sm text-saddle-brown">Keep 90%. We take 10% on successful sales.</p>
+                  <p className="text-sm text-saddle">Keep 90%. We take 10% on successful sales.</p>
                 </div>
               </div>
             </div>
@@ -441,14 +441,14 @@ export default function HomePage() {
             <h2 className="font-serif text-4xl md:text-5xl">
               Built on Trust
             </h2>
-            <p className="text-xl leading-relaxed text-saddle-brown">
+            <p className="text-xl leading-relaxed text-saddle">
               Every rancher is reviewed.<br />
               Every member is approved.<br />
               Every deal is logged in our CRM.
             </p>
             <Divider />
             <p className="text-lg">
-              <strong className="text-charcoal-black">This isn't about scale.</strong><br />
+              <strong className="text-charcoal">This isn't about scale.</strong><br />
               It's about keeping things good.
             </p>
           </div>
@@ -458,7 +458,7 @@ export default function HomePage() {
       <Divider />
 
       {/* FINAL CTA */}
-      <section className="py-24 bg-saddle-brown text-bone-white">
+      <section className="py-24 bg-saddle text-bone">
         <Container>
           <div className="text-center space-y-8">
             <h2 className="font-serif text-4xl md:text-5xl">
@@ -470,13 +470,13 @@ export default function HomePage() {
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-6">
               <a
                 href="/access"
-                className="inline-block px-10 py-5 bg-bone-white text-charcoal-black hover:bg-white transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone-white"
+                className="inline-block px-10 py-5 bg-bone text-charcoal hover:bg-white transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
                 I Want Beef
               </a>
               <a
                 href="/partner"
-                className="inline-block px-10 py-5 bg-transparent text-bone-white hover:bg-bone-white hover:text-charcoal-black transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone-white"
+                className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
                 I'm a Partner
           </a>
@@ -484,12 +484,12 @@ export default function HomePage() {
                 href="https://www.sackett-ranch.com/pages/buy-half-cow"
             target="_blank"
             rel="noopener noreferrer"
-                className="inline-block px-10 py-5 bg-transparent text-bone-white hover:bg-bone-white hover:text-charcoal-black transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone-white"
+                className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
           >
                 Shop Limited Drop
           </a>
         </div>
-            <p className="text-sm pt-4 text-dust-gray">
+            <p className="text-sm pt-4 text-dust">
               Questions? <a href="mailto:contact@buyhalfcow.com" className="underline">contact@buyhalfcow.com</a>
             </p>
           </div>
@@ -513,12 +513,12 @@ export default function HomePage() {
             
             <Divider />
 
-            <div className="flex flex-wrap justify-center gap-6 text-xs text-dust-gray">
-              <a href="/terms" className="hover:text-charcoal-black transition-colors">Terms</a>
-              <a href="/privacy" className="hover:text-charcoal-black transition-colors">Privacy</a>
+            <div className="flex flex-wrap justify-center gap-6 text-xs text-dust">
+              <a href="/terms" className="hover:text-charcoal transition-colors">Terms</a>
+              <a href="/privacy" className="hover:text-charcoal transition-colors">Privacy</a>
             </div>
             
-            <div className="space-y-2 text-sm text-dust-gray">
+            <div className="space-y-2 text-sm text-dust">
               <p>BuyHalfCow is a private membership network.</p>
               <p>Not a marketplace. Not e-commerce.</p>
             </div>

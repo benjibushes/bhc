@@ -9,8 +9,8 @@ import Link from 'next/link';
 export default function SignAgreementPage() {
   return (
     <Suspense fallback={
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
-        <Container><p className="text-center text-saddle-brown">Loading agreement...</p></Container>
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
+        <Container><p className="text-center text-saddle">Loading agreement...</p></Container>
       </main>
     }>
       <SignAgreementInner />
@@ -101,11 +101,11 @@ function SignAgreementInner() {
 
   if (loading) {
     return (
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-2xl mx-auto text-center">
-            <div className="inline-block w-8 h-8 border-4 border-charcoal-black border-t-transparent rounded-full animate-spin" />
-            <p className="mt-4 text-saddle-brown">Loading agreement...</p>
+            <div className="inline-block w-8 h-8 border-4 border-charcoal border-t-transparent rounded-full animate-spin" />
+            <p className="mt-4 text-saddle">Loading agreement...</p>
           </div>
         </Container>
       </main>
@@ -114,12 +114,12 @@ function SignAgreementInner() {
 
   if (error && !rancherData) {
     return (
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-2xl mx-auto text-center space-y-6">
             <h1 className="font-serif text-3xl">Unable to Load Agreement</h1>
-            <p className="text-saddle-brown">{error}</p>
-            <Link href="/" className="inline-block px-6 py-3 border border-charcoal-black hover:bg-charcoal-black hover:text-bone-white transition-colors">
+            <p className="text-saddle">{error}</p>
+            <Link href="/" className="inline-block px-6 py-3 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors">
               Go to Homepage
             </Link>
           </div>
@@ -130,30 +130,30 @@ function SignAgreementInner() {
 
   if (alreadySigned) {
     return (
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-2xl mx-auto text-center space-y-6">
             <div className="text-6xl">&#10003;</div>
             <h1 className="font-serif text-3xl">Agreement Already Signed</h1>
-            <p className="text-saddle-brown">
+            <p className="text-saddle">
               This agreement was signed{signedAt ? ` on ${new Date(signedAt).toLocaleDateString()}` : ''}.
             </p>
             {rancherData?.dashboardLink ? (
               <a
                 href={rancherData.dashboardLink}
-                className="inline-block px-8 py-4 bg-charcoal-black text-bone-white font-semibold uppercase tracking-wider text-sm hover:bg-saddle-brown transition-colors"
+                className="inline-block px-8 py-4 bg-charcoal text-bone font-semibold uppercase tracking-wider text-sm hover:bg-saddle transition-colors"
               >
                 Go to Your Dashboard
               </a>
             ) : (
               <Link
                 href="/rancher/login"
-                className="inline-block px-8 py-4 bg-charcoal-black text-bone-white font-semibold uppercase tracking-wider text-sm hover:bg-saddle-brown transition-colors"
+                className="inline-block px-8 py-4 bg-charcoal text-bone font-semibold uppercase tracking-wider text-sm hover:bg-saddle transition-colors"
               >
                 Log In to Dashboard
               </Link>
             )}
-            <p className="text-sm text-dust-gray">
+            <p className="text-sm text-dust">
               Questions? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
             </p>
           </div>
@@ -164,29 +164,29 @@ function SignAgreementInner() {
 
   if (success) {
     return (
-      <main className="min-h-screen py-24 bg-bone-white text-charcoal-black">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-2xl mx-auto text-center space-y-6">
             <div className="text-6xl">&#10003;</div>
             <h1 className="font-serif text-3xl">Agreement Signed</h1>
-            <p className="text-lg text-saddle-brown">
+            <p className="text-lg text-saddle">
               Thank you, {signatureName}. Your BuyHalfCow Commission Agreement has been accepted.
             </p>
-            <div className="p-6 border border-dust-gray bg-white text-left space-y-2 text-sm">
+            <div className="p-6 border border-dust bg-white text-left space-y-2 text-sm">
               <p><strong>Signed by:</strong> {signatureName}</p>
               <p><strong>Date:</strong> {new Date(signedAt).toLocaleString()}</p>
               <p><strong>Status:</strong> Agreement Signed — Set up your ranch page next</p>
             </div>
             <div className="space-y-2">
-              <p className="text-saddle-brown font-medium">
+              <p className="text-saddle font-medium">
                 Redirecting you to your dashboard to set up your ranch page...
               </p>
-              <div className="inline-block w-6 h-6 border-3 border-charcoal-black border-t-transparent rounded-full animate-spin" />
+              <div className="inline-block w-6 h-6 border-3 border-charcoal border-t-transparent rounded-full animate-spin" />
             </div>
-            <p className="text-sm text-dust-gray">
-              Not redirecting? <a href={dashboardLink || '/rancher/login'} className="underline text-saddle-brown">Click here to go to your dashboard</a>
+            <p className="text-sm text-dust">
+              Not redirecting? <a href={dashboardLink || '/rancher/login'} className="underline text-saddle">Click here to go to your dashboard</a>
             </p>
-            <p className="text-xs text-dust-gray">
+            <p className="text-xs text-dust">
               Questions? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
             </p>
           </div>
@@ -196,14 +196,14 @@ function SignAgreementInner() {
   }
 
   return (
-    <main className="min-h-screen py-12 bg-bone-white text-charcoal-black">
+    <main className="min-h-screen py-12 bg-bone text-charcoal">
       <Container>
         <div className="max-w-3xl mx-auto space-y-8">
           <div className="text-center space-y-2">
             <h1 className="font-serif text-3xl md:text-4xl">
               BuyHalfCow Commission Agreement
             </h1>
-            <p className="text-saddle-brown">
+            <p className="text-saddle">
               {rancherData?.rancher_name && `Prepared for ${rancherData.rancher_name}`}
               {rancherData?.ranch_name && rancherData.ranch_name !== rancherData.rancher_name && ` — ${rancherData.ranch_name}`}
             </p>
@@ -229,7 +229,7 @@ function SignAgreementInner() {
             <section className="space-y-3">
               <h2 className="font-serif text-xl">2. Commission Structure</h2>
               <p>BuyHalfCow earns a <strong>10% commission</strong> on all verified referred sales. This applies to:</p>
-              <ul className="list-disc pl-6 space-y-1 text-saddle-brown">
+              <ul className="list-disc pl-6 space-y-1 text-saddle">
                 <li>One-time bulk purchases</li>
                 <li>Repeat purchases from referred buyers</li>
                 <li>Subscription-based agreements from referred buyers</li>
@@ -241,7 +241,7 @@ function SignAgreementInner() {
 
             <section className="space-y-3">
               <h2 className="font-serif text-xl">3. How It Works</h2>
-              <ol className="list-decimal pl-6 space-y-1 text-saddle-brown">
+              <ol className="list-decimal pl-6 space-y-1 text-saddle">
                 <li>Alignment call to confirm production capacity, goals, and standards</li>
                 <li>Commission Agreement signed (this document)</li>
                 <li>Verification via customer references, reviews, or social proof</li>
@@ -254,7 +254,7 @@ function SignAgreementInner() {
 
             <section className="space-y-3">
               <h2 className="font-serif text-xl">4. Rancher Expectations</h2>
-              <ul className="list-disc pl-6 space-y-1 text-saddle-brown">
+              <ul className="list-disc pl-6 space-y-1 text-saddle">
                 <li>Honest inventory reporting</li>
                 <li>Clear pricing to referred buyers</li>
                 <li>Professional communication with introduced customers</li>
@@ -285,16 +285,16 @@ function SignAgreementInner() {
           <Divider />
 
           {/* Download Links */}
-          <div className="p-4 bg-white border border-dust-gray space-y-2">
+          <div className="p-4 bg-white border border-dust space-y-2">
             <p className="text-sm font-medium">Full documents for your records:</p>
             <div className="flex flex-wrap gap-3">
-              <a href="/docs/BHC_Commission_Agreement.docx" download className="text-sm underline text-saddle-brown hover:text-charcoal-black">
+              <a href="/docs/BHC_Commission_Agreement.docx" download className="text-sm underline text-saddle hover:text-charcoal">
                 Commission Agreement (DOCX)
               </a>
-              <a href="/docs/BHC_Media_Agreement.docx" download className="text-sm underline text-saddle-brown hover:text-charcoal-black">
+              <a href="/docs/BHC_Media_Agreement.docx" download className="text-sm underline text-saddle hover:text-charcoal">
                 Media Agreement (DOCX)
               </a>
-              <a href="/docs/BHC_Rancher_Info_Packet.pdf" download className="text-sm underline text-saddle-brown hover:text-charcoal-black">
+              <a href="/docs/BHC_Rancher_Info_Packet.pdf" download className="text-sm underline text-saddle hover:text-charcoal">
                 Rancher Info Packet (PDF)
               </a>
             </div>
@@ -304,7 +304,7 @@ function SignAgreementInner() {
 
           {/* Signature Form */}
           <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="p-6 border-2 border-charcoal-black bg-white space-y-6">
+            <div className="p-6 border-2 border-charcoal bg-white space-y-6">
               <h2 className="font-serif text-xl">Accept Agreement</h2>
 
               <div className="space-y-2">
@@ -317,10 +317,10 @@ function SignAgreementInner() {
                   onChange={(e) => setSignatureName(e.target.value)}
                   placeholder="Type your full legal name"
                   required
-                  className="w-full px-4 py-3 border border-dust-gray bg-bone-white text-lg focus:outline-none focus:border-charcoal-black"
+                  className="w-full px-4 py-3 border border-dust bg-bone text-lg focus:outline-none focus:border-charcoal"
                   style={{ fontFamily: 'cursive, Georgia, serif' }}
                 />
-                <p className="text-xs text-dust-gray">
+                <p className="text-xs text-dust">
                   By typing your name above, you are providing a legally binding electronic signature.
                 </p>
               </div>
@@ -349,14 +349,14 @@ function SignAgreementInner() {
               <button
                 type="submit"
                 disabled={submitting || !agreedToTerms || !signatureName.trim()}
-                className="w-full px-6 py-4 bg-charcoal-black text-bone-white text-sm font-semibold uppercase tracking-wider hover:bg-saddle-brown transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-6 py-4 bg-charcoal text-bone text-sm font-semibold uppercase tracking-wider hover:bg-saddle transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? 'Submitting...' : 'Sign & Accept Agreement'}
               </button>
             </div>
           </form>
 
-          <p className="text-center text-xs text-dust-gray">
+          <p className="text-center text-xs text-dust">
             Questions before signing? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a> or reply to your onboarding email.
           </p>
         </div>
