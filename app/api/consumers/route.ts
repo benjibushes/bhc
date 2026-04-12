@@ -126,7 +126,7 @@ export async function POST(request: Request) {
       'Full Name': fullName.trim(),
       'Email': email.trim().toLowerCase(),
       'Phone': phone || '',
-      'State': state,
+      'State': state.toString().trim().toUpperCase(),
       'Interests': interests,
       'Status': status,
       'Segment': consumerSegment,

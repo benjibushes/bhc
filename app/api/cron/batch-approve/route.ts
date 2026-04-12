@@ -6,7 +6,7 @@ import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from 
 import { bulkRouteStateToRancher, getRancherServedStates } from '@/lib/bulkRoute';
 import jwt from 'jsonwebtoken';
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -31,6 +31,53 @@ async function handler(request: Request) {
       }
     }
 
+    // ── CAPACITY COUNTER SELF-HEAL ──────────────────────────────────────────
+    // The increment/decrement counter on ranchers can drift (missed decrements,
+    // manual Airtable edits, etc.). Reconcile from actual active referrals so
+    // the matching engine uses correct capacity numbers.
+    let capacityFixed = 0;
+    try {
+      const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+      const allReferrals = await getAllRecords(TABLES.REFERRALS) as any[];
+      const activeStatuses = ['Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Negotiation'];
+
+      // Count actual active referrals per rancher
+      const actualCounts: Record<string, number> = {};
+      for (const ref of allReferrals) {
+        if (!activeStatuses.includes(ref['Status'])) continue;
+        const rIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+        const rId = Array.isArray(rIds) ? rIds[0] : null;
+        if (rId) {
+          actualCounts[rId] = (actualCounts[rId] || 0) + 1;
+        }
+      }
+
+      // Fix any rancher where the stored counter doesn't match reality
+      for (const rancher of allRanchers) {
+        const stored = rancher['Current Active Referrals'] || 0;
+        const actual = actualCounts[rancher.id] || 0;
+        if (stored !== actual) {
+          try {
+            await updateRecord(TABLES.RANCHERS, rancher.id, {
+              'Current Active Referrals': actual,
+            });
+            capacityFixed++;
+            console.log(`Capacity fix: ${rancher['Operator Name'] || rancher['Ranch Name']} ${stored} → ${actual}`);
+          } catch (e: any) {
+            console.error(`Capacity fix error for ${rancher.id}:`, e.message);
+          }
+        }
+      }
+      if (capacityFixed > 0) {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🔧 <b>Capacity Self-Heal</b>\n\nFixed ${capacityFixed} rancher(s) with drifted referral counters.`
+        );
+      }
+    } catch (e: any) {
+      console.error('Capacity self-heal error:', e.message);
+    }
+
     // Get all pending consumers
     const pending = await getAllRecords(
       TABLES.CONSUMERS,
@@ -39,7 +86,7 @@ async function handler(request: Request) {
 
     if (pending.length === 0) {
       await sendTelegramUpdate('⏳ Batch approve ran — no pending consumers.');
-      return NextResponse.json({ success: true, approved: 0, skipped: 0 });
+      // Don't return yet — still need to retry waitlisted consumers below
     }
 
     let approved = 0;
@@ -229,15 +276,82 @@ async function handler(request: Request) {
       console.error('Auto-go-live query error:', e.message);
     }
 
+    // ── WAITLISTED CONSUMER RETRY ───────────────────────────────────────────
+    // Consumers who were previously approved but waitlisted (no rancher at the
+    // time) get re-run through matching. This catches buyers who got stuck when
+    // a rancher was at capacity but has since freed up (or capacity was healed).
+    let waitlistedRetried = 0;
+    let waitlistedMatched = 0;
+    try {
+      const waitlisted = await getAllRecords(
+        TABLES.CONSUMERS,
+        `AND({Status} = "Approved", {Segment} = "Beef Buyer", OR({Referral Status} = "Waitlisted", {Referral Status} = "Unmatched"))`
+      ) as any[];
+
+      for (const consumer of waitlisted) {
+        const cState = consumer['State'];
+        if (!cState) continue;
+
+        // Skip if they already have an active referral (Intro Sent, Rancher Contacted, etc.)
+        // This is double-checked inside matching/suggest too, but skip here to save API calls
+        const existingRefStatus = consumer['Referral Status'] || '';
+        if (['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(existingRefStatus)) continue;
+
+        waitlistedRetried++;
+        try {
+          const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+            },
+            body: JSON.stringify({
+              buyerState: cState,
+              buyerId: consumer.id,
+              buyerName: consumer['Full Name'],
+              buyerEmail: consumer['Email'],
+              buyerPhone: consumer['Phone'],
+              orderType: consumer['Order Type'],
+              budgetRange: consumer['Budget'],
+              intentScore: consumer['Intent Score'],
+              intentClassification: consumer['Intent Classification'] || '',
+              notes: consumer['Notes'],
+            }),
+          });
+          if (matchRes.ok) {
+            const matchData = await matchRes.json().catch(() => ({}));
+            if (matchData.matchFound || matchData.referralId) {
+              waitlistedMatched++;
+            }
+          }
+        } catch (e: any) {
+          console.error(`Waitlist retry error for ${consumer.id}:`, e.message);
+        }
+        await sleep(300);
+      }
+
+      if (waitlistedRetried > 0) {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🔄 <b>Waitlist Retry</b>\n\n` +
+          `Re-checked ${waitlistedRetried} waitlisted buyers\n` +
+          `✅ Matched: ${waitlistedMatched}\n` +
+          `⏳ Still waiting: ${waitlistedRetried - waitlistedMatched}`
+        );
+      }
+    } catch (e: any) {
+      console.error('Waitlisted retry error:', e.message);
+    }
+
     const summary = `✅ <b>Batch Approval Complete</b>
 
 📥 Pending reviewed: ${pending.length}
 ✅ Approved: ${approved}
-🤝 Matched to ranchers: ${matched}${ranchersGoLive > 0 ? `\n🚀 Ranchers auto-published: ${ranchersGoLive}` : ''}${errors.length > 0 ? `\n⚠️ Errors: ${errors.length} (${errors.slice(0, 3).join(', ')})` : ''}`;
+🤝 Matched to ranchers: ${matched}${ranchersGoLive > 0 ? `\n🚀 Ranchers auto-published: ${ranchersGoLive}` : ''}${waitlistedMatched > 0 ? `\n🔄 Waitlisted re-matched: ${waitlistedMatched}/${waitlistedRetried}` : ''}${capacityFixed > 0 ? `\n🔧 Capacity counters fixed: ${capacityFixed}` : ''}${errors.length > 0 ? `\n⚠️ Errors: ${errors.length} (${errors.slice(0, 3).join(', ')})` : ''}`;
 
     await sendTelegramUpdate(summary);
 
-    return NextResponse.json({ success: true, approved, matched, ranchersGoLive, errors: errors.length });
+    return NextResponse.json({ success: true, approved, matched, ranchersGoLive, waitlistedRetried, waitlistedMatched, capacityFixed, errors: errors.length });
   } catch (error: any) {
     console.error('Batch approve error:', error);
     await sendTelegramUpdate(`⚠️ Batch approval cron failed: ${error.message}`).catch(() => {});

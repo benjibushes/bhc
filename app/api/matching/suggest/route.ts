@@ -36,6 +36,32 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'buyerState and buyerId are required' }, { status: 400 });
     }
 
+    // Normalize buyer state to uppercase 2-letter code for reliable matching
+    const normalizedBuyerState = buyerState.toString().trim().toUpperCase();
+
+    // ── Guard: skip if buyer already has an active referral ────────────────
+    // Prevents duplicate referrals when waitlisted retry re-calls this endpoint.
+    if (buyerEmail) {
+      try {
+        const existingRefs = await getAllRecords(
+          TABLES.REFERRALS,
+          `AND({Buyer Email} = "${buyerEmail.trim().toLowerCase()}", OR({Status} = "Intro Sent", {Status} = "Rancher Contacted", {Status} = "Negotiation"))`
+        ) as any[];
+        if (existingRefs.length > 0) {
+          return NextResponse.json({
+            success: true,
+            matchFound: true,
+            alreadyActive: true,
+            referralId: existingRefs[0].id,
+            message: `Buyer already has an active referral (${existingRefs[0]['Status']})`,
+          });
+        }
+      } catch (e) {
+        console.error('Error checking existing referrals:', e);
+        // Continue anyway — better a duplicate than a missed lead
+      }
+    }
+
     const allRanchers: any[] = await getAllRecords(TABLES.RANCHERS);
 
     // Helper: check if rancher is active, signed, and under capacity
@@ -81,12 +107,12 @@ export async function POST(request: Request) {
       // Standard matching: local first, then nationwide
       const localEligible = allRanchers.filter((r: any) => {
         if (!isEligibleBase(r)) return false;
-        const state = r['State'] || '';
+        const rState = (r['State'] || '').toString().trim().toUpperCase();
         const statesServed = r['States Served'] || '';
         return (
-          state === buyerState ||
-          (typeof statesServed === 'string' && statesServed.split(',').map((s: string) => s.trim()).includes(buyerState)) ||
-          (Array.isArray(statesServed) && statesServed.includes(buyerState))
+          rState === normalizedBuyerState ||
+          (typeof statesServed === 'string' && statesServed.split(',').map((s: string) => s.trim().toUpperCase()).includes(normalizedBuyerState)) ||
+          (Array.isArray(statesServed) && statesServed.map((s: any) => String(s).trim().toUpperCase()).includes(normalizedBuyerState))
         );
       });
 
@@ -121,7 +147,7 @@ export async function POST(request: Request) {
       'Buyer Name': buyerName || '',
       'Buyer Email': buyerEmail || '',
       'Buyer Phone': buyerPhone || '',
-      'Buyer State': buyerState,
+      'Buyer State': normalizedBuyerState,
       'Order Type': orderType || '',
       'Budget Range': budgetRange || '',
       'Intent Score': intentScore || 0,
