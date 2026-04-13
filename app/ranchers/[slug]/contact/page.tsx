@@ -67,7 +67,7 @@ export default function RancherContactPage() {
     setError('');
 
     try {
-      const res = await fetch(`/api/ranchers/${slug}/contact`, {
+      const res = await fetch(`/api/public/ranchers/${slug}/contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

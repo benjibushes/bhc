@@ -35,8 +35,8 @@ function CampaignTracker() {
   return null;
 }
 
-function LiveStats() {
-  const [stats, setStats] = useState<{ rancherCount: number; buyerCount: number } | null>(null);
+function useLiveStats() {
+  const [stats, setStats] = useState<{ rancherCount: number; buyerCount: number; stateCount: number } | null>(null);
 
   useEffect(() => {
     fetch('/api/stats/public')
@@ -45,24 +45,13 @@ function LiveStats() {
       .catch(() => {});
   }, []);
 
-  if (!stats) return null;
-
-  return (
-    <div className="flex justify-center gap-8 pt-6">
-      <div className="text-center">
-        <div className="font-serif text-3xl md:text-4xl">{stats.rancherCount}</div>
-        <div className="text-xs uppercase tracking-wider text-saddle">Ranchers in Pipeline</div>
-      </div>
-      <div className="w-px bg-dust" />
-      <div className="text-center">
-        <div className="font-serif text-3xl md:text-4xl">{stats.buyerCount}</div>
-        <div className="text-xs uppercase tracking-wider text-saddle">Buyers Waiting</div>
-      </div>
-    </div>
-  );
+  return stats;
 }
 
 export default function HomePage() {
+  const stats = useLiveStats();
+  const totalMembers = stats ? stats.rancherCount + stats.buyerCount : null;
+
   return (
     <main className="min-h-screen bg-bone text-charcoal">
       <Suspense fallback={null}>
@@ -88,18 +77,38 @@ export default function HomePage() {
             </div>
 
             <h1 className="font-serif text-4xl md:text-6xl lg:text-7xl leading-tight">
-              18,000+ People<br />
-              Rebuilding Real Food
+              {totalMembers
+                ? <>{totalMembers.toLocaleString()}+ Members<br />Rebuilding Real Food</>
+                : <>A Private Network<br />Rebuilding Real Food</>}
             </h1>
-            
+
             <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle">
-              Direct rancher access. Local beef. No middleman.<br />
-              This is how we take back the food system.
+              A private membership network connecting Americans directly with verified local ranchers. No middlemen. No algorithms. Just trust.
             </p>
 
-            <Suspense fallback={null}>
-              <LiveStats />
-            </Suspense>
+            {stats && (
+              <div className="flex justify-center gap-6 md:gap-10 pt-6">
+                <div className="text-center">
+                  <div className="font-serif text-3xl md:text-4xl">{stats.buyerCount.toLocaleString()}</div>
+                  <div className="text-xs uppercase tracking-wider text-saddle">Members</div>
+                </div>
+                <div className="w-px bg-dust" />
+                <div className="text-center">
+                  <div className="font-serif text-3xl md:text-4xl">{stats.rancherCount}</div>
+                  <div className="text-xs uppercase tracking-wider text-saddle">Ranchers</div>
+                </div>
+                <div className="w-px bg-dust" />
+                <div className="text-center">
+                  <div className="font-serif text-3xl md:text-4xl">{stats.stateCount}</div>
+                  <div className="text-xs uppercase tracking-wider text-saddle">States</div>
+                </div>
+              </div>
+            )}
+
+            <p className="text-sm text-saddle pt-2">
+              Follow the movement:{' '}
+              <a href="https://instagram.com/buyhalfcow" target="_blank" rel="noopener noreferrer" className="underline hover:text-charcoal transition-colors">@buyhalfcow</a>
+            </p>
           </div>
         </Container>
       </section>
@@ -139,7 +148,7 @@ export default function HomePage() {
                 </p>
                 <p className="flex items-start">
                   <span className="mr-2">✓</span>
-                  <span>Join 18,000+ followers sourcing direct</span>
+                  <span>Join {totalMembers ? `${totalMembers.toLocaleString()}+` : 'hundreds of'} members sourcing direct</span>
                 </p>
               </div>
               <Button href="/access" className="w-full">
@@ -268,93 +277,51 @@ export default function HomePage() {
 
       <Divider />
 
-      {/* WHAT IS BUYHALFCOW - Clear Explanation */}
+      {/* HOW WE'RE DIFFERENT */}
       <section className="py-20">
         <Container>
           <div className="max-w-4xl mx-auto space-y-12">
             <div className="text-center">
               <h2 className="font-serif text-4xl md:text-5xl mb-6">
-                What BuyHalfCow Is
+                How We're Different
               </h2>
               <p className="text-xl leading-relaxed text-saddle">
-                A <strong className="text-charcoal">private membership network</strong> connecting people who want to source ranch beef directly — and ranchers who want qualified buyers without the noise.
+                BuyHalfCow is the only <strong className="text-charcoal">private, approval-only</strong> network for sourcing ranch beef direct. Every rancher is verified. Every buyer is vetted. Every connection is logged.
               </p>
             </div>
 
             <Divider />
 
-            {/* The Problem */}
-            <div className="grid md:grid-cols-2 gap-12">
-              <div className="space-y-4">
-                <h3 className="font-serif text-2xl text-weathered">The Problem</h3>
-                <ul className="space-y-3 text-base leading-relaxed">
-                  <li className="flex items-start">
-                    <span className="mr-3 text-weathered">✗</span>
-                    <span>Public marketplaces are full of spam</span>
-                  </li>
-                  <li className="flex items-start">
-                    <span className="mr-3 text-weathered">✗</span>
-                    <span>Buyers don't know who to trust</span>
-                  </li>
-                  <li className="flex items-start">
-                    <span className="mr-3 text-weathered">✗</span>
-                    <span>Ranchers waste time on tire-kickers</span>
-                  </li>
-                  <li className="flex items-start">
-                    <span className="mr-3 text-weathered">✗</span>
-                    <span>No accountability or vetting</span>
-                  </li>
-                </ul>
+            <div className="grid md:grid-cols-3 gap-8">
+              <div className="text-center space-y-4">
+                <div className="text-4xl">01</div>
+                <h3 className="font-serif text-xl">Approval-Only Access</h3>
+                <p className="text-sm text-saddle leading-relaxed">
+                  Every member is manually reviewed before joining. No bots, no spam, no tire-kickers.
+                </p>
               </div>
-
-              <div className="space-y-4">
-                <h3 className="font-serif text-2xl">Our Solution</h3>
-                <ul className="space-y-3 text-base leading-relaxed">
-                  <li className="flex items-start">
-                    <span className="mr-3 text-charcoal font-bold">✓</span>
-                    <span><strong>Manual approval</strong> for all members</span>
-                  </li>
-                  <li className="flex items-start">
-                    <span className="mr-3 text-charcoal font-bold">✓</span>
-                    <span><strong>Certified ranchers</strong> only</span>
-                  </li>
-                  <li className="flex items-start">
-                    <span className="mr-3 text-charcoal font-bold">✓</span>
-                    <span><strong>Direct connections</strong> — we stay out</span>
-                  </li>
-                  <li className="flex items-start">
-                    <span className="mr-3 text-charcoal font-bold">✓</span>
-                    <span><strong>CRM-logged</strong> for accountability</span>
-                  </li>
-                </ul>
+              <div className="text-center space-y-4">
+                <div className="text-4xl">02</div>
+                <h3 className="font-serif text-xl">Verified Ranchers</h3>
+                <p className="text-sm text-saddle leading-relaxed">
+                  We certify ranchers through direct outreach and verification. Only real operations make the network.
+                </p>
+              </div>
+              <div className="text-center space-y-4">
+                <div className="text-4xl">03</div>
+                <h3 className="font-serif text-xl">Direct Relationships</h3>
+                <p className="text-sm text-saddle leading-relaxed">
+                  We make the introduction, then get out of the way. You deal directly with your rancher.
+                </p>
               </div>
             </div>
 
             <Divider />
 
-            {/* What We're NOT */}
-            <div className="text-center space-y-6">
-              <h3 className="font-serif text-3xl">What We're NOT</h3>
-              <div className="grid md:grid-cols-2 gap-4 max-w-2xl mx-auto text-left">
-                <p className="flex items-start text-base">
-                  <span className="mr-3 text-weathered text-xl">✗</span>
-                  <span>An e-commerce site with checkout</span>
-                </p>
-                <p className="flex items-start text-base">
-                  <span className="mr-3 text-weathered text-xl">✗</span>
-                  <span>Open to anyone with an email</span>
-                </p>
-                <p className="flex items-start text-base">
-                  <span className="mr-3 text-weathered text-xl">✗</span>
-                  <span>A matching algorithm platform</span>
-                </p>
-                <p className="flex items-start text-base">
-                  <span className="mr-3 text-weathered text-xl">✗</span>
-                  <span>Trying to scale at all costs</span>
-                </p>
-              </div>
-              <p className="text-lg text-saddle pt-4">
-                We're small, intentional, and trust-first.
+            <div className="text-center">
+              <p className="text-lg text-saddle">
+                No e-commerce checkout. No public marketplace. No algorithms.<br />
+                <strong className="text-charcoal">Just real people, real beef, real trust.</strong>
               </p>
             </div>
           </div>
@@ -385,7 +352,7 @@ export default function HomePage() {
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
                   <p className="font-medium">Get Approved</p>
-                  <p className="text-sm text-saddle">Email confirmation + login access in 3-5 days.</p>
+                  <p className="text-sm text-saddle">Email confirmation + member access within 24 hours.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
@@ -439,18 +406,26 @@ export default function HomePage() {
         <Container>
           <div className="max-w-3xl mx-auto text-center space-y-8">
             <h2 className="font-serif text-4xl md:text-5xl">
-              Built on Trust
+              Why People Trust Us
             </h2>
-            <p className="text-xl leading-relaxed text-saddle">
-              Every rancher is reviewed.<br />
-              Every member is approved.<br />
-              Every deal is logged in our CRM.
-            </p>
-            <Divider />
-            <p className="text-lg">
-              <strong className="text-charcoal">This isn't about scale.</strong><br />
-              It's about keeping things good.
-            </p>
+            <div className="grid sm:grid-cols-2 gap-6 text-left max-w-2xl mx-auto">
+              <div className="space-y-2">
+                <p className="font-medium">Rancher Verification</p>
+                <p className="text-sm text-saddle">Direct outreach, documentation review, and ongoing accountability for every ranch in our network.</p>
+              </div>
+              <div className="space-y-2">
+                <p className="font-medium">Buyer Vetting</p>
+                <p className="text-sm text-saddle">Every application is reviewed. We match intent, location, and order type before any introduction is made.</p>
+              </div>
+              <div className="space-y-2">
+                <p className="font-medium">Logged Connections</p>
+                <p className="text-sm text-saddle">Every referral, introduction, and follow-up is tracked in our CRM. Nothing falls through the cracks.</p>
+              </div>
+              <div className="space-y-2">
+                <p className="font-medium">Real Support</p>
+                <p className="text-sm text-saddle">Run by a real person, not a faceless platform. Questions get answered. Problems get solved.</p>
+              </div>
+            </div>
           </div>
         </Container>
       </section>
@@ -462,33 +437,35 @@ export default function HomePage() {
         <Container>
           <div className="text-center space-y-8">
             <h2 className="font-serif text-4xl md:text-5xl">
-              Ready?
+              Get Started
             </h2>
             <p className="text-xl max-w-2xl mx-auto">
-              Choose your path below.
+              {totalMembers
+                ? `${totalMembers.toLocaleString()}+ people are already in. Applications reviewed daily.`
+                : 'Applications reviewed daily. Most members are approved within 24 hours.'}
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-6">
               <a
                 href="/access"
                 className="inline-block px-10 py-5 bg-bone text-charcoal hover:bg-white transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                I Want Beef
+                Join as a Buyer
               </a>
               <a
                 href="/partner"
                 className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                I'm a Partner
-          </a>
-          <a
+                Apply as a Rancher
+              </a>
+              <a
                 href="https://www.sackett-ranch.com/pages/buy-half-cow"
-            target="_blank"
-            rel="noopener noreferrer"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
-          >
-                Shop Limited Drop
-          </a>
-        </div>
+              >
+                Shop Merch
+              </a>
+            </div>
             <p className="text-sm pt-4 text-dust">
               Questions? <a href="mailto:contact@buyhalfcow.com" className="underline">contact@buyhalfcow.com</a>
             </p>
@@ -519,8 +496,8 @@ export default function HomePage() {
             </div>
             
             <div className="space-y-2 text-sm text-dust">
-              <p>BuyHalfCow is a private membership network.</p>
-              <p>Not a marketplace. Not e-commerce.</p>
+              <p>BuyHalfCow is a private, approval-only network for sourcing ranch beef direct.</p>
+              <p>Kalispell, MT &middot; <a href="https://instagram.com/buyhalfcow" target="_blank" rel="noopener noreferrer" className="hover:text-charcoal transition-colors">@buyhalfcow</a></p>
             </div>
           </div>
         </Container>

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Inter } from "next/font/google";
 import "./globals.css";
+import Header from "./components/Header";
 
 const playfair = Playfair_Display({
   variable: "--font-playfair",
@@ -54,6 +55,31 @@ export const metadata: Metadata = {
   },
 };
 
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'BuyHalfCow',
+  url: 'https://buyhalfcow.com',
+  logo: 'https://buyhalfcow.com/bhc-logo.png',
+  description: 'Private membership network connecting verified American ranchers with serious buyers. Direct ranch beef, no middlemen.',
+  address: {
+    '@type': 'PostalAddress',
+    streetAddress: '1001 S. Main St. Ste 600',
+    addressLocality: 'Kalispell',
+    addressRegion: 'MT',
+    postalCode: '59901',
+    addressCountry: 'US',
+  },
+  sameAs: [
+    'https://instagram.com/buyhalfcow',
+  ],
+  foundingDate: '2026',
+  founder: {
+    '@type': 'Person',
+    name: 'Benjamin Beauchman',
+  },
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -61,9 +87,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+      </head>
       <body
         className={`${playfair.variable} ${inter.variable} antialiased`}
       >
+        <Header />
         {children}
       </body>
     </html>

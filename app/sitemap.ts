@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { getActiveRancherPages } from '@/lib/airtable';
+import { getActiveRancherPages, getAllRecords, TABLES } from '@/lib/airtable';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = 'https://buyhalfcow.com';
@@ -31,5 +31,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // Don't fail the entire sitemap if Airtable is unavailable
   }
 
-  return [...staticRoutes, ...rancherRoutes];
+  let newsRoutes: MetadataRoute.Sitemap = [];
+  try {
+    const posts = await getAllRecords(TABLES.NEWS_POSTS, `{Status} = "published"`) as any[];
+    newsRoutes = posts
+      .filter((p: any) => p['Slug'])
+      .map((p: any) => ({
+        url: `${baseUrl}/news/${p['Slug']}`,
+        lastModified: p['Published Date'] ? new Date(p['Published Date']) : new Date(),
+        changeFrequency: 'monthly' as const,
+        priority: 0.5,
+      }));
+  } catch {
+    // Don't fail if news fetch fails
+  }
+
+  return [...staticRoutes, ...rancherRoutes, ...newsRoutes];
 }

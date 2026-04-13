@@ -80,7 +80,7 @@ function getUnsubscribeHeaders(email: string) {
 }
 
 // Physical address required by CAN-SPAM Act. Update via BUSINESS_ADDRESS env var.
-const BUSINESS_ADDRESS = process.env.BUSINESS_ADDRESS || 'BuyHalfCow · PO Box 1234 · Denver, CO 80201';
+const BUSINESS_ADDRESS = process.env.BUSINESS_ADDRESS || 'BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901';
 
 // Shared email footer — CAN-SPAM compliant: physical address + visible unsubscribe.
 // Append this to every outbound email HTML body.

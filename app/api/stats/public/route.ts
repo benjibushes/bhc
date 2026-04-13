@@ -4,13 +4,14 @@ import { TABLES } from '@/lib/airtable';
 
 export const maxDuration = 60;
 
-let cachedStats: { rancherCount: number; buyerCount: number; timestamp: number } | null = null;
+let cachedStats: { rancherCount: number; buyerCount: number; stateCount: number; timestamp: number } | null = null;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 export async function GET() {
   try {
     if (cachedStats && Date.now() - cachedStats.timestamp < CACHE_TTL) {
-      return NextResponse.json(cachedStats, {
+      const { timestamp: _, ...data } = cachedStats;
+      return NextResponse.json(data, {
         headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
       });
     }
@@ -22,14 +23,17 @@ export async function GET() {
 
     const rancherCount = ranchers.length;
     const buyerCount = consumers.length;
+    const stateCount = new Set(
+      (ranchers as any[]).map(r => (r['State'] || '').toString().trim().toUpperCase()).filter(Boolean)
+    ).size;
 
-    cachedStats = { rancherCount, buyerCount, timestamp: Date.now() };
+    cachedStats = { rancherCount, buyerCount, stateCount, timestamp: Date.now() };
 
-    return NextResponse.json({ rancherCount, buyerCount }, {
+    return NextResponse.json({ rancherCount, buyerCount, stateCount }, {
       headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
     });
   } catch (error: any) {
     console.error('Error fetching public stats:', error);
-    return NextResponse.json({ rancherCount: 0, buyerCount: 0 }, { status: 500 });
+    return NextResponse.json({ rancherCount: 0, buyerCount: 0, stateCount: 0 }, { status: 500 });
   }
 }
