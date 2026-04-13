@@ -110,14 +110,25 @@ async function callAnthropic(params: {
 }
 
 // ─── Tool-use loop ────────────────────────────────────────────────────────
-// callClaudeWithTools runs an Anthropic tool-use conversation: the model can
-// call any tool from `tools`, we execute it via `runTool`, feed the result
-// back, and loop until the model returns a final text response.
-//
-// Anthropic only — Groq tool-use schema differs and Ollama is unreliable.
-// Falls back gracefully: if no Anthropic key, throws.
+// callClaudeWithTools runs a tool-use conversation loop. Priority:
+// 1. Groq (free — OpenAI-compatible tool calling)
+// 2. Anthropic (paid fallback)
+// The model can call any tool from the registry, we execute via runTool,
+// feed results back, and loop until a final text response.
 import { TOOLS as REGISTERED_TOOLS, runTool } from './aiTools';
 import { buildMemoryContextBlock } from './aiMemory';
+
+// Convert Anthropic tool schema to OpenAI/Groq format
+function toOpenAITools(tools: typeof REGISTERED_TOOLS) {
+  return tools.map(t => ({
+    type: 'function' as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.input_schema,
+    },
+  }));
+}
 
 export async function callClaudeWithTools(params: {
   model?: 'claude-sonnet-4-6' | 'claude-haiku-4-5-20251001';
@@ -126,15 +137,7 @@ export async function callClaudeWithTools(params: {
   maxTokens?: number;
   maxIterations?: number;
 }): Promise<{ text: string; toolCalls: { name: string; input: any; output: any }[] }> {
-  if (!ANTHROPIC_API_KEY) {
-    throw new Error('Tool use requires ANTHROPIC_API_KEY (Groq/Ollama tool schemas differ).');
-  }
-  const model = params.model || 'claude-sonnet-4-6';
-  const maxIterations = params.maxIterations || 6;
-  const toolCalls: { name: string; input: any; output: any }[] = [];
-
-  // Inject persistent memory facts into the system prompt so the model
-  // starts every tool-use conversation knowing what it learned previously.
+  // Inject persistent memory facts into the system prompt
   let memoryBlock = '';
   try {
     memoryBlock = await buildMemoryContextBlock();
@@ -143,7 +146,99 @@ export async function callClaudeWithTools(params: {
   }
   const systemWithMemory = params.system + memoryBlock;
 
-  // Anthropic messages history — starts with the user prompt
+  // Route to Groq (free) if available, otherwise Anthropic
+  if (GROQ_API_KEY) {
+    return callGroqWithTools({ ...params, system: systemWithMemory });
+  }
+  if (ANTHROPIC_API_KEY) {
+    return callAnthropicWithTools({ ...params, system: systemWithMemory });
+  }
+  throw new Error('No AI provider configured for tool use. Set GROQ_API_KEY (free) or ANTHROPIC_API_KEY.');
+}
+
+// ─── Groq tool-use loop (OpenAI-compatible, FREE) ────────────────────────
+async function callGroqWithTools(params: {
+  model?: string;
+  system: string;
+  user: string;
+  maxTokens?: number;
+  maxIterations?: number;
+}): Promise<{ text: string; toolCalls: { name: string; input: any; output: any }[] }> {
+  const model = GROQ_MODELS[params.model || 'claude-sonnet-4-6'] || 'llama-3.3-70b-versatile';
+  const maxIterations = params.maxIterations || 6;
+  const toolCalls: { name: string; input: any; output: any }[] = [];
+  const openAITools = toOpenAITools(REGISTERED_TOOLS);
+
+  const messages: any[] = [
+    { role: 'system', content: params.system },
+    { role: 'user', content: params.user },
+  ];
+
+  for (let i = 0; i < maxIterations; i++) {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: params.maxTokens || 2048,
+        messages,
+        tools: openAITools,
+        tool_choice: 'auto',
+      }),
+    });
+    if (!response.ok) throw new Error(`Groq tool API error: ${await response.text()}`);
+    const data: any = await response.json();
+    const choice = data.choices?.[0];
+    if (!choice) throw new Error('Groq returned empty response');
+
+    const msg = choice.message;
+    messages.push(msg);
+
+    // If no tool calls, we're done
+    if (choice.finish_reason !== 'tool_calls' || !msg.tool_calls?.length) {
+      return { text: msg.content || '', toolCalls };
+    }
+
+    // Execute each tool call
+    for (const tc of msg.tool_calls) {
+      const fnName = tc.function.name;
+      let fnArgs: any = {};
+      try {
+        fnArgs = JSON.parse(tc.function.arguments || '{}');
+      } catch (e) {
+        fnArgs = {};
+      }
+      const output = await runTool(fnName, fnArgs);
+      toolCalls.push({ name: fnName, input: fnArgs, output });
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        content: JSON.stringify(output),
+      });
+    }
+  }
+
+  return {
+    text: '⚠️ Tool loop hit max iterations without resolving — partial answer only.',
+    toolCalls,
+  };
+}
+
+// ─── Anthropic tool-use loop (paid fallback) ─────────────────────────────
+async function callAnthropicWithTools(params: {
+  model?: string;
+  system: string;
+  user: string;
+  maxTokens?: number;
+  maxIterations?: number;
+}): Promise<{ text: string; toolCalls: { name: string; input: any; output: any }[] }> {
+  const model = params.model || 'claude-sonnet-4-6';
+  const maxIterations = params.maxIterations || 6;
+  const toolCalls: { name: string; input: any; output: any }[] = [];
+
   const messages: any[] = [{ role: 'user', content: params.user }];
 
   for (let i = 0; i < maxIterations; i++) {
@@ -157,7 +252,7 @@ export async function callClaudeWithTools(params: {
       body: JSON.stringify({
         model,
         max_tokens: params.maxTokens || 2048,
-        system: systemWithMemory,
+        system: params.system,
         tools: REGISTERED_TOOLS,
         messages,
       }),
@@ -165,17 +260,14 @@ export async function callClaudeWithTools(params: {
     if (!response.ok) throw new Error(`Anthropic tool API error: ${await response.text()}`);
     const data: any = await response.json();
 
-    // Append the assistant turn
     messages.push({ role: 'assistant', content: data.content });
 
-    // If the stop reason isn't tool_use, we're done — extract text
     if (data.stop_reason !== 'tool_use') {
       const textBlocks = (data.content || []).filter((b: any) => b.type === 'text');
       const text = textBlocks.map((b: any) => b.text).join('\n');
       return { text, toolCalls };
     }
 
-    // Execute every tool_use block in this turn
     const toolUses = (data.content || []).filter((b: any) => b.type === 'tool_use');
     const toolResults: any[] = [];
     for (const tu of toolUses) {

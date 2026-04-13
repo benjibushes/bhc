@@ -2382,8 +2382,8 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
           return NextResponse.json({ ok: true });
         }
 
-        if (!process.env.ANTHROPIC_API_KEY) {
-          await sendTelegramMessage(chatId, '⚠️ /ask requires ANTHROPIC_API_KEY. Tool use isn\'t available with Ollama or Groq yet.');
+        if (!process.env.GROQ_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+          await sendTelegramMessage(chatId, '⚠️ /ask requires GROQ_API_KEY or ANTHROPIC_API_KEY.');
           return NextResponse.json({ ok: true });
         }
 
