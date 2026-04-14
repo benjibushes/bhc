@@ -197,7 +197,7 @@ export async function sendConsumerApproval(data: {
       <li>Exclusive land deals and brand promotions</li>
       <li>A curated network — no spam, no middlemen</li>
     </ul>
-    <a href="${loginUtm}" class="button">Access Your Dashboard</a>
+    <a href="${loginUtm}" class="button">See Your Match</a>
     <p style="font-size: 13px; color: #A7A29A;">We're matching you with a rancher now. You'll receive an introduction within 48 hours.</p>
   `;
 
@@ -293,12 +293,9 @@ export async function sendBuyerMatchNotification(data: {
     <li>Once confirmed, I'll make a personal introduction via email</li>
     <li>You and your rancher connect directly — no middleman</li>
   </ol>
-  <p>You should receive your introduction within <strong>24-48 hours</strong>. Keep an eye on your inbox.</p>
-  <div style="text-align:center;">
-    <a href="${utm(data.loginUrl, 'match-notification', 'dashboard')}" class="cta">View Your Dashboard</a>
-  </div>
+  <p>You should receive your introduction within <strong>24-48 hours</strong>. Keep an eye on your inbox — your rancher's contact info will be in that next email.</p>
   <div class="divider"></div>
-  <p style="font-size:13px;">Questions? Reply to this email.</p>
+  <p style="font-size:13px;">Questions? Just reply to this email.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
     <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
@@ -359,9 +356,6 @@ export async function sendBuyerIntroNotification(data: {
     <li>Any questions about their operation</li>
   </ul>
   <p>They'll walk you through everything. No pressure, no rush — this is a direct relationship between you and your rancher.</p>
-  <div style="text-align:center;">
-    <a href="${utm(data.loginUrl, 'intro-notification', 'dashboard')}" class="cta">View Your Dashboard</a>
-  </div>
   <div class="divider"></div>
   <p style="font-size:13px;">If you don't hear back within 48 hours, reply to this email and I'll follow up on my end.</p>
   <div class="footer">
@@ -1128,7 +1122,7 @@ export async function sendSequenceEmail_BeefDay3(data: {
           <li>I make a personal introduction via email</li>
           <li>You connect directly — no middleman in the conversation</li>
         </ul>
-        <a href="${utm(data.loginUrl, 'beef-day3', 'dashboard')}" class="button">Check Your Dashboard →</a>
+        <p>If you have a preference on cut type, quantity, or timing that you didn't share on your application, <strong>just reply to this email</strong> and I'll factor it in.</p>
         <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
@@ -1159,9 +1153,8 @@ export async function sendSequenceEmail_BeefDay7(data: {
         <h1>Quick check-in</h1>
         <p>Hi ${esc(data.firstName)},</p>
         <p>We introduced you to <strong>${esc(data.rancherName)}</strong> earlier this week. I wanted to follow up — did you hear from them? Did you get a chance to connect?</p>
-        <p>If you haven't heard back within 24 hours, reply to this email and I'll follow up on my end. Every rancher in our network is vetted and responsive — if something isn't working, I want to know.</p>
+        <p>If you haven't heard back within 24 hours, <strong>reply to this email</strong> and I'll follow up on my end. Every rancher in our network is vetted and responsive — if something isn't working, I want to know.</p>
         <p>If you've already connected, that's great — just ignore this.</p>
-        <a href="${utm(data.loginUrl, 'beef-day7', 'dashboard')}" class="button">View Your Dashboard →</a>
         <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply here if you need anything.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
@@ -1200,7 +1193,7 @@ export async function sendSequenceEmail_CommunityDay7(data: {
           <li>Community members get early access to announcements, drops, and content before anyone else</li>
         </ul>
         <p>This is not a marketplace. We don't take advertising. We don't sell your data. We just connect the right people.</p>
-        <a href="${utm(data.loginUrl, 'community-day7', 'dashboard')}" class="button">Explore Your Dashboard →</a>
+        <a href="${utm(data.loginUrl, 'community-day7', 'member-home')}" class="button">Visit Your Member Home →</a>
         <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply with questions anytime.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
@@ -1240,7 +1233,7 @@ export async function sendSequenceEmail_CommunityDay14(data: {
         </ol>
         <p>No subscription, no markup, no middleman in the transaction. Just clean beef from a rancher you know by name.</p>
         <a href="${utm(data.upgradeUrl, 'community-day14', 'upgrade-cta')}" class="button">Become a Beef Buyer →</a>
-        <p style="font-size:13px;color:#A7A29A">Or <a href="${utm(data.loginUrl, 'community-day14', 'dashboard')}" style="color:#0E0E0E">log in to your dashboard</a> if you've already done this.</p>
+        <p style="font-size:13px;color:#A7A29A">Already on the beef path? Just <a href="${utm(data.loginUrl, 'community-day14', 'member-home')}" style="color:#0E0E0E">log in</a> to check your match.</p>
         <div class="footer"><p>— Benjamin, BuyHalfCow<br>Reply if you have questions about the process.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
@@ -1272,7 +1265,7 @@ export async function sendChaseUpEmail(data: {
         <h1>Quick check-in</h1>
         <p>Hi ${esc(data.firstName)},</p>
         ${data.aiDraftedMessage.split('\n').filter(Boolean).map(p => `<p>${esc(p)}</p>`).join('')}
-        <a href="${utm(data.loginUrl, 'chase-up', 'dashboard')}" class="button">View Your Dashboard →</a>
+        <p><strong>Just reply to this email</strong> and let me know where things stand — or if you'd like me to re-match you with a different rancher.</p>
         <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
@@ -1450,7 +1443,6 @@ p { color: #6B4F3F; margin: 12px 0; }
     <li>Know a rancher who sells direct? Send them to <a href="${SITE_URL}/partners" style="color:#0E0E0E;">buyhalfcow.com/partners</a> — it speeds things up in your area</li>
     <li>Tell a friend who wants better beef — more demand in your state = faster supply</li>
   </ul>
-  ${data.loginUrl ? `<div style="text-align:center;"><a href="${utm(data.loginUrl, 'waitlist', 'dashboard')}" class="cta">Explore Your Dashboard</a></div>` : ''}
   <div class="divider"></div>
   <p style="font-size: 13px;">Questions? Just reply to this email.</p>
   <div class="footer">
@@ -1508,10 +1500,7 @@ p { color: #6B4F3F; margin: 12px 0; }
     ${data.rancherEmail ? `<p>Email: <a href="mailto:${esc(data.rancherEmail)}" style="color:#0E0E0E;">${esc(data.rancherEmail)}</a></p>` : ''}
     ${data.rancherPhone ? `<p>Phone: <a href="tel:${esc(data.rancherPhone)}" style="color:#0E0E0E;">${esc(data.rancherPhone)}</a></p>` : ''}
   </div>
-  <p>If there's been an issue or you'd like us to follow up on your behalf, just reply to this email and we'll handle it.</p>
-  <div style="text-align: center;">
-    <a href="${utm(data.loginUrl, 'intro-checkin', 'dashboard')}" class="cta">View Your Dashboard →</a>
-  </div>
+  <p>If there's been an issue or you'd like us to follow up on your behalf, <strong>just reply to this email</strong> and we'll handle it.</p>
   <div class="divider"></div>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>

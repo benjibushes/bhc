@@ -350,7 +350,7 @@ export default function RancherDashboardPage() {
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
-    { key: 'referrals', label: `Active Leads (${activeRefs.length})` },
+    { key: 'referrals', label: `My Buyers (${activeRefs.length})` },
     { key: 'earnings', label: 'Earnings' },
     { key: 'benefits', label: `Network Benefits${benefits.length > 0 ? ` (${benefits.length})` : ''}` },
     { key: 'my_page', label: 'My Page' },
