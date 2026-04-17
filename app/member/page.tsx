@@ -18,6 +18,22 @@ interface Rancher {
   'Monthly Capacity': number;
   Certifications: string;
   Certified: boolean;
+  // Landing page fields — used for conversion cards
+  Slug?: string;
+  'Page Live'?: boolean;
+  'Logo URL'?: string;
+  Tagline?: string;
+  'Quarter Price'?: number;
+  'Quarter lbs'?: string;
+  'Quarter Payment Link'?: string;
+  'Half Price'?: number;
+  'Half lbs'?: string;
+  'Half Payment Link'?: string;
+  'Whole Price'?: number;
+  'Whole lbs'?: string;
+  'Whole Payment Link'?: string;
+  'Next Processing Date'?: string;
+  'Reserve Link'?: string;
 }
 
 interface LandDeal {
@@ -42,6 +58,7 @@ interface Brand {
 interface MemberReferral {
   id: string;
   status: string;
+  rancher_id?: string;
   rancher_name: string;
   created_at: string;
 }
@@ -200,6 +217,21 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
           {/* Dashboard Tab */}
           {activeTab === 'dashboard' && (
             <div className="space-y-8">
+              {/* Your Match Hero — prominent conversion card when a rancher is matched */}
+              {(() => {
+                const activeRef = data?.memberReferrals?.find(
+                  r => r.status !== 'Closed Won' && r.status !== 'Closed Lost' && r.rancher_id
+                );
+                if (!activeRef?.rancher_id) return null;
+                const matchedRancher =
+                  data?.stateRanchers?.find(r => r.id === activeRef.rancher_id) ||
+                  data?.otherRanchers?.find(r => r.id === activeRef.rancher_id);
+                if (!matchedRancher) return null;
+                return (
+                  <YourMatchHero rancher={matchedRancher} status={activeRef.status} />
+                );
+              })()}
+
               <h2 className="font-serif text-2xl">Your Referral Status</h2>
 
               {data?.memberReferrals && data.memberReferrals.length > 0 ? (
@@ -441,6 +473,128 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   );
 }
 
+// Renders the price-tier buy buttons for a rancher that has payment links.
+// Uses the tracked redirect endpoint (/ranchers/[slug]/pay/[tier]) so clicks
+// are logged in Airtable before the user lands on the payment page.
+function BuyTierButtons({ rancher }: { rancher: Rancher }) {
+  const slug = rancher.Slug;
+  const tiers = [
+    { key: 'quarter', label: 'Quarter Cow', price: rancher['Quarter Price'], lbs: rancher['Quarter lbs'], link: rancher['Quarter Payment Link'] },
+    { key: 'half', label: 'Half Cow', price: rancher['Half Price'], lbs: rancher['Half lbs'], link: rancher['Half Payment Link'] },
+    { key: 'whole', label: 'Whole Cow', price: rancher['Whole Price'], lbs: rancher['Whole lbs'], link: rancher['Whole Payment Link'] },
+  ].filter(t => t.link && t.price);
+
+  if (tiers.length === 0) return null;
+
+  return (
+    <div className="grid sm:grid-cols-3 gap-3">
+      {tiers.map(t => (
+        <a
+          key={t.key}
+          href={slug ? `/ranchers/${slug}/pay/${t.key}` : t.link}
+          className="block p-4 border-2 border-charcoal bg-white hover:bg-charcoal hover:text-bone transition-colors text-center group"
+        >
+          <div className="text-xs uppercase tracking-wider text-saddle group-hover:text-bone">{t.label}</div>
+          <div className="font-serif text-2xl mt-1">${Number(t.price).toLocaleString()}</div>
+          {t.lbs && <div className="text-xs text-dust group-hover:text-bone mt-0.5">{t.lbs} lbs</div>}
+          <div className="mt-2 text-xs font-medium uppercase tracking-wider">Buy Now →</div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+// The conversion hero — lives at the top of the member dashboard when the
+// member has an active referral and a matched rancher. Shows name, logo,
+// processing-date urgency, and direct-buy buttons.
+function YourMatchHero({ rancher, status }: { rancher: Rancher; status: string }) {
+  const processingDate = rancher['Next Processing Date'];
+  const daysToProcessing = processingDate
+    ? Math.ceil((new Date(processingDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null;
+  const urgencyText =
+    daysToProcessing !== null && daysToProcessing > 0 && daysToProcessing <= 21
+      ? `Next processing in ${daysToProcessing} day${daysToProcessing === 1 ? '' : 's'} — reserve your share now`
+      : processingDate
+        ? `Next processing: ${new Date(processingDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`
+        : null;
+
+  const hasPricing = rancher['Quarter Payment Link'] || rancher['Half Payment Link'] || rancher['Whole Payment Link'];
+
+  return (
+    <div className="p-6 md:p-8 border-2 border-charcoal bg-white space-y-5">
+      <div className="flex flex-col sm:flex-row gap-5 items-start">
+        {rancher['Logo URL'] && (
+          <img
+            src={rancher['Logo URL']}
+            alt={rancher['Ranch Name']}
+            className="w-20 h-20 object-cover border border-dust flex-shrink-0"
+          />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="text-xs uppercase tracking-wider text-saddle">Your Matched Rancher</div>
+          <h2 className="font-serif text-2xl md:text-3xl mt-1">{rancher['Ranch Name']}</h2>
+          {rancher.Tagline ? (
+            <p className="text-saddle mt-1">{rancher.Tagline}</p>
+          ) : rancher['Operator Name'] ? (
+            <p className="text-saddle mt-1">Operated by {rancher['Operator Name']}</p>
+          ) : null}
+        </div>
+        {rancher.Certified && (
+          <span className="px-3 py-1 bg-charcoal text-bone text-xs font-medium uppercase tracking-wider flex-shrink-0">
+            Certified
+          </span>
+        )}
+      </div>
+
+      {urgencyText && (
+        <div className="p-3 bg-bone border-l-4 border-charcoal text-sm font-medium">
+          {urgencyText}
+        </div>
+      )}
+
+      {hasPricing ? (
+        <>
+          <BuyTierButtons rancher={rancher} />
+          <div className="flex flex-wrap items-center gap-4 text-sm pt-2">
+            {rancher.Slug && (
+              <Link href={`/ranchers/${rancher.Slug}`} className="text-charcoal hover:text-saddle underline underline-offset-2">
+                View full ranch page →
+              </Link>
+            )}
+            <ContactRancherButton
+              rancher={{
+                id: rancher.id,
+                ranch_name: rancher['Ranch Name'] || '',
+                operator_name: rancher['Operator Name'] || '',
+                email: rancher.Email || '',
+                state: rancher.State || '',
+              }}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-sm text-saddle">
+            {status === 'Intro Sent'
+              ? "We've made the introduction by email — your rancher will reach out with pricing and availability. Check your inbox."
+              : "We're finalizing your introduction. Your rancher will reach out within 24-48 hours."}
+          </p>
+          <ContactRancherButton
+            rancher={{
+              id: rancher.id,
+              ranch_name: rancher['Ranch Name'] || '',
+              operator_name: rancher['Operator Name'] || '',
+              email: rancher.Email || '',
+              state: rancher.State || '',
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RancherCard({ rancher }: { rancher: Rancher }) {
   const rancherForContact = {
     id: rancher.id,
@@ -449,16 +603,23 @@ function RancherCard({ rancher }: { rancher: Rancher }) {
     email: rancher.Email || '',
     state: rancher.State || '',
   };
+  const hasPricing = rancher['Quarter Payment Link'] || rancher['Half Payment Link'] || rancher['Whole Payment Link'];
 
   return (
     <div className="p-6 border border-dust bg-white space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="font-serif text-xl">{rancher['Ranch Name']}</h3>
-          <p className="text-sm text-saddle">Operator: {rancher['Operator Name']}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3 min-w-0">
+          {rancher['Logo URL'] && (
+            <img src={rancher['Logo URL']} alt={rancher['Ranch Name']} className="w-12 h-12 object-cover border border-dust flex-shrink-0" />
+          )}
+          <div className="min-w-0">
+            <h3 className="font-serif text-xl">{rancher['Ranch Name']}</h3>
+            <p className="text-sm text-saddle">Operator: {rancher['Operator Name']}</p>
+            {rancher.Tagline && <p className="text-sm text-dust mt-1 italic">&ldquo;{rancher.Tagline}&rdquo;</p>}
+          </div>
         </div>
         {rancher.Certified && (
-          <span className="px-3 py-1 bg-charcoal text-bone text-xs font-medium uppercase tracking-wider">
+          <span className="px-3 py-1 bg-charcoal text-bone text-xs font-medium uppercase tracking-wider flex-shrink-0">
             Certified
           </span>
         )}
@@ -471,7 +632,13 @@ function RancherCard({ rancher }: { rancher: Rancher }) {
           <div className="md:col-span-2"><span className="text-saddle">Certifications:</span> {rancher.Certifications}</div>
         )}
       </div>
-      <div className="pt-2">
+      {hasPricing && <BuyTierButtons rancher={rancher} />}
+      <div className="flex flex-wrap items-center gap-4 pt-2">
+        {rancher.Slug && (
+          <Link href={`/ranchers/${rancher.Slug}`} className="text-sm text-charcoal hover:text-saddle underline underline-offset-2">
+            View full ranch page →
+          </Link>
+        )}
         <ContactRancherButton rancher={rancherForContact} />
       </div>
     </div>

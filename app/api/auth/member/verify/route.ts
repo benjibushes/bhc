@@ -34,7 +34,8 @@ export async function POST(request: Request) {
     }
 
     const status = (consumer['Status'] || '').toLowerCase();
-    if (status !== 'approved' && status !== 'active') {
+    const LOGIN_ALLOWED = ['approved', 'active', 'waitlisted'];
+    if (!LOGIN_ALLOWED.includes(status)) {
       return NextResponse.json({ error: 'Your account is not yet approved. Please wait for admin review.' }, { status: 403 });
     }
 

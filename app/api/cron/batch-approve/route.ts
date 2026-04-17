@@ -78,10 +78,12 @@ async function handler(request: Request) {
       console.error('Capacity self-heal error:', e.message);
     }
 
-    // Get all pending consumers
+    // Get all unprocessed consumers — both explicit "Pending" AND blank-status
+    // records. New signups arrive with no Status value and were previously being
+    // silently skipped, stranding customers in a "can't log in" state.
     const pending = await getAllRecords(
       TABLES.CONSUMERS,
-      `{Status} = "Pending"`
+      `OR({Status} = "Pending", {Status} = "", {Status} = BLANK())`
     );
 
     if (pending.length === 0) {

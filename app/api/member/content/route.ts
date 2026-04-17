@@ -48,7 +48,10 @@ export async function GET() {
     const [ranchers, landDeals, brands] = await Promise.all([
       getAllRecords(TABLES.RANCHERS, "{Certified} = TRUE()").catch(() => []),
       getAllRecords(TABLES.LAND_DEALS, "{Status} = 'Approved'").catch(() => []),
-      getAllRecords(TABLES.BRANDS, "AND({Featured} = TRUE(), {Payment Status} = 'Paid')").catch(() => []),
+      // NOTE: Brands schema has no "Payment Status" field — the old filter
+      // was always returning [] silently. Featured/Status are multilineText,
+      // so use truthy-string checks. Brands are curated before being added.
+      getAllRecords(TABLES.BRANDS, "{Featured}").catch(() => []),
     ]);
 
     let referrals: any[] = [];
@@ -67,16 +70,23 @@ export async function GET() {
     });
     const otherRanchers = ranchers.filter((r: any) => !stateRanchers.some((sr: any) => sr.id === r.id));
 
-    // Get member's referral status
+    // Get member's referral status — include rancher_id so the UI can render
+    // a rich "your match" card (prices, processing date, buy buttons) by
+    // cross-referencing the full rancher record we already fetched above.
     const memberReferrals = referrals.filter((r: any) => {
       const buyerIds = r['Buyer'] || [];
       return Array.isArray(buyerIds) ? buyerIds.includes(memberId) : buyerIds === memberId;
-    }).map((r: any) => ({
-      id: r.id,
-      status: r['Status'] || '',
-      rancher_name: r['Suggested Rancher Name'] || '',
-      created_at: r['Created At'] || '',
-    }));
+    }).map((r: any) => {
+      const rancherLinks = r['Rancher'] || r['Suggested Rancher'] || [];
+      const rancherId = Array.isArray(rancherLinks) ? rancherLinks[0] : null;
+      return {
+        id: r.id,
+        status: r['Status'] || '',
+        rancher_id: rancherId,
+        rancher_name: r['Suggested Rancher Name'] || '',
+        created_at: r['Created At'] || '',
+      };
+    });
 
     return NextResponse.json({
       memberState,
