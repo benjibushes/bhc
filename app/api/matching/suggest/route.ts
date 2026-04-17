@@ -78,6 +78,61 @@ export async function POST(request: Request) {
       return true;
     };
 
+    // Parse a buyer budget range like "<$500", "$500-$1000", "$1000-$2000", "$2000+", "Unsure"
+    // into a numeric ceiling. Unknown/unparseable → Infinity (no filter applied).
+    const parseBudgetCeiling = (range: string): number => {
+      if (!range) return Infinity;
+      const r = range.trim().toLowerCase();
+      if (r === 'unsure' || r === 'not sure' || r === '') return Infinity;
+      if (r.startsWith('<')) {
+        const n = parseInt(r.replace(/[^0-9]/g, ''), 10);
+        return isFinite(n) ? n : Infinity;
+      }
+      if (r.endsWith('+')) return Infinity; // e.g. "$2000+"
+      // Range like "$500-$1000" — take the upper bound.
+      const parts = r.split('-');
+      if (parts.length === 2) {
+        const upper = parseInt(parts[1].replace(/[^0-9]/g, ''), 10);
+        if (isFinite(upper)) return upper;
+      }
+      const single = parseInt(r.replace(/[^0-9]/g, ''), 10);
+      return isFinite(single) ? single : Infinity;
+    };
+
+    // Helper: does the rancher's pricing fit the buyer's order type + budget?
+    // - If the rancher hasn't set prices at all, don't block (still a valid match —
+    //   they handle pricing in conversation).
+    // - If the buyer wants a specific tier, check THAT tier's price against their budget.
+    // - If the buyer hasn't picked a tier, check the cheapest configured tier.
+    // - If the buyer's budget can't fit ANY configured tier, filter the rancher out.
+    const budgetCeiling = parseBudgetCeiling(budgetRange || '');
+    const normalizedOrderType = (orderType || '').toString().toLowerCase();
+    const isPriceFit = (r: any): boolean => {
+      const q = Number(r['Quarter Price']) || 0;
+      const h = Number(r['Half Price']) || 0;
+      const w = Number(r['Whole Price']) || 0;
+      const anyPriced = q > 0 || h > 0 || w > 0;
+      // Rancher has no pricing configured yet — don't filter out.
+      if (!anyPriced) return true;
+      // Budget is unbounded — any priced rancher fits.
+      if (!isFinite(budgetCeiling)) return true;
+
+      const tierPrice = (() => {
+        if (normalizedOrderType.includes('quarter')) return q;
+        if (normalizedOrderType.includes('half')) return h;
+        if (normalizedOrderType.includes('whole')) return w;
+        // "Not Sure" / blank — use cheapest configured tier.
+        const configured = [q, h, w].filter(p => p > 0);
+        return configured.length > 0 ? Math.min(...configured) : 0;
+      })();
+
+      // If the specifically-requested tier isn't priced, fall back to cheapest configured.
+      const effective = tierPrice > 0
+        ? tierPrice
+        : Math.min(...[q, h, w].filter(p => p > 0));
+      return effective <= budgetCeiling;
+    };
+
     // ── PRIORITY: If lead came from a specific rancher's page, assign to THAT rancher ──
     // Always assign to the page rancher — even at capacity. They clicked "Buy" on THIS rancher.
     // Only require Active + Agreement Signed (skip capacity check for direct page leads).
@@ -104,8 +159,11 @@ export async function POST(request: Request) {
       // Lead came from this rancher's page — assign directly to them
       topMatch = directMatchRancher;
     } else {
-      // Standard matching: local first, then nationwide
-      const localEligible = allRanchers.filter((r: any) => {
+      // Standard matching: local first, then nationwide.
+      // Price-fit filter runs AFTER state/capacity so we still know *why* a
+      // match didn't happen (we can fall back to unfiltered pool for a
+      // "no priced rancher in budget" log-only outcome below).
+      const localEligibleAll = allRanchers.filter((r: any) => {
         if (!isEligibleBase(r)) return false;
         const rState = (r['State'] || '').toString().trim().toUpperCase();
         const statesServed = r['States Served'] || '';
@@ -115,11 +173,20 @@ export async function POST(request: Request) {
           (Array.isArray(statesServed) && statesServed.map((s: any) => String(s).trim().toUpperCase()).includes(normalizedBuyerState))
         );
       });
+      const localEligible = localEligibleAll.filter(isPriceFit);
 
-      const nationwideEligible = allRanchers.filter((r: any) => {
+      const nationwideEligibleAll = allRanchers.filter((r: any) => {
         if (!isEligibleBase(r)) return false;
         return r['Ships Nationwide'] === true || r['Ships Nationwide'] === 1;
       });
+      const nationwideEligible = nationwideEligibleAll.filter(isPriceFit);
+
+      // If price-fit eliminated all candidates but there WERE state-eligible
+      // ranchers, log so we can see the budget-gap pattern over time.
+      const priceFiltered = localEligibleAll.length > 0 && localEligible.length === 0;
+      if (priceFiltered) {
+        console.log(`[match] Price filter removed all ${localEligibleAll.length} local ranchers for ${buyerName || buyerId} (budget=${budgetRange}, orderType=${orderType})`);
+      }
 
       const eligible = localEligible.length > 0 ? localEligible : nationwideEligible;
       matchType = localEligible.length > 0 ? 'local' : nationwideEligible.length > 0 ? 'nationwide' : null;
@@ -290,6 +357,15 @@ export async function POST(request: Request) {
             rancherPhone,
             rancherSlug: topMatch['Slug'] || '',
             loginUrl: buyerLoginUrl,
+            // Pricing surfaced in-email so the buyer doesn't need to ask
+            // "how much?" before reaching out. Big conversion friction remover.
+            quarterPrice: Number(topMatch['Quarter Price']) || undefined,
+            quarterLbs: topMatch['Quarter lbs'] || undefined,
+            halfPrice: Number(topMatch['Half Price']) || undefined,
+            halfLbs: topMatch['Half lbs'] || undefined,
+            wholePrice: Number(topMatch['Whole Price']) || undefined,
+            wholeLbs: topMatch['Whole lbs'] || undefined,
+            nextProcessingDate: topMatch['Next Processing Date'] || undefined,
           });
         }
 

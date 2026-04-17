@@ -318,7 +318,47 @@ export async function sendBuyerIntroNotification(data: {
   rancherSlug?: string;
   loginUrl: string;
   scheduledAt?: string; // ISO date string — Resend holds + delivers at this time
+  // Optional pricing block — when present, shown in the email so the buyer
+  // doesn't have to ask "how much?" before making contact. Big conversion lift.
+  quarterPrice?: number;
+  quarterLbs?: string;
+  halfPrice?: number;
+  halfLbs?: string;
+  wholePrice?: number;
+  wholeLbs?: string;
+  nextProcessingDate?: string;
 }) {
+  // Build pricing block when any tier is configured.
+  const pricingRows: string[] = [];
+  if (data.quarterPrice && data.quarterPrice > 0) {
+    pricingRows.push(
+      `<tr><td style="padding:8px 12px;border:1px solid #E5E2DC;font-weight:600;">Quarter Cow</td><td style="padding:8px 12px;border:1px solid #E5E2DC;">$${data.quarterPrice.toLocaleString()}</td><td style="padding:8px 12px;border:1px solid #E5E2DC;color:#6B4F3F;">${esc(data.quarterLbs || '')}${data.quarterLbs ? ' lbs' : ''}</td></tr>`
+    );
+  }
+  if (data.halfPrice && data.halfPrice > 0) {
+    pricingRows.push(
+      `<tr><td style="padding:8px 12px;border:1px solid #E5E2DC;font-weight:600;">Half Cow</td><td style="padding:8px 12px;border:1px solid #E5E2DC;">$${data.halfPrice.toLocaleString()}</td><td style="padding:8px 12px;border:1px solid #E5E2DC;color:#6B4F3F;">${esc(data.halfLbs || '')}${data.halfLbs ? ' lbs' : ''}</td></tr>`
+    );
+  }
+  if (data.wholePrice && data.wholePrice > 0) {
+    pricingRows.push(
+      `<tr><td style="padding:8px 12px;border:1px solid #E5E2DC;font-weight:600;">Whole Cow</td><td style="padding:8px 12px;border:1px solid #E5E2DC;">$${data.wholePrice.toLocaleString()}</td><td style="padding:8px 12px;border:1px solid #E5E2DC;color:#6B4F3F;">${esc(data.wholeLbs || '')}${data.wholeLbs ? ' lbs' : ''}</td></tr>`
+    );
+  }
+  const processingLine = data.nextProcessingDate
+    ? `<p style="margin-top:12px;font-size:13px;color:#6B4F3F;"><strong>Next processing date:</strong> ${esc(new Date(data.nextProcessingDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }))}</p>`
+    : '';
+  const pricingBlock = pricingRows.length > 0
+    ? `<div style="margin:20px 0;">
+    <p style="font-weight:600;margin-bottom:8px;">Current pricing from ${esc(data.rancherName)}:</p>
+    <table style="border-collapse:collapse;width:100%;font-size:14px;">
+      ${pricingRows.join('')}
+    </table>
+    ${processingLine}
+    ${data.rancherSlug ? `<p style="margin-top:12px;"><a href="${utm(`${SITE_URL}/ranchers/${data.rancherSlug}`, 'intro-notification', 'view-ranch')}" style="color:#0E0E0E;">View full ranch page &rarr;</a></p>` : ''}
+  </div>`
+    : '';
+
   const contactBlock = data.rancherSlug
     ? `<div class="contact-box">
     <p><strong>${esc(data.rancherName)}</strong></p>
@@ -349,6 +389,7 @@ export async function sendBuyerIntroNotification(data: {
   <p>Hi ${esc(data.firstName)},</p>
   <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They know you're coming — reach out whenever you're ready.</p>
   ${contactBlock}
+  ${pricingBlock}
   <p><strong>What to discuss:</strong></p>
   <ul style="color:#6B4F3F;line-height:2">
     <li>What cuts are available and current pricing</li>

@@ -232,6 +232,14 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 );
               })()}
 
+              {/* Ready-to-buy signal — visible to ALL approved buyers, matched or not */}
+              {data?.memberSegment === 'Beef Buyer' && (() => {
+                const hasActive = !!data?.memberReferrals?.find(
+                  r => r.status !== 'Closed Won' && r.status !== 'Closed Lost' && r.rancher_id
+                );
+                return <ReadyToBuyButton hasMatch={hasActive} />;
+              })()}
+
               <h2 className="font-serif text-2xl">Your Referral Status</h2>
 
               {data?.memberReferrals && data.memberReferrals.length > 0 ? (
@@ -470,6 +478,65 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
         </div>
       </Container>
     </main>
+  );
+}
+
+// Single-click "I'm ready to buy this month" signal. Pings Telegram + emails
+// the matched rancher. This is the highest-intent signal the buyer can send.
+function ReadyToBuyButton({ hasMatch }: { hasMatch: boolean }) {
+  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [matchName, setMatchName] = useState<string | null>(null);
+
+  const handleClick = async () => {
+    setState('sending');
+    try {
+      const res = await fetch('/api/member/ready-to-buy', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMatchName(data.rancherName || null);
+        setState('sent');
+      } else {
+        setState('error');
+      }
+    } catch {
+      setState('error');
+    }
+  };
+
+  if (state === 'sent') {
+    return (
+      <div className="p-5 border-2 border-green-700 bg-green-50 text-center space-y-1">
+        <p className="font-serif text-xl text-green-800">We're on it.</p>
+        <p className="text-sm text-green-900">
+          {matchName
+            ? `${matchName} has been notified you're ready. Expect to hear from them within 24-48 hours.`
+            : "Benjamin got the signal and will reach out personally this week."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-5 border-2 border-charcoal bg-bone text-center space-y-3">
+      <div>
+        <p className="font-serif text-xl">Ready to buy this month?</p>
+        <p className="text-sm text-saddle mt-1">
+          {hasMatch
+            ? "Tap below to tell your rancher — they'll prioritize your order."
+            : "One tap and Benjamin will call you personally to match you fast."}
+        </p>
+      </div>
+      <button
+        onClick={handleClick}
+        disabled={state === 'sending'}
+        className="w-full px-6 py-4 bg-charcoal text-bone hover:bg-saddle transition-colors font-semibold uppercase tracking-wider text-sm disabled:opacity-50"
+      >
+        {state === 'sending' ? 'Sending signal...' : "I'm Ready to Buy This Month"}
+      </button>
+      {state === 'error' && (
+        <p className="text-xs text-weathered">Couldn't send — try again in a moment or email hello@buyhalfcow.com.</p>
+      )}
+    </div>
   );
 }
 
