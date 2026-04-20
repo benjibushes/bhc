@@ -2603,7 +2603,14 @@ export async function sendMonthlyCommissionInvoice(data: {
   <div class="divider"></div>
 
   <p><strong>Payment Instructions</strong></p>
-  <p>Please remit payment within 15 days via one of the following methods:</p>
+  <p>Please remit payment within 15 days. Easiest option:</p>
+  ${process.env.COMMISSION_PAYMENT_URL ? `
+  <div style="text-align:center;margin:24px 0;">
+    <a href="${process.env.COMMISSION_PAYMENT_URL}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;border:2px solid #0E0E0E;">Pay $${data.runningTotalUnpaid.toLocaleString('en-US', { minimumFractionDigits: 2 })} Now</a>
+    <p style="font-size:12px;color:#A7A29A;margin-top:8px;">Secure card payment via Stripe</p>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;">Or pay manually:</p>
+  ` : ''}
   <ul style="color:#6B4F3F;line-height:2;">
     <li><strong>Venmo:</strong> @BuyHalfCow</li>
     <li><strong>Zelle:</strong> ${ADMIN_EMAIL}</li>
@@ -2620,6 +2627,57 @@ export async function sendMonthlyCommissionInvoice(data: {
     return { success: true };
   } catch (error) {
     console.error('Error sending commission invoice:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// RANCHER LEAD REMINDER — fires at Day 2 of Intro Sent without rancher action
+// =====================================================
+
+export async function sendRancherLeadReminder(data: {
+  rancherEmail: string;
+  operatorName: string;
+  buyerName: string;
+  buyerState: string;
+  buyerPhone: string;
+  buyerEmail: string;
+  orderType: string;
+  budgetRange: string;
+  daysSinceIntro: number;
+  dashboardUrl: string;
+}) {
+  const firstName = data.operatorName.split(' ')[0] || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.rancherEmail,
+      subject: `Reminder — ${data.buyerName} is waiting (${data.daysSinceIntro}d since intro)`,
+      headers: getUnsubscribeHeaders(data.rancherEmail),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.divider{height:1px;background:#A7A29A;margin:24px 0}.lead-box{background:#F4F1EC;border-left:3px solid #0E0E0E;padding:16px 20px;margin:20px 0}.lead-box p{margin:6px 0;color:#0E0E0E;font-size:14px}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;margin:10px 0}</style>
+</head><body><div class="container">
+  <h1>Quick reminder</h1>
+  <p>Hi ${esc(firstName)},</p>
+  <p>${data.daysSinceIntro} days ago I introduced you to <strong>${esc(data.buyerName)}</strong> in ${esc(data.buyerState)}. They're a verified buyer and they're waiting to hear from you.</p>
+  <div class="lead-box">
+    <p><strong>Buyer:</strong> ${esc(data.buyerName)}</p>
+    <p><strong>State:</strong> ${esc(data.buyerState)}</p>
+    <p><strong>Phone:</strong> ${esc(data.buyerPhone || 'Email only')}</p>
+    <p><strong>Email:</strong> ${esc(data.buyerEmail)}</p>
+    <p><strong>Looking for:</strong> ${esc(data.orderType || 'Beef share')} · ${esc(data.budgetRange || 'Budget TBD')}</p>
+  </div>
+  <p>Reach out today if you can — buyers cool off fast. Even a quick "hey, here's what I have available" text or email keeps the deal alive.</p>
+  <p style="text-align:center;"><a href="${data.dashboardUrl}" class="cta">Open Your Dashboard</a></p>
+  <div class="divider"></div>
+  <p style="font-size:13px;">If you've already reached out, log into your dashboard and update the status to <strong>Rancher Contacted</strong> so I stop nudging you.</p>
+  <p style="font-size:13px;">If you can't take this lead, just reply to this email with "pass" and I'll route them to another rancher.</p>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher lead reminder:', error);
     return { success: false, error };
   }
 }

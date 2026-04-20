@@ -4,7 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
-import { sendEmail, sendRepeatPurchaseEmail } from '@/lib/email';
+import { sendEmail, sendRepeatPurchaseEmail, sendRancherLeadReminder } from '@/lib/email';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 60;
@@ -137,6 +137,73 @@ async function handler(request: Request) {
 
     if (autoClosed > 0) {
       await sendTelegramUpdate(`🔒 <b>Auto-Closed ${autoClosed} Stale Referrals</b>\nNo response after ${MAX_CHASE_UPS} follow-ups. Rancher capacity freed.`);
+    }
+
+    // ── L2a: DAY 2 RANCHER REMINDER ────────────────────────────────────────
+    // Ranchers don't have Telegram — they only have email + dashboard. If a
+    // rancher hasn't moved a lead off "Intro Sent" within 2 days, email them
+    // directly with the buyer's contact info + a CTA. Throttled to one
+    // reminder per 4-day window via Rancher Reminded At field.
+    let rancherReminders = 0;
+    try {
+      const introSentRefs = referrals.filter(r => r['Status'] === 'Intro Sent');
+      const now = Date.now();
+      const needsReminder = introSentRefs.filter(r => {
+        const introAt = r['Intro Sent At'] || r['Approved At'];
+        if (!introAt) return false;
+        const days = (now - new Date(introAt).getTime()) / DAY_MS;
+        if (days < 2) return false;
+        // Throttle: skip if reminded within last 4 days
+        const lastReminder = r['Rancher Reminded At'];
+        if (lastReminder) {
+          const daysSinceReminder = (now - new Date(lastReminder).getTime()) / DAY_MS;
+          if (daysSinceReminder < 4) return false;
+        }
+        return true;
+      });
+
+      for (const ref of needsReminder.slice(0, 10)) {
+        try {
+          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+          const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+          if (!rancherId) continue;
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          if (!rancher) continue;
+          const rancherEmail = rancher['Email'] || '';
+          if (!rancherEmail) continue;
+          if (rancher['Unsubscribed'] || rancher['Bounced']) continue;
+
+          const introAt = ref['Intro Sent At'] || ref['Approved At'];
+          const days = Math.floor((now - new Date(introAt).getTime()) / DAY_MS);
+
+          await sendRancherLeadReminder({
+            rancherEmail,
+            operatorName: rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher',
+            buyerName: ref['Buyer Name'] || 'a buyer',
+            buyerState: ref['Buyer State'] || '',
+            buyerPhone: ref['Buyer Phone'] || '',
+            buyerEmail: ref['Buyer Email'] || '',
+            orderType: ref['Order Type'] || '',
+            budgetRange: ref['Budget Range'] || '',
+            daysSinceIntro: days,
+            dashboardUrl: `${SITE_URL}/rancher`,
+          });
+
+          await updateRecord(TABLES.REFERRALS, ref.id, {
+            'Rancher Reminded At': new Date().toISOString(),
+          });
+
+          rancherReminders++;
+        } catch (e: any) {
+          console.error(`Rancher reminder error for referral ${ref.id}:`, e.message);
+        }
+      }
+
+      if (rancherReminders > 0) {
+        await sendTelegramUpdate(`📧 <b>${rancherReminders} rancher reminder${rancherReminders > 1 ? 's' : ''} sent</b>\nNudged ranchers sitting on Intro Sent leads for 2+ days.`);
+      }
+    } catch (e: any) {
+      console.error('Rancher reminder query error:', e.message);
     }
 
     // ── L2c: STALLED RANCHER NUDGE ─────────────────────────────────────────
@@ -315,7 +382,7 @@ async function handler(request: Request) {
     }
 
     if (stale.length === 0) {
-      return NextResponse.json({ success: true, stale: 0, sent: 0, autoClosed, stalledNudges, autoReassigned });
+      return NextResponse.json({ success: true, stale: 0, sent: 0, autoClosed, rancherReminders, stalledNudges, autoReassigned });
     }
 
     let sent = 0;
@@ -357,6 +424,9 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
           html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
             <p>Hi ${firstName},</p>
             ${draft.split('\n').filter(Boolean).map(p => `<p>${p}</p>`).join('')}
+            <div style="background:#F4F1EC;border-left:3px solid #0E0E0E;padding:14px 18px;margin:20px 0;">
+              <p style="margin:0;font-size:14px;color:#0E0E0E;"><strong>Already bought from ${rancherName}?</strong> Just reply <strong>"YES"</strong> to this email and I'll close the loop on our end. Takes 5 seconds.</p>
+            </div>
             <p style="font-size:12px;color:#A7A29A;margin-top:30px;">You're receiving this because you signed up on BuyHalfCow. <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(buyerEmail)}" style="color:#A7A29A;">Unsubscribe</a></p>
           </div>`,
         });
@@ -436,7 +506,7 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
       await sendTelegramUpdate(`🔄 <b>Repeat Purchase Emails</b>: ${repeatSent} sent to past buyers`);
     }
 
-    return NextResponse.json({ success: true, stale: stale.length, sent, autoClosed, stalledNudges, autoReassigned, errors, repeatSent });
+    return NextResponse.json({ success: true, stale: stale.length, sent, autoClosed, rancherReminders, stalledNudges, autoReassigned, errors, repeatSent });
   } catch (error: any) {
     console.error('Referral chase-up cron error:', error);
     await sendTelegramUpdate(`⚠️ Referral chase-up cron failed: ${error.message}`).catch(() => {});
