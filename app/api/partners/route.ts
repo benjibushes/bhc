@@ -102,6 +102,30 @@ export async function POST(request: Request) {
         email,
       });
 
+      // AUTO-SEND ONBOARDING DOCS IMMEDIATELY.
+      // Previously Ben had to tap a Telegram button to manually send the
+      // agreement + info packet. Now fires automatically so the rancher can
+      // self-serve sign + set up their profile without waiting on a human.
+      // Admin still gets the partner alert below — if Ben wants to kill an
+      // application before it progresses, he can still intervene manually.
+      try {
+        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+        await fetch(`${siteUrl}/api/ranchers/${record.id}/send-onboarding`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+          },
+          body: JSON.stringify({
+            confirmedCapacity: parseInt(monthlyCapacity) || 10,
+            includeVerification: true,
+          }),
+        });
+      } catch (e) {
+        // Non-fatal — rancher can still sign via Telegram trigger later
+        console.error('Auto-send onboarding error:', e);
+      }
+
       // Send admin alert
       await sendAdminAlert({
         type: 'rancher',
@@ -122,7 +146,7 @@ export async function POST(request: Request) {
           name: `${operatorName} — ${ranchName}`,
           email,
           state,
-          details: `🥩 <b>Beef:</b> ${beefTypes}\n📦 <b>Capacity:</b> ${monthlyCapacity || 'N/A'}/mo${callScheduled ? '\n📅 Call scheduled' : ''}`,
+          details: `🥩 <b>Beef:</b> ${beefTypes}\n📦 <b>Capacity:</b> ${monthlyCapacity || 'N/A'}/mo${callScheduled ? '\n📅 Call scheduled' : ''}\n📧 Onboarding docs auto-sent`,
         });
       } catch (e) {
         console.error('Telegram rancher alert error:', e);

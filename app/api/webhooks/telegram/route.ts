@@ -2512,62 +2512,13 @@ Be specific and concise. No fluff.`,
         }
       }
 
+      // /qualify was a manual AI-assisted approval flow for Pending consumers.
+      // Auto-killed: consumer signup is now instant-approve at the form (see
+      // /api/consumers) with a qualification gate that controls who gets
+      // matched to a rancher. No human review needed. Dead command returns
+      // a helpful redirect for any muscle-memory typers.
       else if (text === '/qualify') {
-        if (!AI_CONFIGURED) {
-          await sendTelegramMessage(chatId, '⚠️ AI not configured. Set OLLAMA_BASE_URL or ANTHROPIC_API_KEY.');
-          return NextResponse.json({ ok: true });
-        }
-
-        const pending = await getAllRecords(TABLES.CONSUMERS, '{Status} = "Pending"');
-
-        if (pending.length === 0) {
-          await sendTelegramMessage(chatId, '✅ No pending consumers to qualify. All caught up.');
-          return NextResponse.json({ ok: true });
-        }
-
-        const total = pending.length;
-        const batch = (pending as any[]).slice(0, 3); // Cap at 3 per invocation for timeout safety
-        await sendTelegramMessage(chatId, `🧠 Analyzing <b>${batch.length}</b> of <b>${total}</b> pending lead${total > 1 ? 's' : ''} with AI...`);
-
-        for (const consumer of batch) {
-          try {
-            const { summary, recommendation } = await runQualifyAnalysis(consumer);
-
-            // Store in Airtable
-            await updateRecord(TABLES.CONSUMERS, consumer.id, {
-              'AI Qualification Summary': summary,
-              'AI Recommended Action': recommendation,
-            });
-
-            const recEmoji = recommendation === 'approve' ? '✅' : recommendation === 'reject' ? '❌' : '👁️';
-            const segEmoji = consumer['Segment'] === 'Beef Buyer' ? '🥩' : '🏷️';
-
-            const msg = `🧠 <b>AI LEAD ANALYSIS</b>
-
-${segEmoji} <b>${consumer['Full Name']}</b> — ${consumer['State']}
-Intent: ${consumer['Intent Score'] || 0} (${consumer['Intent Classification'] || 'N/A'}) | ${consumer['Segment'] || 'Unknown'}
-
-${summary}
-
-${recEmoji} <b>Recommendation: ${recommendation.toUpperCase()}</b>`;
-
-            const keyboard = {
-              inline_keyboard: [[
-                { text: '✅ Approve', callback_data: `qapprove_${consumer.id}` },
-                { text: '❌ Reject', callback_data: `qreject_${consumer.id}` },
-                { text: '👁️ Watch', callback_data: `qwatch_${consumer.id}` },
-              ]],
-            };
-
-            await sendTelegramMessage(chatId, msg, keyboard);
-          } catch (err: any) {
-            await sendTelegramMessage(chatId, `⚠️ Could not analyze ${consumer['Full Name'] || consumer.id}: ${err.message}`);
-          }
-        }
-
-        if (total > 3) {
-          await sendTelegramMessage(chatId, `<i>...${total - 3} more pending. Run /qualify again after clearing these.</i>`);
-        }
+        await sendTelegramMessage(chatId, '✅ /qualify is retired. All signups now auto-approve at submit, with qualification gating which buyers reach ranchers. Use /leads to see recent signups or /scout for the full business sweep.');
       }
 
       // ─── NEW: /brief — AI Business Brief ─────────────────────────────────

@@ -88,7 +88,6 @@ export async function PATCH(request: Request) {
 
       // Save any verification materials submitted with the request
       const updates: Record<string, any> = {
-        'Onboarding Status': 'Verification Pending',
         'Verification Requested At': new Date().toISOString(),
       };
       // Support both old field names and new form field names
@@ -115,23 +114,68 @@ export async function PATCH(request: Request) {
       if (body.certifications) methods.push('Certifications');
       updates['Verification Method'] = methods.join(', ') || 'Digital Proof';
 
+      // AUTO-VERIFICATION: if the rancher submitted strong social proof (at
+      // least 3 independent verification signals), auto-approve. Otherwise
+      // fall through to the 1-tap Ben review. This eliminates the manual step
+      // for the 80% of ranchers who have proper credentials while keeping
+      // human judgment for the edge cases.
+      //
+      // Strong signals (each counts as 1):
+      //   - 2+ customer references OR testimonials
+      //   - Google Reviews URL
+      //   - At least one social profile (Facebook OR Instagram)
+      //   - USDA processing facility named
+      //   - Certifications listed
+      //   - Gallery photos provided
+      const hasReferences = !!(body.customerReferences || body.testimonials);
+      const hasReviews = !!(body.googleReviewsUrl || body.reviewsLink);
+      const hasSocial = !!(body.facebookUrl || body.instagramUrl || body.socialMedia);
+      const hasProcessor = !!(body.processingFacility || body.processorName);
+      const hasCerts = !!body.certifications;
+      const hasPhotos = !!body.galleryPhotos;
+      const signalCount = [hasReferences, hasReviews, hasSocial, hasProcessor, hasCerts, hasPhotos]
+        .filter(Boolean).length;
+
+      const autoApprove = signalCount >= 3;
+
+      if (autoApprove) {
+        updates['Onboarding Status'] = 'Verification Complete';
+        updates['Verification Status'] = 'Verified';
+        updates['Verification Notes'] = `Auto-verified ${new Date().toISOString().slice(0, 10)} — ${signalCount}/6 signals (${methods.join(', ')})`;
+      } else {
+        updates['Onboarding Status'] = 'Verification Pending';
+      }
+
       await updateRecord(TABLES.RANCHERS, decoded.rancherId, updates);
 
       try {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `🔍 <b>VERIFICATION REQUEST</b>\n\n🤠 ${name}\n📋 Proof: ${methods.join(', ') || 'Submitted'}\nEmail: ${rancher['Email'] || 'N/A'}\nPhone: ${rancher['Phone'] || 'N/A'}\n${slug ? `Preview: ${siteUrl}/ranchers/${slug}` : ''}\n\nReview their materials and approve.`,
-          {
-            inline_keyboard: [
-              [{ text: '✅ Approve Verification', callback_data: `rverify_${decoded.rancherId}` }],
-            ],
-          }
-        );
+        if (autoApprove) {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `✅ <b>AUTO-VERIFIED</b>\n\n🤠 ${name}\n📋 Signals: ${signalCount}/6 (${methods.join(', ')})\n${slug ? `Preview: ${siteUrl}/ranchers/${slug}` : ''}\n\n<i>Auto-approved — batch-approve cron will flip Page Live at next 9am MT run if slug + prices are set. Revert manually if needed.</i>`
+          );
+        } else {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `🔍 <b>VERIFICATION REQUEST</b> (low signal — ${signalCount}/6)\n\n🤠 ${name}\n📋 Proof: ${methods.join(', ') || 'Submitted'}\nEmail: ${rancher['Email'] || 'N/A'}\nPhone: ${rancher['Phone'] || 'N/A'}\n${slug ? `Preview: ${siteUrl}/ranchers/${slug}` : ''}\n\nReview their materials and approve.`,
+            {
+              inline_keyboard: [
+                [{ text: '✅ Approve Verification', callback_data: `rverify_${decoded.rancherId}` }],
+              ],
+            }
+          );
+        }
       } catch (e) {
         console.error('Telegram verification notification error:', e);
       }
 
-      return NextResponse.json({ success: true, message: 'Verification request submitted' });
+      return NextResponse.json({
+        success: true,
+        autoApproved: autoApprove,
+        message: autoApprove
+          ? 'Verified! Your profile will go live within 24 hours once prices are set.'
+          : 'Verification request submitted. We\'ll review within 24-48 hours.',
+      });
     }
 
     if (body._action === 'request-go-live') {
