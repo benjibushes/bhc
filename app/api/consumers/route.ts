@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 
 export const maxDuration = 60;
@@ -22,10 +22,36 @@ import jwt from 'jsonwebtoken';
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
-function deriveStatus(segment: string, intentClassification: string): string {
-  if (segment === 'Community') return 'Approved';
-  if (segment === 'Beef Buyer' && (intentClassification === 'High' || intentClassification === 'Medium')) return 'Approved';
-  return 'Pending';
+// Every signup is an Approved member. No "Pending" purgatory — the old
+// Pending status created a delay where customers thought they were in but
+// couldn't actually log in or get matched until a cron ran the next day.
+// Qualification (do they get matched to a rancher, or do they get nurtured?)
+// is a separate decision, made below.
+function deriveStatus(_segment: string, _intentClassification: string): string {
+  return 'Approved';
+}
+
+// Qualification gate for sending a buyer to a rancher. We never want a rancher
+// to get a tire-kicker — minimum bar is: explicitly want beef + chose a tier
+// (Quarter/Half/Whole) + provided a budget. Without all three, the rancher
+// can't quote, and the rancher's perception of BHC lead quality tanks.
+//
+// Buyers who don't qualify still get Approved + access — they just go into
+// nurture instead of matching, and can self-upgrade via /api/member/upgrade-intent
+// once they fill in the missing details.
+function isQualifiedForRancherMatch(opts: {
+  segment: string;
+  orderType: string;
+  budgetRange: string;
+  intentScore: number;
+}): boolean {
+  if (opts.segment !== 'Beef Buyer') return false;
+  if (!opts.orderType) return false;
+  if (!opts.budgetRange) return false;
+  // "Unsure" budget → not qualified for rancher (no $ signal)
+  if (opts.budgetRange.toLowerCase().includes('unsure')) return false;
+  if (opts.intentScore < 40) return false;
+  return true;
 }
 
 function isValidEmail(email: string): boolean {
@@ -85,11 +111,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Notes must be under 2000 characters' }, { status: 400 });
     }
 
-    // Check for duplicate email
+    // Check for duplicate email. Special case: if the existing record is an
+    // abandoned-application stub (Source = 'abandoned_application'), we'll
+    // UPGRADE it in place rather than rejecting the user. Otherwise the user
+    // who started the form, abandoned it, then came back to finish would see
+    // a confusing "already registered" error.
+    let upgradeStubId: string | null = null;
     try {
-      const existing = await getAllRecords(TABLES.CONSUMERS, `{Email} = "${escapeAirtableValue(email.trim().toLowerCase())}"`);
+      const existing = await getAllRecords(
+        TABLES.CONSUMERS,
+        `LOWER({Email}) = "${escapeAirtableValue(email.trim().toLowerCase())}"`
+      ) as any[];
       if (existing.length > 0) {
-        return NextResponse.json({ error: 'This email is already registered. Check your inbox for your confirmation.' }, { status: 409 });
+        const stub = existing.find((c) => c['Source'] === 'abandoned_application');
+        if (stub) {
+          upgradeStubId = stub.id;
+        } else {
+          return NextResponse.json({ error: 'This email is already registered. Check your inbox for your confirmation.' }, { status: 409 });
+        }
       }
     } catch (e) {
       console.error('Error checking duplicate email:', e);
@@ -142,7 +181,17 @@ export async function POST(request: Request) {
     };
     if (referredBy) consumerFields['Referred By'] = referredBy;
 
-    const record = await createRecord(TABLES.CONSUMERS, consumerFields);
+    // If we're upgrading an abandoned stub, update the existing record in
+    // place — keeps the original record ID stable + clears the abandon stage.
+    let record: any;
+    if (upgradeStubId) {
+      consumerFields['Sequence Stage'] = 'none'; // remove the abandon marker so they stop receiving recovery emails
+      consumerFields['Source'] = source || 'organic'; // overwrite "abandoned_application"
+      await updateRecord(TABLES.CONSUMERS, upgradeStubId, consumerFields);
+      record = { id: upgradeStubId, ...consumerFields };
+    } else {
+      record = await createRecord(TABLES.CONSUMERS, consumerFields);
+    }
 
     // Send the buyer their confirmation/approval email (must complete before responding)
     if (status === 'Approved') {
@@ -180,20 +229,26 @@ export async function POST(request: Request) {
         });
       } catch (e) { console.error('Admin alert error:', e); }
 
-      try {
-        await sendTelegramConsumerSignup({
-          consumerId: record.id,
-          name: fullName,
-          email,
-          state,
-          segment: consumerSegment,
-          intentScore: serverIntentScore,
-          intentClassification: serverIntentClassification,
-          status,
-          orderType,
-          budgetRange,
-        });
-      } catch (e) { console.error('Telegram consumer signup error:', e); }
+      // Telegram noise reduction: silence routine signups. Only ping for
+      // signups that warrant attention (intent score >= 70). Everything else
+      // rolls into the morning digest. The separate hot-lead alert below
+      // (score >= 80) gets action buttons; this signup alert is informational.
+      if (serverIntentScore >= 70) {
+        try {
+          await sendTelegramConsumerSignup({
+            consumerId: record.id,
+            name: fullName,
+            email,
+            state,
+            segment: consumerSegment,
+            intentScore: serverIntentScore,
+            intentClassification: serverIntentClassification,
+            status,
+            orderType,
+            budgetRange,
+          });
+        } catch (e) { console.error('Telegram consumer signup error:', e); }
+      }
 
       // 🔥 HOT LEAD: score 80+ Beef Buyers get a loud second alert with 1-tap actions
       if (serverIntentScore >= 80 && consumerSegment === 'Beef Buyer') {
@@ -212,8 +267,17 @@ export async function POST(request: Request) {
         } catch (e) { console.error('Telegram hot lead alert error:', e); }
       }
 
-      // Trigger matching for approved Beef Buyers
-      const shouldMatch = status.toLowerCase() === 'approved' && consumerSegment === 'Beef Buyer' && state;
+      // Trigger matching ONLY for buyers who pass qualification. Unqualified
+      // Beef Buyers (no tier, no budget, low intent) are still Approved members
+      // — they just enter nurture instead of getting a rancher introduction.
+      // Protects rancher relationships from broke / tire-kicker leads.
+      const qualified = isQualifiedForRancherMatch({
+        segment: consumerSegment,
+        orderType: orderType || '',
+        budgetRange: budgetRange || '',
+        intentScore: serverIntentScore,
+      });
+      const shouldMatch = qualified && !!state;
       if (shouldMatch) {
         try {
           await fetch(

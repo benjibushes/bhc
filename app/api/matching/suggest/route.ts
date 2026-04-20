@@ -31,7 +31,13 @@ export async function POST(request: Request) {
       buyerState, buyerId, buyerName, buyerEmail, buyerPhone,
       orderType, budgetRange, intentScore, intentClassification, notes,
       campaign,
+      // When re-routing a lead a rancher passed on, the calling code passes
+      // the previous rancher's ID(s) so the matching engine doesn't recommend
+      // them again. Without this, lead resurrection sends the same lead back
+      // to the rancher who just rejected it.
+      excludeRancherIds,
     } = body;
+    const excludeIds = new Set<string>(Array.isArray(excludeRancherIds) ? excludeRancherIds : []);
 
     if (!buyerState || !buyerId) {
       return NextResponse.json({ error: 'buyerState and buyerId are required' }, { status: 400 });
@@ -68,8 +74,12 @@ export async function POST(request: Request) {
 
     const allRanchers: any[] = await getAllRecords(TABLES.RANCHERS);
 
-    // Helper: check if rancher is active, signed, and under capacity
+    // Helper: check if rancher is active, signed, and under capacity.
+    // Also excludes any rancher in `excludeRancherIds` — used when re-routing
+    // a lead that a rancher just passed on, so the same rancher doesn't get
+    // the lead bounced right back to them.
     const isEligibleBase = (r: any) => {
+      if (excludeIds.has(r.id)) return false;
       const activeStatus = r['Active Status'] || '';
       const agreementSigned = r['Agreement Signed'] || false;
       const onboardingStatus = r['Onboarding Status'] || '';
@@ -373,19 +383,12 @@ export async function POST(request: Request) {
           });
         }
 
-        // Info-only Telegram notification (no buttons — just visibility)
-        try {
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `✅ <b>AUTO-APPROVED (${matchTypeLabel})</b>\n\n` +
-            `👤 ${buyerName} in ${buyerState}\n` +
-            `🤠 → ${rancherName}\n` +
-            `📦 ${orderType || 'Not specified'}\n` +
-            `Intro emails sent to both parties automatically.`
-          );
-        } catch (e) {
-          console.error('Telegram auto-approve notification error:', e);
-        }
+        // Telegram noise reduction: per-match notifications were creating
+        // dozens of pings/day with no required action. Routine matches now
+        // roll into the morning digest only. The actionable moments
+        // (sales, passes, hot leads, capacity issues, ready-to-buy) keep
+        // their own loud alerts elsewhere in the codebase.
+        // (intentionally no Telegram message here)
       } catch (e) {
         console.error('Error auto-approving match:', e);
       }
@@ -399,15 +402,21 @@ export async function POST(request: Request) {
         console.error('Error updating consumer referral status:', e);
       }
 
-      // Info-only Telegram: no rancher available in their state
+      // Telegram noise reduction: routine no-match events roll into the
+      // morning digest. Only ping in real-time when the buyer is high-intent
+      // (score >= 70) — that's when "no rancher available" is actually a
+      // problem worth waking Ben up about.
+      const isHighIntentNoMatch = (intentScore || 0) >= 70;
       try {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `⏳ <b>NO MATCH AVAILABLE</b>\n\n` +
+        if (isHighIntentNoMatch) {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `⏳ <b>HIGH-INTENT BUYER WAITLISTED</b>\n\n` +
           `👤 ${buyerName} in ${buyerState}\n` +
           `📦 ${orderType || 'Not specified'}\n` +
           `Buyer waitlisted — will auto-match when a rancher goes live in ${buyerState}.`
-        );
+          );
+        }
       } catch (e) {
         console.error('Error sending no-match Telegram notification:', e);
       }

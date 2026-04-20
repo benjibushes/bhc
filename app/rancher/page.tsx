@@ -109,6 +109,12 @@ export default function RancherDashboardPage() {
   const [closeForm, setCloseForm] = useState({ status: 'Closed Won', saleAmount: '', notes: '' });
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState('');
+  // Pass-on-Lead modal — separate from "close deal" because it carries a
+  // structured reason and triggers auto-rematch with this rancher excluded.
+  const [passModal, setPassModal] = useState<Referral | null>(null);
+  const [passReason, setPassReason] = useState<'out_of_area' | 'at_capacity' | 'not_a_fit'>('not_a_fit');
+  const [passSubmitting, setPassSubmitting] = useState(false);
+  const [passResult, setPassResult] = useState<{ rematchOutcome: string; newRancherName: string | null } | null>(null);
   const [pageForm, setPageForm] = useState<Record<string, string>>({});
   const [pageSaving, setPageSaving] = useState(false);
   const [pageSaved, setPageSaved] = useState(false);
@@ -247,6 +253,40 @@ export default function RancherDashboardPage() {
     } finally {
       setUpdating(null);
     }
+  };
+
+  const handlePassOnLead = async () => {
+    if (!passModal) return;
+    setPassSubmitting(true);
+    setUpdateError('');
+    setPassResult(null);
+    try {
+      const res = await fetch(`/api/rancher/referrals/${passModal.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ _action: 'pass', passReason }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setUpdateError(data.error || 'Failed to pass on lead.');
+        return;
+      }
+      setPassResult({
+        rematchOutcome: data.rematchOutcome || 'unknown',
+        newRancherName: data.newRancherName,
+      });
+      await fetchDashboard();
+    } catch {
+      setUpdateError('Network error. Please try again.');
+    } finally {
+      setPassSubmitting(false);
+    }
+  };
+
+  const closePassModal = () => {
+    setPassModal(null);
+    setPassReason('not_a_fit');
+    setPassResult(null);
   };
 
   const handleLogout = async () => {
@@ -635,7 +675,14 @@ export default function RancherDashboardPage() {
                   <h3 className="font-serif text-xl">Recent Leads</h3>
                   <div className="space-y-3">
                     {activeRefs.slice(0, 3).map((ref) => (
-                      <ReferralRow key={ref.id} referral={ref} onUpdate={updateReferralStatus} onClose={() => setCloseModal(ref)} updating={updating} />
+                      <ReferralRow
+                        key={ref.id}
+                        referral={ref}
+                        onUpdate={updateReferralStatus}
+                        onClose={() => setCloseModal(ref)}
+                        onPass={() => setPassModal(ref)}
+                        updating={updating}
+                      />
                     ))}
                     {activeRefs.length > 3 && (
                       <button onClick={() => setActiveTab('referrals')} className="text-sm text-saddle hover:text-charcoal transition-colors">
@@ -655,7 +702,14 @@ export default function RancherDashboardPage() {
               {activeRefs.length > 0 ? (
                 <div className="space-y-4">
                   {activeRefs.map((ref) => (
-                    <ReferralCard key={ref.id} referral={ref} onUpdate={updateReferralStatus} onClose={() => setCloseModal(ref)} updating={updating} />
+                    <ReferralCard
+                      key={ref.id}
+                      referral={ref}
+                      onUpdate={updateReferralStatus}
+                      onClose={() => setCloseModal(ref)}
+                      onPass={() => setPassModal(ref)}
+                      updating={updating}
+                    />
                   ))}
                 </div>
               ) : (
@@ -1275,6 +1329,101 @@ export default function RancherDashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Pass on Lead Modal — captures structured reason + auto-rematches buyer */}
+      {passModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6">
+            <div className="flex justify-between items-start">
+              <h2 className="font-serif text-2xl">Pass on Lead</h2>
+              <button onClick={closePassModal} className="text-2xl leading-none hover:text-saddle">×</button>
+            </div>
+
+            {!passResult && (
+              <>
+                <p className="text-sm text-saddle">
+                  Buyer: <strong className="text-charcoal">{passModal.buyer_name}</strong> ({passModal.buyer_state})
+                </p>
+                <p className="text-sm text-saddle">
+                  We&apos;ll close this lead and immediately try to match this buyer with another rancher in their state. You won&apos;t see this lead again.
+                </p>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">Why are you passing?</label>
+                  <div className="space-y-2">
+                    {([
+                      ['out_of_area', 'Out of my service area'],
+                      ['at_capacity', "I'm at capacity right now"],
+                      ['not_a_fit', 'Not a fit (price / timing / other)'],
+                    ] as const).map(([value, label]) => (
+                      <label key={value} className="flex items-center gap-3 p-3 border border-dust bg-white cursor-pointer hover:border-charcoal">
+                        <input
+                          type="radio"
+                          name="passReason"
+                          value={value}
+                          checked={passReason === value}
+                          onChange={() => setPassReason(value)}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm">{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {updateError && (
+                  <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+                    {updateError}
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={closePassModal}
+                    disabled={passSubmitting}
+                    className="flex-1 px-4 py-3 border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handlePassOnLead}
+                    disabled={passSubmitting}
+                    className="flex-1 px-4 py-3 bg-saddle text-bone hover:bg-charcoal transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+                  >
+                    {passSubmitting ? 'Passing...' : 'Confirm Pass'}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {passResult && (
+              <div className="space-y-4">
+                {passResult.rematchOutcome === 'rematched' && (
+                  <div className="p-4 border border-green-700 bg-green-50 text-green-900 text-sm">
+                    ✓ Lead reassigned to <strong>{passResult.newRancherName}</strong>. Buyer was notified.
+                  </div>
+                )}
+                {passResult.rematchOutcome === 'waitlisted' && (
+                  <div className="p-4 border border-yellow-600 bg-yellow-50 text-yellow-900 text-sm">
+                    No other rancher available in {passModal.buyer_state} right now. Buyer was waitlisted and put back into nurture so they stay engaged until a rancher opens up.
+                  </div>
+                )}
+                {passResult.rematchOutcome === 'error' && (
+                  <div className="p-4 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+                    Re-match failed — Benjamin was alerted and will reassign manually.
+                  </div>
+                )}
+                <button
+                  onClick={closePassModal}
+                  className="w-full px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider"
+                >
+                  Done
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -1289,45 +1438,108 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
   );
 }
 
-function ReferralRow({ referral, onUpdate, onClose, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; updating: string | null }) {
+// Compute hours remaining on the 48-hour respond-or-pass window. Drives the
+// urgency badge that prompts ranchers to either contact the buyer or pass
+// instead of letting the lead die silently.
+function hoursLeftToRespond(introSentAt: string): number | null {
+  if (!introSentAt) return null;
+  const sent = new Date(introSentAt).getTime();
+  if (!isFinite(sent)) return null;
+  const deadline = sent + 48 * 60 * 60 * 1000;
+  const remaining = (deadline - Date.now()) / (60 * 60 * 1000);
+  return Math.round(remaining);
+}
+
+function ResponseDeadline({ referral }: { referral: Referral }) {
+  // Only show the countdown for leads that haven't been progressed yet.
+  if (referral.status !== 'Intro Sent') return null;
+  const hrs = hoursLeftToRespond(referral.intro_sent_at);
+  if (hrs === null) return null;
+  if (hrs > 24) {
+    return (
+      <span className="inline-flex px-2 py-0.5 text-xs bg-blue-50 text-blue-700 border border-blue-200">
+        {hrs}h to respond
+      </span>
+    );
+  }
+  if (hrs > 0) {
+    return (
+      <span className="inline-flex px-2 py-0.5 text-xs bg-yellow-50 text-yellow-800 border border-yellow-300 font-medium">
+        ⏰ {hrs}h left to respond
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex px-2 py-0.5 text-xs bg-red-50 text-red-700 border border-red-300 font-medium">
+      🚨 Overdue — auto-reassigning soon
+    </span>
+  );
+}
+
+function ReferralRow({ referral, onUpdate, onClose, onPass, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; updating: string | null }) {
   return (
     <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
       <div>
-        <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
-          {referral.status}
-        </span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
+            {referral.status}
+          </span>
+          <ResponseDeadline referral={referral} />
+        </div>
         <p className="font-medium mt-1">{referral.buyer_name}</p>
         <p className="text-xs text-dust">{referral.buyer_state} &middot; {referral.order_type}</p>
       </div>
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {referral.status === 'Intro Sent' && (
           <button
             onClick={() => onUpdate(referral.id, 'Rancher Contacted')}
             disabled={updating === referral.id}
             className="px-3 py-1.5 text-xs border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
-            Mark Contacted
+            Contacted ✓
           </button>
         )}
         <button
           onClick={onClose}
           className="px-3 py-1.5 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors"
         >
-          Close Deal
+          Close as Won
+        </button>
+        <button
+          onClick={onPass}
+          className="px-3 py-1.5 text-xs border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
+          title="Pass on this lead — we'll auto-reassign to another rancher"
+        >
+          Pass on Lead
         </button>
       </div>
     </div>
   );
 }
 
-function ReferralCard({ referral, onUpdate, onClose, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; updating: string | null }) {
+function ReferralCard({
+  referral,
+  onUpdate,
+  onClose,
+  onPass,
+  updating,
+}: {
+  referral: Referral;
+  onUpdate: (id: string, status: string) => void;
+  onClose: () => void;
+  onPass: () => void;
+  updating: string | null;
+}) {
   return (
     <div className="p-6 border border-dust bg-white space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
-        <div>
-          <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
-            {referral.status}
-          </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
+              {referral.status}
+            </span>
+            <ResponseDeadline referral={referral} />
+          </div>
           <h3 className="font-serif text-xl mt-2">{referral.buyer_name}</h3>
           <p className="text-sm text-dust">
             {referral.intro_sent_at ? `Introduced ${new Date(referral.intro_sent_at).toLocaleDateString()}` : ''}
@@ -1372,7 +1584,14 @@ function ReferralCard({ referral, onUpdate, onClose, updating }: { referral: Ref
           onClick={onClose}
           className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors"
         >
-          Close Deal
+          Close as Won
+        </button>
+        <button
+          onClick={onPass}
+          className="px-4 py-2 text-sm border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
+          title="Pass on this lead — we'll auto-reassign to another rancher"
+        >
+          Pass on Lead
         </button>
       </div>
     </div>

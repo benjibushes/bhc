@@ -2,8 +2,19 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendTelegramUpdate, sendTelegramSaleCelebration } from '@/lib/telegram';
+import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTelegramSaleCelebration } from '@/lib/telegram';
+import { sendRerouteNotification } from '@/lib/email';
 import jwt from 'jsonwebtoken';
+
+// The 3 pass reasons a rancher can give when declining a lead.
+// Kept short + mutually exclusive — "Other" deliberately omitted to force
+// a real signal that's useful for matching analytics.
+const PASS_REASONS = {
+  out_of_area: 'Out of my service area',
+  at_capacity: "I'm at capacity right now",
+  not_a_fit: 'Not a fit (price / timing / other)',
+} as const;
+type PassReason = keyof typeof PASS_REASONS;
 
 export const maxDuration = 60;
 
@@ -49,6 +60,154 @@ export async function PATCH(
 
     if (!isOwner) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+    }
+
+    // ── PASS-ON-LEAD ACTION ──────────────────────────────────────────────
+    // Rancher explicitly passes on this lead from their dashboard. We:
+    //   1) close the current referral as Closed Lost with a structured note
+    //   2) free the rancher's capacity counter
+    //   3) re-fire matching for the buyer, EXCLUDING the rancher who just passed
+    //   4) Telegram Ben with the outcome (reassigned to X / waitlisted)
+    //
+    // Different from the existing Closed Lost flow because we capture WHY they
+    // passed (analytics) and explicitly exclude the passing rancher from re-match
+    // — without that exclusion, the buyer could ping-pong back to the same rancher.
+    if (body._action === 'pass') {
+      const passReason = body.passReason as PassReason;
+      if (!passReason || !PASS_REASONS[passReason]) {
+        return NextResponse.json({
+          error: 'passReason required: ' + Object.keys(PASS_REASONS).join(' | '),
+        }, { status: 400 });
+      }
+
+      const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      const reasonLabel = PASS_REASONS[passReason];
+      const buyerName = referral['Buyer Name'] || 'Unknown';
+      const buyerState = referral['Buyer State'] || '';
+
+      // 1. Close current referral as Closed Lost with reason note
+      const passNote = `[PASSED ${new Date().toISOString().slice(0, 10)} — ${decoded.name}] ${reasonLabel}`;
+      await updateRecord(TABLES.REFERRALS, id, {
+        'Status': 'Closed Lost',
+        'Closed At': new Date().toISOString(),
+        'Notes': `${passNote}\n${referral['Notes'] || ''}`.trim(),
+      });
+
+      // 2. Decrement rancher's active referral count
+      try {
+        const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+        const currentCount = rancher['Current Active Referrals'] || 0;
+        await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
+          'Current Active Referrals': Math.max(0, currentCount - 1),
+        });
+      } catch (e) {
+        console.error('Pass: capacity decrement error:', e);
+      }
+
+      // 3. Re-fire matching for the buyer with this rancher excluded
+      const buyerIds = referral['Buyer'] || [];
+      const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+      let rematchOutcome: 'rematched' | 'waitlisted' | 'error' = 'error';
+      let newRancherName = '';
+      let buyerForReroute: any = null;
+
+      if (buyerId) {
+        try {
+          // Reset buyer status + sequence stage so re-engagement nurture restarts
+          await updateRecord(TABLES.CONSUMERS, buyerId, {
+            'Referral Status': 'Unmatched',
+            'Sequence Stage': 'rerouted_after_pass',
+          });
+          buyerForReroute = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+
+          if (buyerForReroute && buyerForReroute['Email']) {
+            const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+              },
+              body: JSON.stringify({
+                buyerState: buyerForReroute['State'] || buyerState,
+                buyerId: buyerId,
+                buyerName: buyerForReroute['Full Name'] || buyerName,
+                buyerEmail: buyerForReroute['Email'],
+                buyerPhone: buyerForReroute['Phone'] || '',
+                orderType: buyerForReroute['Order Type'] || '',
+                budgetRange: buyerForReroute['Budget'] || '',
+                intentScore: buyerForReroute['Intent Score'] || 50,
+                intentClassification: buyerForReroute['Intent Classification'] || 'Medium',
+                notes: buyerForReroute['Notes'] || '',
+                excludeRancherIds: [decoded.rancherId],
+              }),
+            });
+            if (matchRes.ok) {
+              const matchData = await matchRes.json();
+              if (matchData.matchFound) {
+                rematchOutcome = 'rematched';
+                newRancherName = matchData.suggestedRancher?.name || 'another rancher';
+              } else {
+                rematchOutcome = 'waitlisted';
+              }
+            }
+          }
+        } catch (rerouteErr: any) {
+          console.error('Pass: re-route error:', rerouteErr);
+        }
+      }
+
+      // 3a. Send re-engagement email to the buyer so they know what's happening.
+      // Frame as "we're finding you another option" — never "you got rejected".
+      // The matching engine already sends a fresh intro email if rematched, so
+      // this is a heads-up about the transition rather than the new contact info.
+      if (buyerForReroute && buyerForReroute['Email'] && rematchOutcome !== 'error') {
+        try {
+          const buyerEmail = buyerForReroute['Email'];
+          const firstName = (buyerForReroute['Full Name'] || '').split(' ')[0] || 'there';
+          const buyerToken = jwt.sign(
+            { type: 'member-login', consumerId: buyerId!, email: buyerEmail.toLowerCase() },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+          );
+          const loginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
+          await sendRerouteNotification({
+            firstName,
+            email: buyerEmail,
+            state: buyerForReroute['State'] || buyerState,
+            newRancherName: rematchOutcome === 'rematched' ? newRancherName : undefined,
+            loginUrl,
+          });
+        } catch (e) {
+          console.error('Pass: re-engagement email error:', e);
+        }
+      }
+
+      // 4. Telegram Ben with outcome
+      try {
+        const outcomeLine = rematchOutcome === 'rematched'
+          ? `🔄 Reassigned to: <b>${newRancherName}</b>`
+          : rematchOutcome === 'waitlisted'
+            ? `⏳ No other rancher available in ${buyerState} — buyer waitlisted, re-engagement nurture restarted`
+            : `⚠️ Re-match failed — manual reassignment needed`;
+
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🚫 <b>RANCHER PASSED ON LEAD</b>\n\n` +
+          `🤠 ${decoded.name} passed on:\n` +
+          `👤 ${buyerName} (${buyerState})\n` +
+          `📋 Reason: <i>${reasonLabel}</i>\n\n` +
+          outcomeLine
+        );
+      } catch (e) {
+        console.error('Pass: telegram alert error:', e);
+      }
+
+      return NextResponse.json({
+        success: true,
+        passed: true,
+        rematchOutcome,
+        newRancherName: rematchOutcome === 'rematched' ? newRancherName : null,
+      });
     }
 
     const fields: Record<string, any> = {};

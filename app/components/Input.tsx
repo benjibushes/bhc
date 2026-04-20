@@ -5,6 +5,7 @@ interface InputProps {
   required?: boolean;
   value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
   placeholder?: string;
 }
 
@@ -15,6 +16,7 @@ export default function Input({
   required = false,
   value,
   onChange,
+  onBlur,
   placeholder
 }: InputProps) {
   return (
@@ -29,6 +31,7 @@ export default function Input({
         required={required}
         value={value}
         onChange={onChange}
+        onBlur={onBlur}
         placeholder={placeholder}
         className="w-full px-4 py-3 border border-[#A7A29A] bg-[#F4F1EC] text-[#0E0E0E] focus:outline-none focus:border-[#0E0E0E] transition-colors"
       />

@@ -13,6 +13,7 @@ import {
   sendNurtureHow,
   sendNurtureUrgency,
   sendNurtureReferral,
+  sendAbandonedRecoveryEmail,
   sendEmail,
 } from '@/lib/email';
 
@@ -54,6 +55,59 @@ async function handler(request: Request) {
     }
 
     const now = Date.now();
+
+    // ── ABANDONED APPLICATION RECOVERY ────────────────────────────────────
+    // 3-email recapture sequence for visitors who entered email on /access
+    // but didn't complete the form. Industry recovery rate: 8-15%.
+    // Records are created by /api/abandoned-app with Source='abandoned_application'
+    // and Sequence Stage='abandoned_pending'.
+    let abandonedRecovered = 0;
+    try {
+      const abandoned = await getAllRecords(
+        TABLES.CONSUMERS,
+        `AND({Source} = "abandoned_application", {Status} != "Approved")`
+      ) as any[];
+      const ABANDON_LIMIT_PER_RUN = 30;
+      let abandonSent = 0;
+      for (const rec of abandoned) {
+        if (abandonSent >= ABANDON_LIMIT_PER_RUN) break;
+        if (rec['Unsubscribed']) continue;
+        const email = (rec['Email'] || '').trim().toLowerCase();
+        if (!email) continue;
+        const stage = rec['Sequence Stage'] || 'abandoned_pending';
+        const createdAt = new Date(rec.createdTime || 0).getTime();
+        const lastSent = rec['Sequence Sent At'] ? new Date(rec['Sequence Sent At']).getTime() : 0;
+        const ageHours = (now - createdAt) / (60 * 60 * 1000);
+        const hoursSinceLast = lastSent ? (now - lastSent) / (60 * 60 * 1000) : Infinity;
+        const firstName = (rec['Full Name'] || '').replace('(abandoned signup)', '').split(' ')[0] || '';
+
+        let send: 1 | 2 | 3 | null = null;
+        let nextStage = '';
+        if (stage === 'abandoned_pending' && ageHours >= 24) {
+          send = 1; nextStage = 'abandoned_email1_sent';
+        } else if (stage === 'abandoned_email1_sent' && hoursSinceLast >= 72) {
+          send = 2; nextStage = 'abandoned_email2_sent';
+        } else if (stage === 'abandoned_email2_sent' && hoursSinceLast >= 7 * 24) {
+          send = 3; nextStage = 'abandoned_email3_sent';
+        }
+
+        if (!send) continue;
+
+        try {
+          await sendAbandonedRecoveryEmail({ email, firstName, stage: send });
+          await updateRecord(TABLES.CONSUMERS, rec.id, {
+            'Sequence Stage': nextStage,
+            'Sequence Sent At': new Date().toISOString(),
+          });
+          abandonedRecovered++;
+          abandonSent++;
+        } catch (e: any) {
+          console.error('Abandoned recovery email error:', e?.message);
+        }
+      }
+    } catch (e: any) {
+      console.error('Abandoned recovery query error:', e?.message);
+    }
 
     // Fetch all approved consumers + active ranchers once
     const approvedRaw = await getAllRecords(TABLES.CONSUMERS, '{Status} = "Approved"') as any[];
@@ -396,7 +450,7 @@ async function handler(request: Request) {
       await sendTelegramUpdate(`📋 <b>Rancher Agreement Reminders</b>: ${rancherReminders} sent`);
     }
 
-    return NextResponse.json({ success: true, sent: total + rancherReminders, nurture3, nurture10, nurtureMerch, nurtureAffiliate, beefDay3, beefDay7, community7, community14, introCheckin, rancherReminders, errors });
+    return NextResponse.json({ success: true, sent: total + rancherReminders + abandonedRecovered, abandonedRecovered, nurture3, nurture10, nurtureMerch, nurtureAffiliate, beefDay3, beefDay7, community7, community14, introCheckin, rancherReminders, errors });
   } catch (error: any) {
     console.error('Email sequences cron error:', error);
     await sendTelegramUpdate(`⚠️ Email sequences cron failed: ${error.message}`).catch(() => {});

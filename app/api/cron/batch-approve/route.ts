@@ -81,9 +81,13 @@ async function handler(request: Request) {
     // Get all unprocessed consumers — both explicit "Pending" AND blank-status
     // records. New signups arrive with no Status value and were previously being
     // silently skipped, stranding customers in a "can't log in" state.
+    //
+    // EXCLUDE abandoned-application stubs (they're handled by the email-sequences
+    // cron which sends recovery emails — they should NEVER be auto-approved into
+    // the network without finishing the real signup form).
     const pending = await getAllRecords(
       TABLES.CONSUMERS,
-      `OR({Status} = "Pending", {Status} = "", {Status} = BLANK())`
+      `AND(OR({Status} = "Pending", {Status} = "", {Status} = BLANK()), {Source} != "abandoned_application")`
     );
 
     if (pending.length === 0) {

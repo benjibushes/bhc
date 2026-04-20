@@ -197,6 +197,27 @@ function AccessPageContent() {
     setFormData(prev => ({ ...prev, [name]: checked }));
   };
 
+  // Track whether we've already pinged the abandoned-app endpoint for this
+  // session so we don't fire it on every blur. One capture per email.
+  const [abandonedCaptured, setAbandonedCaptured] = useState(false);
+  const handleEmailBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const email = e.target.value.trim();
+    if (!email || abandonedCaptured) return;
+    if (!validateEmail(email)) return;
+    // Fire-and-forget — UI never blocks on this. Endpoint is idempotent and
+    // will skip if the email is already in CONSUMERS (e.g., the user finishes
+    // and submits the full form a moment later).
+    fetch('/api/abandoned-app', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        fullName: formData.fullName,
+        state: formData.state,
+      }),
+    }).then(() => setAbandonedCaptured(true)).catch(() => {});
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -367,6 +388,7 @@ function AccessPageContent() {
               required
               value={formData.email}
               onChange={handleInputChange}
+              onBlur={handleEmailBlur}
             />
 
             <Input
