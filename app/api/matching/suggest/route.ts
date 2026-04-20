@@ -3,6 +3,7 @@ import { getAllRecords, createRecord, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
+import { normalizeState, normalizeStates } from '@/lib/states';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 
@@ -36,8 +37,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'buyerState and buyerId are required' }, { status: 400 });
     }
 
-    // Normalize buyer state to uppercase 2-letter code for reliable matching
-    const normalizedBuyerState = buyerState.toString().trim().toUpperCase();
+    // Normalize buyer state to canonical 2-letter code (handles "Montana" → "MT")
+    const normalizedBuyerState = normalizeState(buyerState);
+    if (!normalizedBuyerState) {
+      return NextResponse.json({ error: `Unrecognized buyer state: ${buyerState}` }, { status: 400 });
+    }
 
     // ── Guard: skip if buyer already has an active referral ────────────────
     // Prevents duplicate referrals when waitlisted retry re-calls this endpoint.
@@ -165,13 +169,13 @@ export async function POST(request: Request) {
       // "no priced rancher in budget" log-only outcome below).
       const localEligibleAll = allRanchers.filter((r: any) => {
         if (!isEligibleBase(r)) return false;
-        const rState = (r['State'] || '').toString().trim().toUpperCase();
-        const statesServed = r['States Served'] || '';
-        return (
-          rState === normalizedBuyerState ||
-          (typeof statesServed === 'string' && statesServed.split(',').map((s: string) => s.trim().toUpperCase()).includes(normalizedBuyerState)) ||
-          (Array.isArray(statesServed) && statesServed.map((s: any) => String(s).trim().toUpperCase()).includes(normalizedBuyerState))
-        );
+        // Normalize rancher's primary state + every "States Served" entry to
+        // 2-letter codes BEFORE comparing. Old behavior just uppercased, so
+        // "Montana" never matched buyer state "MT". This is the root cause
+        // that left waitlisted customers stranded forever.
+        const rState = normalizeState(r['State']);
+        const served = normalizeStates(r['States Served']);
+        return rState === normalizedBuyerState || served.includes(normalizedBuyerState);
       });
       const localEligible = localEligibleAll.filter(isPriceFit);
 

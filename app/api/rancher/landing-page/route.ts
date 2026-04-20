@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { normalizeStates, stringifyStates } from '@/lib/states';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -198,6 +199,14 @@ export async function PATCH(request: Request) {
         }
         fields[key] = num;
       }
+    }
+
+    // Normalize States Served — accept array of codes from new multi-select UI,
+    // OR comma-separated string (with full names or codes) from legacy callers.
+    // Always saves canonical "MT, WY, ID" 2-letter codes joined with ", ".
+    if ('States Served' in fields && fields['States Served'] !== null) {
+      const codes = normalizeStates(fields['States Served']);
+      fields['States Served'] = codes.length > 0 ? stringifyStates(codes) : '';
     }
 
     await updateRecord(TABLES.RANCHERS, decoded.rancherId, fields);

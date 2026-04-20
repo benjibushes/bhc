@@ -1,5 +1,6 @@
 import { getAllRecords, updateRecord, createRecord, escapeAirtableValue, TABLES } from './airtable';
 import { sendEmail, sendBuyerIntroNotification } from './email';
+import { normalizeState, normalizeStates } from './states';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -37,7 +38,10 @@ export async function bulkRouteStateToRancher(opts: {
   dryRun?: boolean;
   scheduledAt?: string;
 }): Promise<BulkRouteResult> {
-  const state = (opts.state || '').toUpperCase();
+  // Normalize the target state to a 2-letter code. Prevents bugs when callers
+  // pass full state names ("Montana") which would never match buyer states
+  // stored as 2-letter codes ("MT") in Airtable.
+  const state = normalizeState(opts.state);
   const slug = opts.rancherSlug;
   const dryRun = !!opts.dryRun;
   const scheduledAt = opts.scheduledAt;
@@ -293,16 +297,14 @@ export async function bulkRouteStateToRancher(opts: {
 }
 
 // Returns the list of states a rancher serves: their primary `State` plus
-// anything in `States Served` (comma-separated string OR array).
+// anything in `States Served`. All values are normalized to 2-letter codes,
+// so "Montana" and "MT" are treated as the same state.
 export function getRancherServedStates(rancher: any): string[] {
   const out = new Set<string>();
-  const primary = (rancher['State'] || '').toString().trim().toUpperCase();
+  const primary = normalizeState(rancher['State']);
   if (primary) out.add(primary);
-  const served = rancher['States Served'];
-  if (typeof served === 'string') {
-    served.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean).forEach((s) => out.add(s));
-  } else if (Array.isArray(served)) {
-    served.map((s: any) => String(s).trim().toUpperCase()).filter(Boolean).forEach((s) => out.add(s));
+  for (const s of normalizeStates(rancher['States Served'])) {
+    out.add(s);
   }
   return Array.from(out);
 }

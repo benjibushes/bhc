@@ -10,6 +10,7 @@ import {
 import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification, sendRancherCheckIn, sendPipelineUpdateEmail } from '@/lib/email';
 import { callClaude } from '@/lib/ai';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
+import { normalizeState, normalizeStates } from '@/lib/states';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -20,31 +21,33 @@ const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 async function runWaitlistBlast(rancherId: string): Promise<{ matched: number; ranchName: string; state: string }> {
   const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
   const ranchName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
-  const rancherState = rancher['State'] || '';
-  const statesServedRaw = rancher['States Served'] || '';
-  const statesServed: string[] = Array.isArray(statesServedRaw)
-    ? statesServedRaw
-    : typeof statesServedRaw === 'string'
-      ? statesServedRaw.split(',').map((s: string) => s.trim()).filter(Boolean)
-      : [];
+  const rancherStateRaw = rancher['State'] || '';
 
-  // Combine primary state + states served for matching
+  // Build set of states this rancher serves, all normalized to 2-letter codes.
+  // CRITICAL: previously this used raw strings, so a rancher who typed "Montana"
+  // never matched buyers stored as "MT". Same root cause as the matching engine bug.
   const allStates = new Set<string>();
-  if (rancherState) allStates.add(rancherState);
-  statesServed.forEach((s: string) => allStates.add(s));
-
-  if (allStates.size === 0) {
-    return { matched: 0, ranchName, state: rancherState };
+  const primary = normalizeState(rancherStateRaw);
+  if (primary) allStates.add(primary);
+  for (const s of normalizeStates(rancher['States Served'])) {
+    allStates.add(s);
   }
 
-  // Find waiting consumers in those states
+  if (allStates.size === 0) {
+    return { matched: 0, ranchName, state: rancherStateRaw };
+  }
+
+  // Find waiting consumers in those states (also normalize the consumer's state
+  // for comparison — a buyer who slipped through with a non-canonical state would
+  // otherwise never match either).
   const allConsumers: any[] = await getAllRecords(TABLES.CONSUMERS);
   const waitingBuyers = allConsumers.filter((c: any) => {
     const status = c['Status'] || '';
     const refStatus = c['Referral Status'] || '';
-    const consumerState = c['State'] || '';
+    const consumerState = normalizeState(c['State']);
     if (status !== 'Approved') return false;
     if (refStatus !== 'Unmatched' && refStatus !== 'Waitlisted') return false;
+    if (!consumerState) return false;
     return allStates.has(consumerState);
   }).slice(0, 50); // Cap at 50
 
@@ -79,7 +82,7 @@ async function runWaitlistBlast(rancherId: string): Promise<{ matched: number; r
     }
   }
 
-  return { matched, ranchName, state: rancherState };
+  return { matched, ranchName, state: primary || rancherStateRaw };
 }
 
 function escHtml(str: string): string {

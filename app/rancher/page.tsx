@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
+import StateMultiSelect from '../components/StateMultiSelect';
 import Link from 'next/link';
 
 interface RancherInfo {
@@ -956,16 +957,16 @@ export default function RancherDashboardPage() {
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="block text-sm font-medium">States You Deliver To <span className="text-dust font-normal">(comma-separated)</span></label>
-                    <input
-                      type="text"
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium">States You Deliver To</label>
+                    <p className="text-xs text-dust">
+                      Tap the states you&apos;ll ship to. We&apos;ll automatically match buyers from these states to you.
+                      <strong className="text-charcoal"> Your home state is included automatically.</strong>
+                    </p>
+                    <StateMultiSelect
                       value={pageForm['States Served'] || ''}
-                      onChange={e => setPageForm(p => ({ ...p, 'States Served': e.target.value }))}
-                      placeholder="Montana, Wyoming, Idaho, Washington"
-                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                      onChange={(v) => setPageForm(p => ({ ...p, 'States Served': v }))}
                     />
-                    <p className="text-xs text-dust">We&apos;ll match buyers from these states to you automatically.</p>
                   </div>
 
                   <div className="flex items-center gap-3">
