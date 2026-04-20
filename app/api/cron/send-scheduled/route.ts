@@ -16,18 +16,30 @@ function sleep(ms: number) {
 async function getRecipients(audienceType: string, selectedStates?: string[]) {
   let recipients: Array<{ email: string; name: string }> = [];
 
+  // CRITICAL: filter out anyone who unsubscribed or hard-bounced. Sending to
+  // them again is a CAN-SPAM violation AND tanks your sender reputation —
+  // ISPs see repeated sends to known-bad addresses and start spam-foldering
+  // the rest of your mail.
+  const isMailable = (record: any): boolean => {
+    if (record['Unsubscribed'] === true) return false;
+    if (record['Bounced'] === true) return false;
+    if (record['Complained'] === true) return false;
+    return true;
+  };
+
   if (audienceType === 'consumers' || audienceType.startsWith('state:')) {
     const consumers = await getAllRecords(TABLES.CONSUMERS);
     const stateList = audienceType.startsWith('state:') ? audienceType.replace('state:', '').split(',') : null;
-    const filtered = stateList
+    const filtered = (stateList
       ? consumers.filter((c: any) => stateList.includes(c['State']))
-      : consumers;
+      : consumers
+    ).filter(isMailable);
     recipients = filtered.map((c: any) => ({
       email: (c['Email'] || '').trim().toLowerCase(),
       name: c['Full Name'] || 'Member',
     })).filter((r) => r.email);
   } else if (audienceType === 'ranchers') {
-    const ranchers = await getAllRecords(TABLES.RANCHERS);
+    const ranchers = (await getAllRecords(TABLES.RANCHERS)).filter(isMailable);
     recipients = ranchers.map((r: any) => ({
       email: (r['Email'] || '').trim().toLowerCase(),
       name: r['Operator Name'] || 'Rancher',

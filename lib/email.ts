@@ -1,6 +1,58 @@
 import { Resend } from 'resend';
+import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 
 const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
+
+// In-memory suppression cache. Built lazily on first email send and refreshed
+// every SUPPRESSION_TTL_MS. Avoids hitting Airtable on every send while still
+// catching new unsubscribes within ~5 minutes. Critical to avoid CAN-SPAM
+// violations + deliverability damage from sending to known-bad addresses.
+const SUPPRESSION_TTL_MS = 5 * 60 * 1000;
+let suppressionCache: { emails: Set<string>; loadedAt: number } | null = null;
+
+async function getSuppressionList(): Promise<Set<string>> {
+  const now = Date.now();
+  if (suppressionCache && now - suppressionCache.loadedAt < SUPPRESSION_TTL_MS) {
+    return suppressionCache.emails;
+  }
+  const emails = new Set<string>();
+  try {
+    // Pull from Consumers table — set built lazily on first send.
+    const consumers = await getAllRecords(
+      TABLES.CONSUMERS,
+      `OR({Unsubscribed} = TRUE(), {Bounced} = TRUE(), {Complained} = TRUE())`
+    );
+    for (const c of consumers as any[]) {
+      const e = (c['Email'] || '').toString().trim().toLowerCase();
+      if (e) emails.add(e);
+    }
+    // Also Ranchers — same fields if present.
+    try {
+      const ranchers = await getAllRecords(
+        TABLES.RANCHERS,
+        `OR({Unsubscribed} = TRUE(), {Bounced} = TRUE(), {Complained} = TRUE())`
+      );
+      for (const r of ranchers as any[]) {
+        const e = (r['Email'] || '').toString().trim().toLowerCase();
+        if (e) emails.add(e);
+      }
+    } catch {
+      // Ranchers table may not have these fields yet — non-fatal
+    }
+  } catch (e) {
+    console.error('Suppression list build failed:', e);
+    // Fail-open: if we can't load the list, send anyway. Better to send than
+    // to silently block all email — but log loud so this gets fixed.
+  }
+  suppressionCache = { emails, loadedAt: now };
+  return emails;
+}
+
+// Force refresh — call after a webhook updates suppression status so the
+// cache doesn't lag.
+export function invalidateSuppressionCache() {
+  suppressionCache = null;
+}
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@buyhalfcow.com';
 
@@ -25,15 +77,48 @@ function htmlToPlainText(html: string): string {
     .trim();
 }
 
+// Extract the domain from a sender like "Name <ben@domain.com>" or "ben@domain.com".
+// Returns SEND_DOMAINS[0] as a fallback so we never crash on parse failure.
+function extractDomain(from: string | undefined): string {
+  if (!from) return SEND_DOMAINS[0];
+  const match = String(from).match(/<?[^@<>\s]+@([^>\s]+)>?/);
+  return match ? match[1] : SEND_DOMAINS[0];
+}
+
 // Wrapper that auto-adds replyTo, plain text, and CAN-SPAM footer
 // to EVERY email. This is the single enforcement point for deliverability.
 // IMPORTANT: replyTo MUST match the sending domain. Gmail/Outlook flag
-// emails where From: domain ≠ Reply-To: domain as phishing.
+// emails where From: domain ≠ Reply-To: domain as phishing — and previously
+// this code hardcoded Reply-To to SEND_DOMAINS[0] even when From rotated to
+// a different domain. That created a domain mismatch on 2/3 of all sends
+// when domain rotation was active.
 const resend = {
   emails: {
     send: async (params: any) => {
+      // ── SUPPRESSION CHECK ────────────────────────────────────────────
+      // Block sends to anyone who unsubscribed, hard-bounced, or marked
+      // spam. CAN-SPAM violation otherwise + repeat sends destroy sender
+      // reputation. Skip for transactional override (e.g., legal notices)
+      // by passing _bypassSuppression: true.
+      if (!params._bypassSuppression) {
+        const recipient = (Array.isArray(params.to) ? params.to[0] : params.to || '')
+          .toString()
+          .trim()
+          .toLowerCase();
+        if (recipient) {
+          const suppressed = await getSuppressionList();
+          if (suppressed.has(recipient)) {
+            console.log(`[email] SKIPPED ${recipient} (suppressed: unsubscribed/bounced/complained)`);
+            return { data: { id: 'skipped-suppressed' }, error: null };
+          }
+        }
+      }
+      delete params._bypassSuppression;
+
       if (!params.replyTo) {
-        params.replyTo = `ben@${SEND_DOMAINS[0]}`;
+        // Match Reply-To to the actual sending domain in the From header.
+        const fromDomain = extractDomain(params.from);
+        params.replyTo = `ben@${fromDomain}`;
       }
       // Auto-inject CAN-SPAM footer (physical address + unsubscribe link)
       // into every HTML email unless explicitly opted out via _skipFooter.
