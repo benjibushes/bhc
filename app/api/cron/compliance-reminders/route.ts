@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
@@ -8,6 +9,8 @@ export const maxDuration = 60;
 
 export async function GET(request: Request) {
   try {
+    if (isMaintenanceMode()) return maintenanceResponse('compliance-reminders');
+
     const authHeader = request.headers.get('authorization');
     if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
       const url = new URL(request.url);

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
 import { sendEmail, sendRepeatPurchaseEmail } from '@/lib/email';
@@ -20,6 +21,8 @@ const AI_CONFIGURED = !!(OLLAMA_URL || ANTHROPIC_KEY);
 // Auto-sends AI re-engagement emails (max 3 per referral), auto-closes stale referrals
 async function handler(request: Request) {
   try {
+    if (isMaintenanceMode()) return maintenanceResponse('referral-chasup');
+
     const cronSecret = process.env.CRON_SECRET;
     if (cronSecret) {
       const authHeader = request.headers.get('authorization');

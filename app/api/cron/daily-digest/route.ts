@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
 
@@ -10,6 +11,8 @@ const BHC_SYSTEM_PROMPT = `You are Ben's AI business assistant for BuyHalfCow (B
 
 async function handler(request: Request) {
   try {
+    if (isMaintenanceMode()) return maintenanceResponse('daily-digest');
+
     const cronSecret = process.env.CRON_SECRET;
     if (cronSecret) {
       const authHeader = request.headers.get('authorization');

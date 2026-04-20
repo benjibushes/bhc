@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { sendRancherLeadNudge } from '@/lib/email';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
 export const maxDuration = 60;
@@ -14,6 +15,8 @@ export const maxDuration = 60;
 // "Verification Pending", "Verification Complete", "Live"
 async function handler(request: Request) {
   try {
+    if (isMaintenanceMode()) return maintenanceResponse('rancher-followup');
+
     const cronSecret = process.env.CRON_SECRET;
     if (cronSecret) {
       const authHeader = request.headers.get('authorization');

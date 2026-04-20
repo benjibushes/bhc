@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendBroadcastEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
@@ -56,6 +57,8 @@ async function getRecipients(audienceType: string, selectedStates?: string[]) {
 
 export async function GET(request: Request) {
   try {
+    if (isMaintenanceMode()) return maintenanceResponse('send-scheduled');
+
     const authHeader = request.headers.get('authorization');
     if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
       const url = new URL(request.url);

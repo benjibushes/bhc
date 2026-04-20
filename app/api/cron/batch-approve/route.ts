@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { bulkRouteStateToRancher, getRancherServedStates } from '@/lib/bulkRoute';
@@ -19,6 +20,9 @@ function sleep(ms: number) {
 // and kicks off rancher matching for approved Beef Buyers
 async function handler(request: Request) {
   try {
+    // Maintenance short-circuit: do nothing while the platform is paused.
+    if (isMaintenanceMode()) return maintenanceResponse('batch-approve');
+
     const cronSecret = process.env.CRON_SECRET;
     if (cronSecret) {
       const authHeader = request.headers.get('authorization');

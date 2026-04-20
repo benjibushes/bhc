@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendMonthlyCommissionInvoice } from '@/lib/email';
 
@@ -10,6 +11,8 @@ export const maxDuration = 60;
 // Sends commission invoices to ranchers with unpaid commissions
 async function handler(request: Request) {
   try {
+    if (isMaintenanceMode()) return maintenanceResponse('commission-invoices');
+
     const cronSecret = process.env.CRON_SECRET;
     if (cronSecret) {
       const authHeader = request.headers.get('authorization');

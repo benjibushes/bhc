@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import {
   sendSequenceEmail_BeefDay3,
@@ -41,6 +42,8 @@ function makeLoginUrl(consumerId: string, email: string) {
 // Sends drip emails to consumers based on how long they've been approved
 async function handler(request: Request) {
   try {
+    if (isMaintenanceMode()) return maintenanceResponse('email-sequences');
+
     const cronSecret = process.env.CRON_SECRET;
     if (cronSecret) {
       const authHeader = request.headers.get('authorization');

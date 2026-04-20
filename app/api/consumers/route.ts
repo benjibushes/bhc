@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode } from '@/lib/maintenance';
 
 export const maxDuration = 60;
 
@@ -141,6 +142,25 @@ export async function POST(request: Request) {
       'UTM Parameters': utmParams || '',
     };
     if (referredBy) consumerFields['Referred By'] = referredBy;
+
+    // Maintenance mode: store the consumer record but skip ALL downstream
+    // processing — no emails, no telegram, no matching. The record gets
+    // picked up when we exit maintenance mode and re-process the queue.
+    // Tag the record so it's distinguishable from live signups.
+    if (isMaintenanceMode()) {
+      consumerFields['Source'] = 'maintenance_capture';
+      consumerFields['Notes'] = `${consumerFields['Notes'] || ''}\n[CAPTURED DURING MAINTENANCE ${new Date().toISOString()}]`.trim();
+      try {
+        await createRecord(TABLES.CONSUMERS, consumerFields);
+      } catch (e) {
+        console.error('Maintenance capture error:', e);
+      }
+      return NextResponse.json({
+        success: true,
+        maintenance: true,
+        message: "You're on the list. We'll email you as soon as the platform re-opens.",
+      }, { status: 201 });
+    }
 
     const record = await createRecord(TABLES.CONSUMERS, consumerFields);
 

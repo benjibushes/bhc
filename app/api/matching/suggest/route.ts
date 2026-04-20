@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, createRecord, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
@@ -14,6 +15,17 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function POST(request: Request) {
   try {
+    // Maintenance short-circuit: don't match anyone while the platform is paused.
+    // Callers (signup, reorder, waitlist retry) all early-return in maintenance mode,
+    // so hitting this is a bug — return 503 so it's visible in logs.
+    if (isMaintenanceMode()) {
+      return NextResponse.json({
+        success: false,
+        paused: true,
+        error: 'Matching is paused while the platform is in maintenance mode.',
+      }, { status: 503 });
+    }
+
     // Allow admin (via cookie) or internal calls (via shared secret header)
     const internalSecret = process.env.INTERNAL_API_SECRET || '';
     const authHeader = request.headers.get('x-internal-secret') || '';
