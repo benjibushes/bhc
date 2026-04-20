@@ -428,28 +428,69 @@ export default function RancherDashboardPage() {
           <Divider />
 
           {/* Onboarding Banner */}
-          {rancherInfo.onboardingStatus && rancherInfo.onboardingStatus !== 'Live' && (
+          {rancherInfo.onboardingStatus && rancherInfo.onboardingStatus !== 'Live' && (() => {
+            const status = rancherInfo.onboardingStatus;
+            const agreementDone = rancherInfo.agreementSigned || ['Agreement Signed', 'Verification Pending', 'Verification Complete'].includes(status);
+            const verifiedDone = status === 'Verification Complete';
+            const pageReady = !!rancherInfo.slug && !!rancherInfo.halfPrice;
+            const steps: Array<{ label: string; state: 'done' | 'current' | 'pending'; cta?: React.ReactNode }> = [
+              { label: 'Application received', state: 'done' },
+              {
+                label: 'Sign the Rancher Agreement',
+                state: agreementDone ? 'done' : 'current',
+                cta: !agreementDone ? (
+                  <span className="text-xs text-saddle">Check your email — we sent the agreement to {rancherInfo.name}&rsquo;s inbox right after signup. Not there? <a href="mailto:ben@buyhalfcow.com?subject=Resend agreement" className="underline">Ask us to resend</a>.</span>
+                ) : undefined,
+              },
+              {
+                label: 'Verification',
+                state: verifiedDone ? 'done' : agreementDone ? 'current' : 'pending',
+                cta: agreementDone && !verifiedDone ? (
+                  <span className="text-xs text-saddle">Submit verification info below &darr;</span>
+                ) : undefined,
+              },
+              {
+                label: 'Set up your ranch page',
+                state: verifiedDone && pageReady ? 'done' : verifiedDone ? 'current' : 'pending',
+                cta: verifiedDone && !pageReady ? (
+                  <Link href="#my_page" onClick={() => setActiveTab('my_page')} className="text-xs text-saddle underline">Open &ldquo;My Page&rdquo; tab</Link>
+                ) : undefined,
+              },
+              { label: 'Go live — start receiving buyers', state: 'pending' },
+            ];
+            return (
             <div className="p-4 border-2 border-yellow-400 bg-yellow-50 space-y-3">
-              <p className="font-medium">Onboarding Status: {rancherInfo.onboardingStatus}</p>
+              <p className="font-medium">Your Onboarding Progress</p>
               <p className="text-sm text-saddle">
-                {rancherInfo.onboardingStatus === 'Docs Sent' && 'Please review and sign the agreement documents sent to your email.'}
-                {rancherInfo.onboardingStatus === 'Verification Complete' && "You're approved! We're activating your profile. You'll receive an email when you're live."}
-                {rancherInfo.onboardingStatus === 'Verification Pending' && !verificationSubmitted && "Submit your verification info to get approved and go live."}
-                {rancherInfo.onboardingStatus === 'Verification Pending' && verificationSubmitted && "Verification submitted! We'll review and get back to you shortly."}
-                {(rancherInfo.onboardingStatus === 'Agreement Signed') && "Next step: complete verification so we can get you live."}
-                {!['Docs Sent', 'Agreement Signed', 'Verification Complete', 'Verification Pending'].includes(rancherInfo.onboardingStatus) && "Complete your onboarding to start receiving buyer leads."}
+                {status === 'Docs Sent' && "Your agreement is in your email inbox. Sign it whenever you're ready — that's the one thing holding up your go-live."}
+                {status === 'Verification Complete' && "You're verified! We're activating your profile. You'll receive an email when you're live."}
+                {status === 'Verification Pending' && !verificationSubmitted && "Submit your verification info below to get approved and go live."}
+                {status === 'Verification Pending' && verificationSubmitted && "Verification submitted. Review takes 24-48 hours — we'll email you the moment it's approved."}
+                {status === 'Agreement Signed' && "Agreement signed! One step left: complete verification so we can get you live."}
+                {!['Docs Sent', 'Agreement Signed', 'Verification Complete', 'Verification Pending'].includes(status) && "Complete the steps below to start receiving qualified buyer leads."}
               </p>
               <div className="pt-3 border-t border-yellow-300">
-                <p className="text-xs font-medium text-saddle uppercase tracking-wider mb-2">Steps to go live</p>
-                <ol className="text-sm text-saddle space-y-1">
-                  <li className={['Docs Sent', 'Agreement Signed', 'Verification Complete', 'Verification Pending', 'Live'].includes(rancherInfo.onboardingStatus) ? 'line-through text-gray-500' : ''}>
-                    1. Sign agreement {['Agreement Signed', 'Verification Complete', 'Verification Pending', 'Live'].includes(rancherInfo.onboardingStatus) && '✓'}
-                  </li>
-                  <li className={['Verification Complete', 'Live'].includes(rancherInfo.onboardingStatus) ? 'line-through text-gray-500' : ''}>
-                    2. Verification {['Verification Complete', 'Live'].includes(rancherInfo.onboardingStatus) && '✓'}
-                  </li>
-                  <li>3. Set up your ranch page</li>
-                  <li>4. Go live</li>
+                <p className="text-xs font-medium text-saddle uppercase tracking-wider mb-3">Steps to go live</p>
+                <ol className="space-y-3">
+                  {steps.map((step, i) => (
+                    <li key={i} className="flex items-start gap-3">
+                      <span className={`flex-shrink-0 w-6 h-6 flex items-center justify-center text-xs font-bold ${
+                        step.state === 'done' ? 'bg-green-600 text-white' :
+                        step.state === 'current' ? 'bg-yellow-500 text-white' :
+                        'bg-gray-200 text-gray-500'
+                      }`} aria-hidden>
+                        {step.state === 'done' ? '\u2713' : step.state === 'current' ? '!' : i + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm ${
+                          step.state === 'done' ? 'text-gray-500 line-through' :
+                          step.state === 'current' ? 'font-medium text-charcoal' :
+                          'text-gray-500'
+                        }`}>{step.label}</p>
+                        {step.cta && <div className="mt-1">{step.cta}</div>}
+                      </div>
+                    </li>
+                  ))}
                 </ol>
               </div>
 
@@ -554,7 +595,8 @@ export default function RancherDashboardPage() {
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {/* Tabs */}
           <div className="flex flex-wrap gap-2">

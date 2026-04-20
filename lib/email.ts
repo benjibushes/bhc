@@ -622,8 +622,10 @@ export async function sendPartnerConfirmation(data: {
             <div class="divider"></div>
             <p><strong>What Happens Next:</strong></p>
             ${data.type === 'rancher' ? `
-              <p>I'm personally reviewing and certifying every rancher in the network. Here's the process:</p>
+              <p><strong>Watch for a second email in the next few minutes</strong> — it contains your Rancher Agreement and info packet. Sign it whenever you're ready; no rush, but we can't go live until it's signed.</p>
+              <p>Here's the full process:</p>
               <ol style="line-height: 1.8; color: #6B4F3F;">
+                <li><strong>Sign the agreement</strong> — Arrives in a separate email right after this one</li>
                 <li><strong>Schedule your call</strong> — Book your 30-minute onboarding call on my calendar (see below)</li>
                 <li><strong>Onboarding call</strong> — We discuss your operation, answer questions, explain The HERD network</li>
                 <li><strong>Verification</strong> — Share customer testimonials, operation photos, social proof (Google Reviews, social media), and processing facility info</li>

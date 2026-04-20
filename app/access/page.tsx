@@ -315,27 +315,51 @@ function AccessPageContent() {
               You&apos;re In
             </h1>
             <Divider />
-            <p className="text-xl leading-relaxed">
-              {isBeef
-                ? "Check your email — you'll find your login link and next steps for getting matched with a verified rancher in your area."
-                : "Check your email — you'll find your login link and access to the BuyHalfCow network, including merch, brand deals, and community events."
-              }
-            </p>
+
+            {/* Email reassurance — most actionable thing the user can do is check their inbox */}
+            <div className="space-y-3">
+              <p className="text-xl leading-relaxed">
+                Your login link is on its way to{' '}
+                <strong className="text-[#0E0E0E] break-all">{formData.email}</strong>
+              </p>
+              <p className="text-sm text-[#6B4F3F]">
+                Arrives in 1-2 minutes. Check spam if you don&apos;t see it from <em>ben@buyhalfcow.com</em>.
+              </p>
+            </div>
+
             <div className="space-y-3 text-left max-w-md mx-auto pt-4">
               <div className="flex items-center gap-3 text-base">
-                <span className="w-6 h-6 bg-[#0E0E0E] text-[#F4F1EC] rounded-full flex items-center justify-center text-xs font-bold">1</span>
+                <span className="w-6 h-6 bg-[#0E0E0E] text-[#F4F1EC] rounded-full flex items-center justify-center text-xs font-bold">✓</span>
                 <span>Application approved</span>
               </div>
-              <div className="flex items-center gap-3 text-base text-[#6B4F3F]">
-                <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold">2</span>
-                <span>{isBeef ? 'Matching you with a rancher...' : 'Explore the network'}</span>
+              <div className="flex items-start gap-3 text-base text-[#6B4F3F]">
+                <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
+                <span>
+                  {isBeef
+                    ? <>We&apos;re matching you with a verified rancher in <strong>{formData.state}</strong> right now</>
+                    : 'Log in to explore ranches, land deals, and member perks'}
+                </span>
               </div>
-              <div className="flex items-center gap-3 text-base text-[#A7A29A]">
-                <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold">3</span>
-                <span>{isBeef ? 'Personal introduction via email' : 'Access member-only perks'}</span>
+              <div className="flex items-start gap-3 text-base text-[#A7A29A]">
+                <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
+                <span>
+                  {isBeef
+                    ? 'Personal introduction email within 24-48 hours'
+                    : 'When you&apos;re ready to source beef, tell us from your dashboard'}
+                </span>
               </div>
             </div>
-            <div className="pt-8">
+
+            {/* Support fallback — visible so users never feel stranded */}
+            <div className="pt-4 text-sm text-[#6B4F3F]">
+              Email not showing up?{' '}
+              <a href="mailto:hello@buyhalfcow.com" className="text-[#0E0E0E] underline underline-offset-2 hover:text-[#6B4F3F]">
+                Email hello@buyhalfcow.com
+              </a>
+              {' '}and we&apos;ll resend it.
+            </div>
+
+            <div className="pt-4">
               <Link href="/" className="text-[#6B4F3F] hover:text-[#0E0E0E] transition-colors">
                 &larr; Back to home
               </Link>
