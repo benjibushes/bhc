@@ -355,6 +355,7 @@ export default function RancherDashboardPage() {
 
   const handleRequestGoLive = async () => {
     setGoLiveLoading(true);
+    setUpdateError('');
     try {
       const res = await fetch('/api/rancher/landing-page', {
         method: 'PATCH',
@@ -363,9 +364,12 @@ export default function RancherDashboardPage() {
       });
       if (res.ok) {
         setGoLiveRequested(true);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setUpdateError(data.error || 'Go-live request failed. Try again or email support@buyhalfcow.com.');
       }
     } catch {
-      // silent
+      setUpdateError('Network error — check your connection and try again.');
     } finally {
       setGoLiveLoading(false);
     }

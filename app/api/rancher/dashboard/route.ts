@@ -88,17 +88,28 @@ export async function GET() {
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
 
+    // Network Benefits = brands flagged Featured + Status approved/active.
+    // BRANDS fields that actually exist (per schema): Brand Name, Contact Name,
+    // Email, Phone, Website, Product Category, Proposed Discount, Partnership Goals,
+    // Featured, Status. Older code referenced "Product Type", "Discount Offered (%)",
+    // and "Payment Status" — none of which exist — so the filter silently returned
+    // zero brands forever. Also: Status is multilineText (free text), so we do a
+    // truthy/contains check instead of strict equality.
     let networkBenefits: any[] = [];
     try {
       const allBrands = await getAllRecords(TABLES.BRANDS);
       networkBenefits = allBrands
-        .filter((b: any) => (b['Status'] === 'Approved' && b['Payment Status'] === 'Paid'))
+        .filter((b: any) => {
+          const status = String(b['Status'] || '').toLowerCase();
+          const featured = !!b['Featured'];
+          return featured && (status.includes('approv') || status.includes('active') || status.includes('paid'));
+        })
         .map((b: any) => ({
           id: b.id,
           brand_name: b['Brand Name'] || '',
-          product_type: b['Product Type'] || '',
-          discount_offered: b['Discount Offered (%)'] || 0,
-          description: b['Description'] || '',
+          product_type: b['Product Category'] || '',
+          discount_offered: Number(b['Proposed Discount']) || 0,
+          description: b['Partnership Goals'] || '',
           website: b['Website'] || '',
           contact_email: b['Email'] || '',
         }));

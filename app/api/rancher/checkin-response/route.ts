@@ -68,15 +68,17 @@ export async function GET(request: Request) {
       return NextResponse.redirect(CALENDLY_LINK);
 
     } else if (action === 'out') {
-      // Not interested — mark as declined
+      // Not interested — mark as declined. Active Status="Paused" (not the
+      // non-existent "Inactive"). Matching engine already filters on
+      // activeStatus === 'Active' so this correctly stops new leads.
       await updateRecord(TABLES.RANCHERS, rancherId, {
         'Last Check In': now,
         'Check In Response': 'Declined',
-        'Active Status': 'Inactive',
+        'Active Status': 'Paused',
       });
 
       await sendTelegramUpdate(
-        `🔴 <b>CHECK-IN: DECLINED</b>\n\n${name} (${ranchName}) is not interested right now.\nMarked as Inactive.`
+        `🔴 <b>CHECK-IN: DECLINED</b>\n\n${name} (${ranchName}) is not interested right now.\nMarked as Paused. Resume with /resume ${rancher['Slug'] || rancherId}.`
       );
 
       return NextResponse.redirect(`${SITE_URL}?checkin=acknowledged`);

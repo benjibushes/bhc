@@ -33,9 +33,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
+    // Block login for ranchers who've been explicitly deactivated. Allowed
+    // statuses (per schema): Active, At Capacity, Paused, Pending Onboarding,
+    // Non-Compliant. Only Non-Compliant should block login outright (they're
+    // being removed for cause). Paused is self-service vacation mode — still
+    // let them log in so they can resume themselves.
     const activeStatus = (rancher['Active Status'] || '').toLowerCase();
-    if (activeStatus === 'suspended' || activeStatus === 'rejected') {
-      return NextResponse.json({ error: 'Your account has been deactivated. Contact support@buyhalfcow.com.' }, { status: 403 });
+    if (activeStatus === 'non-compliant') {
+      return NextResponse.json({ error: 'Your account has been deactivated for compliance reasons. Contact support@buyhalfcow.com.' }, { status: 403 });
     }
 
     const sessionToken = jwt.sign(
