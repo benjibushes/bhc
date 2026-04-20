@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Airtable from 'airtable';
+import { invalidateSuppressionCache } from '@/lib/email';
 
 const apiKey = process.env.AIRTABLE_API_KEY;
 const baseId = process.env.AIRTABLE_BASE_ID;
@@ -65,6 +66,11 @@ async function handleUnsubscribe(req: NextRequest) {
         'Unsubscribed': true,
       });
     }
+
+    // Invalidate suppression cache so the next email send sees this address
+    // as blocked immediately (prevents the 5-minute lag window where they'd
+    // still get the next batch).
+    invalidateSuppressionCache();
 
     // For RFC 8058 one-click, return 200
     if (req.method === 'POST') {

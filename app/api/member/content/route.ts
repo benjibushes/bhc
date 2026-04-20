@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { normalizeState, normalizeStates } from '@/lib/states';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 
@@ -61,18 +62,20 @@ export async function GET() {
       console.warn('Referrals table not accessible, returning empty referrals');
     }
 
-    // Filter ranchers by member's state (show state matches first, then all)
+    // Filter ranchers by member's state. Use normalizeState so "Montana" and
+    // "MT" are both recognized (this comparison was buggy before — same root
+    // cause as the matching engine state bug).
+    const memberStateCode = normalizeState(memberState);
     const stateRanchers = ranchers.filter((r: any) => {
-      const rState = r['State'] || '';
-      const statesServed = r['States Served'] || '';
-      return rState === memberState ||
-        (typeof statesServed === 'string' && statesServed.split(',').map((s: string) => s.trim()).includes(memberState));
+      const rState = normalizeState(r['State']);
+      const served = normalizeStates(r['States Served']);
+      return rState === memberStateCode || served.includes(memberStateCode);
     });
     const otherRanchers = ranchers.filter((r: any) => !stateRanchers.some((sr: any) => sr.id === r.id));
 
-    // Get member's referral status — include rancher_id so the UI can render
-    // a rich "your match" card (prices, processing date, buy buttons) by
-    // cross-referencing the full rancher record we already fetched above.
+    // Get member's referral status — include rancher_id, sale_amount, and
+    // closed_at so the UI can render the "Your Match" hero AND a "Past Orders
+    // → Reorder" section for repeat customers.
     const memberReferrals = referrals.filter((r: any) => {
       const buyerIds = r['Buyer'] || [];
       return Array.isArray(buyerIds) ? buyerIds.includes(memberId) : buyerIds === memberId;
@@ -84,6 +87,9 @@ export async function GET() {
         status: r['Status'] || '',
         rancher_id: rancherId,
         rancher_name: r['Suggested Rancher Name'] || '',
+        order_type: r['Order Type'] || '',
+        sale_amount: r['Sale Amount'] || 0,
+        closed_at: r['Closed At'] || '',
         created_at: r['Created At'] || '',
       };
     });

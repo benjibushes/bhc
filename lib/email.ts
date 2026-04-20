@@ -346,53 +346,11 @@ export async function sendConsumerApproval(data: {
 }
 
 // =====================================================
-// BUYER MATCH + INTRO NOTIFICATION EMAILS
+// BUYER INTRO NOTIFICATION EMAIL
 // =====================================================
-
-export async function sendBuyerMatchNotification(data: {
-  firstName: string;
-  email: string;
-  rancherName: string;
-  ranchState: string;
-  loginUrl: string;
-}) {
-  try {
-    await resend.emails.send({
-      from: getFromEmail(),
-      to: data.email,
-      subject: `We found your rancher — ${esc(data.rancherName)}`,
-      headers: getUnsubscribeHeaders(data.email),
-      html: `<!DOCTYPE html><html><head>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.highlight{background:#F4F1EC;border-left:3px solid #0E0E0E;padding:16px 20px;margin:20px 0;color:#0E0E0E}.cta{display:inline-block;padding:16px 32px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
-</head><body><div class="container">
-  <h1>We Found Your Rancher</h1>
-  <p>Hi ${esc(data.firstName)},</p>
-  <p>Great news — we've matched you with a rancher who fits your preferences.</p>
-  <div class="highlight">
-    <strong>${esc(data.rancherName)}</strong> — ${esc(data.ranchState)}<br>
-    <span style="font-size:14px;color:#6B4F3F;">Verified and certified by BuyHalfCow</span>
-  </div>
-  <p><strong>What happens next:</strong></p>
-  <ol style="color:#6B4F3F;line-height:2">
-    <li>I'm reviewing the match to make sure it's the right fit</li>
-    <li>Once confirmed, I'll make a personal introduction via email</li>
-    <li>You and your rancher connect directly — no middleman</li>
-  </ol>
-  <p>You should receive your introduction within <strong>24-48 hours</strong>. Keep an eye on your inbox — your rancher's contact info will be in that next email.</p>
-  <div class="divider"></div>
-  <p style="font-size:13px;">Questions? Just reply to this email.</p>
-  <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
-    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
-</div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending buyer match notification:', error);
-    return { success: false, error };
-  }
-}
+// (The old two-step flow — sendBuyerMatchNotification then sendBuyerIntroNotification
+// — was collapsed into a single intro email. sendBuyerMatchNotification had no
+// callers left and was removed for clarity.)
 
 export async function sendBuyerIntroNotification(data: {
   firstName: string;
@@ -2664,3 +2622,140 @@ export async function sendMonthlyCommissionInvoice(data: {
   }
 }
 
+// =====================================================
+// ABANDONED APPLICATION RECOVERY — 3-email recapture sequence
+// =====================================================
+
+/**
+ * Sends one of three recovery emails to someone who entered their email on
+ * /access but didn't complete the form. Tone gets progressively more direct
+ * across the three sends. Each email links back to /access with their email
+ * pre-filled to remove friction.
+ *
+ * stage: 1 = "you started something" (24h after abandon)
+ *        2 = "still want in?" (3 days)
+ *        3 = "last touch — here's why it matters" (7 days)
+ */
+export async function sendAbandonedRecoveryEmail(data: {
+  email: string;
+  firstName?: string;
+  stage: 1 | 2 | 3;
+}) {
+  const firstName = (data.firstName || '').trim();
+  const greeting = firstName ? `Hi ${esc(firstName)},` : 'Hey,';
+  const accessUrl = utm(`${SITE_URL}/access?email=${encodeURIComponent(data.email)}`, 'abandoned-recovery', `stage-${data.stage}`);
+
+  const subject = data.stage === 1
+    ? 'You started something on BuyHalfCow — finish in 60 seconds?'
+    : data.stage === 2
+      ? 'Still want in? Your spot is held'
+      : 'Last touch — what BuyHalfCow actually does';
+
+  const body = data.stage === 1
+    ? `
+      <p>${greeting}</p>
+      <p>You started signing up for BuyHalfCow but didn't finish. No pressure — I just wanted to leave the door open.</p>
+      <p>If you tell us what you're looking for (Quarter, Half, or Whole; budget; state), we'll match you with a verified rancher in your area within 24 hours.</p>
+      <p>Takes about 60 seconds. We saved your email so you don't have to retype it.</p>`
+    : data.stage === 2
+      ? `
+      <p>${greeting}</p>
+      <p>Quick check-in — you signed up for BuyHalfCow a few days ago but didn't finish the application.</p>
+      <p>Most of our members find a rancher in their state within 24-48 hours of completing it. The bottleneck is usually budget + cut size — once we have those, we can introduce you to someone who fits.</p>
+      <p>If something stopped you (questions about pricing, how it works, what you'd actually get) just reply to this email and I'll answer personally.</p>`
+      : `
+      <p>${greeting}</p>
+      <p>Last note from me — I won't keep emailing.</p>
+      <p>BuyHalfCow isn't a marketplace. It's a private network where I personally introduce serious buyers to verified ranchers. Most members save 30-50% vs grocery beef and end up with 6-12 months of premium cuts in their freezer.</p>
+      <p>If you're still interested, finishing the form takes a minute. If not, no hard feelings — I'll stop the emails after this one.</p>`;
+
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;margin:16px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>${subject}</h1>
+  ${body}
+  <p style="text-align:center;margin-top:24px;"><a href="${accessUrl}" class="cta">Finish My Application →</a></p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Abandoned recovery email error:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
+// LEAD RESURRECTION — buyer notification when their match falls through
+// =====================================================
+
+/**
+ * Sent to a buyer when their previously-matched rancher passes on the lead.
+ * Frames the event as "we found you another option" (or "we're searching") —
+ * never as rejection. Critical to maintain buyer confidence.
+ *
+ * Two outcomes:
+ *   - newRancherName provided  → "We found you a new match"
+ *   - newRancherName missing   → "We're searching for another rancher"
+ */
+export async function sendRerouteNotification(data: {
+  firstName: string;
+  email: string;
+  state: string;
+  newRancherName?: string;
+  newRancherEmail?: string;
+  newRancherPhone?: string;
+  newRancherSlug?: string;
+  loginUrl: string;
+}) {
+  const hasNewMatch = !!data.newRancherName;
+  const subject = hasNewMatch
+    ? `Quick update — we found you a new rancher match`
+    : `Quick update on your rancher search`;
+
+  const matchBlock = hasNewMatch
+    ? `
+    <p>Good news — we already have your next match lined up:</p>
+    <div style="background:#F4F1EC;border-left:3px solid #0E0E0E;padding:16px 20px;margin:20px 0;color:#0E0E0E;">
+      <p style="margin:6px 0;"><strong>${esc(data.newRancherName!)}</strong> · ${esc(data.state)}</p>
+      ${data.newRancherSlug ? `<p style="margin:12px 0 6px;"><a href="${utm(`${SITE_URL}/ranchers/${data.newRancherSlug}`, 'reroute', 'view-ranch')}" style="color:#0E0E0E;">View their ranch page &rarr;</a></p>` : ''}
+    </div>
+    <p>You'll receive their full contact details and pricing in a separate email within the next few minutes.</p>`
+    : `
+    <p>We're working on finding you another rancher in <strong>${esc(data.state)}</strong> right now. As soon as we have a confirmed match, you'll get an introduction email with their contact info and pricing.</p>
+    <p>This usually takes 24-48 hours. If we don't have anyone available in your state yet, I'll personally reach out with options.</p>`;
+
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>${hasNewMatch ? 'New rancher match incoming' : 'Working on your match'}</h1>
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>Quick update on your BuyHalfCow rancher search. The rancher we initially matched you with isn't able to take this order — could be timing, capacity, or a logistical fit. ${hasNewMatch ? "Good news: we already have your next option lined up." : "We're working on your next match now."}</p>
+  ${matchBlock}
+  <div class="divider"></div>
+  <p style="font-size:13px;">Questions or want to talk through what you're looking for? Just reply to this email.</p>
+  <div class="footer">
+    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+  </div>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending reroute notification:', error);
+    return { success: false, error };
+  }
+}

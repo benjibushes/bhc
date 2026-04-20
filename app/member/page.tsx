@@ -60,6 +60,9 @@ interface MemberReferral {
   status: string;
   rancher_id?: string;
   rancher_name: string;
+  order_type?: string;
+  sale_amount?: number;
+  closed_at?: string;
   created_at: string;
 }
 
@@ -238,6 +241,33 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   r => r.status !== 'Closed Won' && r.status !== 'Closed Lost' && r.rancher_id
                 );
                 return <ReadyToBuyButton hasMatch={hasActive} />;
+              })()}
+
+              {/* Past Orders / Reorder — repeat customers are the highest-LTV
+                  segment and the easiest to convert. Surfacing this as a
+                  prominent dashboard section means buyers don't have to email
+                  the rancher direct (which costs us the commission). */}
+              {(() => {
+                const closedWons = (data?.memberReferrals || []).filter(
+                  r => r.status === 'Closed Won' && r.rancher_id
+                );
+                if (closedWons.length === 0) return null;
+                const hasActiveMatch = !!data?.memberReferrals?.find(
+                  r => r.status !== 'Closed Won' && r.status !== 'Closed Lost' && r.rancher_id
+                );
+                return (
+                  <PastOrdersSection
+                    orders={closedWons}
+                    hasActiveOrder={hasActiveMatch}
+                    rancherLookup={(id) => {
+                      return (
+                        data?.stateRanchers?.find(r => r.id === id) ||
+                        data?.otherRanchers?.find(r => r.id === id) ||
+                        null
+                      );
+                    }}
+                  />
+                );
               })()}
 
               <h2 className="font-serif text-2xl">Your Referral Status</h2>
@@ -478,6 +508,116 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
         </div>
       </Container>
     </main>
+  );
+}
+
+// Past orders + reorder card. Repeat customers are the easiest revenue capture
+// in the platform — without this, a happy buyer goes direct to the rancher on
+// their next order and we collect $0. This routes the reorder back through the
+// platform via the matching engine's direct-page-lead code path.
+function PastOrdersSection({
+  orders,
+  hasActiveOrder,
+  rancherLookup,
+}: {
+  orders: MemberReferral[];
+  hasActiveOrder: boolean;
+  rancherLookup: (id: string) => Rancher | null;
+}) {
+  const [reordering, setReordering] = useState<string | null>(null);
+  const [resultByOrderId, setResultByOrderId] = useState<Record<string, { ok: boolean; message: string }>>({});
+
+  const handleReorder = async (order: MemberReferral) => {
+    if (!order.rancher_id) return;
+    setReordering(order.id);
+    try {
+      const res = await fetch('/api/member/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ previousReferralId: order.id, rancherId: order.rancher_id }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setResultByOrderId(prev => ({
+          ...prev,
+          [order.id]: {
+            ok: true,
+            message: `Reorder request sent to ${data.rancherName}. Watch your inbox for a re-introduction.`,
+          },
+        }));
+      } else {
+        setResultByOrderId(prev => ({
+          ...prev,
+          [order.id]: {
+            ok: false,
+            message: data.error || 'Reorder failed. Try again or email hello@buyhalfcow.com.',
+          },
+        }));
+      }
+    } catch {
+      setResultByOrderId(prev => ({
+        ...prev,
+        [order.id]: { ok: false, message: 'Network error. Try again.' },
+      }));
+    } finally {
+      setReordering(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="font-serif text-2xl">Past Orders</h2>
+        <p className="text-sm text-saddle mt-1">
+          Reorder from a rancher you&apos;ve worked with before. We&apos;ll re-introduce you and they&apos;ll prioritize repeat customers.
+        </p>
+      </div>
+      <div className="space-y-3">
+        {orders.map((order) => {
+          const rancher = order.rancher_id ? rancherLookup(order.rancher_id) : null;
+          const result = resultByOrderId[order.id];
+          const closedDate = order.closed_at ? new Date(order.closed_at).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '';
+          return (
+            <div key={order.id} className="p-5 border border-dust bg-white space-y-3">
+              <div className="flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  {rancher?.['Logo URL'] && (
+                    <img
+                      src={rancher['Logo URL']}
+                      alt={rancher['Ranch Name']}
+                      className="w-12 h-12 object-cover border border-dust flex-shrink-0"
+                    />
+                  )}
+                  <div className="min-w-0">
+                    <p className="font-serif text-lg truncate">
+                      {rancher?.['Ranch Name'] || order.rancher_name || 'Past rancher'}
+                    </p>
+                    <p className="text-xs text-dust">
+                      {[order.order_type, closedDate, order.sale_amount ? `$${Number(order.sale_amount).toLocaleString()}` : null]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleReorder(order)}
+                  disabled={reordering === order.id || hasActiveOrder || !rancher}
+                  className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-medium flex-shrink-0"
+                  title={hasActiveOrder ? "You already have an active order in progress" : !rancher ? "This rancher's profile isn't currently available" : ''}
+                >
+                  {reordering === order.id ? 'Sending...' : hasActiveOrder ? 'Order in progress' : 'Reorder'}
+                </button>
+              </div>
+              {result && (
+                <div className={`p-3 text-sm ${result.ok ? 'border border-green-700 bg-green-50 text-green-900' : 'border border-[#8C2F2F] text-[#8C2F2F]'}`}>
+                  {result.message}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

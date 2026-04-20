@@ -3222,6 +3222,121 @@ Confirm send?`;
         }
       }
 
+      // ─── /pause [slug] — stop sending leads to a rancher ────────────────
+      // Use cases: rancher is on vacation, processing month, sick, or just
+      // backed up. Flips Active Status from 'Active' to 'Paused'. The matching
+      // engine already filters on Active Status === 'Active', so paused ranchers
+      // immediately stop receiving new leads but their existing pipeline stays.
+      else if (text.startsWith('/pause ')) {
+        const arg = text.replace(/^\/pause\s+/, '').trim();
+        if (!arg) {
+          await sendTelegramMessage(chatId, '⚠️ Usage: <code>/pause [rancher-slug]</code>');
+          return NextResponse.json({ ok: true });
+        }
+        try {
+          const all = await getAllRecords(TABLES.RANCHERS) as any[];
+          const target = all.find((r) => (r['Slug'] || '').toLowerCase() === arg.toLowerCase()
+            || (r['Operator Name'] || '').toLowerCase().includes(arg.toLowerCase())
+            || (r['Ranch Name'] || '').toLowerCase().includes(arg.toLowerCase()));
+          if (!target) {
+            await sendTelegramMessage(chatId, `⚠️ No rancher matching "${arg}"`);
+            return NextResponse.json({ ok: true });
+          }
+          await updateRecord(TABLES.RANCHERS, target.id, { 'Active Status': 'Paused' });
+          await sendTelegramMessage(
+            chatId,
+            `⏸ <b>PAUSED</b> ${target['Operator Name'] || target['Ranch Name']}\n\nThey'll stop receiving new leads. Existing pipeline unchanged.\nResume with: <code>/resume ${target['Slug'] || arg}</code>`
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /pause failed: ${e.message}`);
+        }
+      }
+
+      // ─── /resume [slug] — re-activate a paused rancher ──────────────────
+      else if (text.startsWith('/resume ')) {
+        const arg = text.replace(/^\/resume\s+/, '').trim();
+        if (!arg) {
+          await sendTelegramMessage(chatId, '⚠️ Usage: <code>/resume [rancher-slug]</code>');
+          return NextResponse.json({ ok: true });
+        }
+        try {
+          const all = await getAllRecords(TABLES.RANCHERS) as any[];
+          const target = all.find((r) => (r['Slug'] || '').toLowerCase() === arg.toLowerCase()
+            || (r['Operator Name'] || '').toLowerCase().includes(arg.toLowerCase())
+            || (r['Ranch Name'] || '').toLowerCase().includes(arg.toLowerCase()));
+          if (!target) {
+            await sendTelegramMessage(chatId, `⚠️ No rancher matching "${arg}"`);
+            return NextResponse.json({ ok: true });
+          }
+          await updateRecord(TABLES.RANCHERS, target.id, { 'Active Status': 'Active' });
+          await sendTelegramMessage(
+            chatId,
+            `▶️ <b>RESUMED</b> ${target['Operator Name'] || target['Ranch Name']}\n\nNew leads will start flowing. Run <code>/route ${target['State'] || ''} ${target['Slug'] || ''}</code> to push waitlisted buyers their way.`
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /resume failed: ${e.message}`);
+        }
+      }
+
+      // ─── /blast [STATE] [message] — quick broadcast to a state segment ──
+      // Sends an immediate email blast to all approved Beef Buyers in the given
+      // state. Hits the same suppression check + footer as every other email.
+      // Cap at 100 recipients per blast to protect deliverability.
+      else if (text.startsWith('/blast ')) {
+        const rest = text.replace(/^\/blast\s+/, '').trim();
+        const match = rest.match(/^([A-Za-z]{2})\s+(.+)$/);
+        if (!match) {
+          await sendTelegramMessage(chatId, '⚠️ Usage: <code>/blast [STATE] [message]</code>\nExample: <code>/blast TX New rancher live in Texas — reply if you want a Half this month.</code>');
+          return NextResponse.json({ ok: true });
+        }
+        const [, stateRaw, messageBody] = match;
+        const { normalizeState } = await import('@/lib/states');
+        const stateCode = normalizeState(stateRaw);
+        if (!stateCode) {
+          await sendTelegramMessage(chatId, `⚠️ "${stateRaw}" isn't a recognized US state code.`);
+          return NextResponse.json({ ok: true });
+        }
+        try {
+          const consumers = await getAllRecords(
+            TABLES.CONSUMERS,
+            `AND({Status} = "Approved", {State} = "${stateCode}")`
+          ) as any[];
+          const recipients = consumers
+            .filter((c: any) => !c['Unsubscribed'] && !c['Bounced'] && !c['Complained'])
+            .filter((c: any) => (c['Email'] || '').includes('@'))
+            .slice(0, 100);
+          if (recipients.length === 0) {
+            await sendTelegramMessage(chatId, `📭 No mailable approved buyers in ${stateCode}.`);
+            return NextResponse.json({ ok: true });
+          }
+          await sendTelegramMessage(chatId, `📨 Sending to ${recipients.length} buyers in ${stateCode}…`);
+          let sent = 0; let failed = 0;
+          for (const c of recipients) {
+            try {
+              const firstName = (c['Full Name'] || '').split(' ')[0] || 'there';
+              await sendEmail({
+                to: c['Email'].trim().toLowerCase(),
+                subject: `Quick update from BuyHalfCow`,
+                html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:30px;background:white;border:1px solid #A7A29A;">
+                  <p style="color:#0E0E0E;">Hi ${firstName},</p>
+                  ${messageBody.split('\n').filter(Boolean).map((p: string) => `<p style="color:#6B4F3F;">${escHtml(p)}</p>`).join('')}
+                  <p style="color:#6B4F3F;margin-top:24px;">— Benjamin, BuyHalfCow</p>
+                </div>`,
+              });
+              sent++;
+            } catch {
+              failed++;
+            }
+          }
+          await sendTelegramMessage(
+            chatId,
+            `✅ <b>BLAST DONE</b> (${stateCode})\n\n📨 Sent: ${sent}\n❌ Failed: ${failed}`
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /blast failed: ${e.message}`);
+        }
+      }
+
       else if (text === '/help') {
         const msg = `📖 <b>BuyHalfCow Bot — Command Reference</b>
 
@@ -3236,6 +3351,9 @@ Confirm send?`;
 
 <b>🎯 DO</b> — single actions
 /route CO the-high-lonesome-ranch [dry|morning] — Bulk-route stuck buyers
+/pause [slug] — Stop sending leads to a rancher (vacation, processing month, sick)
+/resume [slug] — Reactivate a paused rancher
+/blast [STATE] [message] — Quick email to all approved buyers in a state
 /setuppage [name] — Build a rancher landing page (interactive wizard)
 /affiliate [email] — Make someone an affiliate
 

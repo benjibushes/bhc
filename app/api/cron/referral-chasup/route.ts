@@ -204,8 +204,118 @@ async function handler(request: Request) {
       console.error('Stalled nudge query error:', e.message);
     }
 
+    // ── HARD AUTO-REASSIGN AT 14+ DAYS ────────────────────────────────────
+    // No lead should ever die silently. If a rancher has had a lead for 14+
+    // days without moving past "Intro Sent", we auto-pass it on their behalf
+    // and re-run matching with that rancher excluded. The buyer gets a
+    // re-engagement notification regardless of outcome.
+    let autoReassigned = 0;
+    try {
+      const introSentRefs = referrals.filter(r => r['Status'] === 'Intro Sent');
+      const now = Date.now();
+      const stuckTooLong = introSentRefs.filter(r => {
+        const introAt = r['Intro Sent At'] || r['Approved At'];
+        if (!introAt) return false;
+        const days = (now - new Date(introAt).getTime()) / DAY_MS;
+        return days >= 14;
+      });
+
+      for (const ref of stuckTooLong.slice(0, 10)) {
+        try {
+          const buyerName = ref['Buyer Name'] || 'Unknown';
+          const buyerState = ref['Buyer State'] || '';
+          const rancherName = ref['Suggested Rancher Name'] || 'Unknown rancher';
+          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+          const previousRancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+
+          // Close current referral as Closed Lost with auto-pass note
+          await updateRecord(TABLES.REFERRALS, ref.id, {
+            'Status': 'Closed Lost',
+            'Closed At': new Date().toISOString(),
+            'Notes': `[AUTO-REASSIGNED ${new Date().toISOString().slice(0, 10)} — 14+ days no movement]\n${ref['Notes'] || ''}`.trim(),
+          });
+
+          // Decrement previous rancher's capacity
+          if (previousRancherId) {
+            try {
+              const prevRancher: any = await getRecordById(TABLES.RANCHERS, previousRancherId);
+              const count = prevRancher['Current Active Referrals'] || 0;
+              if (count > 0) {
+                await updateRecord(TABLES.RANCHERS, previousRancherId, {
+                  'Current Active Referrals': count - 1,
+                });
+              }
+            } catch (e) {
+              console.error('Auto-reassign: capacity decrement error:', e);
+            }
+          }
+
+          // Re-run matching for the buyer with previous rancher excluded
+          const buyerIds = ref['Buyer'] || [];
+          const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+          let outcome: 'rematched' | 'waitlisted' = 'waitlisted';
+          let newRancher = '';
+          if (buyerId) {
+            try {
+              const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+              if (buyer && buyer['Email']) {
+                await updateRecord(TABLES.CONSUMERS, buyerId, {
+                  'Referral Status': 'Unmatched',
+                  'Sequence Stage': 'rerouted_after_stall',
+                });
+                const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+                  },
+                  body: JSON.stringify({
+                    buyerState: buyer['State'] || buyerState,
+                    buyerId,
+                    buyerName: buyer['Full Name'] || buyerName,
+                    buyerEmail: buyer['Email'],
+                    buyerPhone: buyer['Phone'] || '',
+                    orderType: buyer['Order Type'] || '',
+                    budgetRange: buyer['Budget'] || '',
+                    intentScore: buyer['Intent Score'] || 50,
+                    intentClassification: buyer['Intent Classification'] || 'Medium',
+                    notes: buyer['Notes'] || '',
+                    excludeRancherIds: previousRancherId ? [previousRancherId] : [],
+                  }),
+                });
+                if (matchRes.ok) {
+                  const data = await matchRes.json();
+                  if (data.matchFound) {
+                    outcome = 'rematched';
+                    newRancher = data.suggestedRancher?.name || '';
+                  }
+                }
+              }
+            } catch (rerouteErr) {
+              console.error('Auto-reassign: rematch error:', rerouteErr);
+            }
+          }
+
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `⏰ <b>AUTO-REASSIGNED</b> (14+ days stalled)\n\n` +
+            `🤠 Was: ${rancherName}\n` +
+            `👤 Buyer: ${buyerName} (${buyerState})\n` +
+            (outcome === 'rematched'
+              ? `🔄 Reassigned to: <b>${newRancher}</b>`
+              : `⏳ No other rancher in ${buyerState} — buyer waitlisted, nurture restarted`)
+          );
+          autoReassigned++;
+        } catch (e: any) {
+          console.error('Auto-reassign error:', e.message);
+        }
+      }
+    } catch (e: any) {
+      console.error('Auto-reassign query error:', e.message);
+    }
+
     if (stale.length === 0) {
-      return NextResponse.json({ success: true, stale: 0, sent: 0, autoClosed, stalledNudges });
+      return NextResponse.json({ success: true, stale: 0, sent: 0, autoClosed, stalledNudges, autoReassigned });
     }
 
     let sent = 0;
@@ -326,7 +436,7 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
       await sendTelegramUpdate(`🔄 <b>Repeat Purchase Emails</b>: ${repeatSent} sent to past buyers`);
     }
 
-    return NextResponse.json({ success: true, stale: stale.length, sent, autoClosed, stalledNudges, errors, repeatSent });
+    return NextResponse.json({ success: true, stale: stale.length, sent, autoClosed, stalledNudges, autoReassigned, errors, repeatSent });
   } catch (error: any) {
     console.error('Referral chase-up cron error:', error);
     await sendTelegramUpdate(`⚠️ Referral chase-up cron failed: ${error.message}`).catch(() => {});
