@@ -467,6 +467,22 @@ export default function ReferralsPage() {
                               📱 Call Buyer
                             </a>
                           )}
+                          {ref.buyer_phone && (() => {
+                            const first = (ref.buyer_name || '').split(' ')[0] || 'there';
+                            const ranch = ref.suggested_rancher_name;
+                            const body = ranch
+                              ? `Hi ${first}, Ben from BuyHalfCow. We just paired you with ${ranch} in ${ref.buyer_state}. Want me to make the intro this week? Reply YES if still interested.`
+                              : `Hi ${first}, Ben from BuyHalfCow. Circling back — we're getting ranchers active in ${ref.buyer_state}. Still want to get matched? Reply YES if yes.`;
+                            const href = `sms:${ref.buyer_phone}?&body=${encodeURIComponent(body)}`;
+                            return (
+                              <a
+                                href={href}
+                                className="px-2 py-1 border border-[#0E0E0E] bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]"
+                              >
+                                💬 SMS Buyer
+                              </a>
+                            );
+                          })()}
                           {ref.rancher_email && (
                             <a
                               href={`mailto:${ref.rancher_email}?subject=${encodeURIComponent(`Following up on ${ref.buyer_name} lead`)}`}

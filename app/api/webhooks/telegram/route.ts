@@ -2084,7 +2084,7 @@ I'm your operations assistant — I run the daily ops so you can focus on closin
 /leads — Pending consumers awaiting review
 /ranchers — Rancher onboarding pipeline
 /money — Revenue + commission summary
-/find [name] — Search consumers/ranchers
+/find [name or phone] — Search consumers, tap 💬 SMS · 📱 Call · 📧 Email
 
 <b>🎯 DO</b> single actions
 /route CO the-high-lonesome-ranch [dry|morning] — Bulk-route stuck buyers
@@ -2234,17 +2234,18 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
         await sendTelegramMessage(chatId, msg);
       }
 
-      else if (text.startsWith('/lookup')) {
-        const query = text.replace('/lookup', '').trim();
+      else if (text.startsWith('/lookup') || text.startsWith('/find') || text.startsWith('/buyer')) {
+        const query = text.replace(/^\/(lookup|find|buyer)/, '').trim();
         if (!query) {
-          await sendTelegramMessage(chatId, 'Usage: <code>/lookup name or email</code>');
+          await sendTelegramMessage(chatId, 'Usage: <code>/find name or email</code>\n\nReturns contact info with tap-to-SMS warmup links for each match.');
         } else {
           const consumers = await getAllRecords(TABLES.CONSUMERS);
           const q = query.toLowerCase();
           const matches = consumers.filter((c: any) => {
             const name = (c['Full Name'] || '').toLowerCase();
             const email = (c['Email'] || '').toLowerCase();
-            return name.includes(q) || email.includes(q);
+            const phone = (c['Phone'] || '').toLowerCase();
+            return name.includes(q) || email.includes(q) || phone.includes(q);
           });
 
           if (matches.length === 0) {
@@ -2252,15 +2253,38 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
           } else {
             let msg = `🔍 <b>${matches.length} result${matches.length > 1 ? 's' : ''}</b> for "${query}"\n`;
             for (const c of matches.slice(0, 5) as any[]) {
-              const segEmoji = c['Segment'] === 'Beef Buyer' ? '🥩' : '🏷️';
-              const statusEmoji = (c['Status'] || '').toLowerCase() === 'approved' || (c['Status'] || '').toLowerCase() === 'active' ? '✅' : '⏳';
-              msg += `\n${statusEmoji} <b>${c['Full Name']}</b> ${segEmoji}`;
-              msg += `\n   📧 ${c['Email']}`;
-              msg += `\n   📍 ${c['State']} | Intent: ${c['Intent Score'] || 0} (${c['Intent Classification'] || 'N/A'})`;
-              msg += `\n   Status: ${c['Status'] || 'Unknown'} | Referral: ${c['Referral Status'] || 'N/A'}`;
+              const segEmoji = c['Segment']?.name === 'Beef Buyer' || c['Segment'] === 'Beef Buyer' ? '🥩' : '🏷️';
+              const statusEmoji = (c['Status']?.name || c['Status'] || '').toLowerCase() === 'approved' ? '✅' : '⏳';
+              const fullName = c['Full Name'] || 'Unknown';
+              const firstName = fullName.split(' ')[0] || 'there';
+              const state = c['State'] || '';
+              const phone = (c['Phone'] || '').replace(/[^\d+]/g, '');
+              const email = c['Email'] || '';
+              const refStatus = c['Referral Status']?.name || c['Referral Status'] || 'N/A';
+              const warmup = c['Warmup Stage']?.name || c['Warmup Stage'] || '';
+
+              msg += `\n${statusEmoji} <b>${fullName}</b> ${segEmoji}`;
+              if (state) msg += ` · ${state}`;
+              msg += `\n   Intent: ${c['Intent Score'] || 0} | Referral: ${refStatus}`;
+              if (warmup) msg += ` | Warmup: ${warmup}`;
               msg += `\n`;
+
+              // Build tap-through links for mobile: sms: / tel: / mailto:
+              const contactLinks: string[] = [];
+              if (phone) {
+                const smsBody = `Hi ${firstName}, Ben from BuyHalfCow. Circling back — we're getting ranchers live in ${state || 'your state'}. Still want to get matched? Reply YES if yes.`;
+                contactLinks.push(`<a href="sms:${phone}?&body=${encodeURIComponent(smsBody)}">💬 SMS</a>`);
+                contactLinks.push(`<a href="tel:${phone}">📱 Call</a>`);
+              }
+              if (email) {
+                contactLinks.push(`<a href="mailto:${email}?subject=${encodeURIComponent('Following up — BuyHalfCow')}">📧 Email</a>`);
+              }
+              if (contactLinks.length > 0) msg += `   ${contactLinks.join(' · ')}\n`;
+              if (email) msg += `   <code>${email}</code>\n`;
+              if (phone) msg += `   <code>${phone}</code>\n`;
             }
             if (matches.length > 5) msg += `\n...and ${matches.length - 5} more`;
+            msg += `\n<i>Tap any link above to open your phone's native app.</i>`;
             await sendTelegramMessage(chatId, msg);
           }
         }
@@ -3296,7 +3320,7 @@ Confirm send?`;
 /leads — Pending consumers awaiting review
 /ranchers — Rancher onboarding pipeline
 /money — Revenue + commission summary
-/find [name] — Search consumers/ranchers
+/find [name or phone] — Search consumers, tap 💬 SMS · 📱 Call · 📧 Email
 /capacity — Ranchers near capacity
 /refs — Referral stage breakdown
 
