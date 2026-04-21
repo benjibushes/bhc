@@ -2632,6 +2632,81 @@ export async function sendMonthlyCommissionInvoice(data: {
 }
 
 // =====================================================
+// RANCHER LAUNCH WARMUP — re-engages Waitlisted buyers when a
+// rancher goes live in their state. Single touch + Day 7 nudge.
+// =====================================================
+
+export async function sendRancherLaunchWarmup(data: {
+  email: string;
+  firstName: string;
+  ranchName: string;
+  buyerState: string;
+  engageUrl: string;
+}) {
+  const first = data.firstName || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `${data.ranchName} just joined — your spot is open`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+</head><body><div class="container">
+  <h1>Good news — we found you a rancher</h1>
+  <p>Hi ${esc(first)},</p>
+  <p>When you signed up for BuyHalfCow, there wasn't a verified rancher in ${esc(data.buyerState)} yet. That just changed.</p>
+  <p><strong>${esc(data.ranchName)}</strong> just passed our verification process and is taking on new buyers this week. Since you've been waiting, I want to introduce you first — before we open it up to the rest of the list.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.engageUrl}" class="cta">Yes, I'm Still Interested</a>
+    <p style="font-size:13px;color:#A7A29A;margin-top:10px;">Click confirms you still want a rancher introduction. I'll send it in the next few days.</p>
+  </div>
+  <div class="divider"></div>
+  <p style="font-size:14px;">Prefer to reply? Just write back "YES" to this email and I'll get your introduction queued. If you're no longer looking, no reply means you drop off the list — no hard feelings.</p>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher launch warmup:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendRancherLaunchWarmupNudge(data: {
+  email: string;
+  firstName: string;
+  ranchName: string;
+  engageUrl: string;
+}) {
+  const first = data.firstName || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `Last call — ${data.ranchName} still has slots`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}</style>
+</head><body><div class="container">
+  <h1>Quick follow-up</h1>
+  <p>Hi ${esc(first)},</p>
+  <p>I sent you a note last week about <strong>${esc(data.ranchName)}</strong> opening spots. Didn't hear back, so this is my last nudge.</p>
+  <p>If you still want the intro, tap below. Otherwise I'll drop you off the active list and you won't get more emails about this rancher.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.engageUrl}" class="cta">Yes, Still Interested</a>
+  </div>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending warmup nudge:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
 // RANCHER LEAD REMINDER — fires at Day 2 of Intro Sent without rancher action
 // =====================================================
 

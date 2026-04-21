@@ -286,24 +286,57 @@ async function handler(request: Request) {
       console.error('Auto-go-live query error:', e.message);
     }
 
-    // ── WAITLISTED CONSUMER RETRY ───────────────────────────────────────────
-    // Consumers who were previously approved but waitlisted (no rancher at the
-    // time) get re-run through matching. This catches buyers who got stuck when
-    // a rancher was at capacity but has since freed up (or capacity was healed).
+    // ── WAITLISTED CONSUMER RETRY (THROTTLED + WARMUP-PRIORITIZED) ─────────
+    // Hard caps keep ranchers from getting flooded when many waitlisted buyers
+    // become eligible at once. Priority order:
+    //   1. Buyers who clicked the warmup engagement link (already said YES)
+    //   2. Buyers warmed 3+ days ago (had time to react)
+    //   3. Brand-new buyers (no warmup needed — their state was always served)
+    //   4. Waitlisted buyers in newly-served states whose warmup hasn't fired yet
+    //      get SKIPPED here — they belong to the rancher-launch-warmup cron.
+    const DAILY_INTRO_CAP = 25;
+    const PER_RANCHER_DAILY_CAP = 5;
+    const WARMUP_GRACE_DAYS = 3;
     let waitlistedRetried = 0;
     let waitlistedMatched = 0;
+    let cappedSkipped = 0;
     try {
       const waitlisted = await getAllRecords(
         TABLES.CONSUMERS,
         `AND({Status} = "Approved", {Segment} = "Beef Buyer", OR({Referral Status} = "Waitlisted", {Referral Status} = "Unmatched"))`
       ) as any[];
 
-      for (const consumer of waitlisted) {
+      const now = Date.now();
+      const tier = (c: any): number => {
+        const engaged = c['Warmup Engaged At'];
+        if (engaged) return 0;
+        const sentAt = c['Warmup Sent At'];
+        if (sentAt) {
+          const days = (now - new Date(sentAt).getTime()) / (24 * 60 * 60 * 1000);
+          if (days >= WARMUP_GRACE_DAYS) return 1;
+          return 99; // warmed but still in grace period — wait
+        }
+        // Never warmed: only standard if Referral Status was set BEFORE Waitlisted
+        // (i.e., they signed up when rancher already existed). For Waitlisted with
+        // no warmup, they're awaiting the launch-warmup cron — defer.
+        return c['Referral Status'] === 'Unmatched' ? 2 : 99;
+      };
+
+      // Sort by tier (lower = higher priority), then intent score desc
+      const queue = waitlisted
+        .map((c: any) => ({ c, t: tier(c) }))
+        .filter(x => x.t < 99)
+        .sort((a, b) => a.t - b.t || (b.c['Intent Score'] || 0) - (a.c['Intent Score'] || 0));
+
+      const perRancherToday = new Map<string, number>();
+
+      for (const { c: consumer } of queue) {
+        if (waitlistedMatched >= DAILY_INTRO_CAP) {
+          cappedSkipped = queue.length - waitlistedRetried;
+          break;
+        }
         const cState = consumer['State'];
         if (!cState) continue;
-
-        // Skip if they already have an active referral (Intro Sent, Rancher Contacted, etc.)
-        // This is double-checked inside matching/suggest too, but skip here to save API calls
         const existingRefStatus = consumer['Referral Status'] || '';
         if (['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(existingRefStatus)) continue;
 
@@ -326,12 +359,25 @@ async function handler(request: Request) {
               intentScore: consumer['Intent Score'],
               intentClassification: consumer['Intent Classification'] || '',
               notes: consumer['Notes'],
+              // Skip ranchers already at this run's per-rancher cap.
+              // matching/suggest already honors excludeRancherIds via filter chain.
+              excludeRancherIds: Array.from(perRancherToday.entries())
+                .filter(([, n]) => n >= PER_RANCHER_DAILY_CAP)
+                .map(([id]) => id),
             }),
           });
           if (matchRes.ok) {
             const matchData = await matchRes.json().catch(() => ({}));
             if (matchData.matchFound || matchData.referralId) {
               waitlistedMatched++;
+              const rid = matchData.suggestedRancher?.id;
+              if (rid) perRancherToday.set(rid, (perRancherToday.get(rid) || 0) + 1);
+              // Mark warmup as matched so we don't re-warm
+              if (consumer['Warmup Sent At']) {
+                try {
+                  await updateRecord(TABLES.CONSUMERS, consumer.id, { 'Warmup Stage': 'matched' });
+                } catch { /* non-fatal */ }
+              }
             }
           }
         } catch (e: any) {
@@ -340,13 +386,14 @@ async function handler(request: Request) {
         await sleep(300);
       }
 
-      if (waitlistedRetried > 0) {
+      if (waitlistedRetried > 0 || cappedSkipped > 0) {
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
-          `🔄 <b>Waitlist Retry</b>\n\n` +
-          `Re-checked ${waitlistedRetried} waitlisted buyers\n` +
-          `✅ Matched: ${waitlistedMatched}\n` +
-          `⏳ Still waiting: ${waitlistedRetried - waitlistedMatched}`
+          `🔄 <b>Waitlist Retry (throttled)</b>\n\n` +
+          `Processed: ${waitlistedRetried} of ${queue.length} eligible\n` +
+          `✅ Matched: ${waitlistedMatched} (cap ${DAILY_INTRO_CAP}/day)\n` +
+          `⏳ Still waiting: ${waitlistedRetried - waitlistedMatched}\n` +
+          (cappedSkipped > 0 ? `🛑 Deferred to tomorrow: ${cappedSkipped}` : '')
         );
       }
     } catch (e: any) {
