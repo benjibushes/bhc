@@ -47,12 +47,14 @@ export async function POST(
       }, { status: 400 });
     }
 
-    // Decrement old rancher's count if we had one assigned (and referral was active)
+    // Decrement old rancher's count if we had one assigned (and referral was active).
+    // Re-read immediately before write to reduce the race window on concurrent
+    // reassigns. The daily capacity self-heal cron catches any residual drift.
     const wasActive = ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(referral['Status']);
     if (oldRancherId && wasActive) {
       try {
         const oldRancher: any = await getRecordById(TABLES.RANCHERS, oldRancherId);
-        const oldCount = oldRancher['Current Active Referrals'] || 0;
+        const oldCount = Number(oldRancher['Current Active Referrals']) || 0;
         if (oldCount > 0) {
           await updateRecord(TABLES.RANCHERS, oldRancherId, {
             'Current Active Referrals': oldCount - 1,
@@ -79,10 +81,14 @@ export async function POST(
       'Rancher Reminded At': '',
     });
 
-    // Increment new rancher's count
+    // Increment new rancher's count — re-read immediately before write to
+    // minimize the race window on concurrent reassigns. Not truly atomic
+    // (Airtable has no compare-and-swap) but closes the critical gap.
     try {
+      const fresh: any = await getRecordById(TABLES.RANCHERS, newRancherId);
+      const freshCount = Number(fresh['Current Active Referrals']) || 0;
       await updateRecord(TABLES.RANCHERS, newRancherId, {
-        'Current Active Referrals': newCount + 1,
+        'Current Active Referrals': freshCount + 1,
         'Last Assigned At': now,
       });
     } catch (e) {

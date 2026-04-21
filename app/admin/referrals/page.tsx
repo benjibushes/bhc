@@ -5,6 +5,7 @@ import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
 import Link from 'next/link';
+import { toast } from '@/lib/toast';
 
 interface Referral {
   id: string;
@@ -98,6 +99,7 @@ export default function ReferralsPage() {
   const [saleModal, setSaleModal] = useState<{ referralId: string } | null>(null);
   const [saleAmount, setSaleAmount] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -105,22 +107,36 @@ export default function ReferralsPage() {
 
   const fetchData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [refRes, ranchRes, statsRes] = await Promise.all([
         fetch('/api/referrals'),
         fetch('/api/admin/ranchers'),
         fetch('/api/admin/referrals/stats'),
       ]);
+      if (!refRes.ok || !ranchRes.ok || !statsRes.ok) {
+        const failing = [
+          !refRes.ok && `referrals(${refRes.status})`,
+          !ranchRes.ok && `ranchers(${ranchRes.status})`,
+          !statsRes.ok && `stats(${statsRes.status})`,
+        ].filter(Boolean).join(', ');
+        setLoadError(`Failed to load: ${failing}`);
+        toast.error('Failed to load referrals', failing);
+        setLoading(false);
+        return;
+      }
       const [refData, ranchData, statsData] = await Promise.all([
         refRes.json(),
         ranchRes.json(),
         statsRes.json(),
       ]);
-      setReferrals(refData);
-      setRanchers(ranchData);
+      setReferrals(Array.isArray(refData) ? refData : []);
+      setRanchers(Array.isArray(ranchData) ? ranchData : []);
       setStats(statsData);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching referral data:', error);
+      setLoadError(error?.message || 'Network error');
+      toast.error('Network error loading referrals', error?.message);
     }
     setLoading(false);
   };
@@ -133,10 +149,10 @@ export default function ReferralsPage() {
       if (data.success) {
         await fetchData();
       } else {
-        alert(data.error || 'Failed to approve');
+        toast.error('Failed to approve', data.error);
       }
     } catch {
-      alert('Error approving referral');
+      toast.error('Error approving referral');
     }
     setActionLoading(null);
   };
@@ -152,7 +168,7 @@ export default function ReferralsPage() {
       });
       await fetchData();
     } catch {
-      alert('Error rejecting referral');
+      toast.error('Error rejecting referral');
     }
     setActionLoading(null);
   };
@@ -171,7 +187,7 @@ export default function ReferralsPage() {
       });
       await fetchData();
     } catch {
-      alert('Error updating status');
+      toast.error('Error updating status');
     }
     setActionLoading(null);
   };
@@ -180,7 +196,7 @@ export default function ReferralsPage() {
     if (!saleModal) return;
     const amount = parseFloat(saleAmount);
     if (isNaN(amount) || amount <= 0) {
-      alert('Please enter a valid sale amount');
+      toast.error('Enter a valid sale amount');
       return;
     }
     setActionLoading(saleModal.referralId);
@@ -194,7 +210,7 @@ export default function ReferralsPage() {
       setSaleAmount('');
       await fetchData();
     } catch {
-      alert('Error closing deal');
+      toast.error('Error closing deal');
     }
     setActionLoading(null);
   };
@@ -216,10 +232,11 @@ export default function ReferralsPage() {
         });
         const data = await res.json();
         if (!res.ok) {
-          alert(data.error || 'Failed to reassign');
+          toast.error('Failed to reassign', data.error);
           setActionLoading(null);
           return;
         }
+        toast.success('Reassigned', data.message);
       } else {
         await fetch(`/api/referrals/${referralId}/approve`, {
           method: 'PATCH',
@@ -230,7 +247,7 @@ export default function ReferralsPage() {
       setReassignModal(null);
       await fetchData();
     } catch {
-      alert('Error reassigning');
+      toast.error('Error reassigning');
     }
     setActionLoading(null);
   };
@@ -242,13 +259,13 @@ export default function ReferralsPage() {
       const res = await fetch(`/api/admin/referrals/${id}/resend-intro`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || 'Failed to resend');
+        toast.error('Failed to resend', data.error);
       } else {
-        alert(`Resent. Rancher: ${data.rancherSent ? 'yes' : 'no'}, Buyer: ${data.buyerSent ? 'yes' : 'no'}.`);
+        toast.success('Intro resent', `Rancher: ${data.rancherSent ? '✓' : '✗'} · Buyer: ${data.buyerSent ? '✓' : '✗'}`);
         await fetchData();
       }
     } catch {
-      alert('Error resending intro');
+      toast.error('Error resending intro');
     }
     setActionLoading(null);
   };
@@ -262,7 +279,7 @@ export default function ReferralsPage() {
       });
       await fetchData();
     } catch {
-      alert('Error updating commission status');
+      toast.error('Error updating commission status');
     }
   };
 
