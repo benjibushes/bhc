@@ -22,6 +22,8 @@ interface Referral {
   intent_classification: string;
   suggested_rancher_name: string;
   suggested_rancher_state: string;
+  rancher_email: string;
+  rancher_phone: string;
   notes: string;
   sale_amount: number;
   commission_due: number;
@@ -30,6 +32,19 @@ interface Referral {
   approved_at: string;
   intro_sent_at: string;
   closed_at: string;
+  chase_count: number;
+  last_chased_at: string;
+  rancher_reminded_at: string;
+  warmup_stage: string;
+  warmup_sent_at: string;
+  warmup_engaged_at: string;
+}
+
+function daysSince(iso: string): number | null {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (isNaN(ms)) return null;
+  return Math.floor(ms / (24 * 60 * 60 * 1000));
 }
 
 interface Rancher {
@@ -187,15 +202,53 @@ export default function ReferralsPage() {
   const handleReassign = async (referralId: string, newRancherId: string) => {
     setActionLoading(referralId);
     try {
-      await fetch(`/api/referrals/${referralId}/approve`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rancherId: newRancherId }),
-      });
+      // Pending Approval → use the approve endpoint (same as before).
+      // Active/mid-flight → use the new admin reassign endpoint which
+      // handles capacity rebalancing + fires a fresh intro email.
+      const target = referrals.find(r => r.id === referralId);
+      const useAdminReassign = target && target.status !== 'Pending Approval';
+      if (useAdminReassign) {
+        const reason = prompt('Reason for reassignment (optional, logged to Telegram + notes):') || '';
+        const res = await fetch(`/api/admin/referrals/${referralId}/reassign`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ newRancherId, reason }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to reassign');
+          setActionLoading(null);
+          return;
+        }
+      } else {
+        await fetch(`/api/referrals/${referralId}/approve`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rancherId: newRancherId }),
+        });
+      }
       setReassignModal(null);
       await fetchData();
     } catch {
       alert('Error reassigning');
+    }
+    setActionLoading(null);
+  };
+
+  const handleResendIntro = async (id: string) => {
+    if (!confirm('Resend intro email to both the rancher and the buyer?')) return;
+    setActionLoading(id);
+    try {
+      const res = await fetch(`/api/admin/referrals/${id}/resend-intro`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to resend');
+      } else {
+        alert(`Resent. Rancher: ${data.rancherSent ? 'yes' : 'no'}, Buyer: ${data.buyerSent ? 'yes' : 'no'}.`);
+        await fetchData();
+      }
+    } catch {
+      alert('Error resending intro');
     }
     setActionLoading(null);
   };
@@ -338,11 +391,99 @@ export default function ReferralsPage() {
                           <p className="text-sm mt-2 text-[#6B4F3F] italic">&ldquo;{ref.notes}&rdquo;</p>
                         )}
                         {ref.suggested_rancher_name && (
-                          <p className="text-sm mt-2">
-                            <span className="text-[#6B4F3F]">Suggested Rancher:</span>{' '}
-                            <strong>{ref.suggested_rancher_name}</strong> ({ref.suggested_rancher_state})
-                          </p>
+                          <div className="mt-3 p-3 bg-[#F4F1EC] border-l-2 border-[#0E0E0E] text-sm space-y-1">
+                            <p>
+                              <span className="text-[#6B4F3F]">Rancher:</span>{' '}
+                              <strong>{ref.suggested_rancher_name}</strong> ({ref.suggested_rancher_state})
+                            </p>
+                            {ref.rancher_email && (
+                              <p className="text-xs">
+                                <a href={`mailto:${ref.rancher_email}`} className="underline text-[#0E0E0E]">
+                                  📧 {ref.rancher_email}
+                                </a>
+                                {ref.rancher_phone && (
+                                  <>
+                                    {' · '}
+                                    <a href={`tel:${ref.rancher_phone}`} className="underline text-[#0E0E0E]">
+                                      📱 {ref.rancher_phone}
+                                    </a>
+                                  </>
+                                )}
+                              </p>
+                            )}
+                          </div>
                         )}
+
+                        {/* Stage + activity badges */}
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {ref.intro_sent_at && ref.status !== 'Closed Won' && ref.status !== 'Closed Lost' && (() => {
+                            const d = daysSince(ref.intro_sent_at);
+                            return d !== null ? (
+                              <span className={`px-2 py-0.5 text-xs border ${d >= 7 ? 'bg-red-50 text-red-700 border-red-300' : d >= 3 ? 'bg-yellow-50 text-yellow-700 border-yellow-300' : 'bg-gray-50 text-gray-700 border-gray-300'}`}>
+                                Intro sent {d === 0 ? 'today' : `${d}d ago`}
+                              </span>
+                            ) : null;
+                          })()}
+                          {ref.chase_count > 0 && (
+                            <span className="px-2 py-0.5 text-xs border bg-orange-50 text-orange-700 border-orange-300">
+                              Chased {ref.chase_count}/3
+                            </span>
+                          )}
+                          {ref.rancher_reminded_at && (() => {
+                            const d = daysSince(ref.rancher_reminded_at);
+                            return d !== null ? (
+                              <span className="px-2 py-0.5 text-xs border bg-purple-50 text-purple-700 border-purple-300">
+                                Rancher nudged {d === 0 ? 'today' : `${d}d ago`}
+                              </span>
+                            ) : null;
+                          })()}
+                          {ref.warmup_stage && (
+                            <span className={`px-2 py-0.5 text-xs border ${
+                              ref.warmup_stage === 'engaged' ? 'bg-green-50 text-green-700 border-green-300' :
+                              ref.warmup_stage === 'matched' ? 'bg-blue-50 text-blue-700 border-blue-300' :
+                              ref.warmup_stage === 'dropped' ? 'bg-gray-50 text-gray-600 border-gray-300' :
+                              'bg-cyan-50 text-cyan-700 border-cyan-300'
+                            }`}>
+                              Warmup: {ref.warmup_stage}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Quick-contact bar */}
+                        <div className="flex flex-wrap gap-2 mt-3 text-xs">
+                          {ref.buyer_email && (
+                            <a
+                              href={`mailto:${ref.buyer_email}?subject=${encodeURIComponent(`BuyHalfCow — following up on your interest`)}`}
+                              className="px-2 py-1 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC]"
+                            >
+                              📧 Email Buyer
+                            </a>
+                          )}
+                          {ref.buyer_phone && (
+                            <a
+                              href={`tel:${ref.buyer_phone}`}
+                              className="px-2 py-1 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC]"
+                            >
+                              📱 Call Buyer
+                            </a>
+                          )}
+                          {ref.rancher_email && (
+                            <a
+                              href={`mailto:${ref.rancher_email}?subject=${encodeURIComponent(`Following up on ${ref.buyer_name} lead`)}`}
+                              className="px-2 py-1 border border-[#6B4F3F] text-[#6B4F3F] hover:bg-[#6B4F3F] hover:text-[#F4F1EC]"
+                            >
+                              📧 Email Rancher
+                            </a>
+                          )}
+                          {ref.rancher_phone && (
+                            <a
+                              href={`tel:${ref.rancher_phone}`}
+                              className="px-2 py-1 border border-[#6B4F3F] text-[#6B4F3F] hover:bg-[#6B4F3F] hover:text-[#F4F1EC]"
+                            >
+                              📱 Call Rancher
+                            </a>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex flex-col gap-2 min-w-[180px]">
@@ -372,15 +513,31 @@ export default function ReferralsPage() {
                         )}
 
                         {ref.status !== 'Pending Approval' && ref.status !== 'Closed Won' && ref.status !== 'Closed Lost' && (
-                          <select
-                            value={ref.status}
-                            onChange={(e) => handleStatusChange(ref.id, e.target.value)}
-                            className="px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
-                          >
-                            {STATUS_OPTIONS.map(s => (
-                              <option key={s} value={s}>{s}</option>
-                            ))}
-                          </select>
+                          <>
+                            <select
+                              value={ref.status}
+                              onChange={(e) => handleStatusChange(ref.id, e.target.value)}
+                              className="px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
+                            >
+                              {STATUS_OPTIONS.map(s => (
+                                <option key={s} value={s}>{s}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => setReassignModal({ referralId: ref.id, buyerState: ref.buyer_state })}
+                              disabled={actionLoading === ref.id}
+                              className="px-4 py-2 border border-[#0E0E0E] text-sm font-medium hover:bg-[#0E0E0E] hover:text-[#F4F1EC] disabled:opacity-50"
+                            >
+                              🔀 Reroute to different rancher
+                            </button>
+                            <button
+                              onClick={() => handleResendIntro(ref.id)}
+                              disabled={actionLoading === ref.id}
+                              className="px-4 py-2 border border-[#6B4F3F] text-[#6B4F3F] text-sm hover:bg-[#6B4F3F] hover:text-[#F4F1EC] disabled:opacity-50"
+                            >
+                              {actionLoading === ref.id ? 'Sending…' : '↻ Resend intro email'}
+                            </button>
+                          </>
                         )}
 
                         {ref.status === 'Closed Won' && (
