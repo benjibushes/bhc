@@ -106,11 +106,12 @@ export async function POST(request: Request) {
       // Previously Ben had to tap a Telegram button to manually send the
       // agreement + info packet. Now fires automatically so the rancher can
       // self-serve sign + set up their profile without waiting on a human.
-      // Admin still gets the partner alert below — if Ben wants to kill an
-      // application before it progresses, he can still intervene manually.
+      // If the onboarding-docs send fails we loudly alert admin over Telegram
+      // — silent failure here used to strand ranchers at "signed up, expected
+      // an email, never got one" with no recovery path.
       try {
         const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
-        await fetch(`${siteUrl}/api/ranchers/${record.id}/send-onboarding`, {
+        const res = await fetch(`${siteUrl}/api/ranchers/${record.id}/send-onboarding`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -121,9 +122,22 @@ export async function POST(request: Request) {
             includeVerification: true,
           }),
         });
+        if (!res.ok) {
+          // send-onboarding already fired a Telegram alert when it failed.
+          // Still log here so the partner-signup request shows the error.
+          const errBody = await res.json().catch(() => ({}));
+          console.error('Auto-send onboarding returned non-ok:', res.status, errBody);
+        }
       } catch (e) {
-        // Non-fatal — rancher can still sign via Telegram trigger later
+        // Network/DNS/etc — send-onboarding didn't run at all. Alert admin.
         console.error('Auto-send onboarding error:', e);
+        try {
+          const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `⚠️ <b>Auto-send onboarding FAILED</b> for new rancher ${ranchName} (${email})\nManually trigger from admin dashboard or call /api/ranchers/${record.id}/send-onboarding.`
+          );
+        } catch {}
       }
 
       // Send admin alert

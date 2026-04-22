@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { track } from '@/lib/track';
 
 const US_STATES = [
   { value: 'AL', label: 'Alabama' }, { value: 'AK', label: 'Alaska' }, { value: 'AZ', label: 'Arizona' },
@@ -49,6 +50,14 @@ export default function RancherLeadModal({ slug, rancherName, quarter, half, who
   const [error, setError] = useState('');
 
   const handleBuyClick = (tier: 'quarter' | 'half' | 'whole', hasLink: boolean) => {
+    const tierData = tier === 'quarter' ? quarter : tier === 'half' ? half : whole;
+    track('ViewContent', {
+      content_name: rancherName,
+      content_category: ORDER_TYPE_MAP[tier],
+      ranchSlug: slug,
+      value: tierData?.price || 0,
+      currency: 'USD',
+    });
     if (!hasLink) {
       window.location.href = '/access';
       return;
@@ -84,6 +93,22 @@ export default function RancherLeadModal({ slug, rancherName, quarter, half, who
 
       // 409 = already a member — still send them through
       if (res.ok || res.status === 409) {
+        const tierData = selectedTier === 'quarter' ? quarter : selectedTier === 'half' ? half : whole;
+        track('Lead', {
+          content_name: rancherName,
+          ranchSlug: slug,
+          orderType: ORDER_TYPE_MAP[selectedTier],
+          state: form.state,
+          value: tierData?.price || 0,
+          currency: 'USD',
+        });
+        track('InitiateCheckout', {
+          content_name: rancherName,
+          ranchSlug: slug,
+          orderType: ORDER_TYPE_MAP[selectedTier],
+          value: tierData?.price || 0,
+          currency: 'USD',
+        });
         window.location.href = `/ranchers/${slug}/pay/${selectedTier}`;
         return;
       }

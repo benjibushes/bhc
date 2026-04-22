@@ -48,14 +48,13 @@ export async function POST(
       return NextResponse.json({ error: 'Rancher has no email address' }, { status: 400 });
     }
 
+    // NOTE: record fields are updated AFTER email send succeeds. Earlier
+    // version stamped Onboarding Status=Docs Sent before sending, so any
+    // email failure left the record claiming "Docs Sent" when the rancher
+    // received nothing. Now: build email first, send it, only then mark the
+    // record. If email fails, record stays in its prior state and admin can
+    // retry via the dashboard "Resend Onboarding Docs" action.
     const now = new Date().toISOString();
-    await updateRecord(TABLES.RANCHERS, id, {
-      'Call Notes': callSummary || '',
-      'Monthly Capacity': confirmedCapacity || 10,
-      'Onboarding Status': 'Docs Sent',
-      'Docs Sent At': now,
-      'Call Completed At': now,
-    });
 
     // Document download links (served from public/docs/ as static files)
     const docs = [
@@ -191,7 +190,30 @@ export async function POST(
 
     if (!emailResult.success) {
       console.error('Email send failed for', rancherEmail, emailResult.error);
-      return NextResponse.json({ error: `Email failed to send to ${rancherEmail}` }, { status: 500 });
+      // Don't touch Airtable — caller can retry cleanly.
+      await sendTelegramUpdate(
+        `⚠️ <b>Onboarding email FAILED</b> for <b>${rancherName}</b> (${rancherEmail})\nRetry from the admin dashboard or via curl.`
+      ).catch(() => {});
+      return NextResponse.json({
+        error: `Email failed to send to ${rancherEmail}. Record unchanged — safe to retry.`,
+      }, { status: 500 });
+    }
+
+    // Email succeeded — stamp the record so the banner + crons see updated state.
+    try {
+      await updateRecord(TABLES.RANCHERS, id, {
+        'Call Notes': callSummary || '',
+        'Monthly Capacity': confirmedCapacity || 10,
+        'Onboarding Status': 'Docs Sent',
+        'Docs Sent At': now,
+        'Call Completed At': now,
+      });
+    } catch (e: any) {
+      // Email is already out — log but don't fail the request.
+      console.error('Failed to stamp Docs Sent on rancher record:', e);
+      await sendTelegramUpdate(
+        `⚠️ <b>Onboarding docs SENT but record NOT updated</b> for <b>${rancherName}</b> (Airtable write failed). Onboarding Status may still read pre-Docs-Sent. Manually set it to "Docs Sent" to unblock downstream flow.`
+      ).catch(() => {});
     }
 
     try {

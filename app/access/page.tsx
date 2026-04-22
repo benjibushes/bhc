@@ -10,6 +10,7 @@ import Checkbox from '../components/Checkbox';
 import Textarea from '../components/Textarea';
 import Button from '../components/Button';
 import Link from 'next/link';
+import { track } from '@/lib/track';
 
 const US_STATES = [
   { value: '', label: 'Select your state' },
@@ -299,6 +300,16 @@ function AccessPageContent() {
 
       setSubmittedSegment(segment);
       setIsSubmitted(true);
+      track('Lead', {
+        segment,
+        state: formData.state,
+        orderType: formData.orderType || '',
+        budget: formData.budgetRange || '',
+        source: campaignData.campaign || 'access',
+      });
+      if (segment === 'Beef Buyer') {
+        track('CompleteRegistration', { segment, state: formData.state });
+      }
     } catch (err: any) {
       setError(err.message || 'Something went wrong. Please try again.');
       setIsSubmitting(false);

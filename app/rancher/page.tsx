@@ -139,6 +139,7 @@ export default function RancherDashboardPage() {
   const [trackingNumber, setTrackingNumber] = useState('');
   const [verificationSubmitting, setVerificationSubmitting] = useState(false);
   const [verificationSubmitted, setVerificationSubmitted] = useState(false);
+  const [verificationError, setVerificationError] = useState('');
 
   useEffect(() => {
     fetchDashboard();
@@ -557,13 +558,19 @@ export default function RancherDashboardPage() {
                     </div>
                   </div>
 
+                  {verificationError && (
+                    <div className="p-3 border border-red-300 bg-red-50 text-red-700 text-sm">
+                      {verificationError}
+                    </div>
+                  )}
                   <button
                     onClick={async () => {
                       const filled = [verificationRefs, verificationReviewsLink, verificationSocial, verificationProcessor, verificationCerts].filter(v => v.trim()).length;
                       if (filled < 2) {
-                        alert('Please fill in at least 2 verification fields to submit.');
+                        setVerificationError('Please fill in at least 2 verification fields to submit. 3+ means we auto-approve.');
                         return;
                       }
+                      setVerificationError('');
                       setVerificationSubmitting(true);
                       try {
                         const res = await fetch('/api/rancher/landing-page', {

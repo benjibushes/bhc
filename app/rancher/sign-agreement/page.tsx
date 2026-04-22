@@ -119,9 +119,14 @@ function SignAgreementInner() {
           <div className="max-w-2xl mx-auto text-center space-y-6">
             <h1 className="font-serif text-3xl">Unable to Load Agreement</h1>
             <p className="text-saddle">{error}</p>
-            <Link href="/" className="inline-block px-6 py-3 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors">
-              Go to Homepage
-            </Link>
+            <div className="border border-dust bg-white p-6 text-left space-y-3">
+              <p className="font-medium text-charcoal">Get a fresh signing link</p>
+              <p className="text-sm text-saddle">Your link may have expired (30-day lifespan) or been lost. Enter your email to receive a new one — no login required.</p>
+              <ResendAgreementForm />
+            </div>
+            <p className="text-xs text-dust">
+              Still stuck? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>.
+            </p>
           </div>
         </Container>
       </main>
@@ -362,5 +367,68 @@ function SignAgreementInner() {
         </div>
       </Container>
     </main>
+  );
+}
+
+function ResendAgreementForm() {
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [message, setMessage] = useState('');
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setStatus('sending');
+    setMessage('');
+    try {
+      const res = await fetch('/api/ranchers/resend-agreement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus('error');
+        setMessage(data.error || 'Failed to resend. Contact support@buyhalfcow.com.');
+        return;
+      }
+      setStatus('sent');
+      setMessage(data.message || 'Check your inbox for a fresh signing link.');
+    } catch (err: any) {
+      setStatus('error');
+      setMessage(err?.message || 'Network error — try again or email support@buyhalfcow.com.');
+    }
+  };
+
+  if (status === 'sent') {
+    return (
+      <div className="text-sm text-charcoal bg-[#F4F1EC] border border-dust p-3">
+        ✓ {message}
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-col sm:flex-row gap-2">
+      <input
+        type="email"
+        required
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="your@ranch.com"
+        disabled={status === 'sending'}
+        className="flex-1 px-3 py-2 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal disabled:opacity-50"
+      />
+      <button
+        type="submit"
+        disabled={status === 'sending' || !email.trim()}
+        className="px-4 py-2 bg-charcoal text-bone text-sm uppercase tracking-wider hover:bg-saddle transition-colors disabled:opacity-50"
+      >
+        {status === 'sending' ? 'Sending…' : 'Send new link'}
+      </button>
+      {status === 'error' && (
+        <p className="text-xs text-red-600 w-full mt-1">{message}</p>
+      )}
+    </form>
   );
 }
