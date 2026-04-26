@@ -7,6 +7,25 @@ const PUBLIC_ADMIN_ROUTES = [
   '/api/admin/auth',
 ];
 
+// Accept any of: bhc-admin-auth cookie, ?password= query, or x-admin-password header.
+// Match the surface that lib/adminAuth.ts uses inside route handlers so scripted
+// callers (Telegram bot, ops scripts, monitoring) can authenticate without first
+// POSTing /api/admin/auth to get a cookie. Several existing endpoints already
+// document password-query access (route-state-to-rancher, setup-ai-fields,
+// setup-rancher-page-fields, backfill-states) but middleware was rejecting them
+// before this change.
+function isAdminAuthed(request: NextRequest): boolean {
+  if (request.cookies.get(ADMIN_AUTH_COOKIE)?.value === 'authenticated') return true;
+  const adminPw = process.env.ADMIN_PASSWORD;
+  if (adminPw) {
+    const headerPw = request.headers.get('x-admin-password');
+    if (headerPw && headerPw === adminPw) return true;
+    const queryPw = request.nextUrl.searchParams.get('password');
+    if (queryPw && queryPw === adminPw) return true;
+  }
+  return false;
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -17,16 +36,14 @@ export function middleware(request: NextRequest) {
       return NextResponse.next();
     }
 
-    const authCookie = request.cookies.get(ADMIN_AUTH_COOKIE);
-    if (authCookie?.value !== 'authenticated') {
+    if (!isAdminAuthed(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
   }
 
   // Protect inquiry management (GET/PATCH/DELETE) — POST is the public contact form
   if (pathname.startsWith('/api/inquiries') && request.method !== 'POST') {
-    const authCookie = request.cookies.get(ADMIN_AUTH_COOKIE);
-    if (authCookie?.value !== 'authenticated') {
+    if (!isAdminAuthed(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
   }
