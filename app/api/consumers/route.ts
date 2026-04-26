@@ -18,6 +18,7 @@ async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
 }
 import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert } from '@/lib/email';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
+import { isQualifiedForRancherMatch } from '@/lib/qualification';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -40,20 +41,8 @@ function deriveStatus(_segment: string, _intentClassification: string): string {
 // Buyers who don't qualify still get Approved + access — they just go into
 // nurture instead of matching, and can self-upgrade via /api/member/upgrade-intent
 // once they fill in the missing details.
-function isQualifiedForRancherMatch(opts: {
-  segment: string;
-  orderType: string;
-  budgetRange: string;
-  intentScore: number;
-}): boolean {
-  if (opts.segment !== 'Beef Buyer') return false;
-  if (!opts.orderType) return false;
-  if (!opts.budgetRange) return false;
-  // "Unsure" budget → not qualified for rancher (no $ signal)
-  if (opts.budgetRange.toLowerCase().includes('unsure')) return false;
-  if (opts.intentScore < 40) return false;
-  return true;
-}
+// Logic moved to lib/qualification.ts as the single source of truth — re-imported
+// here so signup-time and routing-time gates can never drift apart.
 
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;

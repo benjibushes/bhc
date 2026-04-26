@@ -5,6 +5,7 @@ import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { bulkRouteStateToRancher, getRancherServedStates } from '@/lib/bulkRoute';
+import { isQualifiedForRouting } from '@/lib/qualification';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 120;
@@ -300,45 +301,60 @@ async function handler(request: Request) {
     let waitlistedRetried = 0;
     let waitlistedMatched = 0;
     let cappedSkipped = 0;
+    let unqualifiedSkipped = 0;
+    const unqualifiedReasons: Record<string, number> = {};
     try {
+      // Pull broader candidate set than before — Segment may be empty even when
+      // a buyer has Order Type/Budget signals (the silent-exclusion bug we just
+      // fixed in lib/qualification.ts via inference). Filter strictly using
+      // isQualifiedForRouting() below.
       const waitlisted = await getAllRecords(
         TABLES.CONSUMERS,
-        `AND({Status} = "Approved", {Segment} = "Beef Buyer", OR({Referral Status} = "Waitlisted", {Referral Status} = "Unmatched"))`
+        `AND({Status} = "Approved", OR({Referral Status} = "Waitlisted", {Referral Status} = "Unmatched"))`
       ) as any[];
 
-      const now = Date.now();
       const tier = (c: any): number => {
-        const engaged = c['Warmup Engaged At'];
-        if (engaged) return 0;
-        const sentAt = c['Warmup Sent At'];
-        if (sentAt) {
-          const days = (now - new Date(sentAt).getTime()) / (24 * 60 * 60 * 1000);
-          if (days >= WARMUP_GRACE_DAYS) return 1;
-          return 99; // warmed but still in grace period — wait
+        // Priority 0: explicitly engaged with warmup. Hot.
+        if (c['Warmup Engaged At']) return 0;
+        // Priority 1: brand-new high-intent buyer (signed up in last 14 days).
+        // Their signup IS consent. The qualification gate already verified.
+        const created = c['Created'] || c['Created Time'] || c['createdTime'];
+        if (created) {
+          const ageMs = Date.now() - new Date(created).getTime();
+          if (ageMs >= 0 && ageMs <= 14 * 24 * 60 * 60 * 1000) return 1;
         }
-        // Never warmed: only standard if Referral Status was set BEFORE Waitlisted
-        // (i.e., they signed up when rancher already existed). For Waitlisted with
-        // no warmup, they're awaiting the launch-warmup cron — defer.
-        return c['Referral Status'] === 'Unmatched' ? 2 : 99;
+        // Anyone else passing the qualification gate is priority 2 (last).
+        return 2;
       };
 
       // Sort by tier (lower = higher priority), then intent score desc
       const queue = waitlisted
         .map((c: any) => ({ c, t: tier(c) }))
-        .filter(x => x.t < 99)
         .sort((a, b) => a.t - b.t || (b.c['Intent Score'] || 0) - (a.c['Intent Score'] || 0));
 
       const perRancherToday = new Map<string, number>();
 
       for (const { c: consumer } of queue) {
         if (waitlistedMatched >= DAILY_INTRO_CAP) {
-          cappedSkipped = queue.length - waitlistedRetried;
+          cappedSkipped = queue.length - waitlistedRetried - unqualifiedSkipped;
           break;
         }
         const cState = consumer['State'];
         if (!cState) continue;
         const existingRefStatus = consumer['Referral Status'] || '';
         if (['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(existingRefStatus)) continue;
+
+        // ── QUALIFICATION GATE ──────────────────────────────────────────
+        // Only buyers who have actively raised their hand get routed.
+        // No more "matched on day 3 because warmup was sent" — we route ONLY
+        // engaged buyers + fresh hot signups.
+        const qual = isQualifiedForRouting(consumer);
+        if (!qual.ok) {
+          unqualifiedSkipped++;
+          const r = qual.reason || 'unknown';
+          unqualifiedReasons[r] = (unqualifiedReasons[r] || 0) + 1;
+          continue;
+        }
 
         waitlistedRetried++;
         try {
@@ -386,14 +402,18 @@ async function handler(request: Request) {
         await sleep(300);
       }
 
-      if (waitlistedRetried > 0 || cappedSkipped > 0) {
+      if (waitlistedRetried > 0 || cappedSkipped > 0 || unqualifiedSkipped > 0) {
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
           `🔄 <b>Waitlist Retry (throttled)</b>\n\n` +
           `Processed: ${waitlistedRetried} of ${queue.length} eligible\n` +
           `✅ Matched: ${waitlistedMatched} (cap ${DAILY_INTRO_CAP}/day)\n` +
           `⏳ Still waiting: ${waitlistedRetried - waitlistedMatched}\n` +
-          (cappedSkipped > 0 ? `🛑 Deferred to tomorrow: ${cappedSkipped}` : '')
+          (cappedSkipped > 0 ? `🛑 Deferred to tomorrow: ${cappedSkipped}\n` : '') +
+          (unqualifiedSkipped > 0
+            ? `🚫 Skipped (no engagement signal): ${unqualifiedSkipped}\n` +
+              `   ${Object.entries(unqualifiedReasons).slice(0, 3).map(([r, n]) => `${r}=${n}`).join(' · ')}`
+            : '')
         );
       }
     } catch (e: any) {
