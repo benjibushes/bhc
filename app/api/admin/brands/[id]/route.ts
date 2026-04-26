@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { sendBrandApprovalWithPayment } from '@/lib/email';
 import { BRAND_LISTING_PRICE_LABEL } from '@/lib/stripe';
 import jwt from 'jsonwebtoken';
+import { requireAdmin } from '@/lib/adminAuth';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -13,6 +14,8 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await context.params;
     const body = await request.json();
 
@@ -80,6 +83,8 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await context.params;
     await deleteRecord(TABLES.BRANDS, id);
     return NextResponse.json({ success: true });

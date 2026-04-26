@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const records = await getAllRecords(TABLES.LAND_DEALS);
     
     // Transform Airtable field names to frontend-friendly names

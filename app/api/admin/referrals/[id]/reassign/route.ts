@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { requireAdmin } from '@/lib/adminAuth';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 function esc(s: string): string {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -16,6 +18,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const { newRancherId, reason } = body;
@@ -39,7 +43,7 @@ export async function POST(
       return NextResponse.json({ error: 'Target rancher not found' }, { status: 404 });
     }
 
-    const newCap = newRancher['Max Active Referalls'] || 5;
+    const newCap = getMaxActiveReferrals(newRancher);
     const newCount = newRancher['Current Active Referrals'] || 0;
     if (newCount >= newCap) {
       return NextResponse.json({

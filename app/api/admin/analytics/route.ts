@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const consumers = await getAllRecords(TABLES.CONSUMERS);
     const inquiries = await getAllRecords(TABLES.INQUIRIES);
     const campaigns = await getAllRecords(TABLES.CAMPAIGNS);

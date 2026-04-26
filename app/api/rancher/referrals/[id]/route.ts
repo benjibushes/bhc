@@ -220,6 +220,28 @@ export async function PATCH(
       if (status === 'Closed Won' || status === 'Closed Lost') {
         fields['Closed At'] = new Date().toISOString();
 
+        // ── BUYER STATUS SYNC ──────────────────────────────────────────
+        // Without this, the consumer record stays in 'Intro Sent' / 'Negotiation'
+        // forever after their referral closes, and batch-approve's waitlist
+        // retry filter (line 341) silently skips them forever — they orphan.
+        // This was the root cause of "1141 referrals → 0 closed-won data".
+        // Closed Lost handler below sets Referral Status='Unmatched' for re-route;
+        // Closed Won needs an equivalent state-bump so they exit active queues.
+        if (status === 'Closed Won') {
+          const buyerIds = referral['Buyer'] || [];
+          const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+          if (buyerId) {
+            try {
+              await updateRecord(TABLES.CONSUMERS, buyerId, {
+                'Referral Status': 'Closed Won',
+                'Sequence Stage': 'purchased',
+              });
+            } catch (e) {
+              console.error('Closed Won buyer status sync error:', e);
+            }
+          }
+        }
+
         // Decrement active referral count
         try {
           const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;

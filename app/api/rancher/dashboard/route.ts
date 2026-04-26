@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { getRecordById, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 export const maxDuration = 60;
 
@@ -127,7 +128,7 @@ export async function GET() {
         onboardingStatus: rancher['Onboarding Status'] || '',
         agreementSigned: rancher['Agreement Signed'] || false,
         currentActiveReferrals: rancher['Current Active Referrals'] || 0,
-        maxActiveReferrals: rancher['Max Active Referalls'] || 5,
+        maxActiveReferrals: getMaxActiveReferrals(rancher),
         monthlyCapacity: rancher['Monthly Capacity'] || 0,
         beefTypes: rancher['Beef Types'] || '',
         statesServed: rancher['States Served'] || '',

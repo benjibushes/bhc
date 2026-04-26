@@ -9,6 +9,7 @@
 
 import { getAllRecords, getRecordById, updateRecord, escapeAirtableValue, TABLES } from './airtable';
 import { rememberFact, recallAllMemories, forgetMemory } from './aiMemory';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 export type ToolSchema = {
   name: string;
@@ -110,7 +111,7 @@ async function getRancherCapacity(input: { onlyNearCapacity?: boolean }) {
   const active = ranchers.filter((r) => r['Active Status'] === 'Active');
   const list = active.map((r) => {
     const cur = r['Current Active Referrals'] || 0;
-    const max = r['Max Active Referalls'] || 5;
+    const max = getMaxActiveReferrals(r);
     return {
       id: r.id,
       name: r['Operator Name'] || r['Ranch Name'],
@@ -170,7 +171,7 @@ async function lookupRancher(input: { query: string }) {
       onboardingStatus: r['Onboarding Status'],
       slug: r['Slug'],
       currentRefs: r['Current Active Referrals'] || 0,
-      maxRefs: r['Max Active Referalls'] || 5,
+      maxRefs: getMaxActiveReferrals(r),
     })),
     count: matches.length,
   };

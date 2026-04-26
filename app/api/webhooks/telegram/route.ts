@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import {
   sendTelegramMessage,
   editTelegramMessage,
@@ -433,7 +434,7 @@ async function processUpdate(update: any) {
 
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           const currentRefs = rancher['Current Active Referrals'] || 0;
-          const maxRefs = rancher['Max Active Referalls'] || 5;
+          const maxRefs = getMaxActiveReferrals(rancher);
 
           if (currentRefs >= maxRefs) {
             await answerCallbackQuery(queryId, `At capacity (${currentRefs}/${maxRefs}). Reassign instead.`);
@@ -582,7 +583,7 @@ async function processUpdate(update: any) {
             const agreed = r['Agreement Signed'] === true;
             const state = r['State'] || '';
             const served = r['States Served'] || '';
-            const maxRefs = r['Max Active Referalls'] || 5;
+            const maxRefs = getMaxActiveReferrals(r);
             const currentRefs = r['Current Active Referrals'] || 0;
             const servesState = state === buyerState ||
               (typeof served === 'string' && served.includes(buyerState));
@@ -596,7 +597,7 @@ async function processUpdate(update: any) {
             }
           } else {
             const keyboard = available.slice(0, 8).map((r: any) => [{
-              text: `${r['Operator Name'] || r['Ranch Name']} (${r['Current Active Referrals'] || 0}/${r['Max Active Referalls'] || 5})`,
+              text: `${r['Operator Name'] || r['Ranch Name']} (${r['Current Active Referrals'] || 0}/${getMaxActiveReferrals(r)})`,
               callback_data: `assignto_${fullReferralId}_${r.id}`,
             }]);
 
@@ -2159,7 +2160,7 @@ You can also just ask me anything in plain English — I'll figure it out.`;
         const ranchers = await getAllRecords(TABLES.RANCHERS);
         const nearCapacity = ranchers.filter((r: any) => {
           const current = r['Current Active Referrals'] || 0;
-          const max = r['Max Active Referalls'] || 5;
+          const max = getMaxActiveReferrals(r);
           return current >= max * 0.8 && r['Active Status'] === 'Active';
         });
 
@@ -2168,7 +2169,7 @@ You can also just ask me anything in plain English — I'll figure it out.`;
         } else {
           let msg = `⚠️ <b>Ranchers Near Capacity</b>\n\n`;
           for (const r of nearCapacity as any[]) {
-            msg += `• ${r['Operator Name'] || r['Ranch Name']} — ${r['Current Active Referrals']}/${r['Max Active Referalls']} (${r['State']})\n`;
+            msg += `• ${r['Operator Name'] || r['Ranch Name']} — ${r['Current Active Referrals']}/${getMaxActiveReferrals(r)} (${r['State']})\n`;
           }
           await sendTelegramMessage(chatId, msg);
         }
@@ -2207,7 +2208,7 @@ You can also just ask me anything in plain English — I'll figure it out.`;
 
         const capacityWarnings = ranchers.filter((r: any) => {
           const cur = r['Current Active Referrals'] || 0;
-          const max = r['Max Active Referalls'] || 5;
+          const max = getMaxActiveReferrals(r);
           return cur >= max * 0.8 && r['Active Status'] === 'Active';
         }).length;
 
@@ -2578,7 +2579,7 @@ Be specific and concise. No fluff.`,
         const monthCommission = monthWins.reduce((s: number, r: any) => s + (r['Commission Due'] || 0), 0);
         const capacityWarnings = ranchers.filter((r: any) => {
           const cur = r['Current Active Referrals'] || 0;
-          const max = r['Max Active Referalls'] || 5;
+          const max = getMaxActiveReferrals(r);
           return cur >= max * 0.8 && r['Active Status'] === 'Active';
         }).length;
 

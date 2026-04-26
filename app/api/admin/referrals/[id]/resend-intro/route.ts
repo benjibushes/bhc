@@ -3,6 +3,7 @@ import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
+import { requireAdmin } from '@/lib/adminAuth';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -20,6 +21,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await params;
 
     const referral: any = await getRecordById(TABLES.REFERRALS, id);

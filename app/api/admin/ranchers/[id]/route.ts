@@ -2,12 +2,16 @@ import { NextResponse, NextRequest } from 'next/server';
 import { getRecordById, updateRecord, deleteRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendRancherApproval, sendRancherGoLiveEmail } from '@/lib/email';
+import { requireAdmin } from '@/lib/adminAuth';
+import { getMaxActiveReferrals, MAX_ACTIVE_REFERRALS_FIELD } from '@/lib/rancherCapacity';
 
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await context.params;
     const body = await request.json();
 
@@ -32,7 +36,7 @@ export async function PATCH(
     if (body.agreement_signed === true) fields['Agreement Signed'] = true;
     else if (body.agreement_signed === false) fields['Agreement Signed'] = false;
     if (body.states_served) fields['States Served'] = body.states_served;
-    if (body.max_active_referrals !== undefined) fields['Max Active Referalls'] = parseInt(body.max_active_referrals);
+    if (body.max_active_referrals !== undefined) fields[MAX_ACTIVE_REFERRALS_FIELD] = parseInt(body.max_active_referrals);
     if (body.performance_score !== undefined) fields['Performance Score'] = parseInt(body.performance_score);
     if (body.verification_status) fields['Verification Status'] = body.verification_status;
     if (body.call_notes) fields['Call Notes'] = body.call_notes;
@@ -142,6 +146,8 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await context.params;
     await deleteRecord(TABLES.RANCHERS, id);
     return NextResponse.json({ success: true });

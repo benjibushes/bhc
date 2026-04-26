@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 export const maxDuration = 60;
 
@@ -21,7 +22,7 @@ export async function POST(request: Request) {
 
     for (const rancher of ranchers as any[]) {
       const current = rancher['Current Active Referrals'] || 0;
-      const max = rancher['Max Active Referalls'] || 5;
+      const max = getMaxActiveReferrals(rancher);
       const currentStatus = rancher['Active Status'] || '';
 
       if (current >= max && currentStatus === 'Active') {

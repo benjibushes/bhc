@@ -3,6 +3,7 @@ import { getRecordById, updateRecord, deleteRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendConsumerApproval } from '@/lib/email';
 import jwt from 'jsonwebtoken';
+import { requireAdmin } from '@/lib/adminAuth';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -12,6 +13,8 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await context.params;
     const record: any = await getRecordById(TABLES.CONSUMERS, id);
     if (!record) {
@@ -61,6 +64,8 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await context.params;
     const body = await request.json();
 
@@ -122,6 +127,8 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await context.params;
     await deleteRecord(TABLES.CONSUMERS, id);
     return NextResponse.json({ success: true });

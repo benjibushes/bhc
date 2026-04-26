@@ -1,12 +1,16 @@
 import { NextResponse } from 'next/server';
 import { createRecord, updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { requireAdmin } from '@/lib/adminAuth';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 // POST /api/admin/referrals/manual-create
 // Creates a referral from scratch when the matching engine missed a pairing.
 // Body: { buyerId: string, rancherId: string, notes?: string }
 export async function POST(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const body = await request.json().catch(() => ({}));
     const { buyerId, rancherId, notes } = body;
 
@@ -23,7 +27,7 @@ export async function POST(request: Request) {
     if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
 
     // Capacity check
-    const cap = Number(rancher['Max Active Referalls']) || 5;
+    const cap = getMaxActiveReferrals(rancher);
     const current = Number(rancher['Current Active Referrals']) || 0;
     if (current >= cap) {
       return NextResponse.json({

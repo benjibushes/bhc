@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, createRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendAffiliateWelcome } from '@/lib/email';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
@@ -15,6 +16,8 @@ function generateCode(name: string): string {
 
 export async function POST(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const body = await request.json();
     const { name, email } = body;
 
@@ -74,8 +77,10 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const affiliates = await getAllRecords(TABLES.AFFILIATES);
     return NextResponse.json(
       (affiliates as any[]).map(a => ({

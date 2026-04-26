@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 export const maxDuration = 60;
 
@@ -57,7 +58,7 @@ async function handler(request: Request) {
 
     const capacityWarnings = ranchers.filter((r: any) => {
       const cur = r['Current Active Referrals'] || 0;
-      const max = r['Max Active Referalls'] || 5;
+      const max = getMaxActiveReferrals(r);
       return cur >= max * 0.8 && r['Active Status'] === 'Active';
     }).length;
 
