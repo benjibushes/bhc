@@ -13,7 +13,7 @@ export async function PATCH(
     if (__authResp) return __authResp;
     const { id } = await params;
     const body = await request.json();
-    const { status, saleAmount, commissionPaid, notes } = body;
+    const { status, saleAmount, commissionPaid, notes, closeReason } = body;
 
     const fields: Record<string, any> = {};
 
@@ -65,21 +65,56 @@ export async function PATCH(
 
     const updated = await updateRecord(TABLES.REFERRALS, id, fields);
 
-    // ── BUYER STATUS SYNC ────────────────────────────────────────────────
+    // ── BUYER STATUS + HEALTH SYNC ───────────────────────────────────────
     // Mirror the rancher PATCH: when a referral closes, sync the buyer's
     // Referral Status so batch-approve's waitlist retry filter doesn't skip
-    // them forever. Without this, closed deals orphan their buyers in
-    // active-state limbo (the root cause of 0 Closed Won analytics).
+    // them forever, AND update Buyer Health so the routing engine reflects
+    // quality (Closed Won → customer, no_response → ghost-counter).
     if (status === 'Closed Won' || status === 'Closed Lost') {
       try {
         const refForBuyer = await getRecordById(TABLES.REFERRALS, id) as any;
         const buyerIds = refForBuyer['Buyer'] || [];
         const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
         if (buyerId) {
-          await updateRecord(TABLES.CONSUMERS, buyerId, {
-            'Referral Status': status === 'Closed Won' ? 'Closed Won' : 'Unmatched',
-            'Sequence Stage': status === 'Closed Won' ? 'purchased' : 'rerouted',
-          });
+          if (status === 'Closed Won') {
+            await updateRecord(TABLES.CONSUMERS, buyerId, {
+              'Referral Status': 'Closed Won',
+              'Sequence Stage': 'purchased',
+              'Buyer Health': 'Closed Won',
+              'Missed Responses': 0,
+            });
+          } else {
+            // Closed Lost — base status sync always
+            await updateRecord(TABLES.CONSUMERS, buyerId, {
+              'Referral Status': 'Unmatched',
+              'Sequence Stage': 'rerouted',
+            });
+            // If admin specifies closeReason='no_response', count it as a miss
+            if (closeReason === 'no_response') {
+              const buyer = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+              const NON_RESPONSIVE_THRESHOLD = 2;
+              const prevMisses = Number(buyer['Missed Responses'] || 0);
+              const newMisses = prevMisses + 1;
+              const updates: Record<string, any> = { 'Missed Responses': newMisses };
+              const becameNonResponsive = newMisses >= NON_RESPONSIVE_THRESHOLD &&
+                String(buyer['Buyer Health']?.name || buyer['Buyer Health'] || '') !== 'Non-Responsive';
+              if (becameNonResponsive) updates['Buyer Health'] = 'Non-Responsive';
+              await updateRecord(TABLES.CONSUMERS, buyerId, updates);
+              if (becameNonResponsive) {
+                try {
+                  const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+                  await sendTelegramMessage(
+                    TELEGRAM_ADMIN_CHAT_ID,
+                    `🚫 <b>Buyer auto-flagged Non-Responsive (admin close)</b>\n\n` +
+                    `👤 ${buyer['Full Name'] || 'Unknown'} (${buyer['State'] || '?'})\n` +
+                    `📧 ${buyer['Email'] || '?'}\n` +
+                    `Misses: ${newMisses} consecutive no-response closes\n` +
+                    `<i>Excluded from future routing until reactivated.</i>`,
+                  );
+                } catch { /* non-fatal */ }
+              }
+            }
+          }
         }
       } catch (e) {
         console.error('Buyer status sync error:', e);

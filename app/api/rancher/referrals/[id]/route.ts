@@ -7,15 +7,26 @@ import { sendRerouteNotification } from '@/lib/email';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import jwt from 'jsonwebtoken';
 
-// The 3 pass reasons a rancher can give when declining a lead.
-// Kept short + mutually exclusive — "Other" deliberately omitted to force
-// a real signal that's useful for matching analytics.
+// Pass reasons a rancher can give when declining a lead.
+// Mutually exclusive — "Other" deliberately omitted to force a real signal.
+// `no_response` is the slop signal — at 2+ consecutive no-response misses we
+// auto-flag the buyer as Non-Responsive and stop routing them anywhere.
 const PASS_REASONS = {
   out_of_area: 'Out of my service area',
   at_capacity: "I'm at capacity right now",
   not_a_fit: 'Not a fit (price / timing / other)',
+  no_response: 'Buyer never responded',
 } as const;
 type PassReason = keyof typeof PASS_REASONS;
+
+// Reasons that count as "buyer ghosted" — increments Missed Responses on the
+// consumer record. Other pass reasons (out_of_area, at_capacity, not_a_fit)
+// are the rancher's choice, not the buyer's behavior, so they don't penalize.
+const NO_RESPONSE_PASS_REASONS: PassReason[] = ['no_response'];
+
+// At this threshold of consecutive no-response misses, the buyer is auto-flagged
+// Non-Responsive and excluded from all future routing.
+const NON_RESPONSIVE_THRESHOLD = 2;
 
 export const maxDuration = 60;
 
@@ -46,7 +57,7 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
-    const { status, saleAmount, notes } = body;
+    const { status, saleAmount, notes, closeReason } = body;
 
     // Verify this referral belongs to this rancher
     const referral = await getRecordById(TABLES.REFERRALS, id) as any;
@@ -120,6 +131,40 @@ export async function PATCH(
             'Sequence Stage': 'rerouted_after_pass',
           });
           buyerForReroute = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+
+          // ── BUYER HEALTH: track no-response misses ──────────────────────
+          // If the rancher passed because the buyer never responded, count it
+          // against the buyer. After NON_RESPONSIVE_THRESHOLD consecutive misses
+          // we auto-flag them Non-Responsive — they exit the routing pool.
+          // Other pass reasons (out_of_area, at_capacity, not_a_fit) reflect the
+          // rancher's situation, not the buyer's behavior, so they don't count.
+          if (NO_RESPONSE_PASS_REASONS.includes(passReason) && buyerForReroute) {
+            try {
+              const prevMisses = Number(buyerForReroute['Missed Responses'] || 0);
+              const newMisses = prevMisses + 1;
+              const updates: Record<string, any> = { 'Missed Responses': newMisses };
+              const becameNonResponsive = newMisses >= NON_RESPONSIVE_THRESHOLD &&
+                String(buyerForReroute['Buyer Health']?.name || buyerForReroute['Buyer Health'] || '') !== 'Non-Responsive';
+              if (becameNonResponsive) {
+                updates['Buyer Health'] = 'Non-Responsive';
+              }
+              await updateRecord(TABLES.CONSUMERS, buyerId, updates);
+              if (becameNonResponsive) {
+                try {
+                  await sendTelegramMessage(
+                    TELEGRAM_ADMIN_CHAT_ID,
+                    `🚫 <b>Buyer auto-flagged Non-Responsive</b>\n\n` +
+                    `👤 ${buyerForReroute['Full Name'] || 'Unknown'} (${buyerForReroute['State'] || '?'})\n` +
+                    `📧 ${buyerForReroute['Email'] || '?'}\n` +
+                    `Misses: ${newMisses} consecutive no-response closes\n` +
+                    `<i>Excluded from future routing until reactivated. Admin can manually flip Buyer Health back to Active if they re-engage.</i>`
+                  );
+                } catch { /* non-fatal */ }
+              }
+            } catch (healthErr: any) {
+              console.error('Buyer Health update error:', healthErr.message);
+            }
+          }
 
           if (buyerForReroute && buyerForReroute['Email']) {
             const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
@@ -218,30 +263,91 @@ export async function PATCH(
     if (status && allowedStatuses.includes(status)) {
       fields['Status'] = status;
 
+      // ── ENGAGEMENT RESET ────────────────────────────────────────────
+      // Buyer proved responsive — clear any prior no-response misses.
+      // This unblocks them if a previous rancher had flagged them as ghost.
+      if (status === 'Rancher Contacted' || status === 'Negotiation') {
+        const buyerIds = referral['Buyer'] || [];
+        const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+        if (buyerId) {
+          try {
+            await updateRecord(TABLES.CONSUMERS, buyerId, {
+              'Missed Responses': 0,
+            });
+          } catch (e: any) {
+            console.error('Engagement reset error:', e.message);
+          }
+        }
+      }
+
       if (status === 'Closed Won' || status === 'Closed Lost') {
         fields['Closed At'] = new Date().toISOString();
 
-        // ── BUYER STATUS SYNC ──────────────────────────────────────────
+        // ── BUYER STATUS + HEALTH SYNC ─────────────────────────────────
         // Without this, the consumer record stays in 'Intro Sent' / 'Negotiation'
         // forever after their referral closes, and batch-approve's waitlist
-        // retry filter (line 341) silently skips them forever — they orphan.
+        // retry filter silently skips them forever — they orphan.
         // This was the root cause of "1141 referrals → 0 closed-won data".
-        // Closed Lost handler below sets Referral Status='Unmatched' for re-route;
-        // Closed Won needs an equivalent state-bump so they exit active queues.
         if (status === 'Closed Won') {
           const buyerIds = referral['Buyer'] || [];
           const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
           if (buyerId) {
             try {
+              // Closed Won: mark as customer + reset miss counter (they bought)
               await updateRecord(TABLES.CONSUMERS, buyerId, {
                 'Referral Status': 'Closed Won',
                 'Sequence Stage': 'purchased',
+                'Buyer Health': 'Closed Won',
+                'Missed Responses': 0,
               });
             } catch (e) {
               console.error('Closed Won buyer status sync error:', e);
             }
           }
         }
+
+        // ── BUYER HEALTH on Closed Lost with no_response reason ────────
+        // When a rancher closes a deal Lost AND tells us the buyer never replied,
+        // we count it against the buyer's health. After NON_RESPONSIVE_THRESHOLD
+        // such misses, they're auto-flagged Non-Responsive and stop routing.
+        // closeReason is optional — if not provided, no penalty (rancher might
+        // have just closed quickly without specifying why).
+        if (status === 'Closed Lost' && closeReason === 'no_response') {
+          const buyerIds = referral['Buyer'] || [];
+          const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+          if (buyerId) {
+            try {
+              const buyer = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+              const prevMisses = Number(buyer['Missed Responses'] || 0);
+              const newMisses = prevMisses + 1;
+              const updates: Record<string, any> = { 'Missed Responses': newMisses };
+              const becameNonResponsive = newMisses >= NON_RESPONSIVE_THRESHOLD &&
+                String(buyer['Buyer Health']?.name || buyer['Buyer Health'] || '') !== 'Non-Responsive';
+              if (becameNonResponsive) updates['Buyer Health'] = 'Non-Responsive';
+              await updateRecord(TABLES.CONSUMERS, buyerId, updates);
+              if (becameNonResponsive) {
+                try {
+                  await sendTelegramMessage(
+                    TELEGRAM_ADMIN_CHAT_ID,
+                    `🚫 <b>Buyer auto-flagged Non-Responsive</b>\n\n` +
+                    `👤 ${buyer['Full Name'] || 'Unknown'} (${buyer['State'] || '?'})\n` +
+                    `📧 ${buyer['Email'] || '?'}\n` +
+                    `Misses: ${newMisses} consecutive no-response closes\n` +
+                    `<i>Excluded from future routing until reactivated.</i>`
+                  );
+                } catch { /* non-fatal */ }
+              }
+            } catch (healthErr: any) {
+              console.error('Closed Lost buyer health update error:', healthErr.message);
+            }
+          }
+        }
+
+        // Engagement reset: if we got a Rancher Contacted or Negotiation transition
+        // (handled below in non-close path), reset Missed Responses since the buyer
+        // proved responsive. We handle this by NOT incrementing on those — and
+        // explicitly clearing here when the rancher reaches one of those stages.
+        // Actual reset handled in the !closeStatus branch below.
 
         // Decrement active referral count
         try {
