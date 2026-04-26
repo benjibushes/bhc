@@ -85,6 +85,14 @@ export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: strin
   if (buyer['Bounced']) return { ok: false, reason: 'bounced' };
   if (buyer['Complained']) return { ok: false, reason: 'complained' };
 
+  // Buyer Health gate — block leads who've ghosted ranchers (the "slop" filter).
+  // Auto-flagged after 2+ consecutive Closed Lost referrals with no_response reason.
+  // Resets when buyer engages (rancher reports a Rancher Contacted or Negotiation
+  // transition) or buys (Closed Won). Admin can manually flip back to Active.
+  const health = readField(buyer['Buyer Health']);
+  if (health === 'Non-Responsive') return { ok: false, reason: 'non-responsive (ghosted prior ranchers)' };
+  if (health === 'Closed Won') return { ok: false, reason: 'already a customer (use repeat-purchase flow)' };
+
   // Beef Buyer — accept either explicit Segment or inferred from order/budget.
   // Mirrors batch-approve's inference rule so backfill drift doesn't recur.
   const segment = readField(buyer['Segment']);

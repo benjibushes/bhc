@@ -168,6 +168,31 @@ export async function GET() {
         totalCommission,
         unpaidCommission,
         netEarnings: totalRevenue - totalCommission,
+        // Lead Quality metrics — recent-window summary so ranchers can see
+        // what proportion of their leads convert vs ghost. Builds trust that
+        // the platform protects them from "slop" and is worth a retainer.
+        leadQuality: (() => {
+          const lastN = [...myReferrals]
+            .sort((a: any, b: any) => {
+              const ta = new Date(a['Intro Sent At'] || a['Approved At'] || 0).getTime();
+              const tb = new Date(b['Intro Sent At'] || b['Approved At'] || 0).getTime();
+              return tb - ta;
+            })
+            .slice(0, 10);
+          const closed = lastN.filter((r: any) => ['Closed Won', 'Closed Lost'].includes(r['Status']));
+          const won = lastN.filter((r: any) => r['Status'] === 'Closed Won');
+          const inProgress = lastN.filter((r: any) => ['Rancher Contacted', 'Negotiation'].includes(r['Status']));
+          const intro = lastN.filter((r: any) => r['Status'] === 'Intro Sent');
+          const closeRate = closed.length > 0 ? Math.round((won.length / closed.length) * 100) : 0;
+          return {
+            recentWindowSize: lastN.length,
+            closedRecent: closed.length,
+            wonRecent: won.length,
+            inProgressRecent: inProgress.length,
+            introRecent: intro.length,
+            closeRatePct: closeRate,
+          };
+        })(),
       },
       referrals: referralsList,
       networkBenefits,
