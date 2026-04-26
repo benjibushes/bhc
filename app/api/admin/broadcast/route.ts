@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, createRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendBroadcastEmail } from '@/lib/email';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
@@ -47,6 +48,8 @@ async function getRecipients(audienceType: string, selectedStates?: string[]) {
 
 export async function POST(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const body = await request.json();
     const { subject, message, htmlBody, campaignName, audienceType, selectedStates, includeCTA, ctaText, ctaLink, preview, scheduledFor } = body;
 

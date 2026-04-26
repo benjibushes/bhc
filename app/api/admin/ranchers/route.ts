@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { requireAdmin } from '@/lib/adminAuth';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const records = await getAllRecords(TABLES.RANCHERS);
     
     // Transform Airtable field names to frontend-friendly names
@@ -26,7 +30,7 @@ export async function GET() {
       agreement_signed: record['Agreement Signed'] || false,
       active_status: record['Active Status'] || 'Pending Onboarding',
       monthly_capacity: record['Monthly Capacity'] || 0,
-      max_active_referrals: record['Max Active Referalls'] || 5,
+      max_active_referrals: getMaxActiveReferrals(record),
       current_active_referrals: record['Current Active Referrals'] || 0,
       last_assigned_at: record['Last Assigned At'] || '',
       performance_score: record['Performance Score'] || 50,

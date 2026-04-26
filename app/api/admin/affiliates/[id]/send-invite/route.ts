@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendAffiliateInvite } from '@/lib/email';
+import { requireAdmin } from '@/lib/adminAuth';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
@@ -10,6 +11,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await params;
     const affiliate = await getRecordById(TABLES.AFFILIATES, id) as any;
 

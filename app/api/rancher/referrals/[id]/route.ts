@@ -4,6 +4,7 @@ import { getRecordById, updateRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTelegramSaleCelebration } from '@/lib/telegram';
 import { sendRerouteNotification } from '@/lib/email';
+import { isQualifiedForRouting } from '@/lib/qualification';
 import jwt from 'jsonwebtoken';
 
 // The 3 pass reasons a rancher can give when declining a lead.
@@ -220,6 +221,28 @@ export async function PATCH(
       if (status === 'Closed Won' || status === 'Closed Lost') {
         fields['Closed At'] = new Date().toISOString();
 
+        // ── BUYER STATUS SYNC ──────────────────────────────────────────
+        // Without this, the consumer record stays in 'Intro Sent' / 'Negotiation'
+        // forever after their referral closes, and batch-approve's waitlist
+        // retry filter (line 341) silently skips them forever — they orphan.
+        // This was the root cause of "1141 referrals → 0 closed-won data".
+        // Closed Lost handler below sets Referral Status='Unmatched' for re-route;
+        // Closed Won needs an equivalent state-bump so they exit active queues.
+        if (status === 'Closed Won') {
+          const buyerIds = referral['Buyer'] || [];
+          const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+          if (buyerId) {
+            try {
+              await updateRecord(TABLES.CONSUMERS, buyerId, {
+                'Referral Status': 'Closed Won',
+                'Sequence Stage': 'purchased',
+              });
+            } catch (e) {
+              console.error('Closed Won buyer status sync error:', e);
+            }
+          }
+        }
+
         // Decrement active referral count
         try {
           const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
@@ -272,9 +295,16 @@ export async function PATCH(
           }
 
           // ── CLOSED WON or LOST: Auto-match waiting consumers to freed-up capacity ──
+          // Use isQualifiedForRouting to ensure only opted-in buyers (warmup-engaged
+          // OR fresh hot signups) get auto-matched. Without this, every freed slot
+          // would route an unqualified buyer to the rancher who just closed a deal.
           if (rancherState) {
-            const waiting = await getAllRecords(TABLES.CONSUMERS, `AND({Status} = "Approved", {Referral Status} = "Unmatched", {Segment} = "Beef Buyer", {State} = "${rancherState}")`) as any[];
-            const sorted = waiting
+            const candidates = await getAllRecords(
+              TABLES.CONSUMERS,
+              `AND({Status} = "Approved", {Referral Status} = "Unmatched", {State} = "${rancherState}")`,
+            ) as any[];
+            const sorted = candidates
+              .filter((c) => isQualifiedForRouting(c).ok)
               .sort((a, b) => (b['Intent Score'] || 0) - (a['Intent Score'] || 0))
               .slice(0, 3);
 

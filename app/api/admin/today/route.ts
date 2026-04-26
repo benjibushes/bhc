@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // GET /api/admin/today — aggregates action items across the platform so the
 // operator can see the highest-value next actions in one glance.
 // Returns counts + top-N samples for each category.
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const [referrals, consumers, ranchers] = await Promise.all([
       getAllRecords(TABLES.REFERRALS).catch(() => [] as any[]),
       getAllRecords(TABLES.CONSUMERS).catch(() => [] as any[]),

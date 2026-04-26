@@ -3,6 +3,7 @@ import { updateRecord, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 function esc(str: string): string {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -32,7 +33,7 @@ export async function PATCH(
 
     // Capacity check
     const currentRefs = rancher['Current Active Referrals'] || 0;
-    const maxRefs = rancher['Max Active Referalls'] || 5;
+    const maxRefs = getMaxActiveReferrals(rancher);
     if (currentRefs >= maxRefs) {
       return NextResponse.json({
         error: `${rancher['Operator Name'] || 'Rancher'} is at capacity (${currentRefs}/${maxRefs}). Reassign to another rancher.`,

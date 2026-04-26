@@ -2,12 +2,15 @@ import { NextResponse } from 'next/server';
 import { updateRecord, getRecordById, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramSaleCelebration } from '@/lib/telegram';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await params;
     const body = await request.json();
     const { status, saleAmount, commissionPaid, notes } = body;
@@ -61,6 +64,27 @@ export async function PATCH(
     }
 
     const updated = await updateRecord(TABLES.REFERRALS, id, fields);
+
+    // ── BUYER STATUS SYNC ────────────────────────────────────────────────
+    // Mirror the rancher PATCH: when a referral closes, sync the buyer's
+    // Referral Status so batch-approve's waitlist retry filter doesn't skip
+    // them forever. Without this, closed deals orphan their buyers in
+    // active-state limbo (the root cause of 0 Closed Won analytics).
+    if (status === 'Closed Won' || status === 'Closed Lost') {
+      try {
+        const refForBuyer = await getRecordById(TABLES.REFERRALS, id) as any;
+        const buyerIds = refForBuyer['Buyer'] || [];
+        const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+        if (buyerId) {
+          await updateRecord(TABLES.CONSUMERS, buyerId, {
+            'Referral Status': status === 'Closed Won' ? 'Closed Won' : 'Unmatched',
+            'Sequence Stage': status === 'Closed Won' ? 'purchased' : 'rerouted',
+          });
+        }
+      } catch (e) {
+        console.error('Buyer status sync error:', e);
+      }
+    }
 
     // L2e: fire celebration when admin marks something Closed Won
     if (status === 'Closed Won') {

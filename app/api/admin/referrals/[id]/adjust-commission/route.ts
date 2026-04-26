@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // POST /api/admin/referrals/[id]/adjust-commission
 // Manually override a closed referral's commission amount (e.g., when a
@@ -11,6 +12,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const newAmount = Number(body.commissionDue);

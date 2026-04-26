@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { requireAdmin } from '@/lib/adminAuth';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const [consumers, ranchers] = await Promise.all([
       getAllRecords(TABLES.CONSUMERS),
       getAllRecords(TABLES.RANCHERS),
@@ -37,7 +41,7 @@ export async function GET() {
         name: r['Operator Name'] || r['Ranch Name'] || 'Unknown',
         state: r['State'] || '',
         count: r['Current Active Referrals'] || 0,
-        max: r['Max Active Referalls'] || 5,
+        max: getMaxActiveReferrals(r),
       }))
       .sort((a: any, b: any) => b.count - a.count);
 

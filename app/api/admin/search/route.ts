@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export async function GET(request: Request) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { searchParams } = new URL(request.url);
     const q = (searchParams.get('q') || '').trim().toLowerCase();
     if (!q) return NextResponse.json({ results: [] });

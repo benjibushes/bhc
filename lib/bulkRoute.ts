@@ -1,6 +1,7 @@
 import { getAllRecords, updateRecord, createRecord, escapeAirtableValue, TABLES } from './airtable';
 import { sendEmail, sendBuyerIntroNotification } from './email';
 import { normalizeState, normalizeStates } from './states';
+import { isQualifiedForRouting } from './qualification';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -14,6 +15,8 @@ export type BulkRouteSummary = {
   totalConsumers: number;
   processed: number;
   skipped_already_intro_sent: number;
+  skipped_unqualified: number;
+  unqualified_reasons: Record<string, number>;
   updated_stuck_referral: number;
   created_new_referral: number;
   canceled_duplicates: number;
@@ -97,6 +100,8 @@ export async function bulkRouteStateToRancher(opts: {
     totalConsumers: consumers.length,
     processed: 0,
     skipped_already_intro_sent: 0,
+    skipped_unqualified: 0,
+    unqualified_reasons: {},
     updated_stuck_referral: 0,
     created_new_referral: 0,
     canceled_duplicates: 0,
@@ -129,6 +134,19 @@ export async function bulkRouteStateToRancher(opts: {
       );
       if (activeIntroSent) {
         summary.skipped_already_intro_sent++;
+        continue;
+      }
+
+      // ── QUALIFICATION GATE ────────────────────────────────────────────
+      // Reject buyers who haven't explicitly opted in (no warmup engagement
+      // and not a fresh hot signup). This is what stops bulk routing from
+      // becoming spam — every routed buyer has either clicked YES on a warmup
+      // email OR signed up in the last 14 days with strong intent signals.
+      const qual = isQualifiedForRouting(consumer);
+      if (!qual.ok) {
+        summary.skipped_unqualified++;
+        const r = qual.reason || 'unknown';
+        summary.unqualified_reasons[r] = (summary.unqualified_reasons[r] || 0) + 1;
         continue;
       }
 

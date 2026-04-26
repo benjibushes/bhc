@@ -7,6 +7,7 @@ import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 export const maxDuration = 60;
 
@@ -95,7 +96,7 @@ export async function POST(request: Request) {
       const activeStatus = r['Active Status'] || '';
       const agreementSigned = r['Agreement Signed'] || false;
       const onboardingStatus = r['Onboarding Status'] || '';
-      const maxReferrals = r['Max Active Referalls'] || 5;
+      const maxReferrals = getMaxActiveReferrals(r);
       const currentReferrals = r['Current Active Referrals'] || 0;
       if (activeStatus !== 'Active') return false;
       if (!agreementSigned) return false;
@@ -290,7 +291,7 @@ export async function POST(request: Request) {
         });
 
         // Capacity alerts
-        const maxRefs = topMatch['Max Active Referalls'] || 5;
+        const maxRefs = getMaxActiveReferrals(topMatch);
         const rancherName = topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown';
         const rancherState = topMatch['State'] || 'Unknown';
         if (maxRefs > 0) {
@@ -445,7 +446,7 @@ export async function POST(request: Request) {
         state: topMatch['State'],
         shipsNationwide: topMatch['Ships Nationwide'] === true,
         activeReferrals: topMatch['Current Active Referrals'] || 0,
-        maxReferrals: topMatch['Max Active Referalls'] || 5,
+        maxReferrals: getMaxActiveReferrals(topMatch),
       } : null,
     });
   } catch (error: any) {

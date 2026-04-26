@@ -1,12 +1,15 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { updateRecord, deleteRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await context.params;
     const body = await request.json();
 
@@ -38,6 +41,8 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const __authResp = await requireAdmin(request);
+    if (__authResp) return __authResp;
     const { id } = await context.params;
     await deleteRecord(TABLES.LAND_DEALS, id);
     return NextResponse.json({ success: true });
