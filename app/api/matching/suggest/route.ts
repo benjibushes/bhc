@@ -49,8 +49,17 @@ export async function POST(request: Request) {
       // them again. Without this, lead resurrection sends the same lead back
       // to the rancher who just rejected it.
       excludeRancherIds,
+      // Hot-lead override: when the buyer has explicitly clicked YES on a
+      // warmup email (Warmup Engaged At set), they're a rare time-sensitive
+      // opt-in. Capacity caps that protect ranchers from "lead overload"
+      // shouldn't apply — the buyer goes cold while we hold them in queue.
+      // Callers (batch-approve waitlist retry) detect engagement and set
+      // this flag. Capacity-bypass routing fires a Telegram alert so the
+      // operator can see when a rancher is over-cap.
+      warmupEngaged,
     } = body;
     const excludeIds = new Set<string>(Array.isArray(excludeRancherIds) ? excludeRancherIds : []);
+    const isHotLead = !!warmupEngaged;
 
     if (!buyerState || !buyerId) {
       return NextResponse.json({ error: 'buyerState and buyerId are required' }, { status: 400 });
@@ -91,6 +100,13 @@ export async function POST(request: Request) {
     // Also excludes any rancher in `excludeRancherIds` — used when re-routing
     // a lead that a rancher just passed on, so the same rancher doesn't get
     // the lead bounced right back to them.
+    //
+    // CAPACITY BYPASS for hot leads: when the buyer has explicitly opted in via
+    // warmup engagement, we route to a state-matched rancher even if they're at
+    // capacity. The cap exists to prevent "lead overload"; for a rare hand-raised
+    // buyer, sitting in queue means going cold. We do enforce a 2× hard ceiling
+    // so even hot-lead bypass can't unboundedly flood a rancher.
+    const HARD_CEILING_MULTIPLIER = 2;
     const isEligibleBase = (r: any) => {
       if (excludeIds.has(r.id)) return false;
       const activeStatus = r['Active Status'] || '';
@@ -101,7 +117,12 @@ export async function POST(request: Request) {
       if (activeStatus !== 'Active') return false;
       if (!agreementSigned) return false;
       if (onboardingStatus && onboardingStatus !== 'Live') return false;
-      if (currentReferrals >= maxReferrals) return false;
+      if (isHotLead) {
+        // Hot-lead bypass: ignore the soft cap up to 2× the configured max.
+        if (currentReferrals >= maxReferrals * HARD_CEILING_MULTIPLIER) return false;
+      } else {
+        if (currentReferrals >= maxReferrals) return false;
+      }
       return true;
     };
 
@@ -296,12 +317,24 @@ export async function POST(request: Request) {
         const rancherState = topMatch['State'] || 'Unknown';
         if (maxRefs > 0) {
           const capacityPct = newRefs / maxRefs;
-          if (newRefs >= maxRefs) {
+          // Hot-lead bypass: if we routed an over-cap rancher because the
+          // buyer was warmup-engaged, the operator should see it. Use a
+          // distinct emoji so it's easy to triage in the Telegram feed.
+          if (isHotLead && newRefs > maxRefs) {
+            try {
+              await sendTelegramMessage(
+                TELEGRAM_ADMIN_CHAT_ID,
+                `🔥 <b>HOT-LEAD CAP BYPASS:</b> ${rancherName} (${rancherState}) is OVER cap at ${newRefs}/${maxRefs} — routed warmup-engaged buyer ${buyerName || ''} anyway. Hot opt-ins shouldn't sit in queue.\n<i>If ${rancherName} isn't responding, consider Pause from admin.</i>`
+              );
+            } catch (e) {
+              console.error('Error sending hot-lead bypass alert:', e);
+            }
+          } else if (newRefs >= maxRefs) {
             // 100% — at capacity
             try {
               await sendTelegramMessage(
                 TELEGRAM_ADMIN_CHAT_ID,
-                `🔴 <b>AT CAPACITY:</b> ${rancherName} in ${rancherState} is FULL (${newRefs}/${maxRefs}). New leads in ${rancherState} will waitlist until capacity frees up.`
+                `🔴 <b>AT CAPACITY:</b> ${rancherName} in ${rancherState} is FULL (${newRefs}/${maxRefs}). New <i>cold</i> leads will waitlist; warmup-engaged hot leads will continue routing.`
               );
             } catch (e) {
               console.error('Error sending capacity-full Telegram alert:', e);
