@@ -357,6 +357,12 @@ async function handler(request: Request) {
         }
 
         waitlistedRetried++;
+        // Hot-lead override: warmup-engaged buyers (clicked YES on a launch
+        // warmup) are time-sensitive and rare. They bypass the rancher's soft
+        // capacity cap AND the per-rancher daily cap, so they don't sit in
+        // queue going cold. matching/suggest still enforces a 2× hard ceiling
+        // and fires a Telegram alert when the bypass triggers.
+        const isHotLead = !!consumer['Warmup Engaged At'];
         try {
           const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
             method: 'POST',
@@ -375,11 +381,15 @@ async function handler(request: Request) {
               intentScore: consumer['Intent Score'],
               intentClassification: consumer['Intent Classification'] || '',
               notes: consumer['Notes'],
-              // Skip ranchers already at this run's per-rancher cap.
-              // matching/suggest already honors excludeRancherIds via filter chain.
-              excludeRancherIds: Array.from(perRancherToday.entries())
-                .filter(([, n]) => n >= PER_RANCHER_DAILY_CAP)
-                .map(([id]) => id),
+              warmupEngaged: isHotLead,
+              // Cold leads honor the per-rancher daily cap; hot leads bypass it
+              // (we want every YES-clicker connected the morning the cron runs,
+              // not throttled across days).
+              excludeRancherIds: isHotLead
+                ? []
+                : Array.from(perRancherToday.entries())
+                    .filter(([, n]) => n >= PER_RANCHER_DAILY_CAP)
+                    .map(([id]) => id),
             }),
           });
           if (matchRes.ok) {
