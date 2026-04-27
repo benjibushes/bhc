@@ -146,7 +146,15 @@ async function handler(request: Request) {
     // reminder per 4-day window via Rancher Reminded At field.
     let rancherReminders = 0;
     try {
-      const introSentRefs = referrals.filter(r => r['Status'] === 'Intro Sent');
+      // Include both Intro Sent AND Rancher Contacted in stalled-handler
+      // queries. Was Intro Sent only, which silently excluded leads where
+      // the rancher updated to "Rancher Contacted" but then went dormant —
+      // they'd accumulate forever without rancher reminders / stalled
+      // alerts / auto-reassign firing. Critical for ranchers whose habit
+      // is to mark "contacted" then never update again.
+      const introSentRefs = referrals.filter(r =>
+        r['Status'] === 'Intro Sent' || r['Status'] === 'Rancher Contacted'
+      );
       const now = Date.now();
       const needsReminder = introSentRefs.filter(r => {
         const introAt = r['Intro Sent At'] || r['Approved At'];
@@ -211,7 +219,15 @@ async function handler(request: Request) {
     // Fires a Telegram alert (max once per 3-day window) so Ben can nudge or reassign.
     let stalledNudges = 0;
     try {
-      const introSentRefs = referrals.filter(r => r['Status'] === 'Intro Sent');
+      // Include both Intro Sent AND Rancher Contacted in stalled-handler
+      // queries. Was Intro Sent only, which silently excluded leads where
+      // the rancher updated to "Rancher Contacted" but then went dormant —
+      // they'd accumulate forever without rancher reminders / stalled
+      // alerts / auto-reassign firing. Critical for ranchers whose habit
+      // is to mark "contacted" then never update again.
+      const introSentRefs = referrals.filter(r =>
+        r['Status'] === 'Intro Sent' || r['Status'] === 'Rancher Contacted'
+      );
       const now = Date.now();
       const stalledForNudge = introSentRefs.filter(r => {
         const introAt = r['Intro Sent At'] || r['Approved At'];
@@ -278,7 +294,15 @@ async function handler(request: Request) {
     // re-engagement notification regardless of outcome.
     let autoReassigned = 0;
     try {
-      const introSentRefs = referrals.filter(r => r['Status'] === 'Intro Sent');
+      // Include both Intro Sent AND Rancher Contacted in stalled-handler
+      // queries. Was Intro Sent only, which silently excluded leads where
+      // the rancher updated to "Rancher Contacted" but then went dormant —
+      // they'd accumulate forever without rancher reminders / stalled
+      // alerts / auto-reassign firing. Critical for ranchers whose habit
+      // is to mark "contacted" then never update again.
+      const introSentRefs = referrals.filter(r =>
+        r['Status'] === 'Intro Sent' || r['Status'] === 'Rancher Contacted'
+      );
       const now = Date.now();
       const stuckTooLong = introSentRefs.filter(r => {
         const introAt = r['Intro Sent At'] || r['Approved At'];
@@ -388,7 +412,12 @@ async function handler(request: Request) {
     let sent = 0;
     let errors = 0;
 
-    for (const referral of stale.slice(0, 8)) {
+    // Was 8/run — too low when many leads stale at once (e.g., a single
+    // rancher with 40+ Rancher Contacted referrals never caught up). Bumped
+    // to 25/run to flush backlogs while staying under Resend's per-minute
+    // and Airtable's 5 req/sec rate limits (paced via 350ms sleep at end of
+    // loop = ~2.8 req/sec, well under Airtable's ceiling).
+    for (const referral of stale.slice(0, 25)) {
       try {
         const buyerName = referral['Buyer Name'] || 'the buyer';
         const buyerEmail = referral['Buyer Email'] || '';
