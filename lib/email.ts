@@ -458,6 +458,21 @@ export async function sendBuyerIntroNotification(data: {
   </div>`
     : '';
 
+  // Reserve-your-share callout — appears whenever any tier has a payment link
+  // configured. Open-ended on timing because ranchers process on a rolling
+  // cycle, not a single fixed date. Drives the buyer to convert NOW with a
+  // deposit instead of "I'll think about it" → drift to inactive.
+  const hasAnyPayLink = !!(
+    pricingRows.length > 0 && data.rancherSlug
+  );
+  const reserveBlock = hasAnyPayLink
+    ? `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
+    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Reserve Your Share Now</p>
+    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — your deposit puts you on the books for the next available slot. Spots fill first-come, first-served.</p>
+    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Tap any tier above to lock in your share. <strong>No deposit, no slot held.</strong></p>
+  </div>`
+    : '';
+
   const contactBlock = data.rancherSlug
     ? `<div class="contact-box">
     <p><strong>${esc(data.rancherName)}</strong></p>
@@ -497,6 +512,7 @@ export async function sendBuyerIntroNotification(data: {
   <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They know you're coming — reach out whenever you're ready.</p>
   ${contactBlock}
   ${pricingBlock}
+  ${reserveBlock}
   <p><strong>What to discuss:</strong></p>
   <ul style="color:#6B4F3F;line-height:2">
     <li>What cuts are available and current pricing</li>

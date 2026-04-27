@@ -421,7 +421,23 @@ async function handler(request: Request) {
       try {
         const buyerName = referral['Buyer Name'] || 'the buyer';
         const buyerEmail = referral['Buyer Email'] || '';
-        const rancherName = referral['Suggested Rancher Name'] || 'the rancher';
+        // Resolve rancher name from the actual Rancher (or Suggested Rancher)
+        // link, NOT the cached Suggested Rancher Name text. Reassigned referrals
+        // can have stale text fields (e.g., a CO referral originally suggested
+        // to Jose at Next Horizon, then reassigned to Ace at High Lonesome,
+        // still cached "Jose Rodriguez" in the text). Trusting the cache
+        // produced confusing emails like "did Jose reach out at High Lonesome
+        // Ranch". Always go to the linked record for the source of truth.
+        let rancherName = referral['Suggested Rancher Name'] || 'the rancher';
+        try {
+          const rIds = referral['Rancher'] || referral['Suggested Rancher'] || [];
+          const rId = Array.isArray(rIds) ? rIds[0] : null;
+          if (rId) {
+            const rancherRec = await getRecordById(TABLES.RANCHERS, rId) as any;
+            const live = rancherRec['Operator Name'] || rancherRec['Ranch Name'];
+            if (live) rancherName = live;
+          }
+        } catch { /* fall back to cached name */ }
         const chaseCount = (referral['Chase Count'] || 0) + 1;
         const daysStale = Math.floor((Date.now() - new Date(referral['Last Chased At'] || referral['Intro Sent At'] || referral['Approved At']).getTime()) / DAY_MS);
 

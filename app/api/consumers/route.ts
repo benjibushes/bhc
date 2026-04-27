@@ -16,7 +16,8 @@ async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
     return false;
   }
 }
-import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert, sendReadyToBuyPrompt } from '@/lib/email';
+import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert, sendReadyToBuyPrompt, sendWaitlistEmail } from '@/lib/email';
+import { normalizeState, normalizeStates } from '@/lib/states';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
@@ -222,27 +223,56 @@ export async function POST(request: Request) {
       const loginUrl = `${SITE_URL}/member/verify?token=${token}`;
       await sendConsumerApproval({ firstName, email, loginUrl, segment: consumerSegment });
 
-      // Ready-to-Buy gate — every standard signup gets the explicit
-      // "ready to buy in 1-2 months?" prompt. Click of YES sets Ready to Buy=true
-      // and immediately fires matching/suggest (handled by /api/warmup/engage).
-      // Signups who don't click stay in nurture and can convert later — no
-      // rancher introduction goes out without explicit confirmation.
-      //
-      // SKIP for rancher-page leads: they already pressed "Buy" on a specific
-      // rancher's landing page and routing fires below. Adding the prompt
-      // would just be noisy duplication.
+      // Ready-to-Buy gate vs Waitlist:
+      //   • If a verified rancher already serves the buyer's state → send the
+      //     "ready to buy in 1-2 months?" prompt. YES click triggers immediate
+      //     match.
+      //   • If NO rancher serves the buyer's state yet → send the waitlist
+      //     email instead. Asking "ready to buy?" with no rancher to connect
+      //     them to is a broken promise. They'll get the warmup automatically
+      //     the morning a rancher in their state goes live.
+      //   • Skip both for rancher-page leads (campaign starts with rancher-);
+      //     they already pressed "Buy" on a specific rancher's page and
+      //     route immediately below.
       const isRancherPageLead = (campaign || '').startsWith('rancher-');
       if (consumerSegment === 'Beef Buyer' && !isRancherPageLead) {
         try {
-          const engageToken = jwt.sign(
-            { type: 'warmup-engage', consumerId: record.id },
-            JWT_SECRET,
-            { expiresIn: '60d' }
-          );
-          const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
-          await sendReadyToBuyPrompt({ firstName, email, state, engageUrl });
+          // Check rancher availability for the buyer's state. State-local
+          // routing means we look at active+page-live ranchers whose primary
+          // State or States Served includes the buyer's normalized state.
+          const buyerStateNorm = normalizeState(state);
+          const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+          const hasInStateRancher = !!buyerStateNorm && allRanchers.some(r => {
+            if (r['Active Status'] !== 'Active') return false;
+            if (!r['Page Live']) return false;
+            const onb = r['Onboarding Status'];
+            const onbName = (typeof onb === 'object' && onb?.name) ? onb.name : onb;
+            if (onbName && onbName !== 'Live') return false;
+            const primary = normalizeState(r['State']);
+            if (primary === buyerStateNorm) return true;
+            const served = normalizeStates(r['States Served'] || '');
+            return served.includes(buyerStateNorm);
+          });
+
+          if (hasInStateRancher) {
+            const engageToken = jwt.sign(
+              { type: 'warmup-engage', consumerId: record.id },
+              JWT_SECRET,
+              { expiresIn: '60d' }
+            );
+            const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
+            await sendReadyToBuyPrompt({ firstName, email, state, engageUrl });
+          } else {
+            await sendWaitlistEmail({ firstName, email, state, loginUrl });
+            try {
+              await updateRecord(TABLES.CONSUMERS, record.id, {
+                'Sequence Stage': 'waitlisted',
+                'Sequence Sent At': new Date().toISOString(),
+              });
+            } catch { /* non-fatal */ }
+          }
         } catch (e) {
-          console.error('Ready-to-buy prompt send error:', e);
+          console.error('Post-approval prompt/waitlist send error:', e);
         }
       }
     } else {
