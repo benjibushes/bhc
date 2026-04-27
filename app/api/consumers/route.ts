@@ -167,6 +167,13 @@ export async function POST(request: Request) {
       'Referral Status': 'Unmatched',
       'Campaign': campaign || '',
       'UTM Parameters': utmParams || '',
+      // Rancher-page leads explicitly clicked "Buy {tier}" on a specific
+      // rancher's landing page. That's the strongest possible intent signal —
+      // equivalent to a YES click on the Ready-to-Buy prompt. Mark them
+      // ready-to-buy at creation so matching/suggest sees the flag and
+      // formats the rancher's intro email with the 🔥 prefix + READY TO BUY
+      // banner. Telegram fires the READY-TO-BUY MATCH alert too.
+      'Ready to Buy': isRancherPageLead,
     };
     if (referredBy) consumerFields['Referred By'] = referredBy;
 

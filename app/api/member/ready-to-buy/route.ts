@@ -71,7 +71,13 @@ export async function POST(request: Request) {
       const marker = `[READY TO BUY ${now.toISOString()}]`;
       const newNotes = existingNotes ? `${marker}\n${existingNotes}` : marker;
       try {
-        await updateRecord(TABLES.CONSUMERS, memberId, { 'Notes': newNotes });
+        await updateRecord(TABLES.CONSUMERS, memberId, {
+          'Notes': newNotes,
+          // Set the structured checkbox so isQualifiedForRouting + email
+          // subject prefix + Telegram alerts all recognize this as a
+          // ready-to-buy signal. Notes stays for human-readable history.
+          'Ready to Buy': true,
+        });
       } catch (e) {
         console.error('Error updating consumer notes:', e);
       }
