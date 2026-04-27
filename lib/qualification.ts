@@ -73,7 +73,7 @@ export function isQualifiedForRancherMatch(opts: {
  *       (a) Warmup Engaged At is set (clicked YES on launch warmup), OR
  *       (b) Created within last 14 days AND Intent Score >= 80 (fresh hot lead)
  */
-export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: string } {
+export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: string; signal?: 'ready-to-buy' | 'warmup-engaged' | 'fresh-hot-signup' } {
   if (!buyer) return { ok: false, reason: 'no buyer record' };
 
   // Operator-vetted
@@ -109,18 +109,33 @@ export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: strin
   if (isUnsureValue(budget)) return { ok: false, reason: 'budget unsure' };
 
   // CONSENT SIGNAL — at least one must be present.
-  // (a) Explicit warmup engagement.
-  if (buyer['Warmup Engaged At']) return { ok: true };
+  // (a) Explicit "Ready to Buy" flag — the strongest signal. Buyer has stated
+  //     they want to purchase in the next 1-2 months. Bypasses everything
+  //     else and routes immediately as a high-priority lead.
+  if (buyer['Ready to Buy']) return { ok: true, signal: 'ready-to-buy' };
 
-  // (b) Recent signup with strong intent — signup IS consent for fresh hot leads.
+  // (b) Explicit warmup engagement — clicked YES on a launch warmup email.
+  if (buyer['Warmup Engaged At']) return { ok: true, signal: 'warmup-engaged' };
+
+  // (c) Recent signup with strong intent — signup IS consent for fresh hot leads.
   const created = buyer['Created'] || buyer['Created Time'] || buyer['createdTime'];
   if (created) {
     const ageMs = Date.now() - new Date(created).getTime();
     if (ageMs >= 0 && ageMs <= FOURTEEN_DAYS_MS) {
       const intent = Number(buyer['Intent Score'] || 0);
-      if (intent >= HIGH_INTENT_THRESHOLD) return { ok: true };
+      if (intent >= HIGH_INTENT_THRESHOLD) return { ok: true, signal: 'fresh-hot-signup' };
     }
   }
 
-  return { ok: false, reason: 'no engagement signal — not warmup-engaged, not a fresh high-intent signup' };
+  return { ok: false, reason: 'no engagement signal — not ready-to-buy, not warmup-engaged, not a fresh high-intent signup' };
+}
+
+/**
+ * Detects whether a buyer is the highest-priority "ready to buy in 1-2 months"
+ * tier. Used to flag intro emails (subject prefix), Telegram alerts, and admin
+ * dashboards. Distinct from `isQualifiedForRouting` which is the gate.
+ */
+export function isReadyToBuy(buyer: any): boolean {
+  if (!buyer) return false;
+  return !!buyer['Ready to Buy'];
 }

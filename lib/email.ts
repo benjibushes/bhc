@@ -346,6 +346,57 @@ export async function sendConsumerApproval(data: {
 }
 
 // =====================================================
+// READY-TO-BUY PROMPT — sent right after the welcome email so every signup
+// goes through the same explicit "are you ready to purchase?" gate the
+// waitlist warmup uses. Click of the YES button:
+//   1. Sets Ready to Buy = true on their consumer record
+//   2. Triggers immediate matching/suggest (handled by /api/warmup/engage)
+//   3. Buyer + matched rancher receive the intro within seconds
+// Buyers who don't click stay on nurture and can convert later.
+// =====================================================
+
+export async function sendReadyToBuyPrompt(data: {
+  firstName: string;
+  email: string;
+  state: string;
+  engageUrl: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = data.firstName || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `${first}, are you ready to buy in the next 1–2 months?`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:18px 22px;margin:24px 0;font-family:Georgia,serif;font-size:18px;color:#0E0E0E}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>One quick question, ${esc(first)}.</h1>
+  <p>You signed up for BuyHalfCow and you're approved — welcome.</p>
+  <p>Before I introduce you to a rancher in ${esc(data.state) || 'your state'}, I want to make sure the timing is right.</p>
+  <div class="q"><strong>Are you ready to buy in the next 1–2 months?</strong></div>
+  <p>If yes, click below. I'll personally match you with a verified rancher in your state and they'll reach out within 24–48 hours with current pricing, processing date, and how to lock in your order.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
+    <p style="font-size:13px;color:#A7A29A;margin-top:10px;">One click confirms. We only introduce ranchers to confirmed buyers — keeps quality high on both sides.</p>
+  </div>
+  <div class="divider"></div>
+  <p style="font-size:14px;">Not ready yet? Just don't click. You stay on the list and we'll check back when timing fits. No pressure, no spam.</p>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+  <div class="footer">
+    <p>BuyHalfCow · Private Network for American Ranch Beef<br>1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+  </div>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending ready-to-buy prompt:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
 // BUYER INTRO NOTIFICATION EMAIL
 // =====================================================
 // (The old two-step flow — sendBuyerMatchNotification then sendBuyerIntroNotification
@@ -370,6 +421,11 @@ export async function sendBuyerIntroNotification(data: {
   wholePrice?: number;
   wholeLbs?: string;
   nextProcessingDate?: string;
+  // When true, the buyer has explicitly confirmed they're ready to purchase
+  // in the next 1-2 months. Subject line gets a 🔥 prefix so the buyer
+  // recognizes urgency, and the body adds a "you confirmed ready-to-buy"
+  // reminder so they remember why they're hearing from us.
+  readyToBuy?: boolean;
 }) {
   // Build pricing block when any tier is configured.
   const pricingRows: string[] = [];
@@ -415,11 +471,18 @@ export async function sendBuyerIntroNotification(data: {
     ${data.rancherPhone ? `<p>Phone: <a href="tel:${esc(data.rancherPhone)}" style="color:#0E0E0E;">${esc(data.rancherPhone)}</a></p>` : ''}
   </div>`;
 
+  // Subject prefix when this buyer confirmed Ready-to-Buy. Tells the recipient
+  // (and the rancher when they reply-all) this is a high-priority match that
+  // both sides have explicitly opted into.
+  const readyPrefix = data.readyToBuy ? '🔥 READY TO BUY · ' : '';
+  const readyBlock = data.readyToBuy
+    ? `<p style="background:#FFF6E0;border:1px solid #C99A2E;padding:12px 16px;font-size:14px;color:#0E0E0E;"><strong>You confirmed you're ready to buy in the next 1–2 months.</strong> ${esc(data.rancherName)} has been notified and will reach out within 24–48 hours.</p>`
+    : '';
   try {
     const introEmailData: any = {
       from: getFromEmail(),
       to: data.email,
-      subject: `Meet your rancher — ${esc(data.rancherName)}`,
+      subject: `${readyPrefix}Meet your rancher — ${esc(data.rancherName)}`,
       headers: getUnsubscribeHeaders(data.email),
     };
     if (data.scheduledAt) {
@@ -430,6 +493,7 @@ export async function sendBuyerIntroNotification(data: {
 </head><body><div class="container">
   <h1>Your Rancher Introduction</h1>
   <p>Hi ${esc(data.firstName)},</p>
+  ${readyBlock}
   <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They know you're coming — reach out whenever you're ready.</p>
   ${contactBlock}
   ${pricingBlock}
@@ -2648,21 +2712,23 @@ export async function sendRancherLaunchWarmup(data: {
     await resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `${data.ranchName} just joined — your spot is open`,
+      subject: `${data.ranchName} just went live in ${data.buyerState} — ready to buy?`,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:16px 20px;margin:24px 0;font-family:Georgia,serif;font-size:18px;color:#0E0E0E}</style>
 </head><body><div class="container">
   <h1>Good news — we found you a rancher</h1>
   <p>Hi ${esc(first)},</p>
   <p>When you signed up for BuyHalfCow, there wasn't a verified rancher in ${esc(data.buyerState)} yet. That just changed.</p>
-  <p><strong>${esc(data.ranchName)}</strong> just passed our verification process and is taking on new buyers this week. Since you've been waiting, I want to introduce you first — before we open it up to the rest of the list.</p>
+  <p><strong>${esc(data.ranchName)}</strong> just passed our verification and is opening their first round of buyers this week. Since you've been waiting, I want to introduce you first.</p>
+  <div class="q"><strong>One question first:</strong> Are you looking to buy in the next 1–2 months?</div>
+  <p>If yes, click below — I'll send the rancher's full info (pricing, processing date, contact) right after, and they'll reach out to you directly within 24–48 hours.</p>
   <div style="text-align:center;margin:30px 0;">
-    <a href="${data.engageUrl}" class="cta">Yes, I'm Still Interested</a>
-    <p style="font-size:13px;color:#A7A29A;margin-top:10px;">Click confirms you still want a rancher introduction. I'll send it in the next few days.</p>
+    <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
+    <p style="font-size:13px;color:#A7A29A;margin-top:10px;">Clicking confirms you're ready to purchase in the next 1–2 months. Only confirmed buyers are introduced — keeps quality high for ranchers.</p>
   </div>
   <div class="divider"></div>
-  <p style="font-size:14px;">Prefer to reply? Just write back "YES" to this email and I'll get your introduction queued. If you're no longer looking, no reply means you drop off the list — no hard feelings.</p>
+  <p style="font-size:14px;">Not ready yet? Just don't click — you stay on the list and we'll check back when timing fits. No pressure, no hard feelings.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     });
@@ -2692,9 +2758,9 @@ export async function sendRancherLaunchWarmupNudge(data: {
   <h1>Quick follow-up</h1>
   <p>Hi ${esc(first)},</p>
   <p>I sent you a note last week about <strong>${esc(data.ranchName)}</strong> opening spots. Didn't hear back, so this is my last nudge.</p>
-  <p>If you still want the intro, tap below. Otherwise I'll drop you off the active list and you won't get more emails about this rancher.</p>
+  <p><strong>Are you ready to buy in the next 1–2 months?</strong> If yes, tap below and I'll send the rancher's info right after. Otherwise I'll drop you off the active list — you won't get more about this rancher until you tell me to.</p>
   <div style="text-align:center;margin:30px 0;">
-    <a href="${data.engageUrl}" class="cta">Yes, Still Interested</a>
+    <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
   </div>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,

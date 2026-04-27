@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, createRecord, updateRecord } from '@/lib/airtable';
+import { getAllRecords, createRecord, updateRecord, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -378,14 +378,27 @@ export async function POST(request: Request) {
         const rancherPhone = topMatch['Phone'] || '';
         const matchTypeLabel = matchType === 'direct' ? 'Direct Page Lead' : matchType === 'local' ? 'Local Match' : 'Nationwide Match';
 
+        // Look up Ready-to-Buy state on the buyer record so the rancher email
+        // emphasizes urgency. Don't fail the route if Airtable hiccups.
+        let buyerReadyToBuy = false;
+        try {
+          const buyerRec: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+          buyerReadyToBuy = !!buyerRec['Ready to Buy'];
+        } catch {}
+
         // Send rancher the buyer's info
         if (rancherEmail) {
+          const subjectPrefix = buyerReadyToBuy ? '🔥 READY TO BUY · ' : '';
+          const readyBanner = buyerReadyToBuy
+            ? `<div style="background:#FFF6E0;border:2px solid #C99A2E;padding:14px 18px;margin:16px 0;font-size:14px;color:#0E0E0E;"><strong>READY TO BUY in 1–2 months.</strong> Buyer just clicked YES on the Ready-to-Buy CTA. They're expecting your call within 24–48 hours.</div>`
+            : '';
           await sendEmail({
             to: rancherEmail,
-            subject: `BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+            subject: `${subjectPrefix}BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
             html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
               <h1 style="font-family:Georgia,serif;">New Qualified Buyer Lead</h1>
               <p>Hi ${rancherName},</p>
+              ${readyBanner}
               <p>A qualified buyer in your area just came through BuyHalfCow and has been connected to you:</p>
               <p><strong>Buyer:</strong> ${buyerName}</p>
               <p><strong>Email:</strong> ${buyerEmail}</p>
@@ -398,6 +411,21 @@ export async function POST(request: Request) {
               <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
             </div>`,
           });
+        }
+
+        // Telegram alert for Ready-to-Buy routes — highest priority lead type.
+        if (buyerReadyToBuy) {
+          try {
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `🔥 <b>READY-TO-BUY MATCH</b>\n\n` +
+              `👤 ${buyerName} (${buyerState})\n` +
+              `🤠 Routed to: ${rancherName}\n` +
+              `📧 ${buyerEmail}${buyerPhone ? ` · 📱 ${buyerPhone}` : ''}\n` +
+              `${orderType ? `🥩 ${orderType}` : ''}${budgetRange ? ` · 💰 ${budgetRange}` : ''}\n\n` +
+              `<i>Buyer explicitly confirmed ready-to-buy in 1–2 months. Both buyer + rancher just got intro emails. Watch for reply within 24h.</i>`
+            );
+          } catch (e) { console.error('Ready-to-buy Telegram alert error:', e); }
         }
 
         // Send buyer the rancher's info
@@ -426,6 +454,7 @@ export async function POST(request: Request) {
             wholePrice: Number(topMatch['Whole Price']) || undefined,
             wholeLbs: topMatch['Whole lbs'] || undefined,
             nextProcessingDate: topMatch['Next Processing Date'] || undefined,
+            readyToBuy: buyerReadyToBuy,
           });
         }
 

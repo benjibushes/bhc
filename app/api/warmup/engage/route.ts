@@ -34,11 +34,59 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${SITE_URL}/access?error=not-found`);
     }
 
-    if (!consumer['Warmup Engaged At']) {
+    const wasAlreadyEngaged = !!consumer['Warmup Engaged At'];
+    if (!wasAlreadyEngaged) {
+      // Setting Ready to Buy = true here. The warmup/ready-to-buy email's
+      // CTA copy explicitly asks "Ready to buy in the next 1-2 months?" —
+      // clicking YES is affirmation of both engagement AND purchase intent.
       await updateRecord(TABLES.CONSUMERS, payload.consumerId, {
         'Warmup Engaged At': new Date().toISOString(),
         'Warmup Stage': 'engaged',
+        'Ready to Buy': true,
       });
+    }
+
+    // ── IMMEDIATE ROUTE on first YES click ────────────────────────────
+    // The user's vision: signup → welcome → ready-to-buy prompt → click →
+    // intro fires within seconds. We trigger matching/suggest synchronously
+    // here so the buyer + rancher get the intro emails before they even
+    // close their browser tab. matching/suggest is idempotent — if they
+    // already have an active referral it returns the existing one cleanly.
+    if (!wasAlreadyEngaged && consumer['Email'] && consumer['State']) {
+      try {
+        const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+          },
+          body: JSON.stringify({
+            buyerState: consumer['State'],
+            buyerId: payload.consumerId,
+            buyerName: consumer['Full Name'] || '',
+            buyerEmail: consumer['Email'],
+            buyerPhone: consumer['Phone'] || '',
+            orderType: consumer['Order Type'] || '',
+            budgetRange: consumer['Budget'] || '',
+            intentScore: consumer['Intent Score'] || 0,
+            intentClassification: consumer['Intent Classification'] || '',
+            notes: consumer['Notes'] || '',
+            // Hot-lead bypass: warmup-engaged buyers can route to over-cap
+            // ranchers (the ship from earlier today). Matching/suggest will
+            // fire a Telegram alert if the bypass triggers.
+            warmupEngaged: true,
+          }),
+        });
+        // Fire-and-forget: even if matching fails (no rancher in state, etc.),
+        // the buyer is already flagged Ready to Buy. The next batch-approve
+        // run + future rancher go-live will pick them up. Don't block the
+        // redirect on a matching failure.
+        if (!matchRes.ok) {
+          console.warn(`Immediate route attempt for ${payload.consumerId} returned ${matchRes.status} — buyer flagged Ready to Buy, will route on next opportunity`);
+        }
+      } catch (e: any) {
+        console.error('Immediate route on YES click failed:', e?.message);
+      }
     }
 
     return NextResponse.redirect(`${SITE_URL}/access?warmup=engaged`);
