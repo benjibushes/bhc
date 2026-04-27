@@ -20,9 +20,6 @@
  * quality intros, and rancher fatigue. This module makes that impossible.
  */
 
-const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
-const HIGH_INTENT_THRESHOLD = 80; // signup IS consent if intent >= this
-
 // Read either a stored singleSelect ({name,id,color}) or a plain string field.
 function readField(value: any): string {
   if (value == null) return '';
@@ -108,26 +105,22 @@ export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: strin
   if (!budget) return { ok: false, reason: 'no budget' };
   if (isUnsureValue(budget)) return { ok: false, reason: 'budget unsure' };
 
-  // CONSENT SIGNAL — at least one must be present.
-  // (a) Explicit "Ready to Buy" flag — the strongest signal. Buyer has stated
-  //     they want to purchase in the next 1-2 months. Bypasses everything
-  //     else and routes immediately as a high-priority lead.
+  // CONSENT SIGNAL — exactly two paths qualify, both require an explicit click.
+  // Quality over quantity: a buyer never reaches a rancher's inbox unless
+  // they actively pressed a button affirming they want this introduction.
+  //
+  // (a) Explicit "Ready to Buy" — clicked YES on the new ready-to-buy prompt
+  //     email or any warmup email (the YES CTA sets Ready to Buy = true).
   if (buyer['Ready to Buy']) return { ok: true, signal: 'ready-to-buy' };
 
-  // (b) Explicit warmup engagement — clicked YES on a launch warmup email.
+  // (b) Legacy warmup engagement — clicked YES on a launch warmup before the
+  //     CTA was renamed. Same explicit-click signal, just older copy.
   if (buyer['Warmup Engaged At']) return { ok: true, signal: 'warmup-engaged' };
 
-  // (c) Recent signup with strong intent — signup IS consent for fresh hot leads.
-  const created = buyer['Created'] || buyer['Created Time'] || buyer['createdTime'];
-  if (created) {
-    const ageMs = Date.now() - new Date(created).getTime();
-    if (ageMs >= 0 && ageMs <= FOURTEEN_DAYS_MS) {
-      const intent = Number(buyer['Intent Score'] || 0);
-      if (intent >= HIGH_INTENT_THRESHOLD) return { ok: true, signal: 'fresh-hot-signup' };
-    }
-  }
-
-  return { ok: false, reason: 'no engagement signal — not ready-to-buy, not warmup-engaged, not a fresh high-intent signup' };
+  // No path 3 by design. Fresh signups, regardless of intent score or form
+  // completeness, must click the Ready-to-Buy prompt email before any rancher
+  // hears about them. Form completion alone is not enough — the click is.
+  return { ok: false, reason: 'no explicit consent click yet — buyer must click "Ready to Buy" to be routed' };
 }
 
 /**

@@ -18,7 +18,6 @@ async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
 }
 import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert, sendReadyToBuyPrompt } from '@/lib/email';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
-import { isQualifiedForRancherMatch } from '@/lib/qualification';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
@@ -299,18 +298,19 @@ export async function POST(request: Request) {
         } catch (e) { console.error('Telegram hot lead alert error:', e); }
       }
 
-      // Trigger matching ONLY for buyers who pass qualification. Unqualified
-      // Beef Buyers (no tier, no budget, low intent) are still Approved members
-      // — they just enter nurture instead of getting a rancher introduction.
-      // Protects rancher relationships from broke / tire-kicker leads.
-      const qualified = isQualifiedForRancherMatch({
-        segment: consumerSegment,
-        orderType: orderType || '',
-        budgetRange: budgetRange || '',
-        intentScore: serverIntentScore,
-      });
-      const shouldMatch = qualified && !!state;
-      if (shouldMatch) {
+      // ROUTING DELIBERATELY DOES NOT HAPPEN HERE.
+      // Quality over quantity: every signup must click YES on the Ready-to-Buy
+      // prompt email (sent right above) before any rancher hears about them.
+      // The click flows through /api/warmup/engage which sets Ready to Buy=true
+      // and fires matching/suggest synchronously. No rancher inbox sees a lead
+      // who didn't actively press the button.
+      //
+      // EXCEPTION: rancher-page leads (campaign starts with "rancher-") signed
+      // up directly on a specific rancher's landing page. They typed in their
+      // info on that rancher's page — that IS an explicit signal of interest
+      // in that specific rancher. Route them immediately so the rancher gets
+      // the lead info in their inbox right away.
+      if ((campaign || '').startsWith('rancher-') && state) {
         try {
           await fetch(
             `${SITE_URL}/api/matching/suggest`,
@@ -332,11 +332,14 @@ export async function POST(request: Request) {
                 intentClassification: serverIntentClassification,
                 notes,
                 campaign: campaign || '',
+                // Rancher-page leads typed their info on the rancher's own
+                // page — that's explicit consent equivalent to a YES click.
+                warmupEngaged: true,
               }),
             }
           );
         } catch (matchError) {
-          console.error('Error calling matching engine:', matchError);
+          console.error('Error calling matching engine for rancher-page lead:', matchError);
         }
       }
     };
