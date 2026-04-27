@@ -270,9 +270,9 @@ export async function sendConsumerApproval(data: {
     <div class="divider"></div>
     <p><strong>How It Works:</strong></p>
     <ol style="color: #6B4F3F; line-height: 2;">
-      <li><strong>We match you</strong> — Based on your location and preferences, we pair you with a verified rancher in your area</li>
-      <li><strong>Personal introduction</strong> — Your rancher will reach out to discuss cuts, pricing, and delivery timeline</li>
-      <li><strong>Buy direct</strong> — You purchase directly from the rancher at their price. No middlemen, no markup</li>
+      <li><strong>Confirm timing</strong> — In a separate email I'll ask if you're ready to buy in the next 1–2 months. One click on "Yes — Ready to Buy" is all it takes.</li>
+      <li><strong>Personal introduction</strong> — As soon as you click yes, I match you with a verified rancher in your state. They'll reach out within 24–48 hours.</li>
+      <li><strong>Buy direct</strong> — You purchase directly from the rancher at their price. No middlemen, no markup.</li>
     </ol>
     <div class="divider"></div>
     <p><strong>What you get access to:</strong></p>
@@ -282,8 +282,8 @@ export async function sendConsumerApproval(data: {
       <li>Exclusive land deals and brand promotions</li>
       <li>A curated network — no spam, no middlemen</li>
     </ul>
-    <a href="${loginUtm}" class="button">See Your Match</a>
-    <p style="font-size: 13px; color: #A7A29A;">We're matching you with a rancher now. You'll receive an introduction within 48 hours.</p>
+    <a href="${loginUtm}" class="button">Go to Your Dashboard</a>
+    <p style="font-size: 13px; color: #A7A29A;">Watch for the "Ready to buy?" email coming next — your one-click YES is what triggers the rancher introduction. Not ready yet? No pressure — you stay on the list and we check back when timing fits.</p>
   `;
 
   const communityBody = `
@@ -1255,24 +1255,20 @@ export async function sendSequenceEmail_BeefDay3(data: {
     await resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `We're finding your rancher — here's what's happening`,
+      subject: `Quick check-in — did you click the "Ready to Buy" link?`,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html><html><head>
         <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:16px 0;color:#0E0E0E}.button{display:inline-block;padding:14px 28px;background:#0E0E0E;color:white!important;text-decoration:none;text-transform:uppercase;font-weight:600;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#2A2A2A;margin:30px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
         </head><body><div class="container">
-        <h1>Your match is in progress</h1>
+        <h1>One quick step is keeping you waiting</h1>
         <p>Hi ${esc(data.firstName)},</p>
-        <p>You were approved for BuyHalfCow a few days ago — I wanted to give you a quick update on where things stand.</p>
-        <p>We're actively working on finding you the right rancher in ${esc(data.state)}. Our matching process is hands-on: I personally review rancher availability and fit before making any introduction. That's what keeps the quality high.</p>
+        <p>You were approved for BuyHalfCow a few days ago and I sent over a quick "Are you ready to buy in the next 1–2 months?" prompt. <strong>If you haven't clicked YES yet, that's the only thing standing between you and your rancher introduction.</strong></p>
+        <p>It's a one-click confirmation — no form to fill, no commitment beyond saying "yes, this is the right time." Once you click, I personally match you with a verified rancher in ${esc(data.state)} and they reach out within 24–48 hours.</p>
         <div class="divider"></div>
-        <p><strong>What happens next:</strong></p>
-        <ul style="color:#0E0E0E;line-height:2">
-          <li>We confirm a rancher has capacity and matches your order type</li>
-          <li>I make a personal introduction via email</li>
-          <li>You connect directly — no middleman in the conversation</li>
-        </ul>
-        <p>If you have a preference on cut type, quantity, or timing that you didn't share on your application, <strong>just reply to this email</strong> and I'll factor it in.</p>
+        <p><strong>Why we wait for the click:</strong> ranchers in our network only get connected with confirmed buyers. It keeps the quality high on both sides — they don't waste outreach on tire-kickers, and you don't get pitched before you're ready.</p>
+        <p>Check your inbox for the email titled <em>"${esc(data.firstName)}, are you ready to buy in the next 1–2 months?"</em> and tap the YES button. If you can't find it, just reply to this email and I'll resend.</p>
+        <p>Not ready yet? No problem — you stay on the list and we check back when the timing fits.</p>
         <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
@@ -2856,13 +2852,13 @@ export async function sendAbandonedRecoveryEmail(data: {
     ? `
       <p>${greeting}</p>
       <p>You started signing up for BuyHalfCow but didn't finish. No pressure — I just wanted to leave the door open.</p>
-      <p>If you tell us what you're looking for (Quarter, Half, or Whole; budget; state), we'll match you with a verified rancher in your area within 24 hours.</p>
+      <p>If you tell us what you're looking for (Quarter, Half, or Whole; budget; state), I'll send a one-click "ready to buy?" prompt right after — and the moment you tap YES, you get matched with a verified rancher in your state.</p>
       <p>Takes about 60 seconds. We saved your email so you don't have to retype it.</p>`
     : data.stage === 2
       ? `
       <p>${greeting}</p>
       <p>Quick check-in — you signed up for BuyHalfCow a few days ago but didn't finish the application.</p>
-      <p>Most of our members find a rancher in their state within 24-48 hours of completing it. The bottleneck is usually budget + cut size — once we have those, we can introduce you to someone who fits.</p>
+      <p>The flow is simple: finish the form (Quarter/Half/Whole + budget + state), then I send you a one-click "Ready to Buy in 1–2 months?" prompt. The moment you click YES, I match you with a verified rancher in your state — they reach out within 24–48 hours.</p>
       <p>If something stopped you (questions about pricing, how it works, what you'd actually get) just reply to this email and I'll answer personally.</p>`
       : `
       <p>${greeting}</p>
