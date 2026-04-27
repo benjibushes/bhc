@@ -160,6 +160,33 @@ export async function PATCH(
           lifetimeWins: rancherWins.length,
           lifetimeCommission,
         });
+
+        // Pilot milestone: same one-time alert as the rancher PATCH path.
+        // Mirrors lib logic so admin-marked closes also trigger upsell prompt.
+        if (rancherId) {
+          try {
+            const rancherRec = await getRecordById(TABLES.RANCHERS, rancherId) as any;
+            const goal = Number(rancherRec['Pilot Closes Goal'] || 0);
+            const alreadyNotified = !!rancherRec['Pilot Upsell Notified At'];
+            if (goal > 0 && !alreadyNotified && rancherWins.length >= goal) {
+              const ranchName = rancherRec['Ranch Name'] || rancherName;
+              const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+              await sendTelegramMessage(
+                TELEGRAM_ADMIN_CHAT_ID,
+                `🎯 <b>PILOT COMPLETE — UPSELL TIME</b>\n\n` +
+                `🤠 ${ranchName} just hit <b>${rancherWins.length} closed deals</b> — at or above the ${goal}-close pilot goal you set.\n\n` +
+                `💰 Lifetime commission: $${lifetimeCommission.toFixed(2)}\n` +
+                `📅 This month: ${monthlyWins.length} wins · $${monthlyCommission.toFixed(2)}\n\n` +
+                `<b>Time to pitch the marketing retainer.</b> Pilot proven — ride the momentum.`,
+              );
+              await updateRecord(TABLES.RANCHERS, rancherId, {
+                'Pilot Upsell Notified At': new Date().toISOString(),
+              });
+            }
+          } catch (e) {
+            console.error('Pilot milestone check error (admin path):', e);
+          }
+        }
       } catch (e) {
         console.error('Sale celebration notification error:', e);
       }

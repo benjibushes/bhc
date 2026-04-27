@@ -493,6 +493,33 @@ export async function PATCH(
           lifetimeWins: rancherWins.length,
           lifetimeCommission,
         });
+
+        // ── PILOT MILESTONE: fire one-time upsell alert when rancher hits goal ─
+        // Read the rancher's Pilot Closes Goal. If their lifetime Closed Won
+        // count just reached or exceeded it AND we haven't already fired the
+        // alert, ping Ben so he can pivot the conversation to the marketing
+        // retainer. Pilot Upsell Notified At guards against re-firing.
+        try {
+          const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+          const goal = Number(rancher['Pilot Closes Goal'] || 0);
+          const alreadyNotified = !!rancher['Pilot Upsell Notified At'];
+          if (goal > 0 && !alreadyNotified && rancherWins.length >= goal) {
+            const ranchName = rancher['Ranch Name'] || decoded.name;
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `🎯 <b>PILOT COMPLETE — UPSELL TIME</b>\n\n` +
+              `🤠 ${ranchName} (${decoded.name}) just hit <b>${rancherWins.length} closed deals</b> — at or above the ${goal}-close pilot goal you set.\n\n` +
+              `💰 Lifetime commission: $${lifetimeCommission.toFixed(2)}\n` +
+              `📅 This month: ${monthlyWinsForRancher.length} wins · $${monthlyCommission.toFixed(2)}\n\n` +
+              `<b>Time to pitch the marketing retainer.</b> Pilot proven — they're closing leads, you're delivering. Ride the momentum.`
+            );
+            await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
+              'Pilot Upsell Notified At': new Date().toISOString(),
+            });
+          }
+        } catch (e) {
+          console.error('Pilot milestone check error:', e);
+        }
       } else if (status) {
         await sendTelegramUpdate(
           `${decoded.name} updated referral for ${buyerName} to: <b>${status}</b>`
