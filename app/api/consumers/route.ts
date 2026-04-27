@@ -215,12 +215,17 @@ export async function POST(request: Request) {
       const loginUrl = `${SITE_URL}/member/verify?token=${token}`;
       await sendConsumerApproval({ firstName, email, loginUrl, segment: consumerSegment });
 
-      // Ready-to-Buy gate — every signup gets the explicit "ready to buy in
-      // 1-2 months?" prompt. Click of YES sets Ready to Buy=true on their record
+      // Ready-to-Buy gate — every standard signup gets the explicit
+      // "ready to buy in 1-2 months?" prompt. Click of YES sets Ready to Buy=true
       // and immediately fires matching/suggest (handled by /api/warmup/engage).
       // Signups who don't click stay in nurture and can convert later — no
       // rancher introduction goes out without explicit confirmation.
-      if (consumerSegment === 'Beef Buyer') {
+      //
+      // SKIP for rancher-page leads: they already pressed "Buy" on a specific
+      // rancher's landing page and routing fires below. Adding the prompt
+      // would just be noisy duplication.
+      const isRancherPageLead = (campaign || '').startsWith('rancher-');
+      if (consumerSegment === 'Beef Buyer' && !isRancherPageLead) {
         try {
           const engageToken = jwt.sign(
             { type: 'warmup-engage', consumerId: record.id },
