@@ -207,10 +207,11 @@ export async function POST(request: Request) {
       // Lead came from this rancher's page — assign directly to them
       topMatch = directMatchRancher;
     } else {
-      // Standard matching: local first, then nationwide.
-      // Price-fit filter runs AFTER state/capacity so we still know *why* a
-      // match didn't happen (we can fall back to unfiltered pool for a
-      // "no priced rancher in budget" log-only outcome below).
+      // STATE-LOCAL ONLY. The nationwide-fallback path was removed by policy:
+      // every rancher routes only to buyers in their primary State or States
+      // Served. If no in-state rancher exists, the buyer is waitlisted —
+      // they'll be re-engaged when a rancher in their state goes live.
+      // The Ships Nationwide field is no longer read anywhere; ignore it.
       const localEligibleAll = allRanchers.filter((r: any) => {
         if (!isEligibleBase(r)) return false;
         // Normalize rancher's primary state + every "States Served" entry to
@@ -223,12 +224,6 @@ export async function POST(request: Request) {
       });
       const localEligible = localEligibleAll.filter(isPriceFit);
 
-      const nationwideEligibleAll = allRanchers.filter((r: any) => {
-        if (!isEligibleBase(r)) return false;
-        return r['Ships Nationwide'] === true || r['Ships Nationwide'] === 1;
-      });
-      const nationwideEligible = nationwideEligibleAll.filter(isPriceFit);
-
       // If price-fit eliminated all candidates but there WERE state-eligible
       // ranchers, log so we can see the budget-gap pattern over time.
       const priceFiltered = localEligibleAll.length > 0 && localEligible.length === 0;
@@ -236,8 +231,8 @@ export async function POST(request: Request) {
         console.log(`[match] Price filter removed all ${localEligibleAll.length} local ranchers for ${buyerName || buyerId} (budget=${budgetRange}, orderType=${orderType})`);
       }
 
-      const eligible = localEligible.length > 0 ? localEligible : nationwideEligible;
-      matchType = localEligible.length > 0 ? 'local' : nationwideEligible.length > 0 ? 'nationwide' : null;
+      const eligible = localEligible;
+      matchType = localEligible.length > 0 ? 'local' : null;
 
       eligible.sort((a: any, b: any) => {
         const aRefs = a['Current Active Referrals'] || 0;
@@ -276,8 +271,6 @@ export async function POST(request: Request) {
       referralFields['Suggested Rancher State'] = topMatch['State'] || '';
       if (matchType === 'direct') {
         referralFields['Match Type'] = 'Direct (Rancher Page)';
-      } else if (matchType === 'nationwide') {
-        referralFields['Match Type'] = 'Nationwide';
       } else {
         referralFields['Match Type'] = 'Local';
       }

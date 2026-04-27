@@ -64,17 +64,17 @@ async function handler(request: Request) {
       const rancherStates = new Set(
         normalizeStates(rancher['States Served'] || rancher['State'] || '')
       );
-      const shipsNationwide = !!rancher['Ships Nationwide'];
       const ranchName = rancher['Ranch Name'] || rancher['Operator Name'] || 'A verified ranch';
 
-      // Eligible buyers: Waitlisted, not unsubscribed/bounced, state match,
+      // Eligible buyers: Waitlisted, not unsubscribed/bounced, IN-STATE only,
       // and no warmup already sent for this round.
+      // Ships Nationwide path removed — every rancher routes only to their
+      // declared States Served (local-only routing policy).
       const eligible = waitlistedBuyers.filter((b: any) => {
         if (b['Unsubscribed'] || b['Bounced']) return false;
         if (b['Warmup Sent At']) return false;
         const buyerState = normalizeState(b['State']);
         if (!buyerState) return false;
-        if (shipsNationwide) return true;
         return rancherStates.has(buyerState);
       });
 
@@ -142,9 +142,10 @@ async function handler(request: Request) {
         const buyerState = normalizeState(buyer['State']);
 
         // Find a live rancher serving this state to personalize the nudge
+        // (local-only — Ships Nationwide is no longer honored for routing).
         const activeRancher = ranchers.find((r: any) => {
           const states = new Set(normalizeStates(r['States Served'] || r['State'] || ''));
-          return !!r['Ships Nationwide'] || states.has(buyerState);
+          return states.has(buyerState);
         }) || null;
         const ranchName = activeRancher?.['Ranch Name']
           || activeRancher?.['Operator Name']

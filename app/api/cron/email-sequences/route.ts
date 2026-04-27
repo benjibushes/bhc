@@ -118,13 +118,19 @@ async function handler(request: Request) {
     const approved = approvedRaw.filter((c: any) => !c['Unsubscribed']);
     const activeRanchers = await getAllRecords(TABLES.RANCHERS, '{Active Status} = "Active"') as any[];
 
-    // Helper: does this consumer have a rancher available?
+    // Helper: does this consumer have a rancher available IN THEIR STATE?
+    // Local-only routing policy — Ships Nationwide is no longer honored.
+    // Checks both primary State and States Served (multi-state ranchers).
     function hasRancherAvailable(consumerState: string): boolean {
-      return activeRanchers.some((r: any) =>
-        r['Ships Nationwide'] === true ||
-        r['Match Type'] === 'Nationwide' ||
-        (r['State'] || '').toLowerCase() === (consumerState || '').toLowerCase()
-      );
+      const target = (consumerState || '').toUpperCase().trim();
+      if (!target) return false;
+      return activeRanchers.some((r: any) => {
+        const primary = (r['State'] || '').toUpperCase().trim();
+        if (primary === target) return true;
+        const served = String(r['States Served'] || '')
+          .split(',').map((s: string) => s.trim().toUpperCase()).filter(Boolean);
+        return served.includes(target);
+      });
     }
 
     let beefDay3 = 0, beefDay7 = 0, community7 = 0, community14 = 0, introCheckin = 0,
