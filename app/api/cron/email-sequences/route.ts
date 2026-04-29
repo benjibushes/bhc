@@ -20,7 +20,10 @@ import {
 
 import jwt from 'jsonwebtoken';
 
-export const maxDuration = 60;
+// Bumped from 60s — the cron iterates 1200+ approved consumers and was
+// timing out daily for a week, leaving 955 buyers stuck in 'none' stage.
+// 180s leaves headroom for ~75 emails + Airtable updates per run.
+export const maxDuration = 180;
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -118,6 +121,20 @@ async function handler(request: Request) {
     const approved = approvedRaw.filter((c: any) => !c['Unsubscribed']);
     const activeRanchers = await getAllRecords(TABLES.RANCHERS, '{Active Status} = "Active"') as any[];
 
+    // Cache active referrals ONCE (was re-fetched per Day-7 buyer inside the
+    // loop — turned a 500ms call into 50 × 500ms = 25s per cron run, the
+    // primary timeout cause). Now indexed by buyer ID for O(1) lookup.
+    const activeReferralsRaw = await getAllRecords(
+      TABLES.REFERRALS,
+      'OR({Status} = "Intro Sent", {Status} = "Rancher Contacted")'
+    ) as any[];
+    const referralsByBuyer = new Map<string, any>();
+    for (const r of activeReferralsRaw) {
+      const buyerIds = r['Buyer'] || [];
+      const id = Array.isArray(buyerIds) ? buyerIds[0] : null;
+      if (id && !referralsByBuyer.has(id)) referralsByBuyer.set(id, r);
+    }
+
     // Helper: does this consumer have a rancher available IN THEIR STATE?
     // Local-only routing policy — Ships Nationwide is no longer honored.
     // Checks both primary State and States Served (multi-state ranchers).
@@ -138,6 +155,12 @@ async function handler(request: Request) {
     // Cap at 50 emails per run to avoid Resend rate limits and spam flags
     const MAX_EMAILS_PER_RUN = 50;
     let totalSent = 0;
+    // Track sends within this loop so we can sleep AFTER actual work (not
+    // after every iteration). The old `await sleep(250)` after every consumer
+    // meant 1260 × 250ms = 5+ minutes wasted on no-op iterations, blowing
+    // the maxDuration budget before doing real work. Now we only sleep when
+    // we actually fired an email.
+    let sentBeforeIter = 0;
 
     for (const consumer of approved) {
       if (totalSent >= MAX_EMAILS_PER_RUN) break;
@@ -248,17 +271,10 @@ async function handler(request: Request) {
 
           // Day 7+: Follow-up on rancher introduction
           if (daysSinceApproval >= 7 && sequenceStage === 'day3_sent') {
-            // Find their active referral to get rancher name
-            const referrals = await getAllRecords(
-              TABLES.REFERRALS,
-              `OR({Status} = "Intro Sent", {Status} = "Rancher Contacted")`
-            ) as any[];
-
-            const activeReferral = referrals.find(r => {
-              const buyerIds = r['Buyer'] || [];
-              return Array.isArray(buyerIds) && buyerIds.includes(consumerId);
-            });
-
+            // Use the cached referrals map — was re-fetching all referrals
+            // from Airtable on every Day-7-eligible consumer (the timeout
+            // cause). Lookup is O(1) now.
+            const activeReferral = referralsByBuyer.get(consumerId);
             const rancherName = activeReferral?.['Suggested Rancher Name'] || 'your rancher';
 
             await sendSequenceEmail_BeefDay7({ firstName, email, rancherName, loginUrl });
@@ -305,8 +321,14 @@ async function handler(request: Request) {
         errors++;
       }
 
-      // Respect Airtable's 5 req/sec limit — each consumer makes up to 2 calls
-      await sleep(250);
+      // Only pace when we ACTUALLY sent something — Airtable rate limit
+      // applies to writes, not iterations. No-op consumers cost ~0ms so we
+      // can iterate the full 1200+ list quickly looking for who needs an
+      // email, then pace 250ms between actual sends.
+      if (totalSent > sentBeforeIter) {
+        sentBeforeIter = totalSent;
+        await sleep(250);
+      }
     }
 
     // ── Intro check-in: 3 days after Intro Sent At ────────────────────────
