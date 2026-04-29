@@ -8,6 +8,7 @@ import { normalizeState, normalizeStates } from '@/lib/states';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
 export const maxDuration = 60;
 
@@ -109,14 +110,13 @@ export async function POST(request: Request) {
     const HARD_CEILING_MULTIPLIER = 2;
     const isEligibleBase = (r: any) => {
       if (excludeIds.has(r.id)) return false;
-      const activeStatus = r['Active Status'] || '';
-      const agreementSigned = r['Agreement Signed'] || false;
-      const onboardingStatus = r['Onboarding Status'] || '';
+      // Operational check (Active + Agreement Signed + Onboarding Live) lives
+      // in lib/rancherEligibility.ts as the SINGLE source of truth shared with
+      // the signup gate + warmup cron. Don't inline a copy here — drift is
+      // exactly how 48 buyers got stranded in TN/OR waitlists.
+      if (!isRancherOperationalForBuyers(r)) return false;
       const maxReferrals = getMaxActiveReferrals(r);
       const currentReferrals = r['Current Active Referrals'] || 0;
-      if (activeStatus !== 'Active') return false;
-      if (!agreementSigned) return false;
-      if (onboardingStatus && onboardingStatus !== 'Live') return false;
       if (isHotLead) {
         // Hot-lead bypass: ignore the soft cap up to 2× the configured max.
         if (currentReferrals >= maxReferrals * HARD_CEILING_MULTIPLIER) return false;

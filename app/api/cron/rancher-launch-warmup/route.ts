@@ -4,6 +4,7 @@ import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendRancherLaunchWarmup, sendRancherLaunchWarmupNudge } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
+import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 60;
@@ -44,10 +45,16 @@ async function handler(request: Request) {
     }
 
     // ── PHASE 1: Initial warmup to newly-live ranchers' waitlisted buyers ──
-    const ranchers = await getAllRecords(
+    // Filter pulls operationally-live ranchers (Active + Onboarding=Live +
+    // Agreement Signed), NOT just Page Live=TRUE. Page Live is a UX flag for
+    // public landing pages; routing happens via email and shouldn't depend on
+    // it. Previously this query stranded ZK Ranches (TN) — operational but
+    // Page Live not flipped — leaving 31 TN buyers in waitlist forever.
+    const allRanchers = await getAllRecords(
       TABLES.RANCHERS,
-      'AND({Page Live} = TRUE(), NOT({Launch Warmup Triggered}))'
+      'NOT({Launch Warmup Triggered})'
     ) as any[];
+    const ranchers = allRanchers.filter(isRancherOperationalForBuyers);
 
     const waitlistedBuyers = await getAllRecords(
       TABLES.CONSUMERS,

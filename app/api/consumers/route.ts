@@ -17,7 +17,8 @@ async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
   }
 }
 import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert, sendReadyToBuyPrompt, sendWaitlistEmail } from '@/lib/email';
-import { normalizeState, normalizeStates } from '@/lib/states';
+import { normalizeState } from '@/lib/states';
+import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
@@ -237,22 +238,14 @@ export async function POST(request: Request) {
       const isRancherPageLead = (campaign || '').startsWith('rancher-');
       if (consumerSegment === 'Beef Buyer' && !isRancherPageLead) {
         try {
-          // Check rancher availability for the buyer's state. State-local
-          // routing means we look at active+page-live ranchers whose primary
-          // State or States Served includes the buyer's normalized state.
-          const buyerStateNorm = normalizeState(state);
+          // Check rancher availability for the buyer's state via the SHARED
+          // eligibility helper (lib/rancherEligibility.ts). Previously this
+          // file inlined a stricter filter than the matching engine — Page
+          // Live was required here but not there, silently sending CA/TN/OR
+          // buyers to waitlist while their in-state rancher was actively
+          // taking referrals. Single source of truth now keeps them aligned.
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
-          const hasInStateRancher = !!buyerStateNorm && allRanchers.some(r => {
-            if (r['Active Status'] !== 'Active') return false;
-            if (!r['Page Live']) return false;
-            const onb = r['Onboarding Status'];
-            const onbName = (typeof onb === 'object' && onb?.name) ? onb.name : onb;
-            if (onbName && onbName !== 'Live') return false;
-            const primary = normalizeState(r['State']);
-            if (primary === buyerStateNorm) return true;
-            const served = normalizeStates(r['States Served'] || '');
-            return served.includes(buyerStateNorm);
-          });
+          const hasInStateRancher = hasOperationalRancherForState(allRanchers, state);
 
           if (hasInStateRancher) {
             const engageToken = jwt.sign(

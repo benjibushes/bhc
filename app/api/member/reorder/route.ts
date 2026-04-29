@@ -99,12 +99,14 @@ export async function POST(request: Request) {
       }, { status: 404 });
     }
 
-    // Verify rancher is still active before re-introducing
+    // Verify rancher is still operational before re-introducing. Use the
+    // shared eligibility helper — same rule as signup + match engine + warmup.
     const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
     if (!rancher) {
       return NextResponse.json({ error: 'Previous rancher no longer in network' }, { status: 404 });
     }
-    if (rancher['Active Status'] !== 'Active') {
+    const { isRancherOperationalForBuyers } = await import('@/lib/rancherEligibility');
+    if (!isRancherOperationalForBuyers(rancher)) {
       return NextResponse.json({
         error: `${rancher['Operator Name'] || rancher['Ranch Name']} is currently paused. We'll match you with another rancher in your state.`,
         fallbackToMatch: true,
