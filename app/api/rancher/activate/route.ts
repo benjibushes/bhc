@@ -147,6 +147,28 @@ export async function GET(request: Request) {
 
     await updateRecord(TABLES.RANCHERS, payload.rancherId, fields);
 
+    // ── IMMEDIATE WARMUP TRIGGER ────────────────────────────────────────
+    // Without this, buyers in the rancher's state wait until the 8am MT
+    // daily cron to receive the qualification email — up to 21h gap.
+    // Fire-and-forget the cron now: rancher just activated, buyers in
+    // their state should receive the qualification (warmup) email within
+    // seconds. The cron is idempotent and rancher-scoped via the
+    // Launch Warmup Triggered flag we just set to false.
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+      try {
+        // Don't await — let the cron run in the background. The rancher's
+        // confirmation page should render fast.
+        fetch(`${SITE_URL}/api/cron/rancher-launch-warmup?secret=${encodeURIComponent(cronSecret)}`, {
+          method: 'GET',
+          // 50s timeout to match Vercel function lifecycle without blocking
+          signal: AbortSignal.timeout(50_000),
+        }).catch((e) => console.error('Activate-fired warmup cron (background):', e?.message));
+      } catch (e) {
+        console.error('Could not fire-and-forget warmup cron:', e);
+      }
+    }
+
     // Telegram alert — Ben should reach out within minutes
     try {
       const stateLabel = String(fields['States Served'] || rancher['States Served'] || rancher['State'] || '?');
