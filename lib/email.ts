@@ -657,6 +657,76 @@ export async function sendRancherGoLiveEmail(data: {
 }
 
 // =====================================================
+// PILOT UPSELL EMAIL
+//
+// Fires once per rancher when their lifetime Closed Won count reaches
+// Pilot Closes Goal. Sent alongside the Telegram alert that pings Ben.
+// Goal: rancher books the upsell call directly via the Calendly link
+// instead of waiting on Ben to chase them.
+// One-shot: guarded by Pilot Upsell Notified At in the close handlers.
+// =====================================================
+export async function sendPilotUpsellEmail(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+  closesHit: number;
+  pilotGoal: number;
+}) {
+  const firstName = String(data.operatorName || '').trim().split(/\s+/)[0] || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      replyTo: ADMIN_EMAIL,
+      subject: `you just hit ${data.closesHit}. let's run it.`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:580px;margin:0 auto;background:#fff;padding:36px 32px;border:1px solid #A7A29A;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+h2{font-family:Georgia,serif;font-size:20px;margin:26px 0 8px;color:#0E0E0E;}
+.cta{display:inline-block;padding:18px 34px;background:#0E0E0E;color:#F4F1EC !important;
+  text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;
+  font-size:14px;margin:18px 0;border:2px solid #0E0E0E;}
+.box{background:#F8F5F0;border-left:3px solid #0E0E0E;padding:14px 18px;margin:14px 0;font-size:15px;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+
+<p>Hi ${esc(firstName)},</p>
+
+<p>That's <strong>${data.closesHit} closed deals</strong> through BuyHalfCow. The pilot's done — you proved you can close our leads, and we've proved we can deliver them. Time to talk about what's next.</p>
+
+<h2>The white-glove transition</h2>
+<div class="box">
+<p style="margin:0;">Now we move ${esc(data.ranchName)} onto our <strong>full white-glove marketing service</strong> — flat monthly retainer, no commissions, ever. We become your direct-to-consumer growth team: lead generation, email campaigns, paid ads, content. You stay focused on the cattle, we handle everything else.</p>
+</div>
+
+<p>I'd like to walk you through it on a 15-min call. Pick whatever works:</p>
+
+<div style="text-align:center;">
+<a href="${esc(CALENDLY_LINK)}" class="cta">Book the upsell call</a>
+</div>
+
+<p>If those slots don't fit, just hit reply with what does and we'll make it work. Either way — congrats on the milestone. Most ranchers we onboard never make it past lead #1. You blew through 4. Let's keep the momentum.</p>
+
+<p style="margin-top:22px;">— Benjamin<br>
+<span style="color:#6B4F3F;font-size:13px;">Founder, BuyHalfCow · ${esc(ADMIN_EMAIL)}</span></p>
+
+<div class="footer">
+<p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p>
+<p style="margin:6px 0 0;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
+</div>
+
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending pilot upsell email:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
 // PARTNER EMAILS
 // =====================================================
 

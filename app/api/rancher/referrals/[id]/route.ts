@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTelegramSaleCelebration } from '@/lib/telegram';
-import { sendRerouteNotification } from '@/lib/email';
+import { sendRerouteNotification, sendPilotUpsellEmail } from '@/lib/email';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import jwt from 'jsonwebtoken';
 
@@ -511,8 +511,26 @@ export async function PATCH(
               `🤠 ${ranchName} (${decoded.name}) just hit <b>${rancherWins.length} closed deals</b> — at or above the ${goal}-close pilot goal you set.\n\n` +
               `💰 Lifetime commission: $${lifetimeCommission.toFixed(2)}\n` +
               `📅 This month: ${monthlyWinsForRancher.length} wins · $${monthlyCommission.toFixed(2)}\n\n` +
-              `<b>Time to pitch the marketing retainer.</b> Pilot proven — they're closing leads, you're delivering. Ride the momentum.`
+              `<b>Time to pitch the marketing retainer.</b> Pilot proven — they're closing leads, you're delivering. Ride the momentum.\n\n` +
+              `<i>Auto-sent the rancher a Calendly booking email too — they may book before you even reach out.</i>`
             );
+            // Auto-send the rancher a "let's run it" email with Calendly link
+            // — runs in parallel with the Telegram ping. Rancher can self-book
+            // the upsell call, no human-in-the-loop needed.
+            const rancherEmail = rancher['Email'] || '';
+            if (rancherEmail) {
+              try {
+                await sendPilotUpsellEmail({
+                  operatorName: rancher['Operator Name'] || decoded.name,
+                  ranchName,
+                  email: rancherEmail,
+                  closesHit: rancherWins.length,
+                  pilotGoal: goal,
+                });
+              } catch (e) {
+                console.error('Pilot upsell email send error:', e);
+              }
+            }
             await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
               'Pilot Upsell Notified At': new Date().toISOString(),
             });

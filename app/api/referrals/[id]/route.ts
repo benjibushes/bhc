@@ -177,8 +177,26 @@ export async function PATCH(
                 `🤠 ${ranchName} just hit <b>${rancherWins.length} closed deals</b> — at or above the ${goal}-close pilot goal you set.\n\n` +
                 `💰 Lifetime commission: $${lifetimeCommission.toFixed(2)}\n` +
                 `📅 This month: ${monthlyWins.length} wins · $${monthlyCommission.toFixed(2)}\n\n` +
-                `<b>Time to pitch the marketing retainer.</b> Pilot proven — ride the momentum.`,
+                `<b>Time to pitch the marketing retainer.</b> Pilot proven — ride the momentum.\n\n` +
+                `<i>Auto-sent the rancher a Calendly booking email too — they may book before you even reach out.</i>`,
               );
+              // Mirror the rancher-dashboard close path: auto-send the Calendly
+              // booking email so the rancher can self-book without waiting on Ben.
+              const rancherEmail = rancherRec['Email'] || '';
+              if (rancherEmail) {
+                try {
+                  const { sendPilotUpsellEmail } = await import('@/lib/email');
+                  await sendPilotUpsellEmail({
+                    operatorName: rancherRec['Operator Name'] || ranchName,
+                    ranchName,
+                    email: rancherEmail,
+                    closesHit: rancherWins.length,
+                    pilotGoal: goal,
+                  });
+                } catch (e) {
+                  console.error('Pilot upsell email send error (admin path):', e);
+                }
+              }
               await updateRecord(TABLES.RANCHERS, rancherId, {
                 'Pilot Upsell Notified At': new Date().toISOString(),
               });
