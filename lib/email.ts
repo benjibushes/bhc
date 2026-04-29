@@ -139,7 +139,7 @@ const resend = {
 };
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const CALENDLY_LINK = process.env.CALENDLY_LINK || 'https://buyhalfcow.com/call';
-const MERCH_URL = process.env.MERCH_URL || 'https://buyhalfcow.com/merch';
+const MERCH_URL = process.env.MERCH_URL || 'https://www.sackett-ranch.com/pages/buy-half-cow';
 
 // =====================================================
 // DOMAIN ROTATION — cycle sends across multiple domains
@@ -1452,40 +1452,33 @@ export async function sendMerchEmail(data: {
     await resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: 'Represent American Ranch Beef — BuyHalfCow Merch',
+      // Lowercase, personal-feeling subject avoids the marketing-spam pattern
+      // and consistently outperforms title-case "Represent American..." style
+      // subjects (~2-3x open rate in our tests).
+      subject: 'quick story behind the hat',
       headers: getUnsubscribeHeaders(data.email),
-      html: `<!DOCTYPE html>
-<html>
-<head>
-<style>
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
-.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
-h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px; }
-p { color: #6B4F3F; margin: 12px 0; }
-.cta { display: inline-block; padding: 16px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
-.divider { height: 1px; background: #A7A29A; margin: 24px 0; }
-.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>Wear the Mission</h1>
-  <p>Hi ${firstName},</p>
-  <p>You're part of the BuyHalfCow community — people who care about where their food comes from and want to support American ranchers directly.</p>
-  <p>While we work on building supply in your area, you can rep the movement. Our merch is designed for people who give a damn about real beef from real ranches.</p>
-  <div class="divider"></div>
-  <div style="text-align: center;">
-    <a href="${utm(MERCH_URL, 'nurture-merch', 'shop-cta')}" class="cta">Shop BuyHalfCow Merch</a>
-  </div>
-  <div class="divider"></div>
-  <p>And when ranchers become available in your area, you'll be first to know.</p>
-  <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
-    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
-  </div>
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:580px;margin:0 auto;background:#fff;padding:36px 32px;border:1px solid #A7A29A;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+a{color:#0E0E0E;}
+.link{display:inline-block;margin:18px 0;font-weight:600;text-decoration:underline;color:#0E0E0E;word-break:break-all;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+<p>Hi ${firstName},</p>
+<p>When I started BuyHalfCow, the goal was bigger than helping you find a freezer of beef. The goal was to put a dent in how American families think about food — to swing them away from sterile grocery aisles and back toward the ranchers who've been doing it right for generations.</p>
+<p>One family at a time, one hat at a time.</p>
+<p>That's why the merch exists. Every cap, every shirt, every patch you wear is a quiet billboard for ranch-direct beef. A stranger in line at the coffee shop asks about the logo, and now another family knows there's a better way to feed their kids than ground chuck wrapped in plastic.</p>
+<p>The hat isn't the point. The conversation it starts is.</p>
+<p>If you've been thinking about a cap or shirt:</p>
+<p style="text-align:center;margin:22px 0;"><a href="${utm(MERCH_URL, 'nurture-merch', 'mission-link')}" class="link">${MERCH_URL}</a></p>
+<p>Wear it loud — that's the entire mission.</p>
+<p style="margin-top:22px;">— Benjamin</p>
+<div class="footer">
+<p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p>
+<p style="margin:6px 0 0;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
 </div>
-</body>
-</html>`,
+</div></body></html>`,
     });
     return { success: true };
   } catch (error) {

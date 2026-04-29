@@ -126,6 +126,35 @@ export async function POST(request: Request) {
       return true;
     };
 
+    // ── TIER SPECIALTY FILTER ─────────────────────────────────────────────
+    // Some ranchers only handle certain share sizes. High Lonesome doesn't do
+    // Quarters; Homestead Beef does Quarter/Half/Whole. The Ranchers table has
+    // a multipleSelects "Tier Specialty" field — when set, the rancher only
+    // matches buyers whose Order Type is in the list. When EMPTY (legacy
+    // ranchers), no filter is applied (matches all tiers).
+    //
+    // Buyer's Order Type can be "Quarter (~85 lbs)", "Half", "Whole", "Not
+    // Sure", "" — we normalize to one of: "Quarter" | "Half" | "Whole" | null
+    // (null = no filter, route to anyone).
+    const buyerTier: 'Quarter' | 'Half' | 'Whole' | null = (() => {
+      const ot = (orderType || '').toString().toLowerCase();
+      if (ot.includes('quarter')) return 'Quarter';
+      if (ot.includes('half')) return 'Half';
+      if (ot.includes('whole')) return 'Whole';
+      return null;
+    })();
+    const isTierFit = (r: any): boolean => {
+      const specialty = r['Tier Specialty'];
+      // No tier specialty configured on this rancher → matches all (legacy default)
+      if (!specialty || (Array.isArray(specialty) && specialty.length === 0)) return true;
+      // Buyer didn't specify a tier → don't filter
+      if (!buyerTier) return true;
+      const list = Array.isArray(specialty)
+        ? specialty.map((s: any) => (typeof s === 'string' ? s : s?.name || ''))
+        : [specialty];
+      return list.includes(buyerTier);
+    };
+
     // Parse a buyer budget range like "<$500", "$500-$1000", "$1000-$2000", "$2000+", "Unsure"
     // into a numeric ceiling. Unknown/unparseable → Infinity (no filter applied).
     const parseBudgetCeiling = (range: string): number => {
@@ -220,7 +249,12 @@ export async function POST(request: Request) {
         // that left waitlisted customers stranded forever.
         const rState = normalizeState(r['State']);
         const served = normalizeStates(r['States Served']);
-        return rState === normalizedBuyerState || served.includes(normalizedBuyerState);
+        if (!(rState === normalizedBuyerState || served.includes(normalizedBuyerState))) return false;
+        // Tier Specialty filter — see definition above. Quarter buyers won't
+        // get routed to Half/Whole-only ranchers, etc. Empty Tier Specialty =
+        // no filter applied (legacy default).
+        if (!isTierFit(r)) return false;
+        return true;
       });
       const localEligible = localEligibleAll.filter(isPriceFit);
 
