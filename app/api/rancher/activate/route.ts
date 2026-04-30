@@ -6,6 +6,35 @@ import jwt from 'jsonwebtoken';
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
+// ── Multi-secret JWT verify ────────────────────────────────────────────────
+// Background: the 2026-04-29 pilot-pitch broadcast minted activate/decline
+// tokens locally with the developer's .env.local JWT_SECRET, which differs
+// from the production Vercel env var. Yesterday's tokens won't verify against
+// the prod secret → ranchers see "Link expired" the moment they click.
+//
+// Fix without re-sending the broadcast: read additional comma-separated
+// secrets from JWT_SECRET_LEGACY env var, try each in turn after the primary
+// fails. Yesterday's tokens verify via the legacy secret, and all other
+// tokens (warmup engage, member login, rancher dashboard) keep working via
+// the primary. Once the broadcast tokens hit their natural 60-day expiry,
+// the legacy secret can be removed without code changes.
+const FALLBACK_SECRETS: string[] = (process.env.JWT_SECRET_LEGACY || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+function verifyJwt(token: string): any | null {
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {}
+  for (const s of FALLBACK_SECRETS) {
+    try {
+      return jwt.verify(token, s);
+    } catch {}
+  }
+  return null;
+}
+
 // GET /api/rancher/activate?token=<JWT>
 //
 // One-click rancher activation. Token is sent in the "push-coming-to-shove"
@@ -68,10 +97,8 @@ export async function GET(request: Request) {
       );
     }
 
-    let payload: any;
-    try {
-      payload = jwt.verify(token, JWT_SECRET);
-    } catch {
+    const payload: any = verifyJwt(token);
+    if (!payload) {
       return new NextResponse(
         htmlPage({ title: 'Expired link', heading: '⏰', body: '<h1>Link expired</h1><p>This activation link is older than 60 days or invalid. Reply to the email and I\'ll send a new one.</p>' }),
         { status: 401, headers: { 'Content-Type': 'text/html' } }

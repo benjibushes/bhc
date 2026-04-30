@@ -5,6 +5,27 @@ import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
 
+// ── Multi-secret JWT verify ─────────────────────────────────────────────────
+// See /api/rancher/activate/route.ts for full context. Yesterday's broadcast
+// minted decline tokens with a different secret than prod; we accept both via
+// JWT_SECRET_LEGACY (comma-separated) until the 60-day natural expiry.
+const FALLBACK_SECRETS: string[] = (process.env.JWT_SECRET_LEGACY || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+function verifyJwt(token: string): any | null {
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {}
+  for (const s of FALLBACK_SECRETS) {
+    try {
+      return jwt.verify(token, s);
+    } catch {}
+  }
+  return null;
+}
+
 // GET /api/rancher/decline?token=<JWT>
 //
 // One-click rancher opt-out. Token is sent in the "push-coming-to-shove"
@@ -47,10 +68,8 @@ export async function GET(request: Request) {
       );
     }
 
-    let payload: any;
-    try {
-      payload = jwt.verify(token, JWT_SECRET);
-    } catch {
+    const payload: any = verifyJwt(token);
+    if (!payload) {
       return new NextResponse(
         htmlPage({ title: 'Expired link', heading: '⏰', body: '<h1>Link expired</h1><p>Reply to the email and I\'ll remove you manually.</p>' }),
         { status: 401, headers: { 'Content-Type': 'text/html' } }
