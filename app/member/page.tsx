@@ -60,6 +60,9 @@ interface MemberReferral {
   status: string;
   rancher_id?: string;
   rancher_name: string;
+  rancher_email?: string;
+  rancher_phone?: string;
+  rancher_slug?: string;
   order_type?: string;
   sale_amount?: number;
   closed_at?: string;
@@ -85,6 +88,22 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   const [upgradeForm, setUpgradeForm] = useState({ orderType: '', budgetRange: '' });
   const [upgrading, setUpgrading] = useState(false);
   const [upgradeSuccess, setUpgradeSuccess] = useState(false);
+  // Detect ?warmup=engaged so we can show a celebratory banner. The buyer
+  // just clicked YES on the re-engagement email and we routed them — they
+  // need to know their click WORKED, not wonder if they're being asked to
+  // sign up again.
+  const [warmupCelebration, setWarmupCelebration] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('warmup') === 'engaged') {
+      setWarmupCelebration(true);
+      // Strip the param so a refresh doesn't re-trigger the banner
+      const url = new URL(window.location.href);
+      url.searchParams.delete('warmup');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, []);
   const [data, setData] = useState<{
     memberState: string;
     memberSegment: string;
@@ -180,6 +199,29 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
     <main className="min-h-screen py-12 bg-bone text-charcoal">
       <Container>
         <div className="space-y-8">
+          {/* Warmup engagement celebration — shows when buyer just clicked YES
+              on the re-engagement email. Confirms the click registered + tells
+              them what happens next. Removes itself on history.replaceState. */}
+          {warmupCelebration && (
+            <div className="border-2 border-charcoal bg-bone p-6 space-y-2">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="font-serif text-2xl">🔥 You&apos;re in.</p>
+                  <p className="text-saddle mt-2">
+                    We just fired your intro to the rancher in {member.state}. They&apos;ll reach out via email or phone within 1–2 business days. Their contact info is below — feel free to reach out first if you&apos;d like.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setWarmupCelebration(false)}
+                  className="text-dust hover:text-charcoal text-sm"
+                  aria-label="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
@@ -305,9 +347,31 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                           </p>
                         )}
                         {ref.status === 'Intro Sent' && (
-                          <p className="mt-3 text-sm text-saddle">
-                            Your rancher has been introduced. Check your email for their contact details.
-                          </p>
+                          <div className="mt-3 space-y-2 text-sm text-saddle">
+                            <p>Your rancher has been introduced. Reach out to them directly to discuss timing and pickup:</p>
+                            {(ref.rancher_email || ref.rancher_phone) && (
+                              <div className="bg-bone border border-dust p-4 mt-2 space-y-1">
+                                <p className="font-semibold text-charcoal">{ref.rancher_name}</p>
+                                {ref.rancher_email && (
+                                  <p>
+                                    <span className="text-dust">Email:</span>{' '}
+                                    <a href={`mailto:${ref.rancher_email}`} className="text-charcoal underline">{ref.rancher_email}</a>
+                                  </p>
+                                )}
+                                {ref.rancher_phone && (
+                                  <p>
+                                    <span className="text-dust">Phone:</span>{' '}
+                                    <a href={`tel:${ref.rancher_phone}`} className="text-charcoal underline">{ref.rancher_phone}</a>
+                                  </p>
+                                )}
+                                {ref.rancher_slug && (
+                                  <p className="pt-1">
+                                    <Link href={`/r/${ref.rancher_slug}`} className="text-charcoal underline text-xs uppercase tracking-wider">View their page →</Link>
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     );

@@ -34,13 +34,18 @@ export async function GET() {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    // Fetch member's segment from their consumer record
+    // Fetch member's segment from their consumer record. Also rehydrate
+    // memberState if JWT didn't carry it — older session tokens minted by
+    // /api/warmup/engage didn't include state, which made the dashboard
+    // show "0 ranchers" even after a successful match. Defense-in-depth
+    // so any future token shape change can't strand the buyer.
     if (memberId) {
       try {
         const { getRecordById } = await import('@/lib/airtable');
         const consumer: any = await getRecordById(TABLES.CONSUMERS, memberId);
         memberSegment = consumer['Segment'] || '';
         memberOrderType = consumer['Order Type'] || '';
+        if (!memberState && consumer['State']) memberState = String(consumer['State']);
       } catch {
         // Non-fatal, segment will be empty
       }
@@ -76,17 +81,38 @@ export async function GET() {
     // Get member's referral status — include rancher_id, sale_amount, and
     // closed_at so the UI can render the "Your Match" hero AND a "Past Orders
     // → Reorder" section for repeat customers.
+    //
+    // Resolve rancher name LIVE from the linked record (not the stale
+    // "Suggested Rancher Name" text cache). Same drift bug class that
+    // produced "Jose at High Lonesome" in chase-up emails — when ranchers
+    // get renamed or replaced, the cache lags.
+    const ranchersById = new Map<string, any>();
+    for (const r of ranchers) ranchersById.set((r as any).id, r);
     const memberReferrals = referrals.filter((r: any) => {
       const buyerIds = r['Buyer'] || [];
       return Array.isArray(buyerIds) ? buyerIds.includes(memberId) : buyerIds === memberId;
     }).map((r: any) => {
       const rancherLinks = r['Rancher'] || r['Suggested Rancher'] || [];
       const rancherId = Array.isArray(rancherLinks) ? rancherLinks[0] : null;
+      let rancherName = r['Suggested Rancher Name'] || '';
+      let rancherEmail = '';
+      let rancherPhone = '';
+      let rancherSlug = '';
+      if (rancherId && ranchersById.has(rancherId)) {
+        const rr: any = ranchersById.get(rancherId);
+        rancherName = rr['Operator Name'] || rr['Ranch Name'] || rancherName;
+        rancherEmail = rr['Email'] || '';
+        rancherPhone = rr['Phone'] || '';
+        rancherSlug = rr['Slug'] || '';
+      }
       return {
         id: r.id,
         status: r['Status'] || '',
         rancher_id: rancherId,
-        rancher_name: r['Suggested Rancher Name'] || '',
+        rancher_name: rancherName,
+        rancher_email: rancherEmail,
+        rancher_phone: rancherPhone,
+        rancher_slug: rancherSlug,
         order_type: r['Order Type'] || '',
         sale_amount: r['Sale Amount'] || 0,
         closed_at: r['Closed At'] || '',

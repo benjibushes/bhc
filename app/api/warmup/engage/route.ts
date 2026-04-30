@@ -101,11 +101,18 @@ export async function GET(request: Request) {
     // MemberAuthGuard would bounce them to /member/login — making it look
     // like the YES click did nothing and dumping them on a signup-style
     // form. Mint a 30-day session cookie so they land logged in.
+    //
+    // CRITICAL: include state and name fields. /api/member/content reads
+    // decoded.state to filter ranchers by the buyer's state. Without it
+    // the dashboard would show "0 ranchers in your state" even after a
+    // successful match.
     const sessionToken = jwt.sign(
       {
         type: 'member-session',
         consumerId: payload.consumerId,
         email: (consumer['Email'] || '').trim().toLowerCase(),
+        state: consumer['State'] || '',
+        name: consumer['Full Name'] || '',
       },
       JWT_SECRET,
       { expiresIn: '30d' }
