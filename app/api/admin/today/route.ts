@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
+import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
 // GET /api/admin/today — aggregates action items across the platform so the
 // operator can see the highest-value next actions in one glance.
@@ -9,11 +10,39 @@ export async function GET(request: Request) {
   try {
     const __authResp = await requireAdmin(request);
     if (__authResp) return __authResp;
-    const [referrals, consumers, ranchers] = await Promise.all([
-      getAllRecords(TABLES.REFERRALS).catch(() => [] as any[]),
-      getAllRecords(TABLES.CONSUMERS).catch(() => [] as any[]),
-      getAllRecords(TABLES.RANCHERS).catch(() => [] as any[]),
-    ]) as any[][];
+    // Don't silently swallow Airtable errors — if the DB read fails, the
+    // dashboard would show all-zero counts and the operator wouldn't know
+    // anything was wrong. Surface failures so they can be diagnosed.
+    let referrals: any[] = [];
+    let consumers: any[] = [];
+    let ranchers: any[] = [];
+    const fetchErrors: string[] = [];
+    try { referrals = await getAllRecords(TABLES.REFERRALS) as any[]; }
+    catch (e: any) { fetchErrors.push(`Referrals: ${e?.message || 'unknown'}`); console.error('Today/Referrals fetch:', e); }
+    try { consumers = await getAllRecords(TABLES.CONSUMERS) as any[]; }
+    catch (e: any) { fetchErrors.push(`Consumers: ${e?.message || 'unknown'}`); console.error('Today/Consumers fetch:', e); }
+    try { ranchers = await getAllRecords(TABLES.RANCHERS) as any[]; }
+    catch (e: any) { fetchErrors.push(`Ranchers: ${e?.message || 'unknown'}`); console.error('Today/Ranchers fetch:', e); }
+    if (fetchErrors.length === 3) {
+      // All 3 reads failed — definitely a DB connectivity issue, fail loudly
+      return NextResponse.json({ error: 'Database read failed', details: fetchErrors }, { status: 503 });
+    }
+
+    // Build a rancher-id → operator lookup once so we don't rely on the
+    // stale "Suggested Rancher Name" text cache (which drifts when ranchers
+    // get renamed or replaced — caused the "Jose at High Lonesome" bug).
+    const rancherById = new Map<string, any>();
+    for (const r of ranchers) rancherById.set(r.id, r);
+    const resolveRancherName = (referral: any): string => {
+      const links = referral['Rancher'] || referral['Suggested Rancher'] || [];
+      const id = Array.isArray(links) ? links[0] : null;
+      if (id && rancherById.has(id)) {
+        const r = rancherById.get(id);
+        return r['Operator Name'] || r['Ranch Name'] || '';
+      }
+      // Fall back to cached text only if no link exists
+      return referral['Suggested Rancher Name'] || referral['Rancher Name'] || '';
+    };
 
     const now = Date.now();
     const DAY = 24 * 60 * 60 * 1000;
@@ -44,17 +73,20 @@ export async function GET(request: Request) {
       return (Number(c['Intent Score']) || 0) >= 70;
     });
 
-    // Ranchers who need attention: Live but at 0 active referrals (underused)
-    // OR signed agreement but not live yet
+    // Ranchers who need attention: operationally live but at 0 active referrals.
+    // Use the unified eligibility helper (Active + Agreement + Onboarding=Live)
+    // — was previously gated on the "Page Live" flag which silently hid
+    // routing-ready ranchers behind a UX toggle nobody flipped.
     const underused = ranchers.filter((r: any) => {
-      const live = !!r['Page Live'];
+      if (!isRancherOperationalForBuyers(r)) return false;
       const active = Number(r['Current Active Referrals']) || 0;
-      return live && active === 0;
+      return active === 0;
     });
     const pendingGoLive = ranchers.filter((r: any) => {
+      // Not yet operational, but in the onboarding pipeline
+      if (isRancherOperationalForBuyers(r)) return false;
       const status = str(r['Onboarding Status']);
-      const live = !!r['Page Live'];
-      return !live && (status === 'Verification Complete' || status === 'Agreement Signed');
+      return status === 'Verification Complete' || status === 'Agreement Signed' || status === 'Docs Sent';
     });
 
     // Warmup-engaged buyers not yet matched
@@ -81,12 +113,12 @@ export async function GET(request: Request) {
           buyer_name: r['Buyer Name'] || '',
           buyer_state: r['Buyer State'] || '',
           intent_score: r['Intent Score'] || 0,
-          suggested_rancher: r['Suggested Rancher Name'] || '',
+          suggested_rancher: resolveRancherName(r),
         })),
         stalled: sample(stalled, 5, (r: any) => ({
           id: r.id,
           buyer_name: r['Buyer Name'] || '',
-          rancher_name: r['Suggested Rancher Name'] || '',
+          rancher_name: resolveRancherName(r),
           days: Math.floor((now - new Date(r['Intro Sent At'] || r['Approved At']).getTime()) / DAY),
         })),
         unpaidCommissions: sample(
@@ -97,7 +129,7 @@ export async function GET(request: Request) {
           (r: any) => ({
             id: r.id,
             buyer_name: r['Buyer Name'] || '',
-            rancher_name: r['Suggested Rancher Name'] || '',
+            rancher_name: resolveRancherName(r),
             commission_due: r['Commission Due'] || 0,
             closed_at: r['Closed At'] || '',
           })

@@ -17,6 +17,8 @@ import {
   sendAbandonedRecoveryEmail,
   sendEmail,
 } from '@/lib/email';
+import { normalizeState, normalizeStates } from '@/lib/states';
+import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
 import jwt from 'jsonwebtoken';
 
@@ -138,14 +140,23 @@ async function handler(request: Request) {
     // Helper: does this consumer have a rancher available IN THEIR STATE?
     // Local-only routing policy — Ships Nationwide is no longer honored.
     // Checks both primary State and States Served (multi-state ranchers).
+    //
+    // Uses normalizeState() so "Montana" (full name) and "MT" (abbreviation)
+    // both resolve to the same canonical 2-letter code. Without this, buyers
+    // who entered their state as "Montana" got compared against rancher states
+    // stored as "MT" and silently failed — stranded in nurture forever.
+    //
+    // Also enforces the unified rancher-eligibility check, NOT just Active
+    // Status. Otherwise a rancher who's Active but hasn't signed/onboarded
+    // would qualify here while being rejected by the actual matching engine.
     function hasRancherAvailable(consumerState: string): boolean {
-      const target = (consumerState || '').toUpperCase().trim();
+      const target = normalizeState(consumerState || '');
       if (!target) return false;
       return activeRanchers.some((r: any) => {
-        const primary = (r['State'] || '').toUpperCase().trim();
+        if (!isRancherOperationalForBuyers(r)) return false;
+        const primary = normalizeState(r['State'] || '');
         if (primary === target) return true;
-        const served = String(r['States Served'] || '')
-          .split(',').map((s: string) => s.trim().toUpperCase()).filter(Boolean);
+        const served = normalizeStates(r['States Served'] || '');
         return served.includes(target);
       });
     }

@@ -95,7 +95,11 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.redirect(`${SITE_URL}/access?warmup=engaged`);
+    // Redirect to /member so the buyer lands on their dashboard with the
+    // engaged-state confirmation banner — not the signup form they already
+    // completed. The /access?warmup=engaged URL was being silently ignored
+    // by the access page (it only reads ?email=...), creating a dead-end.
+    return NextResponse.redirect(`${SITE_URL}/member?warmup=engaged`);
   } catch (error: any) {
     console.error('Warmup engage error:', error);
     return NextResponse.redirect(`${SITE_URL}/access?error=server`);

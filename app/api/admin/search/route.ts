@@ -10,10 +10,18 @@ export async function GET(request: Request) {
     const q = (searchParams.get('q') || '').trim().toLowerCase();
     if (!q) return NextResponse.json({ results: [] });
 
-    const [consumers, ranchers] = await Promise.all([
-      getAllRecords(TABLES.CONSUMERS).catch(() => [] as any[]),
-      getAllRecords(TABLES.RANCHERS).catch(() => [] as any[]),
-    ]);
+    // Surface DB read failures instead of returning empty results — the
+    // operator deserves to know if search is broken vs. genuinely empty.
+    let consumers: any[] = [];
+    let ranchers: any[] = [];
+    const errors: string[] = [];
+    try { consumers = await getAllRecords(TABLES.CONSUMERS) as any[]; }
+    catch (e: any) { errors.push(`Consumers: ${e?.message}`); console.error('Search/Consumers fetch:', e); }
+    try { ranchers = await getAllRecords(TABLES.RANCHERS) as any[]; }
+    catch (e: any) { errors.push(`Ranchers: ${e?.message}`); console.error('Search/Ranchers fetch:', e); }
+    if (errors.length === 2) {
+      return NextResponse.json({ results: [], error: 'Database read failed', details: errors }, { status: 503 });
+    }
 
     const matchConsumer = (c: any) => {
       const name = (c['Full Name'] || '').toLowerCase();
