@@ -11,7 +11,7 @@ export const maxDuration = 60;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+import { JWT_SECRET } from '@/lib/secrets';
 
 // Global per-run caps — protects sender reputation during mass re-engagement.
 // 100/day warmups × 7 days clears a ~700-waitlist backlog without burst-flagging.

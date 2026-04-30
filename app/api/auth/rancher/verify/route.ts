@@ -4,7 +4,7 @@ import { getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+import { JWT_SECRET } from '@/lib/secrets';
 const RANCHER_AUTH_COOKIE = 'bhc-rancher-auth';
 
 export async function POST(request: Request) {

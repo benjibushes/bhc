@@ -5,7 +5,7 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+import { JWT_SECRET } from '@/lib/secrets';
 
 function verifySigningToken(token: string) {
   try {

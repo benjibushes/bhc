@@ -59,11 +59,15 @@ export async function GET(request: Request) {
   try {
     if (isMaintenanceMode()) return maintenanceResponse('send-scheduled');
 
+    // Cron auth — same fix as compliance-reminders. The old `&& CRON_SECRET`
+    // short-circuit silently allowed unauthenticated requests if the env var
+    // was unset.
+    const { CRON_SECRET } = await import('@/lib/secrets');
     const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    if (authHeader !== `Bearer ${CRON_SECRET}`) {
       const url = new URL(request.url);
       const secret = url.searchParams.get('secret');
-      if (secret !== process.env.CRON_SECRET && process.env.CRON_SECRET) {
+      if (secret !== CRON_SECRET) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
     }

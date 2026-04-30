@@ -6,7 +6,7 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 function esc(str: string): string {

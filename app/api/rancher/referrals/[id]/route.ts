@@ -30,7 +30,7 @@ const NON_RESPONSIVE_THRESHOLD = 2;
 
 export const maxDuration = 60;
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+import { JWT_SECRET } from '@/lib/secrets';
 
 export async function PATCH(
   request: Request,

@@ -12,7 +12,7 @@ import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
 export const maxDuration = 60;
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function POST(request: Request) {
@@ -420,31 +420,48 @@ export async function POST(request: Request) {
           buyerReadyToBuy = !!buyerRec['Ready to Buy'];
         } catch {}
 
-        // Send rancher the buyer's info
+        // Send rancher the buyer's info. Wrap in try/catch + Telegram alert
+        // so a Resend outage doesn't silently strand the referral. Without
+        // this: Airtable shows "Intro Sent" but the rancher's inbox is
+        // empty → buyer waits for a call that never comes → ghost.
         if (rancherEmail) {
           const subjectPrefix = buyerReadyToBuy ? '🔥 READY TO BUY · ' : '';
           const readyBanner = buyerReadyToBuy
             ? `<div style="background:#FFF6E0;border:2px solid #C99A2E;padding:14px 18px;margin:16px 0;font-size:14px;color:#0E0E0E;"><strong>READY TO BUY in 1–2 months.</strong> Buyer just clicked YES on the Ready-to-Buy CTA. They're expecting your call within 24–48 hours.</div>`
             : '';
-          await sendEmail({
-            to: rancherEmail,
-            subject: `${subjectPrefix}BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
-            html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
-              <h1 style="font-family:Georgia,serif;">New Qualified Buyer Lead</h1>
-              <p>Hi ${rancherName},</p>
-              ${readyBanner}
-              <p>A qualified buyer in your area just came through BuyHalfCow and has been connected to you:</p>
-              <p><strong>Buyer:</strong> ${buyerName}</p>
-              <p><strong>Email:</strong> ${buyerEmail}</p>
-              ${buyerPhone ? `<p><strong>Phone:</strong> ${buyerPhone}</p>` : ''}
-              <p><strong>State:</strong> ${buyerState}</p>
-              <p><strong>Order:</strong> ${orderType || 'Not specified'}</p>
-              ${budgetRange ? `<p><strong>Budget:</strong> ${budgetRange}</p>` : ''}
-              ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
-              <p>Reach out within 24 hours to close the sale. Reply-all to keep me in the loop.</p>
-              <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
-            </div>`,
-          });
+          try {
+            await sendEmail({
+              to: rancherEmail,
+              subject: `${subjectPrefix}BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+              html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+                <h1 style="font-family:Georgia,serif;">New Qualified Buyer Lead</h1>
+                <p>Hi ${rancherName},</p>
+                ${readyBanner}
+                <p>A qualified buyer in your area just came through BuyHalfCow and has been connected to you:</p>
+                <p><strong>Buyer:</strong> ${buyerName}</p>
+                <p><strong>Email:</strong> ${buyerEmail}</p>
+                ${buyerPhone ? `<p><strong>Phone:</strong> ${buyerPhone}</p>` : ''}
+                <p><strong>State:</strong> ${buyerState}</p>
+                <p><strong>Order:</strong> ${orderType || 'Not specified'}</p>
+                ${budgetRange ? `<p><strong>Budget:</strong> ${budgetRange}</p>` : ''}
+                ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
+                <p>Reach out within 24 hours to close the sale. Reply-all to keep me in the loop.</p>
+                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
+              </div>`,
+            });
+          } catch (e: any) {
+            console.error('Rancher intro email failed:', e?.message);
+            try {
+              await sendTelegramMessage(
+                TELEGRAM_ADMIN_CHAT_ID,
+                `⚠️ <b>RANCHER INTRO EMAIL FAILED</b>\n\n` +
+                `Buyer: ${buyerName} (${buyerEmail})\n` +
+                `Rancher: ${rancherName} (${rancherEmail})\n` +
+                `Error: ${e?.message || 'unknown'}\n\n` +
+                `<i>Referral was created in Airtable but the rancher never got the intro. Resend manually via /admin or paste the buyer info to ${rancherEmail} directly.</i>`
+              );
+            } catch {}
+          }
         }
 
         // Telegram alert for Ready-to-Buy routes — highest priority lead type.
@@ -471,25 +488,44 @@ export async function POST(request: Request) {
           );
           const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
           const buyerFirstName = (buyerName || '').split(' ')[0] || 'there';
-          await sendBuyerIntroNotification({
-            firstName: buyerFirstName,
-            email: buyerEmail,
-            rancherName,
-            rancherEmail,
-            rancherPhone,
-            rancherSlug: topMatch['Slug'] || '',
-            loginUrl: buyerLoginUrl,
-            // Pricing surfaced in-email so the buyer doesn't need to ask
-            // "how much?" before reaching out. Big conversion friction remover.
-            quarterPrice: Number(topMatch['Quarter Price']) || undefined,
-            quarterLbs: topMatch['Quarter lbs'] || undefined,
-            halfPrice: Number(topMatch['Half Price']) || undefined,
-            halfLbs: topMatch['Half lbs'] || undefined,
-            wholePrice: Number(topMatch['Whole Price']) || undefined,
-            wholeLbs: topMatch['Whole lbs'] || undefined,
-            nextProcessingDate: topMatch['Next Processing Date'] || undefined,
-            readyToBuy: buyerReadyToBuy,
-          });
+          // Same try/catch + Telegram alert pattern as the rancher email.
+          // The buyer-side intro is what actually shows them rancher contact
+          // info in the dashboard email — a silent send failure here makes
+          // the dashboard banner say "we just fired your intro" while the
+          // buyer's inbox stays empty.
+          try {
+            await sendBuyerIntroNotification({
+              firstName: buyerFirstName,
+              email: buyerEmail,
+              rancherName,
+              rancherEmail,
+              rancherPhone,
+              rancherSlug: topMatch['Slug'] || '',
+              loginUrl: buyerLoginUrl,
+              // Pricing surfaced in-email so the buyer doesn't need to ask
+              // "how much?" before reaching out. Big conversion friction remover.
+              quarterPrice: Number(topMatch['Quarter Price']) || undefined,
+              quarterLbs: topMatch['Quarter lbs'] || undefined,
+              halfPrice: Number(topMatch['Half Price']) || undefined,
+              halfLbs: topMatch['Half lbs'] || undefined,
+              wholePrice: Number(topMatch['Whole Price']) || undefined,
+              wholeLbs: topMatch['Whole lbs'] || undefined,
+              nextProcessingDate: topMatch['Next Processing Date'] || undefined,
+              readyToBuy: buyerReadyToBuy,
+            });
+          } catch (e: any) {
+            console.error('Buyer intro email failed:', e?.message);
+            try {
+              await sendTelegramMessage(
+                TELEGRAM_ADMIN_CHAT_ID,
+                `⚠️ <b>BUYER INTRO EMAIL FAILED</b>\n\n` +
+                `Buyer: ${buyerName} (${buyerEmail})\n` +
+                `Rancher: ${rancherName}\n` +
+                `Error: ${e?.message || 'unknown'}\n\n` +
+                `<i>Buyer is in Airtable as Intro Sent but their inbox stayed empty. Their dashboard /member will still show the rancher contact info if they log in.</i>`
+              );
+            } catch {}
+          }
         }
 
         // Telegram noise reduction: per-match notifications were creating

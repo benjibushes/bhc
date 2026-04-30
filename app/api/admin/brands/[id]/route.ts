@@ -6,7 +6,7 @@ import { BRAND_LISTING_PRICE_LABEL } from '@/lib/stripe';
 import jwt from 'jsonwebtoken';
 import { requireAdmin } from '@/lib/adminAuth';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function PATCH(

@@ -27,7 +27,7 @@ import jwt from 'jsonwebtoken';
 // 180s leaves headroom for ~75 emails + Airtable updates per run.
 export const maxDuration = 180;
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-member-secret-change-me';
+import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const DAY_MS = 24 * 60 * 60 * 1000;
 

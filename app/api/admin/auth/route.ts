@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { ADMIN_PASSWORD } from '@/lib/secrets';
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
 const AUTH_TOKEN = 'bhc-admin-auth';
 
 export async function POST(request: Request) {

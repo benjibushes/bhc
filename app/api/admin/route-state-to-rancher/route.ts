@@ -24,8 +24,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const state = searchParams.get('state') || 'CO';
-  const slug = searchParams.get('slug') || 'the-high-lonesome-ranch';
+  // CRITICAL: require explicit state + slug. Previously defaulted to
+  // 'CO' + 'the-high-lonesome-ranch' — meaning any accidental hit on this
+  // URL (browser tab autocomplete, link click) would mass-route every
+  // stuck CO buyer to High Lonesome. That is real-money UX damage.
+  const state = searchParams.get('state');
+  const slug = searchParams.get('slug');
+  if (!state || !slug) {
+    return NextResponse.json(
+      { error: 'Both `state` and `slug` query params are required. e.g. ?state=CO&slug=the-high-lonesome-ranch' },
+      { status: 400 }
+    );
+  }
   const dryRun = searchParams.get('dry_run') === 'true';
   const sendAt = searchParams.get('send_at') || undefined;
 

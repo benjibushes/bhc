@@ -11,11 +11,16 @@ export async function GET(request: Request) {
   try {
     if (isMaintenanceMode()) return maintenanceResponse('compliance-reminders');
 
+    // Cron auth — CRON_SECRET is required (validated at import via lib/secrets).
+    // Old code had a `&& process.env.CRON_SECRET` short-circuit that caused
+    // the auth check to be SKIPPED entirely if CRON_SECRET was unset, letting
+    // anyone trigger this expensive cron remotely.
+    const { CRON_SECRET } = await import('@/lib/secrets');
     const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    if (authHeader !== `Bearer ${CRON_SECRET}`) {
       const url = new URL(request.url);
       const secret = url.searchParams.get('secret');
-      if (secret !== process.env.CRON_SECRET && process.env.CRON_SECRET) {
+      if (secret !== CRON_SECRET) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }
     }
