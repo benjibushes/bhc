@@ -103,6 +103,58 @@ export async function POST(request: Request) {
       console.error('Error loading matched rancher:', e);
     }
 
+    // 2.5 NEW: If no active referral, attempt routing now. The dashboard RTB
+    // click was previously a dead-end for waitlisted buyers — flag set, no
+    // route fired. matching/suggest is the single routing endpoint; calling
+    // it here with warmupEngaged:true gives waitlisted-but-now-RTB buyers
+    // the same hot-lead bypass that the email YES click gets.
+    if (!activeReferral) {
+      try {
+        const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+          },
+          body: JSON.stringify({
+            buyerState: buyerState,
+            buyerId: memberId,
+            buyerName: buyerName,
+            buyerEmail: memberEmail,
+            buyerPhone: buyerPhone,
+            orderType: buyerOrderType,
+            budgetRange: buyerBudget,
+            intentScore: consumer['Intent Score'] || 0,
+            intentClassification: consumer['Intent Classification'] || '',
+            notes: consumer['Notes'] || '',
+            warmupEngaged: true, // hot-lead bypass for capacity
+          }),
+        });
+        if (matchRes.ok) {
+          const j = await matchRes.json();
+          if (j.matchFound && j.suggestedRancher?.id) {
+            matchedRancher = await getRecordById(TABLES.RANCHERS, j.suggestedRancher.id);
+            // matching/suggest already fired the rancher intro email + Telegram;
+            // skip the duplicate alerts in steps 3+4 below by returning the
+            // success state directly.
+            return NextResponse.json({
+              success: true,
+              hasMatch: true,
+              rancherName: matchedRancher
+                ? (matchedRancher['Operator Name'] || matchedRancher['Ranch Name'])
+                : (j.suggestedRancher.name || null),
+              alreadyFlagged: recentlyFlagged,
+              freshlyMatched: true,
+            });
+          }
+        } else {
+          console.warn(`Dashboard RTB route attempt for ${memberId} returned ${matchRes.status}`);
+        }
+      } catch (e: any) {
+        console.error('Dashboard RTB → matching/suggest failed:', e?.message);
+      }
+    }
+
     // 3. Telegram Ben
     try {
       const rancherLine = matchedRancher

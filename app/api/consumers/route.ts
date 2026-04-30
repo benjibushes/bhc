@@ -248,13 +248,63 @@ export async function POST(request: Request) {
           const hasInStateRancher = hasOperationalRancherForState(allRanchers, state);
 
           if (hasInStateRancher) {
-            const engageToken = jwt.sign(
-              { type: 'warmup-engage', consumerId: record.id },
-              JWT_SECRET,
-              { expiresIn: '60d' }
-            );
-            const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
-            await sendReadyToBuyPrompt({ firstName, email, state, engageUrl });
+            // QUALIFIED + IN-STATE = AUTO-ROUTE.
+            // The "quality over quantity" click gate was added to block low-
+            // intent OLD buyers from being bulk-routed without raising their
+            // hand. But a fresh signup with a complete form (Beef Buyer +
+            // Order Type + Budget) AND a live rancher in their state has
+            // already raised their hand — the form completion IS the consent.
+            // Forcing them to click a second time was the source of the 44
+            // stranded RTB buyers we just unstrand-ed.
+            const formIsQualified = !!orderType && !!budgetRange &&
+              !/unsure|not sure/i.test(orderType) && !/unsure|not sure/i.test(budgetRange) &&
+              serverIntentScore >= 40;
+
+            let autoRouted = false;
+            if (formIsQualified) {
+              try {
+                const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+                  },
+                  body: JSON.stringify({
+                    buyerState: state,
+                    buyerId: record.id,
+                    buyerName: fullName.trim(),
+                    buyerEmail: email.trim().toLowerCase(),
+                    buyerPhone: phone || '',
+                    orderType: orderType || '',
+                    budgetRange: budgetRange || '',
+                    intentScore: serverIntentScore,
+                    intentClassification: serverIntentClassification,
+                    notes: notes || '',
+                    // Fresh signup is normal capacity (no hot-lead bypass).
+                    // If rancher's full, falls back to the RTB prompt below.
+                    warmupEngaged: false,
+                  }),
+                });
+                if (matchRes.ok) {
+                  const j = await matchRes.json();
+                  if (j.matchFound) autoRouted = true;
+                }
+              } catch (e: any) {
+                console.error('Signup auto-route failed:', e?.message);
+              }
+            }
+
+            // Fallback: rancher full / not qualified → send the RTB prompt
+            // so they can click in for hot-lead bypass routing.
+            if (!autoRouted) {
+              const engageToken = jwt.sign(
+                { type: 'warmup-engage', consumerId: record.id },
+                JWT_SECRET,
+                { expiresIn: '60d' }
+              );
+              const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
+              await sendReadyToBuyPrompt({ firstName, email, state, engageUrl });
+            }
           } else {
             await sendWaitlistEmail({ firstName, email, state, loginUrl });
             try {

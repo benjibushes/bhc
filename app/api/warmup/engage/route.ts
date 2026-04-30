@@ -46,13 +46,19 @@ export async function GET(request: Request) {
       });
     }
 
-    // ── IMMEDIATE ROUTE on first YES click ────────────────────────────
+    // ── IMMEDIATE ROUTE on YES click ──────────────────────────────────
     // The user's vision: signup → welcome → ready-to-buy prompt → click →
     // intro fires within seconds. We trigger matching/suggest synchronously
     // here so the buyer + rancher get the intro emails before they even
     // close their browser tab. matching/suggest is idempotent — if they
     // already have an active referral it returns the existing one cleanly.
-    if (!wasAlreadyEngaged && consumer['Email'] && consumer['State']) {
+    //
+    // NOTE: this fires on EVERY click, not just the first. Previously we
+    // gated on `!wasAlreadyEngaged` — but that left a hole where a buyer
+    // who engaged when no rancher was live (or rancher was at capacity)
+    // could click again later and have nothing happen. Re-attempting is
+    // safe because matching/suggest is idempotent.
+    if (consumer['Email'] && consumer['State']) {
       try {
         const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
           method: 'POST',
