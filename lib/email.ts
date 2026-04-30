@@ -2848,6 +2848,128 @@ export async function sendRancherLaunchWarmupNudge(data: {
 }
 
 // =====================================================
+// FLAGSHIP LAUNCH WARMUPS — Brimstone-specific (Arizona + Nevada)
+//
+// Used when a flagship rancher activates and we want a higher-impact
+// re-engagement email than the generic launch-warmup template — the
+// "first BuyHalfCow rancher in your state" angle is a strong open-rate
+// and click-through driver. UT buyers stay on the standard template
+// because Matt isn't novel to UT.
+//
+// Both functions share copy structure but vary state-specific framing.
+// One CTA only: Ready-to-Buy click → /api/warmup/engage → matching/suggest
+// fires synchronously and routes the buyer to Brimstone within seconds.
+// =====================================================
+
+function brimstoneFlagshipWarmupHtml(opts: {
+  firstName: string;
+  state: 'Arizona' | 'Nevada';
+  stateAbbrev: 'AZ' | 'NV';
+  engageUrl: string;
+  email: string;
+}): string {
+  const first = opts.firstName || 'there';
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:580px;margin:0 auto;background:#fff;padding:36px 32px;border:1px solid #A7A29A;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px;color:#0E0E0E;}
+.flag{display:inline-block;background:#0E0E0E;color:#F4F1EC;padding:4px 12px;font-size:11px;font-weight:700;
+  text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;}
+.box{background:#F8F5F0;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0;}
+.box strong{font-family:Georgia,serif;font-size:17px;}
+.cta-block{margin:28px 0;text-align:center;}
+.cta{display:inline-block;padding:18px 38px;background:#0E0E0E;color:#F4F1EC !important;
+  text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;
+  font-size:14px;border:2px solid #0E0E0E;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+
+<span class="flag">${esc(opts.stateAbbrev)} launch · first rancher</span>
+<h1>${esc(opts.state)} — your rancher just went live</h1>
+
+<p>Hi ${esc(first)},</p>
+
+<p>You signed up on BuyHalfCow hoping to find a rancher in ${esc(opts.state)}. We didn't have one. So we waited.</p>
+
+<div class="box">
+<p style="margin:0 0 8px;"><strong>Brimstone Beef just went live as the first BuyHalfCow rancher serving ${esc(opts.state)}.</strong></p>
+<p style="margin:0;color:#6B4F3F;font-size:14.5px;">Run by Matt Hirschi — 4th-gen operation out of Utah, USDA-certified, ships AZ / UT / NV. Grass-fed Angus, 1,500-cow capacity per month. They want serious ${esc(opts.stateAbbrev)} buyers and they want them now.</p>
+</div>
+
+<p><strong>One question:</strong> are you ready to buy a quarter, half, or whole cow in the next 1–2 months?</p>
+
+<div class="cta-block">
+<a href="${opts.engageUrl}" class="cta">Yes — Ready to Buy</a>
+<p style="font-size:13px;color:#A7A29A;margin-top:10px;">Click → I send Matt's full info (pricing, processing date, contact) right after. He reaches out within 24–48 hours.</p>
+</div>
+
+<p style="font-size:14px;color:#6B4F3F;">Not ready yet? Just don't click. You stay on the list, we'll check back when timing fits. No pressure.</p>
+
+<p style="margin-top:22px;">— Benjamin<br>
+<span style="color:#6B4F3F;font-size:13px;">Founder, BuyHalfCow</span></p>
+
+<div class="footer">
+<p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p>
+<p style="margin:6px 0 0;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(opts.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
+</div>
+
+</div></body></html>`;
+}
+
+export async function sendBrimstoneArizonaWarmup(data: {
+  email: string;
+  firstName: string;
+  engageUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `Arizona — your rancher just went live`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: brimstoneFlagshipWarmupHtml({
+        firstName: data.firstName,
+        state: 'Arizona',
+        stateAbbrev: 'AZ',
+        engageUrl: data.engageUrl,
+        email: data.email,
+      }),
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending Brimstone AZ warmup:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendBrimstoneNevadaWarmup(data: {
+  email: string;
+  firstName: string;
+  engageUrl: string;
+}) {
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `Nevada — your rancher just went live`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: brimstoneFlagshipWarmupHtml({
+        firstName: data.firstName,
+        state: 'Nevada',
+        stateAbbrev: 'NV',
+        engageUrl: data.engageUrl,
+        email: data.email,
+      }),
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending Brimstone NV warmup:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
 // RANCHER LEAD REMINDER — fires at Day 2 of Intro Sent without rancher action
 // =====================================================
 
