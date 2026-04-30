@@ -95,11 +95,31 @@ export async function GET(request: Request) {
       }
     }
 
-    // Redirect to /member so the buyer lands on their dashboard with the
-    // engaged-state confirmation banner — not the signup form they already
-    // completed. The /access?warmup=engaged URL was being silently ignored
-    // by the access page (it only reads ?email=...), creating a dead-end.
-    return NextResponse.redirect(`${SITE_URL}/member?warmup=engaged`);
+    // Auto-login: the warmup JWT already verified this person owns the
+    // consumerId (only they have the email-issued token). That's enough auth
+    // to grant them a member session. Without this cookie, /member's
+    // MemberAuthGuard would bounce them to /member/login — making it look
+    // like the YES click did nothing and dumping them on a signup-style
+    // form. Mint a 30-day session cookie so they land logged in.
+    const sessionToken = jwt.sign(
+      {
+        type: 'member-session',
+        consumerId: payload.consumerId,
+        email: (consumer['Email'] || '').trim().toLowerCase(),
+      },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    const response = NextResponse.redirect(`${SITE_URL}/member?warmup=engaged`);
+    response.cookies.set('bhc-member-auth', sessionToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60, // 30 days
+      path: '/',
+    });
+    return response;
   } catch (error: any) {
     console.error('Warmup engage error:', error);
     return NextResponse.redirect(`${SITE_URL}/access?error=server`);
