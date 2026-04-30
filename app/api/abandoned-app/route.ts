@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { normalizeState } from '@/lib/states';
 
 export const maxDuration = 15;
 
@@ -34,7 +35,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: 'invalid email' }, { status: 400 });
     }
 
-    const state = (body?.state || '').toString().trim().toUpperCase().slice(0, 2);
+    // CRITICAL: normalizeState handles full names ("Montana" → "MT") + codes.
+    // Old `.slice(0,2)` turned "Montana" into "MO" (Missouri!) — silent
+    // misrouting of every typed-out-state buyer.
+    const state = normalizeState(body?.state);
     const fullName = (body?.fullName || '').toString().trim().slice(0, 100);
 
     // Skip if already in CONSUMERS — we don't want to overwrite a real record

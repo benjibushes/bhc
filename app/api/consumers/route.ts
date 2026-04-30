@@ -156,7 +156,11 @@ export async function POST(request: Request) {
       'Full Name': fullName.trim(),
       'Email': email.trim().toLowerCase(),
       'Phone': phone || '',
-      'State': state.toString().trim().toUpperCase(),
+      // Always store as canonical 2-letter code via normalizeState so all
+      // downstream comparisons (matching, warmup, sequences) hit the same
+      // value. Form may submit "Montana", "montana", "MT", or " mt " —
+      // they all collapse to "MT". Invalid input returns ''.
+      'State': normalizeState(state) || state.toString().trim().toUpperCase(),
       'Interests': interests,
       'Status': status,
       'Segment': consumerSegment,

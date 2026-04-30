@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createRecord, updateRecord, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { normalizeState } from '@/lib/states';
 
 export const maxDuration = 15;
 
@@ -35,7 +36,11 @@ export async function POST(request: Request) {
 
     // Optional fields — keep the form short + friction-free
     const fullName = (body?.fullName || body?.name || '').toString().trim().slice(0, 100);
-    const state = (body?.state || '').toString().trim().toUpperCase().slice(0, 2);
+    // CRITICAL: use normalizeState — the old `.slice(0,2)` on uppercased input
+    // turned "Montana" into "MO" (Missouri's code!), silently routing customers
+    // to the wrong state. normalizeState handles full names ("Montana" → "MT")
+    // and 2-letter codes alike, returning '' for invalid input.
+    const state = normalizeState(body?.state);
     const interest = (body?.interest || '').toString().trim().slice(0, 50); // e.g. "beef", "land", "rancher"
     const notes = (body?.notes || '').toString().trim().slice(0, 500);
     const referrer = (body?.referrer || '').toString().trim().slice(0, 200);
