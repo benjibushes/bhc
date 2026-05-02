@@ -2023,6 +2023,101 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         }
       }
 
+      // ─── Close-detector check-in callbacks ─────────────────────────────
+      // Wired by app/api/cron/close-detector/route.ts which posts daily cards.
+      // Format: clcheck_<action>_<referralId>  where action ∈ {won,lost,working,mute}
+      // - won: status → Closed Won. Prompts a follow-up text message asking
+      //   for sale $ amount which a later turn captures (Phase 0 simplified:
+      //   we mark the status and a placeholder amount; sale $ stays human-confirm).
+      // - lost: status → Closed Lost
+      // - working: leaves status, just resets the "Close Check Sent At" cooldown
+      // - mute: marks "Stop Asking" so close-detector skips this referral going forward
+      else if (callbackData?.startsWith('clcheck_') && chatId && messageId) {
+        const parts = callbackData.split('_');
+        const action = parts[1];
+        const refId = parts.slice(2).join('_');
+        if (!refId) {
+          await answerCallbackQuery(queryId, 'Missing referral ID');
+        } else {
+          try {
+            // Audit log import
+            const { logAuditEntry, buildAirtableUpdateReverse } = await import('@/lib/auditLog');
+            // Capture previous values for the reverse action
+            const before = await getRecordById(TABLES.REFERRALS, refId) as any;
+            const previousStatus = before?.['Status'] || null;
+            const previousClosedAt = before?.['Closed At'] || null;
+            const buyerName = (before?.['Buyer Name'] as string) || '?';
+            const reverse = buildAirtableUpdateReverse(TABLES.REFERRALS, refId, {
+              'Status': previousStatus,
+              'Closed At': previousClosedAt,
+            });
+
+            if (action === 'won') {
+              await answerCallbackQuery(queryId, '✅ Marked Closed Won');
+              const updates: Record<string, unknown> = {
+                'Status': 'Closed Won',
+                'Closed At': new Date().toISOString(),
+              };
+              await updateRecord(TABLES.REFERRALS, refId, updates);
+              await logAuditEntry({
+                actor: 'manual',
+                tool: 'clcheck_won',
+                targetType: 'Referral',
+                targetId: refId,
+                args: { callbackData },
+                result: { previousStatus, newStatus: 'Closed Won' },
+                reverseAction: reverse,
+              });
+              await editTelegramMessage(
+                chatId,
+                messageId,
+                `✅ <b>Closed Won</b> — ${buyerName}\n\n` +
+                `Status flipped. Reply with the sale $ amount (e.g. <code>$1100</code>) to record commission, or skip.`
+              );
+            } else if (action === 'lost') {
+              await answerCallbackQuery(queryId, '❌ Marked Closed Lost');
+              await updateRecord(TABLES.REFERRALS, refId, {
+                'Status': 'Closed Lost',
+                'Closed At': new Date().toISOString(),
+              });
+              await logAuditEntry({
+                actor: 'manual',
+                tool: 'clcheck_lost',
+                targetType: 'Referral',
+                targetId: refId,
+                args: { callbackData },
+                result: { previousStatus, newStatus: 'Closed Lost' },
+                reverseAction: reverse,
+              });
+              await editTelegramMessage(chatId, messageId, `❌ <b>Closed Lost</b> — ${buyerName}\n\nReferral closed out. Buyer stays in network.`);
+            } else if (action === 'working') {
+              await answerCallbackQuery(queryId, '⏳ Will check again in 7 days');
+              // Just reset the cooldown timestamp — no status change.
+              try {
+                await updateRecord(TABLES.REFERRALS, refId, {
+                  'Close Check Sent At': new Date().toISOString(),
+                });
+              } catch {}
+              await editTelegramMessage(chatId, messageId, `⏳ <b>Still working</b> — ${buyerName}\n\nLeft as ${previousStatus}. I'll check in again in 7 days.`);
+            } else if (action === 'mute') {
+              await answerCallbackQuery(queryId, '🔇 Muted — won\'t ask again');
+              // Mark with a far-future check date so the cron skips forever.
+              try {
+                await updateRecord(TABLES.REFERRALS, refId, {
+                  'Close Check Sent At': '2099-12-31T00:00:00Z',
+                });
+              } catch {}
+              await editTelegramMessage(chatId, messageId, `🔇 <b>Muted</b> — ${buyerName}\n\nClose detector will skip this referral. Mark Won/Lost manually in Airtable when it resolves.`);
+            } else {
+              await answerCallbackQuery(queryId, `Unknown action: ${action}`);
+            }
+          } catch (e: any) {
+            await answerCallbackQuery(queryId, `⚠️ ${e?.message || 'Failed'}`);
+            console.error('[clcheck callback]', e);
+          }
+        }
+      }
+
       return NextResponse.json({ ok: true });
     }
 

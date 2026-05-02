@@ -23,6 +23,44 @@ export type ToolSchema = {
 
 type ToolImpl = (input: any) => Promise<any>;
 
+/**
+ * Autonomy tier for each tool — controls whether the AI can fire it without
+ * human approval. The runtime (callClaudeWithTools loop OR cron orchestrators)
+ * enforces this; the schema lives here so it travels with the tool definition.
+ *
+ * Tiers:
+ *   - 'auto'      — execute immediately, log to AI_AUDIT_LOG with reverse_action,
+ *                   post 30-min Telegram undo card. Use for: status updates,
+ *                   tag changes, scheduling, re-routing waiting buyers.
+ *   - 'confirm'   — stage the action, post Telegram approval card, wait for tap.
+ *                   Use for: outbound email, $ writes, status→Closed Won.
+ *   - 'forbidden' — never auto-fire; AI can recommend but only Ben executes.
+ *                   Use for: deletions, rancher offboarding, bulk operations.
+ *
+ * SAFE DEFAULT: tools without explicit autonomy default to 'confirm'. Adding
+ * a new tool without thinking about autonomy won't accidentally let the AI
+ * mass-delete things.
+ */
+export type ToolAutonomy = 'auto' | 'confirm' | 'forbidden';
+
+export interface ToolMeta {
+  name: string;
+  autonomy: ToolAutonomy;
+  // Target type for AI_AUDIT_LOG. Tools that don't write data use 'Other'.
+  targetType: 'Consumer' | 'Rancher' | 'Referral' | 'Inquiry' | 'Other';
+  // Reversible? If false, audit log stores a no-op reverse and undo cards
+  // are skipped (e.g. "draft email" with eventual send is irreversible).
+  reversible: boolean;
+}
+
+export function getToolAutonomy(toolName: string): ToolAutonomy {
+  return TOOL_META.find((m) => m.name === toolName)?.autonomy || 'confirm';
+}
+
+export function getToolMeta(toolName: string): ToolMeta | undefined {
+  return TOOL_META.find((m) => m.name === toolName);
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // ─── Tool implementations ─────────────────────────────────────────────────
@@ -437,6 +475,39 @@ const TOOL_IMPLS: Record<string, ToolImpl> = {
   recall_memories: recallMemoriesTool,
   forget_memory: forgetMemoryTool,
 };
+
+// ─── Autonomy tiers ──────────────────────────────────────────────────────
+// Maps each registered tool to its autonomy + target type + reversibility.
+// Read-only lookups are 'auto' (zero risk). Note-appends are 'auto' but
+// reversible. Email drafts are 'confirm' because eventual send is irreversible.
+// Memory mutations are 'auto' but tracked.
+//
+// To promote a 'confirm' tool to 'auto', flip the tier here AND verify the
+// implementation captures previous state for the reverse action. The runtime
+// (callClaudeWithTools + cron orchestrators in Phase 1) will read this map.
+export const TOOL_META: ToolMeta[] = [
+  // Read-only — always auto, never need reversal
+  { name: 'get_pending_consumers',  autonomy: 'auto',    targetType: 'Other', reversible: true },
+  { name: 'get_pending_referrals',  autonomy: 'auto',    targetType: 'Other', reversible: true },
+  { name: 'get_stalled_referrals',  autonomy: 'auto',    targetType: 'Other', reversible: true },
+  { name: 'get_revenue_summary',    autonomy: 'auto',    targetType: 'Other', reversible: true },
+  { name: 'get_rancher_capacity',   autonomy: 'auto',    targetType: 'Other', reversible: true },
+  { name: 'lookup_consumer',        autonomy: 'auto',    targetType: 'Other', reversible: true },
+  { name: 'lookup_rancher',         autonomy: 'auto',    targetType: 'Other', reversible: true },
+  { name: 'get_unmatched_buyers',   autonomy: 'auto',    targetType: 'Other', reversible: true },
+
+  // Reversible writes — 'auto' is safe because audit log captures previous state
+  { name: 'add_note_to_consumer',   autonomy: 'auto',    targetType: 'Consumer', reversible: true },
+  { name: 'add_note_to_rancher',    autonomy: 'auto',    targetType: 'Rancher',  reversible: true },
+
+  // Eventual side-effect (email send) — 'confirm' until Phase 2 hardens drafting
+  { name: 'draft_email_for_consumer', autonomy: 'confirm', targetType: 'Consumer', reversible: false },
+
+  // Memory ops — 'auto', user-visible via /memory commands
+  { name: 'remember_fact',          autonomy: 'auto',    targetType: 'Other', reversible: true },
+  { name: 'recall_memories',        autonomy: 'auto',    targetType: 'Other', reversible: true },
+  { name: 'forget_memory',          autonomy: 'auto',    targetType: 'Other', reversible: true },
+];
 
 export async function runTool(name: string, input: any): Promise<any> {
   const impl = TOOL_IMPLS[name];

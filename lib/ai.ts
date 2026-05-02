@@ -89,6 +89,17 @@ async function callAnthropic(params: {
     throw new Error('No AI configured. Set GROQ_API_KEY (free) or ANTHROPIC_API_KEY in env vars.');
   }
 
+  // Prompt caching: mark the system prompt as cacheable. Anthropic returns
+  // ~90% input-token discount on cache hits within a 5-min TTL. Worth it for
+  // any system prompt > ~1k tokens that repeats across calls (audit cron,
+  // coaching cron, classification crons all hit this frequently). System
+  // prompts under 1024 tokens are below cache threshold and pass through
+  // unchanged at full cost — no harm in always marking them cacheable.
+  const systemBlocks =
+    params.system.length > 0
+      ? [{ type: 'text', text: params.system, cache_control: { type: 'ephemeral' } }]
+      : undefined;
+
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -99,7 +110,7 @@ async function callAnthropic(params: {
     body: JSON.stringify({
       model: params.model,
       max_tokens: params.maxTokens || 1024,
-      system: params.system,
+      system: systemBlocks,
       messages: [{ role: 'user', content: params.user }],
     }),
   });
@@ -241,6 +252,26 @@ async function callAnthropicWithTools(params: {
 
   const messages: any[] = [{ role: 'user', content: params.user }];
 
+  // Prompt caching for tool-use loop: system prompt + tool schemas are stable
+  // across iterations within the same conversation, so cache them. This is
+  // the biggest cost lever in BHC's AI usage — daily-digest, referral-chasup,
+  // and the upcoming close-detector all run multi-turn tool-use against the
+  // same large system+tools blob. Cache hits drop cost ~90% on the input
+  // tokens (system + tools).
+  const systemBlocks =
+    params.system.length > 0
+      ? [{ type: 'text', text: params.system, cache_control: { type: 'ephemeral' } }]
+      : undefined;
+  const toolsWithCache = REGISTERED_TOOLS.length
+    ? [
+        ...REGISTERED_TOOLS.slice(0, -1),
+        // Cache breakpoint on the LAST tool — this caches all tool definitions
+        // up to and including this one (Anthropic caches everything before
+        // the marker).
+        { ...REGISTERED_TOOLS[REGISTERED_TOOLS.length - 1], cache_control: { type: 'ephemeral' } },
+      ]
+    : REGISTERED_TOOLS;
+
   for (let i = 0; i < maxIterations; i++) {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -252,8 +283,8 @@ async function callAnthropicWithTools(params: {
       body: JSON.stringify({
         model,
         max_tokens: params.maxTokens || 2048,
-        system: params.system,
-        tools: REGISTERED_TOOLS,
+        system: systemBlocks,
+        tools: toolsWithCache,
         messages,
       }),
     });
