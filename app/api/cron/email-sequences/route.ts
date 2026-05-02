@@ -4,18 +4,13 @@ import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import {
-  sendSequenceEmail_BeefDay3,
-  sendSequenceEmail_BeefDay7,
-  sendSequenceEmail_CommunityDay7,
-  sendSequenceEmail_CommunityDay14,
-  sendIntroCheckInEmail,
-  sendMerchEmail,
-  sendNurtureWhy,
-  sendNurtureHow,
-  sendNurtureUrgency,
-  sendNurtureReferral,
   sendAbandonedRecoveryEmail,
   sendEmail,
+  sendFounderLetterWaiting,
+  sendMatchedDay4CheckIn,
+  sendCutsEducation,
+  sendClosedMonthlyLetter,
+  sendRepeatPurchaseAsk,
 } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
@@ -161,256 +156,235 @@ async function handler(request: Request) {
       });
     }
 
-    let beefDay3 = 0, beefDay7 = 0, community7 = 0, community14 = 0, introCheckin = 0,
-        nurture3 = 0, nurture10 = 0, nurtureMerch = 0, nurtureAffiliate = 0, errors = 0;
-    // Cap at 50 emails per run to avoid Resend rate limits and spam flags
+    // ── Buyer Stage state-machine driver (the rebuilt cron heart) ────────────
+    // Replaces the prior parallel nurture/segment/intro-checkin tangle. One
+    // pass over `approved`, branches by Buyer Stage, fires the stage-relative
+    // milestone email when it's due AND not already sent. Sequence Stage is
+    // reused as the per-stage progress marker (legacy values are ignored
+    // because new ones are stage-prefixed: WAITING_L1, READY_NUDGE,
+    // MATCHED_D4, CLOSED_CUTS, CLOSED_REPEAT, etc).
+    //
+    // Buyer Stage Updated At anchors days-in-stage. Buyers entered the system
+    // via the migration script all share the migration timestamp — gives a
+    // clean baseline so no one gets day-7 emails on day 0 of cutover.
+
+    const counters = {
+      waiting_l1: 0, waiting_l2: 0, waiting_monthly: 0,
+      ready_nudge: 0,
+      matched_d4: 0,
+      closed_cuts: 0, closed_monthly: 0, closed_repeat: 0,
+    };
+    let errors = 0;
     const MAX_EMAILS_PER_RUN = 50;
     let totalSent = 0;
-    // Track sends within this loop so we can sleep AFTER actual work (not
-    // after every iteration). The old `await sleep(250)` after every consumer
-    // meant 1260 × 250ms = 5+ minutes wasted on no-op iterations, blowing
-    // the maxDuration budget before doing real work. Now we only sleep when
-    // we actually fired an email.
     let sentBeforeIter = 0;
+
+    // Pre-compute: which buyers have a Closed Won referral (for CLOSED-purchased branch)
+    // and what's their rancher's name (for re-engagement copy)
+    const buyerClosedWonRancher = new Map<string, string>(); // consumerId -> rancherName
+    const buyerActiveRancher = new Map<string, string>();    // consumerId -> rancherName
+    {
+      const allRefs = await getAllRecords(TABLES.REFERRALS) as any[];
+      for (const ref of allRefs) {
+        const buyerIds = ref['Buyer'] || [];
+        if (!buyerIds.length) continue;
+        const bid = buyerIds[0];
+        const status = ref['Status'] || '';
+        const rancherName = ref['Suggested Rancher Name'] || 'your rancher';
+        if (status === 'Closed Won' && !buyerClosedWonRancher.has(bid)) {
+          buyerClosedWonRancher.set(bid, rancherName);
+        }
+        if (
+          (status === 'Intro Sent' || status === 'Rancher Contacted' ||
+           status === 'Negotiation' || status === 'Pending Approval') &&
+          !buyerActiveRancher.has(bid)
+        ) {
+          buyerActiveRancher.set(bid, rancherName);
+        }
+      }
+    }
 
     for (const consumer of approved) {
       if (totalSent >= MAX_EMAILS_PER_RUN) break;
       try {
         const email = consumer['Email'];
-        const firstName = (consumer['Full Name'] || '').split(' ')[0] || 'there';
-        const consumerId = consumer.id;
-        const segment = consumer['Segment'] || '';
-        const sequenceStage = consumer['Sequence Stage'] || 'none';
-
         if (!email) continue;
+        const consumerId = consumer.id;
+        const firstName = (consumer['Full Name'] || '').split(' ')[0] || 'there';
+        const stateLabel = consumer['State'] || 'your state';
+        const buyerStage = (consumer['Buyer Stage'] || '').toString();
+        const seqStage = (consumer['Sequence Stage'] || '').toString();
+        const stageEnteredRaw = consumer['Buyer Stage Updated At'];
+        if (!buyerStage || !stageEnteredRaw) continue; // not migrated yet — skip safely
+        const daysInStage = (now - new Date(stageEnteredRaw).getTime()) / DAY_MS;
 
-        // 24-hour email frequency gate — skip if we sent an automated email in the last 24 hours
+        // 24h frequency gate — never two automated emails to same buyer in 1 day
         const lastSentAt = consumer['Sequence Sent At'];
         if (lastSentAt && (now - new Date(lastSentAt).getTime()) < DAY_MS) continue;
 
-        const approvedAt = consumer['Approved At']
-          ? new Date(consumer['Approved At']).getTime()
-          : new Date(consumer.createdTime || 0).getTime(); // fallback to created time
+        let fired = false;
 
-        const daysSinceApproval = (now - approvedAt) / DAY_MS;
-        const loginUrl = makeLoginUrl(consumerId, email);
-
-        // ── Phase 1 vs Phase 2 determined per consumer by rancher availability ──
-        const consumerState = consumer['State'] || '';
-        const rancherAvailable = hasRancherAvailable(consumerState);
-
-        if (!rancherAvailable) {
-          // Day 3: Why buying direct matters
-          if (daysSinceApproval >= 3 && sequenceStage === 'none') {
-            await sendNurtureWhy({ firstName, email, loginUrl });
+        if (buyerStage === 'WAITING') {
+          // Letter 1 at Day 7
+          if (daysInStage >= 7 && !seqStage.startsWith('WAITING_')) {
+            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 1 });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'nurture_why_sent',
+              'Sequence Stage': 'WAITING_L1',
               'Sequence Sent At': new Date().toISOString(),
             });
-            nurture3++; totalSent++;
+            counters.waiting_l1++; fired = true;
           }
-
-          // Day 7: How buying a half cow actually works
-          if (daysSinceApproval >= 7 && sequenceStage === 'nurture_why_sent') {
-            await sendNurtureHow({ firstName, email, loginUrl });
+          // Letter 2 at Day 30
+          else if (daysInStage >= 30 && seqStage === 'WAITING_L1') {
+            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 2 });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'nurture_how_sent',
+              'Sequence Stage': 'WAITING_L2',
               'Sequence Sent At': new Date().toISOString(),
             });
-            nurture10++; totalSent++;
+            counters.waiting_l2++; fired = true;
           }
-
-          // Day 14: Processing dates fill up — soft urgency
-          if (daysSinceApproval >= 14 && sequenceStage === 'nurture_how_sent') {
-            await sendNurtureUrgency({ firstName, email, loginUrl });
-            await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'nurture_urgency_sent',
-              'Sequence Sent At': new Date().toISOString(),
-            });
-            nurtureMerch++; totalSent++;
-          }
-
-          // Day 21: Merch email — wear the mission
-          if (daysSinceApproval >= 21 && sequenceStage === 'nurture_urgency_sent') {
-            await sendMerchEmail({ firstName, email });
-            await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'nurture_merch_sent',
-              'Sequence Sent At': new Date().toISOString(),
-            });
-            nurtureMerch++; totalSent++;
-          }
-
-          // Day 30: Referral ask — know someone who'd love this?
-          if (daysSinceApproval >= 30 && sequenceStage === 'nurture_merch_sent') {
-            const referralLink = `${SITE_URL}/access`;
-            await sendNurtureReferral({ firstName, email, referralLink, loginUrl });
-            await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'nurture_referral_sent',
-              'Sequence Sent At': new Date().toISOString(),
-            });
-            nurtureAffiliate++; totalSent++;
-          }
-        }
-
-        // ── Phase 2: Rancher available — run closing sequences ────────────────
-
-        if (rancherAvailable) {
-
-        // ── Beef Buyer sequences ──────────────────────────────────────────
-
-        if (segment === 'Beef Buyer') {
-          // Day 3+: No referral yet, haven't sent day3 email
-          if (daysSinceApproval >= 3 && sequenceStage === 'none') {
-            const noReferral = !consumer['Referral Status'] ||
-              consumer['Referral Status'] === 'Unmatched' ||
-              consumer['Referral Status'] === 'Waitlisted';
-
-            if (noReferral) {
-              await sendSequenceEmail_BeefDay3({
-                firstName,
-                email,
-                state: consumer['State'] || 'your area',
-                loginUrl,
-              });
+          // Letters 3+ rolling monthly: Day 60, 90, 120, ...
+          else if (seqStage.startsWith('WAITING_L')) {
+            const lastN = parseInt(seqStage.replace('WAITING_L', ''), 10) || 1;
+            const expectedDays = (lastN + 1 === 3 ? 60 : 30 * (lastN + 1));
+            if (daysInStage >= expectedDays) {
+              await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: lastN + 1 });
               await updateRecord(TABLES.CONSUMERS, consumerId, {
-                'Sequence Stage': 'day3_sent',
+                'Sequence Stage': `WAITING_L${lastN + 1}`,
                 'Sequence Sent At': new Date().toISOString(),
               });
-              beefDay3++; totalSent++;
+              counters.waiting_monthly++; fired = true;
             }
           }
+        }
 
-          // Day 7+: Follow-up on rancher introduction
-          if (daysSinceApproval >= 7 && sequenceStage === 'day3_sent') {
-            // Use the cached referrals map — was re-fetching all referrals
-            // from Airtable on every Day-7-eligible consumer (the timeout
-            // cause). Lookup is O(1) now.
-            const activeReferral = referralsByBuyer.get(consumerId);
-            const rancherName = activeReferral?.['Suggested Rancher Name'] || 'your rancher';
-
-            await sendSequenceEmail_BeefDay7({ firstName, email, rancherName, loginUrl });
+        else if (buyerStage === 'READY') {
+          // Day 7 last-call nudge (uses existing rancher-launch nudge template — same
+          // single-CTA YES button mechanic, fires once per READY tenure)
+          if (daysInStage >= 7 && seqStage !== 'READY_NUDGE') {
+            const rancherName = buyerActiveRancher.get(consumerId) || 'a rancher in your area';
+            const engageToken = jwt.sign({ type: 'warmup-engage', consumerId }, JWT_SECRET, { expiresIn: '30d' });
+            const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
+            // Nudge template — same shape as sendRancherLaunchWarmupNudge but inline
+            // here so we don't have to import yet another email function. Kept short.
+            await sendEmail({
+              to: email,
+              subject: `last call — ${rancherName} is open in ${stateLabel}`,
+              html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:36px;border:1px solid #A7A29A;background:#fff;line-height:1.7;">
+                <p>Hey ${firstName},</p>
+                <p>I introduced you to <strong>${rancherName}</strong> last week — didn't hear back, so this is my last nudge.</p>
+                <p><strong>Are you ready to buy in the next 1–2 months?</strong> If yes, click below and I'll send their full info. If not, I'll drop you off the active list and check back when timing fits.</p>
+                <p style="text-align:center;margin:28px 0;"><a href="${engageUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;">Yes — Ready to Buy</a></p>
+                <p style="font-size:12px;color:#A7A29A;">— Ben</p>
+              </div>`,
+            });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'day7_sent',
+              'Sequence Stage': 'READY_NUDGE',
               'Sequence Sent At': new Date().toISOString(),
             });
-            beefDay7++; totalSent++;
+            counters.ready_nudge++; fired = true;
           }
         }
 
-        // ── Community sequences ───────────────────────────────────────────
-
-        if (segment === 'Community') {
-          const createdAt = new Date(consumer['Created'] || consumer.createdTime || 0).getTime();
-          const daysSinceCreation = (now - createdAt) / DAY_MS;
-
-          // Day 7+: Educational content
-          if (daysSinceCreation >= 7 && sequenceStage === 'none') {
-            await sendSequenceEmail_CommunityDay7({ firstName, email, loginUrl });
+        else if (buyerStage === 'MATCHED') {
+          // Day 4 check-in
+          if (daysInStage >= 4 && seqStage !== 'MATCHED_D4') {
+            const rancherName = buyerActiveRancher.get(consumerId) || 'your rancher';
+            await sendMatchedDay4CheckIn({ firstName, email, rancherName });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'community_7d_sent',
+              'Sequence Stage': 'MATCHED_D4',
               'Sequence Sent At': new Date().toISOString(),
             });
-            community7++; totalSent++;
-          }
-
-          // Day 14+: Upgrade prompt
-          if (daysSinceCreation >= 14 && sequenceStage === 'community_7d_sent') {
-            const upgradeUrl = `${SITE_URL}/member`;
-            await sendSequenceEmail_CommunityDay14({ firstName, email, upgradeUrl, loginUrl });
-            await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'community_14d_sent',
-              'Sequence Sent At': new Date().toISOString(),
-            });
-            community14++; totalSent++;
+            counters.matched_d4++; fired = true;
           }
         }
 
-        } // end if (rancherAvailable)
+        else if (buyerStage === 'CLOSED') {
+          // Only run post-purchase sequence for buyers who actually bought —
+          // CLOSED also includes suppressed/non-responsive (no further outreach).
+          const purchased = buyerClosedWonRancher.has(consumerId);
+          if (!purchased) continue;
+          const rancherName = buyerClosedWonRancher.get(consumerId) || 'your rancher';
+          const orderType = consumer['Order Type'] || 'Not Sure';
 
+          // Day 14 cuts education (Day 0 fires from the close-handler event,
+          // not from this cron — see app/api/rancher/referrals/[id]/route.ts)
+          if (daysInStage >= 14 && seqStage !== 'CLOSED_CUTS' && !seqStage.startsWith('CLOSED_M') && seqStage !== 'CLOSED_REPEAT') {
+            await sendCutsEducation({ firstName, email, orderType });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'CLOSED_CUTS',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            counters.closed_cuts++; fired = true;
+          }
+          // Monthly letters at Day 60, 90, 120 (months 2, 3, 4 post-purchase)
+          else if (seqStage === 'CLOSED_CUTS' && daysInStage >= 60) {
+            await sendClosedMonthlyLetter({ firstName, email, monthNumber: 2 });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'CLOSED_M2',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            counters.closed_monthly++; fired = true;
+          }
+          else if (seqStage === 'CLOSED_M2' && daysInStage >= 90) {
+            await sendClosedMonthlyLetter({ firstName, email, monthNumber: 3 });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'CLOSED_M3',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            counters.closed_monthly++; fired = true;
+          }
+          else if (seqStage === 'CLOSED_M3' && daysInStage >= 120) {
+            await sendClosedMonthlyLetter({ firstName, email, monthNumber: 4 });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'CLOSED_M4',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            counters.closed_monthly++; fired = true;
+          }
+          // Month 5 re-engagement ask
+          else if ((seqStage === 'CLOSED_M4' || seqStage === 'CLOSED_M3') && daysInStage >= 150) {
+            await sendRepeatPurchaseAsk({ firstName, email, rancherName });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'CLOSED_REPEAT',
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            counters.closed_repeat++; fired = true;
+          }
+        }
+
+        if (fired) totalSent++;
       } catch (err: any) {
-        console.error(`Sequence error for consumer ${consumer.id}:`, err.message);
+        console.error(`Buyer-stage error for consumer ${consumer.id}:`, err.message);
         errors++;
       }
-
-      // Only pace when we ACTUALLY sent something — Airtable rate limit
-      // applies to writes, not iterations. No-op consumers cost ~0ms so we
-      // can iterate the full 1200+ list quickly looking for who needs an
-      // email, then pace 250ms between actual sends.
+      // Pace only after actual sends — empty iterations are ~free
       if (totalSent > sentBeforeIter) {
         sentBeforeIter = totalSent;
         await sleep(250);
       }
     }
 
-    // ── Intro check-in: 3 days after Intro Sent At ────────────────────────
-    // Query referrals that are in "Intro Sent" status with Intro Sent At > 3 days ago
-    try {
-      const introReferrals = await getAllRecords(
-        TABLES.REFERRALS,
-        '{Status} = "Intro Sent"'
-      ) as any[];
-
-      for (const referral of introReferrals) {
-        try {
-          const introSentAt = referral['Intro Sent At'];
-          if (!introSentAt) continue;
-
-          const daysSinceIntro = (now - new Date(introSentAt).getTime()) / DAY_MS;
-          if (daysSinceIntro < 3) continue;
-
-          // Find the consumer
-          const consumerIds = referral['Buyer'] || [];
-          if (!Array.isArray(consumerIds) || consumerIds.length === 0) continue;
-          const consumerId = consumerIds[0];
-
-          // Find consumer in approved list
-          const consumer = approved.find(c => c.id === consumerId);
-          if (!consumer) continue;
-
-          const stage = consumer['Sequence Stage'] || 'none';
-          if (stage === 'intro_checkin_sent') continue;
-
-          const email = consumer['Email'];
-          if (!email) continue;
-
-          const firstName = (consumer['Full Name'] || '').split(' ')[0] || 'there';
-          const loginUrl = makeLoginUrl(consumerId, email);
-
-          // Get rancher contact info
-          const rancherName = referral['Suggested Rancher Name'] || 'your rancher';
-          const rancherEmail = referral['Rancher Email'] || '';
-          const rancherPhone = referral['Rancher Phone'] || '';
-
-          // Pass referralId so any reply lands in the inbound webhook
-          await sendIntroCheckInEmail({ firstName, email, rancherName, rancherEmail, rancherPhone, loginUrl, referralId: referral.id });
-          await updateRecord(TABLES.CONSUMERS, consumerId, {
-            'Sequence Stage': 'intro_checkin_sent',
-            'Sequence Sent At': new Date().toISOString(),
-          });
-          introCheckin++; totalSent++;
-        } catch (err: any) {
-          console.error(`Intro check-in error for referral ${referral.id}:`, err.message);
-          errors++;
-        }
-      }
-    } catch (err: any) {
-      console.error('Intro check-in query error:', err.message);
-    }
-
-    const total = beefDay3 + beefDay7 + community7 + community14 + introCheckin + nurture3 + nurture10 + nurtureMerch + nurtureAffiliate;
+    const total = counters.waiting_l1 + counters.waiting_l2 + counters.waiting_monthly +
+      counters.ready_nudge + counters.matched_d4 +
+      counters.closed_cuts + counters.closed_monthly + counters.closed_repeat;
 
     if (total > 0) {
-      await sendTelegramUpdate(
-        `📧 <b>Email Sequences</b>\n\n✅ ${total} email${total > 1 ? 's' : ''} sent\n` +
-        (nurture3 + nurture10 + nurtureMerch + nurtureAffiliate > 0
-          ? `🌱 Nurture: day-3 ${nurture3} | day-10 ${nurture10} | merch ${nurtureMerch} | affiliate ${nurtureAffiliate}\n`
-          : '') +
-        (beefDay3 + beefDay7 + community7 + community14 > 0
-          ? `🥩 Closing: beef d3 ${beefDay3} | d7 ${beefDay7} | community d7 ${community7} | d14 ${community14}\n`
-          : '') +
-        (introCheckin > 0 ? `🔔 Intro check-ins: ${introCheckin}\n` : '') +
-        (errors > 0 ? `⚠️ ${errors} errors` : '')
-      );
+      const lines = [
+        `📧 <b>Email Sequences</b>`,
+        ``,
+        `✅ ${total} email${total > 1 ? 's' : ''} sent`,
+      ];
+      if (counters.waiting_l1 + counters.waiting_l2 + counters.waiting_monthly > 0) {
+        lines.push(`🌱 WAITING: L1 ${counters.waiting_l1} · L2 ${counters.waiting_l2} · monthly ${counters.waiting_monthly}`);
+      }
+      if (counters.ready_nudge > 0) lines.push(`👋 READY nudge: ${counters.ready_nudge}`);
+      if (counters.matched_d4 > 0) lines.push(`🤝 MATCHED check-in: ${counters.matched_d4}`);
+      if (counters.closed_cuts + counters.closed_monthly + counters.closed_repeat > 0) {
+        lines.push(`💰 CLOSED: cuts ${counters.closed_cuts} · monthly ${counters.closed_monthly} · repeat ${counters.closed_repeat}`);
+      }
+      if (errors > 0) lines.push(`⚠️ ${errors} errors`);
+      await sendTelegramUpdate(lines.join('\n'));
     }
 
     // ── Rancher agreement reminder drip ─────────────────────────────────────
@@ -493,7 +467,14 @@ async function handler(request: Request) {
       await sendTelegramUpdate(`📋 <b>Rancher Agreement Reminders</b>: ${rancherReminders} sent`);
     }
 
-    return NextResponse.json({ success: true, sent: total + rancherReminders + abandonedRecovered, abandonedRecovered, nurture3, nurture10, nurtureMerch, nurtureAffiliate, beefDay3, beefDay7, community7, community14, introCheckin, rancherReminders, errors });
+    return NextResponse.json({
+      success: true,
+      sent: total + rancherReminders + abandonedRecovered,
+      abandonedRecovered,
+      stageDriven: counters,
+      rancherReminders,
+      errors,
+    });
   } catch (error: any) {
     console.error('Email sequences cron error:', error);
     await sendTelegramUpdate(`⚠️ Email sequences cron failed: ${error.message}`).catch(() => {});

@@ -115,130 +115,33 @@ export default function FullHomepage() {
 
       <Divider />
 
-      {/* WHO THIS IS FOR - Crystal Clear Paths */}
+      {/* BUYER-PRIMARY CTA — pre-rebuild this was a 4-card "pick your path" grid
+          (buyer + rancher + land + brand) which forced visitors to self-segment
+          before doing anything. The buyer card was 1 of 4 equal-size, which made
+          our highest-volume audience indistinguishable from non-buyer audiences
+          on the homepage. Demoted rancher / land / brand to a single discreet
+          partner link below — they still have flows at /partner, just not on
+          the buyer's primary surface. */}
       <section className="py-20">
         <Container>
-          <div className="text-center mb-16">
+          <div className="max-w-3xl mx-auto text-center">
             <h2 className="font-serif text-3xl md:text-4xl mb-4">
-              Pick Your Path
+              Source beef directly from a real ranch
             </h2>
-            <p className="text-lg text-saddle">
-              Choose what describes you best
+            <p className="text-lg text-saddle mb-10">
+              We connect you with a verified rancher in your state — quarter, half, or whole cow,
+              processed and packaged the way local families have been doing it for generations.
+              {totalMembers ? ` Join ${totalMembers.toLocaleString()}+ members already sourcing direct.` : ''}
             </p>
-          </div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-7xl mx-auto">
-            {/* PATH 1: CONSUMERS / BUYERS */}
-            <div className="border-2 border-charcoal p-8 space-y-6 hover:bg-white transition-colors">
-              <div className="text-center">
-                <div className="text-5xl mb-4">🥩</div>
-                <h3 className="font-serif text-2xl mb-2">I Want to Source Beef</h3>
-                <p className="text-sm text-saddle mb-6">
-                  Join The HERD and source directly from verified American ranchers
-                </p>
-              </div>
-              <div className="space-y-3 text-sm">
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Verified ranchers in your state</span>
-                </p>
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Personal introductions</span>
-                </p>
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Join {totalMembers ? `${totalMembers.toLocaleString()}+` : 'hundreds of'} members sourcing direct</span>
-                </p>
-              </div>
-              <Button href="/access" className="w-full">
-                Join The HERD
-              </Button>
-            </div>
-
-            {/* PATH 2: RANCHERS */}
-            <div className="border-2 border-charcoal p-8 space-y-6 hover:bg-white transition-colors">
-              <div className="text-center">
-                <div className="text-5xl mb-4">🤠</div>
-                <h3 className="font-serif text-2xl mb-2">I'm a Rancher</h3>
-                <p className="text-sm text-saddle mb-6">
-                  Join American ranchers serving The HERD
-                </p>
-              </div>
-              <div className="space-y-3 text-sm">
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Verified buyers only</span>
-                </p>
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>In-person ranch certification</span>
-                </p>
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Direct sales, no spam</span>
-                </p>
-              </div>
-              <Button href="/partner" className="w-full">
-                Apply to Join Network
-              </Button>
-            </div>
-
-            {/* PATH 3: LAND SELLERS */}
-            <div className="border-2 border-charcoal p-8 space-y-6 hover:bg-white transition-colors">
-              <div className="text-center">
-                <div className="text-5xl mb-4">🏞️</div>
-                <h3 className="font-serif text-2xl mb-2">I Have Land</h3>
-                <p className="text-sm text-saddle mb-6">
-                  Selling ranch property, hunting land, or acreage privately
-                </p>
-              </div>
-              <div className="space-y-3 text-sm">
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Serious buyers only</span>
-                </p>
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>No public listing spam</span>
-                </p>
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Direct contact info shared</span>
-                </p>
-              </div>
-              <Button href="/partner" className="w-full">
-                List Land Deal
-              </Button>
-            </div>
-
-            {/* PATH 4: BRANDS */}
-            <div className="border-2 border-charcoal p-8 space-y-6 hover:bg-white transition-colors">
-              <div className="text-center">
-                <div className="text-5xl mb-4">🛠️</div>
-                <h3 className="font-serif text-2xl mb-2">I'm a Brand</h3>
-                <p className="text-sm text-saddle mb-6">
-                  Western/ranch brand wanting to reach engaged members
-                </p>
-              </div>
-              <div className="space-y-3 text-sm">
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Promote to members</span>
-                </p>
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Offer exclusive discounts</span>
-                </p>
-                <p className="flex items-start">
-                  <span className="mr-2">✓</span>
-                  <span>Aligned audience</span>
-          </p>
-        </div>
-              <Button href="/partner" className="w-full">
-                Partner With Us
-              </Button>
-            </div>
+            <Button href="/access" className="text-base">
+              Get Access to the Network
+            </Button>
+            <p className="text-xs text-saddle mt-8">
+              Are you a rancher, brand, or have land to list?{' '}
+              <a href="/partner" className="underline hover:text-charcoal transition-colors">
+                Partner with us instead
+              </a>
+            </p>
           </div>
         </Container>
       </section>

@@ -1,11 +1,11 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Join The HERD',
-  description: 'Apply to join BuyHalfCow — a private, approval-only network for sourcing ranch beef direct from verified American ranchers.',
+  title: 'Get Access — BuyHalfCow',
+  description: 'Apply for access to BuyHalfCow — source ranch beef direct from a verified rancher in your state.',
   openGraph: {
-    title: 'Join The HERD — BuyHalfCow',
-    description: 'Apply to join BuyHalfCow — source ranch beef direct from verified American ranchers.',
+    title: 'Get Access — BuyHalfCow',
+    description: 'Apply for access to BuyHalfCow — source ranch beef direct from a verified rancher in your state.',
   },
 };
 

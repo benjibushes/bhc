@@ -294,12 +294,40 @@ export async function PATCH(
           if (buyerId) {
             try {
               // Closed Won: mark as customer + reset miss counter (they bought)
+              // + transition Buyer Stage to CLOSED (the post-purchase content track).
+              // Sequence Stage RESET to '' so the cron's Day 14 cuts-education check
+              // fires (it gates on `seqStage !== 'CLOSED_CUTS'`, but we want the new
+              // post-purchase sequence to start from a clean slate, not interleave
+              // with whatever pre-purchase state the buyer left).
               await updateRecord(TABLES.CONSUMERS, buyerId, {
                 'Referral Status': 'Closed Won',
-                'Sequence Stage': 'purchased',
+                'Sequence Stage': '',
                 'Buyer Health': 'Closed Won',
                 'Missed Responses': 0,
+                'Buyer Stage': 'CLOSED',
+                'Buyer Stage Updated At': new Date().toISOString(),
               });
+
+              // Fire Day 0 post-purchase welcome immediately. Day 14 cuts education,
+              // Day 60+ monthly letters, Month 5 re-engagement all fire from the
+              // email-sequences cron driven by Buyer Stage Updated At.
+              try {
+                const buyer = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+                const buyerEmail = buyer['Email'] || '';
+                const buyerFullName = buyer['Full Name'] || '';
+                const orderType = buyer['Order Type'] || referral['Order Type'] || 'Not Sure';
+                if (buyerEmail) {
+                  const { sendPostPurchaseWelcome } = await import('@/lib/email');
+                  await sendPostPurchaseWelcome({
+                    firstName: (buyerFullName || '').split(' ')[0] || 'there',
+                    email: buyerEmail,
+                    rancherName: decoded.name,
+                    orderType,
+                  });
+                }
+              } catch (e) {
+                console.error('Post-purchase welcome send error:', e);
+              }
             } catch (e) {
               console.error('Closed Won buyer status sync error:', e);
             }

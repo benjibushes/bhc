@@ -101,7 +101,7 @@ export async function POST(request: Request) {
             <a href="${loginUrl}" class="button">Log In to Your Dashboard</a>
             <p style="color: #6B4F3F; font-size: 14px;">This link works for 7 days. If you didn't request this, you can ignore this email.</p>
             <div class="footer">
-              <p>BuyHalfCow — Private Network for American Ranch Beef</p>
+              <p>BuyHalfCow</p>
             </div>
           </div>
         </body>

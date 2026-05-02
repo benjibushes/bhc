@@ -39,10 +39,17 @@ export async function GET(request: Request) {
       // Setting Ready to Buy = true here. The warmup/ready-to-buy email's
       // CTA copy explicitly asks "Ready to buy in the next 1-2 months?" —
       // clicking YES is affirmation of both engagement AND purchase intent.
+      //
+      // Buyer Stage transition: WAITING/READY → MATCHED. matching/suggest
+      // below fires the actual referral. If matching fails (no rancher),
+      // the post-match catch lower in this handler reverts the stage to
+      // READY since the YES click implies they want to be matched ASAP.
       await updateRecord(TABLES.CONSUMERS, payload.consumerId, {
         'Warmup Engaged At': new Date().toISOString(),
         'Warmup Stage': 'engaged',
         'Ready to Buy': true,
+        'Buyer Stage': 'MATCHED',
+        'Buyer Stage Updated At': new Date().toISOString(),
       });
     }
 
@@ -58,6 +65,8 @@ export async function GET(request: Request) {
     // who engaged when no rancher was live (or rancher was at capacity)
     // could click again later and have nothing happen. Re-attempting is
     // safe because matching/suggest is idempotent.
+    let matchedRancherName = '';
+    let matchedRancherState = '';
     if (consumer['Email'] && consumer['State']) {
       try {
         const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
@@ -78,16 +87,24 @@ export async function GET(request: Request) {
             intentClassification: consumer['Intent Classification'] || '',
             notes: consumer['Notes'] || '',
             // Hot-lead bypass: warmup-engaged buyers can route to over-cap
-            // ranchers (the ship from earlier today). Matching/suggest will
-            // fire a Telegram alert if the bypass triggers.
+            // ranchers. Matching/suggest will fire a Telegram alert if the
+            // bypass triggers.
             warmupEngaged: true,
           }),
         });
-        // Fire-and-forget: even if matching fails (no rancher in state, etc.),
-        // the buyer is already flagged Ready to Buy. The next batch-approve
-        // run + future rancher go-live will pick them up. Don't block the
-        // redirect on a matching failure.
-        if (!matchRes.ok) {
+        if (matchRes.ok) {
+          // Capture rancher info for the ceremonial handoff page redirect.
+          // Even if matching returned alreadyActive (idempotent re-click), we
+          // pull the rancher name from the response so the buyer sees the
+          // right handoff content.
+          try {
+            const j = await matchRes.json();
+            if (j.suggestedRancher?.name) {
+              matchedRancherName = j.suggestedRancher.name;
+              matchedRancherState = j.suggestedRancher.state || '';
+            }
+          } catch { /* non-fatal: redirect to /member fallback below */ }
+        } else {
           console.warn(`Immediate route attempt for ${payload.consumerId} returned ${matchRes.status} — buyer flagged Ready to Buy, will route on next opportunity`);
         }
       } catch (e: any) {
@@ -118,7 +135,13 @@ export async function GET(request: Request) {
       { expiresIn: '30d' }
     );
 
-    const response = NextResponse.redirect(`${SITE_URL}/member?warmup=engaged`);
+    // Ceremonial handoff page — shows rancher name + "expect a call" copy
+    // when matching succeeded. Fallback to /member dashboard when no rancher
+    // was matched (still gives the buyer a logged-in destination).
+    const handoffUrl = matchedRancherName
+      ? `${SITE_URL}/matched?rancher=${encodeURIComponent(matchedRancherName)}&state=${encodeURIComponent(matchedRancherState)}`
+      : `${SITE_URL}/member?warmup=engaged`;
+    const response = NextResponse.redirect(handoffUrl);
     response.cookies.set('bhc-member-auth', sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',

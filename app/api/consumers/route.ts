@@ -16,7 +16,7 @@ async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
     return false;
   }
 }
-import { sendConsumerConfirmation, sendConsumerApproval, sendAdminAlert, sendReadyToBuyPrompt, sendWaitlistEmail } from '@/lib/email';
+import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy } from '@/lib/email';
 import { normalizeState } from '@/lib/states';
 import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
@@ -252,129 +252,116 @@ export async function POST(request: Request) {
       record = await createRecord(TABLES.CONSUMERS, consumerFields);
     }
 
-    // Send the buyer their confirmation/approval email (must complete before responding)
+    // ── REBUILT POST-APPROVAL FLOW (state-machine driven) ────────────────────
+    // Old flow sent 2 emails on approval (sendConsumerApproval + then RTB or
+    // Waitlist) — collapsed into ONE founder-voice email (sendWelcomeAndReadyToBuy)
+    // that branches by rancher-availability. Buyer Stage transitions:
+    //   no rancher in state            → WAITING  (founder letters via cron)
+    //   rancher in state, auto-routed  → MATCHED  (matching/suggest fired intro)
+    //   rancher in state, not routed   → READY    (welcome includes YES button)
+    //   not approved (rare path)       → NEW      (sendConsumerConfirmation only)
     if (status === 'Approved') {
-      const token = jwt.sign(
-        { type: 'member-login', consumerId: record.id, email: email.trim().toLowerCase() },
-        JWT_SECRET,
-        { expiresIn: '7d' }
-      );
-      const loginUrl = `${SITE_URL}/member/verify?token=${token}`;
-      await sendConsumerApproval({ firstName, email, loginUrl, segment: consumerSegment });
-
-      // Ready-to-Buy gate vs Waitlist:
-      //   • If a verified rancher already serves the buyer's state → send the
-      //     "ready to buy in 1-2 months?" prompt. YES click triggers immediate
-      //     match.
-      //   • If NO rancher serves the buyer's state yet → send the waitlist
-      //     email instead. Asking "ready to buy?" with no rancher to connect
-      //     them to is a broken promise. They'll get the warmup automatically
-      //     the morning a rancher in their state goes live.
-      //   • Skip both for rancher-page leads (campaign starts with rancher-);
-      //     they already pressed "Buy" on a specific rancher's page and
-      //     route immediately below.
       const isRancherPageLead = (campaign || '').startsWith('rancher-');
-      if (consumerSegment === 'Beef Buyer' && !isRancherPageLead) {
-        try {
-          // Check rancher availability for the buyer's state via the SHARED
-          // eligibility helper (lib/rancherEligibility.ts). Previously this
-          // file inlined a stricter filter than the matching engine — Page
-          // Live was required here but not there, silently sending CA/TN/OR
-          // buyers to waitlist while their in-state rancher was actively
-          // taking referrals. Single source of truth now keeps them aligned.
-          const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
-          const hasInStateRancher = hasOperationalRancherForState(allRanchers, state);
+      let buyerStage: 'WAITING' | 'READY' | 'MATCHED' = 'WAITING';
 
-          if (hasInStateRancher) {
-            // QUALIFIED + IN-STATE = AUTO-ROUTE.
-            // The "quality over quantity" click gate was added to block low-
-            // intent OLD buyers from being bulk-routed without raising their
-            // hand. But a fresh signup with a complete form (Beef Buyer +
-            // Order Type + Budget) AND a live rancher in their state has
-            // already raised their hand — the form completion IS the consent.
-            //
-            // QUALITY GATE (tightened to combat sub-budget reputation damage):
-            //   • Order Type must be Quarter/Half/Whole (no "Not Sure")
-            //   • Budget must be a real bracket (no "Just exploring", no "Unsure")
-            //   • Phone provided (strongest commitment signal — ranchers convert
-            //     by calling; phoneless leads are 3x less likely to close)
-            //   • Timing in {Within 30 days, 1-3 months} (3-6mo / exploring → nurture)
-            //   • Intent score >= 60 (was 40 — old threshold let casuals through
-            //     and they bashed the platform when they saw real prices)
-            //
-            // Buyers who fail the gate aren't blocked — they get the Ready-
-            // to-Buy prompt instead, and can opt in via click later.
-            const isJustExploring = /just exploring/i.test(budgetRange || '') ||
-              /just exploring/i.test(timing || '');
-            const isFutureTiming = /3-6 months/i.test(timing || '');
-            const formIsQualified =
-              !!orderType && !!budgetRange &&
-              !/unsure|not sure/i.test(orderType) &&
-              !/unsure/i.test(budgetRange) &&
-              !isJustExploring &&
-              !isFutureTiming &&
-              !!phone &&
-              serverIntentScore >= 60;
+      try {
+        const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
+        const hasInStateRancher = hasOperationalRancherForState(allRanchers, state);
 
-            let autoRouted = false;
-            if (formIsQualified) {
-              try {
-                const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
-                  },
-                  body: JSON.stringify({
-                    buyerState: state,
-                    buyerId: record.id,
-                    buyerName: fullName.trim(),
-                    buyerEmail: email.trim().toLowerCase(),
-                    buyerPhone: phone || '',
-                    orderType: orderType || '',
-                    budgetRange: budgetRange || '',
-                    intentScore: serverIntentScore,
-                    intentClassification: serverIntentClassification,
-                    notes: notes || '',
-                    // Fresh signup is normal capacity (no hot-lead bypass).
-                    // If rancher's full, falls back to the RTB prompt below.
-                    warmupEngaged: false,
-                  }),
-                });
-                if (matchRes.ok) {
-                  const j = await matchRes.json();
-                  if (j.matchFound) autoRouted = true;
-                }
-              } catch (e: any) {
-                console.error('Signup auto-route failed:', e?.message);
-              }
-            }
+        // Beef-buyer auto-route attempt (only when rancher available + form qualified)
+        // Rancher-page-leads are routed in backgroundTasks below; skip here.
+        let autoRouted = false;
+        if (hasInStateRancher && consumerSegment === 'Beef Buyer' && !isRancherPageLead) {
+          // QUALITY GATE — protects rancher reputation; sub-budget leads bash the
+          // platform when they see real prices. Buyers who fail still get the
+          // welcome email (with YES button) and can opt in via click — not blocked.
+          const isJustExploring = /just exploring/i.test(budgetRange || '') ||
+            /just exploring/i.test(timing || '');
+          const isFutureTiming = /3-6 months/i.test(timing || '');
+          const formIsQualified =
+            !!orderType && !!budgetRange &&
+            !/unsure|not sure/i.test(orderType) &&
+            !/unsure/i.test(budgetRange) &&
+            !isJustExploring &&
+            !isFutureTiming &&
+            !!phone &&
+            serverIntentScore >= 60;
 
-            // Fallback: rancher full / not qualified → send the RTB prompt
-            // so they can click in for hot-lead bypass routing.
-            if (!autoRouted) {
-              const engageToken = jwt.sign(
-                { type: 'warmup-engage', consumerId: record.id },
-                JWT_SECRET,
-                { expiresIn: '60d' }
-              );
-              const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
-              await sendReadyToBuyPrompt({ firstName, email, state, engageUrl });
-            }
-          } else {
-            await sendWaitlistEmail({ firstName, email, state, loginUrl });
+          if (formIsQualified) {
             try {
-              await updateRecord(TABLES.CONSUMERS, record.id, {
-                'Sequence Stage': 'waitlisted',
-                'Sequence Sent At': new Date().toISOString(),
+              const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+                },
+                body: JSON.stringify({
+                  buyerState: state,
+                  buyerId: record.id,
+                  buyerName: fullName.trim(),
+                  buyerEmail: email.trim().toLowerCase(),
+                  buyerPhone: phone || '',
+                  orderType: orderType || '',
+                  budgetRange: budgetRange || '',
+                  intentScore: serverIntentScore,
+                  intentClassification: serverIntentClassification,
+                  notes: notes || '',
+                  warmupEngaged: false, // fresh signup is normal capacity
+                }),
               });
-            } catch { /* non-fatal */ }
+              if (matchRes.ok) {
+                const j = await matchRes.json();
+                if (j.matchFound) autoRouted = true;
+              }
+            } catch (e: any) {
+              console.error('Signup auto-route failed:', e?.message);
+            }
           }
-        } catch (e) {
-          console.error('Post-approval prompt/waitlist send error:', e);
         }
+
+        // Determine stage + send the appropriate single welcome email
+        if (autoRouted) {
+          // matching/suggest already sent the intro emails — no welcome needed.
+          // Buyer Stage = MATCHED.
+          buyerStage = 'MATCHED';
+        } else if (hasInStateRancher && !isRancherPageLead) {
+          // Rancher available, not auto-routed (form not qualified or rancher full).
+          // Send welcome with YES button — engageUrl drives the matching click later.
+          const engageToken = jwt.sign(
+            { type: 'warmup-engage', consumerId: record.id },
+            JWT_SECRET,
+            { expiresIn: '60d' }
+          );
+          const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
+          await sendWelcomeAndReadyToBuy({
+            firstName, email, state, rancherAvailable: true, engageUrl,
+          });
+          buyerStage = 'READY';
+        } else if (isRancherPageLead) {
+          // Rancher-page lead: matching fires in backgroundTasks below. We don't
+          // send a welcome email here — the rancher-page intro flow handles it.
+          // Default to MATCHED here on the assumption that backgroundTasks will
+          // succeed; if it doesn't, the buyer still has a record + we'll see
+          // the failure in the bg-task error log.
+          buyerStage = 'MATCHED';
+        } else {
+          // No rancher in state — waitlist with the founder-voice welcome
+          await sendWelcomeAndReadyToBuy({
+            firstName, email, state, rancherAvailable: false,
+          });
+          buyerStage = 'WAITING';
+        }
+
+        // Set Buyer Stage + Updated At — ONE write
+        await updateRecord(TABLES.CONSUMERS, record.id, {
+          'Buyer Stage': buyerStage,
+          'Buyer Stage Updated At': new Date().toISOString(),
+        });
+      } catch (e) {
+        console.error('Post-approval flow error:', e);
       }
     } else {
+      // status !== Approved → NEW state, application received but not yet approved
       await sendConsumerConfirmation({ firstName, email, state });
     }
 

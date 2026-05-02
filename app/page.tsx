@@ -1,13 +1,12 @@
-import { isMaintenanceMode } from '@/lib/maintenance';
 import FullHomepage from './components/FullHomepage';
-import WaitlistLanding from './components/WaitlistLanding';
 
-// Server component — picks the landing page based on MAINTENANCE_MODE env var.
-// Flip the env var in Vercel + redeploy to swap between waitlist capture and
-// the full marketing site. No code changes required to pause or resume.
+// Single homepage. The pre-rebuild version had a maintenance-mode fork that
+// rendered a separate <WaitlistLanding/> page when MAINTENANCE_MODE=true —
+// deleted in the strip pass because it was actively confusing buyers (said
+// nothing about beef) and only existed as an emergency holding page during
+// past outages. If we ever need to halt customer flow again, the cleaner
+// path is isMaintenanceMode() at the cron/endpoint layer (already wired) —
+// not a separate homepage that contradicts the brand.
 export default function Home() {
-  if (isMaintenanceMode()) {
-    return <WaitlistLanding />;
-  }
   return <FullHomepage />;
 }

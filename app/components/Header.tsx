@@ -110,7 +110,7 @@ export default function Header() {
                 onClick={() => setOpen(false)}
                 className="block py-2 text-sm font-medium text-charcoal"
               >
-                Join The HERD
+                Get Access
               </Link>
             </div>
           </div>

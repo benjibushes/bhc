@@ -451,9 +451,11 @@ export async function POST(request: Request) {
           'Intro Sent At': now,
         });
 
-        // Update consumer status
+        // Update consumer status + Buyer Stage transition to MATCHED
         await updateRecord(TABLES.CONSUMERS, buyerId, {
           'Referral Status': 'Intro Sent',
+          'Buyer Stage': 'MATCHED',
+          'Buyer Stage Updated At': new Date().toISOString(),
         });
 
         const rancherName = topMatch['Operator Name'] || topMatch['Ranch Name'] || '';
@@ -595,10 +597,15 @@ export async function POST(request: Request) {
         console.error('Error auto-approving match:', e);
       }
     } else {
-      // No match found — waitlist the buyer
+      // No match found — waitlist the buyer. Buyer Stage falls back to WAITING
+      // (no rancher available right now). The rancher-launch-warmup cron picks
+      // them back up the moment a rancher activates in their state and bumps
+      // them to READY.
       try {
         await updateRecord(TABLES.CONSUMERS, buyerId, {
           'Referral Status': 'Waitlisted',
+          'Buyer Stage': 'WAITING',
+          'Buyer Stage Updated At': new Date().toISOString(),
         });
       } catch (e) {
         console.error('Error updating consumer referral status:', e);

@@ -118,7 +118,17 @@ async function handler(request: Request) {
 
         // Approve ALL consumers — no intent gate
         const now = new Date().toISOString();
-        await updateRecord(TABLES.CONSUMERS, consumerId, { 'Status': 'Approved', 'Approved At': now });
+        // Default Buyer Stage to WAITING on approval — matching/suggest below
+        // overrides to MATCHED if it routes successfully, or keeps WAITING if no
+        // rancher available. Without this default, batch-approved buyers enter
+        // the system with empty Buyer Stage and the state-machine cron skips
+        // them. Safe default: every approved buyer has SOME stage assigned.
+        await updateRecord(TABLES.CONSUMERS, consumerId, {
+          'Status': 'Approved',
+          'Approved At': now,
+          'Buyer Stage': 'WAITING',
+          'Buyer Stage Updated At': now,
+        });
 
         // Generate login URL for all consumers with email
         const loginUrl = email ? `${SITE_URL}/member/verify?token=${jwt.sign(

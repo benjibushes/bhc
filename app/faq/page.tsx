@@ -16,7 +16,7 @@ export default function FAQPage() {
             </h1>
             <Divider />
             <p className="text-lg text-[#6B4F3F]">
-              Everything you need to know about The HERD
+              Everything you need to know about the network
             </p>
           </div>
 
@@ -156,14 +156,14 @@ export default function FAQPage() {
                 </p>
                 <ol className="list-decimal list-inside space-y-2 text-[#6B4F3F] leading-relaxed pl-4">
                   <li><strong className="text-[#0E0E0E]">Protect ranchers</strong> — Ranchers get bombarded by tire-kickers and time-wasters. I filter out non-serious buyers so ranchers only spend time on real opportunities.</li>
-                  <li><strong className="text-[#0E0E0E]">Maintain quality</strong> — This is a private community, not a public marketplace. Vetting ensures The HERD stays focused on real sourcing and quality relationships.</li>
+                  <li><strong className="text-[#0E0E0E]">Maintain quality</strong> — This is a private community, not a public marketplace. Vetting ensures the network stays focused on real sourcing and quality relationships.</li>
                 </ol>
               </div>
 
               <div className="space-y-4">
                 <h3 className="font-medium text-xl">Is there a membership fee?</h3>
                 <p className="text-[#6B4F3F] leading-relaxed">
-                  Not yet. Currently free while we grow The HERD.
+                  Not yet. Currently free while we grow the network.
                   We may introduce a small annual fee ($20-50/year) in the future to ensure serious members only.
                 </p>
               </div>
@@ -197,7 +197,7 @@ export default function FAQPage() {
                   <li><strong className="text-[#0E0E0E]">Reference checks</strong> — Past customers, industry connections</li>
                 </ul>
                 <p className="text-[#6B4F3F] leading-relaxed">
-                  Only certified ranchers appear in The HERD's member network. I stake my reputation on every ranch.
+                  Only certified ranchers appear in the network's member network. I stake my reputation on every ranch.
                 </p>
               </div>
 
@@ -331,7 +331,7 @@ export default function FAQPage() {
                 href="/access"
                 className="inline-block px-8 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors duration-300 font-medium tracking-wide uppercase text-sm border border-[#0E0E0E] text-center"
               >
-                Join The HERD
+                Join the network
               </Link>
               <Link 
                 href="/"
