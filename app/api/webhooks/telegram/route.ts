@@ -2118,6 +2118,145 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         }
       }
 
+      // ─── First-week founder approval gate (Project 2 — Onboarding Throttle) ──
+      // Wired by app/api/warmup/engage/route.ts. When a buyer clicks YES on
+      // a warmup email and the in-state rancher is still in their onboarding
+      // window (Trust Mode=false AND <5 onboarding intros), engage stages a
+      // pending-approval referral and posts a card with these buttons.
+      // Format: firstweek_<action>_<referralId>  where action ∈ {approve, hold, skip}
+      // - approve: Approval Status → approved, Status → Intro Sent, fire
+      //   matching/suggest so the rancher gets the standard intro email,
+      //   flip buyer to MATCHED.
+      // - hold:    Approval Status → held, stamp "Approval Hold Until" 7d
+      //   future (lightweight: we just edit the message + leave the row;
+      //   a future cron can re-surface). Buyer stays at READY/WAITING.
+      // - skip:    Approval Status → skipped, Status → Closed Lost. Buyer
+      //   reverts to WAITING. Future iteration: try next-best rancher.
+      else if (callbackData?.startsWith('firstweek_') && chatId && messageId) {
+        const parts = callbackData.split('_');
+        const action = parts[1];
+        const refId = parts.slice(2).join('_');
+        if (!refId) {
+          await answerCallbackQuery(queryId, 'Missing referral ID');
+        } else {
+          try {
+            const referral: any = await getRecordById(TABLES.REFERRALS, refId);
+            const buyerId = referral?.['Buyer']?.[0] || '';
+            const buyerName = referral?.['Buyer Name'] || '?';
+            const ranchName = referral?.['Suggested Rancher Name'] || 'rancher';
+
+            if (action === 'approve') {
+              await answerCallbackQuery(queryId, '✅ Approved — firing intro');
+              const suggestedRancherId = referral?.['Suggested Rancher']?.[0] || '';
+
+              // Flip buyer first so the immediate-route below sees MATCHED.
+              if (buyerId) {
+                try {
+                  await updateRecord(TABLES.CONSUMERS, buyerId, {
+                    'Buyer Stage': 'MATCHED',
+                    'Buyer Stage Updated At': new Date().toISOString(),
+                  });
+                } catch {}
+              }
+
+              // Flip the staged referral to Approval Status=approved. We
+              // leave Status as Pending Approval — matching/suggest is
+              // idempotent and will either reuse this row or create the
+              // canonical Intro Sent referral.
+              try {
+                await updateRecord(TABLES.REFERRALS, refId, {
+                  'Approval Status': 'approved',
+                });
+              } catch {}
+
+              // Fire matching/suggest — same path as warmup/engage's
+              // immediate-route block. This sends the rancher the intro
+              // email and the buyer the buyer-side intro notification.
+              if (buyerId) {
+                try {
+                  const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+                  if (buyer?.['Email'] && buyer?.['State']) {
+                    await fetch(`${SITE_URL}/api/matching/suggest`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        ...(INTERNAL_API_SECRET ? { 'x-internal-secret': INTERNAL_API_SECRET } : {}),
+                      },
+                      body: JSON.stringify({
+                        buyerId,
+                        buyerState: buyer['State'],
+                        buyerName: buyer['Full Name'] || '',
+                        buyerEmail: buyer['Email'],
+                        buyerPhone: buyer['Phone'] || '',
+                        orderType: buyer['Order Type'] || '',
+                        budgetRange: buyer['Budget'] || buyer['Budget Range'] || '',
+                        intentScore: buyer['Intent Score'] || 0,
+                        intentClassification: buyer['Intent Classification'] || '',
+                        notes: buyer['Notes'] || '',
+                        warmupEngaged: true,
+                        // Hint: prefer the rancher we already staged
+                        preferredRancherId: suggestedRancherId,
+                      }),
+                    });
+                  }
+                } catch (e: any) {
+                  console.error('[firstweek approve] matching/suggest failed:', e?.message);
+                }
+              }
+
+              await editTelegramMessage(
+                chatId,
+                messageId,
+                `✅ <b>Approved</b> — ${buyerName} → ${ranchName}\n\nIntro fired. Rancher will reach out within 24-48h.`
+              );
+            } else if (action === 'hold') {
+              await answerCallbackQuery(queryId, '⏸️ Held — re-queue 7d');
+              try {
+                const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+                await updateRecord(TABLES.REFERRALS, refId, {
+                  'Approval Status': 'held',
+                  // Stamp Approved At as the hold-until pointer. Cheap
+                  // re-surface signal without adding a new field.
+                  'Approved At': future,
+                });
+              } catch {}
+              await editTelegramMessage(
+                chatId,
+                messageId,
+                `⏸️ <b>Held 7 days</b> — ${buyerName} → ${ranchName}\n\nReferral parked. I'll keep the buyer warm and you can revisit next week.`
+              );
+            } else if (action === 'skip') {
+              await answerCallbackQuery(queryId, '⏭️ Skipped');
+              try {
+                await updateRecord(TABLES.REFERRALS, refId, {
+                  'Approval Status': 'skipped',
+                  'Status': 'Closed Lost',
+                  'Closed At': new Date().toISOString(),
+                });
+              } catch {}
+              if (buyerId) {
+                try {
+                  await updateRecord(TABLES.CONSUMERS, buyerId, {
+                    'Buyer Stage': 'WAITING',
+                    'Buyer Stage Updated At': new Date().toISOString(),
+                  });
+                } catch {}
+              }
+              await editTelegramMessage(
+                chatId,
+                messageId,
+                `⏭️ <b>Skipped</b> — ${buyerName}\n\nReverted to WAITING. Future iteration can try next-best rancher; for now, manual route via /route.`
+              );
+            } else {
+              await answerCallbackQuery(queryId, `Unknown action: ${action}`);
+            }
+          } catch (e: any) {
+            await answerCallbackQuery(queryId, `⚠️ ${e?.message || 'Failed'}`);
+            console.error('[firstweek callback]', e);
+          }
+        }
+      }
+
       return NextResponse.json({ ok: true });
     }
 
