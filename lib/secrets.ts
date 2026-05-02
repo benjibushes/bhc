@@ -55,3 +55,19 @@ export const CRON_SECRET = requireEnv('CRON_SECRET');
 // calling /api/matching/suggest). Optional — if absent, internal callers
 // fall back to admin password / member session for auth.
 export const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
+
+// ─── Project 1 — Discover Map / AI scraper ──────────────────────────────────
+
+// Tavily web search API key. Used by lib/aiSearch.ts as the primary search
+// provider for the discover-ranchers scraper. If unset, the scraper falls
+// back to Anthropic native web_search tool (slower, lower-quality results).
+// Optional.
+export const TAVILY_API_KEY = process.env.TAVILY_API_KEY || '';
+
+// User-Agent header for Nominatim (OpenStreetMap) reverse-geocoding requests.
+// REQUIRED by Nominatim ToS — anonymous requests get banned. Format must
+// include a contact email, e.g. `BuyHalfCow/1.0 (ben@buyhalfcow.com)`.
+// Required only at the moment the scraper actually calls Nominatim — the
+// `/map` page itself never reads this. Optional at build time.
+export const NOMINATIM_USER_AGENT =
+  process.env.NOMINATIM_USER_AGENT || 'BuyHalfCow/1.0 (ben@buyhalfcow.com)';

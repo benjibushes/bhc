@@ -2748,3 +2748,45 @@ export async function sendRerouteNotification(data: {
     return { success: false, error };
   }
 }
+
+// =====================================================
+// PROJECT 1 — DISCOVER MAP · prospect claim magic link
+// =====================================================
+//
+// Sent when a prospect (someone listed on /map who hasn't claimed yet) submits
+// the claim form. The link is a one-time-use magic link that flips Claim Status
+// to claim-pending when clicked. Founder voice — lowercase, single CTA.
+export async function sendProspectClaimMagicLink(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+  link: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject: `confirm your ${data.ranchName} listing on BuyHalfCow`,
+      headers: getUnsubscribeHeaders(data.to),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+</head><body><div class="container">
+  <h1>Hey ${esc(first)},</h1>
+  <p>Quick one — someone (probably you) just submitted a claim for ${esc(data.ranchName)} on BuyHalfCow's discover map.</p>
+  <p>If that was you, click the button below to confirm. Once you do, I'll reach out personally within 24–48 hours to walk you through the onboarding — quick call, simple agreement, your listing goes live.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.link}" class="cta">Confirm — I'm ${esc(data.ranchName)}</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;">If that wasn't you, just ignore this email — nothing changes.</p>
+  <div class="divider"></div>
+  <p style="font-size:13px;color:#2A2A2A;">A bit of context: I'm Ben, founder of BuyHalfCow. We're building the public hit list of every direct-to-consumer rancher in America so families can find you instead of buying mystery beef from a grocery chain. Your listing was discovered from public info — it's currently a "prospect" pin (grey, no pricing) until you claim it.</p>
+  <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending prospect claim magic link:', error);
+    return { success: false, error };
+  }
+}

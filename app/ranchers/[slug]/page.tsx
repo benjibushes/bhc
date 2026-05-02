@@ -4,7 +4,8 @@ import Link from 'next/link';
 import Image from 'next/image';
 import Container from '../../components/Container';
 import Divider from '../../components/Divider';
-import { getRancherBySlug, getActiveRancherPages } from '@/lib/airtable';
+import ProspectClaimBanner from '../../components/ProspectClaimBanner';
+import { getRancherOrProspectBySlug, getActiveRancherPages } from '@/lib/airtable';
 import RancherLeadModal from './RancherLeadModal';
 
 // Revalidate every 10 minutes
@@ -26,15 +27,20 @@ export async function generateMetadata(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<Metadata> {
   const { slug } = await params;
-  const rancher: any = await getRancherBySlug(slug);
+  const rancher: any = await getRancherOrProspectBySlug(slug);
   if (!rancher) return { title: 'Rancher Not Found' };
 
   const name = rancher['Ranch Name'] || rancher['Operator Name'] || 'Ranch';
-  const tagline = rancher['Tagline'] || `Buy direct from ${name} on BuyHalfCow`;
+  const isProspect = rancher['Verification Status'] === 'Prospect';
+  const stateLabel = rancher['State'] || '';
+  const tagline = rancher['Tagline']
+    || (isProspect
+        ? `${name}${stateLabel ? ` (${stateLabel})` : ''} — direct-to-consumer rancher. Unclaimed listing on BuyHalfCow.`
+        : `Buy direct from ${name} on BuyHalfCow`);
   const logo = rancher['Logo URL'] || '';
 
   return {
-    title: name,
+    title: isProspect ? `${name} — Unclaimed Listing` : name,
     description: tagline,
     openGraph: {
       title: `${name} — BuyHalfCow`,
@@ -65,10 +71,12 @@ export default async function RancherPage(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const rancherRaw: any = await getRancherBySlug(slug);
+  const rancherRaw: any = await getRancherOrProspectBySlug(slug);
   if (!rancherRaw) notFound();
 
   const r = rancherRaw;
+  // Project 1: prospects render the same template with banner + pricing/payment hidden.
+  const isProspect = r['Verification Status'] === 'Prospect';
   const name = r['Ranch Name'] || r['Operator Name'] || 'Ranch';
   const operatorName = r['Operator Name'] || '';
   const tagline = r['Tagline'] || '';
@@ -118,8 +126,35 @@ export default async function RancherPage(
   const wholeLbs = r['Whole lbs'] || '';
   const wholeLink = r['Whole Payment Link'] || '';
 
-  const hasPricing = quarterPrice || halfPrice || wholePrice;
+  // Prospects: never show pricing or payment links — those are reserved for verified
+  // partners with signed agreements. The page still shows hero + about + map context
+  // so it's a legit SEO landing page.
+  const hasPricing = !isProspect && (quarterPrice || halfPrice || wholePrice);
   const embedUrl = getYouTubeEmbedUrl(videoUrl);
+
+  // Schema.org LocalBusiness JSON-LD. Prospects emit `disambiguatingDescription`
+  // so search engines know we don't yet operate this listing.
+  const lat = Number(r['Latitude']);
+  const lng = Number(r['Longitude']);
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const jsonLd: Record<string, unknown> = {
+    '@context': 'https://schema.org',
+    '@type': 'LocalBusiness',
+    name,
+    url: `${siteUrl}/ranchers/${slug}`,
+    ...(state ? { address: { '@type': 'PostalAddress', addressRegion: state, addressCountry: 'US' } } : {}),
+    ...(isFinite(lat) && isFinite(lng)
+      ? { geo: { '@type': 'GeoCoordinates', latitude: lat, longitude: lng } }
+      : {}),
+    ...(logoUrl ? { image: logoUrl } : {}),
+    ...(tagline ? { description: tagline } : {}),
+    ...(isProspect
+      ? {
+          disambiguatingDescription:
+            'Unclaimed listing — built from public information. The operator has not yet verified this listing on BuyHalfCow.',
+        }
+      : {}),
+  };
 
   const processingDateDisplay = nextProcessingDate
     ? new Date(nextProcessingDate).toLocaleDateString('en-US', {
@@ -132,6 +167,17 @@ export default async function RancherPage(
 
   return (
     <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+      {/* JSON-LD for SEO. Prospects + verified both emit LocalBusiness; prospects
+          also emit a `disambiguatingDescription` so search engines know we don't
+          yet operate this listing. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+
+      {isProspect && (
+        <ProspectClaimBanner ranchName={name} slug={slug} state={state} />
+      )}
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <section className="py-20 border-b border-[#2A2A2A]/10">
@@ -160,7 +206,9 @@ export default async function RancherPage(
             {/* Name + meta */}
             <div className="space-y-4 text-center md:text-left">
               <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
-                BuyHalfCow Verified Partner
+                {isProspect
+                  ? 'Direct-to-consumer rancher · unclaimed listing'
+                  : 'BuyHalfCow Verified Partner'}
               </p>
               <h1 className="font-[family-name:var(--font-playfair)] text-4xl md:text-5xl">
                 {name}
@@ -403,7 +451,7 @@ export default async function RancherPage(
       )}
 
       {/* ── Custom Products ─────────────────────────────────────────────── */}
-      {customProducts.length > 0 && (
+      {!isProspect && customProducts.length > 0 && (
         <section className="py-16 border-t border-[#2A2A2A]/10">
           <Container>
             <div className="max-w-4xl mx-auto space-y-8">
@@ -450,7 +498,7 @@ export default async function RancherPage(
       )}
 
       {/* ── Reserve ──────────────────────────────────────────────────────── */}
-      {(processingDateDisplay || reserveLink) && (
+      {!isProspect && (processingDateDisplay || reserveLink) && (
         <>
           <Divider />
           <section className="py-14">
@@ -509,12 +557,51 @@ export default async function RancherPage(
         </>
       )}
 
+      {/* ── Prospect-only claim CTA (bottom) ─────────────────────────────── */}
+      {isProspect && (
+        <>
+          <Divider />
+          <section className="py-14">
+            <Container>
+              <div className="max-w-2xl mx-auto text-center space-y-5">
+                <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+                  Are you {name}?
+                </h2>
+                <p className="text-[#A7A29A] text-sm leading-relaxed">
+                  We built this page from public information so families looking
+                  for direct-to-consumer beef in {state || 'your state'} could
+                  find you. Claim your listing to take it over and start taking
+                  orders through BuyHalfCow.
+                </p>
+                <div className="flex flex-wrap justify-center gap-3">
+                  <Link
+                    href={`/ranchers/${slug}/claim`}
+                    className="inline-block px-8 py-3 border border-[#0E0E0E] text-sm tracking-wide hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                  >
+                    Claim your listing →
+                  </Link>
+                  <Link
+                    href={`/ranchers/${slug}/remove`}
+                    className="inline-block px-8 py-3 text-sm tracking-wide text-[#A7A29A] hover:text-[#0E0E0E] underline self-center"
+                  >
+                    Or remove me from the map
+                  </Link>
+                </div>
+              </div>
+            </Container>
+          </section>
+        </>
+      )}
+
       {/* ── Footer Nav ───────────────────────────────────────────────────── */}
       <div className="border-t border-[#2A2A2A]/10 py-10">
         <Container>
           <div className="max-w-4xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-[#A7A29A]">
-            <Link href="/ranchers" className="hover:text-[#0E0E0E] transition-colors">
-              ← Browse All Ranchers
+            <Link
+              href={isProspect ? '/map' : '/ranchers'}
+              className="hover:text-[#0E0E0E] transition-colors"
+            >
+              {isProspect ? '← Back to discover map' : '← Browse All Ranchers'}
             </Link>
             <Link href="/" className="hover:text-[#0E0E0E] transition-colors">
               BuyHalfCow

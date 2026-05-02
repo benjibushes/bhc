@@ -249,4 +249,28 @@ export async function getRancherBySlug(slug: string) {
   }
 }
 
+// Get a single rancher by slug INCLUDING Prospect records (Page Live=false).
+// Used by the public landing page when the slug points to a Prospect that
+// hasn't been claimed yet. Filters out hidden / removed records so opted-out
+// ranchers cannot be reached even by direct URL.
+export async function getRancherOrProspectBySlug(slug: string) {
+  try {
+    const safeSlug = escapeAirtableValue(slug);
+    const records = await base(TABLES.RANCHERS)
+      .select({
+        filterByFormula:
+          `AND({Slug} = "${safeSlug}", NOT({Public Map Hidden} = 1), ` +
+          `{Verification Status} != "Removed", ` +
+          `OR({Page Live} = 1, {Verification Status} = "Prospect"))`,
+        maxRecords: 1,
+      })
+      .all();
+    if (records.length === 0) return null;
+    return { id: records[0].id, ...records[0].fields };
+  } catch (error) {
+    console.error(`Error fetching rancher/prospect by slug "${slug}":`, error);
+    throw error;
+  }
+}
+
 export default base;
