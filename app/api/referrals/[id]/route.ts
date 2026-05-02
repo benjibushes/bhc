@@ -79,12 +79,43 @@ export async function PATCH(
           if (status === 'Closed Won') {
             await updateRecord(TABLES.CONSUMERS, buyerId, {
               'Referral Status': 'Closed Won',
-              'Sequence Stage': 'purchased',
+              'Sequence Stage': '',
               'Buyer Health': 'Closed Won',
               'Missed Responses': 0,
+              'Buyer Stage': 'CLOSED',
+              'Buyer Stage Updated At': new Date().toISOString(),
             });
+            // Fire Day 0 post-purchase welcome (mirror of rancher-side close handler)
+            try {
+              const buyer = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+              const buyerEmail = buyer['Email'] || '';
+              const buyerFullName = buyer['Full Name'] || '';
+              const orderType = buyer['Order Type'] || refForBuyer['Order Type'] || 'Not Sure';
+              const refRancherIds = refForBuyer['Rancher'] || refForBuyer['Suggested Rancher'] || [];
+              const refRancherId = Array.isArray(refRancherIds) ? refRancherIds[0] : null;
+              let rancherName = refForBuyer['Suggested Rancher Name'] || 'your rancher';
+              if (refRancherId) {
+                try {
+                  const r = await getRecordById(TABLES.RANCHERS, refRancherId) as any;
+                  rancherName = r['Operator Name'] || r['Ranch Name'] || rancherName;
+                } catch {}
+              }
+              if (buyerEmail) {
+                const { sendPostPurchaseWelcome } = await import('@/lib/email');
+                await sendPostPurchaseWelcome({
+                  firstName: (buyerFullName || '').split(' ')[0] || 'there',
+                  email: buyerEmail,
+                  rancherName,
+                  orderType,
+                });
+              }
+            } catch (e) {
+              console.error('Post-purchase welcome (admin close) error:', e);
+            }
           } else {
-            // Closed Lost — base status sync always
+            // Closed Lost — base status sync always (Buyer Stage stays put;
+            // matching/suggest re-route may move them back to MATCHED if a new
+            // referral fires)
             await updateRecord(TABLES.CONSUMERS, buyerId, {
               'Referral Status': 'Unmatched',
               'Sequence Stage': 'rerouted',

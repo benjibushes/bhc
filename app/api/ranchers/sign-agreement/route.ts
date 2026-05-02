@@ -188,7 +188,7 @@ export async function POST(request: Request) {
     <p><strong>The faster you set up your page and send a sample, the faster you're live and receiving buyer leads.</strong></p>
 
     <div class="footer">
-      <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef<br>Questions? Email ${ADMIN_EMAIL}</p>
+      <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
     </div>
   </div>
 </body>

@@ -175,7 +175,7 @@ export async function POST(
           <p>Looking forward to working with you!</p>
 
           <div class="footer">
-            <p>— Benjamin, Founder<br>BuyHalfCow — Private Network for American Ranch Beef</p>
+            <p>— Benjamin, Founder<br>BuyHalfCow</p>
           </div>
         </div>
       </body>
