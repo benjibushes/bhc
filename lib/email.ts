@@ -87,11 +87,21 @@ function extractDomain(from: string | undefined): string {
 
 // Wrapper that auto-adds replyTo, plain text, and CAN-SPAM footer
 // to EVERY email. This is the single enforcement point for deliverability.
-// IMPORTANT: replyTo MUST match the sending domain. Gmail/Outlook flag
-// emails where From: domain ≠ Reply-To: domain as phishing — and previously
-// this code hardcoded Reply-To to SEND_DOMAINS[0] even when From rotated to
-// a different domain. That created a domain mismatch on 2/3 of all sends
-// when domain rotation was active.
+//
+// REPLY-TO STRATEGY (May 2026 — inbound capture):
+// - If caller passes `_replyContext: { type, recordId }`, we generate a
+//   tagged address like `ref-recXXX@replies.buyhalfcow.com`. Replies to
+//   that address hit /api/webhooks/resend-inbound and get classified +
+//   logged to the Conversations Airtable table.
+// - If caller passes explicit `replyTo`, we honor it (escape hatch for
+//   transactional emails that should reply to a specific person).
+// - Otherwise, fall back to ben@<sending-domain> (legacy, lands in Ben's
+//   inbox — same as before this change).
+//
+// IMPORTANT: replyTo domain doesn't have to match the From domain anymore
+// for tagged Reply-To. Reply-To: replies.buyhalfcow.com paired with
+// From: ben@buyhalfcow.com is fine — both are subdomains of the same
+// organizational domain, and SPF/DKIM cover deliverability via the From.
 const resend = {
   emails: {
     send: async (params: any) => {
@@ -115,11 +125,22 @@ const resend = {
       }
       delete params._bypassSuppression;
 
+      // Reply-To resolution priority:
+      //   1. Explicit replyTo passed by caller (honored as-is)
+      //   2. _replyContext { type, recordId } passed by caller → tagged address
+      //   3. Default fallback: ben@<sending-domain>
       if (!params.replyTo) {
-        // Match Reply-To to the actual sending domain in the From header.
-        const fromDomain = extractDomain(params.from);
-        params.replyTo = `ben@${fromDomain}`;
+        if (params._replyContext) {
+          const { replyToFor } = await import('./replyAddressing');
+          const ctx = params._replyContext as { type: 'ref'|'usr'|'rnc'|'inq'; recordId: string };
+          params.replyTo = replyToFor(ctx.type, ctx.recordId);
+        } else {
+          // Match Reply-To to the actual sending domain in the From header.
+          const fromDomain = extractDomain(params.from);
+          params.replyTo = `ben@${fromDomain}`;
+        }
       }
+      delete params._replyContext;
       // Auto-inject CAN-SPAM footer (physical address + unsubscribe link)
       // into every HTML email unless explicitly opted out via _skipFooter.
       if (params.html && !params._skipFooter) {
@@ -426,6 +447,10 @@ export async function sendBuyerIntroNotification(data: {
   // recognizes urgency, and the body adds a "you confirmed ready-to-buy"
   // reminder so they remember why they're hearing from us.
   readyToBuy?: boolean;
+  // Referral ID — when present, sets a tagged Reply-To address so any reply
+  // the buyer sends gets captured + classified by /api/webhooks/resend-inbound.
+  // Without this, replies go to ben@buyhalfcow.com and miss the data layer.
+  referralId?: string;
 }) {
   // Build pricing block when any tier is configured.
   const pricingRows: string[] = [];
@@ -502,6 +527,12 @@ export async function sendBuyerIntroNotification(data: {
     };
     if (data.scheduledAt) {
       introEmailData.scheduledAt = data.scheduledAt;
+    }
+    // Tag Reply-To so any buyer reply lands in /api/webhooks/resend-inbound
+    // and gets classified + logged to the Conversations table. Without
+    // referralId we fall through to the default ben@<domain> Reply-To.
+    if (data.referralId) {
+      introEmailData._replyContext = { type: 'ref', recordId: data.referralId };
     }
     introEmailData.html = `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.contact-box{background:#F4F1EC;border:1px solid #A7A29A;padding:20px 24px;margin:20px 0}.contact-box p{margin:6px 0;color:#0E0E0E}.cta{display:inline-block;padding:16px 32px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -2654,6 +2685,9 @@ export async function sendEmail(params: {
   html: string;
   attachments?: { filename: string; content: Buffer }[];
   scheduledAt?: string; // ISO date string — Resend holds + delivers at this time
+  // Tagged Reply-To: when present, sets Reply-To to <type>-<recordId>@replies.buyhalfcow.com
+  // so any reply lands in /api/webhooks/resend-inbound for classification + logging.
+  _replyContext?: { type: 'ref' | 'usr' | 'rnc' | 'inq'; recordId: string };
 }) {
   try {
     const emailData: any = {
@@ -2668,6 +2702,9 @@ export async function sendEmail(params: {
     }
     if (params.scheduledAt) {
       emailData.scheduledAt = params.scheduledAt;
+    }
+    if (params._replyContext) {
+      emailData._replyContext = params._replyContext;
     }
     await resend.emails.send(emailData);
     return { success: true };

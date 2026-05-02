@@ -482,6 +482,12 @@ export async function POST(request: Request) {
             await sendEmail({
               to: rancherEmail,
               subject: `${subjectPrefix}BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+              // Tag Reply-To with the referral context so when the rancher
+              // hits Reply (or Reply-all) the message lands in the inbound
+              // webhook + Conversations table. Lets us track exactly when
+              // the rancher engages, what objections come up, and whether
+              // the conversation goes silent.
+              _replyContext: { type: 'ref', recordId: referral.id },
               html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
                 <h1 style="font-family:Georgia,serif;">New Qualified Buyer Lead</h1>
                 <p>Hi ${rancherName},</p>
@@ -496,8 +502,8 @@ export async function POST(request: Request) {
                 ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
                 <p>Reach out within 24 hours to close the sale. Reply-all to keep me in the loop.</p>
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
-              </div>`,
-            });
+              </div>` as any,
+            } as any);
           } catch (e: any) {
             console.error('Rancher intro email failed:', e?.message);
             try {
@@ -561,6 +567,8 @@ export async function POST(request: Request) {
               wholeLbs: topMatch['Whole lbs'] || undefined,
               nextProcessingDate: topMatch['Next Processing Date'] || undefined,
               readyToBuy: buyerReadyToBuy,
+              // Tag Reply-To so any buyer reply lands in /api/webhooks/resend-inbound
+              referralId: referral.id,
             });
           } catch (e: any) {
             console.error('Buyer intro email failed:', e?.message);
