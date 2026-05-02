@@ -162,18 +162,28 @@ export async function POST(request: Request) {
       return list.includes(buyerTier);
     };
 
-    // Parse a buyer budget range like "<$500", "$500-$1000", "$1000-$2000", "$2000+", "Unsure"
-    // into a numeric ceiling. Unknown/unparseable → Infinity (no filter applied).
+    // Parse a buyer budget range into a numeric ceiling.
+    // Current brackets: $1000-$1500, $2000-$2500, $4000-$5000, $5000+, "Just exploring".
+    // Legacy brackets still accepted for buyers stored before the form rework:
+    // "<$500", "$500-$1000", "$1000-$2000", "$2000+", "Unsure", "Not Sure".
+    //
+    // Returns 0 for "Just exploring" (no rancher should match — these aren't
+    // real buyers yet). Returns Infinity for "Unsure" (legacy permissive).
     const parseBudgetCeiling = (range: string): number => {
       if (!range) return Infinity;
       const r = range.trim().toLowerCase();
-      if (r === 'unsure' || r === 'not sure' || r === '') return Infinity;
+      if (r === '') return Infinity;
+      // Hard reject: "just exploring" buyers shouldn't match any rancher.
+      // Returning 0 makes isPriceFit reject every priced rancher. They'll
+      // stay in nurture until they pick a real budget.
+      if (r === 'just exploring') return 0;
+      if (r === 'unsure' || r === 'not sure') return Infinity;
       if (r.startsWith('<')) {
         const n = parseInt(r.replace(/[^0-9]/g, ''), 10);
         return isFinite(n) ? n : Infinity;
       }
-      if (r.endsWith('+')) return Infinity; // e.g. "$2000+"
-      // Range like "$500-$1000" — take the upper bound.
+      if (r.endsWith('+')) return Infinity; // e.g. "$2000+", "$5000+"
+      // Range like "$1000-$1500" — take the upper bound.
       const parts = r.split('-');
       if (parts.length === 2) {
         const upper = parseInt(parts[1].replace(/[^0-9]/g, ''), 10);

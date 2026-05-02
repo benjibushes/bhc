@@ -34,6 +34,15 @@ function isUnsureValue(s: string): boolean {
 }
 
 /**
+ * "Just exploring" is a soft no — buyer self-identified as not yet committed.
+ * Qualified for nurture but NEVER for routing. Lets us keep tire-kickers in
+ * the funnel without spamming ranchers with non-buyers.
+ */
+function isJustExploringValue(s: string): boolean {
+  return /just exploring/i.test(s);
+}
+
+/**
  * SIGNUP-time qualification. Used by /api/consumers/route.ts on form submit.
  * Buyer just filled out the form — the form's qualifier questions ARE consent.
  */
@@ -48,7 +57,12 @@ export function isQualifiedForRancherMatch(opts: {
   if (isUnsureValue(opts.orderType)) return false;
   if (!opts.budgetRange) return false;
   if (isUnsureValue(opts.budgetRange)) return false;
-  if (opts.intentScore < 40) return false;
+  // "Just exploring" budget = explicit non-buyer. Don't route.
+  if (isJustExploringValue(opts.budgetRange)) return false;
+  // Threshold raised from 40 to 60 alongside the form rework. With realistic
+  // budget brackets in place, casual signups land at ~40 and serious buyers
+  // at 70+. The new threshold cleanly separates them.
+  if (opts.intentScore < 60) return false;
   return true;
 }
 
@@ -99,11 +113,14 @@ export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: strin
   const isBeefBuyer = segment === 'Beef Buyer' || inferredBeefBuyer;
   if (!isBeefBuyer) return { ok: false, reason: 'not a beef buyer (no order/budget signals)' };
 
-  // Real values, not "Unsure"
+  // Real values, not "Unsure" / "Just exploring"
   if (!orderType) return { ok: false, reason: 'no order type' };
   if (isUnsureValue(orderType)) return { ok: false, reason: 'order type unsure' };
   if (!budget) return { ok: false, reason: 'no budget' };
   if (isUnsureValue(budget)) return { ok: false, reason: 'budget unsure' };
+  if (isJustExploringValue(budget)) {
+    return { ok: false, reason: 'just exploring — buyer hasn\'t committed yet' };
+  }
 
   // CONSENT SIGNAL — exactly two paths qualify, both require an explicit click.
   // Quality over quantity: a buyer never reaches a rancher's inbox unless

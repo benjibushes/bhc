@@ -71,21 +71,40 @@ const ORDER_TYPE_OPTIONS = [
   { value: 'Quarter', label: 'Quarter Cow' },
   { value: 'Half', label: 'Half Cow' },
   { value: 'Whole', label: 'Whole Cow' },
-  { value: 'Not Sure', label: 'Not Sure Yet' },
+  // "Not Sure" removed — buyers who don't know what they want create
+  // unqualified intros that disappoint ranchers and tank lead-quality
+  // perception. They can still pick a tier later via /member dashboard.
 ];
 
+// Aligned with REAL ranch pricing. Quarter cows from real producers run
+// $1,000-$1,500. Half $2,000-$2,500. Whole $4,000-$5,000+. Old brackets
+// (<$500, $500-$1,000) had no rancher anywhere on the platform that could
+// fulfill at those prices — leading to disappointed buyers, confused
+// reviews, and unfulfilled lead spam to ranchers.
+//
+// "Just exploring" routes to nurture, not match — keeps tire-kickers in
+// the funnel without bothering ranchers.
 const BUDGET_OPTIONS = [
   { value: '', label: 'Select your budget range' },
-  { value: '<$500', label: 'Under $500' },
-  { value: '$500-$1000', label: '$500 - $1,000' },
-  { value: '$1000-$2000', label: '$1,000 - $2,000' },
-  { value: '$2000+', label: '$2,000+' },
-  { value: 'Unsure', label: 'Unsure' },
+  { value: '$1000-$1500', label: '$1,000 - $1,500 (typical Quarter Cow)' },
+  { value: '$2000-$2500', label: '$2,000 - $2,500 (typical Half Cow)' },
+  { value: '$4000-$5000', label: '$4,000 - $5,000 (typical Whole Cow)' },
+  { value: '$5000+', label: '$5,000+ (Whole + premium / multi-buy)' },
+  { value: 'Just exploring', label: 'Just exploring' },
+];
+
+const TIMING_OPTIONS = [
+  { value: '', label: 'When do you want it?' },
+  { value: 'Within 30 days', label: 'Within 30 days' },
+  { value: '1-3 months', label: '1-3 months' },
+  { value: '3-6 months', label: '3-6 months' },
+  { value: 'Just exploring', label: 'Just exploring' },
 ];
 
 function calculateIntentScore(data: {
   orderType: string;
   budgetRange: string;
+  timing: string;
   notes: string;
   phone: string;
   email: string;
@@ -99,16 +118,27 @@ function calculateIntentScore(data: {
   if (data.interestAll) score += 15;
   if (data.interestMerch && !data.interestBeef && !data.interestAll) score -= 10;
 
+  // Tier signal — bigger commitment = higher intent.
   if (data.orderType === 'Whole') score += 30;
   else if (data.orderType === 'Half') score += 20;
   else if (data.orderType === 'Quarter') score += 10;
 
-  if (data.budgetRange === '$2000+') score += 25;
-  else if (data.budgetRange === '$1000-$2000') score += 20;
-  else if (data.budgetRange === '$500-$1000') score += 10;
+  // Budget signal — realistic brackets only. "Just exploring" subtracts.
+  if (data.budgetRange === '$5000+') score += 30;
+  else if (data.budgetRange === '$4000-$5000') score += 25;
+  else if (data.budgetRange === '$2000-$2500') score += 20;
+  else if (data.budgetRange === '$1000-$1500') score += 15;
+  else if (data.budgetRange === 'Just exploring') score -= 15;
+
+  // Timing — when buyers say they'll buy. Most actionable signal we have.
+  if (data.timing === 'Within 30 days') score += 25;
+  else if (data.timing === '1-3 months') score += 15;
+  else if (data.timing === '3-6 months') score += 5;
+  else if (data.timing === 'Just exploring') score -= 15;
 
   if (data.notes && data.notes.length > 20) score += 15;
-  if (data.phone && data.email) score += 10;
+  // Phone is the strongest commitment signal — ranchers convert by calling.
+  if (data.phone && data.email) score += 15;
 
   return Math.max(score, 0);
 }
@@ -152,6 +182,7 @@ function AccessPageContent() {
     state: '',
     orderType: '',
     budgetRange: '',
+    timing: '',
     notes: '',
     interestBeef: false,
     interestLand: false,
@@ -255,6 +286,7 @@ function AccessPageContent() {
     const intentScore = calculateIntentScore({
       orderType: formData.orderType,
       budgetRange: formData.budgetRange,
+      timing: formData.timing,
       notes: formData.notes,
       phone: formData.phone,
       email: formData.email,
@@ -278,6 +310,7 @@ function AccessPageContent() {
           state: formData.state,
           orderType: formData.orderType,
           budgetRange: formData.budgetRange,
+          timing: formData.timing,
           notes: formData.notes.trim(),
           interestBeef: formData.interestBeef,
           interestLand: formData.interestLand,
@@ -460,12 +493,36 @@ function AccessPageContent() {
               options={ORDER_TYPE_OPTIONS}
             />
 
+            {/* Pricing context — set realistic expectations BEFORE they pick
+                a budget. Most reputation damage comes from sub-$1k buyers
+                who pick a low bracket, get matched, see real prices, and
+                blame the platform. Showing real numbers up front lets them
+                self-select. */}
+            <div className="bg-[#F4F1EC] border border-[#A7A29A] p-4 text-sm text-[#6B4F3F] leading-relaxed">
+              <p className="font-medium text-[#0E0E0E] mb-2">A note on pricing</p>
+              <p>Real ranch beef ranges roughly:</p>
+              <ul className="list-disc ml-5 mt-1 space-y-1">
+                <li><strong>Quarter cow:</strong> $1,000 – $1,500</li>
+                <li><strong>Half cow:</strong> $2,000 – $2,500</li>
+                <li><strong>Whole cow:</strong> $4,000 – $5,000+</li>
+              </ul>
+              <p className="mt-2">Pick the bracket that matches what you can actually invest in the next 1-2 months. If a quarter cow at $1,000+ doesn&apos;t fit your budget, the &ldquo;Just exploring&rdquo; option keeps you on the list without committing.</p>
+            </div>
+
             <Select
               label="Budget Range"
               name="budgetRange"
               value={formData.budgetRange}
               onChange={handleInputChange}
               options={BUDGET_OPTIONS}
+            />
+
+            <Select
+              label="When are you looking to purchase?"
+              name="timing"
+              value={formData.timing}
+              onChange={handleInputChange}
+              options={TIMING_OPTIONS}
             />
 
             <Textarea

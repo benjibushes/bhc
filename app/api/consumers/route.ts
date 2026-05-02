@@ -76,7 +76,7 @@ export async function POST(request: Request) {
     }
     const {
       fullName, email, phone, state,
-      orderType, budgetRange, notes,
+      orderType, budgetRange, timing, notes,
       interestBeef, interestLand, interestMerch, interestAll,
       intentScore, intentClassification, segment,
       source, campaign, utmParams, ref,
@@ -131,20 +131,48 @@ export async function POST(request: Request) {
     if (interestMerch) interests.push('Merch');
     if (interestAll) interests.push('All');
 
-    // Server-side segment + intent calculation (don't trust client-supplied values)
+    // Server-side segment + intent calculation (don't trust client-supplied values).
+    // Mirrors app/access/page.tsx calculateIntentScore — the form rework gives
+    // bracket-level weights so casual signups land at ~40, serious buyers at 70+.
     const consumerSegment = (interestBeef || interestAll) && orderType ? 'Beef Buyer' : 'Community';
     const isRancherPageLead = source === 'rancher-page' && campaign?.startsWith('rancher-');
     let serverIntentScore = 0;
     if (isRancherPageLead) {
-      // Rancher page leads clicked "Buy" on a specific rancher — they're high intent by definition
+      // Rancher page leads clicked "Buy" on a specific rancher — high intent by definition.
       serverIntentScore = 85;
     } else {
-      if (interestBeef || interestAll) serverIntentScore += 30;
-      if (orderType) serverIntentScore += 20;
-      if (budgetRange) serverIntentScore += 20;
+      // Interest signal
+      if (interestBeef) serverIntentScore += 30;
+      if (interestAll) serverIntentScore += 15;
+      if (interestMerch && !interestBeef && !interestAll) serverIntentScore -= 10;
+
+      // Tier — bigger commit = higher intent
+      if (orderType === 'Whole') serverIntentScore += 30;
+      else if (orderType === 'Half') serverIntentScore += 20;
+      else if (orderType === 'Quarter') serverIntentScore += 10;
+
+      // Budget bracket — realistic ones add, "Just exploring" subtracts
+      if (budgetRange === '$5000+') serverIntentScore += 30;
+      else if (budgetRange === '$4000-$5000') serverIntentScore += 25;
+      else if (budgetRange === '$2000-$2500') serverIntentScore += 20;
+      else if (budgetRange === '$1000-$1500') serverIntentScore += 15;
+      else if (/just exploring/i.test(budgetRange || '')) serverIntentScore -= 15;
+      // Legacy brackets (existing buyers in DB) — keep partial credit so old
+      // records don't get demoted on a re-evaluation.
+      else if (budgetRange === '$2000+') serverIntentScore += 25;
+      else if (budgetRange === '$1000-$2000') serverIntentScore += 20;
+      else if (budgetRange === '$500-$1000') serverIntentScore += 5;
+
+      // Timing — strongest commitment signal we have
+      if (timing === 'Within 30 days') serverIntentScore += 25;
+      else if (timing === '1-3 months') serverIntentScore += 15;
+      else if (timing === '3-6 months') serverIntentScore += 5;
+      else if (/just exploring/i.test(timing || '')) serverIntentScore -= 15;
+
+      if (notes && notes.length > 20) serverIntentScore += 15;
       if (phone) serverIntentScore += 15;
-      if (notes) serverIntentScore += 15;
     }
+    serverIntentScore = Math.max(serverIntentScore, 0);
     const serverIntentClassification = serverIntentScore >= 70 ? 'High' : serverIntentScore >= 40 ? 'Medium' : 'Low';
 
     const status = deriveStatus(consumerSegment, serverIntentClassification);
@@ -166,7 +194,13 @@ export async function POST(request: Request) {
       'Segment': consumerSegment,
       'Order Type': orderType || '',
       'Budget': budgetRange || '',
-      'Notes': notes || '',
+      // Timing prepended to Notes (no schema migration needed). Surfaces in
+      // admin views + the rancher intro email for context. Used transiently
+      // below to decide auto-route eligibility too.
+      'Notes': [
+        timing ? `[Timing: ${timing}]` : '',
+        notes || '',
+      ].filter(Boolean).join('\n'),
       'Source': source || 'organic',
       'Intent Score': serverIntentScore,
       'Intent Classification': serverIntentClassification,
@@ -258,11 +292,29 @@ export async function POST(request: Request) {
             // hand. But a fresh signup with a complete form (Beef Buyer +
             // Order Type + Budget) AND a live rancher in their state has
             // already raised their hand — the form completion IS the consent.
-            // Forcing them to click a second time was the source of the 44
-            // stranded RTB buyers we just unstrand-ed.
-            const formIsQualified = !!orderType && !!budgetRange &&
-              !/unsure|not sure/i.test(orderType) && !/unsure|not sure/i.test(budgetRange) &&
-              serverIntentScore >= 40;
+            //
+            // QUALITY GATE (tightened to combat sub-budget reputation damage):
+            //   • Order Type must be Quarter/Half/Whole (no "Not Sure")
+            //   • Budget must be a real bracket (no "Just exploring", no "Unsure")
+            //   • Phone provided (strongest commitment signal — ranchers convert
+            //     by calling; phoneless leads are 3x less likely to close)
+            //   • Timing in {Within 30 days, 1-3 months} (3-6mo / exploring → nurture)
+            //   • Intent score >= 60 (was 40 — old threshold let casuals through
+            //     and they bashed the platform when they saw real prices)
+            //
+            // Buyers who fail the gate aren't blocked — they get the Ready-
+            // to-Buy prompt instead, and can opt in via click later.
+            const isJustExploring = /just exploring/i.test(budgetRange || '') ||
+              /just exploring/i.test(timing || '');
+            const isFutureTiming = /3-6 months/i.test(timing || '');
+            const formIsQualified =
+              !!orderType && !!budgetRange &&
+              !/unsure|not sure/i.test(orderType) &&
+              !/unsure/i.test(budgetRange) &&
+              !isJustExploring &&
+              !isFutureTiming &&
+              !!phone &&
+              serverIntentScore >= 60;
 
             let autoRouted = false;
             if (formIsQualified) {
