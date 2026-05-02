@@ -381,7 +381,8 @@ async function handler(request: Request) {
           const rancherEmail = referral['Rancher Email'] || '';
           const rancherPhone = referral['Rancher Phone'] || '';
 
-          await sendIntroCheckInEmail({ firstName, email, rancherName, rancherEmail, rancherPhone, loginUrl });
+          // Pass referralId so any reply lands in the inbound webhook
+          await sendIntroCheckInEmail({ firstName, email, rancherName, rancherEmail, rancherPhone, loginUrl, referralId: referral.id });
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Sequence Stage': 'intro_checkin_sent',
             'Sequence Sent At': new Date().toISOString(),

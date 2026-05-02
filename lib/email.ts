@@ -1514,9 +1514,14 @@ export async function sendChaseUpEmail(data: {
   rancherName: string;
   loginUrl: string;
   aiDraftedMessage: string;
+  // Optional referralId — when present, tags Reply-To so any reply lands
+  // in /api/webhooks/resend-inbound for classification + Conversations log.
+  referralId?: string;
+  // Optional consumerId — fallback context if no referralId.
+  consumerId?: string;
 }) {
   try {
-    await resend.emails.send({
+    const params: any = {
       from: getFromEmail(),
       to: data.email,
       subject: `Quick check-in from BuyHalfCow`,
@@ -1532,7 +1537,13 @@ export async function sendChaseUpEmail(data: {
         <div class="footer"><p>— Benjamin, BuyHalfCow<br>Questions? Reply to this email.</p><p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p></div>
         </div></body></html>
       `,
-    });
+    };
+    if (data.referralId) {
+      params._replyContext = { type: 'ref', recordId: data.referralId };
+    } else if (data.consumerId) {
+      params._replyContext = { type: 'usr', recordId: data.consumerId };
+    }
+    await resend.emails.send(params);
     return { success: true };
   } catch (error) {
     console.error('Error sending chase-up email:', error);
@@ -1723,9 +1734,12 @@ export async function sendIntroCheckInEmail(data: {
   rancherEmail: string;
   rancherPhone: string;
   loginUrl: string;
+  // Optional referralId — when present, tags Reply-To so any reply lands
+  // in /api/webhooks/resend-inbound for classification + Conversations log.
+  referralId?: string;
 }) {
   try {
-    await resend.emails.send({
+    const params: any = {
       from: getFromEmail(),
       to: data.email,
       subject: `Did you connect with ${esc(data.rancherName)}?`,
@@ -1765,7 +1779,11 @@ p { color: #6B4F3F; margin: 12px 0; }
 </div>
 </body>
 </html>`,
-    });
+    };
+    if (data.referralId) {
+      params._replyContext = { type: 'ref', recordId: data.referralId };
+    }
+    await resend.emails.send(params);
     return { success: true };
   } catch (error) {
     console.error('Error sending intro check-in email:', error);
