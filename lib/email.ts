@@ -708,7 +708,11 @@ export async function sendPilotUpsellEmail(data: {
     await resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      replyTo: ADMIN_EMAIL,
+      // Reply-To deliberately omitted — wrapper auto-fills with
+      // ben@<sending-domain>. Previously had `replyTo: ADMIN_EMAIL` which
+      // routed rancher replies to Ben's personal Gmail (the env var
+      // ADMIN_EMAIL is set to benibeauchman@gmail.com so ranchers replying
+      // to upsell emails were polluting his personal inbox).
       subject: `you just hit ${data.closesHit}. let's run it.`,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
