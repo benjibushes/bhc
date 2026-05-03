@@ -302,4 +302,95 @@ export async function sendTelegramUpdate(text: string) {
   return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, text);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Founder backer alerts (Project 3 — Founding Herd)
+//
+// All three fire from /api/webhooks/stripe with one-tap action buttons so Ben
+// can send group invites, DM backers, or refund without leaving Telegram.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function sendTelegramFounderBacker(data: {
+  email: string;
+  name?: string;
+  tier: string;
+  founderNumber?: number | null;
+  amountCents: number;
+  isLifetime: boolean;
+  consumerId: string;
+}) {
+  const amountStr = `$${(data.amountCents / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  const numberStr = data.founderNumber ? ` (#${data.founderNumber})` : '';
+  const lifetimeStr = data.isLifetime ? ' lifetime' : '/recurring';
+  const message =
+    `🪙 <b>Founding Herd Backer</b>\n\n` +
+    `<b>${escapeHtml(data.name || data.email)}</b>${numberStr}\n` +
+    `Tier: ${escapeHtml(data.tier)} · ${amountStr}${lifetimeStr}\n` +
+    `Email: <code>${escapeHtml(data.email)}</code>`;
+
+  // Action buttons. No group-invite — backers wanted email, not Telegram.
+  // Personal email (within 48h) is the high-touch motion for Title Founders;
+  // for everyone else the welcome email already covers the ground.
+  const keyboard = {
+    inline_keyboard: [[
+      { text: '📧 Email backer', url: `mailto:${data.email}` },
+      { text: '📅 Calendar invite', url: `mailto:${data.email}?subject=${encodeURIComponent('Welcome to the Founding Herd — let\'s find a time')}&body=${encodeURIComponent('Hey — Ben here. Wanted to say thanks personally. My calendar\'s at ' + (process.env.CALENDLY_LINK || 'https://buyhalfcow.com/call') + ' if you ever want to hop on. — Ben')}` },
+    ]],
+  };
+
+  return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
+}
+
+export async function sendTelegramSubscriptionCancelled(data: {
+  email: string;
+  name?: string;
+  tier: string;
+  consumerId: string;
+}) {
+  const message =
+    `⚠️ <b>Founder subscription cancelled</b>\n\n` +
+    `<b>${escapeHtml(data.name || data.email)}</b>\n` +
+    `Tier: ${escapeHtml(data.tier)}\n` +
+    `Email: <code>${escapeHtml(data.email)}</code>\n\n` +
+    `Personal save attempt recommended within 48h.`;
+
+  const keyboard = {
+    inline_keyboard: [[
+      { text: '📧 Email to save', url: `mailto:${data.email}?subject=${encodeURIComponent('Hey — saw your Founding Herd cancel')}` },
+    ]],
+  };
+
+  return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
+}
+
+export async function sendTelegramInvoiceFailed(data: {
+  email: string;
+  name?: string;
+  tier: string;
+  amountCents: number;
+}) {
+  const amountStr = `$${(data.amountCents / 100).toFixed(2)}`;
+  const message =
+    `🚨 <b>Founder invoice payment failed</b>\n\n` +
+    `<b>${escapeHtml(data.name || data.email)}</b>\n` +
+    `Tier: ${escapeHtml(data.tier)} · ${amountStr}\n` +
+    `Email: <code>${escapeHtml(data.email)}</code>\n\n` +
+    `Stripe will auto-retry. Reach out personally if it fails again.`;
+
+  const keyboard = {
+    inline_keyboard: [[
+      { text: '📧 Email backer', url: `mailto:${data.email}` },
+    ]],
+  };
+
+  return sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message, keyboard);
+}
+
+// Telegram HTML mode escapes — only `<`, `>`, `&` need escaping.
+function escapeHtml(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export { sendTelegramMessage, editTelegramMessage, answerCallbackQuery, TELEGRAM_ADMIN_CHAT_ID };

@@ -1319,6 +1319,165 @@ export async function sendBrandListingConfirmation(data: {
 }
 
 // =====================================================
+// FOUNDING HERD — Project 3 (capital raise)
+// =====================================================
+//
+// Tier-aware welcome email — fires from Stripe webhook on
+// `checkout.session.completed` for any of the 5 paid backer tiers. This is
+// the entire post-purchase product (no /founders/dashboard in v1), so it
+// has to carry its weight: thank, contextualize what they bought, point at
+// the Founders Wall + a call link, and for numbered tiers stamp the Founder
+// Number. NO Telegram — backers wanted email, not yet another group chat.
+//
+// Voice anchors (Stage 1 changelog Section 10): sendMerchEmail,
+// sendWelcomeAndReadyToBuy, sendFounderLetterWaiting. Lowercase opener,
+// lowercase conversational subject, single CTA, signed `— Ben` /
+// `— Benjamin`, address-line footer (no "Private Network").
+export async function sendFoundingHerdWelcome(data: {
+  tier: 'Herd' | 'Outlaw' | 'Steward' | 'Founding 100' | 'Title Founder';
+  firstName: string;
+  email: string;
+  founderNumber?: number;
+  amountPaid: number;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = esc(data.firstName || 'there');
+  const dollars = `$${(data.amountPaid || 0).toLocaleString('en-US', {
+    maximumFractionDigits: 0,
+  })}`;
+  const numberLine =
+    data.founderNumber && (data.tier === 'Founding 100' || data.tier === 'Title Founder')
+      ? `you're founder #${data.founderNumber}.`
+      : '';
+
+  const WALL_URL = `${SITE_URL}/founders#wall`;
+
+  // Per-tier dynamic block — what they actually bought, what to expect.
+  let dynamicBlock = '';
+  let subject = '';
+
+  switch (data.tier) {
+    case 'Herd':
+      subject = `welcome to the founding herd, ${first}`;
+      dynamicBlock = `
+        <p>You're in at <strong>Herd</strong> tier — ${dollars} a year toward
+        building something that puts ranchers back in front of families. Quiet
+        backing, real impact.</p>
+        <p>What you get: monthly founder letter from the road, early heads-up
+        when a new rancher goes live in your state, and a first-print
+        BuyHalfCow patch in the mail. Your name stays private unless you reply
+        to this email asking to be on the public Wall.</p>
+      `;
+      break;
+    case 'Outlaw':
+      subject = `welcome to the founding herd, outlaw ${first}`;
+      dynamicBlock = `
+        <p>You're in at <strong>Outlaw</strong> tier — ${dollars}. The name
+        fits: people backing this from a place of conviction, not convenience.</p>
+        <p>What you get: everything Herd gets, plus your name on the public
+        Founders Wall, quarterly behind-the-scenes drops by email, and first
+        dibs on any limited rancher batches that come through.</p>
+      `;
+      break;
+    case 'Steward':
+      subject = `welcome to the founding herd, steward ${first}`;
+      dynamicBlock = `
+        <p>You're in at <strong>Steward</strong> tier — ${dollars}. This is
+        the level where you start showing up in my decision-making. A
+        Steward's vote weighs more than a survey response.</p>
+        <p>What you get: Outlaw perks plus a quarterly office-hours video
+        call (small group, real questions), public placement on the Founders
+        Wall, and a direct email line to me — flag a rancher to add or a
+        state to prioritize and I'll act on it.</p>
+      `;
+      break;
+    case 'Founding 100':
+      subject = `welcome to the founding herd, founder #${data.founderNumber || ''}`.trim();
+      dynamicBlock = `
+        <p>You're <strong>Founding 100 — ${numberLine}</strong> ${dollars} one-time.
+        Only 100 of these exist. You're getting in at the price the next
+        100 won't.</p>
+        <p>What you get: numbered placement on the public Founders Wall,
+        lifetime priority routing on every rancher we onboard in your state,
+        a first-print BuyHalfCow patch with your number on it, and a 30-min
+        call with me when you're ready to use it (calendar below).</p>
+        <p>Practical: you don't need to do anything else right now. I'll
+        ship the patch within ~3 weeks. The wall placement is live tonight.</p>
+      `;
+      break;
+    case 'Title Founder':
+      subject = `welcome to the founding herd, title founder ${first}`;
+      dynamicBlock = `
+        <p>You're a <strong>Title Founder — ${numberLine}</strong> ${dollars}
+        one-time. There are 10 of these. You're one of them.</p>
+        <p>What you get: top of the public Founders Wall with name + logo
+        treatment, co-build access (I'll loop you in on the next-rancher /
+        next-state / next-product calls before they're public), lifetime
+        everything, and a direct line to me — reply to any email and it lands
+        with me personally.</p>
+        <p>Practical: I'll reach out within 48 hours to get your wall
+        treatment dialed in. Pin the calendar link below — that's how you
+        skip the queue any time you want to talk.</p>
+      `;
+      break;
+  }
+
+  // Mission line is the once-per-letter anchor — uses the rescued copy.
+  const missionLine = `
+    <p style="font-style:italic;color:#6B4F3F;font-family:Georgia,serif;font-size:16px;border-left:3px solid #0E0E0E;padding-left:14px;margin:24px 0;">
+      We're gonna take back American ranching and agriculture. One family,
+      one rancher, one freezer at a time.
+    </p>
+  `;
+
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:26px;margin:0 0 16px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+a{color:#0E0E0E;}
+.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+  <p>Hey ${first},</p>
+  <p>Quick note — your Founding Herd backing just landed. Receipt's already
+  in your inbox from Stripe; this is the human follow-up.</p>
+  ${dynamicBlock}
+  ${missionLine}
+  <p>One thing today: take a look at the Founders Wall. Your name (and
+  number, if you got one) is up there as of right now. That's the proof —
+  every backer listed in real time so nobody has to take my word for any
+  of this.</p>
+  <p style="text-align:center;margin:28px 0;">
+    <a href="${WALL_URL}" class="cta">See the wall</a>
+  </p>
+  <p style="font-size:14px;color:#6B4F3F;">
+    Want to talk live? My calendar's at
+    <a href="${CALENDLY_LINK}">${CALENDLY_LINK}</a>. Reply to this email
+    works too — it lands directly with me.
+  </p>
+  <p style="margin-top:28px;">— Ben</p>
+  <div class="footer">
+    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+    <p style="margin:6px 0 0;">
+      <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a>
+    </p>
+  </div>
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending founding herd welcome:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
 // AFFILIATE EMAILS
 // =====================================================
 
