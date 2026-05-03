@@ -278,14 +278,20 @@ export async function POST(request: Request) {
           const isJustExploring = /just exploring/i.test(budgetRange || '') ||
             /just exploring/i.test(timing || '');
           const isFutureTiming = /3-6 months/i.test(timing || '');
+          // Phone optional for high-intent (>=80) buyers — phone signal is
+          // already baked into the intent score itself (lib has +15 for phone).
+          // Requiring it as a hard gate dropped ~15% of high-quality signups.
+          // Score >=80 means the buyer cleared the bar even without phone, so
+          // route them. Medium-intent (60-79) still requires phone as proxy
+          // for seriousness.
           const formIsQualified =
             !!orderType && !!budgetRange &&
             !/unsure|not sure/i.test(orderType) &&
             !/unsure/i.test(budgetRange) &&
             !isJustExploring &&
             !isFutureTiming &&
-            !!phone &&
-            serverIntentScore >= 60;
+            serverIntentScore >= 60 &&
+            (serverIntentScore >= 80 || !!phone);
 
           if (formIsQualified) {
             try {

@@ -1,0 +1,208 @@
+import { NextResponse } from 'next/server';
+import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { CRON_SECRET } from '@/lib/secrets';
+
+// Stuck-buyer recovery — runs daily and retries matching for buyers who
+// engaged (clicked YES on warmup) but never got matched to a rancher.
+//
+// Scenarios this catches:
+//   1. Buyer clicked YES when all in-state ranchers were at capacity →
+//      Buyer Stage=READY, Ready to Buy=true, no active referral. Capacity
+//      may have freed up since.
+//   2. Buyer's state had zero verified ranchers when they engaged → READY
+//      stage. New rancher in their state may have gone live since.
+//   3. matching/suggest threw an error mid-flight (Airtable rate limit,
+//      network blip) → buyer never got a referral row.
+//   4. First-week approval gate held a referral, Ben tapped Skip, no
+//      next-best rancher found → buyer reverted to READY waiting for
+//      capacity.
+//
+// Stop conditions:
+//   - Buyer Stage = MATCHED (already has a rancher)
+//   - Buyer Stage = CLOSED (already bought)
+//   - Active referral exists (Intro Sent / Rancher Contacted / Negotiation)
+//   - Status = Rejected / Pending review for too long
+//   - Last matching attempt within 24h (don't hammer)
+//
+// What it does:
+//   - Filters buyers where Buyer Stage = READY AND Ready to Buy = true
+//   - Skips ones who already have an active referral row
+//   - Calls /api/matching/suggest with warmupEngaged=true (hot-lead bypass)
+//   - If match found → matching/suggest flips stage to MATCHED + fires intros
+//   - If still no match → leaves buyer at READY (we'll retry tomorrow)
+//   - Telegram digest summarizes what was retried + outcomes
+
+export const maxDuration = 60;
+
+const ACTIVE_REFERRAL_STATUSES = [
+  'Pending Approval',
+  'Intro Sent',
+  'Rancher Contacted',
+  'Negotiation',
+];
+
+async function handler(request: Request) {
+  try {
+    if (isMaintenanceMode()) return maintenanceResponse('stuck-buyer-recovery');
+
+    if (CRON_SECRET) {
+      const authHeader = request.headers.get('authorization');
+      if (authHeader !== `Bearer ${CRON_SECRET}`) {
+        const { searchParams } = new URL(request.url);
+        if (searchParams.get('secret') !== CRON_SECRET) {
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+      }
+    }
+
+    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+    const now = Date.now();
+    const DAY_MS = 86_400_000;
+
+    const [consumers, referrals] = await Promise.all([
+      getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
+      getAllRecords(TABLES.REFERRALS) as Promise<any[]>,
+    ]);
+
+    // Build a set of buyer IDs who already have an active referral.
+    const buyersWithActiveRef = new Set<string>();
+    for (const ref of referrals) {
+      const status = (ref['Status'] || '').toString();
+      if (!ACTIVE_REFERRAL_STATUSES.includes(status)) continue;
+      const buyerLinks: string[] = ref['Buyer'] || [];
+      for (const id of buyerLinks) buyersWithActiveRef.add(id);
+    }
+
+    const stuck: any[] = [];
+    for (const c of consumers) {
+      const stage = (c['Buyer Stage'] || '').toString();
+      const readyToBuy = c['Ready to Buy'] === true;
+      const segment = (c['Segment'] || '').toString();
+      const status = (c['Status'] || '').toString();
+
+      // Eligible: READY stage, opted in via warmup, beef segment, approved.
+      if (stage !== 'READY') continue;
+      if (!readyToBuy) continue;
+      if (segment !== 'Beef Buyer') continue;
+      if (status === 'Rejected') continue;
+      if (buyersWithActiveRef.has(c.id)) continue;
+
+      // Cooldown: don't retry within 24h of last attempt.
+      const lastAttempt = c['Last Match Attempt At'];
+      if (lastAttempt) {
+        const ms = new Date(lastAttempt).getTime();
+        if (ms > 0 && now - ms < DAY_MS) continue;
+      }
+
+      stuck.push(c);
+    }
+
+    const retried: Array<{ id: string; name: string; state: string; matched: boolean }> = [];
+
+    // Cap per-run to avoid blasting Resend / Airtable. 50 retries is plenty —
+    // if there are more than 50 stuck buyers, we'll catch the rest tomorrow.
+    const RETRY_CAP = 50;
+    for (const c of stuck.slice(0, RETRY_CAP)) {
+      const buyerState = (c['State'] || '').toString();
+      if (!c['Email'] || !buyerState) {
+        // Mark attempt anyway so we don't keep filtering them in.
+        try {
+          await updateRecord(TABLES.CONSUMERS, c.id, {
+            'Last Match Attempt At': new Date().toISOString(),
+          });
+        } catch {}
+        continue;
+      }
+
+      let matched = false;
+      try {
+        const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+          },
+          body: JSON.stringify({
+            buyerState,
+            buyerId: c.id,
+            buyerName: c['Full Name'] || '',
+            buyerEmail: c['Email'],
+            buyerPhone: c['Phone'] || '',
+            orderType: c['Order Type'] || '',
+            budgetRange: c['Budget'] || '',
+            intentScore: c['Intent Score'] || 0,
+            intentClassification: c['Intent Classification'] || '',
+            notes: c['Notes'] || '',
+            warmupEngaged: true, // hot-lead bypass — they already said YES
+          }),
+        });
+        if (matchRes.ok) {
+          const j = await matchRes.json();
+          if (j.matchFound || j.alreadyActive) matched = true;
+        }
+      } catch (e: any) {
+        console.error(`[stuck-buyer-recovery] retry failed for ${c.id}:`, e?.message);
+      }
+
+      // Always stamp the attempt so cooldown holds.
+      try {
+        await updateRecord(TABLES.CONSUMERS, c.id, {
+          'Last Match Attempt At': new Date().toISOString(),
+          // matching/suggest flips Buyer Stage on success, but if we had a
+          // race where the flip didn't land, force it here as belt-and-suspenders.
+          ...(matched ? { 'Buyer Stage': 'MATCHED', 'Buyer Stage Updated At': new Date().toISOString() } : {}),
+        });
+      } catch (e: any) {
+        console.error(`[stuck-buyer-recovery] stamp failed for ${c.id}:`, e?.message);
+      }
+
+      retried.push({
+        id: c.id,
+        name: (c['Full Name'] || c['Email'] || '?').toString(),
+        state: buyerState,
+        matched,
+      });
+    }
+
+    // Telegram summary if anything happened.
+    if (retried.length && TELEGRAM_ADMIN_CHAT_ID) {
+      try {
+        const matchedCount = retried.filter((r) => r.matched).length;
+        const stillStuck = retried.length - matchedCount;
+        const lines: string[] = [
+          `🔄 <b>Stuck-buyer recovery</b>`,
+          `Retried ${retried.length} READY buyers.`,
+          `✅ Matched: ${matchedCount}`,
+          `⏳ Still no rancher: ${stillStuck}`,
+        ];
+        if (stillStuck > 0) {
+          const stillStuckBuyers = retried.filter((r) => !r.matched).slice(0, 10);
+          lines.push('');
+          lines.push('<b>Still waiting on capacity:</b>');
+          for (const r of stillStuckBuyers) {
+            lines.push(`  · ${r.name} (${r.state})`);
+          }
+          if (stillStuck > 10) lines.push(`  · ...and ${stillStuck - 10} more`);
+        }
+        await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, lines.join('\n'));
+      } catch (e: any) {
+        console.error('[stuck-buyer-recovery] telegram summary failed:', e?.message);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      stuckTotal: stuck.length,
+      retried: retried.length,
+      matched: retried.filter((r) => r.matched).length,
+    });
+  } catch (e: any) {
+    console.error('[stuck-buyer-recovery] fatal:', e?.message);
+    return NextResponse.json({ error: 'cron failed' }, { status: 500 });
+  }
+}
+
+export const GET = handler;
+export const POST = handler;

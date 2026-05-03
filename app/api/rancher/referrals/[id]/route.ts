@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTelegramSaleCelebration } from '@/lib/telegram';
-import { sendRerouteNotification, sendPilotUpsellEmail } from '@/lib/email';
+import { sendRerouteNotification, sendPilotUpsellEmail, sendInstantCommissionInvoice } from '@/lib/email';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import jwt from 'jsonwebtoken';
 
@@ -521,6 +521,32 @@ export async function PATCH(
           lifetimeWins: rancherWins.length,
           lifetimeCommission,
         });
+
+        // ── INSTANT COMMISSION INVOICE — fires on Closed Won so the rancher
+        // gets the bill the moment they hit the button. Monthly cron is the
+        // backstop for any unpaid rolling balance, but the invoice itself
+        // lives here. Skip if no sale amount captured.
+        if (saleAmount && saleAmount > 0) {
+          try {
+            const rancherForInvoice = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+            const invoiceEmail = rancherForInvoice?.['Email'] || '';
+            if (invoiceEmail) {
+              await sendInstantCommissionInvoice({
+                operatorName: rancherForInvoice['Operator Name'] || decoded.name,
+                ranchName: rancherForInvoice['Ranch Name'] || decoded.name,
+                email: invoiceEmail,
+                buyerName,
+                orderType: referral['Order Type'] || 'Beef order',
+                saleAmount,
+                commissionDue: commission,
+                closedAt: new Date().toISOString(),
+              });
+            }
+          } catch (e) {
+            console.error('Instant commission invoice error:', e);
+            // Non-fatal — monthly cron will pick up unpaid commission
+          }
+        }
 
         // ── PILOT MILESTONE: fire one-time upsell alert when rancher hits goal ─
         // Read the rancher's Pilot Closes Goal. If their lifetime Closed Won

@@ -230,17 +230,15 @@ export async function GET(request: Request) {
       // could click again later and have nothing happen. Re-attempting is
       // safe because matching/suggest is idempotent.
       //
-      // Buyer Stage flip to MATCHED happens ONLY when the gate is open OR
-      // when matching/suggest succeeds. Pending-approval buyers stay at
-      // their prior stage (READY) until Ben taps Approve on Telegram.
-      try {
-        await updateRecord(TABLES.CONSUMERS, payload.consumerId, {
-          'Buyer Stage': 'MATCHED',
-          'Buyer Stage Updated At': new Date().toISOString(),
-        });
-      } catch (e: any) {
-        console.error('[warmup/engage] stage flip failed:', e?.message);
-      }
+      // Buyer Stage flip happens AFTER matching/suggest returns. Previously
+      // we pre-emptively flipped to MATCHED before firing matching, which
+      // stranded buyers in MATCHED stage with no referral when matching
+      // failed (no rancher available, all at capacity, etc.). Now:
+      //   - matchFound      → MATCHED
+      //   - alreadyActive   → MATCHED (idempotent re-click, prior match holds)
+      //   - no match        → READY (engaged, waiting for capacity to open)
+      //   - matching errored → READY (recovery cron will retry)
+      let matchOutcome: 'matched' | 'ready' = 'ready';
       if (consumer['Email'] && consumer['State']) {
         try {
           const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
@@ -267,15 +265,14 @@ export async function GET(request: Request) {
             }),
           });
           if (matchRes.ok) {
-            // Capture rancher info for the ceremonial handoff page redirect.
-            // Even if matching returned alreadyActive (idempotent re-click), we
-            // pull the rancher name from the response so the buyer sees the
-            // right handoff content.
             try {
               const j = await matchRes.json();
               if (j.suggestedRancher?.name) {
                 matchedRancherName = j.suggestedRancher.name;
                 matchedRancherState = j.suggestedRancher.state || '';
+              }
+              if (j.matchFound || j.alreadyActive) {
+                matchOutcome = 'matched';
               }
             } catch { /* non-fatal: redirect to /member fallback below */ }
           } else {
@@ -284,6 +281,17 @@ export async function GET(request: Request) {
         } catch (e: any) {
           console.error('Immediate route on YES click failed:', e?.message);
         }
+      }
+
+      // Now flip stage based on outcome. READY means "engaged + waiting for
+      // capacity"; the stuck-buyer-recovery cron retries READY buyers daily.
+      try {
+        await updateRecord(TABLES.CONSUMERS, payload.consumerId, {
+          'Buyer Stage': matchOutcome === 'matched' ? 'MATCHED' : 'READY',
+          'Buyer Stage Updated At': new Date().toISOString(),
+        });
+      } catch (e: any) {
+        console.error('[warmup/engage] stage flip failed:', e?.message);
       }
     }
 

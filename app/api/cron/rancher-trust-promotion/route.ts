@@ -79,14 +79,36 @@ async function handler(request: Request) {
       const phaseUntilMs = phaseUntilRaw ? new Date(phaseUntilRaw).getTime() : null;
       const phaseExpired = phaseUntilMs !== null && !Number.isNaN(phaseUntilMs) && phaseUntilMs < now;
 
+      // LEGACY GRADUATION — ranchers who went live BEFORE this cron existed
+      // never got `Onboarding Phase Until` stamped at go-live. Without this
+      // fallback they'd sit throttled forever (5/week + Telegram approval gate).
+      // If Onboarding Phase Until is blank AND their live signal (Agreement
+      // Signed At, Approved At, or Created) is older than 30 days, treat them
+      // as graduated. This is the bulk-promote path on first run after merge —
+      // every existing partner flips Trust Mode=true overnight.
+      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+      const liveSignal =
+        rancher['Agreement Signed At'] ||
+        rancher['Approved At'] ||
+        rancher['Created'] ||
+        rancher.createdTime;
+      const liveSignalMs = liveSignal ? new Date(liveSignal).getTime() : null;
+      const legacyGraduated =
+        phaseUntilRaw == null &&
+        liveSignalMs !== null &&
+        !Number.isNaN(liveSignalMs) &&
+        now - liveSignalMs >= THIRTY_DAYS_MS;
+
       const closesPromote = closedWon >= 5;
 
-      if (!closesPromote && !phaseExpired) continue;
+      if (!closesPromote && !phaseExpired && !legacyGraduated) continue;
 
       const ranchName = rancher['Operator Name'] || rancher['Ranch Name'] || '(unnamed)';
       const reason = closesPromote
         ? `${closedWon} Closed Won (>=5)`
-        : `Onboarding Phase Until passed (${phaseUntilRaw})`;
+        : phaseExpired
+        ? `Onboarding Phase Until passed (${phaseUntilRaw})`
+        : `Legacy auto-graduate (live ${Math.round((now - liveSignalMs!) / (24 * 60 * 60 * 1000))}d, no phase set)`;
 
       try {
         await updateRecord(TABLES.RANCHERS, rancher.id, { 'Trust Mode': true });

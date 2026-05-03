@@ -352,10 +352,10 @@ function AccessPageContent() {
   if (isSubmitted) {
     const isBeef = submittedSegment === 'Beef Buyer';
     return (
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-2xl mx-auto text-center space-y-8">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
+            <h1 className="font-serif text-4xl md:text-5xl">
               You&apos;re In
             </h1>
             <Divider />
@@ -364,28 +364,28 @@ function AccessPageContent() {
             <div className="space-y-3">
               <p className="text-xl leading-relaxed">
                 Your login link is on its way to{' '}
-                <strong className="text-[#0E0E0E] break-all">{formData.email}</strong>
+                <strong className="text-charcoal break-all">{formData.email}</strong>
               </p>
-              <p className="text-sm text-[#6B4F3F]">
+              <p className="text-sm text-saddle">
                 Arrives in 1-2 minutes. Check spam if you don&apos;t see it from <em>ben@buyhalfcow.com</em>.
               </p>
             </div>
 
             <div className="space-y-3 text-left max-w-md mx-auto pt-4">
               <div className="flex items-center gap-3 text-base">
-                <span className="w-6 h-6 bg-[#0E0E0E] text-[#F4F1EC] rounded-full flex items-center justify-center text-xs font-bold">✓</span>
+                <span className="w-6 h-6 bg-charcoal text-bone rounded-full flex items-center justify-center text-xs font-bold">✓</span>
                 <span>Application approved</span>
               </div>
-              <div className="flex items-start gap-3 text-base text-[#6B4F3F]">
-                <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
+              <div className="flex items-start gap-3 text-base text-saddle">
+                <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
                 <span>
                   {isBeef
                     ? <>We&apos;re matching you with a verified rancher in <strong>{formData.state}</strong> right now</>
                     : 'Log in to explore ranches, land deals, and member perks'}
                 </span>
               </div>
-              <div className="flex items-start gap-3 text-base text-[#A7A29A]">
-                <span className="w-6 h-6 border border-[#A7A29A] rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
+              <div className="flex items-start gap-3 text-base text-dust">
+                <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
                 <span>
                   {isBeef
                     ? 'Personal introduction email within 24-48 hours'
@@ -395,16 +395,16 @@ function AccessPageContent() {
             </div>
 
             {/* Support fallback — visible so users never feel stranded */}
-            <div className="pt-4 text-sm text-[#6B4F3F]">
+            <div className="pt-4 text-sm text-saddle">
               Email not showing up?{' '}
-              <a href="mailto:hello@buyhalfcow.com" className="text-[#0E0E0E] underline underline-offset-2 hover:text-[#6B4F3F]">
+              <a href="mailto:hello@buyhalfcow.com" className="text-charcoal underline underline-offset-2 hover:text-saddle">
                 Email hello@buyhalfcow.com
               </a>
               {' '}and we&apos;ll resend it.
             </div>
 
             <div className="pt-4">
-              <Link href="/" className="text-[#6B4F3F] hover:text-[#0E0E0E] transition-colors">
+              <Link href="/" className="text-saddle hover:text-charcoal transition-colors">
                 &larr; Back to home
               </Link>
             </div>
@@ -415,15 +415,15 @@ function AccessPageContent() {
   }
 
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-2xl mx-auto">
           <div className="text-center space-y-6 mb-12">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
+            <h1 className="font-serif text-4xl md:text-5xl">
               Get Private Access
             </h1>
             <Divider />
-            <p className="text-lg text-[#6B4F3F]">
+            <p className="text-lg text-saddle">
               Apply to get matched with a verified rancher in your state. We review every application and personally introduce you.
             </p>
           </div>
@@ -480,7 +480,7 @@ function AccessPageContent() {
             <Divider />
 
             <div className="space-y-2">
-              <p className="text-sm font-medium text-[#6B4F3F] uppercase tracking-wider">
+              <p className="text-sm font-medium text-saddle uppercase tracking-wider">
                 Help us match you with the right rancher
               </p>
             </div>
@@ -498,8 +498,8 @@ function AccessPageContent() {
                 who pick a low bracket, get matched, see real prices, and
                 blame the platform. Showing real numbers up front lets them
                 self-select. */}
-            <div className="bg-[#F4F1EC] border border-[#A7A29A] p-4 text-sm text-[#6B4F3F] leading-relaxed">
-              <p className="font-medium text-[#0E0E0E] mb-2">A note on pricing</p>
+            <div className="bg-bone border border-dust p-4 text-sm text-saddle leading-relaxed">
+              <p className="font-medium text-charcoal mb-2">A note on pricing</p>
               <p>Real ranch beef ranges roughly:</p>
               <ul className="list-disc ml-5 mt-1 space-y-1">
                 <li><strong>Quarter cow:</strong> $1,000 – $1,500</li>
@@ -538,7 +538,7 @@ function AccessPageContent() {
 
             <div className="space-y-4">
               <p className="text-sm font-medium">
-                I&apos;m interested in: <span className="text-[#8C2F2F]">*</span>
+                I&apos;m interested in: <span className="text-weathered">*</span>
               </p>
               <Checkbox
                 label="Beef"
@@ -567,7 +567,7 @@ function AccessPageContent() {
             </div>
 
             {error && (
-              <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F] text-sm">
+              <div className="p-4 border border-[#8C2F2F] bg-transparent text-weathered text-sm">
                 {error}
               </div>
             )}
@@ -580,7 +580,7 @@ function AccessPageContent() {
           </form>
 
           <div className="mt-12 text-center">
-            <Link href="/" className="text-[#6B4F3F] hover:text-[#0E0E0E] transition-colors">
+            <Link href="/" className="text-saddle hover:text-charcoal transition-colors">
               &larr; Back to home
             </Link>
           </div>
@@ -592,7 +592,7 @@ function AccessPageContent() {
 
 export default function AccessPage() {
   return (
-    <Suspense fallback={<main className="min-h-screen py-24 bg-[#F4F1EC] flex items-center justify-center"><p className="text-[#6B4F3F]">Loading...</p></main>}>
+    <Suspense fallback={<main className="min-h-screen py-24 bg-bone flex items-center justify-center"><p className="text-saddle">Loading...</p></main>}>
       <AccessPageContent />
     </Suspense>
   );

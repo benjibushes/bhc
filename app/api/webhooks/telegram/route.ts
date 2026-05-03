@@ -2409,6 +2409,77 @@ You can also just ask me anything in plain English — I'll figure it out.`;
         }
       }
 
+      // /casestudy [rancher-slug-or-name] — generates a copy-paste social
+      // blurb for any rancher with closed deals. Pulls live data; safe to
+      // run any time. Output is plain-text + emoji so it pastes clean into
+      // X / IG captions / LinkedIn / email. No formatting markup.
+      else if (text.startsWith('/casestudy')) {
+        const query = text.replace('/casestudy', '').trim().toLowerCase();
+        if (!query) {
+          await sendTelegramMessage(
+            chatId,
+            'Usage: <code>/casestudy [rancher slug or name]</code>\n\nExample: <code>/casestudy sackett</code> or <code>/casestudy high lonesome</code>'
+          );
+        } else {
+          const [allRanchers, allRefs] = (await Promise.all([
+            getAllRecords(TABLES.RANCHERS),
+            getAllRecords(TABLES.REFERRALS, '{Status} = "Closed Won"'),
+          ])) as [any[], any[]];
+
+          const matched = (allRanchers as any[]).find((r: any) => {
+            const slug = (r['Slug'] || '').toString().toLowerCase();
+            const name = (r['Ranch Name'] || '').toString().toLowerCase();
+            const op = (r['Operator Name'] || '').toString().toLowerCase();
+            return slug.includes(query) || name.includes(query) || op.includes(query);
+          });
+
+          if (!matched) {
+            await sendTelegramMessage(
+              chatId,
+              `No rancher matched "${text.replace('/casestudy', '').trim()}". Try a slug or part of their name.`
+            );
+          } else {
+            const wins = (allRefs as any[]).filter((ref: any) => {
+              const ids = ref['Rancher'] || ref['Suggested Rancher'] || [];
+              return Array.isArray(ids) && ids.includes(matched.id);
+            });
+            const totalGmv = wins.reduce(
+              (s: number, r: any) => s + (Number(r['Sale Amount']) || 0),
+              0
+            );
+            const ranchName = matched['Ranch Name'] || matched['Operator Name'] || 'this ranch';
+            const state = matched['State'] || '';
+            const slug = matched['Slug'] || '';
+            const url = `https://www.buyhalfcow.com/ranchers/${slug}`;
+
+            // Find earliest close to compute time-on-platform / time-to-close.
+            const earliestClose = wins
+              .map((r: any) => r['Closed At'])
+              .filter(Boolean)
+              .sort()[0];
+            const months = earliestClose
+              ? Math.max(
+                  1,
+                  Math.ceil(
+                    (Date.now() - new Date(earliestClose).getTime()) /
+                      (30 * 24 * 60 * 60 * 1000)
+                  )
+                )
+              : null;
+
+            const blurb =
+              `🎯 <b>${ranchName}${state ? ` (${state})` : ''}</b>\n` +
+              `${wins.length} closed deal${wins.length !== 1 ? 's' : ''}` +
+              (totalGmv ? ` · $${totalGmv.toLocaleString('en-US', { maximumFractionDigits: 0 })} GMV` : '') +
+              (months ? ` in ${months} month${months !== 1 ? 's' : ''}` : '') +
+              `\n\n${url}\n\n` +
+              `<i>Copy-paste anywhere. Pin in marketing.</i>`;
+
+            await sendTelegramMessage(chatId, blurb);
+          }
+        }
+      }
+
       else if (text === '/today') {
         const now = new Date();
         const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -3552,6 +3623,7 @@ Confirm send?`;
 
 <b>📊 SEE</b> — what's happening
 /today — Daily brief (numbers + AI top 3 priorities)
+/casestudy [name or slug] — Generate copy-paste social blurb for any rancher
 /leads — Pending consumers awaiting review
 /ranchers — Rancher onboarding pipeline
 /money — Revenue + commission summary

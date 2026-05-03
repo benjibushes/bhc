@@ -45,6 +45,10 @@ interface RancherInfo {
   quarterClicks: number;
   halfClicks: number;
   wholeClicks: number;
+  // Optional optimization-checklist fields (JSON-encoded strings on
+  // the Airtable side; parsed lazily where used).
+  galleryPhotos?: string;
+  testimonials?: string;
 }
 
 interface Stats {
@@ -631,6 +635,127 @@ export default function RancherDashboardPage() {
                 <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
                 <StatCard label="Your Earnings" value={`$${stats.netEarnings.toLocaleString()}`} sub="(after 10% commission)" />
               </div>
+
+              {/* OPTIMIZATION CHECKLIST — drives ranchers to keep filling out
+                  their page after onboarding. Pages with all 6 boxes checked
+                  convert ~3× better. Only renders if they're missing at least
+                  one item — disappears at 6/6 to reward completion. */}
+              {(() => {
+                const checklist = [
+                  {
+                    key: 'logo',
+                    label: 'Add a ranch logo',
+                    done: !!rancherInfo.logoUrl,
+                    hint: 'Pages with logos look 10× more legit. PNG/JPG URL.',
+                  },
+                  {
+                    key: 'tagline',
+                    label: 'Write a tagline',
+                    done: !!rancherInfo.tagline && rancherInfo.tagline.length > 10,
+                    hint: 'One-sentence pitch. Goes under your name.',
+                  },
+                  {
+                    key: 'about',
+                    label: 'Add your story',
+                    done: !!rancherInfo.aboutText && rancherInfo.aboutText.length > 100,
+                    hint: 'A few paragraphs about your operation. The biggest conversion lever.',
+                  },
+                  {
+                    key: 'pricing',
+                    label: 'Set at least one share price',
+                    done: !!(rancherInfo.quarterPrice || rancherInfo.halfPrice || rancherInfo.wholePrice),
+                    hint: 'Pages with prices convert ~3× better than "contact for pricing".',
+                  },
+                  {
+                    key: 'gallery',
+                    label: 'Add gallery photos',
+                    done: (() => {
+                      try {
+                        const arr = rancherInfo.galleryPhotos
+                          ? JSON.parse(rancherInfo.galleryPhotos)
+                          : [];
+                        return Array.isArray(arr) && arr.length >= 3;
+                      } catch {
+                        return false;
+                      }
+                    })(),
+                    hint: '3+ photos of your ranch, cattle, or family.',
+                  },
+                  {
+                    key: 'testimonials',
+                    label: 'Add a customer testimonial',
+                    done: (() => {
+                      try {
+                        const arr = rancherInfo.testimonials
+                          ? JSON.parse(rancherInfo.testimonials)
+                          : [];
+                        return Array.isArray(arr) && arr.length >= 1;
+                      } catch {
+                        return false;
+                      }
+                    })(),
+                    hint: 'One quote from a real customer = massive trust boost.',
+                  },
+                ];
+                const doneCount = checklist.filter((c) => c.done).length;
+                if (doneCount === checklist.length) return null; // hide at 100%
+                return (
+                  <div className="border border-dust bg-bone-warm p-5 md:p-6 space-y-4">
+                    <div className="flex items-baseline justify-between flex-wrap gap-2">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+                          Optimize your page
+                        </p>
+                        <h3 className="font-serif text-xl text-charcoal mt-1">
+                          {doneCount}/{checklist.length} complete · pages with all 6 convert ~3× better
+                        </h3>
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('my_page')}
+                        className="text-xs uppercase tracking-widest font-semibold text-charcoal underline underline-offset-2 hover:text-saddle"
+                      >
+                        Open page editor →
+                      </button>
+                    </div>
+                    {/* Progress bar */}
+                    <div className="w-full bg-bone h-2 border border-dust">
+                      <div
+                        className="h-full bg-sage transition-all"
+                        style={{ width: `${(doneCount / checklist.length) * 100}%` }}
+                      />
+                    </div>
+                    <ul className="space-y-2">
+                      {checklist.map((item) => (
+                        <li key={item.key} className="flex items-start gap-3">
+                          <span
+                            className={`inline-flex items-center justify-center w-5 h-5 text-[11px] font-bold shrink-0 mt-0.5 ${
+                              item.done
+                                ? 'bg-sage text-bone'
+                                : 'bg-bone border border-dust text-saddle'
+                            }`}
+                          >
+                            {item.done ? '✓' : ''}
+                          </span>
+                          <div className="flex-1">
+                            <p
+                              className={`text-sm ${
+                                item.done ? 'text-saddle line-through' : 'text-charcoal font-medium'
+                              }`}
+                            >
+                              {item.label}
+                            </p>
+                            {!item.done && (
+                              <p className="text-xs text-saddle mt-0.5 leading-relaxed">
+                                {item.hint}
+                              </p>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
 
               <Divider />
 
