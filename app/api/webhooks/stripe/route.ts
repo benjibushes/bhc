@@ -293,17 +293,18 @@ async function handleFounderCheckoutCompleted(session: any, metaType: string) {
     }
   }
 
-  // ── 5. Telegram alert ──
+  // ── 5. Telegram alert with action buttons ──
   try {
-    const { sendTelegramUpdate } = await import('@/lib/telegram');
-    const fnLine = founderNumber ? `\n🔢 Founder #${founderNumber}` : '';
-    await sendTelegramUpdate(
-      `🪙 <b>Founding Herd Backer</b>\n\n` +
-        `🎖️ <b>${mapped.tier}</b>${fnLine}\n` +
-        `📧 ${email}\n` +
-        `💵 $${amountPaid.toLocaleString('en-US')}\n` +
-        `🧾 ${metaType}`
-    );
+    const { sendTelegramFounderBacker } = await import('@/lib/telegram');
+    await sendTelegramFounderBacker({
+      email,
+      name: firstName,
+      tier: mapped.tier,
+      founderNumber,
+      amountCents: Math.round(amountPaid * 100),
+      isLifetime: metaType === 'founder-lifetime',
+      consumerId,
+    });
   } catch (e) {
     console.error('Telegram founder notification error:', e);
   }
@@ -341,13 +342,13 @@ async function markSubscriptionCancelled(subscriptionId: string) {
     console.error('Failed to mark subscription cancelled:', e);
   }
   try {
-    const { sendTelegramUpdate } = await import('@/lib/telegram');
-    await sendTelegramUpdate(
-      `⚠️ <b>Founder subscription cancelled</b>\n\n` +
-        `🎖️ ${row['Founder Tier'] || '(no tier)'}\n` +
-        `📧 ${row['Email'] || '(no email)'}\n` +
-        `🧾 ${subscriptionId}`
-    );
+    const { sendTelegramSubscriptionCancelled } = await import('@/lib/telegram');
+    await sendTelegramSubscriptionCancelled({
+      email: (row['Email'] as string) || '(no email)',
+      name: (row['Full Name'] as string) || (row['First Name'] as string) || '',
+      tier: (row['Founder Tier'] as string) || '(no tier)',
+      consumerId: row.id,
+    });
   } catch (e) {
     console.error('Telegram churn notification error:', e);
   }
@@ -360,13 +361,26 @@ async function markSubscriptionCancelled(subscriptionId: string) {
 // ============================================================================
 async function alertInvoicePaymentFailed(invoice: any) {
   try {
-    const { sendTelegramUpdate } = await import('@/lib/telegram');
-    await sendTelegramUpdate(
-      `🚨 <b>Founder invoice payment failed</b>\n\n` +
-        `📧 ${invoice.customer_email || '(no email)'}\n` +
-        `💵 $${((invoice.amount_due || 0) / 100).toFixed(2)}\n` +
-        `🧾 ${invoice.subscription || invoice.id}`
-    );
+    const { sendTelegramInvoiceFailed } = await import('@/lib/telegram');
+    // Best-effort tier lookup via subscription ID. If miss, blank fine.
+    let tier = '(unknown tier)';
+    if (invoice.subscription) {
+      try {
+        const matches = await getAllRecords(
+          TABLES.CONSUMERS,
+          `{Stripe Subscription ID} = "${escapeAirtableValue(invoice.subscription)}"`
+        );
+        if (matches.length > 0) {
+          tier = ((matches[0] as any)['Founder Tier'] as string) || tier;
+        }
+      } catch {}
+    }
+    await sendTelegramInvoiceFailed({
+      email: invoice.customer_email || '(no email)',
+      name: invoice.customer_name || '',
+      tier,
+      amountCents: invoice.amount_due || 0,
+    });
   } catch (e) {
     console.error('Telegram invoice-failed notification error:', e);
   }

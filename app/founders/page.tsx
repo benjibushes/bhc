@@ -73,47 +73,49 @@ type TierCardProps = {
 };
 
 function TierCard(props: TierCardProps) {
+  // Emphasis = capped one-time tiers (Founding 100, Title Founder). They get
+  // the deep border + warm bg to feel scarcer / heavier than the recurring
+  // subscription tiers below them.
+  const surfaceClass = props.emphasis
+    ? 'bg-bone-warm border-2 border-charcoal'
+    : 'bg-bone border border-dust';
   return (
-    <div
-      className={`border ${
-        props.emphasis ? 'border-[#0E0E0E]' : 'border-[#A7A29A]'
-      } bg-white p-6 md:p-8 space-y-5`}
-    >
-      <div className="space-y-1">
-        <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+    <article className={`${surfaceClass} p-7 md:p-8 space-y-6 transition-base hover:border-charcoal flex flex-col`}>
+      <header className="space-y-2">
+        <p className="text-[11px] uppercase tracking-[0.18em] text-saddle font-semibold">
           {props.label}
         </p>
-        <p className="font-[family-name:var(--font-playfair)] text-2xl">
+        <p className="font-serif text-3xl text-charcoal leading-tight">
           {props.tagline}
         </p>
-        <p className="text-lg text-[#0E0E0E]">{props.priceLine}</p>
+        <p className="text-base text-charcoal font-medium">{props.priceLine}</p>
         {props.remaining && (
-          <p className="text-xs text-[#6B4F3F]">{props.remaining}</p>
+          <p className="text-xs text-saddle pt-1">{props.remaining}</p>
         )}
-      </div>
-      <ul className="text-sm text-[#2A2A2A] space-y-2 leading-relaxed">
+      </header>
+      <ul className="text-sm text-charcoal/85 space-y-2.5 leading-relaxed flex-1">
         {props.bullets.map((b, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="text-[#6B4F3F]">·</span>
+          <li key={i} className="flex gap-2.5">
+            <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
             <span>{b}</span>
           </li>
         ))}
       </ul>
-      <div className="space-y-2">
+      <div className="space-y-2 pt-2">
         {props.buttons.map((btn, i) =>
           btn.kind === 'link' ? (
             btn.href ? (
               <a
                 key={i}
                 href={btn.href}
-                className="block text-center px-6 py-3 text-sm tracking-wide bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]"
+                className="block text-center px-6 py-3.5 text-sm font-medium tracking-wide uppercase bg-charcoal text-bone transition-base hover:bg-divider"
               >
                 {btn.label}
               </a>
             ) : (
               <span
                 key={i}
-                className="block text-center px-6 py-3 text-sm tracking-wide bg-[#A7A29A] text-[#F4F1EC] cursor-not-allowed"
+                className="block text-center px-6 py-3.5 text-sm font-medium tracking-wide uppercase bg-dust text-bone cursor-not-allowed"
                 aria-disabled
               >
                 {btn.label} (coming soon)
@@ -129,11 +131,24 @@ function TierCard(props: TierCardProps) {
           )
         )}
       </div>
-    </div>
+    </article>
   );
 }
 
-export default async function FoundersPage() {
+export default async function FoundersPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ success?: string; cancelled?: string; tier?: string; paid?: string }>;
+}) {
+  // Stripe redirects backers here after checkout with `?success=1` (and
+  // `?session_id=...` from Payment Links via the `{CHECKOUT_SESSION_ID}`
+  // template) or `?cancelled=1`. Render a confirmation banner so backers
+  // know the payment landed instead of staring at an unchanged tier grid.
+  const params = (await searchParams) || {};
+  const isSuccess = params.success === '1' || !!params.paid;
+  const isCancelled = params.cancelled === '1';
+  const paidTier = (params.paid || params.tier || '').toString().replace(/-/g, ' ');
+
   // Live counts for the hero counter + sold-out gating on capped tiers.
   const [founding100Count, titleFounderCount] = await Promise.all([
     countFoundersByTier('Founding 100'),
@@ -161,25 +176,59 @@ export default async function FoundersPage() {
   const titleFounderSoldOut = titleFounderCount >= TITLE_FOUNDER_CAP;
 
   return (
-    <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen bg-bone text-charcoal">
+      {/* POST-CHECKOUT BANNER — Stripe redirect lands here. Without this, backers
+          see no acknowledgment after paying. Welcome email is the next signal
+          but takes 30s+ to arrive. */}
+      {isSuccess && (
+        <div className="bg-sage text-bone py-5 border-b-2 border-sage-dark">
+          <Container>
+            <div className="max-w-3xl mx-auto text-center space-y-2">
+              <p className="font-bold text-base md:text-lg">
+                You&rsquo;re in. Welcome to the Founding Herd
+                {paidTier ? ` — ${paidTier}` : ''}.
+              </p>
+              <p className="text-sm text-bone/90 leading-relaxed">
+                A welcome email with everything you need is on its way (usually
+                within 60 seconds). If it doesn&rsquo;t arrive, email{' '}
+                <a href="mailto:ben@buyhalfcow.com" className="underline underline-offset-2 decoration-bone/60 hover:decoration-bone">
+                  ben@buyhalfcow.com
+                </a>{' '}
+                and I&rsquo;ll sort you personally.
+              </p>
+            </div>
+          </Container>
+        </div>
+      )}
+      {isCancelled && (
+        <div className="bg-bone-deep text-charcoal py-4 border-b border-saddle/30">
+          <Container>
+            <p className="max-w-3xl mx-auto text-center text-sm">
+              Checkout cancelled — no charge made. Pick a tier below when
+              you&rsquo;re ready.
+            </p>
+          </Container>
+        </div>
+      )}
+
       {/* HERO */}
       <section className="py-20 md:py-28">
         <Container>
           <div className="max-w-3xl mx-auto text-center space-y-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-[#6B4F3F]">
+            <p className="text-xs uppercase tracking-[0.2em] text-saddle">
               The Founding Herd
             </p>
-            <h1 className="font-[family-name:var(--font-playfair)] text-4xl md:text-6xl leading-tight">
+            <h1 className="font-serif text-4xl md:text-6xl leading-tight">
               100 spots. {founding100PriceLabel} early bird.
             </h1>
             <Divider />
-            <p className="text-lg md:text-xl text-[#2A2A2A] leading-relaxed">
+            <p className="text-lg md:text-xl text-charcoal/85 leading-relaxed">
               I'm raising capital from the people who already believe in this
               and want a stake. Five tiers, no equity, no fundraising
               theatrics. The wall lists every backer in real time. Names are
               the proof.
             </p>
-            <p className="text-base text-[#6B4F3F]">
+            <p className="text-base text-saddle">
               <strong>{founding100Count}</strong> of {FOUNDING_100_CAP} Founding
               100 spots claimed
               {titleFounderCount > 0 ? (
@@ -194,36 +243,36 @@ export default async function FoundersPage() {
             <div className="pt-4 flex flex-wrap gap-3 justify-center">
               <a
                 href="#tiers"
-                className="px-8 py-3 bg-[#0E0E0E] text-[#F4F1EC] text-sm tracking-wide hover:bg-[#6B4F3F] transition-colors"
+                className="px-8 py-3 bg-charcoal text-bone text-sm tracking-wide hover:bg-divider transition-colors"
               >
                 See the tiers
               </a>
               <a
                 href="#wall"
-                className="px-8 py-3 border border-[#0E0E0E] text-[#0E0E0E] text-sm tracking-wide hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                className="px-8 py-3 border border-charcoal text-charcoal text-sm tracking-wide hover:bg-charcoal hover:text-bone transition-colors"
               >
                 Read the wall
               </a>
             </div>
             {earlyBirdSubline && (
-              <p className="text-xs text-[#A7A29A]">{earlyBirdSubline}</p>
+              <p className="text-xs text-dust">{earlyBirdSubline}</p>
             )}
           </div>
         </Container>
       </section>
 
       {/* PROBLEM */}
-      <section className="py-16 bg-white border-y border-[#A7A29A]">
+      <section className="py-16 bg-white border-y border-dust">
         <Container>
           <div className="max-w-3xl mx-auto space-y-6">
-            <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+            <p className="text-xs uppercase tracking-widest text-saddle">
               Why I'm doing this
             </p>
-            <h2 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl leading-snug">
+            <h2 className="font-serif text-3xl md:text-4xl leading-snug">
               Four companies own American beef. The ranchers raising it can't
               make rent.
             </h2>
-            <div className="space-y-4 text-[#2A2A2A] leading-relaxed">
+            <div className="space-y-4 text-charcoal/85 leading-relaxed">
               <p>
                 Tyson, Cargill, JBS, National Beef. They process roughly 80% of
                 the beef in this country. They set the price the rancher
@@ -244,7 +293,7 @@ export default async function FoundersPage() {
                 merch and patches and the small physical things that make a
                 community real, capital to keep me on the road.
               </p>
-              <p className="italic font-[family-name:var(--font-playfair)] border-l-2 border-[#0E0E0E] pl-4 text-[#0E0E0E]">
+              <p className="italic font-serif border-l-2 border-charcoal pl-4 text-charcoal">
                 We're gonna take back American ranching and agriculture. One
                 family, one rancher, one freezer at a time.
               </p>
@@ -263,16 +312,16 @@ export default async function FoundersPage() {
         <Container>
           <div className="max-w-5xl mx-auto space-y-10">
             <div className="text-center space-y-2">
-              <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+              <p className="text-xs uppercase tracking-widest text-saddle">
                 Tiers
               </p>
-              <h2 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl">
+              <h2 className="font-serif text-3xl md:text-4xl">
                 Pick the level that fits.
               </h2>
-              <p className="text-[#6B4F3F] max-w-2xl mx-auto">
+              <p className="text-saddle max-w-2xl mx-auto">
                 Three subscriptions, two one-times. Every tier comes with the
-                Founding Herd Telegram and the monthly road letter. The higher
-                you go, the more access you get to the build itself.
+                monthly founder letter and a name on the public Founders Wall.
+                The higher you go, the more access you get to the build itself.
               </p>
             </div>
 
@@ -337,9 +386,9 @@ export default async function FoundersPage() {
                 priceLine="$75 / mo or $750 / yr"
                 bullets={[
                   'Outlaw + Herd benefits',
-                  'Quarterly office-hours calls (small group)',
-                  'Founders Wall placement',
-                  'Direct Telegram access — flag a rancher to add or a state to prioritize',
+                  'Quarterly office-hours video call (small group)',
+                  'Public placement on the Founders Wall',
+                  'Direct email line to me — flag a rancher to add or a state to prioritize',
                 ]}
                 buttons={[
                   {
@@ -388,7 +437,7 @@ export default async function FoundersPage() {
                 bullets={[
                   'Monthly founder letter from the road',
                   'Early heads-up when a rancher goes live in your state',
-                  'Standing invite to the Founding Herd Telegram',
+                  'First-print BuyHalfCow patch (mailed once)',
                   'Quiet backing — your name stays private unless you opt in',
                 ]}
                 buttons={[
@@ -430,7 +479,7 @@ export default async function FoundersPage() {
       </section>
 
       {/* WALL */}
-      <section id="wall" className="py-16 bg-white border-t border-[#A7A29A]">
+      <section id="wall" className="py-16 bg-white border-t border-dust">
         <Container>
           <div className="max-w-5xl mx-auto">
             <FoundersWall />
@@ -443,10 +492,10 @@ export default async function FoundersPage() {
         <Container>
           <div className="max-w-3xl mx-auto space-y-8">
             <div className="text-center space-y-2">
-              <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+              <p className="text-xs uppercase tracking-widest text-saddle">
                 Common questions
               </p>
-              <h2 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl">
+              <h2 className="font-serif text-3xl md:text-4xl">
                 FAQ
               </h2>
             </div>
@@ -459,7 +508,7 @@ export default async function FoundersPage() {
                 },
                 {
                   q: 'What does the money go to?',
-                  a: 'Onboarding ranchers (the biggest cost), shipping merch and patches, my time on the road. I keep a public expense ledger in the Founding Herd Telegram. Steward+ gets a quarterly call to ask anything about the spend.',
+                  a: 'Onboarding ranchers (the biggest cost), shipping merch and patches, my time on the road. I send a quarterly expense breakdown to all backers. Steward+ gets a quarterly group call to ask anything about the spend.',
                 },
                 {
                   q: 'Can I be a Founder and a Buyer?',
@@ -483,20 +532,20 @@ export default async function FoundersPage() {
                 },
               ].map((faq, i) => (
                 <div key={i} className="border-b border-[#E5E2DC] pb-5">
-                  <p className="font-[family-name:var(--font-playfair)] text-lg mb-2">
+                  <p className="font-serif text-lg mb-2">
                     {faq.q}
                   </p>
-                  <p className="text-[#2A2A2A] leading-relaxed">{faq.a}</p>
+                  <p className="text-charcoal/85 leading-relaxed">{faq.a}</p>
                 </div>
               ))}
             </div>
 
             <div className="text-center pt-4">
-              <p className="text-sm text-[#6B4F3F]">
+              <p className="text-sm text-saddle">
                 Got a different question? Email me directly:{' '}
                 <Link
                   href="mailto:ben@buyhalfcow.com"
-                  className="underline hover:text-[#0E0E0E]"
+                  className="underline hover:text-charcoal"
                 >
                   ben@buyhalfcow.com
                 </Link>
@@ -506,8 +555,59 @@ export default async function FoundersPage() {
         </Container>
       </section>
 
+      {/* CROSS-PAGE FOOTER — sites that funnel campaign traffic into /founders
+          need an exit ramp to the rest of the network so backers don't dead-end. */}
+      <section className="py-12 border-t border-dust/40">
+        <Container>
+          <div className="max-w-3xl mx-auto text-center space-y-4">
+            <p className="text-xs uppercase tracking-widest text-saddle">
+              The rest of the network
+            </p>
+            <div className="flex flex-wrap justify-center gap-3">
+              <Link
+                href="/map"
+                className="text-sm px-5 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+              >
+                Discover map
+              </Link>
+              <Link
+                href="/map/add-a-rancher"
+                className="text-sm px-5 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+              >
+                Add a rancher
+              </Link>
+              <Link
+                href="/access"
+                className="text-sm px-5 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+              >
+                Buyer access
+              </Link>
+              <Link
+                href="/partner"
+                className="text-sm px-5 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+              >
+                Rancher partner
+              </Link>
+              <Link
+                href="/faq"
+                className="text-sm px-5 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+              >
+                FAQ
+              </Link>
+            </div>
+            <p className="text-xs text-dust pt-4">
+              <Link href="/terms" className="underline hover:text-charcoal">Terms</Link>
+              {' · '}
+              <Link href="/privacy" className="underline hover:text-charcoal">Privacy</Link>
+              {' · '}
+              BuyHalfCow · Kalispell, MT
+            </p>
+          </div>
+        </Container>
+      </section>
+
       {/* STICKY MOBILE CTA */}
-      <div className="md:hidden fixed bottom-0 inset-x-0 bg-[#0E0E0E] text-[#F4F1EC] z-40 border-t border-[#6B4F3F]">
+      <div className="md:hidden fixed bottom-0 inset-x-0 bg-charcoal text-bone z-40 border-t border-saddle">
         <a
           href="#tiers"
           className="block text-center py-4 text-sm tracking-widest"

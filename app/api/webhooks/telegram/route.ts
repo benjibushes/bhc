@@ -2330,6 +2330,95 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
         await sendTelegramMessage(chatId, msg);
       }
 
+      // /morning — campaign-aware digest. Bigger surface than /today. Surfaces
+      // self-submits, founder backers, throttle approvals, hot leads, deals at risk.
+      // Keeps Ben from running 5 commands in the morning.
+      else if (text === '/morning') {
+        const now = new Date();
+        const day = 24 * 60 * 60 * 1000;
+        const yesterday = new Date(now.getTime() - day);
+
+        const [consumers, ranchers, referrals] = await Promise.all([
+          getAllRecords(TABLES.CONSUMERS),
+          getAllRecords(TABLES.RANCHERS),
+          getAllRecords(TABLES.REFERRALS),
+        ]);
+
+        const recentSelfSubmits = ranchers.filter((r: any) => {
+          const at = r['Self-Submitted At'];
+          return at && new Date(at) >= yesterday;
+        });
+
+        const recentFounders = consumers.filter((c: any) => {
+          const subAt = c['Subscribed At'];
+          return subAt && new Date(subAt) >= yesterday && c['Founder Tier'];
+        });
+        const founderRevenue24h = recentFounders.reduce(
+          (s: number, c: any) => s + (Number(c['Tier Amount Paid']) || 0),
+          0
+        );
+
+        const founding100Count = consumers.filter(
+          (c: any) => c['Founder Tier'] === 'Founding 100'
+        ).length;
+        const titleFounderCount = consumers.filter(
+          (c: any) => c['Founder Tier'] === 'Title Founder'
+        ).length;
+
+        const pendingApprovals = referrals.filter(
+          (r: any) => r['Approval Status'] === 'pending-approval'
+        );
+
+        const hotLeads = consumers.filter((c: any) => {
+          const intent = Number(c['Intent Score']) || 0;
+          const status = (c['Status'] || '').toLowerCase();
+          return intent >= 80 && (status === 'pending' || status === 'new' || !status);
+        });
+
+        const sevenDays = 7 * day;
+        const dealsAtRisk = referrals.filter((r: any) => {
+          const status = r['Status'];
+          if (!['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(status)) return false;
+          const last = new Date(
+            r['Last Updated'] || r['Intro Sent At'] || r['Created'] || 0
+          ).getTime();
+          return now.getTime() - last >= sevenDays;
+        });
+
+        const lines = [
+          `🌅 <b>Morning brief</b> — ${now.toLocaleDateString('en-US', {
+            weekday: 'long',
+            month: 'short',
+            day: 'numeric',
+          })}`,
+          '',
+          '<b>Movement (last 24h)</b>',
+          `🟡 Self-submits: ${recentSelfSubmits.length}${
+            recentSelfSubmits.length
+              ? ' — ' +
+                recentSelfSubmits
+                  .slice(0, 5)
+                  .map((r: any) => r['Ranch Name'] || '?')
+                  .join(', ')
+              : ''
+          }`,
+          `🪙 New founders: ${recentFounders.length} ($${founderRevenue24h.toLocaleString()})`,
+          '',
+          '<b>Funnel</b>',
+          `🔥 Hot leads waiting: ${hotLeads.length}`,
+          `🛂 Throttle approvals pending: ${pendingApprovals.length}`,
+          `⏳ Deals at risk (7d+ stale): ${dealsAtRisk.length}`,
+          '',
+          '<b>Founding Herd live counts</b>',
+          `Founding 100: ${founding100Count}/100`,
+          `Title Founder: ${titleFounderCount}/10`,
+          '',
+          '<i>Tap commands: /pending · /capacity · /pipeline · /revenue</i>',
+        ];
+
+        await sendTelegramMessage(chatId, lines.join('\n'));
+      }
+
       else if (text.startsWith('/lookup') || text.startsWith('/find') || text.startsWith('/buyer')) {
         const query = text.replace(/^\/(lookup|find|buyer)/, '').trim();
         if (!query) {
@@ -3412,6 +3501,7 @@ Confirm send?`;
         const msg = `📖 <b>BuyHalfCow Bot — Command Reference</b>
 
 <b>📊 SEE</b> — what's happening
+/morning — Campaign-aware brief: self-submits, founders, throttle approvals, hot leads
 /today — Daily brief (numbers + AI top 3 priorities)
 /leads — Pending consumers awaiting review
 /ranchers — Rancher onboarding pipeline

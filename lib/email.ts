@@ -1326,7 +1326,8 @@ export async function sendBrandListingConfirmation(data: {
 // `checkout.session.completed` for any of the 5 paid backer tiers. This is
 // the entire post-purchase product (no /founders/dashboard in v1), so it
 // has to carry its weight: thank, contextualize what they bought, point at
-// Telegram + a call link, and for numbered tiers stamp the Founder Number.
+// the Founders Wall + a call link, and for numbered tiers stamp the Founder
+// Number. NO Telegram — backers wanted email, not yet another group chat.
 //
 // Voice anchors (Stage 1 changelog Section 10): sendMerchEmail,
 // sendWelcomeAndReadyToBuy, sendFounderLetterWaiting. Lowercase opener,
@@ -1348,7 +1349,7 @@ export async function sendFoundingHerdWelcome(data: {
       ? `you're founder #${data.founderNumber}.`
       : '';
 
-  const TELEGRAM_URL = process.env.FOUNDERS_TELEGRAM_URL || 'https://t.me/buyhalfcow';
+  const WALL_URL = `${SITE_URL}/founders#wall`;
 
   // Per-tier dynamic block — what they actually bought, what to expect.
   let dynamicBlock = '';
@@ -1362,9 +1363,9 @@ export async function sendFoundingHerdWelcome(data: {
         building something that puts ranchers back in front of families. Quiet
         backing, real impact.</p>
         <p>What you get: monthly founder letter from the road, early heads-up
-        when a new rancher goes live in your state, and a standing invite to
-        the Founding Herd Telegram (where I post the actual operations — what's
-        working, what's not).</p>
+        when a new rancher goes live in your state, and a first-print
+        BuyHalfCow patch in the mail. Your name stays private unless you reply
+        to this email asking to be on the public Wall.</p>
       `;
       break;
     case 'Outlaw':
@@ -1372,9 +1373,9 @@ export async function sendFoundingHerdWelcome(data: {
       dynamicBlock = `
         <p>You're in at <strong>Outlaw</strong> tier — ${dollars}. The name
         fits: people backing this from a place of conviction, not convenience.</p>
-        <p>What you get: everything Herd gets, plus your name on the
-        Founders Wall, quarterly behind-the-scenes drops, and first dibs on
-        any limited rancher batches that come through.</p>
+        <p>What you get: everything Herd gets, plus your name on the public
+        Founders Wall, quarterly behind-the-scenes drops by email, and first
+        dibs on any limited rancher batches that come through.</p>
       `;
       break;
     case 'Steward':
@@ -1383,10 +1384,10 @@ export async function sendFoundingHerdWelcome(data: {
         <p>You're in at <strong>Steward</strong> tier — ${dollars}. This is
         the level where you start showing up in my decision-making. A
         Steward's vote weighs more than a survey response.</p>
-        <p>What you get: Outlaw perks plus quarterly office-hours calls
-        (small group, real questions), Founders Wall placement, and direct
-        Telegram access if you want to flag a rancher to add or a state to
-        prioritize.</p>
+        <p>What you get: Outlaw perks plus a quarterly office-hours video
+        call (small group, real questions), public placement on the Founders
+        Wall, and a direct email line to me — flag a rancher to add or a
+        state to prioritize and I'll act on it.</p>
       `;
       break;
     case 'Founding 100':
@@ -1395,9 +1396,9 @@ export async function sendFoundingHerdWelcome(data: {
         <p>You're <strong>Founding 100 — ${numberLine}</strong> ${dollars} one-time.
         Only 100 of these exist. You're getting in at the price the next
         100 won't.</p>
-        <p>What you get: numbered placement on the Founders Wall, lifetime
-        priority routing on every rancher we onboard in your state, a
-        first-print BuyHalfCow patch with your number on it, and a 30-min
+        <p>What you get: numbered placement on the public Founders Wall,
+        lifetime priority routing on every rancher we onboard in your state,
+        a first-print BuyHalfCow patch with your number on it, and a 30-min
         call with me when you're ready to use it (calendar below).</p>
         <p>Practical: you don't need to do anything else right now. I'll
         ship the patch within ~3 weeks. The wall placement is live tonight.</p>
@@ -1408,10 +1409,11 @@ export async function sendFoundingHerdWelcome(data: {
       dynamicBlock = `
         <p>You're a <strong>Title Founder — ${numberLine}</strong> ${dollars}
         one-time. There are 10 of these. You're one of them.</p>
-        <p>What you get: top of the Founders Wall, name + logo treatment,
-        co-build access (I'll loop you in on the next-rancher / next-state /
-        next-product calls before they're public), lifetime everything, and
-        whatever's reasonable to ask of me directly.</p>
+        <p>What you get: top of the public Founders Wall with name + logo
+        treatment, co-build access (I'll loop you in on the next-rancher /
+        next-state / next-product calls before they're public), lifetime
+        everything, and a direct line to me — reply to any email and it lands
+        with me personally.</p>
         <p>Practical: I'll reach out within 48 hours to get your wall
         treatment dialed in. Pin the calendar link below — that's how you
         skip the queue any time you want to talk.</p>
@@ -1447,12 +1449,12 @@ a{color:#0E0E0E;}
   in your inbox from Stripe; this is the human follow-up.</p>
   ${dynamicBlock}
   ${missionLine}
-  <p>One CTA today: hop into the Founding Herd Telegram. That's where I
-  post the operational stuff — which rancher just signed, which state's
-  next, what's hard. It's quieter than email and you'll see things before
-  anyone outside the room.</p>
+  <p>One thing today: take a look at the Founders Wall. Your name (and
+  number, if you got one) is up there as of right now. That's the proof —
+  every backer listed in real time so nobody has to take my word for any
+  of this.</p>
   <p style="text-align:center;margin:28px 0;">
-    <a href="${TELEGRAM_URL}" class="cta">Join the Telegram</a>
+    <a href="${WALL_URL}" class="cta">See the wall</a>
   </p>
   <p style="font-size:14px;color:#6B4F3F;">
     Want to talk live? My calendar's at
