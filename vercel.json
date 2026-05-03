@@ -47,6 +47,14 @@
     {
       "path": "/api/cron/rancher-onboarding-drip",
       "schedule": "30 17 * * *"
+    },
+    {
+      "path": "/api/cron/rancher-trust-promotion",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/stuck-buyer-recovery",
+      "schedule": "30 14 * * *"
     }
   ]
 }

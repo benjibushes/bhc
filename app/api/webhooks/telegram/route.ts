@@ -2146,6 +2146,145 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         }
       }
 
+      // ─── First-week founder approval gate (Project 2 — Onboarding Throttle) ──
+      // Wired by app/api/warmup/engage/route.ts. When a buyer clicks YES on
+      // a warmup email and the in-state rancher is still in their onboarding
+      // window (Trust Mode=false AND <5 onboarding intros), engage stages a
+      // pending-approval referral and posts a card with these buttons.
+      // Format: firstweek_<action>_<referralId>  where action ∈ {approve, hold, skip}
+      // - approve: Approval Status → approved, Status → Intro Sent, fire
+      //   matching/suggest so the rancher gets the standard intro email,
+      //   flip buyer to MATCHED.
+      // - hold:    Approval Status → held, stamp "Approval Hold Until" 7d
+      //   future (lightweight: we just edit the message + leave the row;
+      //   a future cron can re-surface). Buyer stays at READY/WAITING.
+      // - skip:    Approval Status → skipped, Status → Closed Lost. Buyer
+      //   reverts to WAITING. Future iteration: try next-best rancher.
+      else if (callbackData?.startsWith('firstweek_') && chatId && messageId) {
+        const parts = callbackData.split('_');
+        const action = parts[1];
+        const refId = parts.slice(2).join('_');
+        if (!refId) {
+          await answerCallbackQuery(queryId, 'Missing referral ID');
+        } else {
+          try {
+            const referral: any = await getRecordById(TABLES.REFERRALS, refId);
+            const buyerId = referral?.['Buyer']?.[0] || '';
+            const buyerName = referral?.['Buyer Name'] || '?';
+            const ranchName = referral?.['Suggested Rancher Name'] || 'rancher';
+
+            if (action === 'approve') {
+              await answerCallbackQuery(queryId, '✅ Approved — firing intro');
+              const suggestedRancherId = referral?.['Suggested Rancher']?.[0] || '';
+
+              // Flip buyer first so the immediate-route below sees MATCHED.
+              if (buyerId) {
+                try {
+                  await updateRecord(TABLES.CONSUMERS, buyerId, {
+                    'Buyer Stage': 'MATCHED',
+                    'Buyer Stage Updated At': new Date().toISOString(),
+                  });
+                } catch {}
+              }
+
+              // Flip the staged referral to Approval Status=approved. We
+              // leave Status as Pending Approval — matching/suggest is
+              // idempotent and will either reuse this row or create the
+              // canonical Intro Sent referral.
+              try {
+                await updateRecord(TABLES.REFERRALS, refId, {
+                  'Approval Status': 'approved',
+                });
+              } catch {}
+
+              // Fire matching/suggest — same path as warmup/engage's
+              // immediate-route block. This sends the rancher the intro
+              // email and the buyer the buyer-side intro notification.
+              if (buyerId) {
+                try {
+                  const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+                  if (buyer?.['Email'] && buyer?.['State']) {
+                    await fetch(`${SITE_URL}/api/matching/suggest`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        ...(INTERNAL_API_SECRET ? { 'x-internal-secret': INTERNAL_API_SECRET } : {}),
+                      },
+                      body: JSON.stringify({
+                        buyerId,
+                        buyerState: buyer['State'],
+                        buyerName: buyer['Full Name'] || '',
+                        buyerEmail: buyer['Email'],
+                        buyerPhone: buyer['Phone'] || '',
+                        orderType: buyer['Order Type'] || '',
+                        budgetRange: buyer['Budget'] || buyer['Budget Range'] || '',
+                        intentScore: buyer['Intent Score'] || 0,
+                        intentClassification: buyer['Intent Classification'] || '',
+                        notes: buyer['Notes'] || '',
+                        warmupEngaged: true,
+                        // Hint: prefer the rancher we already staged
+                        preferredRancherId: suggestedRancherId,
+                      }),
+                    });
+                  }
+                } catch (e: any) {
+                  console.error('[firstweek approve] matching/suggest failed:', e?.message);
+                }
+              }
+
+              await editTelegramMessage(
+                chatId,
+                messageId,
+                `✅ <b>Approved</b> — ${buyerName} → ${ranchName}\n\nIntro fired. Rancher will reach out within 24-48h.`
+              );
+            } else if (action === 'hold') {
+              await answerCallbackQuery(queryId, '⏸️ Held — re-queue 7d');
+              try {
+                const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+                await updateRecord(TABLES.REFERRALS, refId, {
+                  'Approval Status': 'held',
+                  // Stamp Approved At as the hold-until pointer. Cheap
+                  // re-surface signal without adding a new field.
+                  'Approved At': future,
+                });
+              } catch {}
+              await editTelegramMessage(
+                chatId,
+                messageId,
+                `⏸️ <b>Held 7 days</b> — ${buyerName} → ${ranchName}\n\nReferral parked. I'll keep the buyer warm and you can revisit next week.`
+              );
+            } else if (action === 'skip') {
+              await answerCallbackQuery(queryId, '⏭️ Skipped');
+              try {
+                await updateRecord(TABLES.REFERRALS, refId, {
+                  'Approval Status': 'skipped',
+                  'Status': 'Closed Lost',
+                  'Closed At': new Date().toISOString(),
+                });
+              } catch {}
+              if (buyerId) {
+                try {
+                  await updateRecord(TABLES.CONSUMERS, buyerId, {
+                    'Buyer Stage': 'WAITING',
+                    'Buyer Stage Updated At': new Date().toISOString(),
+                  });
+                } catch {}
+              }
+              await editTelegramMessage(
+                chatId,
+                messageId,
+                `⏭️ <b>Skipped</b> — ${buyerName}\n\nReverted to WAITING. Future iteration can try next-best rancher; for now, manual route via /route.`
+              );
+            } else {
+              await answerCallbackQuery(queryId, `Unknown action: ${action}`);
+            }
+          } catch (e: any) {
+            await answerCallbackQuery(queryId, `⚠️ ${e?.message || 'Failed'}`);
+            console.error('[firstweek callback]', e);
+          }
+        }
+      }
+
       return NextResponse.json({ ok: true });
     }
 
@@ -2295,6 +2434,77 @@ You can also just ask me anything in plain English — I'll figure it out.`;
             msg += `• ${r['Operator Name'] || r['Ranch Name']} — ${r['Current Active Referrals']}/${getMaxActiveReferrals(r)} (${r['State']})\n`;
           }
           await sendTelegramMessage(chatId, msg);
+        }
+      }
+
+      // /casestudy [rancher-slug-or-name] — generates a copy-paste social
+      // blurb for any rancher with closed deals. Pulls live data; safe to
+      // run any time. Output is plain-text + emoji so it pastes clean into
+      // X / IG captions / LinkedIn / email. No formatting markup.
+      else if (text.startsWith('/casestudy')) {
+        const query = text.replace('/casestudy', '').trim().toLowerCase();
+        if (!query) {
+          await sendTelegramMessage(
+            chatId,
+            'Usage: <code>/casestudy [rancher slug or name]</code>\n\nExample: <code>/casestudy sackett</code> or <code>/casestudy high lonesome</code>'
+          );
+        } else {
+          const [allRanchers, allRefs] = (await Promise.all([
+            getAllRecords(TABLES.RANCHERS),
+            getAllRecords(TABLES.REFERRALS, '{Status} = "Closed Won"'),
+          ])) as [any[], any[]];
+
+          const matched = (allRanchers as any[]).find((r: any) => {
+            const slug = (r['Slug'] || '').toString().toLowerCase();
+            const name = (r['Ranch Name'] || '').toString().toLowerCase();
+            const op = (r['Operator Name'] || '').toString().toLowerCase();
+            return slug.includes(query) || name.includes(query) || op.includes(query);
+          });
+
+          if (!matched) {
+            await sendTelegramMessage(
+              chatId,
+              `No rancher matched "${text.replace('/casestudy', '').trim()}". Try a slug or part of their name.`
+            );
+          } else {
+            const wins = (allRefs as any[]).filter((ref: any) => {
+              const ids = ref['Rancher'] || ref['Suggested Rancher'] || [];
+              return Array.isArray(ids) && ids.includes(matched.id);
+            });
+            const totalGmv = wins.reduce(
+              (s: number, r: any) => s + (Number(r['Sale Amount']) || 0),
+              0
+            );
+            const ranchName = matched['Ranch Name'] || matched['Operator Name'] || 'this ranch';
+            const state = matched['State'] || '';
+            const slug = matched['Slug'] || '';
+            const url = `https://www.buyhalfcow.com/ranchers/${slug}`;
+
+            // Find earliest close to compute time-on-platform / time-to-close.
+            const earliestClose = wins
+              .map((r: any) => r['Closed At'])
+              .filter(Boolean)
+              .sort()[0];
+            const months = earliestClose
+              ? Math.max(
+                  1,
+                  Math.ceil(
+                    (Date.now() - new Date(earliestClose).getTime()) /
+                      (30 * 24 * 60 * 60 * 1000)
+                  )
+                )
+              : null;
+
+            const blurb =
+              `🎯 <b>${ranchName}${state ? ` (${state})` : ''}</b>\n` +
+              `${wins.length} closed deal${wins.length !== 1 ? 's' : ''}` +
+              (totalGmv ? ` · $${totalGmv.toLocaleString('en-US', { maximumFractionDigits: 0 })} GMV` : '') +
+              (months ? ` in ${months} month${months !== 1 ? 's' : ''}` : '') +
+              `\n\n${url}\n\n` +
+              `<i>Copy-paste anywhere. Pin in marketing.</i>`;
+
+            await sendTelegramMessage(chatId, blurb);
+          }
         }
       }
 
@@ -3441,6 +3651,7 @@ Confirm send?`;
 
 <b>📊 SEE</b> — what's happening
 /today — Daily brief (numbers + AI top 3 priorities)
+/casestudy [name or slug] — Generate copy-paste social blurb for any rancher
 /leads — Pending consumers awaiting review
 /ranchers — Rancher onboarding pipeline
 /money — Revenue + commission summary

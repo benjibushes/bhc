@@ -2390,6 +2390,85 @@ export async function sendEmail(params: {
 }
 
 // =====================================================
+// INSTANT COMMISSION INVOICE — fires the moment a rancher marks Closed Won
+// in their dashboard. Single sale, single line item. Concrete proof of
+// the deal that just closed + clear payment instructions. Monthly cron
+// still runs as a backstop summary for any unpaid balances rolled forward.
+// =====================================================
+
+export async function sendInstantCommissionInvoice(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+  buyerName: string;
+  orderType: string;
+  saleAmount: number;
+  commissionDue: number;
+  closedAt: string; // ISO date string
+}) {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  const closedDateLabel = new Date(data.closedAt).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const invoiceNum = `BHC-${new Date(data.closedAt)
+    .toISOString()
+    .slice(2, 10)
+    .replace(/-/g, '')}-${data.email.slice(0, 4).toUpperCase()}`;
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `Commission invoice: ${data.buyerName} — ${data.ranchName}`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:22px;margin:0 0 8px;}
+table{width:100%;border-collapse:collapse;margin:18px 0;}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #E5E2DC;font-size:14px;}
+th{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#6B4F3F;font-weight:600;}
+.total{background:#F4F1EC;font-weight:700;font-size:16px;}
+.meta{font-size:12px;color:#6B4F3F;}
+</style></head><body><div class="container">
+  <p class="meta">Invoice #${esc(invoiceNum)} · ${esc(closedDateLabel)}</p>
+  <h1>Commission invoice — ${esc(data.ranchName)}</h1>
+  <p>Hey ${esc(first)}, congrats on closing <strong>${esc(data.buyerName)}</strong>. Here's the commission breakdown:</p>
+  <table>
+    <thead><tr><th>Buyer</th><th>Order</th><th style="text-align:right;">Sale</th><th style="text-align:right;">Commission (10%)</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>${esc(data.buyerName)}</td>
+        <td>${esc(data.orderType)}</td>
+        <td style="text-align:right;">$${data.saleAmount.toFixed(2)}</td>
+        <td style="text-align:right;">$${data.commissionDue.toFixed(2)}</td>
+      </tr>
+      <tr class="total">
+        <td colspan="3" style="text-align:right;">Amount due</td>
+        <td style="text-align:right;">$${data.commissionDue.toFixed(2)}</td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="font-size:14px;">Pay any of these ways within 30 days:</p>
+  <ul style="font-size:14px;color:#2A2A2A;line-height:1.8;">
+    <li>Reply to this email — I'll send you a Stripe payment link</li>
+    <li>Venmo: @buyhalfcow</li>
+    <li>Check: BuyHalfCow · Kalispell, MT 59901</li>
+  </ul>
+  <p style="font-size:13px;color:#6B4F3F;">This is sent automatically when you mark a deal Closed Won. Monthly statement still arrives on the 1st as a rollup of any unpaid balance.</p>
+  <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending instant commission invoice:', error);
+    return { success: false, error };
+  }
+}
+
+// =====================================================
 // MONTHLY COMMISSION INVOICE — sent to ranchers on the 1st
 // =====================================================
 
