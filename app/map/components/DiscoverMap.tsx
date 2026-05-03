@@ -11,14 +11,24 @@ import ProductFilter from './ProductFilter';
 
 // Inline SVG pin icons. We deliberately avoid bundling the default Leaflet
 // raster icon — Next.js bundles assets oddly and 404 the marker shadow PNG.
-// Three visual states:
-//   - Solid green     → verified partner
-//   - Solid yellow    → self-submitted / community-submitted (raised their hand)
-//   - Dashed grey     → cold-discovered prospect
+// Four visual states aligned to onboarding pipeline:
+//   - Solid green   → verified partner (Verification=Verified + Onboarding=Live)
+//   - Solid orange  → in-progress onboarding (Call/Docs/Agreement/Verification stages)
+//   - Solid yellow  → self-submitted / community-flagged (raised their hand)
+//   - Dashed grey   → cold-discovered prospect
 const verifiedIconSvg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
   <path d="M14 1 C7 1 1.5 6.5 1.5 13.5 C1.5 23 14 35 14 35 C14 35 26.5 23 26.5 13.5 C26.5 6.5 21 1 14 1 Z"
         fill="#4F7A3F" stroke="#2A4A20" stroke-width="1.5"/>
+  <circle cx="14" cy="13" r="4.5" fill="#F4F1EC"/>
+</svg>`;
+
+// Onboarding pin — solid orange, paper-warm border. Distinct from yellow
+// (raised-hand-only) and grey (cold). Signals active progress in pipeline.
+const onboardingIconSvg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
+  <path d="M14 1 C7 1 1.5 6.5 1.5 13.5 C1.5 23 14 35 14 35 C14 35 26.5 23 26.5 13.5 C26.5 6.5 21 1 14 1 Z"
+        fill="#D97757" stroke="#8C3D1F" stroke-width="1.5"/>
   <circle cx="14" cy="13" r="4.5" fill="#F4F1EC"/>
 </svg>`;
 
@@ -48,6 +58,13 @@ const verifiedIcon = L.icon({
   popupAnchor: [0, -32],
 });
 
+const onboardingIcon = L.icon({
+  iconUrl: svgToDataUri(onboardingIconSvg),
+  iconSize: [28, 36],
+  iconAnchor: [14, 35],
+  popupAnchor: [0, -32],
+});
+
 const selfSubmittedIcon = L.icon({
   iconUrl: svgToDataUri(selfSubmittedIconSvg),
   iconSize: [28, 36],
@@ -64,6 +81,7 @@ const prospectIcon = L.icon({
 
 function iconForStatus(status: MapPin['status']) {
   if (status === 'verified') return verifiedIcon;
+  if (status === 'onboarding') return onboardingIcon;
   if (status === 'self-submitted') return selfSubmittedIcon;
   return prospectIcon;
 }
@@ -149,6 +167,11 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
                     {p.status === 'verified' && (
                       <span style={{ color: '#4F7A3F', fontWeight: 600 }}>
                         Verified partner
+                      </span>
+                    )}
+                    {p.status === 'onboarding' && (
+                      <span style={{ color: '#8C3D1F', fontWeight: 600 }}>
+                        Onboarding{p.stageLabel ? ` · ${p.stageLabel}` : ''}
                       </span>
                     )}
                     {p.status === 'self-submitted' && (

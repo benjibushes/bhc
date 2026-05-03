@@ -20,29 +20,62 @@ export const metadata: Metadata = {
 };
 
 // MapPin shape passed from server → client. Keep it small; don't leak email,
-// phone, or operator name on prospect pins (legal + spam concern).
+// phone, or operator name on non-verified pins (legal + spam concern).
+//
+// Pipeline-aligned status (added so the public map reflects the full
+// onboarding journey, not just verified vs prospect):
+//   verified       → Verification=Verified + Onboarding Status=Live
+//                    (green pin, public-routable, buyer can reach out)
+//   onboarding     → Onboarding Status set + not yet Live
+//                    (orange pin — actively being onboarded; visible but not
+//                    yet routable). Covers Call Scheduled / Call Complete /
+//                    Docs Sent / Agreement Signed / Verification Pending /
+//                    Verification Complete.
+//   self-submitted → Self-Submitted At set, no onboarding progress yet
+//                    (yellow pin — raised hand or fan-flagged)
+//   prospect       → cold-discovered, no progress (grey-dashed pin)
+//
+// Excluded at fetch time:
+//   - Verification Status = "Removed" (legal opt-out)
+//   - Public Map Hidden = true (admin/blocked)
+//   - Active Status = "Paused" or "Non-Compliant" (don't show flagged
+//     ranchers on a public discovery surface)
+//   - No coordinates (can't plot)
 export type MapPin = {
   id: string;
   ranchName: string;
   state: string;
   slug: string;
-  // 'self-submitted' = added via /map/add-a-rancher (yellow pin). Distinct from
-  // 'prospect' (grey, ranchers we discovered ourselves) and 'verified' (green,
-  // signed partners). Yellow pins are NOT routed customers — see
-  // isRancherOperationalForBuyers.
-  status: 'verified' | 'prospect' | 'self-submitted';
+  status: 'verified' | 'onboarding' | 'self-submitted' | 'prospect';
+  // Sub-stage label for onboarding pins — surfaced in the popup so visitors
+  // see "Pending verification" / "Docs signed" etc. instead of a generic
+  // orange pin. Empty string for non-onboarding statuses.
+  stageLabel: string;
   primaryProduct: string;
   lat: number;
   lng: number;
   city?: string;
 };
 
+const ONBOARDING_STAGES = [
+  'Call Scheduled',
+  'Call Complete',
+  'Docs Sent',
+  'Agreement Signed',
+  'Verification Pending',
+  'Verification Complete',
+];
+
 async function fetchPins(): Promise<MapPin[]> {
-  // Only show records that are either Verified or Prospect, AND not hidden,
-  // AND have valid lat/lng coordinates. (No coords = nothing to plot.)
+  // Pull every rancher we'd consider plottable: Verification not Removed,
+  // not hidden, not paused/non-compliant, has lat/lng. Onboarding-stage
+  // ranchers join the discovery surface so visitors see the network is
+  // alive + filling out, not just "verified or nothing".
   const formula = `AND(
-    OR({Verification Status} = "Verified", {Verification Status} = "Prospect"),
+    {Verification Status} != "Removed",
     NOT({Public Map Hidden} = 1),
+    {Active Status} != "Paused",
+    {Active Status} != "Non-Compliant",
     {Latitude} != BLANK(),
     {Longitude} != BLANK()
   )`.replace(/\s+/g, ' ');
@@ -61,19 +94,26 @@ async function fetchPins(): Promise<MapPin[]> {
       const lng = Number(r['Longitude']);
       if (!isFinite(lat) || !isFinite(lng)) return null;
       const verification = (r['Verification Status'] || '').toString();
+      const onboarding = (r['Onboarding Status'] || '').toString();
       const selfSubmittedAt = (r['Self-Submitted At'] || '').toString();
-      // Status priority: Verified always wins. Otherwise self-submitted
-      // (yellow) takes precedence over generic prospect (grey) — yellow
-      // pins are real humans who raised their hand or were flagged by a
-      // fan, distinct from cold-discovered prospects.
+
+      // Status priority — most-progressed wins. Verified+Live is the
+      // routable state; onboarding stages are visible but not routable;
+      // self-submitted vs cold prospect differentiates raised-hand vs
+      // discovered.
       let status: MapPin['status'];
-      if (verification === 'Verified') {
+      let stageLabel = '';
+      if (verification === 'Verified' && onboarding === 'Live') {
         status = 'verified';
+      } else if (ONBOARDING_STAGES.includes(onboarding)) {
+        status = 'onboarding';
+        stageLabel = onboarding;
       } else if (selfSubmittedAt) {
         status = 'self-submitted';
       } else {
         status = 'prospect';
       }
+
       const ranchName = (r['Ranch Name'] || r['Operator Name'] || 'Ranch').toString();
       return {
         id: r.id,
@@ -81,6 +121,7 @@ async function fetchPins(): Promise<MapPin[]> {
         state: (r['State'] || '').toString(),
         slug: (r['Slug'] || '').toString(),
         status,
+        stageLabel,
         primaryProduct: (r['Primary Product'] || 'Beef').toString(),
         lat,
         lng,
@@ -91,10 +132,17 @@ async function fetchPins(): Promise<MapPin[]> {
 
 function deriveStats(pins: MapPin[]) {
   const verified = pins.filter((p) => p.status === 'verified').length;
+  const onboarding = pins.filter((p) => p.status === 'onboarding').length;
   const selfSubmitted = pins.filter((p) => p.status === 'self-submitted').length;
   const prospects = pins.filter((p) => p.status === 'prospect').length;
   const states = new Set(pins.map((p) => p.state).filter(Boolean));
-  return { verified, prospects, selfSubmitted, statesCovered: states.size };
+  return {
+    verified,
+    onboarding,
+    prospects,
+    selfSubmitted,
+    statesCovered: states.size,
+  };
 }
 
 export default async function MapPage() {
@@ -111,32 +159,44 @@ export default async function MapPage() {
               Every direct-to-consumer rancher in America
             </h1>
             <p className="text-lg text-charcoal/80 leading-relaxed">
-              We&rsquo;re building the public hit list. <strong>Green pins</strong> are
-              verified BuyHalfCow partners shipping today. <strong>Yellow pins</strong>{' '}
-              are ranchers who raised their hand or were flagged by a fan.{' '}
-              <strong>Grey pins</strong> are prospects we found and are working to bring
-              in.
+              We&rsquo;re building the public hit list. Pin colors reflect each
+              rancher&rsquo;s spot in the pipeline.
             </p>
+            <ul className="text-sm text-charcoal/85 leading-relaxed pt-1 space-y-1">
+              <li>
+                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full bg-sage mr-2 align-middle" />
+                <strong>Green</strong> — verified partner shipping today
+              </li>
+              <li>
+                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style={{ backgroundColor: '#D97757' }} />
+                <strong>Orange</strong> — being onboarded right now (call · docs · agreement · verification)
+              </li>
+              <li>
+                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full bg-amber mr-2 align-middle" />
+                <strong>Yellow</strong> — raised their hand or flagged by a fan
+              </li>
+              <li>
+                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full bg-dust mr-2 align-middle" />
+                <strong>Grey</strong> — discovered, not yet engaged
+              </li>
+            </ul>
             <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-saddle pt-1">
               <span>
                 <strong className="text-charcoal">{stats.verified}</strong> verified
               </span>
-              <span aria-hidden className="text-dust">
-                ·
-              </span>
+              <span aria-hidden className="text-dust">·</span>
               <span>
-                <strong className="text-charcoal">{stats.selfSubmitted}</strong>{' '}
-                self-submitted
+                <strong className="text-charcoal">{stats.onboarding}</strong> onboarding
               </span>
-              <span aria-hidden className="text-dust">
-                ·
-              </span>
+              <span aria-hidden className="text-dust">·</span>
               <span>
-                <strong className="text-charcoal">{stats.prospects}</strong> working with us
+                <strong className="text-charcoal">{stats.selfSubmitted}</strong> self-submitted
               </span>
-              <span aria-hidden className="text-dust">
-                ·
+              <span aria-hidden className="text-dust">·</span>
+              <span>
+                <strong className="text-charcoal">{stats.prospects}</strong> prospects
               </span>
+              <span aria-hidden className="text-dust">·</span>
               <span>
                 <strong className="text-charcoal">{stats.statesCovered}</strong> states
               </span>
@@ -167,7 +227,7 @@ export default async function MapPage() {
       <StickyMobileCTA
         href="/map/add-a-rancher"
         label="Add a rancher to the map"
-        subLabel={`${stats.verified + stats.selfSubmitted + stats.prospects} pins · ${stats.statesCovered} states`}
+        subLabel={`${stats.verified + stats.onboarding + stats.selfSubmitted + stats.prospects} pins · ${stats.statesCovered} states`}
       />
     </main>
   );
