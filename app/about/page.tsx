@@ -9,22 +9,22 @@ export const metadata = {
 
 export default function AboutPage() {
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-3xl mx-auto space-y-12">
           <div className="text-center space-y-6">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
+            <h1 className="font-serif text-4xl md:text-5xl">
               About BuyHalfCow
             </h1>
             <Divider />
-            <p className="text-xl leading-relaxed text-[#6B4F3F]">
+            <p className="text-xl leading-relaxed text-saddle">
               A private network built on trust, transparency, and real relationships.
             </p>
           </div>
 
           <div className="space-y-8 leading-relaxed text-lg">
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-3xl">
+              <h2 className="font-serif text-3xl">
                 Why We Exist
               </h2>
               <p>
@@ -43,23 +43,23 @@ export default function AboutPage() {
             <Divider />
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-3xl">
+              <h2 className="font-serif text-3xl">
                 What We Do
               </h2>
               <p>
                 We manually review every ranch, every deal, and every partnership to maintain quality.
               </p>
               <div className="grid md:grid-cols-3 gap-6 my-8">
-                <div className="p-6 border border-[#A7A29A]">
-                  <h3 className="font-[family-name:var(--font-serif)] text-xl mb-2">Certify Ranchers</h3>
+                <div className="p-6 border border-dust">
+                  <h3 className="font-serif text-xl mb-2">Certify Ranchers</h3>
                   <p className="text-base">We verify operations, practices, and capacity before listing.</p>
                 </div>
-                <div className="p-6 border border-[#A7A29A]">
-                  <h3 className="font-[family-name:var(--font-serif)] text-xl mb-2">Approve Members</h3>
+                <div className="p-6 border border-dust">
+                  <h3 className="font-serif text-xl mb-2">Approve Members</h3>
                   <p className="text-base">Serious buyers only. We keep the community small and intentional.</p>
                 </div>
-                <div className="p-6 border border-[#A7A29A]">
-                  <h3 className="font-[family-name:var(--font-serif)] text-xl mb-2">Curate Deals</h3>
+                <div className="p-6 border border-dust">
+                  <h3 className="font-serif text-xl mb-2">Curate Deals</h3>
                   <p className="text-base">Land opportunities and brand partnerships vetted for quality.</p>
                 </div>
               </div>
@@ -68,24 +68,24 @@ export default function AboutPage() {
             <Divider />
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-3xl">
+              <h2 className="font-serif text-3xl">
                 What We're Not
               </h2>
               <ul className="space-y-3">
                 <li className="flex items-start">
-                  <span className="mr-3 text-[#8C2F2F]">✗</span>
+                  <span className="mr-3 text-weathered">✗</span>
                   <span>Not a marketplace with checkout buttons</span>
                 </li>
                 <li className="flex items-start">
-                  <span className="mr-3 text-[#8C2F2F]">✗</span>
+                  <span className="mr-3 text-weathered">✗</span>
                   <span>Not an algorithm matching you with ranchers</span>
                 </li>
                 <li className="flex items-start">
-                  <span className="mr-3 text-[#8C2F2F]">✗</span>
+                  <span className="mr-3 text-weathered">✗</span>
                   <span>Not trying to scale fast and break things</span>
                 </li>
                 <li className="flex items-start">
-                  <span className="mr-3 text-[#8C2F2F]">✗</span>
+                  <span className="mr-3 text-weathered">✗</span>
                   <span>Not open to everyone (that's the point)</span>
                 </li>
               </ul>
@@ -94,7 +94,7 @@ export default function AboutPage() {
             <Divider />
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-3xl">
+              <h2 className="font-serif text-3xl">
                 How It Works
               </h2>
               <div className="space-y-6">
@@ -122,7 +122,7 @@ export default function AboutPage() {
             <Divider />
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-3xl">
+              <h2 className="font-serif text-3xl">
                 Our Values
               </h2>
               <div className="space-y-3">

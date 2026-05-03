@@ -2118,6 +2118,34 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         }
       }
 
+      // ─── selfblock_<recordId> ─ block a self-submitted prospect ───────────
+      // Fires from the self-submit Telegram alert. Hides the rancher from the
+      // public map (Public Map Hidden=true) AND stops the drip cron
+      // (Self-Submit Drip Stage=stopped). Used when a fan-flagged rancher
+      // turns out to be junk or a real rancher asks to be removed pre-onboarding.
+      else if (callbackData?.startsWith('selfblock_') && chatId && messageId) {
+        const recordId = callbackData.slice('selfblock_'.length);
+        if (!recordId) {
+          await answerCallbackQuery(queryId, 'Missing record ID');
+        } else {
+          try {
+            await updateRecord(TABLES.RANCHERS, recordId, {
+              'Public Map Hidden': true,
+              'Self-Submit Drip Stage': 'stopped',
+            });
+            await answerCallbackQuery(queryId, '🚫 Blocked — hidden from map, drip stopped');
+            await editTelegramMessage(
+              chatId,
+              messageId,
+              `🚫 <b>Blocked</b>\n\nRecord <code>${recordId}</code> hidden from public map. Drip cron will skip them.`
+            );
+          } catch (e: any) {
+            await answerCallbackQuery(queryId, `⚠️ ${e?.message || 'Block failed'}`);
+            console.error('[selfblock callback]', e);
+          }
+        }
+      }
+
       return NextResponse.json({ ok: true });
     }
 

@@ -6,18 +6,47 @@
 }
 
 @theme inline {
+  /* ──────────────────────────────────────────────────────────────────────
+     COLORS — editorial Western-modern. Cream + charcoal core; saddle + dust
+     for hierarchy; sage green for verified/positive; weathered red only for
+     errors. Yellow for self-submit prospects on the map. Use SEMANTIC names
+     in components (bg-bone, text-saddle) rather than hex literals.
+     ────────────────────────────────────────────────────────────────────── */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-serif: var(--font-playfair);
-  --font-sans: var(--font-inter);
-  
-  /* Brand Colors */
+
   --color-charcoal: #0E0E0E;
   --color-bone: #F4F1EC;
   --color-saddle: #6B4F3F;
   --color-dust: #A7A29A;
   --color-weathered: #8C2F2F;
   --color-divider: #2A2A2A;
+  --color-sage: #4F7A3F;
+  --color-sage-dark: #2A4A20;
+  --color-amber: #E8C547;
+  --color-amber-dark: #8A6F1A;
+
+  /* Surface tints for cards / banners — no harsh shadows; just slight value
+     shifts. Western aesthetic = paper textures, not Material. */
+  --color-bone-warm: #ECE8E0;
+  --color-bone-deep: #E5E2DC;
+
+  /* ──────────────────────────────────────────────────────────────────────
+     TYPE — Playfair Display for headlines (one face, varied weights).
+     Inter for body/UI. Restrained scale: hero 60/56 → 18/14 captions.
+     line-height tightens at large sizes for editorial feel.
+     ────────────────────────────────────────────────────────────────────── */
+  --font-serif: var(--font-playfair);
+  --font-sans: var(--font-inter);
+
+  /* ──────────────────────────────────────────────────────────────────────
+     MOTION — slow + intentional. No bouncy springs. Western pacing.
+     ────────────────────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.6, 0, 0.84, 0);
+  --duration-quick: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
 }
 
 body {
@@ -27,9 +56,38 @@ body {
   line-height: 1.7;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-/* Custom form styling to remove default browser validation styles */
+/* Headings tighten leading; serif by default. */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-playfair), Georgia, serif;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   FOCUS RING — accessibility floor. Every interactive element shows a
+   visible 2px ring on keyboard focus (not click — :focus-visible). The
+   ring is charcoal on bone surfaces, bone on charcoal surfaces. Apps
+   that skip this ship inaccessible UI. Don't ship inaccessible UI.
+   ────────────────────────────────────────────────────────────────────── */
+*:focus-visible {
+  outline: 2px solid var(--color-charcoal);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* On dark surfaces (charcoal bg), invert the ring */
+.bg-charcoal *:focus-visible,
+[class*="bg-charcoal"] *:focus-visible,
+.dark-surface *:focus-visible {
+  outline-color: var(--color-bone);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   FORM SURFACES — strip browser chrome, restore consistent affordance.
+   ────────────────────────────────────────────────────────────────────── */
 input:invalid,
 select:invalid,
 textarea:invalid {
@@ -39,13 +97,95 @@ textarea:invalid {
 input:focus:invalid,
 select:focus:invalid,
 textarea:focus:invalid {
-  outline: 2px solid #8C2F2F;
+  outline: 2px solid var(--color-weathered);
   outline-offset: 0;
 }
 
-/* Hide default validation tooltips */
 input::-webkit-validation-bubble-message,
 select::-webkit-validation-bubble-message,
 textarea::-webkit-validation-bubble-message {
   display: none;
+}
+
+/* Selection accent — bone on charcoal looks better than browser default */
+::selection {
+  background: var(--color-charcoal);
+  color: var(--color-bone);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   MOTION — reusable transitions. Components pick which property they want.
+   Always respect prefers-reduced-motion.
+   ────────────────────────────────────────────────────────────────────── */
+.transition-base {
+  transition-property: color, background-color, border-color, transform, opacity;
+  transition-timing-function: var(--ease-out);
+  transition-duration: var(--duration-base);
+}
+
+.transition-quick {
+  transition-property: color, background-color, border-color, transform, opacity;
+  transition-timing-function: var(--ease-out);
+  transition-duration: var(--duration-quick);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   SCROLL — smooth in-page anchor jumps but only without reduced-motion.
+   ────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   PROSE — editorial body text utility for marketing pages.
+   ────────────────────────────────────────────────────────────────────── */
+.prose-bhc p {
+  margin-block: 1em;
+  line-height: 1.75;
+  color: var(--color-charcoal);
+}
+.prose-bhc p + p {
+  margin-block-start: 1.25em;
+}
+.prose-bhc strong {
+  font-weight: 600;
+  color: var(--color-charcoal);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   STEP TRANSITION — fade-in on key change for the wizard. Subtle. Replaces
+   the harsh jump between steps. Disabled by prefers-reduced-motion above.
+   ────────────────────────────────────────────────────────────────────── */
+@keyframes bhc-step-in {
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.step-in {
+  animation: bhc-step-in var(--duration-base) var(--ease-out) both;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   SKELETON — loading placeholder. Subtle pulse, brand-tinted.
+   ────────────────────────────────────────────────────────────────────── */
+@keyframes bhc-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.skeleton {
+  background: var(--color-bone-deep);
+  border-radius: 2px;
+  animation: bhc-pulse 1.6s var(--ease-out) infinite;
 }

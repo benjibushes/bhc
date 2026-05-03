@@ -11,12 +11,22 @@ import ProductFilter from './ProductFilter';
 
 // Inline SVG pin icons. We deliberately avoid bundling the default Leaflet
 // raster icon — Next.js bundles assets oddly and 404 the marker shadow PNG.
-// Two visual states: solid green (verified) + dashed grey (prospect).
+// Three visual states:
+//   - Solid green     → verified partner
+//   - Solid yellow    → self-submitted / community-submitted (raised their hand)
+//   - Dashed grey     → cold-discovered prospect
 const verifiedIconSvg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
   <path d="M14 1 C7 1 1.5 6.5 1.5 13.5 C1.5 23 14 35 14 35 C14 35 26.5 23 26.5 13.5 C26.5 6.5 21 1 14 1 Z"
         fill="#4F7A3F" stroke="#2A4A20" stroke-width="1.5"/>
   <circle cx="14" cy="13" r="4.5" fill="#F4F1EC"/>
+</svg>`;
+
+const selfSubmittedIconSvg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
+  <path d="M14 1 C7 1 1.5 6.5 1.5 13.5 C1.5 23 14 35 14 35 C14 35 26.5 23 26.5 13.5 C26.5 6.5 21 1 14 1 Z"
+        fill="#E8C547" stroke="#8A6F1A" stroke-width="1.5"/>
+  <circle cx="14" cy="13" r="4.5" fill="#0E0E0E"/>
 </svg>`;
 
 const prospectIconSvg = `
@@ -38,12 +48,25 @@ const verifiedIcon = L.icon({
   popupAnchor: [0, -32],
 });
 
+const selfSubmittedIcon = L.icon({
+  iconUrl: svgToDataUri(selfSubmittedIconSvg),
+  iconSize: [28, 36],
+  iconAnchor: [14, 35],
+  popupAnchor: [0, -32],
+});
+
 const prospectIcon = L.icon({
   iconUrl: svgToDataUri(prospectIconSvg),
   iconSize: [28, 36],
   iconAnchor: [14, 35],
   popupAnchor: [0, -32],
 });
+
+function iconForStatus(status: MapPin['status']) {
+  if (status === 'verified') return verifiedIcon;
+  if (status === 'self-submitted') return selfSubmittedIcon;
+  return prospectIcon;
+}
 
 // Continental US starting view. Just-clear-of-edges so AK/HI ranchers still
 // fit if they show up (rare but possible).
@@ -98,11 +121,11 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
         </p>
       </div>
 
-      <div className="border border-[#A7A29A] overflow-hidden">
+      <div className="border border-[#A7A29A] overflow-hidden h-[420px] md:h-[600px]">
         <MapContainer
           center={DEFAULT_CENTER}
           zoom={DEFAULT_ZOOM}
-          style={{ height: '600px', width: '100%' }}
+          style={{ height: '100%', width: '100%' }}
           scrollWheelZoom
         >
           <TileLayer
@@ -113,7 +136,7 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
             <Marker
               key={p.id}
               position={[p.lat, p.lng]}
-              icon={p.status === 'verified' ? verifiedIcon : prospectIcon}
+              icon={iconForStatus(p.status)}
             >
               <Popup>
                 <div style={{ minWidth: 180 }}>
@@ -123,11 +146,17 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
                     {p.primaryProduct ? ` · ${p.primaryProduct}` : ''}
                   </p>
                   <p style={{ margin: '4px 0', fontSize: 12 }}>
-                    {p.status === 'verified' ? (
+                    {p.status === 'verified' && (
                       <span style={{ color: '#4F7A3F', fontWeight: 600 }}>
                         Verified partner
                       </span>
-                    ) : (
+                    )}
+                    {p.status === 'self-submitted' && (
+                      <span style={{ color: '#8A6F1A', fontWeight: 600 }}>
+                        On the map · onboarding pending
+                      </span>
+                    )}
+                    {p.status === 'prospect' && (
                       <span style={{ color: '#6B4F3F' }}>Prospect (unclaimed)</span>
                     )}
                   </p>

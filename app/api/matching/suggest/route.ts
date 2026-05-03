@@ -81,26 +81,46 @@ export async function POST(request: Request) {
 
     // ── Guard: skip if buyer already has an active referral ────────────────
     // Prevents duplicate referrals when waitlisted retry re-calls this endpoint.
+    //
+    // Also dedups (buyer, rancher) pairs on TERMINAL outcomes — Closed Lost
+    // (rancher passed / deal died) and Closed Won (buyer already bought).
+    // Without this dedup the same rancher could get the same buyer re-routed
+    // every retry, breaking rancher trust + buyer experience. We DON'T exclude
+    // on Pending Approval / Intro Sent (those still active, would short-circuit
+    // above) or on Hold/Skip from first-week gate (those re-stage cleanly).
+    const closedRancherIds = new Set<string>();
     if (buyerEmail) {
       try {
         const existingRefs = await getAllRecords(
           TABLES.REFERRALS,
-          `AND({Buyer Email} = "${buyerEmail.trim().toLowerCase()}", OR({Status} = "Intro Sent", {Status} = "Rancher Contacted", {Status} = "Negotiation"))`
+          `{Buyer Email} = "${buyerEmail.trim().toLowerCase()}"`
         ) as any[];
-        if (existingRefs.length > 0) {
+        // Active short-circuit.
+        const active = existingRefs.find((r) =>
+          ['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Pending Approval'].includes(r['Status'])
+        );
+        if (active) {
           return NextResponse.json({
             success: true,
             matchFound: true,
             alreadyActive: true,
-            referralId: existingRefs[0].id,
-            message: `Buyer already has an active referral (${existingRefs[0]['Status']})`,
+            referralId: active.id,
+            message: `Buyer already has an active referral (${active['Status']})`,
           });
+        }
+        // Build terminal-outcome exclusion set.
+        for (const ref of existingRefs) {
+          if (['Closed Lost', 'Closed Won'].includes(ref['Status'])) {
+            for (const id of (ref['Rancher'] || [])) closedRancherIds.add(id);
+            for (const id of (ref['Suggested Rancher'] || [])) closedRancherIds.add(id);
+          }
         }
       } catch (e) {
         console.error('Error checking existing referrals:', e);
         // Continue anyway — better a duplicate than a missed lead
       }
     }
+    for (const id of closedRancherIds) excludeIds.add(id);
 
     const allRanchers: any[] = await getAllRecords(TABLES.RANCHERS);
 

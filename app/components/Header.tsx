@@ -5,11 +5,13 @@ import Link from 'next/link';
 import Image from 'next/image';
 
 const NAV_LINKS = [
+  { href: '/map', label: 'Map' },
   { href: '/ranchers', label: 'Ranchers' },
-  { href: '/land', label: 'Land' },
+  { href: '/wins', label: 'Wins' },
+  { href: '/founders', label: 'Founders' },
+  { href: '/brand-partners', label: 'Brands' },
   { href: '/about', label: 'About' },
   { href: '/faq', label: 'FAQ' },
-  { href: '/news', label: 'News' },
 ];
 
 export default function Header() {

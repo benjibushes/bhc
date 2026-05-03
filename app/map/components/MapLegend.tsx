@@ -20,6 +20,21 @@ export default function MapLegend() {
           aria-hidden
           className="inline-block w-3 h-4"
           style={{
+            backgroundColor: '#E8C547',
+            border: '1.5px solid #8A6F1A',
+            borderRadius: '6px 6px 0 50%',
+          }}
+        />
+        <span>
+          <strong>On the map</strong> — rancher self-submitted or was flagged by a
+          fan. Onboarding pending.
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className="inline-block w-3 h-4"
+          style={{
             backgroundColor: '#A7A29A',
             border: '1.5px dashed #0E0E0E',
             borderRadius: '6px 6px 0 50%',

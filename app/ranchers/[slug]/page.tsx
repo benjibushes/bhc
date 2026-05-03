@@ -4,14 +4,34 @@ import Link from 'next/link';
 import Image from 'next/image';
 import Container from '../../components/Container';
 import Divider from '../../components/Divider';
+import Pill from '../../components/Pill';
+import Card from '../../components/Card';
 import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import { getRancherOrProspectBySlug, getActiveRancherPages } from '@/lib/airtable';
 import RancherLeadModal from './RancherLeadModal';
 
-// Revalidate every 10 minutes
+// Public rancher landing page — the unit of conversion. Verified partners
+// get full pricing + lead capture; prospects get the same shell with pricing
+// hidden + a claim banner. This page is the SEO surface for every rancher
+// in the network — every section here is a search hit.
+//
+// Visual hierarchy (post-rebuild):
+//   1. Cover hero — full-bleed gallery photo (or branded fallback) with
+//      name + state + verification pill overlaid. Cinematic.
+//   2. Quick-fact strip — pull-out tagline + chips (state, beef types, USDA, certs)
+//   3. Pricing (verified only) — the conversion CTA, sits high
+//   4. About + video
+//   5. Gallery
+//   6. Testimonials
+//   7. Process (How it works)
+//   8. Custom products
+//   9. Reserve
+//   10. Note from rancher
+//   11. Prospect claim CTA (prospects only)
+//   12. Footer nav
+
 export const revalidate = 600;
 
-// Pre-generate pages for known slugs at build time
 export async function generateStaticParams() {
   try {
     const ranchers = await getActiveRancherPages();
@@ -50,22 +70,15 @@ export async function generateMetadata(
   };
 }
 
-// ─── YouTube embed helper ───────────────────────────────────────────────────
-
 function getYouTubeEmbedUrl(url: string): string | null {
   if (!url) return null;
-  // Handle youtu.be short links
   const shortMatch = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
   if (shortMatch) return `https://www.youtube.com/embed/${shortMatch[1]}`;
-  // Handle youtube.com/watch?v=
   const longMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
   if (longMatch) return `https://www.youtube.com/embed/${longMatch[1]}`;
-  // Already an embed URL or other format — return as-is
   if (url.includes('youtube.com/embed') || url.includes('vimeo.com')) return url;
   return null;
 }
-
-// ─── Page ──────────────────────────────────────────────────────────────────
 
 export default async function RancherPage(
   { params }: { params: Promise<{ slug: string }> }
@@ -75,7 +88,6 @@ export default async function RancherPage(
   if (!rancherRaw) notFound();
 
   const r = rancherRaw;
-  // Project 1: prospects render the same template with banner + pricing/payment hidden.
   const isProspect = r['Verification Status'] === 'Prospect';
   const name = r['Ranch Name'] || r['Operator Name'] || 'Ranch';
   const operatorName = r['Operator Name'] || '';
@@ -84,6 +96,7 @@ export default async function RancherPage(
   const aboutText = r['About Text'] || '';
   const videoUrl = r['Video URL'] || '';
   const state = r['State'] || '';
+  const city = r['City'] || '';
   const beefTypes = r['Beef Types'] || '';
   const statesServed = r['States Served'] || '';
   const certifications = r['Certifications'] || '';
@@ -95,26 +108,22 @@ export default async function RancherPage(
   const instagramUrl = r['Instagram URL'] || '';
   const processingFacility = r['Processing Facility'] || '';
 
-  // Parse testimonials JSON: [{name, quote, location?, photo?}]
+  // Parse JSON-encoded fields. All wrapped in try/catch — a bad row can't
+  // break the page, just hides the section.
   let testimonials: { name: string; quote: string; location?: string; photo?: string }[] = [];
   try {
-    const raw = r['Testimonials'] || '';
-    if (raw) testimonials = JSON.parse(raw);
-  } catch { /* ignore parse errors */ }
+    if (r['Testimonials']) testimonials = JSON.parse(r['Testimonials']);
+  } catch {}
 
-  // Parse gallery photos JSON: string[]
   let galleryPhotos: string[] = [];
   try {
-    const raw = r['Gallery Photos'] || '';
-    if (raw) galleryPhotos = JSON.parse(raw);
-  } catch { /* ignore parse errors */ }
+    if (r['Gallery Photos']) galleryPhotos = JSON.parse(r['Gallery Photos']);
+  } catch {}
 
-  // Parse custom products JSON: [{name, price, description, link}]
   let customProducts: { name: string; price: number; description: string; link: string }[] = [];
   try {
-    const raw = r['Custom Products'] || '';
-    if (raw) customProducts = JSON.parse(raw);
-  } catch { /* ignore parse errors */ }
+    if (r['Custom Products']) customProducts = JSON.parse(r['Custom Products']);
+  } catch {}
 
   const quarterPrice = r['Quarter Price'];
   const quarterLbs = r['Quarter lbs'] || '';
@@ -126,14 +135,13 @@ export default async function RancherPage(
   const wholeLbs = r['Whole lbs'] || '';
   const wholeLink = r['Whole Payment Link'] || '';
 
-  // Prospects: never show pricing or payment links — those are reserved for verified
-  // partners with signed agreements. The page still shows hero + about + map context
-  // so it's a legit SEO landing page.
   const hasPricing = !isProspect && (quarterPrice || halfPrice || wholePrice);
   const embedUrl = getYouTubeEmbedUrl(videoUrl);
 
-  // Schema.org LocalBusiness JSON-LD. Prospects emit `disambiguatingDescription`
-  // so search engines know we don't yet operate this listing.
+  // Cover photo — first gallery photo if available, else null. We layer a
+  // dark gradient over it so hero text stays readable on any image.
+  const coverPhoto = galleryPhotos[0] || '';
+
   const lat = Number(r['Latitude']);
   const lng = Number(r['Longitude']);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -142,7 +150,7 @@ export default async function RancherPage(
     '@type': 'LocalBusiness',
     name,
     url: `${siteUrl}/ranchers/${slug}`,
-    ...(state ? { address: { '@type': 'PostalAddress', addressRegion: state, addressCountry: 'US' } } : {}),
+    ...(state ? { address: { '@type': 'PostalAddress', addressLocality: city, addressRegion: state, addressCountry: 'US' } } : {}),
     ...(isFinite(lat) && isFinite(lng)
       ? { geo: { '@type': 'GeoCoordinates', latitude: lat, longitude: lng } }
       : {}),
@@ -165,268 +173,204 @@ export default async function RancherPage(
       })
     : null;
 
+  const locationLine = [city, state].filter(Boolean).join(', ');
+
   return (
-    <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
-      {/* JSON-LD for SEO. Prospects + verified both emit LocalBusiness; prospects
-          also emit a `disambiguatingDescription` so search engines know we don't
-          yet operate this listing. */}
+    <main className="min-h-screen bg-bone text-charcoal">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
-      {isProspect && (
-        <ProspectClaimBanner ranchName={name} slug={slug} state={state} />
-      )}
+      {isProspect && <ProspectClaimBanner ranchName={name} slug={slug} state={state} />}
 
-      {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <section className="py-20 border-b border-[#2A2A2A]/10">
+      {/* ── HERO ──────────────────────────────────────────────────────────────
+          Cover photo full-bleed (or warm bone gradient fallback) with a
+          ground-up dark gradient to keep text legible. Logo + name + state +
+          verification pill float on top. Cinematic on desktop, restrained
+          on mobile.
+         ───────────────────────────────────────────────────────────────────── */}
+      <section className="relative isolate overflow-hidden">
+        <div className="absolute inset-0 -z-10">
+          {coverPhoto ? (
+            <>
+              <Image
+                src={coverPhoto}
+                alt={`${name} cover`}
+                fill
+                className="object-cover"
+                priority
+                unoptimized
+                sizes="100vw"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-charcoal/85 via-charcoal/50 to-charcoal/30" />
+            </>
+          ) : (
+            <div className="absolute inset-0 bg-gradient-to-br from-charcoal via-divider to-saddle" />
+          )}
+        </div>
+
         <Container>
-          <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center gap-10">
-            {/* Logo */}
-            <div className="flex-shrink-0">
-              {logoUrl ? (
-                <Image
-                  src={logoUrl}
-                  alt={`${name} logo`}
-                  width={180}
-                  height={180}
-                  className="object-contain max-h-40"
-                  unoptimized
-                />
-              ) : (
-                <div className="w-32 h-32 border border-[#A7A29A] flex items-center justify-center">
-                  <span className="font-[family-name:var(--font-playfair)] text-5xl text-[#A7A29A]">
-                    {name.charAt(0)}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Name + meta */}
-            <div className="space-y-4 text-center md:text-left">
-              <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
-                {isProspect
-                  ? 'Direct-to-consumer rancher · unclaimed listing'
-                  : 'BuyHalfCow Verified Partner'}
-              </p>
-              <h1 className="font-[family-name:var(--font-playfair)] text-4xl md:text-5xl">
-                {name}
-              </h1>
-              {tagline && (
-                <p className="text-xl text-[#6B4F3F]">{tagline}</p>
-              )}
-              <div className="flex flex-wrap justify-center md:justify-start gap-2 pt-1">
-                {state && (
-                  <span className="text-xs border border-[#A7A29A] px-3 py-1 text-[#6B4F3F]">
-                    {state}
-                  </span>
+          <div className="py-24 md:py-36 max-w-4xl">
+            <div className="flex flex-col gap-6">
+              {/* Verification + state pill row */}
+              <div className="flex flex-wrap items-center gap-2">
+                {isProspect ? (
+                  <Pill tone="amber">Unclaimed listing</Pill>
+                ) : (
+                  <Pill tone="positive" icon={<span aria-hidden>✓</span>}>
+                    Verified partner
+                  </Pill>
+                )}
+                {locationLine && (
+                  <Pill tone="inverted">{locationLine}</Pill>
                 )}
                 {beefTypes && (
-                  <span className="text-xs border border-[#A7A29A] px-3 py-1 text-[#6B4F3F]">
-                    {beefTypes}
-                  </span>
-                )}
-                {statesServed && statesServed !== state && (
-                  <span className="text-xs border border-[#A7A29A] px-3 py-1 text-[#6B4F3F]">
-                    Ships to: {statesServed}
-                  </span>
+                  <Pill tone="inverted">{beefTypes}</Pill>
                 )}
                 {certifications && (
-                  <span className="text-xs border border-[#8C2F2F] px-3 py-1 text-[#8C2F2F]">
-                    ✓ {certifications}
-                  </span>
+                  <Pill tone="inverted" icon={<span aria-hidden>★</span>}>
+                    {certifications}
+                  </Pill>
                 )}
               </div>
-            </div>
-          </div>
-        </Container>
-      </section>
 
-      {/* ── About + Video ─────────────────────────────────────────────────── */}
-      {(aboutText || embedUrl) && (
-        <section className="py-16">
-          <Container>
-            <div className="max-w-4xl mx-auto space-y-10">
-              {aboutText && (
-                <div className="space-y-4">
-                  <h2 className="font-[family-name:var(--font-playfair)] text-3xl">
-                    About {name}
-                  </h2>
-                  <div className="prose prose-lg max-w-none text-[#0E0E0E]/80 leading-relaxed whitespace-pre-line">
-                    {aboutText}
-                  </div>
-                </div>
-              )}
-
-              {embedUrl && (
-                <div className="space-y-4">
-                  <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
-                    Watch Our Interview{operatorName ? ` with ${operatorName}` : ''}
-                  </h2>
-                  <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
-                    <iframe
-                      src={embedUrl}
-                      title={`${name} interview`}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                      className="absolute inset-0 w-full h-full border border-[#A7A29A]"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          </Container>
-        </section>
-      )}
-
-      {/* ── Photo Gallery ─────────────────────────────────────────────── */}
-      {galleryPhotos.length > 0 && (
-        <section className="py-16 border-b border-[#2A2A2A]/10">
-          <Container>
-            <div className="max-w-5xl mx-auto space-y-8">
-              <h2 className="font-[family-name:var(--font-playfair)] text-3xl text-center">
-                Our Operation
-              </h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {galleryPhotos.map((url, i) => (
-                  <div key={i} className="relative aspect-square overflow-hidden border border-[#A7A29A]">
+              {/* Logo + name */}
+              <div className="flex items-center gap-5">
+                {logoUrl && (
+                  <div className="relative h-20 w-20 md:h-24 md:w-24 shrink-0 bg-bone p-2 border border-bone/40">
                     <Image
-                      src={url}
-                      alt={`${name} ranch photo ${i + 1}`}
+                      src={logoUrl}
+                      alt={`${name} logo`}
                       fill
-                      className="object-cover"
+                      className="object-contain"
                       unoptimized
                     />
                   </div>
-                ))}
+                )}
+                <h1 className="font-serif text-4xl md:text-6xl text-bone leading-[1.05] drop-shadow-sm">
+                  {name}
+                </h1>
               </div>
-            </div>
-          </Container>
-        </section>
-      )}
 
-      {/* ── Testimonials ───────────────────────────────────────────────── */}
-      {testimonials.length > 0 && (
-        <section className="py-16 bg-white border-b border-[#A7A29A]/40">
-          <Container>
-            <div className="max-w-4xl mx-auto space-y-8">
-              <h2 className="font-[family-name:var(--font-playfair)] text-3xl text-center">
-                What Customers Say
-              </h2>
-              <div className="grid md:grid-cols-2 gap-6">
-                {testimonials.map((t, i) => (
-                  <div key={i} className="p-6 border border-[#A7A29A] space-y-4">
-                    <p className="text-[#0E0E0E]/80 leading-relaxed italic">
-                      &ldquo;{t.quote}&rdquo;
-                    </p>
-                    <div className="flex items-center gap-3">
-                      {t.photo ? (
-                        <Image
-                          src={t.photo}
-                          alt={t.name}
-                          width={40}
-                          height={40}
-                          className="rounded-full object-cover"
-                          unoptimized
-                        />
-                      ) : (
-                        <div className="w-10 h-10 border border-[#A7A29A] flex items-center justify-center rounded-full">
-                          <span className="text-sm text-[#A7A29A]">{t.name.charAt(0)}</span>
-                        </div>
-                      )}
-                      <div>
-                        <p className="text-sm font-medium">{t.name}</p>
-                        {t.location && (
-                          <p className="text-xs text-[#A7A29A]">{t.location}</p>
-                        )}
-                      </div>
-                    </div>
+              {tagline && (
+                <p className="text-lg md:text-xl text-bone/90 max-w-2xl leading-relaxed">
+                  {tagline}
+                </p>
+              )}
+
+              {/* CTA row — verified gets pricing-jump, prospect gets claim */}
+              <div className="flex flex-wrap gap-3 pt-2">
+                {hasPricing ? (
+                  <a
+                    href="#shares"
+                    className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
+                  >
+                    See pricing
+                    <span aria-hidden>↓</span>
+                  </a>
+                ) : isProspect ? (
+                  <Link
+                    href={`/ranchers/${slug}/claim`}
+                    className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
+                  >
+                    Claim this listing
+                    <span aria-hidden>→</span>
+                  </Link>
+                ) : (
+                  <Link
+                    href="/access"
+                    className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
+                  >
+                    Get on the list
+                    <span aria-hidden>→</span>
+                  </Link>
+                )}
+                {(facebookUrl || instagramUrl || googleReviewsUrl) && (
+                  <div className="flex items-center gap-3 px-2">
+                    {googleReviewsUrl && (
+                      <a
+                        href={googleReviewsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-bone/80 hover:text-bone transition-base text-sm underline underline-offset-4 decoration-bone/40"
+                      >
+                        Reviews
+                      </a>
+                    )}
+                    {instagramUrl && (
+                      <a
+                        href={instagramUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-bone/80 hover:text-bone transition-base text-sm underline underline-offset-4 decoration-bone/40"
+                      >
+                        Instagram
+                      </a>
+                    )}
+                    {facebookUrl && (
+                      <a
+                        href={facebookUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-bone/80 hover:text-bone transition-base text-sm underline underline-offset-4 decoration-bone/40"
+                      >
+                        Facebook
+                      </a>
+                    )}
                   </div>
-                ))}
-              </div>
-            </div>
-          </Container>
-        </section>
-      )}
-
-      {/* ── Social Proof + Facility ─────────────────────────────────────── */}
-      {(processingFacility || googleReviewsUrl || facebookUrl || instagramUrl) && (
-        <section className="py-10 border-b border-[#2A2A2A]/10">
-          <Container>
-            <div className="max-w-4xl mx-auto flex flex-wrap justify-center items-center gap-6 text-sm">
-              {processingFacility && (
-                <span className="text-[#6B4F3F]">
-                  🏭 USDA Inspected: {processingFacility}
-                </span>
-              )}
-              {googleReviewsUrl && (
-                <a href={googleReviewsUrl} target="_blank" rel="noopener noreferrer"
-                   className="text-[#6B4F3F] hover:text-[#0E0E0E] underline transition-colors">
-                  ⭐ Google Reviews
-                </a>
-              )}
-              {facebookUrl && (
-                <a href={facebookUrl} target="_blank" rel="noopener noreferrer"
-                   className="text-[#6B4F3F] hover:text-[#0E0E0E] underline transition-colors">
-                  Facebook
-                </a>
-              )}
-              {instagramUrl && (
-                <a href={instagramUrl} target="_blank" rel="noopener noreferrer"
-                   className="text-[#6B4F3F] hover:text-[#0E0E0E] underline transition-colors">
-                  Instagram
-                </a>
-              )}
-            </div>
-          </Container>
-        </section>
-      )}
-
-      {/* ── How It Works ─────────────────────────────────────────────────── */}
-      <section className="py-14 bg-white border-y border-[#A7A29A]/40">
-        <Container>
-          <div className="max-w-4xl mx-auto space-y-8">
-            <h2 className="font-[family-name:var(--font-playfair)] text-3xl text-center">
-              How It Works
-            </h2>
-            <div className="grid md:grid-cols-3 gap-6">
-              <div className="p-6 border border-[#A7A29A] space-y-2">
-                <p className="text-2xl font-[family-name:var(--font-playfair)] text-[#6B4F3F]">01</p>
-                <h3 className="font-medium">Choose Your Share</h3>
-                <p className="text-sm text-[#A7A29A] leading-relaxed">
-                  Select a quarter, half, or whole cow based on your family's needs and freezer space.
-                </p>
-              </div>
-              <div className="p-6 border border-[#A7A29A] space-y-2">
-                <p className="text-2xl font-[family-name:var(--font-playfair)] text-[#6B4F3F]">02</p>
-                <h3 className="font-medium">Pay &amp; Confirm</h3>
-                <p className="text-sm text-[#A7A29A] leading-relaxed">
-                  Secure your share with a payment or deposit. {name} will reach out to confirm details.
-                </p>
-              </div>
-              <div className="p-6 border border-[#A7A29A] space-y-2">
-                <p className="text-2xl font-[family-name:var(--font-playfair)] text-[#6B4F3F]">03</p>
-                <h3 className="font-medium">Pick Up or Deliver</h3>
-                <p className="text-sm text-[#A7A29A] leading-relaxed">
-                  Your beef is custom butchered and ready for pickup or delivery on processing day.
-                </p>
+                )}
               </div>
             </div>
           </div>
         </Container>
       </section>
 
-      {/* ── Pricing ──────────────────────────────────────────────────────── */}
+      {/* ── QUICK FACTS STRIP ────────────────────────────────────────────────
+          Compact dark band right under hero — same width-constrained band
+          for processing date + USDA facility + states served. Replaces the
+          old "social proof" section that was floating awkwardly mid-page.
+         ───────────────────────────────────────────────────────────────────── */}
+      {(processingDateDisplay || processingFacility || statesServed) && (
+        <section className="bg-bone-warm border-b border-dust">
+          <Container>
+            <div className="py-5 md:py-6 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-sm text-charcoal/85">
+              {processingDateDisplay && (
+                <span>
+                  <span className="text-saddle">Next processing</span>{' '}
+                  <strong>{processingDateDisplay}</strong>
+                </span>
+              )}
+              {processingFacility && (
+                <span>
+                  <span className="text-saddle">USDA inspected</span>{' '}
+                  <strong>{processingFacility}</strong>
+                </span>
+              )}
+              {statesServed && statesServed !== state && (
+                <span>
+                  <span className="text-saddle">Ships to</span>{' '}
+                  <strong>{statesServed}</strong>
+                </span>
+              )}
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── PRICING ───────────────────────────────────────────────────────────
+          Sits high on the page — main conversion. RancherLeadModal owns the
+          UX of share selection + lead capture. Wrapped in a clean Card wash
+          so it visually owns the section.
+         ───────────────────────────────────────────────────────────────────── */}
       {hasPricing && (
-        <section className="py-16">
+        <section id="shares" className="py-16 md:py-20 scroll-mt-12">
           <Container>
             <div className="max-w-4xl mx-auto space-y-8">
               <div className="text-center space-y-3">
-                <h2 className="font-[family-name:var(--font-playfair)] text-3xl">
-                  Choose Your Share
-                </h2>
-                <p className="text-[#A7A29A]">
+                <Pill tone="neutral" className="mx-auto">Available shares</Pill>
+                <h2 className="font-serif text-3xl md:text-5xl">Choose your share</h2>
+                <p className="text-saddle max-w-xl mx-auto">
                   All prices include processing. Custom cuts available at no extra charge.
                 </p>
               </div>
@@ -439,9 +383,9 @@ export default async function RancherPage(
                 whole={wholePrice ? { price: wholePrice, lbs: wholeLbs, hasLink: !!wholeLink } : undefined}
               />
 
-              <p className="text-center text-sm text-[#A7A29A]">
-                Prices listed in USD. Questions?{' '}
-                <Link href="/access" className="underline hover:text-[#0E0E0E]">
+              <p className="text-center text-xs text-dust">
+                Prices in USD. Questions?{' '}
+                <Link href="/access" className="underline underline-offset-2 hover:text-charcoal">
                   Contact BuyHalfCow
                 </Link>
               </p>
@@ -450,31 +394,194 @@ export default async function RancherPage(
         </section>
       )}
 
-      {/* ── Custom Products ─────────────────────────────────────────────── */}
-      {!isProspect && customProducts.length > 0 && (
-        <section className="py-16 border-t border-[#2A2A2A]/10">
+      {/* ── ABOUT + VIDEO ────────────────────────────────────────────────────
+          Two-column on desktop (text left, video right) — gives both equal
+          weight without the old stacked layout that hid the video.
+         ───────────────────────────────────────────────────────────────────── */}
+      {(aboutText || embedUrl) && (
+        <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
           <Container>
-            <div className="max-w-4xl mx-auto space-y-8">
-              <div className="text-center space-y-3">
-                <h2 className="font-[family-name:var(--font-playfair)] text-3xl">
-                  Other Products
-                </h2>
-                <p className="text-[#A7A29A]">
-                  Additional products available from {name}.
-                </p>
+            <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-10 lg:gap-14 items-start">
+              {aboutText && (
+                <div className="space-y-5">
+                  <Pill tone="neutral">About</Pill>
+                  <h2 className="font-serif text-3xl md:text-4xl">
+                    Meet {operatorName ? operatorName.split(' ')[0] : name}
+                  </h2>
+                  <div className="prose-bhc whitespace-pre-line">{aboutText}</div>
+                </div>
+              )}
+
+              {embedUrl && (
+                <div className="space-y-4">
+                  {!aboutText && <Pill tone="neutral">Watch</Pill>}
+                  <div
+                    className="relative w-full overflow-hidden border border-dust"
+                    style={{ paddingBottom: '56.25%' }}
+                  >
+                    <iframe
+                      src={embedUrl}
+                      title={`${name} interview`}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      className="absolute inset-0 w-full h-full"
+                    />
+                  </div>
+                  {operatorName && (
+                    <p className="text-xs text-dust">Interview with {operatorName}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── GALLERY ──────────────────────────────────────────────────────────
+          Slips coverPhoto (idx 0) since it's already the hero. Remaining
+          photos render as 4-col masonry-ish grid. Blurs on hover.
+         ───────────────────────────────────────────────────────────────────── */}
+      {galleryPhotos.length > 1 && (
+        <section className="py-16 md:py-20">
+          <Container>
+            <div className="max-w-6xl mx-auto space-y-8">
+              <div className="text-center space-y-2">
+                <Pill tone="neutral" className="mx-auto">The Operation</Pill>
+                <h2 className="font-serif text-3xl md:text-4xl">Inside the ranch</h2>
               </div>
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
+                {galleryPhotos.slice(1).map((url, i) => (
+                  <div
+                    key={i}
+                    className="relative aspect-square overflow-hidden border border-dust group"
+                  >
+                    <Image
+                      src={url}
+                      alt={`${name} ranch photo ${i + 2}`}
+                      fill
+                      className="object-cover transition-base group-hover:scale-105"
+                      unoptimized
+                      sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 50vw"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── TESTIMONIALS ─────────────────────────────────────────────────────
+          Larger quote cards with serif quote marks. Lifts on hover.
+         ───────────────────────────────────────────────────────────────────── */}
+      {testimonials.length > 0 && (
+        <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
+          <Container>
+            <div className="max-w-5xl mx-auto space-y-10">
+              <div className="text-center space-y-2">
+                <Pill tone="neutral" className="mx-auto">Word of mouth</Pill>
+                <h2 className="font-serif text-3xl md:text-4xl">What customers say</h2>
+              </div>
+              <div className="grid md:grid-cols-2 gap-5 md:gap-6">
+                {testimonials.map((t, i) => (
+                  <Card key={i} variant="default" padding="lg" className="space-y-5">
+                    <div
+                      aria-hidden
+                      className="font-serif text-5xl leading-none text-saddle/40 select-none"
+                    >
+                      “
+                    </div>
+                    <p className="text-charcoal/90 leading-relaxed text-base md:text-lg italic -mt-3">
+                      {t.quote}
+                    </p>
+                    <div className="flex items-center gap-3 pt-2 border-t border-dust/60">
+                      {t.photo ? (
+                        <Image
+                          src={t.photo}
+                          alt={t.name}
+                          width={40}
+                          height={40}
+                          className="rounded-full object-cover"
+                          unoptimized
+                        />
+                      ) : (
+                        <div className="w-10 h-10 border border-dust flex items-center justify-center rounded-full bg-bone-deep">
+                          <span className="text-sm text-saddle font-medium">
+                            {t.name.charAt(0)}
+                          </span>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-sm font-semibold text-charcoal">{t.name}</p>
+                        {t.location && <p className="text-xs text-dust">{t.location}</p>}
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── PROCESS ──────────────────────────────────────────────────────────
+          Three-step explainer. Big numbers in serif, restrained borders.
+         ───────────────────────────────────────────────────────────────────── */}
+      <section className="py-16 md:py-20">
+        <Container>
+          <div className="max-w-5xl mx-auto space-y-10">
+            <div className="text-center space-y-2">
+              <Pill tone="neutral" className="mx-auto">How it works</Pill>
+              <h2 className="font-serif text-3xl md:text-4xl">Direct from {name} to your freezer</h2>
+            </div>
+            <div className="grid md:grid-cols-3 gap-5 md:gap-6">
+              {[
+                {
+                  num: '01',
+                  title: 'Choose your share',
+                  blurb: 'Quarter, half, or whole — based on your family and freezer space.',
+                },
+                {
+                  num: '02',
+                  title: 'Pay & confirm',
+                  blurb: `Secure your share with a deposit. ${name} reaches out to confirm cut sheet, timing, pickup.`,
+                },
+                {
+                  num: '03',
+                  title: 'Pickup or delivery',
+                  blurb: 'Custom butchered, vacuum-sealed, packed into coolers. Ready on processing day.',
+                },
+              ].map((step) => (
+                <Card key={step.num} variant="default" padding="lg" className="space-y-3">
+                  <p className="font-serif text-5xl text-saddle/70 leading-none">{step.num}</p>
+                  <h3 className="font-serif text-xl text-charcoal">{step.title}</h3>
+                  <p className="text-sm text-charcoal/75 leading-relaxed">{step.blurb}</p>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </Container>
+      </section>
+
+      {/* ── CUSTOM PRODUCTS ──────────────────────────────────────────────── */}
+      {!isProspect && customProducts.length > 0 && (
+        <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
+          <Container>
+            <div className="max-w-5xl mx-auto space-y-10">
+              <div className="text-center space-y-2">
+                <Pill tone="neutral" className="mx-auto">Other products</Pill>
+                <h2 className="font-serif text-3xl md:text-4xl">More from {name}</h2>
+              </div>
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6">
                 {customProducts.map((product, i) => (
-                  <div key={i} className="p-6 border border-[#A7A29A] space-y-4 flex flex-col">
-                    <div className="flex-1 space-y-2">
-                      <h3 className="font-[family-name:var(--font-playfair)] text-xl">
-                        {product.name}
-                      </h3>
-                      <p className="text-2xl font-[family-name:var(--font-playfair)] text-[#6B4F3F]">
+                  <Card key={i} variant="default" padding="lg" className="flex flex-col">
+                    <div className="flex-1 space-y-2.5">
+                      <h3 className="font-serif text-2xl text-charcoal">{product.name}</h3>
+                      <p className="font-serif text-3xl text-saddle">
                         ${product.price}
                       </p>
                       {product.description && (
-                        <p className="text-sm text-[#A7A29A] leading-relaxed">
+                        <p className="text-sm text-charcoal/75 leading-relaxed">
                           {product.description}
                         </p>
                       )}
@@ -484,12 +591,12 @@ export default async function RancherPage(
                         href={product.link}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="block w-full text-center px-6 py-3 border border-[#0E0E0E] text-sm tracking-wide hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                        className="block w-full text-center mt-5 px-6 py-3 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
                       >
-                        Buy Now
+                        Buy now
                       </a>
                     )}
-                  </div>
+                  </Card>
                 ))}
               </div>
             </div>
@@ -497,119 +604,127 @@ export default async function RancherPage(
         </section>
       )}
 
-      {/* ── Reserve ──────────────────────────────────────────────────────── */}
+      {/* ── RESERVE / NEXT PROCESSING ────────────────────────────────────── */}
       {!isProspect && (processingDateDisplay || reserveLink) && (
-        <>
-          <Divider />
-          <section className="py-14">
-            <Container>
-              <div className="max-w-2xl mx-auto text-center space-y-5">
-                <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
-                  Not Ready to Commit?
-                </h2>
-                {processingDateDisplay && (
-                  <p className="text-[#6B4F3F]">
-                    Next processing date: <strong>{processingDateDisplay}</strong>
-                  </p>
-                )}
-                <p className="text-[#A7A29A] text-sm leading-relaxed">
-                  Reserve your spot before the processing date fills up. A small deposit holds your share.
+        <section className="py-16 md:py-20">
+          <Container>
+            <Card
+              variant="inverted"
+              padding="lg"
+              className="max-w-3xl mx-auto text-center space-y-5"
+            >
+              <Pill tone="inverted" className="mx-auto bg-bone/15">
+                Not ready to commit?
+              </Pill>
+              <h2 className="font-serif text-3xl md:text-4xl text-bone">
+                Hold your spot
+              </h2>
+              {processingDateDisplay && (
+                <p className="text-bone/85">
+                  Next processing date{' '}
+                  <strong className="text-bone">{processingDateDisplay}</strong>
                 </p>
+              )}
+              <p className="text-bone/75 text-sm leading-relaxed max-w-md mx-auto">
+                A small deposit holds your share. Reserve before the processing date
+                fills up.
+              </p>
+              <div className="pt-2">
                 {reserveLink ? (
                   <a
                     href={reserveLink}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-block px-8 py-3 border border-[#6B4F3F] text-[#6B4F3F] text-sm tracking-wide hover:bg-[#6B4F3F] hover:text-[#F4F1EC] transition-colors"
+                    className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
                   >
-                    Reserve Your Share →
+                    Reserve your share
+                    <span aria-hidden>→</span>
                   </a>
                 ) : (
                   <Link
                     href="/access"
-                    className="inline-block px-8 py-3 border border-[#6B4F3F] text-[#6B4F3F] text-sm tracking-wide hover:bg-[#6B4F3F] hover:text-[#F4F1EC] transition-colors"
+                    className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
                   >
-                    Get In Touch →
+                    Get in touch
+                    <span aria-hidden>→</span>
                   </Link>
                 )}
               </div>
-            </Container>
-          </section>
-        </>
+            </Card>
+          </Container>
+        </section>
       )}
 
-      {/* ── Custom Notes ─────────────────────────────────────────────────── */}
+      {/* ── NOTE FROM RANCHER ────────────────────────────────────────────── */}
       {customNotes && (
-        <>
-          <Divider />
-          <section className="py-14">
-            <Container>
-              <div className="max-w-3xl mx-auto space-y-4">
-                <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
-                  A Note from {name}
-                </h2>
-                <p className="text-[#0E0E0E]/80 leading-relaxed whitespace-pre-line">
-                  {customNotes}
-                </p>
-              </div>
-            </Container>
-          </section>
-        </>
+        <section className="py-16 md:py-20 border-t border-dust/40">
+          <Container>
+            <div className="max-w-3xl mx-auto space-y-4">
+              <Pill tone="neutral">A note from the ranch</Pill>
+              <h2 className="font-serif text-2xl md:text-3xl">
+                Direct from {operatorName || name}
+              </h2>
+              <div className="prose-bhc whitespace-pre-line">{customNotes}</div>
+            </div>
+          </Container>
+        </section>
       )}
 
-      {/* ── Prospect-only claim CTA (bottom) ─────────────────────────────── */}
+      {/* ── PROSPECT CLAIM CTA ───────────────────────────────────────────── */}
       {isProspect && (
-        <>
-          <Divider />
-          <section className="py-14">
-            <Container>
-              <div className="max-w-2xl mx-auto text-center space-y-5">
-                <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
-                  Are you {name}?
-                </h2>
-                <p className="text-[#A7A29A] text-sm leading-relaxed">
-                  We built this page from public information so families looking
-                  for direct-to-consumer beef in {state || 'your state'} could
-                  find you. Claim your listing to take it over and start taking
-                  orders through BuyHalfCow.
-                </p>
-                <div className="flex flex-wrap justify-center gap-3">
-                  <Link
-                    href={`/ranchers/${slug}/claim`}
-                    className="inline-block px-8 py-3 border border-[#0E0E0E] text-sm tracking-wide hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
-                  >
-                    Claim your listing →
-                  </Link>
-                  <Link
-                    href={`/ranchers/${slug}/remove`}
-                    className="inline-block px-8 py-3 text-sm tracking-wide text-[#A7A29A] hover:text-[#0E0E0E] underline self-center"
-                  >
-                    Or remove me from the map
-                  </Link>
-                </div>
+        <section className="py-16 md:py-20 border-t border-dust/40">
+          <Container>
+            <Card
+              variant="inverted"
+              padding="lg"
+              className="max-w-3xl mx-auto text-center space-y-5"
+            >
+              <Pill tone="amber" className="mx-auto">Are you {name}?</Pill>
+              <h2 className="font-serif text-3xl md:text-4xl text-bone">
+                Take over this listing
+              </h2>
+              <p className="text-bone/85 text-sm leading-relaxed max-w-md mx-auto">
+                We built this page from public information so families looking for
+                direct-to-consumer beef in {state || 'your state'} could find you.
+                Claim your listing to take it over and start taking orders through
+                BuyHalfCow.
+              </p>
+              <div className="flex flex-wrap justify-center gap-3 pt-2">
+                <Link
+                  href={`/ranchers/${slug}/claim`}
+                  className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
+                >
+                  Claim your listing
+                  <span aria-hidden>→</span>
+                </Link>
+                <Link
+                  href={`/ranchers/${slug}/remove`}
+                  className="inline-flex items-center self-center text-sm tracking-wide text-bone/60 hover:text-bone underline underline-offset-4 decoration-bone/30"
+                >
+                  Or remove me from the map
+                </Link>
               </div>
-            </Container>
-          </section>
-        </>
+            </Card>
+          </Container>
+        </section>
       )}
 
-      {/* ── Footer Nav ───────────────────────────────────────────────────── */}
-      <div className="border-t border-[#2A2A2A]/10 py-10">
+      {/* ── FOOTER NAV ───────────────────────────────────────────────────── */}
+      <div className="border-t border-dust/40 py-8 md:py-10">
         <Container>
-          <div className="max-w-4xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-[#A7A29A]">
+          <div className="max-w-5xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-3 text-sm text-saddle">
             <Link
               href={isProspect ? '/map' : '/ranchers'}
-              className="hover:text-[#0E0E0E] transition-colors"
+              className="hover:text-charcoal transition-base"
             >
-              {isProspect ? '← Back to discover map' : '← Browse All Ranchers'}
+              ← {isProspect ? 'Back to discover map' : 'Browse all ranchers'}
             </Link>
-            <Link href="/" className="hover:text-[#0E0E0E] transition-colors">
+            <Link href="/" className="hover:text-charcoal transition-base">
               BuyHalfCow
             </Link>
           </div>
         </Container>
       </div>
-
     </main>
   );
 }

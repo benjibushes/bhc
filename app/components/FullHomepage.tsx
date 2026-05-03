@@ -6,6 +6,7 @@ import Image from 'next/image';
 import Container from './Container';
 import Divider from './Divider';
 import Button from './Button';
+import LiveCounter from './LiveCounter';
 
 function CampaignTracker() {
   const searchParams = useSearchParams();
@@ -86,24 +87,8 @@ export default function FullHomepage() {
               A private membership network connecting Americans directly with verified local ranchers. No middlemen. No algorithms. Just trust.
             </p>
 
-            {stats && (
-              <div className="flex justify-center gap-6 md:gap-10 pt-6">
-                <div className="text-center">
-                  <div className="font-serif text-3xl md:text-4xl">{stats.buyerCount.toLocaleString()}</div>
-                  <div className="text-xs uppercase tracking-wider text-saddle">Members</div>
-                </div>
-                <div className="w-px bg-dust" />
-                <div className="text-center">
-                  <div className="font-serif text-3xl md:text-4xl">{stats.rancherCount}</div>
-                  <div className="text-xs uppercase tracking-wider text-saddle">Ranchers</div>
-                </div>
-                <div className="w-px bg-dust" />
-                <div className="text-center">
-                  <div className="font-serif text-3xl md:text-4xl">{stats.stateCount}</div>
-                  <div className="text-xs uppercase tracking-wider text-saddle">States</div>
-                </div>
-              </div>
-            )}
+            <LiveCounter />
+
 
             <p className="text-sm text-saddle pt-2">
               Follow the movement:{' '}
@@ -142,6 +127,55 @@ export default function FullHomepage() {
                 Partner with us instead
               </a>
             </p>
+          </div>
+        </Container>
+      </section>
+
+      <Divider />
+
+      {/* MOVEMENT + FOUNDERS CTA — drive campaign traffic into the two new
+          surfaces: the public discover map (every D2C rancher in America)
+          and the Founding Herd subscription tiers. Both are essential to
+          the marketing campaign and were previously orphaned pages. */}
+      <section className="py-16">
+        <Container>
+          <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+            <a
+              href="/map"
+              className="block p-8 border-2 border-charcoal hover:bg-charcoal hover:text-bone transition-colors group"
+            >
+              <p className="text-xs uppercase tracking-widest text-saddle group-hover:text-dust mb-3">
+                The Discover Map
+              </p>
+              <h3 className="font-serif text-2xl md:text-3xl mb-3">
+                Every D2C rancher in America
+              </h3>
+              <p className="text-sm text-saddle group-hover:text-dust leading-relaxed mb-4">
+                Public hit list of ranchers shipping direct to families. Find one near you, or
+                add a rancher you know to the map.
+              </p>
+              <span className="text-sm font-bold uppercase tracking-widest">
+                View the map &rarr;
+              </span>
+            </a>
+            <a
+              href="/founders"
+              className="block p-8 border-2 border-charcoal bg-charcoal text-bone hover:bg-bone hover:text-charcoal transition-colors group"
+            >
+              <p className="text-xs uppercase tracking-widest text-dust group-hover:text-saddle mb-3">
+                The Founding Herd
+              </p>
+              <h3 className="font-serif text-2xl md:text-3xl mb-3">
+                Back the food revolution
+              </h3>
+              <p className="text-sm text-dust group-hover:text-saddle leading-relaxed mb-4">
+                Founder tiers from $9/mo to $15k lifetime. Limited Founding 100 seats. Help
+                fund the platform that takes families off mystery grocery beef.
+              </p>
+              <span className="text-sm font-bold uppercase tracking-widest">
+                See the tiers &rarr;
+              </span>
+            </a>
           </div>
         </Container>
       </section>
@@ -383,6 +417,11 @@ export default function FullHomepage() {
         <Container>
           <div className="text-center space-y-6">
             <div className="flex flex-wrap justify-center gap-4 text-sm">
+              <Button href="/map" variant="secondary">Map</Button>
+              <Button href="/wins" variant="secondary">Wins</Button>
+              <Button href="/founders" variant="secondary">Founders</Button>
+              <Button href="/brand-partners" variant="secondary">Brand Partners</Button>
+              <Button href="/map/add-a-rancher" variant="secondary">Add a Rancher</Button>
               <Button href="/faq" variant="secondary">FAQ</Button>
               <Button href="/about" variant="secondary">About</Button>
               <Button href="/news" variant="secondary">News</Button>

@@ -2790,3 +2790,234 @@ export async function sendProspectClaimMagicLink(data: {
     return { success: false, error };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-submit + community-submit welcome emails (Project 1 — Discover Map)
+//
+// Both fired from /api/prospects/self-submit. Per founder direction:
+// NO subscription tiers, NO pricing breakdown — Ben closes on the call.
+// Only ask: "book the 15-minute call." That's it.
+//
+// These are plain transactional emails (one-shot, not part of a sequence yet —
+// the drip lives in app/api/cron/rancher-onboarding-drip/route.ts which fires
+// follow-ups on Day 2, Day 5, and Day 14 if the rancher hasn't booked yet).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function sendRancherSelfSubmitWelcome(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+  rancherId?: string; // optional — when present, mints a setup magic link
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+
+  // Mint a 60-day setup magic link. The link points at the self-serve
+  // wizard at /rancher/setup which lets the rancher fill in their page
+  // (logo, prices, about, etc.) and request the agreement WITHOUT a manual
+  // call. Falls back gracefully — if rancherId not passed, we just hide
+  // the wizard CTA and the email is still useful (Calendly fallback).
+  let setupUrl = '';
+  if (data.rancherId) {
+    try {
+      // Lazy import to avoid pulling jsonwebtoken into other call sites.
+      const jwt = await import('jsonwebtoken');
+      const { JWT_SECRET } = await import('@/lib/secrets');
+      const token = jwt.default.sign(
+        { type: 'rancher-setup', rancherId: data.rancherId },
+        JWT_SECRET,
+        { expiresIn: '60d' }
+      );
+      setupUrl = `${SITE_URL}/rancher/setup?token=${token}`;
+    } catch (e) {
+      console.error('[self-submit-welcome] setup link mint failed:', e);
+    }
+  }
+
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject: `${data.ranchName} is on the map — set up your page`,
+      headers: getUnsubscribeHeaders(data.to),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.cta-secondary{display:inline-block;padding:14px 30px;border:1px solid #0E0E0E;color:#0E0E0E !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+</head><body><div class="container">
+  <h1>Hey ${esc(first)},</h1>
+  <p>You just put <strong>${esc(data.ranchName)}</strong> on the BuyHalfCow discover map. Yellow pin. Live now.</p>
+  <p>Quick context on what this is &mdash; I'm Ben, founder of BuyHalfCow. We help direct-to-consumer ranchers reach more families and sell more beef without the middleman. Public map, buyer routing, marketing services, the whole stack.</p>
+  <p>You're not getting routed customers yet &mdash; that flips after you sign the partner agreement. Yellow pin = "we know about you, we haven't onboarded you yet."</p>
+  ${setupUrl ? `
+  <p><strong>The fastest way through:</strong> our self-serve wizard. Five minutes, four steps, no call needed unless you want one.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${utm(setupUrl, 'self-submit-welcome', 'wizard')}" class="cta">Set up your page →</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Want to talk first? <a href="${utm(CALENDLY_LINK, 'self-submit-welcome', 'calendly')}">Book a 15-min call</a> instead.</p>
+  ` : `
+  <p><strong>One next step:</strong> book a 15-minute call. I'll show you what we do, ask a few questions about how you sell today, and we figure out together if it's a fit.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${utm(CALENDLY_LINK, 'self-submit-welcome', 'cta')}" class="cta">Book the 15-min call</a>
+  </div>
+  `}
+  <div class="divider"></div>
+  <p style="font-size:13px;color:#2A2A2A;">We're running the food revolution &mdash; getting families off mystery grocery beef and onto real ranches like yours. The map is how they find you. The marketing services are how you stay full.</p>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
+  ${emailFooter(data.to)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher self-submit welcome:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendRancherCommunityIntro(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+  submitterName: string;
+  relationship?: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  const relationLine = data.relationship
+    ? ` ${esc(data.submitterName)} described the connection as: "${esc(data.relationship)}".`
+    : '';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject: `${data.submitterName} thinks you should know about us`,
+      headers: getUnsubscribeHeaders(data.to),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+</head><body><div class="container">
+  <h1>Hey ${esc(first)},</h1>
+  <p>Cold email, sorry &mdash; but worth your three minutes.</p>
+  <p><strong>${esc(data.submitterName)}</strong> just put <strong>${esc(data.ranchName)}</strong> on the BuyHalfCow discover map and asked us to reach out.${relationLine}</p>
+  <p>I'm Ben, founder of BuyHalfCow. We help direct-to-consumer ranchers like you reach more families &mdash; the public map, marketing services, intros to buyers in your area. No middleman, no commodity pricing, you keep your margin.</p>
+  <p>You're a yellow pin on the map right now: visible, but not getting routed customers. That only flips after a 15-minute call and a partner agreement. The call is free, low-pressure, and you'll know in 15 minutes whether it's a fit.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${utm(CALENDLY_LINK, 'community-intro', 'cta')}" class="cta">Book the 15-min call</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;">If you'd rather we take you off the map, just reply with "remove" and you're gone. No questions.</p>
+  <div class="divider"></div>
+  <p style="font-size:13px;color:#2A2A2A;">${esc(data.submitterName)} flagged you because they think families should be buying from a real rancher instead of a grocery chain. We agree. The food revolution doesn't happen without ranchers like you on the map.</p>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
+  ${emailFooter(data.to)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher community intro:', error);
+    return { success: false, error };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drip emails fired by /api/cron/rancher-onboarding-drip
+// (Day 2 nudge, Day 5 case-study, Day 14 last-call)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function sendRancherOnboardingDripDay2(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject: `Re: ${data.ranchName} on the map`,
+      headers: getUnsubscribeHeaders(data.to),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
+</head><body><div class="container">
+  <p>Hey ${esc(first)},</p>
+  <p>Following up on my note from a couple days back &mdash; ${esc(data.ranchName)} is sitting on the map as a yellow pin and I haven't heard from you yet.</p>
+  <p>The 15-minute call is the only way to flip you from yellow ("on the map") to green ("getting routed real customers"). I'll come in with a couple of buyer profiles already in your area so we have something concrete to look at.</p>
+  <div style="text-align:center;margin:24px 0;">
+    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day2')}" class="cta">Grab a slot</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;">Reply with a phone number if email isn't your thing. I'll call.</p>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
+  ${emailFooter(data.to)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher onboarding drip Day 2:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendRancherOnboardingDripDay5(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject: `What we actually do for ranchers like you`,
+      headers: getUnsubscribeHeaders(data.to),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}ul{margin:14px 0;padding-left:22px}li{margin:6px 0}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
+</head><body><div class="container">
+  <p>Hey ${esc(first)},</p>
+  <p>I haven't bombarded you with a sales deck because that's not what we do. Two-line version of what BuyHalfCow does for D2C ranchers:</p>
+  <ul>
+    <li><strong>Public map + listing</strong> &mdash; families searching for real beef in your county find you, not Walmart.</li>
+    <li><strong>Buyer matching</strong> &mdash; we route pre-screened families with confirmed budgets and timing directly to ranchers we've vetted.</li>
+    <li><strong>Marketing services</strong> &mdash; story-driven email, content, and outreach so families understand why your beef is worth $7/lb instead of $4/lb.</li>
+  </ul>
+  <p>One 15-minute call, no slide deck, you tell me how you sell today and I tell you whether we'd actually move the needle for ${esc(data.ranchName)}.</p>
+  <div style="text-align:center;margin:24px 0;">
+    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day5')}" class="cta">Book the call</a>
+  </div>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
+  ${emailFooter(data.to)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher onboarding drip Day 5:', error);
+    return { success: false, error };
+  }
+}
+
+export async function sendRancherOnboardingDripDay14(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject: `Last note from me`,
+      headers: getUnsubscribeHeaders(data.to),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
+</head><body><div class="container">
+  <p>Hey ${esc(first)},</p>
+  <p>Last note from me unless I hear back &mdash; I don't want to be that guy who emails forever.</p>
+  <p>${esc(data.ranchName)} stays on the map as a yellow pin either way. If timing isn't right now, that's fine. Pin's there when you're ready.</p>
+  <p>If you DO want to talk:</p>
+  <div style="text-align:center;margin:24px 0;">
+    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day14')}" class="cta">Pick a slot</a>
+  </div>
+  <p>If you want OFF the map, just reply "remove" and you're gone, same day.</p>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
+  ${emailFooter(data.to)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending rancher onboarding drip Day 14:', error);
+    return { success: false, error };
+  }
+}

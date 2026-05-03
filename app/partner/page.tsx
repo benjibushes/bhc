@@ -177,17 +177,17 @@ function PartnerPageContent() {
 
   if (isSubmitted) {
     return (
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-2xl mx-auto text-center space-y-8">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
+            <h1 className="font-serif text-4xl md:text-5xl">
               Application Received ✓
             </h1>
             <Divider />
             
             {partnerType === 'rancher' && (
               <>
-                <div className="bg-[#0E0E0E] text-[#F4F1EC] p-8 space-y-6">
+                <div className="bg-charcoal text-bone p-8 space-y-6">
                   <h2 className="text-2xl font-medium">
                     📞 Next Step: Schedule Your Onboarding Call
                   </h2>
@@ -199,11 +199,11 @@ function PartnerPageContent() {
                     href={process.env.NEXT_PUBLIC_CALENDLY_LINK || 'https://cal.com/ben-beauchman-1itnsg/30min'}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-block px-12 py-5 bg-[#F4F1EC] text-[#0E0E0E] hover:bg-[#E4E1DC] transition-colors duration-300 font-medium tracking-wider uppercase text-base"
+                    className="inline-block px-12 py-5 bg-bone text-charcoal hover:bg-[#E4E1DC] transition-colors duration-300 font-medium tracking-wider uppercase text-base"
                   >
                     📅 Schedule Your Call Now →
                   </a>
-                  <p className="text-sm text-[#A7A29A]">
+                  <p className="text-sm text-dust">
                     Can't find a time? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
                   </p>
                 </div>
@@ -212,7 +212,7 @@ function PartnerPageContent() {
             
             {partnerType !== 'rancher' && (
               <>
-                <p className="text-lg leading-relaxed text-[#6B4F3F]">
+                <p className="text-lg leading-relaxed text-saddle">
                   Thank you for your interest in partnering with BuyHalfCow.
                 </p>
                 <p className="text-lg leading-relaxed">
@@ -222,7 +222,7 @@ function PartnerPageContent() {
             )}
             
             <div className="pt-8">
-              <Link href="/" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+              <Link href="/" className="text-charcoal hover:text-saddle transition-colors">
                 ← Back to home
               </Link>
             </div>
@@ -233,16 +233,16 @@ function PartnerPageContent() {
   }
 
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-2xl mx-auto space-y-12">
           {/* Header */}
           <div className="text-center space-y-6">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
+            <h1 className="font-serif text-4xl md:text-5xl">
               Partner With BuyHalfCow
             </h1>
             <Divider />
-            <p className="text-lg leading-relaxed text-[#6B4F3F]">
+            <p className="text-lg leading-relaxed text-saddle">
               All partnerships are manually reviewed to ensure quality and trust.
             </p>
           </div>
@@ -250,7 +250,7 @@ function PartnerPageContent() {
           {/* Partner Type Selection */}
           <div className="space-y-4">
             <label htmlFor="partnerType" className="block text-sm font-medium mb-2">
-              I want to partner as a: <span className="text-[#8C2F2F]">*</span>
+              I want to partner as a: <span className="text-weathered">*</span>
             </label>
             <select
               id="partnerType"
@@ -258,7 +258,7 @@ function PartnerPageContent() {
               value={partnerType}
               onChange={(e) => setPartnerType(e.target.value as PartnerType)}
               required
-              className="w-full px-4 py-3 border border-[#A7A29A] bg-[#F4F1EC] text-[#0E0E0E] focus:outline-none focus:border-[#0E0E0E] transition-colors"
+              className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
             >
               <option value="">Select partnership type</option>
               <option value="rancher">Rancher — Sell Beef to Members</option>
@@ -275,7 +275,7 @@ function PartnerPageContent() {
               {/* RANCHER FORM */}
               {partnerType === 'rancher' && (
                 <div className="space-y-6">
-                  <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+                  <h2 className="font-serif text-2xl">
                     Rancher Application
                   </h2>
                   
@@ -372,9 +372,9 @@ function PartnerPageContent() {
 
                   <Divider />
 
-                  <div className="space-y-4 p-6 bg-white border border-[#A7A29A]">
+                  <div className="space-y-4 p-6 bg-white border border-dust">
                     <h3 className="font-medium text-lg">Ranch Tour & Verification</h3>
-                    <p className="text-sm text-[#6B4F3F] leading-relaxed">
+                    <p className="text-sm text-saddle leading-relaxed">
                       Part of our verification process includes in-person ranch tours. 
                       I travel through different states certifying ranchers and documenting operations.
                     </p>
@@ -413,7 +413,7 @@ function PartnerPageContent() {
               {/* BRAND FORM */}
               {partnerType === 'brand' && (
                 <div className="space-y-6">
-                  <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+                  <h2 className="font-serif text-2xl">
                     Brand Partnership Application
                   </h2>
 
@@ -502,7 +502,7 @@ function PartnerPageContent() {
               {/* LAND DEAL FORM */}
               {partnerType === 'land' && (
                 <div className="space-y-6">
-                  <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+                  <h2 className="font-serif text-2xl">
                     Land Deal Submission
                   </h2>
 
@@ -621,7 +621,7 @@ function PartnerPageContent() {
               )}
 
               {error && (
-                <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F] text-sm">
+                <div className="p-4 border border-[#8C2F2F] bg-transparent text-weathered text-sm">
                   {error}
                 </div>
               )}
@@ -633,7 +633,7 @@ function PartnerPageContent() {
           )}
 
           <div className="text-center pt-8">
-            <Link href="/" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/" className="text-charcoal hover:text-saddle transition-colors">
               ← Back to home
             </Link>
           </div>
@@ -645,7 +645,7 @@ function PartnerPageContent() {
 
 export default function PartnerPage() {
   return (
-    <Suspense fallback={<main className="min-h-screen py-24 bg-[#F4F1EC] flex items-center justify-center"><p className="text-[#6B4F3F]">Loading...</p></main>}>
+    <Suspense fallback={<main className="min-h-screen py-24 bg-bone flex items-center justify-center"><p className="text-saddle">Loading...</p></main>}>
       <PartnerPageContent />
     </Suspense>
   );
