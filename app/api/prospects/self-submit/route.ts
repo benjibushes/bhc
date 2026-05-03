@@ -280,13 +280,12 @@ export async function POST(req: Request) {
         `Airtable: ${created.id}`,
       ].filter(Boolean);
 
-      // Inline keyboard rows. Phone-row only renders if phone provided.
+      // Inline keyboard rows. Telegram URL buttons reject `tel:` and `mailto:`
+      // schemes (only http/https/tg allowed) — sending those returns 400 Bad
+      // Request and silently kills the entire alert. Phone + email live in
+      // the message body where Telegram apps render them as tap-to-call /
+      // tap-to-email automatically.
       const buttons: any[][] = [];
-      if (rancherPhone) {
-        buttons.push([
-          { text: '📞 Call', url: `tel:${rancherPhone.replace(/[^\d+]/g, '')}` },
-        ]);
-      }
       if (rancherEmail) {
         buttons.push([
           { text: '✉️ Onboard (send docs)', callback_data: `ronboard_${created.id}` },
