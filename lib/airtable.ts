@@ -22,6 +22,7 @@ export const TABLES = {
   CAMPAIGNS: 'Campaigns',
   REFERRALS: 'Referrals',
   AFFILIATES: 'Affiliates',
+  CONVERSATIONS: 'Conversations',
 };
 
 // Escape a string value for use in Airtable filterByFormula to prevent injection
