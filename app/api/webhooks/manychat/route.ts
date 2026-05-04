@@ -100,6 +100,42 @@ const CLOSER_SYSTEM_PROMPT = `You are Ben, founder of BuyHalfCow, replying to an
 • No emojis unless they use them first. Never more than one emoji.
 • Sound human: "yeah", "totally", "right on", "gotcha", "nice", "ha", "hey", "hmm".
 
+═══ ANTI-AI-TELLS — BANNED PHRASES ═══
+Never use any of these. They scream chatbot:
+  • "I'd be happy to" / "happy to help"
+  • "Great question!" / "That's a great question"
+  • "I understand" / "I hear you"
+  • "Feel free to" / "Don't hesitate to"
+  • "Let me know if" / "Just let me know"
+  • "As an AI" / "I'm an AI" / "as a language model"
+  • "Absolutely!" / "Certainly!" / "Of course!" as standalone openers
+  • "I'd love to help you with"
+  • "Thanks for reaching out" / "Thanks for the message"
+  • "Hope this helps" / "Hope that helps"
+  • "Looking forward to" / "Excited to"
+  • "Please don't hesitate"
+  • Long greetings ("Hello! Welcome to BuyHalfCow!")
+  • "How can I assist you today" — never. ever.
+  • Any sentence starting with "I'd recommend" or "I would suggest"
+  • "Reach out" — say "hit me up" or just don't say it
+
+If you catch yourself starting with "Sure!", "Great!", "Awesome!" — delete it. Just write the substance.
+
+═══ POSITIVE VOICE ANCHORS ═══
+Texts you'd actually send sound like:
+  • "yeah we can probably figure that out"
+  • "nice — what state are you in?"
+  • "love that. how big's your operation?"
+  • "easiest way is /access — 60 secs, matches you with a rancher near you"
+  • "gotcha. you trying to buy or sell?"
+  • "no worries, takes 60 seconds"
+  • "ha yeah, fair question"
+  • "honestly the quiz at /access is the move"
+  • "right on — /rancher/setup gets you live in 5 min"
+  • "appreciate that, means a lot"
+
+Use these as templates. Feel them. Don't copy verbatim every time — vary.
+
 ═══ YOUR JOB IS TO LISTEN, NOT PITCH ═══
 Goal of the FIRST reply is almost never to send a link. It's to:
 1. Read what they actually want.
@@ -207,6 +243,29 @@ interface ParsedClaudeOutput {
   signals: Record<string, string>;
 }
 
+// Banned phrases — surface chatbot tells. Stripped from every reply.
+// Pairs: [pattern, replacement]. Replacement is usually empty (drop the phrase
+// + any leading/trailing punctuation it dragged in).
+const BANNED_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(I'?d be happy to|I'?m happy to|happy to help)\b[,.\s]*/gi, ''],
+  [/\b(great question|good question|that's a great question|excellent question)\b[!,.\s]*/gi, ''],
+  [/\b(I understand|I hear you)\b[,.\s]*/gi, ''],
+  [/\b(feel free to|don'?t hesitate to|please don'?t hesitate)\b\s*/gi, ''],
+  [/\b(let me know if|just let me know)\b\s*/gi, ''],
+  [/\b(as an AI|I'?m an AI|as a language model)\b[,.\s]*/gi, ''],
+  [/^(absolutely|certainly|of course|sure|great|awesome)[!,.\s]+/i, ''],
+  [/\bI'?d love to help( you)?( with)?\b\s*/gi, ''],
+  [/\b(thanks for reaching out|thanks for the message|thank you for reaching out)\b[,.\s]*/gi, ''],
+  [/\b(hope this helps|hope that helps)\b[,.\s!]*/gi, ''],
+  [/\b(looking forward to|excited to)\b\s*/gi, ''],
+  [/\bhow can I (assist|help) you( today)?\b[?,.\s]*/gi, ''],
+  [/\bI'?d (recommend|suggest)\b/gi, 'try'],
+  [/\bI would (recommend|suggest)\b/gi, 'try'],
+  // Long greetings / brand-shouts
+  [/^(hello|hi there|greetings)[!,.\s]+/i, ''],
+  [/welcome to buyhalfcow[!,.\s]*/gi, ''],
+];
+
 function sanitizeReply(text: string): string {
   let t = text.trim();
   // Strip wrapping quotes models love to add
@@ -218,22 +277,48 @@ function sanitizeReply(text: string): string {
   );
   // Drop accidental bullet chars at line start
   t = t.replace(/^\s*[•\-\*]\s+/gm, '');
+
+  // Strip banned chatbot tells
+  for (const [pat, repl] of BANNED_PATTERNS) {
+    t = t.replace(pat, repl);
+  }
+  // Cleanup: double spaces, leading punctuation orphans
+  t = t.replace(/[ \t]{2,}/g, ' ');
+  t = t.replace(/^[\s,.;:!?-]+/, '');
+  t = t.replace(/\s+([,.;:!?])/g, '$1');
+
   // Collapse 3+ newlines → 2
   t = t.replace(/\n{3,}/g, '\n\n');
   // Trim trailing whitespace per line
   t = t.split('\n').map((l) => l.trimEnd()).join('\n').trim();
 
   // Enforce ONE question mark — keep first question, drop the rest.
-  // Model occasionally double-barrels despite the prompt.
   const qCount = (t.match(/\?/g) || []).length;
   if (qCount > 1) {
     let seen = 0;
-    t = t.replace(/\?/g, (m) => {
+    t = t.replace(/\?/g, () => {
       seen++;
       return seen === 1 ? '?' : '.';
     });
   }
-  return t;
+
+  // Hard cap: 3 sentences max. Sentence-split on .?! followed by space/end.
+  // Preserve URLs that contain dots (don't split mid-link).
+  // Strategy: protect common URL-ish patterns, split, restore.
+  const urlPlaceholders: string[] = [];
+  t = t.replace(/https?:\/\/\S+|\/[a-z][a-z0-9\-_/]+|[a-z0-9.-]+\.(com|co|io|app|org|net)\/\S*/gi, (m) => {
+    urlPlaceholders.push(m);
+    return `__URL${urlPlaceholders.length - 1}__`;
+  });
+  const sentences = t.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [t];
+  if (sentences.length > 3) {
+    t = sentences.slice(0, 3).join('').trim();
+  }
+  // Restore URLs
+  t = t.replace(/__URL(\d+)__/g, (_, i) => urlPlaceholders[Number(i)] || '');
+
+  // Final tidy
+  return t.trim();
 }
 
 function parseClaudeOutput(raw: string): ParsedClaudeOutput {
@@ -310,8 +395,8 @@ async function callClaudeMultiTurn(args: {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 250,
-        temperature: 0.85,
+        max_tokens: 220,
+        temperature: 0.7,
         system: [
           {
             type: 'text',
@@ -343,8 +428,8 @@ async function callClaudeMultiTurn(args: {
         },
         body: JSON.stringify({
           model,
-          max_tokens: 250,
-          temperature: 0.85,
+          max_tokens: 220,
+          temperature: 0.7,
           messages: [
             { role: 'system', content: CLOSER_SYSTEM_PROMPT },
             ...messages,
