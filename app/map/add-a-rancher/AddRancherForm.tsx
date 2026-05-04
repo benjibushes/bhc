@@ -43,6 +43,7 @@ export default function AddRancherForm() {
       rancherPhone: String(fd.get('rancherPhone') || '').trim(),
       city: String(fd.get('city') || '').trim(),
       state: String(fd.get('state') || '').trim(),
+      zip: String(fd.get('zip') || '').trim().slice(0, 5),
       website: String(fd.get('website') || '').trim(),
       primaryProduct: String(fd.get('primaryProduct') || 'Beef').trim(),
       notes: String(fd.get('notes') || '').trim(),
@@ -203,18 +204,31 @@ export default function AddRancherForm() {
               placeholder="(555) 555-5555"
             />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="sm:col-span-2">
+          <div className="grid grid-cols-1 sm:grid-cols-6 gap-4">
+            <div className="sm:col-span-3">
               <Field label="City" name="city" required placeholder="Bozeman" />
             </div>
-            <SelectField label="State" name="state" required>
-              <option value="" disabled>—</option>
-              {STATES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </SelectField>
+            <div className="sm:col-span-1">
+              <SelectField label="State" name="state" required>
+                <option value="" disabled>—</option>
+                {STATES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </SelectField>
+            </div>
+            <div className="sm:col-span-2">
+              <Field
+                label="ZIP"
+                name="zip"
+                required
+                placeholder="59715"
+                pattern="\d{5}"
+                inputMode="numeric"
+                maxLength={5}
+              />
+            </div>
           </div>
           <Field label="Website / shop URL" name="website" type="url" placeholder="https://smithranch.com" />
           <Field
@@ -296,6 +310,9 @@ function Field({
   required,
   placeholder,
   defaultValue,
+  pattern,
+  inputMode,
+  maxLength,
 }: {
   label: string;
   name: string;
@@ -303,6 +320,9 @@ function Field({
   required?: boolean;
   placeholder?: string;
   defaultValue?: string;
+  pattern?: string;
+  inputMode?: 'numeric' | 'text' | 'email' | 'tel' | 'url' | 'search' | 'decimal' | 'none';
+  maxLength?: number;
 }) {
   return (
     <label className="block">
@@ -315,6 +335,9 @@ function Field({
         required={required}
         placeholder={placeholder}
         defaultValue={defaultValue}
+        pattern={pattern}
+        inputMode={inputMode}
+        maxLength={maxLength}
         className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:outline-none focus:border-charcoal hover:border-saddle"
       />
     </label>

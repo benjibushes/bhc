@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
+import { geocodeRancher } from '@/lib/geocode';
 
 // Self-serve rancher setup wizard — backing API.
 //
@@ -32,6 +33,7 @@ const ALLOWED_FIELDS = new Set([
   'Phone',
   'City',
   'State',
+  'Zip',
   'States Served',
   'Beef Types',
   'Logo URL',
@@ -131,6 +133,42 @@ export async function PATCH(req: Request) {
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
+  }
+
+  // If ZIP / City / State changed, re-geocode and store fresh lat/lng so the
+  // public map reflects the rancher's chosen location accurately. ZIP-first
+  // for ~3-5 mi accuracy; falls back to city centroid if zippopotam misses.
+  const locationChanged =
+    'Zip' in updates || 'City' in updates || 'State' in updates;
+  if (locationChanged) {
+    try {
+      // Read existing record to fill in any unchanged location fields.
+      const current: any = await getRecordById(
+        TABLES.RANCHERS,
+        decoded.rancherId
+      );
+      const zip =
+        ('Zip' in updates ? String(updates['Zip'] || '') : current?.['Zip'] || '')
+          .toString()
+          .trim()
+          .slice(0, 5);
+      const city =
+        'City' in updates
+          ? String(updates['City'] || '')
+          : current?.['City'] || '';
+      const state =
+        'State' in updates
+          ? String(updates['State'] || '')
+          : current?.['State'] || '';
+      const coords = await geocodeRancher({ zip, city, state });
+      if (coords) {
+        updates['Latitude'] = coords.lat;
+        updates['Longitude'] = coords.lng;
+      }
+    } catch (e: any) {
+      // Non-fatal — keep the field updates, skip the lat/lng refresh.
+      console.warn('[rancher/setup] re-geocode skipped:', e?.message);
+    }
   }
 
   try {

@@ -10,6 +10,7 @@ import {
   sendRancherCommunityIntro,
 } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { geocodeRancher } from '@/lib/geocode';
 
 // Public endpoint — no auth. Two paths converge here:
 //
@@ -39,11 +40,12 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const NOMINATIM_USER_AGENT =
-  process.env.NOMINATIM_USER_AGENT || 'BuyHalfCow/1.0 (ben@buyhalfcow.com)';
-
 function isValidEmail(s: string): boolean {
   return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(s);
+}
+
+function isValidZip(s: string): boolean {
+  return /^\d{5}$/.test(s.trim());
 }
 
 function slugify(s: string, suffix?: string): string {
@@ -66,21 +68,6 @@ function hostOf(url: string): string {
   }
 }
 
-async function geocode(query: string): Promise<{ lat: number; lng: number } | null> {
-  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': NOMINATIM_USER_AGENT },
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as Array<{ lat: string; lon: string }>;
-    if (!Array.isArray(data) || data.length === 0) return null;
-    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-  } catch {
-    return null;
-  }
-}
-
 export async function POST(req: Request) {
   let body: Record<string, unknown> = {};
   try {
@@ -96,6 +83,7 @@ export async function POST(req: Request) {
   const rancherPhone = String(body.rancherPhone || '').trim();
   const city = String(body.city || '').trim();
   const state = String(body.state || '').trim().toUpperCase();
+  const zip = String(body.zip || '').trim().slice(0, 5);
   const website = String(body.website || '').trim();
   const primaryProduct = String(body.primaryProduct || 'Beef').trim() || 'Beef';
   const notes = String(body.notes || '').trim();
@@ -118,6 +106,9 @@ export async function POST(req: Request) {
   }
   if (state.length !== 2) {
     return NextResponse.json({ error: 'Use 2-letter state abbreviation' }, { status: 400 });
+  }
+  if (zip && !isValidZip(zip)) {
+    return NextResponse.json({ error: 'ZIP must be 5 digits' }, { status: 400 });
   }
 
   if (submitterType === 'self') {
@@ -175,8 +166,8 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── Geocode (best effort) ──
-  const coords = await geocode(`${city}, ${state}, USA`);
+  // ── Geocode (best effort) — ZIP-first for ~3-5 mi accuracy, city+state fallback (~city centroid). ──
+  const coords = await geocodeRancher({ zip, city, state });
 
   // ── Build Notes payload — submitter context lives here so we don't bloat schema ──
   const submittedAt = new Date().toISOString();
@@ -200,6 +191,7 @@ export async function POST(req: Request) {
     'Phone': rancherPhone || '',
     'City': city,
     'State': state,
+    'Zip': zip || '',
     'Website': website || '',
     'Primary Product': primaryProduct,
     'Slug': slug,

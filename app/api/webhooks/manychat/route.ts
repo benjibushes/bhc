@@ -618,6 +618,18 @@ export async function POST(request: Request) {
     incomingFields.conversation_id || `mc-${subscriberId}`;
   const isFirstContact = !incomingTags.includes('closer_engaged');
 
+  // Short-circuit: if this contact has been escalated to a human, do NOT
+  // generate an AI reply. Ben handles the convo manually from here. We
+  // return a no-op response (empty messages, no actions) so ManyChat
+  // stays silent.
+  if (incomingTags.includes('escalate_human')) {
+    return NextResponse.json({
+      version: 'v2',
+      content: { messages: [] },
+      actions: [],
+    });
+  }
+
   // Fetch history (best-effort; tolerate empty)
   const history = await fetchHistory(conversationId, username);
 
@@ -736,13 +748,54 @@ export async function POST(request: Request) {
     console.error('[manychat webhook] telegram alert failed:', e?.message);
   }
 
-  // Return ManyChat-shaped response
+  // Build flat top-level signal mirrors so ManyChat's Response Mapping
+  // (JSONPath → custom field) can apply each one without depending on the
+  // "Apply Actions from Response" toggle (which the modern ManyChat UI no
+  // longer exposes consistently). These duplicate what's in `actions[]` but
+  // are addressable via simple JSONPaths like `$.set_segment`.
+  const segmentTagOut =
+    signals.segment && segMap[signals.segment] ? segMap[signals.segment] : '';
+  const intentTagOut =
+    (signals.intent_signal || '').toLowerCase() === 'high'
+      ? 'qualified_lead'
+      : '';
+  const escalateTagOut = needsHuman ? 'escalate_human' : '';
+  const emailCapturedOut =
+    signals.email && signals.email !== 'blank' ? 'true' : '';
+
+  // Return ManyChat-shaped response. `content.messages[0].text` is the AI
+  // reply. `actions[]` is the legacy Apply Actions format. Top-level
+  // `set_*` / `*_tag` fields are the JSONPath-mappable mirrors.
   return NextResponse.json({
     version: 'v2',
     content: {
       messages: [{ type: 'text', text: reply }],
     },
     actions,
+
+    // Flat mirrors for ManyChat Response Mapping (JSONPath → custom field).
+    // Always present (empty string when not set) so JSONPath mappings don't
+    // error out. ManyChat UI: Response mapping → JSONPath `$.set_segment`
+    // → custom field `segment`, etc.
+    ai_reply: reply,
+    set_segment: signals.segment || '',
+    set_intent_signal: signals.intent_signal || '',
+    set_state: signals.state || '',
+    set_email: signals.email || '',
+    set_ranch_name: signals.ranch_name || '',
+    set_needs_human: needsHuman ? 'true' : 'false',
+    set_email_captured: emailCapturedOut,
+    set_conversation_id: conversationId,
+
+    // Tag names ready to feed into Add Tag steps. Empty string means "no
+    // tag for this slot" — gate the Add Tag step in ManyChat with a
+    // Condition that checks the field is non-empty.
+    segment_tag: segmentTagOut,
+    intent_tag: intentTagOut,
+    escalate_tag: escalateTagOut,
+    suggest_link: signals.suggest_link || '',
+    note: signals.note || '',
+    is_first_contact: isFirstContact ? 'true' : 'false',
   });
 }
 

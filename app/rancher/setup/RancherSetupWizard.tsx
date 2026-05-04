@@ -35,6 +35,7 @@ type Rancher = {
   Phone?: string;
   City?: string;
   State?: string;
+  Zip?: string;
   'States Served'?: string;
   'Beef Types'?: string;
   'Logo URL'?: string;
@@ -128,6 +129,7 @@ export default function RancherSetupWizard() {
             Phone: data.rancher.Phone || '',
             City: data.rancher.City || '',
             State: data.rancher.State || '',
+            Zip: data.rancher.Zip || '',
             'States Served': data.rancher['States Served'] || '',
             'Beef Types': data.rancher['Beef Types'] || '',
             'Logo URL': data.rancher['Logo URL'] || '',
@@ -690,17 +692,31 @@ export default function RancherSetupWizard() {
                 type="tel"
                 placeholder="(555) 555-5555"
               />
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="sm:col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-6 gap-4">
+                <div className="sm:col-span-3">
                   <Field label="City" required value={form.City} onChange={(v) => setField('City', v)} />
                 </div>
-                <SelectField label="State" required value={form.State} onChange={(v) => setField('State', v)}>
-                  <option value="" disabled>—</option>
-                  {STATES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </SelectField>
+                <div className="sm:col-span-1">
+                  <SelectField label="State" required value={form.State} onChange={(v) => setField('State', v)}>
+                    <option value="" disabled>—</option>
+                    {STATES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </SelectField>
+                </div>
+                <div className="sm:col-span-2">
+                  <Field
+                    label="ZIP"
+                    required
+                    value={form.Zip}
+                    onChange={(v) => setField('Zip', v.replace(/\D/g, '').slice(0, 5))}
+                    placeholder="59715"
+                  />
+                </div>
               </div>
+              <p className="text-xs text-saddle -mt-3">
+                ZIP places your pin within ~3 miles. Privacy: never your street address — pin lands at ZIP centroid.
+              </p>
               <Field
                 label="States you ship to (comma-separated)"
                 value={form['States Served']}
@@ -717,8 +733,12 @@ export default function RancherSetupWizard() {
             <StepFooter
               saving={saving}
               onContinue={async () => {
-                if (!form.Email || !form.City || !form.State) {
-                  setError('Email, City, and State are required');
+                if (!form.Email || !form.City || !form.State || !form.Zip) {
+                  setError('Email, City, State, and ZIP are required');
+                  return;
+                }
+                if (!/^\d{5}$/.test(String(form.Zip))) {
+                  setError('ZIP must be 5 digits');
                   return;
                 }
                 setError('');
@@ -727,6 +747,7 @@ export default function RancherSetupWizard() {
                   Phone: form.Phone,
                   City: form.City,
                   State: form.State,
+                  Zip: form.Zip,
                   'States Served': form['States Served'],
                   'Beef Types': form['Beef Types'],
                 });
