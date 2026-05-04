@@ -70,9 +70,16 @@ export default function RancherSetupWizard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [rancher, setRancher] = useState<Rancher | null>(null);
-  // Step 0 = intro (business model + video), 1-3 = page setup, 4 = inline
-  // agreement signing (no email round-trip), 5 = done (logged in, dashboard).
-  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5>(0);
+  // Hybrid B onboarding flow:
+  //   Step 0 = intro (business model + video)
+  //   Step 1-3 = page setup (contact / brand / pricing)
+  //   Step 4 = Book onboarding call with Ben (Cal.com embed). REQUIRED unless
+  //            rancher already has Onboarding Status = 'Call Complete' set
+  //            (Ben backfilled it for an existing rancher OR finished the
+  //            call already and tapped the Telegram callback).
+  //   Step 5 = inline agreement signing
+  //   Step 6 = done (logged in, dashboard auto-link)
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(0);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false); // mobile accordion state
@@ -339,12 +346,21 @@ export default function RancherSetupWizard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Signing failed');
       if (data?.dashboardLink) setDashboardLink(data.dashboardLink);
-      setStep(5);
+      setStep(6);
     } catch (e: any) {
       setError(e?.message || 'Signing failed');
     } finally {
       setSigning(false);
     }
+  }
+
+  // Hybrid B gate: rancher must have completed the onboarding call (Ben
+  // marks Onboarding Status = "Call Complete" via Telegram callback or
+  // dashboard) before agreement signing unlocks. Existing ranchers that
+  // already had calls done are backfilled by scripts/backfill-call-complete.mjs.
+  function canSkipBooking(): boolean {
+    const status = (rancher?.onboardingStatus || '').toString();
+    return status === 'Call Complete' || status === 'Verification Pending' || status === 'Verification Complete' || status === 'Live';
   }
 
   if (loading) {
@@ -375,8 +391,8 @@ export default function RancherSetupWizard() {
 
   if (!rancher) return null;
 
-  const stepLabel = (n: 1 | 2 | 3 | 4) => {
-    const labels = { 1: 'Contact', 2: 'Brand', 3: 'Pricing', 4: 'Sign' };
+  const stepLabel = (n: 1 | 2 | 3 | 4 | 5) => {
+    const labels = { 1: 'Contact', 2: 'Brand', 3: 'Pricing', 4: 'Call', 5: 'Sign' };
     return labels[n];
   };
 
@@ -465,7 +481,7 @@ export default function RancherSetupWizard() {
         {/* Progress + auto-save indicator */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <nav className="flex flex-wrap items-center gap-3" aria-label="Progress">
-            {([1, 2, 3, 4] as const).map((n) => {
+            {([1, 2, 3, 4, 5] as const).map((n) => {
               const isActive = step === n;
               const isDone = step > n;
               return (
@@ -488,7 +504,7 @@ export default function RancherSetupWizard() {
                   >
                     {stepLabel(n)}
                   </span>
-                  {n < 4 && <span aria-hidden className="text-dust hidden sm:inline">·</span>}
+                  {n < 5 && <span aria-hidden className="text-dust hidden sm:inline">·</span>}
                 </div>
               );
             })}
@@ -1033,19 +1049,40 @@ export default function RancherSetupWizard() {
                     : '',
                 });
                 if (ok) {
-                  // Prime the signing token before step 4 renders so the
-                  // "I agree" submit is instant. Fire-and-forget; SignStep
-                  // also calls primeSigningToken on mount as a backstop.
-                  primeSigningToken();
-                  setStep(4);
+                  // After pricing, route to step 4 (Book Call). If the rancher
+                  // already has Call Complete on file (e.g. Ben backfilled or
+                  // they came back to a partially-onboarded record), skip the
+                  // booking step and prime the signing token for step 5.
+                  if (canSkipBooking()) {
+                    primeSigningToken();
+                    setStep(5);
+                  } else {
+                    setStep(4);
+                  }
                 }
               }}
             />
           </section>
         )}
 
-        {/* STEP 4 — Inline sign agreement (NO email round-trip) */}
+        {/* STEP 4 — Book onboarding call (Hybrid B gate) */}
         {step === 4 && (
+          <CallStep
+            rancher={rancher}
+            onAlreadyComplete={() => {
+              primeSigningToken();
+              setStep(5);
+            }}
+            onBack={() => setStep(3)}
+            onProceedAnyway={() => {
+              primeSigningToken();
+              setStep(5);
+            }}
+          />
+        )}
+
+        {/* STEP 5 — Inline sign agreement */}
+        {step === 5 && (
           <SignStep
             rancher={rancher}
             form={form}
@@ -1057,12 +1094,12 @@ export default function RancherSetupWizard() {
             setAgreedToTerms={setAgreedToTerms}
             signing={signing}
             onSign={signAgreement}
-            onBack={() => setStep(3)}
+            onBack={() => setStep(canSkipBooking() ? 3 : 4)}
           />
         )}
 
-        {/* STEP 5 — Done. Auto-redirect to dashboard via dashboardLink. */}
-        {step === 5 && (
+        {/* STEP 6 — Done. Auto-redirect to dashboard via dashboardLink. */}
+        {step === 6 && (
           <section className="space-y-5 bg-sage/10 border-2 border-sage p-7 md:p-8 text-center">
             <p className="text-xs uppercase tracking-[0.2em] text-sage-dark font-bold">
               You&rsquo;re live
@@ -1118,19 +1155,22 @@ export default function RancherSetupWizard() {
           )}
         </div>
 
-        {/* Always-available escape hatch */}
-        <div className="border-t border-dust pt-6 text-center text-sm text-saddle">
-          Want to talk first?{' '}
-          <a
-            href={CALENDLY_LINK}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:text-charcoal"
-          >
-            Book a 15-min call with Ben
-          </a>
-          {' · '}
-          or reply to your welcome email.
+        {/* Always-available escape hatch + remove option */}
+        <div className="border-t border-dust pt-6 space-y-3 text-center text-sm text-saddle">
+          <div>
+            Want to talk first?{' '}
+            <a
+              href={CALENDLY_LINK}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 hover:text-charcoal"
+            >
+              Book a 15-min call with Ben
+            </a>
+            {' · '}
+            or reply to your welcome email.
+          </div>
+          <RemoveMeLink token={token} ranchName={rancher.ranchName} />
         </div>
       </div>
     </Container>
@@ -1540,5 +1580,258 @@ function SignStep({
         </button>
       </div>
     </section>
+  );
+}
+
+// ── Step 4 — Hybrid B onboarding call gate ────────────────────────────────
+// Embeds the Cal.com booking iframe. Once the rancher books, Cal.com fires
+// BOOKING_CREATED → /api/webhooks/cal flips Onboarding Status to "Call
+// Scheduled". After Ben hops on the call and marks Call Complete (via
+// Telegram callback or Airtable directly), the rancher's next return to
+// the wizard auto-skips this step (canSkipBooking() returns true).
+//
+// Status display logic per current rancher.onboardingStatus:
+//   "" / "New"             → show booking embed, primary CTA
+//   "Call Scheduled"       → show "you booked, here's what to expect"
+//   "Call Complete"+       → auto-skip via parent, but defensive UI here too
+function CallStep({
+  rancher,
+  onAlreadyComplete,
+  onBack,
+  onProceedAnyway,
+}: {
+  rancher: Rancher;
+  onAlreadyComplete: () => void;
+  onBack: () => void;
+  onProceedAnyway: () => void;
+}) {
+  const status = (rancher.onboardingStatus || '').toString();
+  const calBookingUrl =
+    process.env.NEXT_PUBLIC_CALENDLY_LINK ||
+    'https://cal.com/ben-beauchman-1itnsg/30min';
+  // Cal.com inline embed URL — append `?embed=true&theme=light` for clean iframe
+  const embedUrl = `${calBookingUrl}?embed=true&theme=light&hideEventTypeDetails=false`;
+
+  const alreadyBooked = status === 'Call Scheduled';
+  const callDone =
+    status === 'Call Complete' ||
+    status === 'Verification Pending' ||
+    status === 'Verification Complete' ||
+    status === 'Live';
+
+  if (callDone) {
+    // Edge case: parent should have auto-skipped, but render fallback so
+    // the rancher isn't dead-ended if the parent gate logic ever drifts.
+    return (
+      <section className="space-y-5 bg-bone border border-dust p-7 md:p-8">
+        <header>
+          <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 4</p>
+          <h2 className="font-serif text-2xl text-charcoal">Call already done.</h2>
+          <p className="text-sm text-saddle mt-1">
+            Looks like you&rsquo;ve already had your onboarding call. Let&rsquo;s
+            jump to the agreement.
+          </p>
+        </header>
+        <button
+          type="button"
+          onClick={onAlreadyComplete}
+          className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+        >
+          Sign agreement →
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
+      <header>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 4</p>
+        <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
+          {alreadyBooked ? 'Your call is booked.' : 'Book your 15-min onboarding call.'}
+        </h2>
+        <p className="text-sm text-saddle mt-1">
+          {alreadyBooked
+            ? `Great — looking forward to chatting. After our call, I'll mark you complete and unlock the agreement signing step.`
+            : `One short call before you go live. We walk through your operation, answer your questions, confirm fit, and queue up your agreement. After the call you sign + go live.`}
+        </p>
+      </header>
+
+      {!alreadyBooked && (
+        <>
+          <div className="bg-bone-warm border border-dust p-5 space-y-2 text-sm text-charcoal/85">
+            <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
+              What we&rsquo;ll cover (15 min)
+            </p>
+            <ul className="space-y-1.5">
+              <li className="flex gap-2.5">
+                <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
+                <span>Your operation, herd size, processing rhythm</span>
+              </li>
+              <li className="flex gap-2.5">
+                <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
+                <span>How matching + intro emails work day-to-day</span>
+              </li>
+              <li className="flex gap-2.5">
+                <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
+                <span>Pricing strategy + commission mechanics</span>
+              </li>
+              <li className="flex gap-2.5">
+                <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
+                <span>Anything you want to ask before signing</span>
+              </li>
+            </ul>
+          </div>
+
+          <div
+            className="relative w-full overflow-hidden border border-dust"
+            style={{ minHeight: '600px' }}
+          >
+            <iframe
+              src={embedUrl}
+              title="Book onboarding call with Ben"
+              className="absolute inset-0 w-full h-full"
+              allow="camera; microphone; autoplay; encrypted-media; fullscreen"
+              loading="lazy"
+            />
+          </div>
+
+          <p className="text-xs text-dust leading-relaxed text-center">
+            Once you book, we&rsquo;ll auto-stamp this step. After the call,
+            sign agreement + go live.
+          </p>
+        </>
+      )}
+
+      {alreadyBooked && (
+        <div className="bg-sage/10 border border-sage p-5 space-y-3">
+          <p className="text-sm text-charcoal/85 leading-relaxed">
+            Need to reschedule? Use the link in your booking confirmation email
+            from Cal.com. After our call, this step auto-completes and you can
+            sign your agreement.
+          </p>
+          <a
+            href={calBookingUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm underline underline-offset-2 text-sage-dark hover:text-charcoal"
+          >
+            Reschedule on Cal.com →
+          </a>
+        </div>
+      )}
+
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center pt-2 border-t border-dust">
+        <button
+          type="button"
+          onClick={onProceedAnyway}
+          disabled={!alreadyBooked}
+          className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-40 disabled:cursor-not-allowed"
+          title={alreadyBooked ? '' : 'Book a call first'}
+        >
+          {alreadyBooked ? 'Continue to agreement →' : 'Book a call to continue'}
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-sm text-saddle hover:text-charcoal underline underline-offset-4"
+        >
+          ← Back
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// ── Self-serve removal link ──────────────────────────────────────────────
+// Always visible in the footer of the wizard. Click → confirm modal →
+// POST /api/rancher/remove with optional reason. Soft-deletes the record.
+function RemoveMeLink({ token, ranchName }: { token: string; ranchName: string }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState('');
+
+  if (done) {
+    return (
+      <p className="text-sm text-charcoal">
+        ✓ {ranchName} has been removed from BuyHalfCow. You can close this tab.
+      </p>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs text-dust hover:text-weathered underline underline-offset-2"
+      >
+        Remove {ranchName} from BuyHalfCow
+      </button>
+    );
+  }
+
+  return (
+    <div className="border border-weathered/40 bg-weathered/5 p-4 text-left max-w-md mx-auto space-y-3">
+      <p className="text-sm text-charcoal">
+        Remove <strong>{ranchName}</strong> from BuyHalfCow?
+      </p>
+      <p className="text-xs text-saddle leading-relaxed">
+        Soft-delete: hidden from the public map, paused from buyer routing,
+        drip emails stopped. Record stays in the database for audit but
+        nothing surfaces publicly. Reversible if you change your mind — email{' '}
+        <a className="underline" href="mailto:ben@buyhalfcow.com">
+          ben@buyhalfcow.com
+        </a>
+        .
+      </p>
+      <textarea
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Reason (optional — helps us improve)"
+        rows={2}
+        className="w-full px-3 py-2 border border-dust bg-bone text-sm text-charcoal focus:outline-none focus:border-charcoal"
+      />
+      {err && <p className="text-xs text-weathered">{err}</p>}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={async () => {
+            setSubmitting(true);
+            setErr('');
+            try {
+              const res = await fetch(
+                `/api/rancher/remove?token=${encodeURIComponent(token)}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ reason: reason.trim() }),
+                }
+              );
+              const data = await res.json();
+              if (!res.ok) throw new Error(data?.error || 'Removal failed');
+              setDone(true);
+            } catch (e: any) {
+              setErr(e?.message || 'Removal failed');
+            } finally {
+              setSubmitting(false);
+            }
+          }}
+          disabled={submitting}
+          className="text-xs px-4 py-2 bg-weathered text-bone uppercase tracking-widest font-bold hover:bg-charcoal transition-base disabled:opacity-50"
+        >
+          {submitting ? 'Removing…' : 'Confirm remove'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="text-xs px-4 py-2 border border-dust text-saddle uppercase tracking-widest hover:border-charcoal hover:text-charcoal transition-base"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
