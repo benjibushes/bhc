@@ -8,7 +8,7 @@ import Pill from '../../components/Pill';
 import Card from '../../components/Card';
 import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import { getRancherOrProspectBySlug, getActiveRancherPages } from '@/lib/airtable';
-import RancherLeadModal from './RancherLeadModal';
+import RancherOrderForm from './RancherOrderForm';
 
 // Public rancher landing page — the unit of conversion. Verified partners
 // get full pricing + lead capture; prospects get the same shell with pricing
@@ -359,9 +359,10 @@ export default async function RancherPage(
       )}
 
       {/* ── PRICING ───────────────────────────────────────────────────────────
-          Sits high on the page — main conversion. RancherLeadModal owns the
-          UX of share selection + lead capture. Wrapped in a clean Card wash
-          so it visually owns the section.
+          Sits high on the page — main conversion. RancherOrderForm owns the
+          UX of share selection + buyer-rancher connection. Submits an order
+          REQUEST through BHC (no external redirect to rancher's website),
+          creates a Referral, emails the rancher with reply-to=buyer.
          ───────────────────────────────────────────────────────────────────── */}
       {hasPricing && (
         <section id="shares" className="py-16 md:py-20 scroll-mt-12">
@@ -371,16 +372,17 @@ export default async function RancherPage(
                 <Pill tone="neutral" className="mx-auto">Available shares</Pill>
                 <h2 className="font-serif text-3xl md:text-5xl">Choose your share</h2>
                 <p className="text-saddle max-w-xl mx-auto">
-                  All prices include processing. Custom cuts available at no extra charge.
+                  All prices include processing. {operatorName ? operatorName.split(' ')[0] : name} reaches back out within 48h to confirm timing + payment.
                 </p>
               </div>
 
-              <RancherLeadModal
+              <RancherOrderForm
                 slug={slug}
-                rancherName={name}
-                quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs, hasLink: !!quarterLink } : undefined}
-                half={halfPrice ? { price: halfPrice, lbs: halfLbs, hasLink: !!halfLink } : undefined}
-                whole={wholePrice ? { price: wholePrice, lbs: wholeLbs, hasLink: !!wholeLink } : undefined}
+                rancherName={operatorName || name}
+                ranchName={name}
+                quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs } : undefined}
+                half={halfPrice ? { price: halfPrice, lbs: halfLbs } : undefined}
+                whole={wholePrice ? { price: wholePrice, lbs: wholeLbs } : undefined}
               />
 
               <p className="text-center text-xs text-dust">

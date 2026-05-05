@@ -97,13 +97,26 @@ async function fetchPins(): Promise<MapPin[]> {
       const onboarding = (r['Onboarding Status'] || '').toString();
       const selfSubmittedAt = (r['Self-Submitted At'] || '').toString();
 
-      // Status priority — most-progressed wins. Verified+Live is the
-      // routable state; onboarding stages are visible but not routable;
-      // self-submitted vs cold prospect differentiates raised-hand vs
-      // discovered.
+      // Status priority — most-progressed wins.
+      //
+      // Onboarding="Live" is the canonical terminal state — by the time a
+      // rancher reaches Live, they've cleared agreement + verification and
+      // are routable. Verification Status is a legacy/duplicate gate; some
+      // ranchers reach Live without it ever being flipped to "Verified"
+      // (Self-Submit drip path skips that field). Treat Live as verified
+      // regardless of Verification Status (Removed is already excluded at
+      // fetch time via filterByFormula).
+      //
+      // Onboarding stages between Call Scheduled and Verification Complete
+      // are visible but not yet routable (orange pin). Self-submitted vs
+      // cold prospect differentiates raised-hand vs discovered.
       let status: MapPin['status'];
       let stageLabel = '';
-      if (verification === 'Verified' && onboarding === 'Live') {
+      if (onboarding === 'Live') {
+        status = 'verified';
+      } else if (verification === 'Verified') {
+        // Verified field set but Onboarding not yet Live — still treat as
+        // verified for the public map (they cleared the verification gate).
         status = 'verified';
       } else if (ONBOARDING_STAGES.includes(onboarding)) {
         status = 'onboarding';
