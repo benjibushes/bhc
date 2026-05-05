@@ -104,25 +104,18 @@ export async function createCommissionInvoice(
   const amountCents = Math.round(args.referral.commissionDue * 100);
   const description = `Commission · ${args.referral.buyerName} · ${args.referral.orderType} · $${args.referral.saleAmount.toFixed(2)} sale (10%)`;
 
-  // Create invoice item BEFORE creating the invoice (Stripe pulls pending
-  // items into the next invoice for that customer).
-  await stripe.invoiceItems.create({
-    customer: customerId,
-    amount: amountCents,
-    currency: 'usd',
-    description,
-    metadata: {
-      type: 'commission',
-      referralId: args.referral.id,
-      rancherId: args.rancher.id,
-    },
-  });
-
-  const invoice = await stripe.invoices.create({
+  // Order matters with API 2026: create draft invoice FIRST, then attach
+  // line item to it explicitly with `invoice` field, then finalize + send.
+  // The legacy "create pending invoiceItem → invoices.create picks it up"
+  // path silently fails on this API version — the invoice gets created
+  // before the pending item attaches, finalizes at $0, auto-marks paid.
+  const draft = await stripe.invoices.create({
     customer: customerId,
     collection_method: 'send_invoice',
     days_until_due: 30,
-    auto_advance: true,
+    // Disable auto-advance — we want to control finalize/send timing so
+    // line item attaches before the invoice transitions out of draft.
+    auto_advance: false,
     description: `BuyHalfCow commission for ${args.referral.buyerName} (${args.referral.orderType})`,
     metadata: {
       type: 'commission-invoice',
@@ -134,19 +127,45 @@ export async function createCommissionInvoice(
       'Thanks for closing the deal. Reply to this invoice if anything looks off — Ben.',
   });
 
-  // Finalize so a hosted_invoice_url + PDF exist.
-  if (!invoice.id) throw new Error('Stripe invoice id missing after create');
-  const finalized = await stripe.invoices.finalizeInvoice(invoice.id);
+  if (!draft.id) throw new Error('Stripe invoice id missing after create');
 
-  // Stripe with collection_method=send_invoice auto-emails the hosted page on
-  // finalize. No separate sendInvoice call needed (calling it on a paid/sent
-  // invoice errors out).
-  const url = finalized.hosted_invoice_url || invoice.hosted_invoice_url || '';
+  // Attach the commission line item directly to the draft.
+  await stripe.invoiceItems.create({
+    customer: customerId,
+    invoice: draft.id,
+    amount: amountCents,
+    currency: 'usd',
+    description,
+    metadata: {
+      type: 'commission',
+      referralId: args.referral.id,
+      rancherId: args.rancher.id,
+    },
+  });
+
+  // Finalize → moves draft to "open", generates hosted_invoice_url + PDF.
+  const finalized = await stripe.invoices.finalizeInvoice(draft.id);
+
+  // Explicitly send the invoice email. With collection_method='send_invoice'
+  // Stripe needs an explicit `sendInvoice` call to email the hosted page —
+  // finalize alone does NOT email when auto_advance is false.
+  let sent = finalized;
+  if (finalized.status === 'open' && finalized.id) {
+    try {
+      sent = await stripe.invoices.sendInvoice(finalized.id);
+    } catch (sendErr: any) {
+      // sendInvoice can fail if invoice is already paid/uncollectible —
+      // not fatal, hosted URL still works for direct linking.
+      console.warn('[stripe-commission] sendInvoice failed:', sendErr?.message);
+    }
+  }
+
+  const url = sent.hosted_invoice_url || finalized.hosted_invoice_url || '';
   return {
-    invoiceId: finalized.id || invoice.id,
+    invoiceId: sent.id || finalized.id || draft.id,
     invoiceUrl: url,
     customerId,
-    status: finalized.status || 'open',
+    status: sent.status || 'open',
   };
 }
 
