@@ -4,10 +4,12 @@ import {
   updateRecord,
   createRecord,
   getAllRecords,
+  getRecordById,
   escapeAirtableValue,
   TABLES,
 } from '@/lib/airtable';
 import { sendBrandListingConfirmation, sendFoundingHerdWelcome } from '@/lib/email';
+import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 
@@ -88,6 +90,23 @@ export async function POST(request: Request) {
         await alertInvoicePaymentFailed(invoice);
       } catch (e) {
         console.error('Error handling invoice.payment_failed:', e);
+      }
+      return NextResponse.json({ received: true });
+    }
+
+    case 'invoice.paid': {
+      // Rancher commission invoice paid via Stripe hosted page (or via card-on-file).
+      // metadata.type='commission-invoice' + metadata.referralId stamped at
+      // creation in lib/stripe-commission.ts. Other invoice.paid events
+      // (founder subscriptions, brand listings) flow through their own paths
+      // so we early-out unless metadata.type matches.
+      const invoice = event.data.object as any;
+      try {
+        if (invoice?.metadata?.type === 'commission-invoice') {
+          await handleCommissionInvoicePaid(invoice);
+        }
+      } catch (e) {
+        console.error('Error handling invoice.paid:', e);
       }
       return NextResponse.json({ received: true });
     }
@@ -402,3 +421,71 @@ async function alertInvoicePaymentFailed(invoice: any) {
     }
   }
 }
+
+// ============================================================================
+// COMMISSION INVOICE PAID — rancher settles their 10% on a Closed Won deal
+// ============================================================================
+async function handleCommissionInvoicePaid(invoice: any) {
+  const referralId =
+    invoice?.metadata?.referralId ||
+    invoice?.lines?.data?.[0]?.metadata?.referralId ||
+    '';
+  const rancherId = invoice?.metadata?.rancherId || '';
+  const amountPaidCents: number = invoice?.amount_paid || 0;
+  const amountPaidDollars = amountPaidCents / 100;
+
+  if (!referralId) {
+    console.warn('[stripe webhook] commission invoice paid without referralId metadata:', invoice.id);
+    return;
+  }
+
+  // Mark the referral as commission paid + persist amount + paid date.
+  // Tolerate a missing record id — Stripe might fire a delayed event after
+  // we've archived/restructured. Just log and move on.
+  try {
+    await updateRecord(TABLES.REFERRALS, referralId, {
+      'Commission Paid': true,
+      'Commission Paid At': new Date().toISOString(),
+      'Stripe Invoice URL': invoice.hosted_invoice_url || '',
+    });
+  } catch (e: any) {
+    console.error('[stripe webhook] mark commission paid failed:', e?.message);
+  }
+
+  // Telegram celebration — same chat that gets sale alerts.
+  try {
+    if (TELEGRAM_ADMIN_CHAT_ID) {
+      let rancherLine = '';
+      let buyerLine = '';
+      try {
+        const ref: any = await getRecordById(TABLES.REFERRALS, referralId);
+        if (ref) {
+          buyerLine = `\n👤 ${ref['Buyer Name'] || 'Unknown'}`;
+        }
+      } catch {
+        /* non-fatal */
+      }
+      if (rancherId) {
+        try {
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          if (rancher) {
+            rancherLine = `\n🤠 ${rancher['Operator Name'] || rancher['Ranch Name'] || ''}`;
+          }
+        } catch {
+          /* non-fatal */
+        }
+      }
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `💰 <b>COMMISSION PAID</b>\n\n` +
+          `<b>$${amountPaidDollars.toFixed(2)}</b> just landed in BHC's Stripe.` +
+          rancherLine +
+          buyerLine +
+          `\n\n<i>Stripe invoice ${invoice.id}. Referral marked Commission Paid.</i>`
+      );
+    }
+  } catch (e: any) {
+    console.error('[stripe webhook] commission-paid telegram alert failed:', e?.message);
+  }
+}
+

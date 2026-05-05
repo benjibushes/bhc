@@ -110,7 +110,7 @@ export default function RancherDashboardPage() {
   const [referrals, setReferrals] = useState<Referral[]>([]);
   const [closeModal, setCloseModal] = useState<Referral | null>(null);
   const [benefits, setBenefits] = useState<NetworkBenefit[]>([]);
-  const [closeForm, setCloseForm] = useState({ status: 'Closed Won', saleAmount: '', notes: '' });
+  const [closeForm, setCloseForm] = useState({ status: 'Closed Won', saleAmount: '', notes: '', confirmed: false });
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState('');
   // Pass-on-Lead modal — separate from "close deal" because it carries a
@@ -251,7 +251,7 @@ export default function RancherDashboardPage() {
         return;
       }
       setCloseModal(null);
-      setCloseForm({ status: 'Closed Won', saleAmount: '', notes: '' });
+      setCloseForm({ status: 'Closed Won', saleAmount: '', notes: '', confirmed: false });
       await fetchDashboard();
     } catch {
       setUpdateError('Network error. Please check your connection.');
@@ -1454,21 +1454,48 @@ export default function RancherDashboardPage() {
               </div>
 
               {closeForm.status === 'Closed Won' && (
-                <div>
-                  <label className="block text-sm font-medium mb-2">Sale Amount ($)</label>
-                  <input
-                    type="number"
-                    value={closeForm.saleAmount}
-                    onChange={(e) => setCloseForm(prev => ({ ...prev, saleAmount: e.target.value }))}
-                    placeholder="e.g. 2500"
-                    className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
-                  />
-                  {closeForm.saleAmount && (
-                    <p className="text-xs text-saddle mt-1">
-                      Commission (10%): ${(parseFloat(closeForm.saleAmount) * 0.10).toFixed(2)} &middot; You keep: ${(parseFloat(closeForm.saleAmount) * 0.90).toFixed(2)}
-                    </p>
+                <>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Final sale amount ($)</label>
+                    <input
+                      type="number"
+                      value={closeForm.saleAmount}
+                      onChange={(e) => setCloseForm(prev => ({ ...prev, saleAmount: e.target.value, confirmed: false }))}
+                      placeholder="e.g. 2500"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                    />
+                    {closeForm.saleAmount && parseFloat(closeForm.saleAmount) > 0 && (
+                      <p className="text-xs text-saddle mt-1">
+                        Commission (10%): ${(parseFloat(closeForm.saleAmount) * 0.10).toFixed(2)} &middot; You keep: ${(parseFloat(closeForm.saleAmount) * 0.90).toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Confirmation + commission auto-invoice disclaimer.
+                      Required by the rancher closing the deal so we don't
+                      mint Stripe invoices on a typo or accidental click. */}
+                  {closeForm.saleAmount && parseFloat(closeForm.saleAmount) > 0 && (
+                    <div className="border border-saddle/40 bg-bone-warm p-4 space-y-3">
+                      <p className="text-sm leading-relaxed text-charcoal">
+                        <strong>Confirm before submitting:</strong> ${parseFloat(closeForm.saleAmount).toFixed(2)} is the final sale price the buyer agreed to.
+                      </p>
+                      <p className="text-xs leading-relaxed text-saddle">
+                        Submitting auto-generates a Stripe invoice for <strong>${(parseFloat(closeForm.saleAmount) * 0.10).toFixed(2)}</strong> (10% commission), emailed to your account. Pay by card or ACH on the hosted invoice page within 30 days. The deal won&rsquo;t mark Commission Paid until Stripe confirms payment.
+                      </p>
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={closeForm.confirmed}
+                          onChange={(e) => setCloseForm(prev => ({ ...prev, confirmed: e.target.checked }))}
+                          className="mt-1 cursor-pointer"
+                        />
+                        <span className="text-sm text-charcoal">
+                          Yes, ${parseFloat(closeForm.saleAmount).toFixed(2)} is the final agreed price. Generate the commission invoice.
+                        </span>
+                      </label>
+                    </div>
                   )}
-                </div>
+                </>
               )}
 
               <div>
@@ -1498,10 +1525,14 @@ export default function RancherDashboardPage() {
               </button>
               <button
                 onClick={handleCloseDeal}
-                disabled={!!updating || (closeForm.status === 'Closed Won' && !closeForm.saleAmount)}
+                disabled={
+                  !!updating ||
+                  (closeForm.status === 'Closed Won' &&
+                    (!closeForm.saleAmount || parseFloat(closeForm.saleAmount) <= 0 || !closeForm.confirmed))
+                }
                 className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
               >
-                {updating ? 'Saving...' : 'Confirm'}
+                {updating ? 'Saving...' : closeForm.status === 'Closed Won' ? 'Submit + Send Invoice' : 'Confirm'}
               </button>
             </div>
           </div>

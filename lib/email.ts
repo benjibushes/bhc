@@ -2564,6 +2564,12 @@ export async function sendInstantCommissionInvoice(data: {
   saleAmount: number;
   commissionDue: number;
   closedAt: string; // ISO date string
+  /**
+   * Stripe-hosted invoice URL. If present, the email surfaces a one-click
+   * "Pay this invoice" CTA pointing at the hosted page instead of the
+   * legacy "reply for a Stripe link / Venmo / mail a check" fallback.
+   */
+  stripeInvoiceUrl?: string;
 }) {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
   const closedDateLabel = new Date(data.closedAt).toLocaleDateString('en-US', {
@@ -2609,12 +2615,18 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#6B4F3F;fo
       </tr>
     </tbody>
   </table>
-  <p style="font-size:14px;">Pay any of these ways within 30 days:</p>
+  ${
+    data.stripeInvoiceUrl
+      ? `<div style="text-align:center;margin:28px 0;"><a href="${esc(data.stripeInvoiceUrl)}" style="display:inline-block;padding:14px 36px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Pay invoice</a></div>
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Pay by card or ACH on the hosted Stripe invoice. Due in 30 days.</p>
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;margin-top:8px;">Stripe also sent you the invoice email directly — same link, either works.</p>`
+      : `<p style="font-size:14px;">Pay any of these ways within 30 days:</p>
   <ul style="font-size:14px;color:#2A2A2A;line-height:1.8;">
     <li>Reply to this email — I'll send you a Stripe payment link</li>
     <li>Venmo: @buyhalfcow</li>
     <li>Check: BuyHalfCow · Kalispell, MT 59901</li>
-  </ul>
+  </ul>`
+  }
   <p style="font-size:13px;color:#6B4F3F;">This is sent automatically when you mark a deal Closed Won. Monthly statement still arrives on the 1st as a rollup of any unpaid balance.</p>
   <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
   ${emailFooter(data.email)}

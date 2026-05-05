@@ -5,6 +5,7 @@ import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTelegramSaleCelebration } from '@/lib/telegram';
 import { sendRerouteNotification, sendPilotUpsellEmail, sendInstantCommissionInvoice } from '@/lib/email';
 import { isQualifiedForRouting } from '@/lib/qualification';
+import { createCommissionInvoice } from '@/lib/stripe-commission';
 import jwt from 'jsonwebtoken';
 
 // Pass reasons a rancher can give when declining a lead.
@@ -526,11 +527,60 @@ export async function PATCH(
         // gets the bill the moment they hit the button. Monthly cron is the
         // backstop for any unpaid rolling balance, but the invoice itself
         // lives here. Skip if no sale amount captured.
+        //
+        // Path:
+        //   1. Try to create a Stripe Invoice (real, payable, hosted page).
+        //      Stripe sends the hosted-invoice email itself when finalized.
+        //   2. ALWAYS send our branded fallback email too (rancher might
+        //      miss the Stripe email; ours has Ben's voice). When Stripe
+        //      succeeded, we pass the hosted_invoice_url so the email's
+        //      "pay" CTA points at the real invoice instead of "reply for
+        //      a link".
         if (saleAmount && saleAmount > 0) {
+          let stripeInvoiceUrl = '';
+          let stripeInvoiceId = '';
           try {
             const rancherForInvoice = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
             const invoiceEmail = rancherForInvoice?.['Email'] || '';
             if (invoiceEmail) {
+              try {
+                const stripeResult = await createCommissionInvoice({
+                  rancher: {
+                    id: decoded.rancherId,
+                    operatorName: rancherForInvoice['Operator Name'] || decoded.name,
+                    ranchName: rancherForInvoice['Ranch Name'] || decoded.name,
+                    email: invoiceEmail,
+                    stripeCustomerId: rancherForInvoice['Stripe Customer ID'] || undefined,
+                  },
+                  referral: {
+                    id,
+                    buyerName,
+                    orderType: referral['Order Type'] || 'Beef order',
+                    saleAmount,
+                    commissionDue: commission,
+                  },
+                });
+                stripeInvoiceUrl = stripeResult.invoiceUrl;
+                stripeInvoiceId = stripeResult.invoiceId;
+                // Persist back to the referral so dashboard can resurface it
+                try {
+                  await updateRecord(TABLES.REFERRALS, id, {
+                    'Stripe Invoice ID': stripeInvoiceId,
+                    'Stripe Invoice URL': stripeInvoiceUrl,
+                  });
+                } catch (persistErr: any) {
+                  console.warn('[referrals/close] persist stripe invoice fields failed:', persistErr?.message);
+                }
+              } catch (stripeErr: any) {
+                console.error('Stripe invoice create failed (falling back to plain email):', stripeErr?.message);
+              }
+
+              // Branded email — always sent. If Stripe invoice succeeded,
+              // pass the hosted-invoice URL so the CTA is a one-click Pay
+              // button instead of the legacy "reply for a link / Venmo /
+              // check" multi-option footer. (Stripe sends its own email too;
+              // having both reinforces and lets rancher use whichever lands
+              // first.)
               await sendInstantCommissionInvoice({
                 operatorName: rancherForInvoice['Operator Name'] || decoded.name,
                 ranchName: rancherForInvoice['Ranch Name'] || decoded.name,
@@ -540,6 +590,7 @@ export async function PATCH(
                 saleAmount,
                 commissionDue: commission,
                 closedAt: new Date().toISOString(),
+                stripeInvoiceUrl: stripeInvoiceUrl || undefined,
               });
             }
           } catch (e) {
