@@ -520,6 +520,39 @@ export async function POST(request: Request) {
           const readyBanner = buyerReadyToBuy
             ? `<div style="background:#FFF6E0;border:2px solid #C99A2E;padding:14px 18px;margin:16px 0;font-size:14px;color:#0E0E0E;"><strong>READY TO BUY in 1–2 months.</strong> Buyer just clicked YES on the Ready-to-Buy CTA. They're expecting your call within 24–48 hours.</div>`
             : '';
+
+          // Rancher quick-action JWT — 30d. Lets the rancher mark the
+          // referral status with one click from this email instead of
+          // logging into the dashboard.
+          const SITE = SITE_URL;
+          const actionToken = jwt.sign(
+            {
+              type: 'rancher-quick-action',
+              referralId: referral.id,
+              rancherId: topMatch.id,
+            },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+          );
+          const actionBase = `${SITE}/api/rancher/quick-action?token=${actionToken}`;
+          const actionsBlock = `
+            <table cellspacing="0" cellpadding="0" style="margin:22px 0 6px;width:100%;">
+              <tr>
+                <td style="padding:0 6px 8px 0;width:25%;">
+                  <a href="${actionBase}&action=in_talks" style="display:block;padding:11px 8px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;text-align:center;">💬 In talks</a>
+                </td>
+                <td style="padding:0 6px 8px 0;width:25%;">
+                  <a href="${actionBase}&action=won" style="display:block;padding:11px 8px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;text-align:center;">✓ Closed Won</a>
+                </td>
+                <td style="padding:0 6px 8px 0;width:25%;">
+                  <a href="${actionBase}&action=lost" style="display:block;padding:11px 8px;background:#6B4F3F;color:#F4F1EC;text-decoration:none;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;text-align:center;">✗ Closed Lost</a>
+                </td>
+                <td style="padding:0 0 8px 0;width:25%;">
+                  <a href="${actionBase}&action=pass" style="display:block;padding:11px 8px;background:#A7A29A;color:#F4F1EC;text-decoration:none;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;text-align:center;">⏭ Pass</a>
+                </td>
+              </tr>
+            </table>
+            <p style="font-size:12px;color:#6B4F3F;margin:0 0 18px 0;">One-click status updates — no login. Closed Won button asks for sale amount + auto-generates the 10% commission invoice via Stripe.</p>`;
           try {
             await sendEmail({
               to: rancherEmail,
@@ -543,6 +576,7 @@ export async function POST(request: Request) {
                 ${budgetRange ? `<p><strong>Budget:</strong> ${budgetRange}</p>` : ''}
                 ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
                 <p>Reach out within 24 hours to close the sale. Reply-all to keep me in the loop.</p>
+                ${actionsBlock}
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
               </div>` as any,
             } as any);
