@@ -85,9 +85,16 @@ export async function POST(request: Request) {
     // Also dedups (buyer, rancher) pairs on TERMINAL outcomes — Closed Lost
     // (rancher passed / deal died) and Closed Won (buyer already bought).
     // Without this dedup the same rancher could get the same buyer re-routed
-    // every retry, breaking rancher trust + buyer experience. We DON'T exclude
-    // on Pending Approval / Intro Sent (those still active, would short-circuit
-    // above) or on Hold/Skip from first-week gate (those re-stage cleanly).
+    // every retry, breaking rancher trust + buyer experience.
+    //
+    // BUG-FIX (2026-05-06): a "Pending Approval" referral with NO Suggested
+    // Rancher attached is NOT active — it's a record of a previous failed
+    // matching attempt (capacity was full, rancher excluded, etc). Treating
+    // it as active blocked all retries for that buyer FOREVER. 15 TX/CA/MT/NE
+    // buyers were stuck this way despite open capacity. Fix: require either a
+    // linked Rancher OR a Suggested Rancher for a Pending Approval to count
+    // as "active." Empty-attachment Pending Approval is treated as recoverable
+    // and matching retries cleanly.
     const closedRancherIds = new Set<string>();
     if (buyerEmail) {
       try {
@@ -95,10 +102,22 @@ export async function POST(request: Request) {
           TABLES.REFERRALS,
           `{Buyer Email} = "${buyerEmail.trim().toLowerCase()}"`
         ) as any[];
-        // Active short-circuit.
-        const active = existingRefs.find((r) =>
-          ['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Pending Approval'].includes(r['Status'])
-        );
+        // Active short-circuit. Pending Approval requires a linked rancher
+        // — otherwise it's an orphan record from a failed match attempt and
+        // should NOT block retries.
+        const active = existingRefs.find((r) => {
+          const status = r['Status'];
+          if (!['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Pending Approval'].includes(status)) {
+            return false;
+          }
+          if (status === 'Pending Approval') {
+            const hasRancher =
+              (Array.isArray(r['Rancher']) && r['Rancher'].length > 0) ||
+              (Array.isArray(r['Suggested Rancher']) && r['Suggested Rancher'].length > 0);
+            return hasRancher;
+          }
+          return true;
+        });
         if (active) {
           return NextResponse.json({
             success: true,
