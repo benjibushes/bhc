@@ -352,14 +352,27 @@ export async function POST(request: Request) {
       matchType = localEligible.length > 0 ? 'local' : null;
 
       eligible.sort((a: any, b: any) => {
+        // 1. PRIMARY STATE WINS. A rancher whose Primary State === buyer's
+        //    state should always beat a rancher who only "serves" the buyer's
+        //    state via States Served. Otherwise a low-load multi-state
+        //    rancher (e.g. Russell Gift OK serving TX,KS,NM,CO) hoovers up
+        //    every TX buyer ahead of the actual TX rancher (Ashcraft),
+        //    creating bad UX (longer ship time + buyer expects "local").
+        const aPrimary = normalizeState(a['State']) === normalizedBuyerState;
+        const bPrimary = normalizeState(b['State']) === normalizedBuyerState;
+        if (aPrimary !== bPrimary) return aPrimary ? -1 : 1;
+
+        // 2. Then by capacity (fewer active = preferred for load-balance)
         const aRefs = a['Current Active Referrals'] || 0;
         const bRefs = b['Current Active Referrals'] || 0;
         if (aRefs !== bRefs) return aRefs - bRefs;
 
+        // 3. Then round-robin by oldest Last Assigned At
         const aDate = a['Last Assigned At'] ? new Date(a['Last Assigned At']).getTime() : 0;
         const bDate = b['Last Assigned At'] ? new Date(b['Last Assigned At']).getTime() : 0;
         if (aDate !== bDate) return aDate - bDate;
 
+        // 4. Performance score tiebreaker
         const aScore = a['Performance Score'] || 50;
         const bScore = b['Performance Score'] || 50;
         return bScore - aScore;
