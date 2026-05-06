@@ -10,6 +10,10 @@ import LiveCounter from './LiveCounter';
 
 function CampaignTracker() {
   const searchParams = useSearchParams();
+  // Depend on serialized string so the effect runs once per actual URL
+  // change instead of every render (useSearchParams() returns a fresh
+  // object each render).
+  const searchParamsString = searchParams.toString();
 
   useEffect(() => {
     const campaign = searchParams.get('campaign');
@@ -31,7 +35,8 @@ function CampaignTracker() {
     if (utmParams) {
       localStorage.setItem('bhc_utm_params', utmParams);
     }
-  }, [searchParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParamsString]);
 
   return null;
 }

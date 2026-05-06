@@ -244,7 +244,14 @@ export async function POST(request: Request) {
       const effective = tierPrice > 0
         ? tierPrice
         : Math.min(...[q, h, w].filter(p => p > 0));
-      return effective <= budgetCeiling;
+      // 10% tolerance over the budget ceiling. Buyer brackets like
+      // "$1000-2000" are descriptive, not hard caps — a $2100 rancher
+      // shouldn't get filtered out for being $100 over. Real conversations
+      // happen between buyer and rancher to land on a final number.
+      // Without this, edge cases (TX buyer at $2000 budget vs Ashcraft Half
+      // at $2100) silently waitlisted otherwise-perfect matches.
+      const BUDGET_TOLERANCE = 1.10;
+      return effective <= budgetCeiling * BUDGET_TOLERANCE;
     };
 
     // ── 5 BAR BEEF (FRANK FITZPATRICK) PER-RANCHER POLICY ────────────────

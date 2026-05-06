@@ -42,11 +42,18 @@ function PartnerPageContent() {
   const [ref, setRef] = useState('');
 
   const searchParams = useSearchParams();
+  // useSearchParams() returns a fresh object on every render — depending on
+  // it + calling setRef(...) loops the renderer to a freeze. Use the
+  // serialized string so the effect runs only on actual URL changes, and
+  // skip the setState call when the value is unchanged.
+  const searchParamsString = searchParams.toString();
   useEffect(() => {
     const refFromUrl = searchParams.get('ref') || searchParams.get('aff');
     if (refFromUrl) localStorage.setItem('bhc_ref', refFromUrl);
-    setRef(refFromUrl || localStorage.getItem('bhc_ref') || '');
-  }, [searchParams]);
+    const next = refFromUrl || localStorage.getItem('bhc_ref') || '';
+    setRef((prev) => (prev === next ? prev : next));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParamsString]);
 
   // Rancher form data
   const [rancherData, setRancherData] = useState({

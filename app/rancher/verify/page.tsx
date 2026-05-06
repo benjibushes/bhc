@@ -11,6 +11,9 @@ function VerifyContent() {
   const [status, setStatus] = useState<'verifying' | 'success' | 'error'>('verifying');
   const [error, setError] = useState('');
 
+  // Depend on serialized string — useSearchParams() returns a fresh object
+  // each render, which hammered verifyToken with duplicate fetches.
+  const searchParamsString = searchParams.toString();
   useEffect(() => {
     const token = searchParams.get('token');
     if (!token) {
@@ -19,7 +22,8 @@ function VerifyContent() {
       return;
     }
     verifyToken(token);
-  }, [searchParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParamsString]);
 
   const verifyToken = async (token: string) => {
     try {

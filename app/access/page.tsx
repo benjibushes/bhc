@@ -204,6 +204,14 @@ function AccessPageContent() {
   });
 
   const searchParams = useSearchParams();
+  // BUG-FIX (2026-05-06): useSearchParams() returns a NEW object reference on
+  // every render. Depending on `[searchParams]` ran the effect on every render;
+  // setCampaignData(...) created a fresh object → state change → re-render →
+  // new searchParams ref → effect fires again → infinite loop → renderer
+  // freeze. Customers saw the form but every click/submit was unresponsive.
+  // Fix: depend on the SERIALIZED search params string (stable when URL
+  // doesn't change) and only setCampaignData when values actually changed.
+  const searchParamsString = searchParams.toString();
   useEffect(() => {
     const refFromUrl = searchParams.get('ref') || searchParams.get('aff');
     if (refFromUrl) localStorage.setItem('bhc_ref', refFromUrl);
@@ -211,8 +219,19 @@ function AccessPageContent() {
     const source = localStorage.getItem('bhc_source') || 'organic';
     const utmParams = localStorage.getItem('bhc_utm_params') || '';
     const ref = refFromUrl || localStorage.getItem('bhc_ref') || '';
-    setCampaignData({ campaign, source, utmParams, ref });
-  }, [searchParams]);
+    setCampaignData((prev) => {
+      if (
+        prev.campaign === campaign &&
+        prev.source === source &&
+        prev.utmParams === utmParams &&
+        prev.ref === ref
+      ) {
+        return prev;
+      }
+      return { campaign, source, utmParams, ref };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParamsString]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
