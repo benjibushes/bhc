@@ -394,11 +394,12 @@ export async function POST(request: Request) {
         });
       } catch (e) { console.error('Admin alert error:', e); }
 
-      // Telegram noise reduction: silence routine signups. Only ping for
-      // signups that warrant attention (intent score >= 70). Everything else
-      // rolls into the morning digest. The separate hot-lead alert below
-      // (score >= 80) gets action buttons; this signup alert is informational.
-      if (serverIntentScore >= 70) {
+      // Visibility threshold lowered 2026-05-07 from 70 → 40. Operator
+      // wants flow visibility (per-signup pings) for any meaningful intent.
+      // Below 40 = abandoned-app fills / pure browsers, still rolled into
+      // morning digest. The separate hot-lead alert below (score >= 80)
+      // adds 1-tap action buttons for highest-priority signups.
+      if (serverIntentScore >= 40) {
         try {
           await sendTelegramConsumerSignup({
             consumerId: record.id,
