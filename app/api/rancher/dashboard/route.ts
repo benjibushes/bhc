@@ -78,6 +78,10 @@ export async function GET() {
       created_at: r['Created At'] || r.createdTime || '',
       intro_sent_at: r['Intro Sent At'] || '',
       closed_at: r['Closed At'] || '',
+      last_rancher_activity_at: r['Last Rancher Activity At'] || '',
+      last_buyer_activity_at: r['Last Buyer Activity At'] || '',
+      rancher_engaged_flag: !!r['Rancher Engaged Flag'],
+      stripe_invoice_url: r['Stripe Invoice URL'] || '',
     }));
 
     // Sort: active first, then by date
