@@ -400,6 +400,40 @@ export async function POST(request: Request) {
       topMatch = eligible.length > 0 ? eligible[0] : null;
     }
 
+    // ── NO-MATCH SHORT-CIRCUIT (2026-05-09 fix) ──
+    // Pre-fix: this block created a Pending Approval Referral row regardless
+    // of whether topMatch was found. When no rancher available, the row had
+    // no Suggested Rancher / Match Type / Approval Status — pure garbage.
+    // 452 such orphans had accumulated in production.
+    //
+    // Two harms:
+    //   1. Buyer counted as "active" by stuck-buyer-recovery via the orphan,
+    //      blocking legitimate retries (fixed separately by orphan-aware check).
+    //   2. Garbage data in Referrals table grows without bound, every retry.
+    //
+    // Fix: if no rancher matched, DON'T create a referral. Update buyer state
+    // to Waitlisted instead. Existing waitlist-blast cron catches them when
+    // capacity opens. Return matchFound=false to caller.
+    if (!topMatch) {
+      // Update buyer Consumer record to Waitlisted state so they're
+      // re-tried by stuck-buyer-recovery when capacity opens.
+      try {
+        await updateRecord(TABLES.CONSUMERS, buyerId, {
+          'Referral Status': 'Waitlisted',
+          'Last Match Attempt At': new Date().toISOString(),
+        });
+      } catch (e: any) {
+        console.warn('[matching] consumer waitlist update failed:', e?.message);
+      }
+      return NextResponse.json({
+        success: true,
+        matchFound: false,
+        matchType: null,
+        suggestedRancher: null,
+        message: 'No rancher available — buyer waitlisted. Will retry when capacity opens.',
+      });
+    }
+
     const referralFields: Record<string, any> = {
       'Buyer': [buyerId],
       'Status': 'Pending Approval',
@@ -412,18 +446,11 @@ export async function POST(request: Request) {
       'Intent Score': intentScore || 0,
       'Intent Classification': intentClassification || '',
       'Notes': notes || '',
+      'Suggested Rancher': [topMatch.id],
+      'Suggested Rancher Name': topMatch['Operator Name'] || topMatch['Ranch Name'] || '',
+      'Suggested Rancher State': topMatch['State'] || '',
+      'Match Type': matchType === 'direct' ? 'Direct (Rancher Page)' : 'Local',
     };
-
-    if (topMatch) {
-      referralFields['Suggested Rancher'] = [topMatch.id];
-      referralFields['Suggested Rancher Name'] = topMatch['Operator Name'] || topMatch['Ranch Name'] || '';
-      referralFields['Suggested Rancher State'] = topMatch['State'] || '';
-      if (matchType === 'direct') {
-        referralFields['Match Type'] = 'Direct (Rancher Page)';
-      } else {
-        referralFields['Match Type'] = 'Local';
-      }
-    }
 
     let referral: any;
     try {
