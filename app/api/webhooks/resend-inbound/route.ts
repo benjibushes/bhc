@@ -262,6 +262,31 @@ export async function POST(request: Request) {
       console.warn(`[resend-inbound] ${CONVERSATIONS_TABLE} unavailable:`, e?.message || e);
     }
 
+    // ── ACTIVITY STAMPING on the Referral ─────────────────────────────────
+    // If the inbound was tied to a referral, stamp the appropriate "Last X
+    // Activity At" timestamp on that referral. Lets referral-chasup cron see
+    // real engagement even when ranchers/buyers email each other directly
+    // (which the cron's old freshness signal — Intro Sent At only — missed,
+    // causing 70 lead auto-kills in 7 days before this fix).
+    if (links.referralId) {
+      try {
+        const now = new Date().toISOString();
+        const refUpdates: Record<string, any> = {};
+        if (classification.senderType === 'rancher') {
+          refUpdates['Last Rancher Activity At'] = now;
+          refUpdates['Rancher Engaged Flag'] = true;
+        } else if (classification.senderType === 'buyer') {
+          refUpdates['Last Buyer Activity At'] = now;
+        }
+        if (Object.keys(refUpdates).length > 0) {
+          const { updateRecord, TABLES } = await import('@/lib/airtable');
+          await updateRecord(TABLES.REFERRALS, links.referralId, refUpdates);
+        }
+      } catch (e: any) {
+        console.warn('[resend-inbound] referral activity stamp failed:', e?.message);
+      }
+    }
+
     // Audit log — every inbound capture is auditable
     try {
       await logAuditEntry({

@@ -489,6 +489,12 @@ export async function PATCH(
       return NextResponse.json({ error: 'No valid updates provided' }, { status: 400 });
     }
 
+    // Stamp rancher activity — extends referral-chasup freshness window so the
+    // cron doesn't auto-close leads the rancher is actively working from their
+    // dashboard. Pre-2026-05-09 bug: cron used Intro Sent At only.
+    fields['Last Rancher Activity At'] = new Date().toISOString();
+    fields['Rancher Engaged Flag'] = true;
+
     await updateRecord(TABLES.REFERRALS, id, fields);
 
     // Notify admin via Telegram

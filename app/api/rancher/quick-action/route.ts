@@ -114,12 +114,27 @@ async function applyAction(
   const currentStatus = referral['Status'] || '';
   const wasActiveBefore = !TERMINAL_STATUSES.includes(currentStatus);
 
-  const updates: Record<string, any> = {};
+  // EVERY rancher action — including no-op repeats — stamps Last Rancher
+  // Activity At + Rancher Engaged Flag. This extends the freshness window
+  // so referral-chasup cron stops auto-killing leads ranchers are working.
+  // Pre-2026-05-09 bug: cron used Intro Sent At only; couldn't see off-platform
+  // rancher work; killed 70 referrals across 8 ranchers in 7 days.
+  const nowISO = new Date().toISOString();
+  const updates: Record<string, any> = {
+    'Last Rancher Activity At': nowISO,
+    'Rancher Engaged Flag': true,
+  };
   let summary = '';
 
   if (action === 'in_talks') {
     if (currentStatus === 'Rancher Contacted' || currentStatus === 'Negotiation') {
-      return { ok: true, message: `Already marked "${currentStatus}" — no change.` };
+      // Even on no-op, stamp activity so cron freshness window extends.
+      try {
+        await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
+      } catch {
+        /* non-fatal — message still returns success */
+      }
+      return { ok: true, message: `Already marked "${currentStatus}" — activity refreshed.` };
     }
     updates['Status'] = 'Rancher Contacted';
     summary = 'Status flipped to Rancher Contacted. Buyer is in active conversation with you.';
