@@ -78,6 +78,10 @@ interface Referral {
   created_at: string;
   intro_sent_at: string;
   closed_at: string;
+  last_rancher_activity_at?: string;
+  last_buyer_activity_at?: string;
+  rancher_engaged_flag?: boolean;
+  stripe_invoice_url?: string;
 }
 
 interface NetworkBenefit {
@@ -111,6 +115,10 @@ export default function RancherDashboardPage() {
   const [closeModal, setCloseModal] = useState<Referral | null>(null);
   const [benefits, setBenefits] = useState<NetworkBenefit[]>([]);
   const [closeForm, setCloseForm] = useState({ status: 'Closed Won', saleAmount: '', notes: '', confirmed: false });
+  // My Buyers tab — filter + sort. Helps ranchers triage when they have 20+
+  // active leads. Defaults to all + newest-first so the latest intros surface.
+  const [buyerFilter, setBuyerFilter] = useState<'all' | 'Intro Sent' | 'Rancher Contacted' | 'Negotiation' | 'stale'>('all');
+  const [buyerSort, setBuyerSort] = useState<'newest' | 'oldest' | 'stalest'>('newest');
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState('');
   // Pass-on-Lead modal — separate from "close deal" because it carries a
@@ -216,6 +224,40 @@ export default function RancherDashboardPage() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setUpdateError(data.error || 'Failed to update status. Please try again.');
+      }
+      await fetchDashboard();
+    } catch {
+      setUpdateError('Network error. Please check your connection.');
+    } finally {
+      setUpdating(null);
+    }
+  };
+
+  // Mark Lost — clean close path, no rerouting. Different from "Pass" which
+  // signals "buyer's not for me, give to someone else" — Mark Lost signals
+  // "they're out (price/timing/etc), no one's going to convert them."
+  // Confirms before writing to avoid accidental closes.
+  const handleMarkLost = async (referral: Referral) => {
+    const reason = window.prompt(
+      `Mark "${referral.buyer_name}" as Closed Lost?\n\nOptional reason (helps us learn):`,
+      ''
+    );
+    if (reason === null) return; // user cancelled
+    setUpdating(referral.id);
+    setUpdateError('');
+    try {
+      const res = await fetch(`/api/rancher/referrals/${referral.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Closed Lost',
+          closeReason: reason || 'rancher_marked_lost',
+          notes: reason ? `[CLOSED LOST] ${reason}` : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setUpdateError(data.error || 'Failed to mark lost. Please try again.');
       }
       await fetchDashboard();
     } catch {
@@ -416,7 +458,7 @@ export default function RancherDashboardPage() {
               <h1 className="font-serif text-3xl md:text-4xl">{rancherInfo.ranchName}</h1>
               <p className="text-saddle mt-1">{rancherInfo.name} &middot; {rancherInfo.state}</p>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 flex-wrap">
               <span className={`px-3 py-1 text-xs font-medium uppercase tracking-wider ${
                 rancherInfo.activeStatus === 'Active' ? 'bg-green-100 text-green-800' :
                 rancherInfo.activeStatus === 'At Capacity' ? 'bg-yellow-100 text-yellow-800' :
@@ -424,6 +466,16 @@ export default function RancherDashboardPage() {
               }`}>
                 {rancherInfo.activeStatus || 'Pending'}
               </span>
+              {rancherInfo.slug && rancherInfo.pageLive && (
+                <a
+                  href={`/ranchers/${rancherInfo.slug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-saddle hover:text-charcoal underline underline-offset-2"
+                >
+                  View public page →
+                </a>
+              )}
               <button onClick={handleLogout} className="text-sm text-dust hover:text-charcoal transition-colors">
                 Log out
               </button>
@@ -859,6 +911,7 @@ export default function RancherDashboardPage() {
                         onUpdate={updateReferralStatus}
                         onClose={() => setCloseModal(ref)}
                         onPass={() => setPassModal(ref)}
+                        onLost={() => handleMarkLost(ref)}
                         updating={updating}
                       />
                     ))}
@@ -876,21 +929,86 @@ export default function RancherDashboardPage() {
           {/* Referrals Tab */}
           {activeTab === 'referrals' && (
             <div className="space-y-8">
-              <h2 className="font-serif text-2xl">Active Leads</h2>
-              {activeRefs.length > 0 ? (
-                <div className="space-y-4">
-                  {activeRefs.map((ref) => (
-                    <ReferralCard
-                      key={ref.id}
-                      referral={ref}
-                      onUpdate={updateReferralStatus}
-                      onClose={() => setCloseModal(ref)}
-                      onPass={() => setPassModal(ref)}
-                      updating={updating}
-                    />
-                  ))}
-                </div>
-              ) : (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <h2 className="font-serif text-2xl">Active Leads</h2>
+                {activeRefs.length > 3 && (
+                  <div className="flex flex-wrap gap-2 text-sm">
+                    <select
+                      value={buyerFilter}
+                      onChange={(e) => setBuyerFilter(e.target.value as any)}
+                      className="px-3 py-1.5 border border-dust bg-bone text-charcoal text-xs uppercase tracking-wide focus:outline-none focus:border-charcoal"
+                    >
+                      <option value="all">All ({activeRefs.length})</option>
+                      <option value="Intro Sent">Intro Sent ({activeRefs.filter(r => r.status === 'Intro Sent').length})</option>
+                      <option value="Rancher Contacted">Contacted ({activeRefs.filter(r => r.status === 'Rancher Contacted').length})</option>
+                      <option value="Negotiation">Negotiation ({activeRefs.filter(r => r.status === 'Negotiation').length})</option>
+                      <option value="stale">Stale 14d+ (needs follow-up)</option>
+                    </select>
+                    <select
+                      value={buyerSort}
+                      onChange={(e) => setBuyerSort(e.target.value as any)}
+                      className="px-3 py-1.5 border border-dust bg-bone text-charcoal text-xs uppercase tracking-wide focus:outline-none focus:border-charcoal"
+                    >
+                      <option value="newest">Newest first</option>
+                      <option value="oldest">Oldest first</option>
+                      <option value="stalest">Stalest activity</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+              {(() => {
+                // Apply filter + sort. Pure-function — no side effects.
+                let filtered = [...activeRefs];
+                if (buyerFilter === 'stale') {
+                  const now = Date.now();
+                  const FOURTEEN_D_MS = 14 * 86_400_000;
+                  filtered = filtered.filter((r) => {
+                    const last = r.last_rancher_activity_at || r.intro_sent_at || r.created_at;
+                    if (!last) return false;
+                    return now - new Date(last).getTime() >= FOURTEEN_D_MS;
+                  });
+                } else if (buyerFilter !== 'all') {
+                  filtered = filtered.filter((r) => r.status === buyerFilter);
+                }
+                if (buyerSort === 'newest') {
+                  filtered.sort((a, b) =>
+                    new Date(b.intro_sent_at || b.created_at).getTime() -
+                    new Date(a.intro_sent_at || a.created_at).getTime()
+                  );
+                } else if (buyerSort === 'oldest') {
+                  filtered.sort((a, b) =>
+                    new Date(a.intro_sent_at || a.created_at).getTime() -
+                    new Date(b.intro_sent_at || b.created_at).getTime()
+                  );
+                } else if (buyerSort === 'stalest') {
+                  filtered.sort((a, b) => {
+                    const aLast = new Date(a.last_rancher_activity_at || a.intro_sent_at || a.created_at).getTime();
+                    const bLast = new Date(b.last_rancher_activity_at || b.intro_sent_at || b.created_at).getTime();
+                    return aLast - bLast;
+                  });
+                }
+                return filtered.length > 0 ? (
+                  <div className="space-y-4">
+                    {filtered.map((ref) => (
+                      <ReferralCard
+                        key={ref.id}
+                        referral={ref}
+                        onUpdate={updateReferralStatus}
+                        onClose={() => setCloseModal(ref)}
+                        onPass={() => setPassModal(ref)}
+                        onLost={() => handleMarkLost(ref)}
+                        updating={updating}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 border border-dust text-center bg-white">
+                    <p className="text-saddle">No leads match the current filter.</p>
+                  </div>
+                );
+              })()}
+              {/* Legacy empty state — shown when zero active leads total */}
+              {activeRefs.length === 0 && (
                 <div className="p-8 border border-dust text-center bg-white">
                   <p className="text-saddle">No active leads right now. New buyer introductions will appear here.</p>
                 </div>
@@ -962,6 +1080,16 @@ export default function RancherDashboardPage() {
                             <span className={`px-2 py-0.5 text-xs ${ref.commission_paid ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
                               {ref.commission_paid ? 'Paid' : 'Pending'}
                             </span>
+                            {!ref.commission_paid && ref.stripe_invoice_url && (
+                              <a
+                                href={ref.stripe_invoice_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="ml-2 text-xs text-saddle hover:text-charcoal underline underline-offset-2"
+                              >
+                                Pay now →
+                              </a>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1685,7 +1813,7 @@ function ResponseDeadline({ referral }: { referral: Referral }) {
   );
 }
 
-function ReferralRow({ referral, onUpdate, onClose, onPass, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; updating: string | null }) {
+function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; updating: string | null }) {
   return (
     <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
       <div>
@@ -1693,6 +1821,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, updating }: { referr
           <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
             {referral.status}
           </span>
+          <FreshnessIndicator referral={referral} />
           <ResponseDeadline referral={referral} />
         </div>
         <p className="font-medium mt-1">{referral.buyer_name}</p>
@@ -1715,14 +1844,47 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, updating }: { referr
           Close as Won
         </button>
         <button
-          onClick={onPass}
+          onClick={onLost}
           className="px-3 py-1.5 text-xs border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
-          title="Pass on this lead — we'll auto-reassign to another rancher"
+          title="Mark Lost — closes deal without rerouting buyer"
         >
-          Pass on Lead
+          Mark Lost
+        </button>
+        <button
+          onClick={onPass}
+          className="px-3 py-1.5 text-xs border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
+          title="Pass — we auto-reassign buyer to another rancher"
+        >
+          Pass
         </button>
       </div>
     </div>
+  );
+}
+
+// ── Freshness indicator: visualizes how recently rancher acted on this lead
+// Green = active in last 7d. Yellow = 7-14d, nudge time. Red = 14d+, will
+// trigger the rancher-prompt email cron unless rancher engages.
+function FreshnessIndicator({ referral }: { referral: Referral }) {
+  const last = referral.last_rancher_activity_at || referral.intro_sent_at || referral.created_at;
+  if (!last) return null;
+  const daysSince = (Date.now() - new Date(last).getTime()) / 86_400_000;
+  const days = Math.floor(daysSince);
+  const tone = days < 7 ? 'green' : days < 14 ? 'yellow' : 'red';
+  const colors = {
+    green: 'bg-green-100 text-green-800',
+    yellow: 'bg-yellow-100 text-yellow-800',
+    red: 'bg-red-100 text-red-800',
+  };
+  const label =
+    days < 1 ? 'Active — today' :
+    days < 7 ? `Active — ${days}d ago` :
+    days < 14 ? `${days}d since activity — nudge or close` :
+    `${days}d stale — auto-prompt incoming`;
+  return (
+    <span className={`inline-block px-2 py-0.5 text-xs font-medium ${colors[tone]}`}>
+      {label}
+    </span>
   );
 }
 
@@ -1731,12 +1893,14 @@ function ReferralCard({
   onUpdate,
   onClose,
   onPass,
+  onLost,
   updating,
 }: {
   referral: Referral;
   onUpdate: (id: string, status: string) => void;
   onClose: () => void;
   onPass: () => void;
+  onLost: () => void;
   updating: string | null;
 }) {
   return (
@@ -1747,6 +1911,7 @@ function ReferralCard({
             <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
               {referral.status}
             </span>
+            <FreshnessIndicator referral={referral} />
             <ResponseDeadline referral={referral} />
           </div>
           <h3 className="font-serif text-xl mt-2">{referral.buyer_name}</h3>
@@ -1796,9 +1961,16 @@ function ReferralCard({
           Close as Won
         </button>
         <button
-          onClick={onPass}
+          onClick={onLost}
           className="px-4 py-2 text-sm border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
-          title="Pass on this lead — we'll auto-reassign to another rancher"
+          title="Mark this lead as closed lost — they're out (price/timing/etc). Won't re-route."
+        >
+          Mark Lost
+        </button>
+        <button
+          onClick={onPass}
+          className="px-4 py-2 text-sm border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
+          title="Pass on this lead — we'll auto-reassign the buyer to another rancher"
         >
           Pass on Lead
         </button>
