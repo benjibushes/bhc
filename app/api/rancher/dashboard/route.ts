@@ -136,6 +136,11 @@ export async function GET() {
         monthlyCapacity: rancher['Monthly Capacity'] || 0,
         beefTypes: rancher['Beef Types'] || '',
         statesServed: rancher['States Served'] || '',
+        // Preferred States = rancher's requested service area (editable).
+        // Routing States = admin-controlled, drives actual matching. We
+        // surface both so the UI can show "you asked for X, we're routing Y".
+        preferredStates: rancher['Preferred States'] || rancher['States Served'] || '',
+        routingStates: rancher['Routing States'] || rancher['States Served'] || '',
         shipsNationwide: rancher['Ships Nationwide'] || false,
         certifications: rancher['Certifications'] || '',
         // Landing page fields

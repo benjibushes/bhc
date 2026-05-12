@@ -50,6 +50,10 @@ export async function PATCH(request: Request) {
       'Reserve Link',
       'Custom Notes',
       'States Served',
+      // Preferred States = rancher-REQUESTED service area. Distinct from
+      // "Routing States" (admin-controlled, what actually drives matching).
+      // Edits here pop a Telegram alert so Ben can review + promote.
+      'Preferred States',
       'Ships Nationwide',
       'Beef Types',
       'Certifications',
@@ -252,8 +256,50 @@ export async function PATCH(request: Request) {
       const codes = normalizeStates(fields['States Served']);
       fields['States Served'] = codes.length > 0 ? stringifyStates(codes) : '';
     }
+    // Same normalization for Preferred States (rancher-requested service area).
+    if ('Preferred States' in fields && fields['Preferred States'] !== null) {
+      const codes = normalizeStates(fields['Preferred States']);
+      fields['Preferred States'] = codes.length > 0 ? stringifyStates(codes) : '';
+      // Mirror Preferred → States Served so the public landing page reflects
+      // what the rancher SAYS they serve. Routing States stays admin-only.
+      if (!('States Served' in fields)) {
+        fields['States Served'] = fields['Preferred States'];
+      }
+    }
+
+    // If Preferred States changed, snapshot the prior value so we can alert
+    // Ben with the diff. Routing States is admin-controlled — rancher edits
+    // here only request a change; Ben promotes by editing Routing States.
+    let preferredChanged: { before: string; after: string } | null = null;
+    if ('Preferred States' in fields) {
+      try {
+        const prior = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+        const before = String(prior?.['Preferred States'] || '').trim();
+        const after = String(fields['Preferred States'] || '').trim();
+        if (before !== after) {
+          preferredChanged = { before, after };
+        }
+      } catch {
+        // Non-fatal — proceed without the alert.
+      }
+    }
 
     await updateRecord(TABLES.RANCHERS, decoded.rancherId, fields);
+
+    // Fire admin alert AFTER successful write so we never alert on a failed save.
+    if (preferredChanged) {
+      try {
+        const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+        const name = rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'Unknown';
+        const routing = String(rancher?.['Routing States'] || rancher?.['States Served'] || '').trim();
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🗺️ <b>PREFERRED STATES CHANGED</b>\n\n🤠 ${name}\nBefore: <code>${preferredChanged.before || '(empty)'}</code>\nAfter: <code>${preferredChanged.after || '(empty)'}</code>\nCurrently routing: <code>${routing || '(empty)'}</code>\n\n<i>Review and promote into Routing States if approved.</i>`
+        );
+      } catch (e) {
+        console.error('Telegram preferred-states alert error:', e);
+      }
+    }
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
