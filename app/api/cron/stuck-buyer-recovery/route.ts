@@ -67,10 +67,22 @@ async function handler(request: Request) {
     ]);
 
     // Build a set of buyer IDs who already have an active referral.
+    //
+    // BUG-FIX 2026-05-09: previously counted "Pending Approval" with NO
+    // linked rancher as active. Those are orphan records from a failed
+    // matching attempt (capacity full, all candidates excluded). Treating
+    // them as active blocked stuck-buyer-recovery from retrying. Fix:
+    // Pending Approval only counts as active if a rancher is linked.
     const buyersWithActiveRef = new Set<string>();
     for (const ref of referrals) {
       const status = (ref['Status'] || '').toString();
       if (!ACTIVE_REFERRAL_STATUSES.includes(status)) continue;
+      if (status === 'Pending Approval') {
+        const hasRancher =
+          (Array.isArray(ref['Rancher']) && ref['Rancher'].length > 0) ||
+          (Array.isArray(ref['Suggested Rancher']) && ref['Suggested Rancher'].length > 0);
+        if (!hasRancher) continue; // orphan, recoverable
+      }
       const buyerLinks: string[] = ref['Buyer'] || [];
       for (const id of buyerLinks) buyersWithActiveRef.add(id);
     }

@@ -287,126 +287,215 @@ async function handler(request: Request) {
       console.error('Stalled nudge query error:', e.message);
     }
 
-    // ── HARD AUTO-REASSIGN AT 14+ DAYS ────────────────────────────────────
-    // No lead should ever die silently. If a rancher has had a lead for 14+
-    // days without moving past "Intro Sent", we auto-pass it on their behalf
-    // and re-run matching with that rancher excluded. The buyer gets a
-    // re-engagement notification regardless of outcome.
+    // ── REAL-ACTIVITY-AWARE STALL HANDLING (replaces hard auto-reassign) ──
+    //
+    // Pre-2026-05-09: this block hard-auto-closed referrals at day 14 based
+    // ONLY on Intro Sent At / Approved At. That signal couldn't see off-platform
+    // rancher work (calls, direct emails) — system killed 70 active leads
+    // across 8 ranchers in 7 days. Zero of those auto-reassigns produced a
+    // Closed Won with the next rancher. Pure churn.
+    //
+    // New logic:
+    //   1. Freshness = MAX(Last Rancher Activity At, Last Buyer Activity At,
+    //      Intro Sent At). Off-platform replies + dashboard clicks + quick-
+    //      action buttons all reset the clock.
+    //   2. At day 14 (configurable via STALE_PROMPT_DAYS): send the rancher
+    //      ONE email with the 4 quick-action buttons (already shipped at
+    //      /api/rancher/quick-action). Rancher self-corrects in one click.
+    //      DO NOT auto-close.
+    //   3. Hard auto-close only when: Rancher Engaged Flag = false AND days
+    //      since freshness ≥ STALE_AUTOCLOSE_DAYS (default 30) AND no buyer
+    //      activity ever. Rancher who NEVER signaled engagement after 30+ days
+    //      with no buyer reply = real ghost.
+    //   4. Dry-run mode (?dryRun=1) returns what WOULD happen, writes nothing.
+    const STALE_PROMPT_DAYS = 14;
+    const STALE_AUTOCLOSE_DAYS = 30;
+    const dryRunMode = new URL(request.url).searchParams.get('dryRun') === '1';
+
+    const promptedRanchers: Array<{
+      refId: string;
+      buyerName: string;
+      rancherEmail: string;
+      rancherName: string;
+      daysSinceActivity: number;
+    }> = [];
+    const autoClosePlanned: Array<{
+      refId: string;
+      buyerName: string;
+      rancherName: string;
+      daysSinceActivity: number;
+      reason: string;
+    }> = [];
+
+    let stalePromptsFired = 0;
     let autoReassigned = 0;
+
     try {
-      // Include both Intro Sent AND Rancher Contacted in stalled-handler
-      // queries. Was Intro Sent only, which silently excluded leads where
-      // the rancher updated to "Rancher Contacted" but then went dormant —
-      // they'd accumulate forever without rancher reminders / stalled
-      // alerts / auto-reassign firing. Critical for ranchers whose habit
-      // is to mark "contacted" then never update again.
-      const introSentRefs = referrals.filter(r =>
-        r['Status'] === 'Intro Sent' || r['Status'] === 'Rancher Contacted'
+      const activeStallable = referrals.filter(
+        (r) =>
+          r['Status'] === 'Intro Sent' || r['Status'] === 'Rancher Contacted'
       );
       const now = Date.now();
-      const stuckTooLong = introSentRefs.filter(r => {
-        const introAt = r['Intro Sent At'] || r['Approved At'];
-        if (!introAt) return false;
-        const days = (now - new Date(introAt).getTime()) / DAY_MS;
-        return days >= 14;
-      });
 
-      for (const ref of stuckTooLong.slice(0, 10)) {
-        try {
-          const buyerName = ref['Buyer Name'] || 'Unknown';
-          const buyerState = ref['Buyer State'] || '';
-          const rancherName = ref['Suggested Rancher Name'] || 'Unknown rancher';
-          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
-          const previousRancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+      for (const ref of activeStallable) {
+        const lastRancher = ref['Last Rancher Activity At'];
+        const lastBuyer = ref['Last Buyer Activity At'];
+        const introAt = ref['Intro Sent At'] || ref['Approved At'];
+        // Pick the freshest signal of any activity on the referral.
+        const freshnessSource = [lastRancher, lastBuyer, introAt]
+          .filter(Boolean)
+          .map((s) => new Date(s).getTime())
+          .filter((t) => Number.isFinite(t));
+        if (freshnessSource.length === 0) continue;
+        const lastActivity = Math.max(...freshnessSource);
+        const daysSince = (now - lastActivity) / DAY_MS;
 
-          // Close current referral as Closed Lost with auto-pass note
-          await updateRecord(TABLES.REFERRALS, ref.id, {
-            'Status': 'Closed Lost',
-            'Closed At': new Date().toISOString(),
-            'Notes': `[AUTO-REASSIGNED ${new Date().toISOString().slice(0, 10)} — 14+ days no movement]\n${ref['Notes'] || ''}`.trim(),
+        const rancherEngaged = !!ref['Rancher Engaged Flag'];
+        const buyerEngaged = !!lastBuyer;
+
+        // Auto-close eligibility: only the actual ghosts.
+        const isRealGhost =
+          !rancherEngaged && !buyerEngaged && daysSince >= STALE_AUTOCLOSE_DAYS;
+
+        if (isRealGhost) {
+          autoClosePlanned.push({
+            refId: ref.id,
+            buyerName: ref['Buyer Name'] || '',
+            rancherName: ref['Suggested Rancher Name'] || '',
+            daysSinceActivity: Math.floor(daysSince),
+            reason: `No rancher engagement + no buyer reply for ${Math.floor(daysSince)}d`,
           });
+          continue;
+        }
 
-          // Decrement previous rancher's capacity
-          if (previousRancherId) {
-            try {
-              const prevRancher: any = await getRecordById(TABLES.RANCHERS, previousRancherId);
-              const count = prevRancher['Current Active Referrals'] || 0;
-              if (count > 0) {
-                await updateRecord(TABLES.RANCHERS, previousRancherId, {
-                  'Current Active Referrals': count - 1,
-                });
-              }
-            } catch (e) {
-              console.error('Auto-reassign: capacity decrement error:', e);
-            }
+        // Prompt eligibility: 14+ days since last activity AND haven't been
+        // prompted in the last 7 days (track via Last Chased At).
+        if (daysSince >= STALE_PROMPT_DAYS) {
+          const lastChased = ref['Last Chased At'];
+          const daysSinceChase = lastChased
+            ? (now - new Date(lastChased).getTime()) / DAY_MS
+            : Infinity;
+          if (daysSinceChase < 7) continue; // throttle prompts
+
+          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+          const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+          if (!rancherId) continue;
+
+          let rancherEmail = '';
+          let rancherFirstName = '';
+          try {
+            const r: any = await getRecordById(TABLES.RANCHERS, rancherId);
+            rancherEmail = r?.['Email'] || '';
+            const op = (r?.['Operator Name'] || '').toString();
+            rancherFirstName = op.split(' ')[0] || 'there';
+          } catch {
+            continue;
           }
+          if (!rancherEmail) continue;
 
-          // Re-run matching for the buyer with previous rancher excluded
-          const buyerIds = ref['Buyer'] || [];
-          const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
-          let outcome: 'rematched' | 'waitlisted' = 'waitlisted';
-          let newRancher = '';
-          if (buyerId) {
-            try {
-              const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId);
-              if (buyer && buyer['Email']) {
-                await updateRecord(TABLES.CONSUMERS, buyerId, {
-                  'Referral Status': 'Unmatched',
-                  'Sequence Stage': 'rerouted_after_stall',
-                });
-                const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
-                  },
-                  body: JSON.stringify({
-                    buyerState: buyer['State'] || buyerState,
-                    buyerId,
-                    buyerName: buyer['Full Name'] || buyerName,
-                    buyerEmail: buyer['Email'],
-                    buyerPhone: buyer['Phone'] || '',
-                    orderType: buyer['Order Type'] || '',
-                    budgetRange: buyer['Budget'] || '',
-                    intentScore: buyer['Intent Score'] || 50,
-                    intentClassification: buyer['Intent Classification'] || 'Medium',
-                    notes: buyer['Notes'] || '',
-                    excludeRancherIds: previousRancherId ? [previousRancherId] : [],
-                  }),
-                });
-                if (matchRes.ok) {
-                  const data = await matchRes.json();
-                  if (data.matchFound) {
-                    outcome = 'rematched';
-                    newRancher = data.suggestedRancher?.name || '';
-                  }
-                }
-              }
-            } catch (rerouteErr) {
-              console.error('Auto-reassign: rematch error:', rerouteErr);
-            }
-          }
-
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `⏰ <b>AUTO-REASSIGNED</b> (14+ days stalled)\n\n` +
-            `🤠 Was: ${rancherName}\n` +
-            `👤 Buyer: ${buyerName} (${buyerState})\n` +
-            (outcome === 'rematched'
-              ? `🔄 Reassigned to: <b>${newRancher}</b>`
-              : `⏳ No other rancher in ${buyerState} — buyer waitlisted, nurture restarted`)
-          );
-          autoReassigned++;
-        } catch (e: any) {
-          console.error('Auto-reassign error:', e.message);
+          promptedRanchers.push({
+            refId: ref.id,
+            buyerName: ref['Buyer Name'] || 'Buyer',
+            rancherEmail,
+            rancherName: rancherFirstName,
+            daysSinceActivity: Math.floor(daysSince),
+          });
         }
       }
+
+      // ── DRY-RUN exit ────────────────────────────────────────────────────
+      if (dryRunMode) {
+        return NextResponse.json({
+          success: true,
+          dryRun: true,
+          stalePromptsPlanned: promptedRanchers,
+          autoClosePlanned,
+          summary: `${promptedRanchers.length} prompts would fire, ${autoClosePlanned.length} hard auto-closes would fire`,
+        });
+      }
+
+      // ── Send rancher prompt emails (one per stale referral, throttled) ──
+      for (const p of promptedRanchers.slice(0, 10)) {
+        try {
+          const token = jwt.sign(
+            { type: 'rancher-quick-action', referralId: p.refId, rancherId: (await getRecordById(TABLES.REFERRALS, p.refId) as any)?.['Rancher']?.[0] || (await getRecordById(TABLES.REFERRALS, p.refId) as any)?.['Suggested Rancher']?.[0] },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+          );
+          const base = `${SITE_URL}/api/rancher/quick-action?token=${token}`;
+          await sendEmail({
+            to: p.rancherEmail,
+            subject: `Quick check — ${p.buyerName}: still working it?`,
+            html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:32px;border:1px solid #A7A29A;background:#fff;">
+              <h2 style="font-family:Georgia,serif;margin:0 0 12px;">Hey ${p.rancherName},</h2>
+              <p>It's been ${p.daysSinceActivity} days since I saw activity on this lead. Want to give me a 1-click update?</p>
+              <p><strong>Buyer:</strong> ${p.buyerName}</p>
+              <table cellspacing="0" cellpadding="0" style="margin:20px 0;width:100%;">
+                <tr>
+                  <td style="padding:0 6px 8px 0;width:25%;"><a href="${base}&action=in_talks" style="display:block;padding:11px 8px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;text-align:center;">💬 In talks</a></td>
+                  <td style="padding:0 6px 8px 0;width:25%;"><a href="${base}&action=won" style="display:block;padding:11px 8px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;text-align:center;">✓ Closed Won</a></td>
+                  <td style="padding:0 6px 8px 0;width:25%;"><a href="${base}&action=lost" style="display:block;padding:11px 8px;background:#6B4F3F;color:#F4F1EC;text-decoration:none;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;text-align:center;">✗ Closed Lost</a></td>
+                  <td style="padding:0 0 8px 0;width:25%;"><a href="${base}&action=pass" style="display:block;padding:11px 8px;background:#A7A29A;color:#F4F1EC;text-decoration:none;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.8px;text-align:center;">⏭ Pass</a></td>
+                </tr>
+              </table>
+              <p style="font-size:12px;color:#6B4F3F;">If you're actively working this one, just click "💬 In talks" — it refreshes the lead in your dashboard. No login needed.</p>
+              <p style="margin-top:24px;">— Ben</p>
+            </div>` as any,
+            _replyContext: { type: 'ref', recordId: p.refId },
+          } as any);
+          // Stamp Last Chased At for throttle
+          await updateRecord(TABLES.REFERRALS, p.refId, {
+            'Last Chased At': new Date().toISOString(),
+            'Chase Count': (referrals.find((r: any) => r.id === p.refId)?.['Chase Count'] || 0) + 1,
+          });
+          stalePromptsFired++;
+        } catch (e: any) {
+          console.error('[chasup-prompt]', e?.message);
+        }
+      }
+
+      // ── Hard auto-close real ghosts (no engagement >= 30d) ──────────────
+      for (const c of autoClosePlanned.slice(0, 10)) {
+        try {
+          const ref = referrals.find((r: any) => r.id === c.refId);
+          if (!ref) continue;
+          await updateRecord(TABLES.REFERRALS, c.refId, {
+            'Status': 'Closed Lost',
+            'Closed At': new Date().toISOString(),
+            'Notes': `[GHOST AUTO-CLOSE ${new Date().toISOString().slice(0, 10)} — ${c.reason}]\n${ref['Notes'] || ''}`.trim(),
+          });
+          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+          const prevRancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+          if (prevRancherId) {
+            try {
+              const r: any = await getRecordById(TABLES.RANCHERS, prevRancherId);
+              const cur = Number(r['Current Active Referrals'] || 0);
+              if (cur > 0) {
+                await updateRecord(TABLES.RANCHERS, prevRancherId, {
+                  'Current Active Referrals': cur - 1,
+                });
+              }
+            } catch {}
+          }
+          autoReassigned++;
+        } catch (e: any) {
+          console.error('[ghost-close]', e?.message);
+        }
+      }
+
+      if (stalePromptsFired > 0 || autoReassigned > 0) {
+        await sendTelegramUpdate(
+          `📋 <b>Stale-handling run</b>\n` +
+            `${stalePromptsFired} rancher prompts sent (1-click update, no auto-close)\n` +
+            `${autoReassigned} ghosts auto-closed (zero engagement 30+ days)`
+        );
+      }
     } catch (e: any) {
-      console.error('Auto-reassign query error:', e.message);
+      console.error('Stalled-handling error:', e?.message);
     }
 
     if (stale.length === 0) {
-      return NextResponse.json({ success: true, stale: 0, sent: 0, autoClosed, rancherReminders, stalledNudges, autoReassigned });
+      return NextResponse.json({ success: true, stale: 0, sent: 0, autoClosed, rancherReminders, stalledNudges, autoReassigned, stalePromptsFired });
     }
 
     let sent = 0;
