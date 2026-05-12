@@ -35,6 +35,10 @@ const ALLOWED_FIELDS = new Set([
   'State',
   'Zip',
   'States Served',
+  // Rancher-editable: their REQUESTED states. Routing only fires from
+  // "Routing States" which is admin-controlled (Ben). Rancher edits
+  // Preferred → Ben reviews + promotes into Routing.
+  'Preferred States',
   'Beef Types',
   'Logo URL',
   'Website',

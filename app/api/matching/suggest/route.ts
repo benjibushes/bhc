@@ -341,12 +341,18 @@ export async function POST(request: Request) {
       // The Ships Nationwide field is no longer read anywhere; ignore it.
       const localEligibleAll = allRanchers.filter((r: any) => {
         if (!isEligibleBase(r)) return false;
-        // Normalize rancher's primary state + every "States Served" entry to
+        // Normalize rancher's primary state + every "Routing States" entry to
         // 2-letter codes BEFORE comparing. Old behavior just uppercased, so
-        // "Montana" never matched buyer state "MT". This is the root cause
-        // that left waitlisted customers stranded forever.
+        // "Montana" never matched buyer state "MT".
+        //
+        // Routing States = ADMIN-controlled (Ben). Rancher edits Preferred
+        // States separately to request additions. Matching does NOT fire from
+        // a state until admin promotes the rancher's preference into Routing
+        // States. Falls back to legacy States Served field if Routing States
+        // is empty (handles pre-migration records).
         const rState = normalizeState(r['State']);
-        const served = normalizeStates(r['States Served']);
+        const routingRaw = (r['Routing States'] || '').toString().trim();
+        const served = normalizeStates(routingRaw || r['States Served']);
         if (!(rState === normalizedBuyerState || served.includes(normalizedBuyerState))) return false;
         // Tier Specialty filter — see definition above. Quarter buyers won't
         // get routed to Half/Whole-only ranchers, etc. Empty Tier Specialty =

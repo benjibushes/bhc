@@ -749,6 +749,11 @@ export default function RancherSetupWizard() {
                   State: form.State,
                   Zip: form.Zip,
                   'States Served': form['States Served'],
+                  // Mirror to Preferred States — sets the rancher's "requested
+                  // service area" baseline. Routing States (admin-controlled)
+                  // is what actually drives matching; falls back to States
+                  // Served when unset, so initial routing still works.
+                  'Preferred States': form['States Served'],
                   'Beef Types': form['Beef Types'],
                 });
                 if (ok) setStep(2);

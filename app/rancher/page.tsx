@@ -20,6 +20,8 @@ interface RancherInfo {
   monthlyCapacity: number;
   beefTypes: string;
   statesServed: string;
+  preferredStates?: string;
+  routingStates?: string;
   shipsNationwide: boolean;
   certifications: string;
   // Landing page fields
@@ -197,6 +199,7 @@ export default function RancherDashboardPage() {
         'Reserve Link': r.reserveLink || '',
         'Custom Notes': r.customNotes || '',
         'States Served': r.statesServed || '',
+        'Preferred States': r.preferredStates || r.statesServed || '',
         'Ships Nationwide': r.shipsNationwide ? 'true' : '',
         'Beef Types': r.beefTypes || '',
         'Certifications': r.certifications || '',
@@ -1318,15 +1321,54 @@ export default function RancherDashboardPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <label className="block text-sm font-medium">States You Deliver To</label>
+                    <label className="block text-sm font-medium">States You Want To Serve</label>
                     <p className="text-xs text-dust">
-                      Tap the states you&apos;ll ship to. We&apos;ll automatically match buyers from these states to you.
-                      <strong className="text-charcoal"> Your home state is included automatically.</strong>
+                      Tap the states you&apos;d like buyers from. We review your request and turn on
+                      routing once your capacity and verification check out.
+                      <strong className="text-charcoal"> Your home state is always included.</strong>
                     </p>
                     <StateMultiSelect
-                      value={pageForm['States Served'] || ''}
-                      onChange={(v) => setPageForm(p => ({ ...p, 'States Served': v }))}
+                      value={pageForm['Preferred States'] || ''}
+                      onChange={(v) => setPageForm(p => ({ ...p, 'Preferred States': v }))}
                     />
+                    {(() => {
+                      const preferred = new Set(
+                        (pageForm['Preferred States'] || '')
+                          .split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+                      );
+                      const routing = new Set(
+                        (rancherInfo.routingStates || '')
+                          .split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+                      );
+                      const live = Array.from(preferred).filter(s => routing.has(s));
+                      const pending = Array.from(preferred).filter(s => !routing.has(s));
+                      const muted = Array.from(routing).filter(s => !preferred.has(s));
+                      return (
+                        <div className="mt-3 space-y-2 text-xs">
+                          {live.length > 0 && (
+                            <div className="flex items-start gap-2">
+                              <span className="font-bold text-green-700 shrink-0">✓ Routing live:</span>
+                              <span className="font-mono text-charcoal">{live.join(', ')}</span>
+                            </div>
+                          )}
+                          {pending.length > 0 && (
+                            <div className="flex items-start gap-2">
+                              <span className="font-bold text-amber-700 shrink-0">⏳ Pending review:</span>
+                              <span className="font-mono text-charcoal">{pending.join(', ')}</span>
+                            </div>
+                          )}
+                          {muted.length > 0 && (
+                            <div className="flex items-start gap-2">
+                              <span className="font-bold text-dust shrink-0">— Removed by you:</span>
+                              <span className="font-mono text-dust">{muted.join(', ')}</span>
+                            </div>
+                          )}
+                          {preferred.size === 0 && routing.size === 0 && (
+                            <p className="text-dust italic">No states selected yet — pick the states you can deliver to above.</p>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="flex items-center gap-3">
