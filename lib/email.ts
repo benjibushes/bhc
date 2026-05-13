@@ -123,8 +123,15 @@ async function _gateEmail<T>(fn: () => Promise<T>): Promise<T> {
       const waitMs = 1000 - (now - _emailTimestamps[0]) + 5;
       await new Promise(r => setTimeout(r, Math.max(0, waitMs)));
     }
-    _emailTimestamps.push(Date.now());
-    return await fn();
+    // Stamp timestamp AFTER the send completes (not before). Stamping
+    // before created a window where a slow send extended past 1s but the
+    // timestamp aged out — the next queued call read an empty window and
+    // skipped the wait, doubling actual send rate during latency spikes.
+    try {
+      return await fn();
+    } finally {
+      _emailTimestamps.push(Date.now());
+    }
   } finally {
     resolve();
   }
@@ -183,17 +190,18 @@ const resend = {
       if (!params.text && params.html) {
         params.text = htmlToPlainText(params.html);
       }
-      return _gateEmail(async () => {
-        const r: any = await _resend.emails.send(params);
-        // Resend surfaces 429 inside the .error object.
-        const errStr = r?.error ? JSON.stringify(r.error) : '';
-        if (r?.error && (/429|rate.?limit|too.?many/i.test(errStr))) {
-          console.warn('Resend 429 — backing off 1s, retrying once');
-          await new Promise(res => setTimeout(res, 1100));
-          return _resend.emails.send(params);
-        }
-        return r;
-      });
+      const firstAttempt: any = await _gateEmail(() => _resend.emails.send(params));
+      const errStr = firstAttempt?.error ? JSON.stringify(firstAttempt.error) : '';
+      const is429 = firstAttempt?.error && /429|rate.?limit|too.?many/i.test(errStr);
+      if (!is429) return firstAttempt;
+      // 429: back off 1s, then RETRY THROUGH THE GATE (not bare). The bare
+      // retry path skipped _gateEmail entirely so the second send raced
+      // every other concurrent caller and could 429 again immediately,
+      // defeating the throttle. Going back through the gate respects the
+      // token bucket and serializes against in-flight sends.
+      console.warn('Resend 429 — backing off 1s then retrying through gate');
+      await new Promise(res => setTimeout(res, 1100));
+      return _gateEmail(() => _resend.emails.send(params));
     }
   }
 };

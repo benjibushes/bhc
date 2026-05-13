@@ -699,10 +699,12 @@ export async function POST(request: Request) {
           }
           if (!introSendOk) {
             console.error('Rancher intro email failed:', introSendErr);
-            // Roll the referral back so the lead doesn't go ghost — flip to
-            // Pending Approval + tag notes so the next batch-approve waitlist
-            // retry can re-route. Buyer Stage stays MATCHED in-memory but the
-            // status flip is the persistent truth.
+            // Roll BOTH the referral AND the consumer back so state stays
+            // consistent. Old version only flipped the referral, leaving
+            // the consumer at Buyer Stage='MATCHED' / Referral Status=
+            // 'Intro Sent' even though the referral was actually Pending
+            // Approval and the rancher never got the email. Inconsistent
+            // state confused the dashboard + state-machine cron.
             try {
               await updateRecord(TABLES.REFERRALS, referral.id, {
                 'Status': 'Pending Approval',
@@ -710,6 +712,15 @@ export async function POST(request: Request) {
               });
             } catch (e) {
               console.error('Could not roll referral back after intro failure:', e);
+            }
+            try {
+              await updateRecord(TABLES.CONSUMERS, buyerId, {
+                'Referral Status': 'Pending Approval',
+                'Buyer Stage': 'READY',
+                'Buyer Stage Updated At': new Date().toISOString(),
+              });
+            } catch (e) {
+              console.error('Could not roll consumer back after intro failure:', e);
             }
             try {
               await sendTelegramMessage(
