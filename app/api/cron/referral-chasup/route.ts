@@ -52,6 +52,25 @@ async function handler(request: Request) {
         .map((c: any) => (c['Email'] || '').trim().toLowerCase())
     );
 
+    // Recency check — used by BOTH stale and maxed-out filters. Returns true
+    // if the referral has any signal of real activity within window. The big
+    // pipeline rewrite added Last Rancher/Buyer Activity At + Rancher Engaged
+    // Flag — if we don't check them here, the legacy chase-up sender will
+    // email buyers who already replied off-platform ("why are you bugging me?").
+    const recentlyActive = (r: any, windowDays = 5) => {
+      const cutoff = Date.now() - windowDays * DAY_MS;
+      const lastR = r['Last Rancher Activity At'] ? new Date(r['Last Rancher Activity At']).getTime() : 0;
+      const lastB = r['Last Buyer Activity At'] ? new Date(r['Last Buyer Activity At']).getTime() : 0;
+      if (lastR > cutoff || lastB > cutoff) return true;
+      // Engaged flag means rancher confirmed in_talks via Telegram or email
+      // reply. Honor it for a full 14-day window before re-prompting.
+      if (r['Rancher Engaged Flag']) {
+        const introAt = r['Intro Sent At'] ? new Date(r['Intro Sent At']).getTime() : 0;
+        if (introAt > Date.now() - 14 * DAY_MS) return true;
+      }
+      return false;
+    };
+
     const stale = referrals.filter(r => {
       const lastActivity = r['Last Chased At'] || r['Intro Sent At'] || r['Approved At'];
       if (!lastActivity) return false;
@@ -59,6 +78,7 @@ async function handler(request: Request) {
       if (unsubscribedEmails.has(buyerEmail)) return false;
       const chaseCount = r['Chase Count'] || 0;
       if (chaseCount >= MAX_CHASE_UPS) return false; // Already maxed out
+      if (recentlyActive(r, 5)) return false; // Skip if rancher or buyer touched it recently
       return (Date.now() - new Date(lastActivity).getTime()) >= 5 * DAY_MS;
     });
 
@@ -69,6 +89,10 @@ async function handler(request: Request) {
       if (chaseCount < MAX_CHASE_UPS) return false;
       const lastActivity = r['Last Chased At'] || r['Intro Sent At'] || r['Approved At'];
       if (!lastActivity) return false;
+      // Never hard-close a referral the rancher confirmed is in talks, OR one
+      // with recent activity. The activity-aware close block below handles the
+      // 30-day disengaged path — this legacy chase-count path should not.
+      if (recentlyActive(r, 7)) return false;
       return (Date.now() - new Date(lastActivity).getTime()) >= 5 * DAY_MS;
     });
 

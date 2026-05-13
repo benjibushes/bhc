@@ -46,10 +46,18 @@ async function handler(request: Request) {
       const allReferrals = await getAllRecords(TABLES.REFERRALS) as any[];
       const activeStatuses = ['Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Negotiation'];
 
-      // Count actual active referrals per rancher
+      // Count actual active referrals per rancher.
+      // Orphan-aware: skip Pending Approval rows with no Rancher AND no
+      // Suggested Rancher link. The 452-cleanup deleted historical orphans but
+      // any new orphan that sneaks past matching/suggest would otherwise be
+      // ignored entirely (good) — this check just makes intent explicit and
+      // protects against accidentally counting a row with EMPTY links.
       const actualCounts: Record<string, number> = {};
       for (const ref of allReferrals) {
         if (!activeStatuses.includes(ref['Status'])) continue;
+        const ranchered = Array.isArray(ref['Rancher']) && ref['Rancher'].length > 0;
+        const suggested = Array.isArray(ref['Suggested Rancher']) && ref['Suggested Rancher'].length > 0;
+        if (!ranchered && !suggested) continue; // orphan — don't bill capacity to anyone
         const rIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
         const rId = Array.isArray(rIds) ? rIds[0] : null;
         if (rId) {
