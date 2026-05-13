@@ -62,6 +62,7 @@ export async function createRecord(tableName: string, fields: any) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const records = await withRateLimitRetry(() => base(tableName).create([{ fields: currentFields }], { typecast: true }));
+      if (_cacheKey(tableName)) invalidateAirtableCache(tableName);
       return records[0];
     } catch (error: any) {
       const msg = error?.message || error?.error?.message || String(error);
@@ -106,9 +107,39 @@ export async function createRecord(tableName: string, fields: any) {
   throw new Error(`Failed to create record in ${tableName} after ${maxRetries} retries`);
 }
 
+// ── In-process cache for hot tables ─────────────────────────────────────
+// Spike-readiness: matching/suggest + consumers signup both call
+// getAllRecords(RANCHERS) on every hit. At 30+ signups/sec that detonates
+// the Airtable 5 req/sec per-base limit, which then triggers exponential
+// backoff inside withRateLimitRetry and blows past maxDuration. Cache the
+// ranchers full-list for a short TTL so steady-state concurrent signups
+// share one read. Single-record reads (getRecordById) still bypass cache,
+// so capacity bumps stay live-correct. Filtered selects skip cache because
+// the formula space is unbounded.
+type Cached = { ts: number; data: Array<Record<string, any>> };
+const CACHE_TTL_MS = 10_000;
+const _cache: Record<string, Cached> = {};
+function _cacheKey(tableName: string): string | null {
+  // Only the full ranchers list is hot enough to cache. Add more tables
+  // here only after measuring read volume — stale cache on referrals or
+  // consumers would break the capacity logic.
+  return tableName === TABLES.RANCHERS ? `${tableName}::full` : null;
+}
+export function invalidateAirtableCache(tableName?: string): void {
+  if (!tableName) { for (const k of Object.keys(_cache)) delete _cache[k]; return; }
+  for (const k of Object.keys(_cache)) {
+    if (k.startsWith(`${tableName}::`)) delete _cache[k];
+  }
+}
+
 // Helper function to get all records from a table
 export async function getAllRecords(tableName: string, filterByFormula?: string) {
   try {
+    const key = !filterByFormula ? _cacheKey(tableName) : null;
+    if (key) {
+      const hit = _cache[key];
+      if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return hit.data;
+    }
     const records = await withRateLimitRetry(() =>
       base(tableName)
         .select({
@@ -117,10 +148,12 @@ export async function getAllRecords(tableName: string, filterByFormula?: string)
         .all()
     );
 
-    return records.map((record) => ({
+    const data = records.map((record) => ({
       id: record.id,
       ...record.fields,
     }));
+    if (key) _cache[key] = { ts: Date.now(), data };
+    return data;
   } catch (error) {
     console.error(`Error fetching records from ${tableName}:`, error);
     throw error;
@@ -168,6 +201,10 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
           fields: currentFields,
         },
       ], { typecast: true }));
+      // Bust the in-process cache for this table so callers don't read
+      // back stale data on the next getAllRecords. Cheap; runs only on
+      // tables we cache (currently just RANCHERS).
+      if (_cacheKey(tableName)) invalidateAirtableCache(tableName);
       return {
         id: records[0].id,
         ...records[0].fields,

@@ -3,7 +3,7 @@ import { createRecord, updateRecord, getAllRecords, escapeAirtableValue } from '
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
   if (!ref || typeof ref !== 'string' || ref.length > 50) return false;
