@@ -638,8 +638,17 @@ export async function POST(request: Request) {
               </tr>
             </table>
             <p style="font-size:12px;color:#6B4F3F;margin:0 0 18px 0;">One-click status updates — no login. Closed Won button asks for sale amount + auto-generates the 10% commission invoice via Stripe.</p>`;
+          // sendEmail can fail two ways: (a) throw on network/Resend SDK
+          // error, (b) return a result with .error set (Resend's documented
+          // shape for rate limits, suppression hits, invalid recipient). The
+          // old code only caught (a) — Resend errors slipped through and the
+          // referral stayed marked "Intro Sent" while the rancher inbox was
+          // empty. Now we check both paths and downgrade the referral so
+          // batch-approve's waitlist-retry picks it back up.
+          let introSendOk = true;
+          let introSendErr: string = '';
           try {
-            await sendEmail({
+            const emailResult: any = await sendEmail({
               to: rancherEmail,
               subject: `${subjectPrefix}BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
               // Tag Reply-To with the referral context so when the rancher
@@ -665,16 +674,36 @@ export async function POST(request: Request) {
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
               </div>` as any,
             } as any);
+            if (emailResult && emailResult.error) {
+              introSendOk = false;
+              introSendErr = typeof emailResult.error === 'string' ? emailResult.error : JSON.stringify(emailResult.error);
+            }
           } catch (e: any) {
-            console.error('Rancher intro email failed:', e?.message);
+            introSendOk = false;
+            introSendErr = e?.message || 'unknown error';
+          }
+          if (!introSendOk) {
+            console.error('Rancher intro email failed:', introSendErr);
+            // Roll the referral back so the lead doesn't go ghost — flip to
+            // Pending Approval + tag notes so the next batch-approve waitlist
+            // retry can re-route. Buyer Stage stays MATCHED in-memory but the
+            // status flip is the persistent truth.
+            try {
+              await updateRecord(TABLES.REFERRALS, referral.id, {
+                'Status': 'Pending Approval',
+                'Notes': `[intro-email-failed ${new Date().toISOString().slice(0, 16)}] Resend error: ${introSendErr.slice(0, 200)}. Auto-rolled back from Intro Sent — batch-approve retry path will pick this up.`,
+              });
+            } catch (e) {
+              console.error('Could not roll referral back after intro failure:', e);
+            }
             try {
               await sendTelegramMessage(
                 TELEGRAM_ADMIN_CHAT_ID,
                 `⚠️ <b>RANCHER INTRO EMAIL FAILED</b>\n\n` +
                 `Buyer: ${buyerName} (${buyerEmail})\n` +
                 `Rancher: ${rancherName} (${rancherEmail})\n` +
-                `Error: ${e?.message || 'unknown'}\n\n` +
-                `<i>Referral was created in Airtable but the rancher never got the intro. Resend manually via /admin or paste the buyer info to ${rancherEmail} directly.</i>`
+                `Error: ${introSendErr.slice(0, 200)}\n\n` +
+                `<i>Referral rolled back to Pending Approval — batch-approve will retry. If urgent, resend manually via /admin.</i>`
               );
             } catch {}
           }
@@ -794,7 +823,8 @@ export async function POST(request: Request) {
       } : null,
     });
   } catch (error: any) {
+    // Sanitize: don't leak internals (Airtable record IDs, API token hints).
     console.error('Matching engine error:', error);
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'Matching engine error — please retry.' }, { status: 500 });
   }
 }

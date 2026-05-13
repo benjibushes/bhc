@@ -320,7 +320,20 @@ export async function POST(request: Request) {
                 if (j.matchFound) autoRouted = true;
               }
             } catch (e: any) {
+              // Hardening 2026-05-13: fetch failures used to log-and-forget,
+              // stranding the consumer. Now ping admin so the orphan is
+              // visible AND batch-approve still gets a shot on next tick.
               console.error('Signup auto-route failed:', e?.message);
+              try {
+                const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+                await sendTelegramMessage(
+                  TELEGRAM_ADMIN_CHAT_ID,
+                  `⚠️ <b>SIGNUP MATCHING FETCH FAILED</b>\n\n` +
+                  `Buyer: ${fullName} (${email})\nState: ${state}\nScore: ${serverIntentScore}\n\n` +
+                  `Error: ${(e?.message || 'unknown').slice(0, 200)}\n\n` +
+                  `<i>Consumer record was created; matching/suggest never ran. batch-approve will retry within 2h.</i>`
+                );
+              } catch {}
             }
           }
         }
@@ -344,12 +357,14 @@ export async function POST(request: Request) {
           });
           buyerStage = 'READY';
         } else if (isRancherPageLead) {
-          // Rancher-page lead: matching fires in backgroundTasks below. We don't
-          // send a welcome email here — the rancher-page intro flow handles it.
-          // Default to MATCHED here on the assumption that backgroundTasks will
-          // succeed; if it doesn't, the buyer still has a record + we'll see
-          // the failure in the bg-task error log.
-          buyerStage = 'MATCHED';
+          // Rancher-page lead: matching fires in backgroundTasks below. Stage
+          // defaults to READY (not MATCHED) — the matching call inside
+          // backgroundTasks flips it to MATCHED on success. If matching fails
+          // (network error, etc.), the buyer stays READY so batch-approve's
+          // waitlist-retry can pick them up instead of being orphaned at
+          // MATCHED with no referral. Old code defaulted to MATCHED which
+          // produced "matched but no referral" ghosts under failure.
+          buyerStage = 'READY';
         } else {
           // No rancher in state — waitlist with the founder-voice welcome
           await sendWelcomeAndReadyToBuy({
@@ -485,7 +500,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, consumer: record }, { status: 201 });
   } catch (error: any) {
+    // Sanitize: never echo internal error messages to the client (may leak
+    // Airtable IDs, API token hints, internal table names, etc.). Full
+    // error is in server logs for debugging.
     console.error('API error creating consumer:', error);
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'Could not complete signup. Please try again or email support@buyhalfcow.com.' }, { status: 500 });
   }
 }
