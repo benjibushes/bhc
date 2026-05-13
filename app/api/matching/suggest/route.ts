@@ -553,17 +553,11 @@ export async function POST(request: Request) {
             } catch (e) {
               console.error('Error sending capacity-full Telegram alert:', e);
             }
-          } else if (capacityPct >= 0.8) {
-            // 80%+ — warning
-            try {
-              await sendTelegramMessage(
-                TELEGRAM_ADMIN_CHAT_ID,
-                `⚠️ <b>CAPACITY ALERT:</b> ${rancherName} in ${rancherState} is at ${newRefs}/${maxRefs} referrals (80%+). Consider recruiting another rancher in ${rancherState}.`
-              );
-            } catch (e) {
-              console.error('Error sending capacity-warning Telegram alert:', e);
-            }
           }
+          // 80% warning intentionally dropped — under burst it fires for
+          // every match in a near-cap state and clogs the chat. The 100%
+          // alert above is the actionable signal; the morning digest
+          // surfaces 80%+ ranchers for slower planning.
         }
       } catch (e) {
         console.error('Error incrementing rancher referral count:', e);
@@ -777,23 +771,12 @@ export async function POST(request: Request) {
       }
 
       // Telegram noise reduction: routine no-match events roll into the
-      // morning digest. Only ping in real-time when the buyer is high-intent
-      // (score >= 70) — that's when "no rancher available" is actually a
-      // problem worth waking Ben up about.
-      const isHighIntentNoMatch = (intentScore || 0) >= 70;
-      try {
-        if (isHighIntentNoMatch) {
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `⏳ <b>HIGH-INTENT BUYER WAITLISTED</b>\n\n` +
-          `👤 ${buyerName} in ${buyerState}\n` +
-          `📦 ${orderType || 'Not specified'}\n` +
-          `Buyer waitlisted — will auto-match when a rancher goes live in ${buyerState}.`
-          );
-        }
-      } catch (e) {
-        console.error('Error sending no-match Telegram notification:', e);
-      }
+      // morning digest. Real-time pings for high-intent no-match were
+      // dropped 2026-05-13 ahead of spike — at scale, every uncovered
+      // state generates dozens of these per hour and clogged the chat.
+      // batch-approve's waitlist-retry path re-routes them automatically
+      // when a rancher comes online in the state, so the operator doesn't
+      // need to act in real-time.
     }
 
     return NextResponse.json({

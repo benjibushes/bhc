@@ -394,12 +394,13 @@ export async function POST(request: Request) {
         });
       } catch (e) { console.error('Admin alert error:', e); }
 
-      // Visibility threshold lowered 2026-05-07 from 70 → 40. Operator
-      // wants flow visibility (per-signup pings) for any meaningful intent.
-      // Below 40 = abandoned-app fills / pure browsers, still rolled into
-      // morning digest. The separate hot-lead alert below (score >= 80)
-      // adds 1-tap action buttons for highest-priority signups.
-      if (serverIntentScore >= 40) {
+      // Visibility threshold raised 2026-05-13 from 40 → 80 ahead of volume
+      // spike. The 40 setting produced 1 ping per medium-intent signup and
+      // detonated Telegram's 1 msg/sec/chat cap at burst scale. 80+ now
+      // captures only "real" buyers — daily-digest still rolls up the
+      // medium-intent population. Hot-lead alert below (also 80+) provides
+      // 1-tap action buttons for those highest-priority signups.
+      if (serverIntentScore >= 80) {
         try {
           await sendTelegramConsumerSignup({
             consumerId: record.id,
