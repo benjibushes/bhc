@@ -2603,8 +2603,13 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
           (c: any) => c['Founder Tier'] === 'Title Founder'
         ).length;
 
+        // BUG-FIX (2026-05-13): was filtering r['Approval Status'] but
+        // matching/suggest only sets r['Status']='Pending Approval'. The
+        // 'Approval Status' field is set by warmup/engage only — so the
+        // /morning command reported 0 pending all the time even when the
+        // queue was full. daily-digest + /pending already use Status.
         const pendingApprovals = referrals.filter(
-          (r: any) => r['Approval Status'] === 'pending-approval'
+          (r: any) => r['Status'] === 'Pending Approval'
         );
 
         const hotLeads = consumers.filter((c: any) => {
