@@ -111,9 +111,10 @@ export default function AdminInquiriesPage() {
   const handleUpdate = async (id: string) => {
     try {
       const saleAmount = editData.sale_amount ? parseFloat(editData.sale_amount) : null;
-      // Commission is 10% by default (configurable via env)
-      const commissionRate = parseFloat(process.env.NEXT_PUBLIC_COMMISSION_RATE || '10') / 100;
-      const commissionAmount = saleAmount ? saleAmount * commissionRate : null;
+      // Commission rate normalized — accepts "10" or "0.10" or "10%". See lib/commission.ts.
+      const raw = Number((process.env.NEXT_PUBLIC_COMMISSION_RATE || '0.10').replace('%', ''));
+      const commissionRate = !isFinite(raw) || raw <= 0 ? 0.10 : (raw > 1 ? raw / 100 : raw);
+      const commissionAmount = saleAmount ? Math.round(saleAmount * commissionRate * 100) / 100 : null;
 
       const response = await fetch(`/api/inquiries/${id}`, {
         method: 'PATCH',

@@ -6,6 +6,7 @@ import {
   updateRecord,
 } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
+import { calcCommission } from '@/lib/commission';
 import {
   sendTelegramMessage,
   TELEGRAM_ADMIN_CHAT_ID,
@@ -144,8 +145,7 @@ async function applyAction(
     }
     updates['Status'] = 'Closed Won';
     updates['Sale Amount'] = saleAmount;
-    const rate = Number(process.env.NEXT_PUBLIC_COMMISSION_RATE || '0.10');
-    updates['Commission Due'] = Math.round(saleAmount * rate * 100) / 100;
+    updates['Commission Due'] = calcCommission(saleAmount);
     updates['Closed At'] = new Date().toISOString();
     summary = `Marked Closed Won at $${saleAmount.toFixed(2)}. Commission ($${updates['Commission Due'].toFixed(2)}) invoice on the way.`;
   } else if (action === 'lost') {

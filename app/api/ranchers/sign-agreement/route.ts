@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendTelegramUpdate } from '@/lib/telegram';
+import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import jwt from 'jsonwebtoken';
 
@@ -201,12 +201,25 @@ export async function POST(request: Request) {
     }
 
     try {
-      await sendTelegramUpdate(
+      // Inline 1-tap-verify button. Without this, freshly-signed self-serve
+      // ranchers sit indefinitely — sign-agreement only sets Onboarding
+      // Status='Agreement Signed', but batch-approve requires
+      // 'Verification Complete' to flip them Active. Telegram callback
+      // 'rverify_' handler flips both Onboarding Status AND Verification
+      // Status in one tap (see app/api/webhooks/telegram/route.ts:1788).
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
         `✍️ <b>Agreement signed!</b>\n\n` +
         `<b>${rancherName}</b> (${rancher['State'] || 'Unknown'})\n` +
         `Signed as: ${signatureName.trim()}\n` +
         `Time: ${new Date(now).toLocaleString('en-US', { timeZone: 'America/Denver' })}\n\n` +
-        `📧 Dashboard setup email sent automatically\nNext step: Verification`
+        `📧 Dashboard setup email sent automatically.\n` +
+        `Tap below to 1-click verify and unlock routing — otherwise they sit until they self-verify on dashboard.`,
+        {
+          inline_keyboard: [
+            [{ text: '✅ Verify Now & Unlock Routing', callback_data: `rverify_${decoded.rancherId}` }],
+          ],
+        }
       );
     } catch {
       // Non-fatal

@@ -6,6 +6,7 @@ import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTe
 import { sendRerouteNotification, sendPilotUpsellEmail, sendInstantCommissionInvoice } from '@/lib/email';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
+import { calcCommission } from '@/lib/commission';
 import jwt from 'jsonwebtoken';
 
 // Pass reasons a rancher can give when declining a lead.
@@ -477,8 +478,7 @@ export async function PATCH(
 
     if (saleAmount !== undefined && saleAmount > 0) {
       fields['Sale Amount'] = saleAmount;
-      const commissionRate = Number(process.env.NEXT_PUBLIC_COMMISSION_RATE || '0.10');
-      fields['Commission Due'] = Math.round(saleAmount * commissionRate * 100) / 100;
+      fields['Commission Due'] = calcCommission(saleAmount);
     }
 
     if (notes !== undefined) {
@@ -514,7 +514,7 @@ export async function PATCH(
         const monthlyWinsForRancher = rancherWins.filter((r) => new Date(r['Closed At'] || 0).getTime() >= monthStart);
         const monthlyCommission = monthlyWinsForRancher.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
         const lifetimeCommission = rancherWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
-        const commission = Math.round((saleAmount || 0) * 0.10 * 100) / 100;
+        const commission = calcCommission(saleAmount || 0);
 
         await sendTelegramSaleCelebration({
           referralId: id,
