@@ -3,6 +3,7 @@ import { updateRecord, getRecordById, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramSaleCelebration } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
+import { calcCommission, getCommissionRate } from '@/lib/commission';
 
 export async function PATCH(
   request: Request,
@@ -50,9 +51,8 @@ export async function PATCH(
       if (isNaN(amount) || amount < 0) {
         return NextResponse.json({ error: 'Sale amount must be a positive number' }, { status: 400 });
       }
-      const commissionRate = Number(process.env.NEXT_PUBLIC_COMMISSION_RATE || '0.10');
       fields['Sale Amount'] = amount;
-      fields['Commission Due'] = Math.round(amount * commissionRate * 100) / 100;
+      fields['Commission Due'] = calcCommission(amount);
     }
 
     if (commissionPaid !== undefined) {
@@ -176,8 +176,7 @@ export async function PATCH(
         const monthlyWins = rancherWins.filter((r) => new Date(r['Closed At'] || 0).getTime() >= monthStart);
         const monthlyCommission = monthlyWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
         const lifetimeCommission = rancherWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
-        const commissionRate = Number(process.env.NEXT_PUBLIC_COMMISSION_RATE || '0.10');
-        const commission = Math.round((saleAmount || 0) * commissionRate * 100) / 100;
+        const commission = calcCommission(saleAmount || 0);
 
         await sendTelegramSaleCelebration({
           referralId: id,
