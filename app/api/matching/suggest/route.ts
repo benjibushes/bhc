@@ -10,7 +10,7 @@ import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -479,7 +479,46 @@ export async function POST(request: Request) {
     const now = new Date().toISOString();
     if (topMatch) {
       try {
-        const currentRefs = topMatch['Current Active Referrals'] || 0;
+        // ── Atomic-ish capacity bump ─────────────────────────────────────
+        // The scoring snapshot (taken at request start) reflects whatever
+        // counts existed then. Under burst load, multiple concurrent buyers
+        // can all score against the SAME stale count and all bump it past
+        // cap. Re-read the rancher right before write to shrink the race
+        // window. Not truly atomic (Airtable has no CAS), but cuts the
+        // overflow rate from "guaranteed" to "rare".
+        let fresh: any = topMatch;
+        try {
+          fresh = await getRecordById(TABLES.RANCHERS, topMatch.id);
+        } catch (e) {
+          console.warn('Capacity refetch failed; using snapshot count:', (e as any)?.message);
+        }
+        const currentRefs = (fresh && fresh['Current Active Referrals']) || 0;
+        const maxRefsForGuard = getMaxActiveReferrals(topMatch);
+        // Hot leads bypass cap by design (warmup-engaged opt-ins). For cold
+        // leads, if the fresh read shows we'd overflow, downgrade this
+        // referral to Waitlisted rather than corrupting the counter. The
+        // buyer will be re-routed by batch-approve's waitlist-retry path.
+        if (!isHotLead && maxRefsForGuard > 0 && currentRefs >= maxRefsForGuard) {
+          try {
+            await updateRecord(TABLES.REFERRALS, referral.id, {
+              'Status': 'Waitlisted',
+              'Notes': `[capacity-race] Refetched ${currentRefs}/${maxRefsForGuard} before bump; waitlisted to avoid overflow.`,
+            });
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `🟠 <b>CAPACITY RACE CAUGHT:</b> ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) was at cap on refetch — buyer routed to Waitlisted instead of overflowing counter. Indicates burst-traffic scenario.`
+            );
+          } catch (e) {
+            console.error('Capacity-race waitlist downgrade failed:', e);
+          }
+          return NextResponse.json({
+            success: true,
+            matchFound: false,
+            waitlisted: true,
+            reason: 'capacity_race',
+            referralId: referral.id,
+          });
+        }
         const newRefs = currentRefs + 1;
         await updateRecord(TABLES.RANCHERS, topMatch.id, {
           'Current Active Referrals': newRefs,
