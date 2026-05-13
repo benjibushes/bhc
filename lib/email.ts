@@ -102,6 +102,34 @@ function extractDomain(from: string | undefined): string {
 // for tagged Reply-To. Reply-To: replies.buyhalfcow.com paired with
 // From: ben@buyhalfcow.com is fine — both are subdomains of the same
 // organizational domain, and SPF/DKIM cover deliverability via the From.
+// ── Resend rate-limit guard ─────────────────────────────────────────────
+// Default Resend tier is 10 req/sec. Burst signups + cron loops easily
+// exceed that, dropping transactional emails with 429s. Token bucket
+// limits us to 8/sec (leaves headroom for the rate counter to refresh)
+// and serializes via a single global chain. 429 from Resend triggers a
+// 1s backoff + one retry.
+let _emailGate: Promise<unknown> = Promise.resolve();
+const _emailTimestamps: number[] = [];
+const EMAIL_MAX_PER_SEC = 8;
+async function _gateEmail<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = _emailGate;
+  let resolve!: () => void;
+  _emailGate = new Promise<void>(r => { resolve = r; });
+  try {
+    await prev;
+    const now = Date.now();
+    while (_emailTimestamps.length && now - _emailTimestamps[0] > 1000) _emailTimestamps.shift();
+    if (_emailTimestamps.length >= EMAIL_MAX_PER_SEC) {
+      const waitMs = 1000 - (now - _emailTimestamps[0]) + 5;
+      await new Promise(r => setTimeout(r, Math.max(0, waitMs)));
+    }
+    _emailTimestamps.push(Date.now());
+    return await fn();
+  } finally {
+    resolve();
+  }
+}
+
 const resend = {
   emails: {
     send: async (params: any) => {
@@ -154,7 +182,17 @@ const resend = {
       if (!params.text && params.html) {
         params.text = htmlToPlainText(params.html);
       }
-      return _resend.emails.send(params);
+      return _gateEmail(async () => {
+        const r: any = await _resend.emails.send(params);
+        // Resend surfaces 429 inside the .error object.
+        const errStr = r?.error ? JSON.stringify(r.error) : '';
+        if (r?.error && (/429|rate.?limit|too.?many/i.test(errStr))) {
+          console.warn('Resend 429 — backing off 1s, retrying once');
+          await new Promise(res => setTimeout(res, 1100));
+          return _resend.emails.send(params);
+        }
+        return r;
+      });
     }
   }
 };

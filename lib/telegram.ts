@@ -3,6 +3,33 @@ const TELEGRAM_ADMIN_CHAT_ID = process.env.TELEGRAM_ADMIN_CHAT_ID || '';
 
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
+// ── Per-chat throttle (1 msg/sec/chat is Telegram's hard limit) ─────────
+// Without this, burst events (cron loops, signup spikes) blast multiple
+// messages in the same second → 429 with retry_after → currently dropped
+// silently because the old code only logged the error. This preserves the
+// happy-path behavior and adds: (a) sequencing per chat, (b) sliding-window
+// throttle, (c) automatic retry_after honor on 429.
+const _chatGate: Record<string, Promise<unknown>> = {};
+const _lastSendAt: Record<string, number> = {};
+const TG_MIN_GAP_MS = 1100; // 1 msg/sec/chat with a hair of slack
+async function _gateForChat(chatId: string, fn: () => Promise<any>): Promise<any> {
+  const prev = _chatGate[chatId] || Promise.resolve();
+  const next = prev.then(async () => {
+    const since = Date.now() - (_lastSendAt[chatId] || 0);
+    if (since < TG_MIN_GAP_MS) {
+      await new Promise(r => setTimeout(r, TG_MIN_GAP_MS - since));
+    }
+    try {
+      return await fn();
+    } finally {
+      _lastSendAt[chatId] = Date.now();
+    }
+  });
+  // Don't keep failed sends in the chain — swap to resolved so future calls don't reject.
+  _chatGate[chatId] = next.catch(() => undefined);
+  return next;
+}
+
 async function sendTelegramMessage(chatId: string, text: string, replyMarkup?: any) {
   if (!TELEGRAM_BOT_TOKEN || !chatId) {
     console.warn('Telegram not configured, skipping notification');
@@ -22,36 +49,57 @@ async function sendTelegramMessage(chatId: string, text: string, replyMarkup?: a
     body.reply_markup = JSON.stringify(replyMarkup);
   }
 
-  const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  return _gateForChat(chatId, async () => {
+    const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
-    const err = await res.text();
-    console.error('Telegram send error:', err);
-    // Retry without HTML parsing — handles user data with <, >, & characters
-    try {
-      const fallbackBody: any = {
-        chat_id: chatId,
-        text: text.replace(/<[^>]*>/g, ''), // strip HTML tags for plain text
-      };
-      if (replyMarkup) fallbackBody.reply_markup = JSON.stringify(replyMarkup);
-      const retryRes = await fetch(`${TELEGRAM_API}/sendMessage`, {
+    // Honor Telegram's documented retry_after on 429.
+    if (res.status === 429) {
+      let retryMs = 1000;
+      try {
+        const j = await res.clone().json();
+        if (j?.parameters?.retry_after) retryMs = Math.min(30_000, Number(j.parameters.retry_after) * 1000);
+      } catch {}
+      console.warn(`Telegram 429 — backing off ${retryMs}ms then retrying once`);
+      await new Promise(r => setTimeout(r, retryMs));
+      const retry = await fetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fallbackBody),
+        body: JSON.stringify(body),
       });
-      if (retryRes.ok) return retryRes.json();
-      console.error('Telegram fallback also failed:', await retryRes.text());
-    } catch (retryErr) {
-      console.error('Telegram fallback error:', retryErr);
+      if (retry.ok) return retry.json();
+      console.error('Telegram 429 retry failed:', await retry.text());
+      return null;
     }
-    return null;
-  }
 
-  return res.json();
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('Telegram send error:', err);
+      // Retry without HTML parsing — handles user data with <, >, & characters
+      try {
+        const fallbackBody: any = {
+          chat_id: chatId,
+          text: text.replace(/<[^>]*>/g, ''), // strip HTML tags for plain text
+        };
+        if (replyMarkup) fallbackBody.reply_markup = JSON.stringify(replyMarkup);
+        const retryRes = await fetch(`${TELEGRAM_API}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fallbackBody),
+        });
+        if (retryRes.ok) return retryRes.json();
+        console.error('Telegram fallback also failed:', await retryRes.text());
+      } catch (retryErr) {
+        console.error('Telegram fallback error:', retryErr);
+      }
+      return null;
+    }
+
+    return res.json();
+  });
 }
 
 async function editTelegramMessage(chatId: string, messageId: number, text: string) {
