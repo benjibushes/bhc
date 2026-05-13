@@ -156,16 +156,17 @@ const resend = {
       // Reply-To resolution priority:
       //   1. Explicit replyTo passed by caller (honored as-is)
       //   2. _replyContext { type, recordId } passed by caller → tagged address
-      //   3. Default fallback: ben@<sending-domain>
+      //   3. Default fallback: inbox@replies.buyhalfcow.com — Resend inbound
+      //      catches every reply, lands in Conversations table via webhook.
+      //      Used to fall back to ben@<send-domain> which dumped untagged
+      //      replies into Ben's inbox and bypassed the inbound pipeline.
       if (!params.replyTo) {
+        const { replyToFor, REPLIES_DOMAIN } = await import('./replyAddressing');
         if (params._replyContext) {
-          const { replyToFor } = await import('./replyAddressing');
           const ctx = params._replyContext as { type: 'ref'|'usr'|'rnc'|'inq'; recordId: string };
           params.replyTo = replyToFor(ctx.type, ctx.recordId);
         } else {
-          // Match Reply-To to the actual sending domain in the From header.
-          const fromDomain = extractDomain(params.from);
-          params.replyTo = `ben@${fromDomain}`;
+          params.replyTo = `inbox@${REPLIES_DOMAIN}`;
         }
       }
       delete params._replyContext;
@@ -1098,10 +1099,9 @@ export async function sendPilotUpsellEmail(data: {
       from: getFromEmail(),
       to: data.email,
       // Reply-To deliberately omitted — wrapper auto-fills with
-      // ben@<sending-domain>. Previously had `replyTo: ADMIN_EMAIL` which
-      // routed rancher replies to Ben's personal Gmail (the env var
-      // ADMIN_EMAIL is set to benibeauchman@gmail.com so ranchers replying
-      // to upsell emails were polluting his personal inbox).
+      // inbox@replies.buyhalfcow.com (Resend inbound webhook captures the
+      // reply into Conversations). Previously routed to ADMIN_EMAIL which
+      // polluted Ben's personal Gmail with rancher replies.
       subject: `you just hit ${data.closesHit}. let's run it.`,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
