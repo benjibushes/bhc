@@ -351,9 +351,24 @@ export async function POST(request: Request) {
         // States. Falls back to legacy States Served field if Routing States
         // is empty (handles pre-migration records).
         const rState = normalizeState(r['State']);
-        const routingRaw = (r['Routing States'] || '').toString().trim();
-        const served = normalizeStates(routingRaw || r['States Served']);
-        if (!(rState === normalizedBuyerState || served.includes(normalizedBuyerState))) return false;
+        // ── Home-state gate (2026-05-13) ─────────────────────────────────
+        // RULE: ranchers route ONLY to their home state by default. Multi-
+        // state routing requires explicit admin opt-in via the
+        // `Admin Approved Multi-State` boolean field on the rancher record.
+        // Without this gate, Routing States can drift wide (e.g. nationwide
+        // shipper flags, bulk imports) and silently route cross-state leads
+        // that the operator never approved. Keeping the gate at the read
+        // layer means even pre-existing wide Routing States lists become
+        // safe — they're ignored until Ben flips the boolean.
+        const adminApprovedMultiState = !!r['Admin Approved Multi-State'];
+        if (!adminApprovedMultiState) {
+          // Strict home-only match.
+          if (rState !== normalizedBuyerState) return false;
+        } else {
+          const routingRaw = (r['Routing States'] || '').toString().trim();
+          const served = normalizeStates(routingRaw || r['States Served']);
+          if (!(rState === normalizedBuyerState || served.includes(normalizedBuyerState))) return false;
+        }
         // Tier Specialty filter — see definition above. Quarter buyers won't
         // get routed to Half/Whole-only ranchers, etc. Empty Tier Specialty =
         // no filter applied (legacy default).

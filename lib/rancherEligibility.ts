@@ -63,15 +63,26 @@ export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
 }
 
 /**
- * Returns the deduped 2-letter state codes a rancher serves (primary State +
- * any States Served entries). All comparisons against buyer state should run
- * through this so 'Montana' vs 'MT' typos can't strand customers.
+ * Returns the deduped 2-letter state codes a rancher serves.
+ *
+ * HOME-STATE GATE (2026-05-13): default behavior is HOME STATE ONLY. Multi-
+ * state coverage requires admin opt-in via the `Admin Approved Multi-State`
+ * boolean. Without the boolean, even a populated Routing States list is
+ * ignored. Prevents bulk-imported nationwide lists, accidental dashboard
+ * over-shares, or rancher-edited Preferred States from silently routing
+ * cross-state. Matches the gate in app/api/matching/suggest/route.ts so
+ * the signup-time "rancher available in your state?" check stays consistent.
  */
 export function getOperationalServedStates(rancher: RancherFields): string[] {
   const out = new Set<string>();
   const primary = normalizeState(rancher['State']);
   if (primary) out.add(primary);
-  for (const s of normalizeStates(rancher['States Served'] || '')) out.add(s);
+  const approved = !!(rancher as any)['Admin Approved Multi-State'];
+  if (approved) {
+    // Prefer Routing States (admin-controlled); fall back to legacy States Served.
+    const routing = String((rancher as any)['Routing States'] || rancher['States Served'] || '');
+    for (const s of normalizeStates(routing)) out.add(s);
+  }
   return Array.from(out);
 }
 
