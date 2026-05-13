@@ -41,7 +41,11 @@ export async function POST(request: Request) {
         email: normalizedEmail,
       },
       JWT_SECRET,
-      { expiresIn: '1h' }
+      // 24h expiry (was 1h). Ranchers check email hours-to-a-day after
+      // requesting, so 1h was producing "Invalid or expired login link"
+      // for the normal case. 24h is still tight enough that a stolen-phone
+      // token is low-value. Session cookie still 30d after exchange.
+      { expiresIn: '24h' }
     );
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -69,7 +73,7 @@ export async function POST(request: Request) {
             <p>Hi ${rancherName.split(' ')[0]},</p>
             <p>Click the button below to access your BuyHalfCow rancher dashboard:</p>
             <a href="${loginUrl}" class="button">Log In to Dashboard</a>
-            <p style="color: #6B4F3F; font-size: 14px;">This link expires in 1 hour. If you didn't request this, you can ignore this email.</p>
+            <p style="color: #6B4F3F; font-size: 14px;">This link is good for 24 hours. If you didn't request it, you can ignore this email.</p>
             <div class="footer">
               <p>BuyHalfCow</p>
             </div>
