@@ -1785,10 +1785,45 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         }
       }
 
+      else if (callbackData.startsWith('rcallcompl_')) {
+        const rancherId = callbackData.substring('rcallcompl_'.length);
+        try {
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          if (!rancher) {
+            await answerCallbackQuery(queryId, 'Rancher not found');
+            return NextResponse.json({ ok: true });
+          }
+          const currentStatus = (rancher['Onboarding Status'] || '').toString();
+          // Only advance from Call Scheduled. Don't overwrite signed / verified.
+          if (currentStatus === 'Call Scheduled' || currentStatus === '' || currentStatus === 'New') {
+            await updateRecord(TABLES.RANCHERS, rancherId, {
+              'Onboarding Status': 'Call Complete',
+              'Call Completed At': new Date().toISOString().slice(0, 10),
+            });
+            await answerCallbackQuery(queryId, '✅ Call marked complete');
+          } else {
+            await answerCallbackQuery(queryId, `No-op — status is ${currentStatus}`);
+          }
+        } catch (e: any) {
+          console.error('rcallcompl_ handler error:', e);
+          await answerCallbackQuery(queryId, 'Error — check logs');
+        }
+        return NextResponse.json({ ok: true });
+      }
+
       else if (callbackData.startsWith('rverify_')) {
         const rancherId = callbackData.substring('rverify_'.length);
         try {
-          await updateRecord(TABLES.RANCHERS, rancherId, { 'Onboarding Status': 'Verification Complete' });
+          // Set BOTH fields. Prior version only flipped Onboarding Status,
+          // leaving Verification Status='Prospect' which contradicts
+          // downstream filters and the sign-agreement copy claiming both
+          // flip together. batch-approve gates on Onboarding Status so
+          // routing worked, but other reads (admin dashboards, public
+          // page, audit log) saw inconsistent state.
+          await updateRecord(TABLES.RANCHERS, rancherId, {
+            'Onboarding Status': 'Verification Complete',
+            'Verification Status': 'Verified',
+          });
           await answerCallbackQuery(queryId, '✅ Verification approved!');
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';

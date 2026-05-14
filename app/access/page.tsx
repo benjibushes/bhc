@@ -193,6 +193,7 @@ function AccessPageContent() {
 
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submittedSegment, setSubmittedSegment] = useState('');
+  const [submittedRancherAvailable, setSubmittedRancherAvailable] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [formLoadedAt] = useState(Date.now());
@@ -350,6 +351,13 @@ function AccessPageContent() {
         throw new Error(data.error || 'Submission failed');
       }
 
+      // Capture rancherAvailable from API so success copy branches honestly.
+      // True → "matching you right now" promise is real.
+      // False → "no rancher in your state yet, you're on the waitlist."
+      try {
+        const data = await response.json();
+        setSubmittedRancherAvailable(!!data?.rancherAvailable);
+      } catch {}
       setSubmittedSegment(segment);
       setIsSubmitted(true);
       track('Lead', {
@@ -399,7 +407,9 @@ function AccessPageContent() {
                 <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
                 <span>
                   {isBeef
-                    ? <>We&apos;re matching you with a verified rancher in <strong>{formData.state}</strong> right now</>
+                    ? submittedRancherAvailable
+                      ? <>We&apos;ve got a verified rancher in <strong>{formData.state}</strong>. Check your inbox &mdash; one click confirms.</>
+                      : <>No verified rancher in <strong>{formData.state}</strong> yet. You&apos;re on the list and will be first to hear when one goes live.</>
                     : 'Log in to explore ranches, land deals, and member perks'}
                 </span>
               </div>
@@ -407,7 +417,9 @@ function AccessPageContent() {
                 <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
                 <span>
                   {isBeef
-                    ? 'Personal introduction email within 24-48 hours'
+                    ? submittedRancherAvailable
+                      ? 'Personal introduction email within 24-48 hours of your YES click'
+                      : 'Monthly update on which states are about to launch'
                     : 'When you&apos;re ready to source beef, tell us from your dashboard'}
                 </span>
               </div>

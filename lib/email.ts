@@ -447,6 +447,10 @@ export async function sendWelcomeAndReadyToBuy(data: {
       <p>Right now we don't have a verified rancher in ${esc(stateLabel)} yet — but I'm working on it. Every week I'm signing new ranchers state by state. The moment one goes live in your area, you'll be one of the first to hear.</p>
       <p>While you wait, I'll send you a short note once a month — what I'm seeing on the road, which states are about to launch, the actual numbers. Not marketing. Just the real situation.</p>
       <p style="font-size:14px;color:#6B4F3F;">Know a rancher in ${esc(stateLabel)} who sells direct? Reply with their name and I'll reach out personally.</p>
+      <div style="text-align:center;margin:30px 0;">
+        <a href="${SITE_URL}/member/login" class="cta">View Your Dashboard</a>
+        <p style="font-size:12px;color:#A7A29A;margin-top:10px;">Log in any time to update preferences or check status.</p>
+      </div>
     `;
 
   try {
