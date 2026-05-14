@@ -4,12 +4,19 @@ import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 
+// External hats CTA links straight to merch store; middleware /hats also
+// redirects there but using the absolute URL in nav avoids a same-origin
+// hop and lets us decorate with UTM at the nav-click level.
+const HATS_NAV_URL =
+  'https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=nav&utm_campaign=hat-launch';
+
 const NAV_LINKS = [
   { href: '/map', label: 'Map' },
   { href: '/ranchers', label: 'Ranchers' },
   { href: '/wins', label: 'Wins' },
   { href: '/founders', label: 'Founders' },
   { href: '/brand-partners', label: 'Brands' },
+  { href: HATS_NAV_URL, label: '🧢 Hats', external: true },
   { href: '/about', label: 'About' },
   { href: '/faq', label: 'FAQ' },
 ];
@@ -37,13 +44,25 @@ export default function Header() {
           {/* Desktop Nav */}
           <nav className="hidden md:flex items-center gap-6">
             {NAV_LINKS.map(link => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="text-sm text-saddle hover:text-charcoal transition-colors"
-              >
-                {link.label}
-              </Link>
+              link.external ? (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-saddle hover:text-charcoal transition-colors"
+                >
+                  {link.label}
+                </a>
+              ) : (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="text-sm text-saddle hover:text-charcoal transition-colors"
+                >
+                  {link.label}
+                </Link>
+              )
             ))}
           </nav>
 
@@ -82,7 +101,18 @@ export default function Header() {
         {/* Mobile Menu */}
         {open && (
           <div className="md:hidden border-t border-dust py-4 space-y-1">
-            {NAV_LINKS.map(link => (
+            {NAV_LINKS.map(link => link.external ? (
+              <a
+                key={link.href}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
+                className="block py-2 text-sm text-saddle hover:text-charcoal transition-colors"
+              >
+                {link.label}
+              </a>
+            ) : (
               <Link
                 key={link.href}
                 href={link.href}

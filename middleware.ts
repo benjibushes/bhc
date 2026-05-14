@@ -26,8 +26,23 @@ function isAdminAuthed(request: NextRequest): boolean {
   return false;
 }
 
+// Vanity redirects → merch store hat collection. Cuts friction from the
+// brand domain to the Shopify store. UTM tags so we can measure traffic
+// source in Shopify Analytics.
+const MERCH_HAT_URL = 'https://merch.buyhalfcow.com/collections/hats';
+const VANITY_REDIRECTS: Record<string, string> = {
+  '/hat': `${MERCH_HAT_URL}?utm_source=buyhalfcow&utm_medium=vanity&utm_campaign=hat-launch&utm_content=hat`,
+  '/hats': `${MERCH_HAT_URL}?utm_source=buyhalfcow&utm_medium=vanity&utm_campaign=hat-launch&utm_content=hats`,
+  '/merch': `${MERCH_HAT_URL}?utm_source=buyhalfcow&utm_medium=vanity&utm_campaign=hat-launch&utm_content=merch`,
+  '/trucker': `${MERCH_HAT_URL}?utm_source=buyhalfcow&utm_medium=vanity&utm_campaign=hat-launch&utm_content=trucker`,
+};
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Vanity merch redirects (308 — preserve method, permanent for SEO/share).
+  const vanity = VANITY_REDIRECTS[pathname];
+  if (vanity) return NextResponse.redirect(vanity, 308);
 
   // Protect admin API routes
   if (pathname.startsWith('/api/admin/') || pathname.startsWith('/api/referrals')) {

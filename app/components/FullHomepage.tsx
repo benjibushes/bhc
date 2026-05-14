@@ -187,26 +187,31 @@ export default function FullHomepage() {
 
       <Divider />
 
-      {/* MERCH SECTION - Signal of Belief */}
+      {/* MERCH / HATS SECTION — drives traffic to merch.buyhalfcow.com.
+          New hat drop replaces the legacy Sackett collab CTA. Free
+          shipping over $35 mirrors Shopify shipping rule. */}
       <section className="py-20 bg-charcoal text-bone">
         <Container>
           <div className="text-center space-y-8">
+            <p className="text-xs uppercase tracking-[0.3em] text-dust">New Drop</p>
             <h2 className="font-serif text-4xl md:text-5xl">
-              Wear The Signal
+              Rep The Herd
             </h2>
             <p className="text-xl text-dust max-w-2xl mx-auto leading-relaxed">
-              Limited Sackett Ranch collab. If you're wearing this, you were early.<br />
-              <strong className="text-bone">This is how we prove demand to ranchers — and fund the first partnerships.</strong>
+              Trucker hats made for ranchers, beef lovers, and anyone who knows
+              where their food comes from.
+              <br />
+              <strong className="text-bone">Free shipping over $35. Ships in 5–7 days.</strong>
             </p>
-            
+
             <div className="pt-6">
-              <a 
-                href="https://www.sackett-ranch.com/pages/buy-half-cow" 
-            target="_blank"
-            rel="noopener noreferrer"
+              <a
+                href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=homepage-hero&utm_campaign=hat-launch"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="inline-block px-12 py-5 bg-bone text-charcoal hover:bg-dust hover:text-bone transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone"
               >
-                Get Yours →
+                🧢 Shop Hats →
               </a>
             </div>
 
@@ -400,12 +405,12 @@ export default function FullHomepage() {
                 Apply as a Rancher
               </a>
               <a
-                href="https://www.sackett-ranch.com/pages/buy-half-cow"
+                href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=cta&utm_campaign=hat-launch"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                Shop Merch
+                🧢 Shop Hats
               </a>
             </div>
             <p className="text-sm pt-4 text-dust">
@@ -430,7 +435,7 @@ export default function FullHomepage() {
               <Button href="/faq" variant="secondary">FAQ</Button>
               <Button href="/about" variant="secondary">About</Button>
               <Button href="/news" variant="secondary">News</Button>
-              <Button href="https://www.sackett-ranch.com/pages/buy-half-cow" variant="secondary">Merch</Button>
+              <Button href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=footer&utm_campaign=hat-launch" variant="secondary">🧢 Hats</Button>
               <Button href="/member/login" variant="secondary">Member Login</Button>
               <Button href="/rancher/login" variant="secondary">Rancher Login</Button>
             </div>
