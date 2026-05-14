@@ -153,7 +153,7 @@ export async function POST(request: Request) {
 
     <div class="step step-done">✅ <strong>Agreement signed</strong> — Done</div>
     <div class="step"><strong>🖥️ Set up your ranch page</strong> — Add your logo, tagline, about text, pricing, and payment links. This is what buyers will see.</div>
-    <div class="step"><strong>🔍 Start verification</strong> — Ship a product sample so we can get you approved fast</div>
+    <div class="step"><strong>🔍 Start verification</strong> — Submit verification signals on your dashboard (3+ signals = instant approval).</div>
     <div class="step"><strong>🟢 Go live</strong> — Once verified, your page goes live and buyers start coming in.</div>
 
     <div style="text-align: center; margin: 32px 0;">
@@ -164,15 +164,16 @@ export async function POST(request: Request) {
     <div class="divider"></div>
 
     <p><strong>🔍 Verification — Here's How:</strong></p>
-    <p>Complete a quick verification on your dashboard by providing at least 2 of the following:</p>
+    <p>On your dashboard, fill in any of the following. <strong>3 or more = instant auto-approve.</strong> Fewer than 3 = we review within 24-48h.</p>
     <ul style="color: #6B4F3F; line-height: 2;">
       <li>2-3 customer references (name + contact info)</li>
       <li>Google Reviews or Facebook Reviews link</li>
-      <li>Social media presence (Instagram, Facebook, etc.)</li>
+      <li>Social media presence (Instagram and/or Facebook)</li>
       <li>USDA processing facility name</li>
       <li>Certifications (USDA, organic, grass-fed, etc.)</li>
+      <li>Gallery photos of your operation</li>
     </ul>
-    <p>Once verified, we'll go live with your page immediately — no additional steps needed from you.</p>
+    <p>Once verified, your page goes live and buyers route to you on the next 2-hourly approval cycle.</p>
 
     <div class="divider"></div>
 

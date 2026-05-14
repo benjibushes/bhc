@@ -1128,15 +1128,16 @@ export default function RancherSetupWizard() {
         {step === 6 && (
           <section className="space-y-5 bg-sage/10 border-2 border-sage p-7 md:p-8 text-center">
             <p className="text-xs uppercase tracking-[0.2em] text-sage-dark font-bold">
-              You&rsquo;re live
+              Agreement signed
             </p>
             <h2 className="font-serif text-3xl md:text-4xl text-charcoal">
               Welcome to the network.
             </h2>
             <p className="text-charcoal/85 max-w-md mx-auto leading-relaxed">
               <strong>{rancher.ranchName}</strong> is signed and locked in.
-              Your public page is live, your dashboard is ready, and BuyHalfCow
-              starts routing buyers in your state immediately.
+              <strong> One last step:</strong> hit &ldquo;Start Verification&rdquo;
+              on your dashboard. Most ranchers complete it in 2 minutes.
+              Once verified, your page goes live and buyers route to you within 2 hours.
             </p>
             <div className="flex flex-wrap justify-center gap-3 pt-3">
               {dashboardLink ? (
@@ -1415,8 +1416,9 @@ function SignStep({
           Lock it in &mdash; sign the partner agreement
         </h2>
         <p className="text-sm text-saddle mt-1">
-          One signature. No PDF, no notary, no email round-trip. As soon as
-          you sign, your page goes live and we start routing buyers.
+          One signature. No PDF, no notary, no email round-trip. Signing locks
+          you in &mdash; next step is verification (instant tap if your profile
+          is filled out, 24-48h otherwise).
         </p>
       </header>
 

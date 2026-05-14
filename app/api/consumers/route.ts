@@ -498,7 +498,26 @@ export async function POST(request: Request) {
     // Don't await — let it run in the background after response is sent
     backgroundTasks().catch(e => console.error('Background tasks error:', e));
 
-    return NextResponse.json({ success: true, consumer: record }, { status: 201 });
+    // Synchronous "rancher available?" check so the success page can branch
+    // honestly. Without this the UI promised "matching you right now" to
+    // every Beef Buyer including the ones who'd actually be waitlisted in
+    // an uncovered state. getAllRecords(RANCHERS) is cached 10s → second
+    // read here is free if the matching engine ran first; otherwise +~150ms.
+    let rancherAvailable = false;
+    try {
+      const { getAllRecords, TABLES } = await import('@/lib/airtable');
+      const { hasOperationalRancherForState } = await import('@/lib/rancherEligibility');
+      const allRanchers = await getAllRecords(TABLES.RANCHERS);
+      rancherAvailable = hasOperationalRancherForState(allRanchers, state);
+    } catch (e) {
+      console.warn('Could not compute rancherAvailable for response:', (e as any)?.message);
+    }
+
+    return NextResponse.json({
+      success: true,
+      consumer: record,
+      rancherAvailable,
+    }, { status: 201 });
   } catch (error: any) {
     // Sanitize: never echo internal error messages to the client (may leak
     // Airtable IDs, API token hints, internal table names, etc.). Full

@@ -407,7 +407,6 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                         <option value="Quarter">Quarter Cow</option>
                         <option value="Half">Half Cow</option>
                         <option value="Whole">Whole Cow</option>
-                        <option value="Not Sure">Not Sure Yet</option>
                       </select>
                     </div>
                     <div>
@@ -417,12 +416,14 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                         onChange={(e) => setUpgradeForm(prev => ({ ...prev, budgetRange: e.target.value }))}
                         className="w-full px-3 py-2 border border-dust bg-bone text-sm"
                       >
+                        {/* Brackets mirror /access intentionally — old brackets
+                            (<$500, $500-1000, etc) were below any real rancher's
+                            price and produced unmatchable leads. */}
                         <option value="">Select...</option>
-                        <option value="<$500">Under $500</option>
-                        <option value="$500-$1000">$500 - $1,000</option>
-                        <option value="$1000-$2000">$1,000 - $2,000</option>
-                        <option value="$2000+">$2,000+</option>
-                        <option value="Unsure">Unsure</option>
+                        <option value="$1,000-$1,500">$1,000 - $1,500</option>
+                        <option value="$2,000-$2,500">$2,000 - $2,500</option>
+                        <option value="$4,000-$5,000">$4,000 - $5,000</option>
+                        <option value="$5,000+">$5,000+</option>
                       </select>
                     </div>
                   </div>

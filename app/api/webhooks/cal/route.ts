@@ -130,9 +130,42 @@ export async function POST(request: Request) {
         `📅 ${dateDisplay} MT\n` +
         `📧 ${attendeeEmail}\n` +
         (rancher
-          ? `Status: ${rancher['Onboarding Status'] || 'New'}\n\n<i>After the call, tap Call Complete in Airtable or via /bhc-ops to unlock their wizard signing step.</i>`
-          : '⚠️ Not found in rancher database — they may have booked with a different email than they self-submitted with.')
+          ? `Status: ${rancher['Onboarding Status'] || 'New'}\n\n<i>After the call, tap below to unlock their wizard signing step. MEETING_ENDED webhook also flips this automatically if Cal.com fires it.</i>`
+          : '⚠️ Not found in rancher database — they may have booked with a different email than they self-submitted with.'),
+        rancher
+          ? {
+              inline_keyboard: [
+                [{ text: '✅ Mark Call Complete', callback_data: `rcallcompl_${rancher.id}` }],
+              ],
+            }
+          : undefined
       );
+    }
+
+    else if (triggerEvent === 'MEETING_ENDED') {
+      // Auto-flip Onboarding Status='Call Complete' so the rancher's setup
+      // wizard unblocks the signing step without operator intervention.
+      // Cal.com fires MEETING_ENDED when the booking's end time passes.
+      if (rancher) {
+        try {
+          const currentStatus = (rancher['Onboarding Status'] || '').toString();
+          // Only advance from Call Scheduled — don't overwrite Agreement
+          // Signed / Verification Complete / Live if rancher somehow got
+          // ahead via dashboard.
+          if (currentStatus === 'Call Scheduled') {
+            await updateRecord(TABLES.RANCHERS, rancher.id, {
+              'Onboarding Status': 'Call Complete',
+              'Call Completed At': new Date().toISOString().slice(0, 10),
+            });
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `✅ <b>CALL COMPLETE (auto)</b>\n\n🤠 ${rancherName}\n📧 ${attendeeEmail}\n\n<i>Onboarding Status auto-advanced to Call Complete via Cal.com MEETING_ENDED. Wizard signing step is now unblocked for them.</i>`
+            );
+          }
+        } catch (e) {
+          console.error('[cal webhook] MEETING_ENDED update failed:', e);
+        }
+      }
     }
 
     else if (triggerEvent === 'BOOKING_CANCELLED') {

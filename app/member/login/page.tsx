@@ -48,7 +48,7 @@ export default function MemberLoginPage() {
               If you have an approved account, you&apos;ll receive a login link at <strong className="text-charcoal">{email}</strong>.
             </p>
             <p className="text-sm text-dust">
-              The link expires in 1 hour. Check spam if you don&apos;t see it.
+              The link works for 7 days. Check spam if you don&apos;t see it.
             </p>
             <div className="pt-6">
               <button
