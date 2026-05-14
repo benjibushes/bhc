@@ -31,6 +31,7 @@ type Rancher = {
   agreementSigned: boolean;
   pageLive: boolean;
   onboardingStatus?: string;
+  callCompletedAt?: string;
   Email?: string;
   Phone?: string;
   City?: string;
@@ -356,13 +357,29 @@ export default function RancherSetupWizard() {
     }
   }
 
-  // Hybrid B gate: rancher must have completed the onboarding call (Ben
-  // marks Onboarding Status = "Call Complete" via Telegram callback or
-  // dashboard) before agreement signing unlocks. Existing ranchers that
-  // already had calls done are backfilled by scripts/backfill-call-complete.mjs.
+  // Hybrid B gate: rancher must have completed the onboarding call before
+  // signing unlocks. Two signals count as "call done":
+  //   1. Onboarding Status advanced to Call Complete / Verification Pending /
+  //      Verification Complete / Live / Agreement Signed (any post-call enum).
+  //   2. Call Completed At date is set on the record (proof the call happened
+  //      even if Onboarding Status was advanced to a non-canonical value like
+  //      "Docs Sent" by legacy operator action).
+  // Without signal #2 a rancher whose call WAS held but whose status got
+  // bumped to "Docs Sent" instead of "Call Complete" was being asked to
+  // book a SECOND call when they revisited the wizard. Real bug — Anna
+  // Gajewski (Renick Valley) hit it on 2026-05-13.
   function canSkipBooking(): boolean {
     const status = (rancher?.onboardingStatus || '').toString();
-    return status === 'Call Complete' || status === 'Verification Pending' || status === 'Verification Complete' || status === 'Live';
+    if (
+      status === 'Call Complete' ||
+      status === 'Docs Sent' ||
+      status === 'Agreement Signed' ||
+      status === 'Verification Pending' ||
+      status === 'Verification Complete' ||
+      status === 'Live'
+    ) return true;
+    if (rancher?.callCompletedAt) return true;
+    return false;
   }
 
   if (loading) {
