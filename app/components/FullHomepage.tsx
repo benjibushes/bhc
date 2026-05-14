@@ -136,6 +136,20 @@ export default function FullHomepage() {
         </Container>
       </section>
 
+      {/* Landscape image strip — break up the text wall + signal authenticity.
+          Plain <img> instead of next/image because the source is the Shopify
+          CDN and we haven't allowlisted it in next.config. eager-load above
+          the fold; lazy below. */}
+      <section className="relative w-full overflow-hidden">
+        <img
+          src="https://cdn.shopify.com/s/files/1/0720/5348/9896/files/MAKE_AMERICA_GRASS_FED_-_LOS_RIOS_FARM-259.jpg?v=1739935780"
+          alt="A rancher wearing the BuyHalfCow trucker hat in a grass-fed field"
+          className="w-full h-[260px] md:h-[420px] object-cover"
+          loading="eager"
+          fetchPriority="high"
+        />
+      </section>
+
       <Divider />
 
       {/* MOVEMENT + FOUNDERS CTA — drive campaign traffic into the two new
@@ -189,35 +203,68 @@ export default function FullHomepage() {
 
       {/* MERCH / HATS SECTION — drives traffic to merch.buyhalfcow.com.
           New hat drop replaces the legacy Sackett collab CTA. Free
-          shipping over $35 mirrors Shopify shipping rule. */}
+          shipping over $35 mirrors Shopify shipping rule. Product
+          images sourced from the Shopify CDN (BHC + Vuck Fegans hats). */}
       <section className="py-20 bg-charcoal text-bone">
         <Container>
-          <div className="text-center space-y-8">
-            <p className="text-xs uppercase tracking-[0.3em] text-dust">New Drop</p>
-            <h2 className="font-serif text-4xl md:text-5xl">
-              Rep The Herd
-            </h2>
-            <p className="text-xl text-dust max-w-2xl mx-auto leading-relaxed">
-              Trucker hats made for ranchers, beef lovers, and anyone who knows
-              where their food comes from.
-              <br />
-              <strong className="text-bone">Free shipping over $35. Ships in 5–7 days.</strong>
-            </p>
-
-            <div className="pt-6">
+          <div className="grid md:grid-cols-2 gap-10 items-center max-w-5xl mx-auto">
+            {/* Product image collage */}
+            <div className="grid grid-cols-2 gap-3">
               <a
-                href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=homepage-hero&utm_campaign=hat-launch"
+                href="https://merch.buyhalfcow.com/products/buy-half-cow-trucker?utm_source=buyhalfcow&utm_medium=hero-image&utm_campaign=hat-launch"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-block px-12 py-5 bg-bone text-charcoal hover:bg-dust hover:text-bone transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone"
+                className="block aspect-square overflow-hidden bg-bone/5 border border-bone/10 hover:border-bone transition-colors"
               >
-                🧢 Shop Hats →
+                <img
+                  src="https://cdn.shopify.com/s/files/1/0720/5348/9896/files/MAKE_AMERICA_GRASS_FED_-_LOS_RIOS_FARM-259.jpg?v=1739935780"
+                  alt="BUY HALF COW Trucker hat"
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+              </a>
+              <a
+                href="https://merch.buyhalfcow.com/products/vuck-fegans-trucker?utm_source=buyhalfcow&utm_medium=hero-image&utm_campaign=hat-launch"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block aspect-square overflow-hidden bg-bone/5 border border-bone/10 hover:border-bone transition-colors"
+              >
+                <img
+                  src="https://cdn.shopify.com/s/files/1/0720/5348/9896/files/retro-trucker-hat-white-front-67b54f8b08425.jpg?v=1739935633"
+                  alt="Vuck Fegans Trucker hat"
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
               </a>
             </div>
 
-            <p className="text-sm text-dust pt-4">
-              HERD members only. Sells out fast.
-            </p>
+            {/* Copy + CTA */}
+            <div className="text-center md:text-left space-y-6">
+              <p className="text-xs uppercase tracking-[0.3em] text-dust">New Drop</p>
+              <h2 className="font-serif text-4xl md:text-5xl">
+                Rep The Herd
+              </h2>
+              <p className="text-lg text-dust leading-relaxed">
+                Trucker hats made for ranchers, beef lovers, and anyone who knows
+                where their food comes from.
+                <br />
+                <strong className="text-bone">Free shipping over $35. Ships in 5–7 days.</strong>
+              </p>
+
+              <div className="pt-2">
+                <a
+                  href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=homepage-hero&utm_campaign=hat-launch"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block px-12 py-5 bg-bone text-charcoal hover:bg-dust hover:text-bone transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone"
+                >
+                  🧢 Shop Hats →
+                </a>
+              </div>
+              <p className="text-sm text-dust">
+                HERD members only. Sells out fast.
+              </p>
+            </div>
           </div>
         </Container>
       </section>
