@@ -107,6 +107,10 @@ export async function GET(req: Request) {
     agreementSigned: !!rancher['Agreement Signed'],
     pageLive: !!rancher['Page Live'],
     onboardingStatus: rancher['Onboarding Status'] || '',
+    // Wizard reads this as fallback proof the call happened — covers
+    // ranchers whose Onboarding Status got bumped to a non-canonical
+    // value (e.g. "Docs Sent") while skipping past "Call Complete".
+    callCompletedAt: rancher['Call Completed At'] || '',
   };
   for (const f of ALLOWED_FIELDS) {
     if (rancher[f] !== undefined) out[f] = rancher[f];
