@@ -64,6 +64,9 @@ export async function PATCH(request: Request) {
       'Facebook URL',
       'Instagram URL',
       'Processing Facility',
+      // Multi-user: comma/newline list of additional emails allowed to log
+      // into this rancher's dashboard. Login flow matches against this.
+      'Team Emails',
     ];
 
     // Handle special actions

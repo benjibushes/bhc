@@ -163,6 +163,8 @@ export async function GET() {
         reserveLink: rancher['Reserve Link'] || '',
         customNotes: rancher['Custom Notes'] || '',
         customProducts: rancher['Custom Products'] || '',
+        // Multi-user: additional emails allowed to log into this dashboard.
+        teamEmails: rancher['Team Emails'] || '',
         // Click tracking stats
         quarterClicks: rancher['Quarter Clicks'] || 0,
         halfClicks: rancher['Half Clicks'] || 0,
