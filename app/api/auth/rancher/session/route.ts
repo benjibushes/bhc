@@ -34,6 +34,10 @@ export async function GET() {
         email: decoded.email,
         state: decoded.state,
       },
+      // Surface admin impersonation flag so the dashboard can show admin-only
+      // controls (e.g. "Revive Lead" on Closed Lost referrals). Set by
+      // /api/admin/ranchers/[id]/impersonate when the JWT is minted.
+      impersonatedBy: decoded.impersonatedBy || null,
     });
   } catch (error: any) {
     console.error('Rancher session error:', error);
