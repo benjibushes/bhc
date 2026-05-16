@@ -919,6 +919,14 @@ export default function AdminPage() {
                       <h2 className="font-[family-name:var(--font-serif)] text-2xl">Rancher Applications</h2>
 
                       <div className="flex items-center gap-3 flex-wrap">
+                        <a
+                          href="/map/add-a-rancher"
+                          target="_blank"
+                          className="px-4 py-2 border-2 border-[#0E0E0E] bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium hover:bg-[#2A2A2A]"
+                          title="Opens the self-submit form. Use for ranchers you want to onboard yourself — fill in their info, they get a setup link emailed."
+                        >
+                          + Add Rancher
+                        </a>
                         <select
                           value={rancherViewFilter}
                           onChange={(e) => { setRancherViewFilter(e.target.value); setPipelineFilter(''); }}
