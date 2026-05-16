@@ -203,6 +203,7 @@ export default function RancherDashboardPage() {
         'Ships Nationwide': r.shipsNationwide ? 'true' : '',
         'Beef Types': r.beefTypes || '',
         'Certifications': r.certifications || '',
+        'Team Emails': (r as any).teamEmails || '',
       });
       // Parse custom products
       try {
@@ -1318,6 +1319,20 @@ export default function RancherDashboardPage() {
                       placeholder="USDA Inspected, Grass-Fed, No Hormones"
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Team Emails <span className="text-dust font-normal">(extra logins for spouse, hired help, etc.)</span></label>
+                    <textarea
+                      value={pageForm['Team Emails'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Team Emails': e.target.value }))}
+                      placeholder="spouse@ranch.com&#10;ranchhand@ranch.com"
+                      rows={2}
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm font-mono"
+                    />
+                    <p className="text-xs text-dust">
+                      One email per line. Anyone listed here can request a login link at /rancher/login and access this dashboard. Primary email always works regardless.
+                    </p>
                   </div>
 
                   <div className="space-y-2">

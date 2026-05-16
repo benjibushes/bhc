@@ -20,9 +20,13 @@ export async function POST(request: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
 
+    // Match primary Email OR any address in Team Emails (multi-user per ranch).
+    // Team Emails is a comma/newline list; we substring-match the typed email
+    // inside it. FIND() in Airtable formulas returns 0 if not found, >0 if
+    // present — wrapping in IF gives a clean boolean for OR.
     const ranchers = await getAllRecords(
       TABLES.RANCHERS,
-      `LOWER({Email}) = "${escapeAirtableValue(normalizedEmail)}"`
+      `OR(LOWER({Email}) = "${escapeAirtableValue(normalizedEmail)}", FIND("${escapeAirtableValue(normalizedEmail)}", LOWER({Team Emails})))`
     );
 
     if (ranchers.length === 0) {
@@ -32,7 +36,11 @@ export async function POST(request: Request) {
       });
     }
 
-    const rancher = ranchers[0] as any;
+    // If multiple records match (rare — same email listed on two ranches),
+    // pick the one where it's the primary first, else the first match.
+    const rancher = (ranchers.find((r: any) =>
+      (r['Email'] || '').toString().trim().toLowerCase() === normalizedEmail
+    ) || ranchers[0]) as any;
 
     const token = jwt.sign(
       {
