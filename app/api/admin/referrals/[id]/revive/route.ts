@@ -89,11 +89,15 @@ export async function POST(
     await updateRecord(TABLES.REFERRALS, id, updates);
 
     // Telegram audit so revivals are visible — also useful for spotting
-    // mass-revive accidents.
+    // mass-revive accidents. Escape user-controlled fields (buyer name +
+    // email could contain < > & from spammy signups) so HTML parse_mode
+    // doesn't break the message.
+    const esc = (s: string) =>
+      String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     try {
       await sendTelegramMessage(
         TELEGRAM_ADMIN_CHAT_ID,
-        `♻️ <b>LEAD REVIVED</b>\n\nBuyer: ${buyerName} (${buyerEmail})\nStatus: <code>${fromStatus}</code> → <code>${toStatus}</code>\nReferral: ${id}\n\n<i>Closed At cleared. Activity stamped. Cron will treat as fresh.</i>`
+        `♻️ <b>LEAD REVIVED</b>\n\nBuyer: ${esc(buyerName)} (${esc(buyerEmail)})\nStatus: <code>${esc(fromStatus)}</code> → <code>${esc(toStatus)}</code>\nReferral: ${esc(id)}\n\n<i>Closed At cleared. Activity stamped. Cron will treat as fresh.</i>`
       );
     } catch {}
 

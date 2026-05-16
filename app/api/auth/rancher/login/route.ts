@@ -20,27 +20,41 @@ export async function POST(request: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Match primary Email OR any address in Team Emails (multi-user per ranch).
-    // Team Emails is a comma/newline list; we substring-match the typed email
-    // inside it. FIND() in Airtable formulas returns 0 if not found, >0 if
-    // present — wrapping in IF gives a clean boolean for OR.
-    const ranchers = await getAllRecords(
+    // Match primary Email OR an EXACT entry in Team Emails. Earlier version
+    // used Airtable FIND() inside the formula — that's a substring match
+    // ("alice" matches "alice@ranch.com"). Auth bypass: attacker types a
+    // substring they control as a real inbox and gets the magic link to
+    // their address. Now we exact-match by parsing the Team Emails field
+    // server-side.
+    let primary = await getAllRecords(
       TABLES.RANCHERS,
-      `OR(LOWER({Email}) = "${escapeAirtableValue(normalizedEmail)}", FIND("${escapeAirtableValue(normalizedEmail)}", LOWER({Team Emails})))`
+      `LOWER({Email}) = "${escapeAirtableValue(normalizedEmail)}"`
     );
+    let rancher: any = primary[0] || null;
 
-    if (ranchers.length === 0) {
+    if (!rancher) {
+      // No primary email match — scan Team Emails field. Pulling all ranchers
+      // is fine: getAllRecords(RANCHERS) is in-process cached (10s TTL) and
+      // matching/suggest already does this on hot path.
+      const all = await getAllRecords(TABLES.RANCHERS);
+      const splitRe = /[\s,;\n]+/;
+      for (const r of all as any[]) {
+        const teamRaw = String(r['Team Emails'] || '').toLowerCase();
+        if (!teamRaw) continue;
+        const list = teamRaw.split(splitRe).map((s) => s.trim()).filter(Boolean);
+        if (list.includes(normalizedEmail)) {
+          rancher = r;
+          break;
+        }
+      }
+    }
+
+    if (!rancher) {
       return NextResponse.json({
         success: true,
         message: 'If this email is registered, you will receive a login link.',
       });
     }
-
-    // If multiple records match (rare — same email listed on two ranches),
-    // pick the one where it's the primary first, else the first match.
-    const rancher = (ranchers.find((r: any) =>
-      (r['Email'] || '').toString().trim().toLowerCase() === normalizedEmail
-    ) || ranchers[0]) as any;
 
     const token = jwt.sign(
       {
