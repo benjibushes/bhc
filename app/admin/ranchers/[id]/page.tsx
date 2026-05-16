@@ -226,6 +226,19 @@ export default function AdminRancherDetailPage() {
                   </a>
                 )}
                 <button
+                  onClick={async () => {
+                    if (!confirm(`Open the rancher dashboard as ${rancher.operator_name || rancher.ranch_name}? You'll see exactly what they see (leads, earnings, settings). Audit alert fires to Telegram. 4h session.`)) return;
+                    const res = await fetch(`/api/admin/ranchers/${id}/impersonate`, { method: 'POST' });
+                    if (!res.ok) { alert('Impersonation failed — check console'); console.error(await res.text()); return; }
+                    const data = await res.json();
+                    window.open(data.redirectTo || '/rancher', '_blank');
+                  }}
+                  className="px-4 py-2 text-sm border border-[#0E0E0E] bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]"
+                  title="Opens /rancher in a new tab logged in as this rancher. Telegram alert fires."
+                >
+                  🕵️ View Dashboard as Rancher
+                </button>
+                <button
                   onClick={handleSave}
                   disabled={saving}
                   className="px-6 py-2 text-sm bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] disabled:opacity-50"
