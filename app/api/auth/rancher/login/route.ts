@@ -18,27 +18,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = email.trim().toLowerCase().replace(/\s+/g, '');
 
-    // Match primary Email OR an EXACT entry in Team Emails. Earlier version
-    // used Airtable FIND() inside the formula — that's a substring match
-    // ("alice" matches "alice@ranch.com"). Auth bypass: attacker types a
-    // substring they control as a real inbox and gets the magic link to
-    // their address. Now we exact-match by parsing the Team Emails field
-    // server-side.
-    let primary = await getAllRecords(
-      TABLES.RANCHERS,
-      `LOWER({Email}) = "${escapeAirtableValue(normalizedEmail)}"`
-    );
-    let rancher: any = primary[0] || null;
+    // Both Email and Team Emails matching done server-side. Earlier version
+    // used an Airtable formula equality on {Email} — that broke for any
+    // record where the stored email had trailing whitespace (e.g. ZK Ranches
+    // "zach@zkranches.com\n") because the formula compared raw stored value
+    // to trimmed input. Operator saw silent "200 success" responses; rancher
+    // got nothing. Now everything trimmed/compared in memory.
+    const all = await getAllRecords(TABLES.RANCHERS) as any[];
+    const splitRe = /[\s,;\n]+/;
+    let rancher: any = all.find((r) => {
+      const stored = String(r['Email'] || '').trim().toLowerCase().replace(/\s+/g, '');
+      return stored && stored === normalizedEmail;
+    });
 
     if (!rancher) {
-      // No primary email match — scan Team Emails field. Pulling all ranchers
-      // is fine: getAllRecords(RANCHERS) is in-process cached (10s TTL) and
-      // matching/suggest already does this on hot path.
-      const all = await getAllRecords(TABLES.RANCHERS);
-      const splitRe = /[\s,;\n]+/;
-      for (const r of all as any[]) {
+      for (const r of all) {
         const teamRaw = String(r['Team Emails'] || '').toLowerCase();
         if (!teamRaw) continue;
         const list = teamRaw.split(splitRe).map((s) => s.trim()).filter(Boolean);
@@ -50,11 +46,23 @@ export async function POST(request: Request) {
     }
 
     if (!rancher) {
+      // Telegram audit on every miss — surfaces typos + whitespace bugs
+      // immediately instead of operator guessing why a rancher didn't get
+      // an email.
+      try {
+        const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `⚠️ <b>RANCHER LOGIN MISS</b>\n\nEmail typed: <code>${normalizedEmail}</code>\nNo match in Email or Team Emails. Likely a typo or whitespace in the stored field.`
+        );
+      } catch {}
+      console.log(`[rancher-login] MISS email=${normalizedEmail}`);
       return NextResponse.json({
         success: true,
         message: 'If this email is registered, you will receive a login link.',
       });
     }
+    console.log(`[rancher-login] match email=${normalizedEmail} rancher=${rancher.id}`);
 
     const token = jwt.sign(
       {
