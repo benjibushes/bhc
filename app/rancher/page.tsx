@@ -159,6 +159,8 @@ export default function RancherDashboardPage() {
     fetchDashboard();
   }, []);
 
+  const [isAdminImpersonating, setIsAdminImpersonating] = useState(false);
+
   const fetchDashboard = async () => {
     try {
       const sessionRes = await fetch('/api/auth/rancher/session');
@@ -166,6 +168,10 @@ export default function RancherDashboardPage() {
         router.push('/rancher/login');
         return;
       }
+      try {
+        const s = await sessionRes.clone().json();
+        if (s?.impersonatedBy === 'admin') setIsAdminImpersonating(true);
+      } catch {}
 
       const dashRes = await fetch('/api/rancher/dashboard');
       if (!dashRes.ok) {
@@ -241,6 +247,49 @@ export default function RancherDashboardPage() {
   // signals "buyer's not for me, give to someone else" — Mark Lost signals
   // "they're out (price/timing/etc), no one's going to convert them."
   // Confirms before writing to avoid accidental closes.
+  // Admin-only: revive a Closed Lost referral back to an actionable status.
+  // Shows up only when impersonatedBy === 'admin' (session flag). Server-side
+  // endpoint also enforces admin auth, so a normal rancher can't call this
+  // even if they craft the request.
+  const handleReviveLead = async (referral: Referral) => {
+    const target = window.prompt(
+      `Revive "${referral.buyer_name}" — pick target status:\n\n` +
+      `  1 = Pending Approval (re-route via cron)\n` +
+      `  2 = Intro Sent (drop back at intro)\n` +
+      `  3 = Rancher Contacted\n` +
+      `  4 = Negotiation\n\n` +
+      `Enter number:`,
+      '1'
+    );
+    if (target === null) return;
+    const map: Record<string, string> = {
+      '1': 'Pending Approval',
+      '2': 'Intro Sent',
+      '3': 'Rancher Contacted',
+      '4': 'Negotiation',
+    };
+    const toStatus = map[target.trim()];
+    if (!toStatus) { setUpdateError('Invalid choice'); return; }
+    setUpdating(referral.id);
+    setUpdateError('');
+    try {
+      const res = await fetch(`/api/admin/referrals/${referral.id}/revive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toStatus }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setUpdateError(data.error || 'Failed to revive — admin auth required.');
+      }
+      await fetchDashboard();
+    } catch {
+      setUpdateError('Network error.');
+    } finally {
+      setUpdating(null);
+    }
+  };
+
   const handleMarkLost = async (referral: Referral) => {
     const reason = window.prompt(
       `Mark "${referral.buyer_name}" as Closed Lost?\n\nOptional reason (helps us learn):`,
@@ -1032,12 +1081,24 @@ export default function RancherDashboardPage() {
                           <p className="font-medium mt-1">{ref.buyer_name}</p>
                           <p className="text-xs text-dust">{ref.closed_at ? new Date(ref.closed_at).toLocaleDateString() : ''}</p>
                         </div>
-                        {ref.status === 'Closed Won' && (
-                          <div className="text-right">
-                            <p className="font-serif text-lg">${ref.sale_amount.toLocaleString()}</p>
-                            <p className="text-xs text-dust">Commission: ${ref.commission_due.toLocaleString()}</p>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-3">
+                          {ref.status === 'Closed Won' && (
+                            <div className="text-right">
+                              <p className="font-serif text-lg">${ref.sale_amount.toLocaleString()}</p>
+                              <p className="text-xs text-dust">Commission: ${ref.commission_due.toLocaleString()}</p>
+                            </div>
+                          )}
+                          {isAdminImpersonating && ref.status === 'Closed Lost' && (
+                            <button
+                              onClick={() => handleReviveLead(ref)}
+                              disabled={updating === ref.id}
+                              className="px-3 py-1.5 text-xs border border-charcoal bg-charcoal text-bone hover:bg-saddle disabled:opacity-50"
+                              title="Admin only: flip this Closed Lost back to an actionable status. Audit fires to Telegram."
+                            >
+                              ♻️ Revive Lead
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
