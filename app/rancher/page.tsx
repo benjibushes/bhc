@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
 import StateMultiSelect from '../components/StateMultiSelect';
+import ImageUploader from '../components/ImageUploader';
 import Link from 'next/link';
 
 interface RancherInfo {
@@ -135,6 +136,7 @@ export default function RancherDashboardPage() {
   const [pageError, setPageError] = useState('');
   // Custom products
   const [customProducts, setCustomProducts] = useState<{ name: string; price: number | string; description: string; link: string }[]>([]);
+  const [galleryPhotos, setGalleryPhotos] = useState<string[]>([]);
   const [newProduct, setNewProduct] = useState({ name: '', price: '', description: '', link: '' });
   // Capacity editor
   const [editingCapacity, setEditingCapacity] = useState(false);
@@ -215,6 +217,12 @@ export default function RancherDashboardPage() {
       try {
         setCustomProducts(r.customProducts ? JSON.parse(r.customProducts) : []);
       } catch { setCustomProducts([]); }
+      // Parse gallery photos — stored as JSON array of URL strings.
+      try {
+        const raw = (r as any).galleryPhotos;
+        const parsed = raw ? JSON.parse(raw) : [];
+        setGalleryPhotos(Array.isArray(parsed) ? parsed.filter((s: any) => typeof s === 'string') : []);
+      } catch { setGalleryPhotos([]); }
     } catch {
       router.push('/rancher/login');
     } finally {
@@ -407,6 +415,7 @@ export default function RancherDashboardPage() {
       }
       // Include custom products as JSON
       body['Custom Products'] = JSON.stringify(customProducts);
+      body['Gallery Photos'] = JSON.stringify(galleryPhotos);
       const res = await fetch('/api/rancher/landing-page', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1303,15 +1312,47 @@ export default function RancherDashboardPage() {
                     )}
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="block text-sm font-medium">Logo URL <span className="text-dust font-normal">(paste a link to your logo image)</span></label>
-                    <input
-                      type="url"
-                      value={pageForm['Logo URL'] || ''}
-                      onChange={e => setPageForm(p => ({ ...p, 'Logo URL': e.target.value }))}
-                      placeholder="https://..."
-                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                    />
+                  <ImageUploader
+                    label="Logo"
+                    hint="(your ranch logo — shows on your public page)"
+                    value={pageForm['Logo URL'] || ''}
+                    onChange={(url) => setPageForm(p => ({ ...p, 'Logo URL': url }))}
+                  />
+
+                  <div className="space-y-3">
+                    <label className="block text-sm font-medium">Gallery Photos <span className="text-dust font-normal">(up to 8 — cattle, the operation, your family, what makes your ranch yours)</span></label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {galleryPhotos.map((url, i) => (
+                        <div key={`${url}-${i}`} className="relative group">
+                          <img
+                            src={url}
+                            alt={`Gallery ${i + 1}`}
+                            className="w-full aspect-square object-cover border border-dust"
+                            onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setGalleryPhotos(galleryPhotos.filter((_, idx) => idx !== i))}
+                            className="absolute top-1 right-1 px-2 py-0.5 bg-charcoal text-bone text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Remove"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {galleryPhotos.length < 8 ? (
+                      <ImageUploader
+                        label=""
+                        hint={`Add photo ${galleryPhotos.length + 1} of 8`}
+                        value=""
+                        onChange={(url) => {
+                          if (url) setGalleryPhotos([...galleryPhotos, url]);
+                        }}
+                      />
+                    ) : (
+                      <p className="text-xs text-dust">Max 8 photos. Remove one to add another.</p>
+                    )}
                   </div>
 
                   <div className="space-y-1">
