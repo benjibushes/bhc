@@ -39,8 +39,34 @@ function VerifyContent() {
       setStatus('success');
       setTimeout(() => router.push('/rancher'), 1500);
     } catch (err: any) {
-      setStatus('error');
-      setError(err.message || 'Something went wrong. Please request a new login link.');
+      // Dead-end recovery: when a token is expired/invalid, peek at the
+      // payload (without verification — it's untrusted, used only to
+      // prefill the email on the login page) and bounce the rancher to
+      // /rancher/login?relogin=1&email=<x>. Two clicks back in instead of
+      // them giving up at a generic error page.
+      let prefillEmail = '';
+      try {
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+          const payload = JSON.parse(atob(padded));
+          if (payload?.email && typeof payload.email === 'string') {
+            prefillEmail = payload.email;
+          }
+        }
+      } catch {}
+      if (prefillEmail) {
+        // Brief flash before redirect so user sees what happened.
+        setStatus('error');
+        setError('Link expired. Sending you back to request a fresh one…');
+        setTimeout(() => {
+          router.push(`/rancher/login?relogin=1&email=${encodeURIComponent(prefillEmail)}`);
+        }, 1500);
+      } else {
+        setStatus('error');
+        setError(err.message || 'Something went wrong. Please request a new login link.');
+      }
     }
   };
 
