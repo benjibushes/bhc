@@ -1161,6 +1161,19 @@ export default function AdminPage() {
                                     <div className="flex items-center gap-2">
                                       {renderNextAction()}
                                       <button
+                                        onClick={async () => {
+                                          if (!confirm(`View dashboard as ${rancher.operator_name || rancher.ranch_name}? Audit alert fires to Telegram. 4h session.`)) return;
+                                          const res = await fetch(`/api/admin/ranchers/${rancher.id}/impersonate`, { method: 'POST' });
+                                          if (!res.ok) { alert('Impersonation failed — check console'); console.error(await res.text()); return; }
+                                          const data = await res.json();
+                                          window.open(data.redirectTo || '/rancher', '_blank');
+                                        }}
+                                        className="px-3 py-1 text-xs border border-[#0E0E0E] bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]"
+                                        title="Open this rancher's dashboard in a new tab. Audit alert fires."
+                                      >
+                                        🕵️ View as Rancher
+                                      </button>
+                                      <button
                                         onClick={() => setExpandedRancher(isExpanded ? null : rancher.id)}
                                         className="px-3 py-1 text-xs border border-[#A7A29A] hover:bg-[#A7A29A] hover:text-white"
                                       >
