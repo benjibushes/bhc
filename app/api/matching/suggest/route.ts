@@ -303,9 +303,14 @@ export async function POST(request: Request) {
     })();
     const buyerTierIsHalfOrWhole = buyerTier === 'Half' || buyerTier === 'Whole';
     const buyerQualifiesForFiveBarBeef = buyerTierIsHalfOrWhole && buyerBudgetOver2k;
-    const passesFiveBarBeefPolicy = (r: any): boolean => {
-      if (!isFiveBarBeefRancher(r)) return true;
-      return buyerQualifiesForFiveBarBeef;
+    const passesFiveBarBeefPolicy = (_r: any): boolean => {
+      // DEPRECATED: was per-rancher hardcode for Frank Fitzpatrick to filter
+      // Quarter buyers + buyers under $2000. Replaced with the canonical
+      // Tier Specialty field on the Ranchers table. The isTierFit() filter
+      // earlier in the chain already enforces tier match. Returning true
+      // here keeps the call site valid until the function can be removed
+      // (separate PR — call sites may be inlined elsewhere).
+      return true;
     };
 
     // ── PRIORITY: If lead came from a specific rancher's page, assign to THAT rancher ──
