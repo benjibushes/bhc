@@ -16,9 +16,10 @@
 //   - Telegram cap: 4096 chars per message. The summary is hard-capped.
 
 import { NextResponse } from 'next/server';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaudeWithTools } from '@/lib/ai';
+import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 120;
 
@@ -80,64 +81,65 @@ writing your summary. Investigate at minimum:
 
 Output the prioritized issue list as specified.`;
 
-export async function GET(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('daily-audit');
-
-    const { CRON_SECRET } = await import('@/lib/secrets');
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${CRON_SECRET}`) {
-      const url = new URL(request.url);
-      const secret = url.searchParams.get('secret');
-      if (secret !== CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-
-    const startedAt = Date.now();
-    let result: { text: string; toolCalls: any[] };
-    try {
-      result = await callClaudeWithTools({
-        model: 'claude-sonnet-4-6',
-        system: AUDIT_SYSTEM_PROMPT,
-        user: AUDIT_USER_PROMPT,
-        maxTokens: 2048,
-        maxIterations: 8,
-      });
-    } catch (e: any) {
-      console.error('[daily-audit] AI call failed:', e?.message);
-      try {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `⚠️ <b>Daily audit failed</b>\n\n` +
-          `Couldn't reach the AI provider this morning.\n` +
-          `Error: ${e?.message?.slice(0, 200) || 'unknown'}\n\n` +
-          `<i>Manually run /api/cron/daily-audit when AI is back. Other crons still running.</i>`
-        );
-      } catch {}
-      return NextResponse.json({ ok: false, error: e?.message }, { status: 502 });
-    }
-
-    // Telegram cap is 4096 chars. Truncate hard.
-    const summary = (result.text || '').slice(0, 3900);
-    const elapsed = Math.round((Date.now() - startedAt) / 1000);
-    const message = summary +
-      `\n\n<i>Audit ran in ${elapsed}s · ${result.toolCalls.length} tool calls</i>`;
-
-    try {
-      await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message);
-    } catch (e: any) {
-      console.error('[daily-audit] Telegram send failed:', e?.message);
-    }
-
-    return NextResponse.json({
-      ok: true,
-      elapsed,
-      toolCalls: result.toolCalls.length,
-      summaryLength: summary.length,
-    });
-  } catch (error: any) {
-    console.error('[daily-audit] cron error:', error);
-    return NextResponse.json({ error: error?.message || 'Internal server error' }, { status: 500 });
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked' | 'error'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
+
+  const startedAt = Date.now();
+  let result: { text: string; toolCalls: any[] };
+  try {
+    result = await callClaudeWithTools({
+      model: 'claude-sonnet-4-6',
+      system: AUDIT_SYSTEM_PROMPT,
+      user: AUDIT_USER_PROMPT,
+      maxTokens: 2048,
+      maxIterations: 8,
+    });
+  } catch (e: any) {
+    console.error('[daily-audit] AI call failed:', e?.message);
+    try {
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `⚠️ <b>Daily audit failed</b>\n\n` +
+        `Couldn't reach the AI provider this morning.\n` +
+        `Error: ${e?.message?.slice(0, 200) || 'unknown'}\n\n` +
+        `<i>Manually run /api/cron/daily-audit when AI is back. Other crons still running.</i>`
+      );
+    } catch {}
+    return { status: 'error', recordsTouched: 0, notes: `AI provider failed: ${(e?.message || 'unknown').slice(0, 200)}` };
+  }
+
+  // Telegram cap is 4096 chars. Truncate hard.
+  const summary = (result.text || '').slice(0, 3900);
+  const elapsed = Math.round((Date.now() - startedAt) / 1000);
+  const message = summary +
+    `\n\n<i>Audit ran in ${elapsed}s · ${result.toolCalls.length} tool calls</i>`;
+
+  try {
+    await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, message);
+  } catch (e: any) {
+    console.error('[daily-audit] Telegram send failed:', e?.message);
+  }
+
+  return {
+    status: 'success',
+    recordsTouched: result.toolCalls.length,
+    notes: `tools=${result.toolCalls.length} elapsed=${elapsed}s summaryLen=${summary.length}`,
+  };
 }
+
+async function authedHandler(request: Request): Promise<Response> {
+  const { CRON_SECRET } = await import('@/lib/secrets');
+  const authHeader = request.headers.get('authorization');
+  if (authHeader !== `Bearer ${CRON_SECRET}`) {
+    const url = new URL(request.url);
+    const secret = url.searchParams.get('secret');
+    if (secret !== CRON_SECRET) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+  }
+  return withCronRun('daily-audit', realHandler)(request);
+}
+
+export const GET = authedHandler;
