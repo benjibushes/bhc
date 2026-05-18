@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { bulkRouteStateToRancher, getRancherServedStates } from '@/lib/bulkRoute';
 import { isQualifiedForRouting } from '@/lib/qualification';
+import { withCronRun } from '@/lib/cronRun';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 120;
@@ -19,24 +20,13 @@ function sleep(ms: number) {
 
 // Runs daily at 9am MT — processes pending consumers who qualify for auto-approval
 // and kicks off rancher matching for approved Beef Buyers
-async function handler(request: Request) {
-  try {
-    // Maintenance short-circuit: do nothing while the platform is paused.
-    if (isMaintenanceMode()) return maintenanceResponse('batch-approve');
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  // Maintenance short-circuit: do nothing while the platform is paused.
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      const authHeader = request.headers.get('authorization');
-      if (authHeader !== `Bearer ${cronSecret}`) {
-        const { searchParams } = new URL(request.url);
-        const secret = searchParams.get('secret');
-        if (secret !== cronSecret) {
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-      }
-    }
-
-    // ── CAPACITY COUNTER SELF-HEAL ──────────────────────────────────────────
+  // ── CAPACITY COUNTER SELF-HEAL ──────────────────────────────────────────
     // The increment/decrement counter on ranchers can drift (missed decrements,
     // manual Airtable edits, etc.). Reconcile from actual active referrals so
     // the matching engine uses correct capacity numbers.
@@ -456,18 +446,27 @@ async function handler(request: Request) {
 
     await sendTelegramUpdate(summary);
 
-    return NextResponse.json({ success: true, approved, matched, ranchersGoLive, waitlistedRetried, waitlistedMatched, capacityFixed, errors: errors.length });
-  } catch (error: any) {
-    console.error('Batch approve error:', error);
-    await sendTelegramUpdate(`⚠️ Batch approval cron failed: ${error.message}`).catch(() => {});
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+  return {
+    status: errors.length > 0 ? 'partial' : 'success',
+    recordsTouched: approved + matched + ranchersGoLive + waitlistedMatched + capacityFixed,
+    notes: `approved=${approved} matched=${matched} live=${ranchersGoLive} waitlist=${waitlistedMatched}/${waitlistedRetried} capFix=${capacityFixed} errs=${errors.length}`,
+  };
+}
+
+async function authedHandler(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      const { searchParams } = new URL(request.url);
+      const secret = searchParams.get('secret');
+      if (secret !== cronSecret) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
   }
+  return withCronRun('batch-approve', realHandler)(request);
 }
 
-export async function GET(request: Request) {
-  return handler(request);
-}
-
-export async function POST(request: Request) {
-  return handler(request);
-}
+export const GET = authedHandler;
+export const POST = authedHandler;
