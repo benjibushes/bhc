@@ -23,11 +23,29 @@ export async function GET(request: Request) {
   const __authResp = await requireAdmin(request);
   if (__authResp) return __authResp;
 
-  const [ranchers, refs, consumers] = await Promise.all([
+  const [ranchers, refs, consumers, cronRuns] = await Promise.all([
     getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
     getAllRecords(TABLES.REFERRALS) as Promise<any[]>,
     getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
+    (getAllRecords(TABLES.CRON_RUNS) as Promise<any[]>).catch(() => [] as any[]),
   ]);
+
+  // Cron Runs — collapse to most-recent-per-name view.
+  const byName: Record<string, { lastRun: string; status: string; durationMs: number; notes: string; recordsTouched: number }> = {};
+  for (const r of cronRuns) {
+    const name = (r['Name'] || '').toString();
+    if (!name) continue;
+    const startedAt = r['Started At'] || '';
+    if (!byName[name] || startedAt > byName[name].lastRun) {
+      byName[name] = {
+        lastRun: startedAt,
+        status: (r['Status'] || '').toString(),
+        durationMs: Number(r['Duration ms'] || 0),
+        notes: (r['Notes'] || '').toString().slice(0, 200),
+        recordsTouched: Number(r['Records Touched'] || 0),
+      };
+    }
+  }
 
   // Ranchers
   const byOnboarding: Record<string, number> = {};
@@ -169,5 +187,6 @@ export async function GET(request: Request) {
       won_last_7d: recentWon,
       new_signups_7d: recentSignups,
     },
+    crons: byName,
   });
 }
