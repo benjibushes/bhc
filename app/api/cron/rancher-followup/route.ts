@@ -2,34 +2,20 @@ import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { sendRancherLeadNudge } from '@/lib/email';
 import { TABLES } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 60;
 
 // Runs every Monday at 9am MT — finds ranchers stalled at each onboarding stage
 // and sends Telegram alerts with action buttons
-//
-// Airtable Onboarding Status options:
-// "Call Scheduled", "Call Complete", "Docs Sent", "Agreement Signed",
-// "Verification Pending", "Verification Complete", "Live"
-async function handler(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('rancher-followup');
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      const authHeader = request.headers.get('authorization');
-      if (authHeader !== `Bearer ${cronSecret}`) {
-        const { searchParams } = new URL(request.url);
-        const secret = searchParams.get('secret');
-        if (secret !== cronSecret) {
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-      }
-    }
-
-    const ranchers = await getAllRecords(TABLES.RANCHERS);
+  const ranchers = await getAllRecords(TABLES.RANCHERS);
     const now = new Date();
     const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -101,7 +87,7 @@ async function handler(request: Request) {
         TELEGRAM_ADMIN_CHAT_ID,
         '✅ <b>Rancher Follow-Up Check</b>\n\nAll ranchers are progressing on schedule. Nothing stalled.'
       );
-      return NextResponse.json({ success: true, stalled: 0 });
+      return { status: 'success', recordsTouched: 0, notes: 'no stalled ranchers' };
     }
 
     // Send one Telegram alert per stalled rancher
@@ -220,21 +206,27 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
       console.error('Stale lead nudge error:', e.message);
     }
 
-    return NextResponse.json({ success: true, stalled: stalled.length, nudgesSent });
-  } catch (error: any) {
-    console.error('Rancher follow-up error:', error);
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `⚠️ Rancher follow-up cron failed: ${error.message}`
-    ).catch(() => {});
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+  return {
+    status: 'success',
+    recordsTouched: stalled.length + nudgesSent,
+    notes: `stalled=${stalled.length} nudges=${nudgesSent}`,
+  };
+}
+
+async function authedHandler(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      const { searchParams } = new URL(request.url);
+      const secret = searchParams.get('secret');
+      if (secret !== cronSecret) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
   }
+  return withCronRun('rancher-followup', realHandler)(request);
 }
 
-export async function GET(request: Request) {
-  return handler(request);
-}
-
-export async function POST(request: Request) {
-  return handler(request);
-}
+export const GET = authedHandler;
+export const POST = authedHandler;

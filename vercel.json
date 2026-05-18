@@ -50,7 +50,7 @@
     },
     {
       "path": "/api/cron/rancher-trust-promotion",
-      "schedule": "0 14 * * *"
+      "schedule": "45 14 * * *"
     },
     {
       "path": "/api/cron/stuck-buyer-recovery",
@@ -58,7 +58,19 @@
     },
     {
       "path": "/api/cron/onboarding-stuck",
-      "schedule": "0 16 * * *"
+      "schedule": "15 16 * * *"
+    },
+    {
+      "path": "/api/cron/close-detector",
+      "schedule": "15 17 * * *"
+    },
+    {
+      "path": "/api/cron/daily-audit",
+      "schedule": "45 5 * * *"
+    },
+    {
+      "path": "/api/cron/buyer-pulse",
+      "schedule": "0 18 * * *"
     }
   ]
 }

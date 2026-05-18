@@ -1,32 +1,22 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
-import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { isMaintenanceMode } from '@/lib/maintenance';
+import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 60;
 
 const BHC_SYSTEM_PROMPT = `You are Ben's AI business assistant for BuyHalfCow (BHC). BHC is a private beef brokerage connecting verified consumers with American ranchers. Ben earns 10% commission on every sale. Be concise and direct — Ben reads this on his phone.`;
 
-async function handler(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('daily-digest');
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      const authHeader = request.headers.get('authorization');
-      if (authHeader !== `Bearer ${cronSecret}`) {
-        const { searchParams } = new URL(request.url);
-        const secret = searchParams.get('secret');
-        if (secret !== cronSecret) {
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-      }
-    }
-
-    const now = new Date();
+  const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -148,18 +138,27 @@ SUGGESTED ACTIONS:
       console.warn('AI brief skipped:', aiErr.message);
     }
 
-    return NextResponse.json({ success: true, message: 'Daily digest sent' });
-  } catch (error: any) {
-    console.error('Daily digest error:', error);
-    await sendTelegramUpdate(`⚠️ Daily digest cron failed: ${error.message}`).catch(() => {});
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+  return {
+    status: 'success',
+    recordsTouched: recentSignups.length + recentIntros + monthWins.length,
+    notes: `signups=${recentSignups.length} intros=${recentIntros} pending=${pendingConsumers} stalled=${stalledReferrals} closed=${monthWins.length}`,
+  };
+}
+
+async function authedHandler(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      const { searchParams } = new URL(request.url);
+      const secret = searchParams.get('secret');
+      if (secret !== cronSecret) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
   }
+  return withCronRun('daily-digest', realHandler)(request);
 }
 
-export async function GET(request: Request) {
-  return handler(request);
-}
-
-export async function POST(request: Request) {
-  return handler(request);
-}
+export const GET = authedHandler;
+export const POST = authedHandler;

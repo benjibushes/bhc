@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
 import { sendEmail, sendRepeatPurchaseEmail, sendRancherLeadReminder } from '@/lib/email';
+import { withCronRun } from '@/lib/cronRun';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 60;
@@ -19,27 +20,16 @@ const AI_CONFIGURED = !!(OLLAMA_URL || ANTHROPIC_KEY);
 
 // Runs daily at 11am MT (17:00 UTC)
 // Auto-sends AI re-engagement emails (max 3 per referral), auto-closes stale referrals
-async function handler(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('referral-chasup');
+async function realHandler(request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked' | 'error'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      const authHeader = request.headers.get('authorization');
-      if (authHeader !== `Bearer ${cronSecret}`) {
-        const { searchParams } = new URL(request.url);
-        const secret = searchParams.get('secret');
-        if (secret !== cronSecret) {
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-      }
-    }
+  if (!AI_CONFIGURED) {
+    return { status: 'error', recordsTouched: 0, notes: 'AI not configured (set OLLAMA_BASE_URL or ANTHROPIC_API_KEY)' };
+  }
 
-    if (!AI_CONFIGURED) {
-      return NextResponse.json({ success: false, error: 'AI not configured (set OLLAMA_BASE_URL or ANTHROPIC_API_KEY)' });
-    }
-
-    const referrals = await getAllRecords(
+  const referrals = await getAllRecords(
       TABLES.REFERRALS,
       'OR({Status} = "Intro Sent", {Status} = "Rancher Contacted")'
     ) as any[];
@@ -429,13 +419,9 @@ async function handler(request: Request) {
 
       // ── DRY-RUN exit ────────────────────────────────────────────────────
       if (dryRunMode) {
-        return NextResponse.json({
-          success: true,
-          dryRun: true,
-          stalePromptsPlanned: promptedRanchers,
-          autoClosePlanned,
-          summary: `${promptedRanchers.length} prompts would fire, ${autoClosePlanned.length} hard auto-closes would fire`,
-        });
+        const summary = `${promptedRanchers.length} prompts would fire, ${autoClosePlanned.length} hard auto-closes would fire`;
+        console.log('[chasup:dryRun]', JSON.stringify({ stalePromptsPlanned: promptedRanchers, autoClosePlanned, summary }));
+        return { status: 'success', recordsTouched: 0, notes: `dryRun: ${summary}` };
       }
 
       // ── Send rancher prompt emails (one per stale referral, throttled) ──
@@ -519,7 +505,11 @@ async function handler(request: Request) {
     }
 
     if (stale.length === 0) {
-      return NextResponse.json({ success: true, stale: 0, sent: 0, autoClosed, rancherReminders, stalledNudges, autoReassigned, stalePromptsFired });
+      return {
+        status: 'success',
+        recordsTouched: autoClosed + rancherReminders + stalledNudges + autoReassigned + stalePromptsFired,
+        notes: `no stale; closed=${autoClosed} reminders=${rancherReminders} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired}`,
+      };
     }
 
     let sent = 0;
@@ -664,18 +654,28 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
       await sendTelegramUpdate(`🔄 <b>Repeat Purchase Emails</b>: ${repeatSent} sent to past buyers`);
     }
 
-    return NextResponse.json({ success: true, stale: stale.length, sent, autoClosed, rancherReminders, stalledNudges, autoReassigned, errors, repeatSent });
-  } catch (error: any) {
-    console.error('Referral chase-up cron error:', error);
-    await sendTelegramUpdate(`⚠️ Referral chase-up cron failed: ${error.message}`).catch(() => {});
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+  const touched = sent + autoClosed + rancherReminders + stalledNudges + autoReassigned + stalePromptsFired + repeatSent;
+  return {
+    status: errors > 0 ? 'partial' : 'success',
+    recordsTouched: touched,
+    notes: `stale=${stale.length} sent=${sent} closed=${autoClosed} reminders=${rancherReminders} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired} repeat=${repeatSent} errors=${errors}`,
+  };
+}
+
+async function authedHandler(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      const { searchParams } = new URL(request.url);
+      const secret = searchParams.get('secret');
+      if (secret !== cronSecret) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
   }
+  return withCronRun('referral-chasup', realHandler)(request);
 }
 
-export async function GET(request: Request) {
-  return handler(request);
-}
-
-export async function POST(request: Request) {
-  return handler(request);
-}
+export const GET = authedHandler;
+export const POST = authedHandler;

@@ -32,8 +32,9 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 60;
 
@@ -50,22 +51,12 @@ const MAX_CARDS_PER_RUN = 15;
 
 const rf = (v: any) => v == null ? '' : (typeof v === 'object' && 'name' in v) ? String(v.name) : String(v);
 
-export async function GET(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('close-detector');
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    // Cron auth — same pattern as other crons. Validated CRON_SECRET via
-    // lib/secrets.ts, which throws if env unset (no silent fallback).
-    const { CRON_SECRET } = await import('@/lib/secrets');
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${CRON_SECRET}`) {
-      const url = new URL(request.url);
-      const secret = url.searchParams.get('secret');
-      if (secret !== CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-
+  {
     const now = Date.now();
 
     // Pull active referrals + ranchers (for name resolution).
@@ -192,17 +183,25 @@ export async function GET(request: Request) {
       } catch {}
     }
 
-    return NextResponse.json({
-      ok: true,
-      posted,
-      failed,
-      candidates_total: candidates.length,
-      cap: MAX_CARDS_PER_RUN,
-      site_url: SITE_URL,
-      warnings: skippedReasons,
-    });
-  } catch (error: any) {
-    console.error('[close-detector] cron error:', error);
-    return NextResponse.json({ error: error?.message || 'Internal server error' }, { status: 500 });
+    return {
+      status: failed > 0 ? 'partial' : 'success',
+      recordsTouched: posted,
+      notes: `posted=${posted} failed=${failed} candidates=${candidates.length}${skippedReasons.length ? ` warn=${skippedReasons[0].slice(0, 80)}` : ''}`,
+    };
   }
 }
+
+async function authedHandler(request: Request): Promise<Response> {
+  const { CRON_SECRET } = await import('@/lib/secrets');
+  const authHeader = request.headers.get('authorization');
+  if (authHeader !== `Bearer ${CRON_SECRET}`) {
+    const url = new URL(request.url);
+    const secret = url.searchParams.get('secret');
+    if (secret !== CRON_SECRET) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+  }
+  return withCronRun('close-detector', realHandler)(request);
+}
+
+export const GET = authedHandler;

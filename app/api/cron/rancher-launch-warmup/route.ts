@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendRancherLaunchWarmup, sendRancherLaunchWarmupNudge } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
+import { withCronRun } from '@/lib/cronRun';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 60;
@@ -78,22 +79,12 @@ function priorityScore(buyer: any): number {
 //
 // Phase 2 (Day-7 nudge) runs after Phase 1 regardless of mode and
 // is unchanged from the pre-throttle implementation.
-async function handler(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('rancher-launch-warmup');
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      const authHeader = request.headers.get('authorization');
-      if (authHeader !== `Bearer ${cronSecret}`) {
-        const { searchParams } = new URL(request.url);
-        const secret = searchParams.get('secret');
-        if (secret !== cronSecret) {
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-      }
-    }
-
+  {
     // ── PHASE 1: warmup to operationally-Live ranchers' waitlisted buyers ──
     // Pull all operational ranchers — Trust Mode promotion cron may have
     // flipped some to legacy-drain since yesterday; we evaluate per rancher.
@@ -360,26 +351,28 @@ async function handler(request: Request) {
       await sendTelegramUpdate(lines);
     }
 
-    return NextResponse.json({
-      success: true,
-      warmupsSent,
-      warmupsSkipped,
-      nudgesSent,
-      ranchersProcessed: ranchersProcessed.length,
-      throttledRanchers,
-      trustDrainRanchers,
-    });
-  } catch (error: any) {
-    console.error('Rancher-launch-warmup cron error:', error);
-    await sendTelegramUpdate(`⚠️ Rancher launch warmup cron failed: ${error.message}`).catch(() => {});
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+  return {
+    status: warmupsSkipped > 0 ? 'partial' : 'success',
+    recordsTouched: warmupsSent + nudgesSent,
+    notes: `warmups=${warmupsSent} nudges=${nudgesSent} ranchers=${ranchersProcessed.length} skipped=${warmupsSkipped}`,
+  };
   }
 }
 
-export async function GET(request: Request) {
-  return handler(request);
+async function authedHandler(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      const { searchParams } = new URL(request.url);
+      const secret = searchParams.get('secret');
+      if (secret !== cronSecret) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+  }
+  return withCronRun('rancher-launch-warmup', realHandler)(request);
 }
 
-export async function POST(request: Request) {
-  return handler(request);
-}
+export const GET = authedHandler;
+export const POST = authedHandler;

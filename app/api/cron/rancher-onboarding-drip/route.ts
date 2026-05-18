@@ -5,9 +5,10 @@ import {
   sendRancherOnboardingDripDay5,
   sendRancherOnboardingDripDay14,
 } from '@/lib/email';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { CRON_SECRET } from '@/lib/secrets';
+import { withCronRun } from '@/lib/cronRun';
 
 // Self-submit / community-submit drip — fires Day 2 / Day 5 / Day 14 nudges
 // for ranchers who landed on the map via /map/add-a-rancher and haven't been
@@ -30,20 +31,12 @@ import { CRON_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 60;
 
-async function handler(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('rancher-onboarding-drip');
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    if (CRON_SECRET) {
-      const authHeader = request.headers.get('authorization');
-      if (authHeader !== `Bearer ${CRON_SECRET}`) {
-        const { searchParams } = new URL(request.url);
-        if (searchParams.get('secret') !== CRON_SECRET) {
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-      }
-    }
-
+  {
     // Pull only self-submitted prospects whose drip stage is still active.
     // Filtering in code (not formula) — ranchers table is small and
     // formula-side date math against Self-Submitted At is fiddly.
@@ -135,17 +128,26 @@ async function handler(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      sent: sent.length,
-      stopped: stopped.length,
-      details: { sent, stopped },
-    });
-  } catch (e) {
-    console.error('[rancher-onboarding-drip] fatal:', e);
-    return NextResponse.json({ error: 'cron failed' }, { status: 500 });
+    return {
+      status: 'success',
+      recordsTouched: sent.length + stopped.length,
+      notes: `sent=${sent.length} stopped=${stopped.length}`,
+    };
   }
 }
 
-export const GET = handler;
-export const POST = handler;
+async function authedHandler(request: Request): Promise<Response> {
+  if (CRON_SECRET) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${CRON_SECRET}`) {
+      const { searchParams } = new URL(request.url);
+      if (searchParams.get('secret') !== CRON_SECRET) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+  }
+  return withCronRun('rancher-onboarding-drip', realHandler)(request);
+}
+
+export const GET = authedHandler;
+export const POST = authedHandler;

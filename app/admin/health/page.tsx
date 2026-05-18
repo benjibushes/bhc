@@ -119,6 +119,43 @@ function HealthDashboard() {
           </div>
         </section>
 
+        {/* Cron Health */}
+        <section>
+          <h2 className="font-serif text-xl mb-3">Cron Health</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[#6B4F3F] border-b border-[#A7A29A]/40">
+                  <th className="pr-3 py-1">Name</th>
+                  <th className="pr-3 py-1">Last Run</th>
+                  <th className="pr-3 py-1">Status</th>
+                  <th className="pr-3 py-1">Duration</th>
+                  <th className="pr-3 py-1">Touched</th>
+                  <th className="pr-3 py-1">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(data.crons || {})
+                  .sort((a: any, b: any) => (b[1].lastRun > a[1].lastRun ? 1 : -1))
+                  .map(([name, c]: any) => (
+                    <tr key={name} className="border-t border-[#A7A29A]/30">
+                      <td className="py-1 pr-3 font-mono">{name}</td>
+                      <td className="py-1 pr-3">{c.lastRun ? new Date(c.lastRun).toLocaleString() : '(never)'}</td>
+                      <td className="py-1 pr-3">
+                        <span className={c.status === 'success' ? 'text-green-700' : c.status === 'error' ? 'text-red-700' : c.status === 'maintenance-blocked' ? 'text-amber-700' : ''}>
+                          {c.status || '(unknown)'}
+                        </span>
+                      </td>
+                      <td className="py-1 pr-3">{c.durationMs}ms</td>
+                      <td className="py-1 pr-3">{c.recordsTouched}</td>
+                      <td className="py-1">{c.notes}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         {/* Coverage gap */}
         <section>
           <h2 className="font-serif text-xl mb-3">Coverage Gap (Untapped Demand)</h2>
