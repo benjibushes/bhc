@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { withCronRun } from '@/lib/cronRun';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 
@@ -66,18 +67,9 @@ ${urgency}
 </body></html>`;
 }
 
-async function handler(request: Request) {
-  if (isMaintenanceMode()) return maintenanceResponse('onboarding-stuck');
-
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      const { searchParams } = new URL(request.url);
-      if (searchParams.get('secret') !== cronSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
 
   const all = (await getAllRecords(TABLES.RANCHERS)) as any[];
@@ -182,8 +174,26 @@ async function handler(request: Request) {
     } catch {}
   }
 
-  return NextResponse.json({ success: true, sent, escalated, results });
+  return {
+    status: 'success',
+    recordsTouched: sent + escalated,
+    notes: `sent=${sent} escalated=${escalated}`,
+  };
 }
 
-export const GET = handler;
-export const POST = handler;
+async function authedHandler(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      const { searchParams } = new URL(request.url);
+      if (searchParams.get('secret') !== cronSecret) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+  }
+  return withCronRun('onboarding-stuck', realHandler)(request);
+}
+
+export const GET = authedHandler;
+export const POST = authedHandler;
