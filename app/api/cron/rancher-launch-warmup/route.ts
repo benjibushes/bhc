@@ -324,7 +324,10 @@ async function handler(request: Request) {
         // Find a live rancher serving this state to personalize the nudge
         // (local-only — Ships Nationwide is no longer honored for routing).
         const activeRancher = ranchers.find((r: any) => {
-          const states = new Set(normalizeStates(r['States Served'] || r['State'] || ''));
+          // Same canonical source as Phase 1 + matching/suggest. Reading raw
+          // States Served here let newly-live ranchers fall through and
+          // nudges showed "our new rancher" instead of the actual ranch name.
+          const states = new Set(getOperationalServedStates(r));
           return states.has(buyerState);
         }) || null;
         const ranchName = activeRancher?.['Ranch Name']
