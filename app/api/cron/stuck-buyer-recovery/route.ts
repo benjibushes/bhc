@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { CRON_SECRET } from '@/lib/secrets';
+import { withCronRun } from '@/lib/cronRun';
 
 // Stuck-buyer recovery — runs daily and retries matching for buyers who
 // engaged (clicked YES on warmup) but never got matched to a rancher.
@@ -43,20 +44,12 @@ const ACTIVE_REFERRAL_STATUSES = [
   'Negotiation',
 ];
 
-async function handler(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('stuck-buyer-recovery');
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    if (CRON_SECRET) {
-      const authHeader = request.headers.get('authorization');
-      if (authHeader !== `Bearer ${CRON_SECRET}`) {
-        const { searchParams } = new URL(request.url);
-        if (searchParams.get('secret') !== CRON_SECRET) {
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-      }
-    }
-
+  {
     const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
     const now = Date.now();
     const DAY_MS = 86_400_000;
@@ -204,17 +197,27 @@ async function handler(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      stuckTotal: stuck.length,
-      retried: retried.length,
-      matched: retried.filter((r) => r.matched).length,
-    });
-  } catch (e: any) {
-    console.error('[stuck-buyer-recovery] fatal:', e?.message);
-    return NextResponse.json({ error: 'cron failed' }, { status: 500 });
+    const matchedCount = retried.filter((r) => r.matched).length;
+    return {
+      status: 'success',
+      recordsTouched: retried.length,
+      notes: `stuck=${stuck.length} retried=${retried.length} matched=${matchedCount}`,
+    };
   }
 }
 
-export const GET = handler;
-export const POST = handler;
+async function authedHandler(request: Request): Promise<Response> {
+  if (CRON_SECRET) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${CRON_SECRET}`) {
+      const { searchParams } = new URL(request.url);
+      if (searchParams.get('secret') !== CRON_SECRET) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+  }
+  return withCronRun('stuck-buyer-recovery', realHandler)(request);
+}
+
+export const GET = authedHandler;
+export const POST = authedHandler;
