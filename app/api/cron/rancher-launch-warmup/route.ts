@@ -123,11 +123,15 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         // Once drained for this rancher we set Launch Warmup Triggered=true
         // so we don't re-fire on already-warmed buyers (their Warmup Sent At
         // also gates them, but the flag preserves the prior op semantics).
-        if (rancher['Launch Warmup Triggered']) {
-          // Already drained at some point and this is a Trust-Mode legacy
-          // rancher — nothing to do this run. Skip silently.
-          continue;
-        }
+        // NOTE: Trust Mode used to one-shot per rancher via `Launch Warmup
+        // Triggered` flag. That assumption was wrong — new Waitlisted buyers
+        // keep arriving in the rancher's state and never got warmed up
+        // because the flag blocked the whole iteration. The per-buyer
+        // `Warmup Sent At` filter below (line 140-area) already prevents
+        // double-warming, so the rancher-level flag is redundant + harmful.
+        // We still STAMP the flag after first drain (preserves audit
+        // history + back-compat with /admin views), but we no longer GATE
+        // future runs on it.
 
         // Pull Waitlisted buyers, scoped to this rancher's states.
         const waitlistedBuyers = await getAllRecords(
