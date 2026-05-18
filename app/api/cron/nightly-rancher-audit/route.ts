@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 180;
 
@@ -34,21 +35,8 @@ export const maxDuration = 180;
 // All findings: posted to Telegram + returned in JSON for admin dashboard.
 // ─────────────────────────────────────────────────────────────────────────
 
-async function handler(request: Request) {
-  try {
-    // Cron secret guard — same pattern as other crons
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      const authHeader = request.headers.get('authorization');
-      const ok = authHeader === `Bearer ${cronSecret}`;
-      if (!ok) {
-        const { searchParams } = new URL(request.url);
-        if (searchParams.get('secret') !== cronSecret) {
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-      }
-    }
-
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial'; recordsTouched: number; notes: string }> {
+  {
     const startedAt = Date.now();
 
     // Pull entire dataset once. Audit is read-only so no rate concerns beyond initial fetch.
@@ -382,26 +370,28 @@ async function handler(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      durationMs: Date.now() - startedAt,
-      activeRanchers: activeSummaries.length,
-      issuesBySeverity: { critical: critical.length, warn: warn.length, info: info.length },
-      ranchers: activeSummaries,
-      issues,
-      systemTotals: { activeRefs, totalWon, wonLast30, totalRefs },
-    });
-  } catch (error: any) {
-    console.error('Nightly rancher audit error:', error);
-    try {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `🔴 <b>NIGHTLY AUDIT FAILED</b>\n\n${error.message}\n\n<i>Audit logic in /api/cron/nightly-rancher-audit may need attention.</i>`
-      );
-    } catch {}
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return {
+      status: critical.length > 0 ? 'partial' : 'success',
+      recordsTouched: activeSummaries.length,
+      notes: `ranchers=${activeSummaries.length} critical=${critical.length} warn=${warn.length} info=${info.length} activeRefs=${activeRefs} won30=${wonLast30}`,
+    };
   }
 }
 
-export async function GET(request: Request) { return handler(request); }
-export async function POST(request: Request) { return handler(request); }
+async function authedHandler(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    const ok = authHeader === `Bearer ${cronSecret}`;
+    if (!ok) {
+      const { searchParams } = new URL(request.url);
+      if (searchParams.get('secret') !== cronSecret) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+  }
+  return withCronRun('nightly-rancher-audit', realHandler)(request);
+}
+
+export const GET = authedHandler;
+export const POST = authedHandler;
