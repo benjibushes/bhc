@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 60;
 
@@ -25,24 +26,12 @@ export const maxDuration = 60;
 // that shouldn't be trusted gets flipped (e.g. ghost closes).
 // ─────────────────────────────────────────────────────────────────────────
 
-async function handler(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('rancher-trust-promotion');
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    // Cron secret guard — same pattern as nightly-rancher-audit
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      const authHeader = request.headers.get('authorization');
-      const ok = authHeader === `Bearer ${cronSecret}`;
-      if (!ok) {
-        const { searchParams } = new URL(request.url);
-        if (searchParams.get('secret') !== cronSecret) {
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-      }
-    }
-
-    const startedAt = Date.now();
+  {
     const now = Date.now();
 
     const [allRanchers, allReferrals] = await Promise.all([
@@ -131,30 +120,28 @@ async function handler(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      durationMs: Date.now() - startedAt,
-      operationalRanchers: operationalRanchers.length,
-      evaluated,
-      promoted,
-      promotedDetails,
-    });
-  } catch (error: any) {
-    console.error('Rancher-trust-promotion cron error:', error);
-    try {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `⚠️ <b>Trust promotion cron failed</b>\n\n${error.message}`
-      );
-    } catch {}
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    return {
+      status: 'success',
+      recordsTouched: promoted,
+      notes: `operational=${operationalRanchers.length} evaluated=${evaluated} promoted=${promoted}`,
+    };
   }
 }
 
-export async function GET(request: Request) {
-  return handler(request);
+async function authedHandler(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    const ok = authHeader === `Bearer ${cronSecret}`;
+    if (!ok) {
+      const { searchParams } = new URL(request.url);
+      if (searchParams.get('secret') !== cronSecret) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    }
+  }
+  return withCronRun('rancher-trust-promotion', realHandler)(request);
 }
 
-export async function POST(request: Request) {
-  return handler(request);
-}
+export const GET = authedHandler;
+export const POST = authedHandler;
