@@ -23,9 +23,10 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { withCronRun } from '@/lib/cronRun';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 
@@ -43,20 +44,12 @@ const MAX_PULSES_PER_RUN = 25;
 
 const rf = (v: any) => v == null ? '' : (typeof v === 'object' && 'name' in v) ? String(v.name) : String(v);
 
-export async function GET(request: Request) {
-  try {
-    if (isMaintenanceMode()) return maintenanceResponse('buyer-pulse');
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
 
-    const { CRON_SECRET } = await import('@/lib/secrets');
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${CRON_SECRET}`) {
-      const url = new URL(request.url);
-      const secret = url.searchParams.get('secret');
-      if (secret !== CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-
+  {
     const now = Date.now();
 
     const referrals = await getAllRecords(
@@ -181,19 +174,28 @@ p{margin:14px 0;color:#2A2A2A;font-size:15px}
       } catch {}
     }
 
-    return NextResponse.json({
-      ok: true,
-      sent,
-      failed,
-      candidates_total: candidates.length,
-      cap: MAX_PULSES_PER_RUN,
-      warnings: skippedReasons,
-    });
-  } catch (error: any) {
-    console.error('[buyer-pulse] cron error:', error);
-    return NextResponse.json({ error: error?.message || 'Internal server error' }, { status: 500 });
+    return {
+      status: failed > 0 ? 'partial' : 'success',
+      recordsTouched: sent,
+      notes: `sent=${sent} failed=${failed} candidates=${candidates.length}${skippedReasons.length ? ` warn=${skippedReasons[0].slice(0, 80)}` : ''}`,
+    };
   }
 }
+
+async function authedHandler(request: Request): Promise<Response> {
+  const { CRON_SECRET } = await import('@/lib/secrets');
+  const authHeader = request.headers.get('authorization');
+  if (authHeader !== `Bearer ${CRON_SECRET}`) {
+    const url = new URL(request.url);
+    const secret = url.searchParams.get('secret');
+    if (secret !== CRON_SECRET) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+  }
+  return withCronRun('buyer-pulse', realHandler)(request);
+}
+
+export const GET = authedHandler;
 
 function esc(str: string): string {
   return String(str || '')
