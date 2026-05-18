@@ -151,9 +151,11 @@ export async function POST(request: Request) {
     // CAPACITY BYPASS for hot leads: when the buyer has explicitly opted in via
     // warmup engagement, we route to a state-matched rancher even if they're at
     // capacity. The cap exists to prevent "lead overload"; for a rare hand-raised
-    // buyer, sitting in queue means going cold. We do enforce a 2× hard ceiling
-    // so even hot-lead bypass can't unboundedly flood a rancher.
-    const HARD_CEILING_MULTIPLIER = 2;
+    // buyer, sitting in queue means going cold. We enforce a 1.2× hard ceiling
+    // (was 2× — produced 19/15 outcomes like Hewitson when one rancher covers
+    // multiple states with no in-state competition). 1.2× keeps the safety
+    // valve for hot leads but bounds the worst case to "20% over max."
+    const HARD_CEILING_MULTIPLIER = 1.2;
     const isEligibleBase = (r: any) => {
       if (excludeIds.has(r.id)) return false;
       // Operational check (Active + Agreement Signed + Onboarding Live) lives
@@ -303,9 +305,14 @@ export async function POST(request: Request) {
     })();
     const buyerTierIsHalfOrWhole = buyerTier === 'Half' || buyerTier === 'Whole';
     const buyerQualifiesForFiveBarBeef = buyerTierIsHalfOrWhole && buyerBudgetOver2k;
-    const passesFiveBarBeefPolicy = (r: any): boolean => {
-      if (!isFiveBarBeefRancher(r)) return true;
-      return buyerQualifiesForFiveBarBeef;
+    const passesFiveBarBeefPolicy = (_r: any): boolean => {
+      // DEPRECATED: was per-rancher hardcode for Frank Fitzpatrick to filter
+      // Quarter buyers + buyers under $2000. Replaced with the canonical
+      // Tier Specialty field on the Ranchers table. The isTierFit() filter
+      // earlier in the chain already enforces tier match. Returning true
+      // here keeps the call site valid until the function can be removed
+      // (separate PR — call sites may be inlined elsewhere).
+      return true;
     };
 
     // ── PRIORITY: If lead came from a specific rancher's page, assign to THAT rancher ──

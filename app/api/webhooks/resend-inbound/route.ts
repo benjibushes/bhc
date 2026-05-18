@@ -205,16 +205,29 @@ async function resolveLinks(context: ReplyContext | null): Promise<{
 
 export async function POST(request: Request) {
   try {
+    const rawBody = await request.text();
+    const secret = process.env.RESEND_INBOUND_WEBHOOK_SECRET || '';
+    if (secret) {
+      const { verifySvixSignature } = await import('@/lib/svixVerify');
+      const verify = verifySvixSignature({
+        body: rawBody,
+        svixId: request.headers.get('svix-id'),
+        svixTimestamp: request.headers.get('svix-timestamp'),
+        svixSignature: request.headers.get('svix-signature'),
+        secret,
+      });
+      if (!verify.ok) {
+        console.warn('[resend-inbound] signature rejected:', verify.reason);
+        return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
+      }
+    }
     let payload: ResendInboundPayload;
     try {
-      payload = await request.json();
+      payload = JSON.parse(rawBody);
     } catch {
       return NextResponse.json({ ok: false, error: 'invalid JSON' }, { status: 400 });
     }
 
-    // Optional: verify Resend webhook signature when they support it. As of
-    // writing, Resend's inbound posts a signed payload via Svix-Signature
-    // headers; we'll skip verification here for now and add when stable.
     // For DEFENSE: accept only requests with the expected payload shape.
     const { from, to, subject, text, html, headers } = pluck(payload);
 
@@ -231,6 +244,22 @@ export async function POST(request: Request) {
       body: bodyForClassify,
       context,
     });
+
+    let autoRespondResult: { sent: boolean; reason?: string } | null = null;
+    if (
+      classification.actionNeeded === 'auto-respond' &&
+      classification.senderType === 'buyer' &&
+      classification.sentiment !== 'blocking' &&
+      ['ghost', 'scheduling'].includes(classification.objectionCategory)
+    ) {
+      const { maybeAutoRespond } = await import('@/lib/autoRespond');
+      autoRespondResult = await maybeAutoRespond({
+        to: from,
+        subject,
+        bodyContext: bodyForClassify,
+        category: classification.objectionCategory,
+      });
+    }
 
     // Build the Conversations row. Fields that are linked records use arrays.
     const row: Record<string, unknown> = {
@@ -313,6 +342,12 @@ export async function POST(request: Request) {
         ? '\n👀 Ben to review.'
         : '';
 
+      const autoReplyLine = autoRespondResult?.sent
+        ? '\n🤖 Auto-replied to buyer.'
+        : autoRespondResult
+        ? `\n⚠️ Auto-reply attempt failed: ${autoRespondResult.reason}`
+        : '';
+
       const msg =
         `${senderEmoji} <b>Inbound reply</b> ${sentimentEmoji}\n\n` +
         `<b>From:</b> ${from}\n` +
@@ -320,7 +355,8 @@ export async function POST(request: Request) {
         (context ? `<b>Threaded to:</b> ${context.type}=${context.recordId}\n` : `<b>No thread:</b> reply hit catch-all\n`) +
         `<b>Category:</b> ${classification.objectionCategory}\n\n` +
         `<i>${classification.summary}</i>` +
-        actionLine;
+        actionLine +
+        autoReplyLine;
 
       // Inline buttons only when there's actionable signal
       const inlineKeyboard = classification.actionNeeded === 'propose-close-won' && links.referralId
@@ -337,6 +373,27 @@ export async function POST(request: Request) {
       await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, msg, inlineKeyboard);
     } catch (e: any) {
       console.error('[resend-inbound] Telegram mirror failed:', e?.message || e);
+    }
+
+    const ADMIN_EMAIL_FOR_FORWARD = process.env.ADMIN_EMAIL_FOR_FORWARD || process.env.ADMIN_EMAIL || '';
+    if (ADMIN_EMAIL_FOR_FORWARD) {
+      try {
+        const { sendEmail } = await import('@/lib/email');
+        await sendEmail({
+          to: ADMIN_EMAIL_FOR_FORWARD,
+          subject: `[BHC inbound] ${classification.objectionCategory} · ${subject}`,
+          html: `<div style="font-family:monospace;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:8px;margin-bottom:12px;">
+<strong>From:</strong> ${from}<br>
+<strong>To:</strong> ${Array.isArray(to) ? to.join(', ') : to}<br>
+<strong>Context:</strong> ${context ? `${context.type}=${context.recordId}` : 'no-thread'}<br>
+<strong>Classification:</strong> ${classification.senderType} · ${classification.objectionCategory} · ${classification.sentiment}<br>
+<strong>AI Summary:</strong> ${classification.summary}
+</div>${html || `<pre>${text}</pre>`}`,
+          _bypassSuppression: true,
+        } as any);
+      } catch (e: any) {
+        console.error('[resend-inbound] forward to admin failed:', e?.message);
+      }
     }
 
     return NextResponse.json({
