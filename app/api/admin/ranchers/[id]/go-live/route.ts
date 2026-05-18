@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 
 export const maxDuration = 60;
 
@@ -25,6 +26,11 @@ export async function POST(
     const { id } = await context.params;
 
     await updateRecord(TABLES.RANCHERS, id, { 'Page Live': true });
+
+    // Fire launch-warmup IMMEDIATELY for this rancher's state. Without this,
+    // newly-Live ranchers' Waitlisted buyer queue waits up to 24h for the
+    // scheduled cron. Idempotent: per-buyer Warmup Sent At gates double-warm.
+    triggerLaunchWarmup(`admin-go-live:${id}`);
 
     // Waitlist blast: auto-match waiting buyers in this rancher's state(s)
     let matched = 0;

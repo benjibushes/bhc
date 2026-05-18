@@ -3,6 +3,7 @@ import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 
 export const maxDuration = 60;
 
@@ -38,6 +39,7 @@ export async function POST(request: Request) {
         await updateRecord(TABLES.RANCHERS, rancher.id, {
           'Active Status': 'Active',
         });
+        triggerLaunchWarmup(`capacity-check-resume:${rancher.id}`);
         updates.push({
           name: rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown',
           oldStatus: 'At Capacity',
