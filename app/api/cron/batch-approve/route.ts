@@ -8,6 +8,7 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { bulkRouteStateToRancher, getRancherServedStates } from '@/lib/bulkRoute';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import { withCronRun } from '@/lib/cronRun';
+import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 120;
@@ -236,6 +237,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             'Onboarding Status': 'Live',
             'Active Status': 'Active',
           });
+          triggerLaunchWarmup(`batch-approve-auto-go-live:${rancher.id}`);
 
           const email = rancher['Email'];
           const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';

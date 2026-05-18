@@ -11,6 +11,7 @@ import {
 import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification, sendRancherCheckIn, sendPipelineUpdateEmail } from '@/lib/email';
 import { callClaude } from '@/lib/ai';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
+import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import jwt from 'jsonwebtoken';
 
@@ -1650,6 +1651,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             'Page Live': true,
             'Onboarding Status': 'Live',
           });
+          triggerLaunchWarmup(`telegram-spgolive:${session.rancherId}`);
           await logSpGolive({
             actor: 'manual',
             tool: 'spgolive',
@@ -1867,6 +1869,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             'Page Live': true,
             'Onboarding Status': 'Live',
           });
+          triggerLaunchWarmup(`telegram-rgolive:${rancherId}`);
           await logGolive({
             actor: 'manual',
             tool: 'rgolive',
@@ -3740,9 +3743,10 @@ Confirm send?`;
             return NextResponse.json({ ok: true });
           }
           await updateRecord(TABLES.RANCHERS, target.id, { 'Active Status': 'Active' });
+          triggerLaunchWarmup(`telegram-resume:${target.id}`);
           await sendTelegramMessage(
             chatId,
-            `▶️ <b>RESUMED</b> ${target['Operator Name'] || target['Ranch Name']}\n\nNew leads will start flowing. Run <code>/route ${target['State'] || ''} ${target['Slug'] || ''}</code> to push waitlisted buyers their way.`
+            `▶️ <b>RESUMED</b> ${target['Operator Name'] || target['Ranch Name']}\n\nNew leads will start flowing. Waitlisted buyers in their state are being warmed up now.`
           );
         } catch (e: any) {
           await sendTelegramMessage(chatId, `⚠️ /resume failed: ${e.message}`);

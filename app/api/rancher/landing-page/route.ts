@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { normalizeStates, stringifyStates } from '@/lib/states';
+import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -83,6 +84,7 @@ export async function PATCH(request: Request) {
       const current = rancher['Current Active Referrals'] || 0;
       if (rancher['Active Status'] === 'At Capacity' && current < maxReferrals) {
         await updateRecord(TABLES.RANCHERS, decoded.rancherId, { 'Active Status': 'Active' });
+        triggerLaunchWarmup(`landing-page-capacity-raise:${decoded.rancherId}`);
       }
       return NextResponse.json({ success: true });
     }
