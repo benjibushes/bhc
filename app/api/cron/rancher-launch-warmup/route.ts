@@ -4,7 +4,7 @@ import { isMaintenanceMode, maintenanceResponse } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendRancherLaunchWarmup, sendRancherLaunchWarmupNudge } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
-import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 60;
@@ -113,7 +113,13 @@ async function handler(request: Request) {
       if (warmupsSent >= WARMUP_CAP_PER_RUN) break;
 
       const ranchName = rancher['Ranch Name'] || rancher['Operator Name'] || 'A verified ranch';
-      const rancherStatesArr = normalizeStates(rancher['States Served'] || rancher['State'] || '');
+      // Single source of truth for "what states does this rancher serve?" —
+      // same helper used by matching/suggest. Respects Admin Approved
+      // Multi-State gate. Without this, launch-warmup uses raw States Served
+      // while matching uses Routing States, causing newly-live ranchers
+      // (whose States Served is empty post-multi-state-gate ship) to never
+      // warm up their states' Waitlisted buyers.
+      const rancherStatesArr = getOperationalServedStates(rancher);
       if (rancherStatesArr.length === 0) continue;
       const rancherStates = new Set(rancherStatesArr);
 
