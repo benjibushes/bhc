@@ -417,6 +417,7 @@ async function processUpdate(update: any) {
       // ─── Referral actions ───────────────────────────────────────────────
 
       if (action === 'approve') {
+        await answerCallbackQuery(queryId, 'Approving…');
         try {
           const referral: any = await getRecordById(TABLES.REFERRALS, fullReferralId);
 
@@ -537,6 +538,7 @@ async function processUpdate(update: any) {
       }
 
       else if (action === 'reject') {
+        await answerCallbackQuery(queryId, 'Rejecting…');
         try {
           const referral: any = await getRecordById(TABLES.REFERRALS, fullReferralId);
 
@@ -573,6 +575,7 @@ async function processUpdate(update: any) {
       }
 
       else if (action === 'reassign') {
+        await answerCallbackQuery(queryId, 'Finding available ranchers…');
         try {
           const referral: any = await getRecordById(TABLES.REFERRALS, fullReferralId);
           const buyerState = referral['Buyer State'] || '';
@@ -614,6 +617,7 @@ async function processUpdate(update: any) {
       }
 
       else if (action === 'assignto') {
+        await answerCallbackQuery(queryId, 'Reassigning…');
         const parts = callbackData.split('_');
         const refId = parts[1];
         const newRancherId = parts.slice(2).join('_');
@@ -758,6 +762,7 @@ Suggested: ${referral['Suggested Rancher Name'] || 'None'}`;
       // ─── Consumer actions ───────────────────────────────────────────────
 
       else if (action === 'capprove') {
+        await answerCallbackQuery(queryId, 'Approving…');
         try {
           const consumer: any = await getRecordById(TABLES.CONSUMERS, fullReferralId);
           const currentStatus = (consumer['Status'] || '').toLowerCase();
@@ -973,13 +978,31 @@ Source: ${c['Source'] || 'organic'}`;
       // Mark a stalled referral as Closed Lost (and free up rancher capacity)
       else if (action === 'closelost') {
         try {
+          const { logAuditEntry, buildAirtableUpdateReverse } = await import('@/lib/auditLog');
           const refId = fullReferralId;
           const ref: any = await getRecordById(TABLES.REFERRALS, refId);
           const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+          const previousStatus = ref['Status'] || null;
+          const previousClosedAt = ref['Closed At'] || null;
+          const previousNotes = ref['Notes'] || null;
+          const reverse = buildAirtableUpdateReverse(TABLES.REFERRALS, refId, {
+            'Status': previousStatus,
+            'Closed At': previousClosedAt,
+            'Notes': previousNotes,
+          });
           await updateRecord(TABLES.REFERRALS, refId, {
             'Status': 'Closed Lost',
             'Closed At': new Date().toISOString(),
             'Notes': `${ref['Notes'] || ''}\n[Closed Lost via Telegram — stalled, no engagement]`.trim(),
+          });
+          await logAuditEntry({
+            actor: 'manual',
+            tool: 'closelost',
+            targetType: 'Referral',
+            targetId: refId,
+            args: { callbackData },
+            result: { previousStatus, newStatus: 'Closed Lost' },
+            reverseAction: reverse,
           });
           // Free up rancher capacity
           if (Array.isArray(rancherIds) && rancherIds[0]) {
@@ -1076,6 +1099,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
       // ─── Rancher actions ────────────────────────────────────────────────
 
       else if (action === 'ronboard') {
+        await answerCallbackQuery(queryId, 'Sending onboarding docs…');
         try {
           // Fetch rancher to include their call notes and capacity
           const rancher: any = await getRecordById(TABLES.RANCHERS, fullReferralId);
@@ -1109,104 +1133,11 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         }
       }
 
-      // ─── AI Qualify callbacks ───────────────────────────────────────────
-      // qapprove_{consumerId}, qreject_{consumerId}, qwatch_{consumerId}
-
-      else if (action === 'qapprove') {
-        try {
-          const consumer: any = await getRecordById(TABLES.CONSUMERS, fullReferralId);
-          const currentStatus = (consumer['Status'] || '').toLowerCase();
-          if (currentStatus === 'approved' || currentStatus === 'active') {
-            await answerCallbackQuery(queryId, 'Already approved');
-            return NextResponse.json({ ok: true });
-          }
-
-          const consumerEmail = consumer['Email'];
-          const firstName = (consumer['Full Name'] || '').split(' ')[0];
-          const segment = consumer['Segment'] || 'Community';
-          const now = new Date().toISOString();
-
-          await updateRecord(TABLES.CONSUMERS, fullReferralId, { 'Status': 'Approved', 'Approved At': now });
-
-          const token = jwt.sign(
-            { type: 'member-login', consumerId: fullReferralId, email: consumerEmail?.trim().toLowerCase() },
-            JWT_SECRET,
-            { expiresIn: '7d' }
-          );
-          const loginUrl = `${SITE_URL}/member/verify?token=${token}`;
-          await sendConsumerApproval({ firstName, email: consumerEmail, loginUrl, segment });
-
-          if (segment === 'Beef Buyer' && consumer['State']) {
-            try {
-              await fetch(`${SITE_URL}/api/matching/suggest`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
-                },
-                body: JSON.stringify({
-                  buyerState: consumer['State'],
-                  buyerId: fullReferralId,
-                  buyerName: consumer['Full Name'],
-                  buyerEmail: consumerEmail,
-                  buyerPhone: consumer['Phone'],
-                  orderType: consumer['Order Type'],
-                  budgetRange: consumer['Budget'],
-                  intentScore: consumer['Intent Score'],
-                  intentClassification: consumer['Intent Classification'],
-                  notes: consumer['Notes'],
-                }),
-              });
-            } catch (e) {
-              console.error('Matching error after AI qualify approval:', e);
-            }
-          }
-
-          await answerCallbackQuery(queryId, '✅ Approved! Email sent.');
-          if (chatId && messageId) {
-            await editTelegramMessage(chatId, messageId,
-              `✅ <b>AI QUALIFIED → APPROVED</b>\n\n${consumer['Full Name']} (${segment}) — approval email sent`
-            );
-          }
-        } catch (e: any) {
-          await answerCallbackQuery(queryId, `Error: ${e.message}`);
-        }
-      }
-
-      else if (action === 'qreject') {
-        try {
-          const consumer: any = await getRecordById(TABLES.CONSUMERS, fullReferralId);
-          await updateRecord(TABLES.CONSUMERS, fullReferralId, { 'Status': 'Rejected' });
-          await answerCallbackQuery(queryId, 'Rejected');
-          if (chatId && messageId) {
-            await editTelegramMessage(chatId, messageId,
-              `❌ <b>AI QUALIFIED → REJECTED</b>\n\n${consumer['Full Name']} (${consumer['State']}) — marked as Rejected`
-            );
-          }
-        } catch (e: any) {
-          await answerCallbackQuery(queryId, `Error: ${e.message}`);
-        }
-      }
-
-      else if (action === 'qwatch') {
-        try {
-          await updateRecord(TABLES.CONSUMERS, fullReferralId, { 'AI Recommended Action': 'watch' });
-          await answerCallbackQuery(queryId, 'Marked as Watch — no action taken.');
-          if (chatId && messageId) {
-            const c: any = await getRecordById(TABLES.CONSUMERS, fullReferralId);
-            await editTelegramMessage(chatId, messageId,
-              `👁️ <b>WATCHING</b>\n\n${c['Full Name']} — flagged for later review`
-            );
-          }
-        } catch (e: any) {
-          await answerCallbackQuery(queryId, `Error: ${e.message}`);
-        }
-      }
-
       // ─── Chase-up callbacks ─────────────────────────────────────────────
       // chasend_{referralId}, chaskip_{referralId}
 
       else if (action === 'chasend') {
+        await answerCallbackQuery(queryId, 'Sending chase-up…');
         try {
           const referral: any = await getRecordById(TABLES.REFERRALS, fullReferralId);
           const draft = referral['AI Chase Draft'];
@@ -1593,6 +1524,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
       }
 
       else if (callbackData?.startsWith('bcsend_')) {
+        await answerCallbackQuery(queryId, 'Broadcasting…');
         try {
           const originalText = message?.text || '';
           const messageMatch = originalText.match(/Message:\n([\s\S]+)\n\nConfirm/);
@@ -1707,9 +1639,25 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             return NextResponse.json({ ok: true });
           }
 
+          const { logAuditEntry: logSpGolive, buildAirtableUpdateReverse: buildSpGoliveReverse } = await import('@/lib/auditLog');
+          const previousPageLive = rancher['Page Live'] ?? null;
+          const previousOnboardingStatus = rancher['Onboarding Status'] ?? null;
+          const spGoliveReverse = buildSpGoliveReverse(TABLES.RANCHERS, session.rancherId, {
+            'Page Live': previousPageLive,
+            'Onboarding Status': previousOnboardingStatus,
+          });
           await updateRecord(TABLES.RANCHERS, session.rancherId, {
             'Page Live': true,
             'Onboarding Status': 'Live',
+          });
+          await logSpGolive({
+            actor: 'manual',
+            tool: 'spgolive',
+            targetType: 'Rancher',
+            targetId: session.rancherId,
+            args: { callbackData },
+            result: { previousPageLive, previousOnboardingStatus, newPageLive: true, newOnboardingStatus: 'Live' },
+            reverseAction: spGoliveReverse,
           });
           await answerCallbackQuery(queryId, '🚀 Page is live!');
           const liveUrl = `${SITE_URL}/ranchers/${slug}`;
@@ -1814,6 +1762,14 @@ Output ONLY the email body. First line should be the subject line prefixed with 
       else if (callbackData.startsWith('rverify_')) {
         const rancherId = callbackData.substring('rverify_'.length);
         try {
+          const { logAuditEntry, buildAirtableUpdateReverse } = await import('@/lib/auditLog');
+          const before = await getRecordById(TABLES.RANCHERS, rancherId) as any;
+          const previousOnboarding = before?.['Onboarding Status'] ?? null;
+          const previousVerification = before?.['Verification Status'] ?? null;
+          const reverse = buildAirtableUpdateReverse(TABLES.RANCHERS, rancherId, {
+            'Onboarding Status': previousOnboarding,
+            'Verification Status': previousVerification,
+          });
           // Set BOTH fields. Prior version only flipped Onboarding Status,
           // leaving Verification Status='Prospect' which contradicts
           // downstream filters and the sign-agreement copy claiming both
@@ -1823,6 +1779,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           await updateRecord(TABLES.RANCHERS, rancherId, {
             'Onboarding Status': 'Verification Complete',
             'Verification Status': 'Verified',
+          });
+          await logAuditEntry({
+            actor: 'manual',
+            tool: 'rverify',
+            targetType: 'Rancher',
+            targetId: rancherId,
+            args: { callbackData },
+            result: { previousOnboarding, previousVerification, newOnboarding: 'Verification Complete', newVerification: 'Verified' },
+            reverseAction: reverse,
           });
           await answerCallbackQuery(queryId, '✅ Verification approved!');
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
@@ -1891,9 +1856,25 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             return NextResponse.json({ ok: true });
           }
 
+          const { logAuditEntry: logGolive, buildAirtableUpdateReverse: buildGoliveReverse } = await import('@/lib/auditLog');
+          const previousPageLive = rancher['Page Live'] ?? null;
+          const previousOnboardingStatus = rancher['Onboarding Status'] ?? null;
+          const goliveReverse = buildGoliveReverse(TABLES.RANCHERS, rancherId, {
+            'Page Live': previousPageLive,
+            'Onboarding Status': previousOnboardingStatus,
+          });
           await updateRecord(TABLES.RANCHERS, rancherId, {
             'Page Live': true,
             'Onboarding Status': 'Live',
+          });
+          await logGolive({
+            actor: 'manual',
+            tool: 'rgolive',
+            targetType: 'Rancher',
+            targetId: rancherId,
+            args: { callbackData },
+            result: { previousPageLive, previousOnboardingStatus, newPageLive: true, newOnboardingStatus: 'Live' },
+            reverseAction: goliveReverse,
           });
           await answerCallbackQuery(queryId, '🟢 Page is live!');
 
@@ -1943,16 +1924,20 @@ Output ONLY the email body. First line should be the subject line prefixed with 
       }
 
       else if (callbackData === 'spdone') {
+        await answerCallbackQuery(queryId, 'Done!');
         if (chatId) {
           setupPageSessions.delete(chatId);
-          await answerCallbackQuery(queryId, 'Done!');
           await sendTelegramMessage(chatId, '✅ Page setup saved. Run /setuppage [name] anytime to edit.');
         }
       }
 
       // ─── Morning brief drill-down buttons ───────────────────────────────────
       // Tapping a button on the daily AI brief fires a fresh fetch and replies inline.
-      else if (callbackData === 'brief_leads' && chatId) {
+      else if (callbackData === 'brief_leads') {
+        if (!chatId) {
+          await answerCallbackQuery(queryId, 'Message context lost — re-run the action');
+          return NextResponse.json({ ok: true });
+        }
         await answerCallbackQuery(queryId, 'Loading…');
         try {
           const refs = await getAllRecords(TABLES.REFERRALS, '{Status} = "Pending Approval"');
@@ -1972,7 +1957,11 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         }
       }
 
-      else if (callbackData === 'brief_stalled' && chatId) {
+      else if (callbackData === 'brief_stalled') {
+        if (!chatId) {
+          await answerCallbackQuery(queryId, 'Message context lost — re-run the action');
+          return NextResponse.json({ ok: true });
+        }
         await answerCallbackQuery(queryId, 'Loading…');
         try {
           const refs = await getAllRecords(TABLES.REFERRALS);
@@ -2001,7 +1990,11 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         }
       }
 
-      else if (callbackData === 'brief_money' && chatId) {
+      else if (callbackData === 'brief_money') {
+        if (!chatId) {
+          await answerCallbackQuery(queryId, 'Message context lost — re-run the action');
+          return NextResponse.json({ ok: true });
+        }
         await answerCallbackQuery(queryId, 'Loading…');
         try {
           const refs = await getAllRecords(TABLES.REFERRALS);
@@ -2028,7 +2021,11 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         }
       }
 
-      else if (callbackData === 'brief_pipeline' && chatId) {
+      else if (callbackData === 'brief_pipeline') {
+        if (!chatId) {
+          await answerCallbackQuery(queryId, 'Message context lost — re-run the action');
+          return NextResponse.json({ ok: true });
+        }
         await answerCallbackQuery(queryId, 'Loading…');
         try {
           const refs = await getAllRecords(TABLES.REFERRALS);
@@ -2067,7 +2064,11 @@ Output ONLY the email body. First line should be the subject line prefixed with 
       // - lost: status → Closed Lost
       // - working: leaves status, just resets the "Close Check Sent At" cooldown
       // - mute: marks "Stop Asking" so close-detector skips this referral going forward
-      else if (callbackData?.startsWith('clcheck_') && chatId && messageId) {
+      else if (callbackData?.startsWith('clcheck_')) {
+        if (!chatId || !messageId) {
+          await answerCallbackQuery(queryId, 'Message context lost — re-run the action');
+          return NextResponse.json({ ok: true });
+        }
         const parts = callbackData.split('_');
         const action = parts[1];
         const refId = parts.slice(2).join('_');
@@ -2158,15 +2159,36 @@ Output ONLY the email body. First line should be the subject line prefixed with 
       // public map (Public Map Hidden=true) AND stops the drip cron
       // (Self-Submit Drip Stage=stopped). Used when a fan-flagged rancher
       // turns out to be junk or a real rancher asks to be removed pre-onboarding.
-      else if (callbackData?.startsWith('selfblock_') && chatId && messageId) {
+      else if (callbackData?.startsWith('selfblock_')) {
+        if (!chatId || !messageId) {
+          await answerCallbackQuery(queryId, 'Message context lost — re-run the action');
+          return NextResponse.json({ ok: true });
+        }
         const recordId = callbackData.slice('selfblock_'.length);
         if (!recordId) {
           await answerCallbackQuery(queryId, 'Missing record ID');
         } else {
           try {
+            const { logAuditEntry, buildAirtableUpdateReverse } = await import('@/lib/auditLog');
+            const before = await getRecordById(TABLES.RANCHERS, recordId) as any;
+            const previousHidden = before?.['Public Map Hidden'] ?? null;
+            const previousDripStage = before?.['Self-Submit Drip Stage'] ?? null;
+            const reverse = buildAirtableUpdateReverse(TABLES.RANCHERS, recordId, {
+              'Public Map Hidden': previousHidden,
+              'Self-Submit Drip Stage': previousDripStage,
+            });
             await updateRecord(TABLES.RANCHERS, recordId, {
               'Public Map Hidden': true,
               'Self-Submit Drip Stage': 'stopped',
+            });
+            await logAuditEntry({
+              actor: 'manual',
+              tool: 'selfblock',
+              targetType: 'Rancher',
+              targetId: recordId,
+              args: { callbackData },
+              result: { previousHidden, previousDripStage, newHidden: true, newDripStage: 'stopped' },
+              reverseAction: reverse,
             });
             await answerCallbackQuery(queryId, '🚫 Blocked — hidden from map, drip stopped');
             await editTelegramMessage(
@@ -2195,7 +2217,11 @@ Output ONLY the email body. First line should be the subject line prefixed with 
       //   a future cron can re-surface). Buyer stays at READY/WAITING.
       // - skip:    Approval Status → skipped, Status → Closed Lost. Buyer
       //   reverts to WAITING. Future iteration: try next-best rancher.
-      else if (callbackData?.startsWith('firstweek_') && chatId && messageId) {
+      else if (callbackData?.startsWith('firstweek_')) {
+        if (!chatId || !messageId) {
+          await answerCallbackQuery(queryId, 'Message context lost — re-run the action');
+          return NextResponse.json({ ok: true });
+        }
         const parts = callbackData.split('_');
         const action = parts[1];
         const refId = parts.slice(2).join('_');
@@ -2318,6 +2344,13 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             console.error('[firstweek callback]', e);
           }
         }
+      }
+
+      else {
+        // Unknown callback — likely from a deploy that removed the handler or a
+        // bug in callback_data construction. Log + ack so the button doesn't spin.
+        console.warn('[telegram] Unknown callback:', callbackData);
+        await answerCallbackQuery(queryId, 'Unknown action');
       }
 
       return NextResponse.json({ ok: true });
