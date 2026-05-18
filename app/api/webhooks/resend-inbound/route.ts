@@ -375,6 +375,27 @@ export async function POST(request: Request) {
       console.error('[resend-inbound] Telegram mirror failed:', e?.message || e);
     }
 
+    const ADMIN_EMAIL_FOR_FORWARD = process.env.ADMIN_EMAIL_FOR_FORWARD || process.env.ADMIN_EMAIL || '';
+    if (ADMIN_EMAIL_FOR_FORWARD) {
+      try {
+        const { sendEmail } = await import('@/lib/email');
+        await sendEmail({
+          to: ADMIN_EMAIL_FOR_FORWARD,
+          subject: `[BHC inbound] ${classification.objectionCategory} · ${subject}`,
+          html: `<div style="font-family:monospace;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:8px;margin-bottom:12px;">
+<strong>From:</strong> ${from}<br>
+<strong>To:</strong> ${Array.isArray(to) ? to.join(', ') : to}<br>
+<strong>Context:</strong> ${context ? `${context.type}=${context.recordId}` : 'no-thread'}<br>
+<strong>Classification:</strong> ${classification.senderType} · ${classification.objectionCategory} · ${classification.sentiment}<br>
+<strong>AI Summary:</strong> ${classification.summary}
+</div>${html || `<pre>${text}</pre>`}`,
+          _bypassSuppression: true,
+        } as any);
+      } catch (e: any) {
+        console.error('[resend-inbound] forward to admin failed:', e?.message);
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       classified: classification.objectionCategory,
