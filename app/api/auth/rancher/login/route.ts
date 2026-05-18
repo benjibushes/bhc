@@ -50,11 +50,15 @@ export async function POST(request: Request) {
       // immediately instead of operator guessing why a rancher didn't get
       // an email.
       try {
-        const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `⚠️ <b>RANCHER LOGIN MISS</b>\n\nEmail typed: <code>${normalizedEmail}</code>\nNo match in Email or Team Emails. Likely a typo or whitespace in the stored field.`
-        );
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'login-miss',
+          summary: `Email typed: ${normalizedEmail}`,
+          detail: 'No match in Email or Team Emails. Likely a typo or whitespace in the stored field.',
+          dedupeKey: `login-miss:${normalizedEmail}`,
+          dedupeWindowMs: 30 * 60 * 1000,
+        });
       } catch {}
       console.log(`[rancher-login] MISS email=${normalizedEmail}`);
       return NextResponse.json({

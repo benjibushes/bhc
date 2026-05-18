@@ -3,6 +3,7 @@ import { getAllRecords, createRecord, updateRecord, getRecordById } from '@/lib/
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { cookies } from 'next/headers';
@@ -526,10 +527,14 @@ export async function POST(request: Request) {
               'Status': 'Waitlisted',
               'Notes': `[capacity-race] Refetched ${currentRefs}/${maxRefsForGuard} before bump; waitlisted to avoid overflow.`,
             });
-            await sendTelegramMessage(
-              TELEGRAM_ADMIN_CHAT_ID,
-              `🟠 <b>CAPACITY RACE CAUGHT:</b> ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) was at cap on refetch — buyer routed to Waitlisted instead of overflowing counter. Indicates burst-traffic scenario.`
-            );
+            await sendOperatorSignal({
+              urgency: 'digest',
+              kind: 'capacity',
+              summary: `CAPACITY RACE CAUGHT: ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) was at cap on refetch — buyer routed to Waitlisted instead of overflowing counter.`,
+              detail: 'Indicates burst-traffic scenario.',
+              refs: [{ type: 'rancher', id: topMatch.id, label: topMatch['Operator Name'] || topMatch['Ranch Name'] }],
+              dedupeKey: `capacity-race:${topMatch.id}`,
+            });
           } catch (e) {
             console.error('Capacity-race waitlist downgrade failed:', e);
           }
@@ -558,20 +563,29 @@ export async function POST(request: Request) {
           // distinct emoji so it's easy to triage in the Telegram feed.
           if (isHotLead && newRefs > maxRefs) {
             try {
-              await sendTelegramMessage(
-                TELEGRAM_ADMIN_CHAT_ID,
-                `🔥 <b>HOT-LEAD CAP BYPASS:</b> ${rancherName} (${rancherState}) is OVER cap at ${newRefs}/${maxRefs} — routed warmup-engaged buyer ${buyerName || ''} anyway. Hot opt-ins shouldn't sit in queue.\n<i>If ${rancherName} isn't responding, consider Pause from admin.</i>`
-              );
+              await sendOperatorSignal({
+                urgency: 'normal',
+                kind: 'capacity',
+                summary: `HOT-LEAD CAP BYPASS: ${rancherName} (${rancherState}) is OVER cap at ${newRefs}/${maxRefs} — routed warmup-engaged buyer ${buyerName || ''} anyway.`,
+                detail: `Hot opt-ins shouldn't sit in queue. If ${rancherName} isn't responding, consider Pause from admin.`,
+                refs: [{ type: 'rancher', id: topMatch.id, label: rancherName }],
+                dedupeKey: `hotlead-bypass:${topMatch.id}`,
+              });
             } catch (e) {
               console.error('Error sending hot-lead bypass alert:', e);
             }
           } else if (newRefs >= maxRefs) {
             // 100% — at capacity
             try {
-              await sendTelegramMessage(
-                TELEGRAM_ADMIN_CHAT_ID,
-                `🔴 <b>AT CAPACITY:</b> ${rancherName} in ${rancherState} is FULL (${newRefs}/${maxRefs}). New <i>cold</i> leads will waitlist; warmup-engaged hot leads will continue routing.`
-              );
+              await sendOperatorSignal({
+                urgency: 'normal',
+                kind: 'capacity',
+                summary: `AT CAPACITY: ${rancherName} in ${rancherState} is FULL (${newRefs}/${maxRefs}).`,
+                detail: 'New cold leads will waitlist; warmup-engaged hot leads will continue routing.',
+                refs: [{ type: 'rancher', id: topMatch.id, label: rancherName }],
+                dedupeKey: `at-capacity:${topMatch.id}`,
+                dedupeWindowMs: 60 * 60 * 1000,
+              });
             } catch (e) {
               console.error('Error sending capacity-full Telegram alert:', e);
             }

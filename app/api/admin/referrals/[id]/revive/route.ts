@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 
 // POST /api/admin/referrals/[id]/revive
 //
@@ -89,16 +89,15 @@ export async function POST(
     await updateRecord(TABLES.REFERRALS, id, updates);
 
     // Telegram audit so revivals are visible — also useful for spotting
-    // mass-revive accidents. Escape user-controlled fields (buyer name +
-    // email could contain < > & from spammy signups) so HTML parse_mode
-    // doesn't break the message.
-    const esc = (s: string) =>
-      String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // mass-revive accidents.
     try {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `♻️ <b>LEAD REVIVED</b>\n\nBuyer: ${esc(buyerName)} (${esc(buyerEmail)})\nStatus: <code>${esc(fromStatus)}</code> → <code>${esc(toStatus)}</code>\nReferral: ${esc(id)}\n\n<i>Closed At cleared. Activity stamped. Cron will treat as fresh.</i>`
-      );
+      await sendOperatorSignal({
+        urgency: 'digest',
+        kind: 'audit',
+        summary: `LEAD REVIVED: ${buyerName} (${buyerEmail})`,
+        detail: `Status: ${fromStatus} → ${toStatus}\nClosed At cleared. Activity stamped. Cron will treat as fresh.`,
+        refs: [{ type: 'referral', id, label: buyerName }],
+      });
     } catch {}
 
     return NextResponse.json({

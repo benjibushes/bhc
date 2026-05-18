@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { bulkRouteStateToRancher, getRancherServedStates } from '@/lib/bulkRoute';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import { withCronRun } from '@/lib/cronRun';
@@ -72,10 +73,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         }
       }
       if (capacityFixed > 0) {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `🔧 <b>Capacity Self-Heal</b>\n\nFixed ${capacityFixed} rancher(s) with drifted referral counters.`
-        );
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'capacity',
+          summary: `Capacity Self-Heal: fixed ${capacityFixed} rancher(s) with drifted referral counters.`,
+        });
       }
     } catch (e: any) {
       console.error('Capacity self-heal error:', e.message);
