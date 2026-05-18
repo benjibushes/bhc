@@ -205,16 +205,29 @@ async function resolveLinks(context: ReplyContext | null): Promise<{
 
 export async function POST(request: Request) {
   try {
+    const rawBody = await request.text();
+    const secret = process.env.RESEND_INBOUND_WEBHOOK_SECRET || '';
+    if (secret) {
+      const { verifySvixSignature } = await import('@/lib/svixVerify');
+      const verify = verifySvixSignature({
+        body: rawBody,
+        svixId: request.headers.get('svix-id'),
+        svixTimestamp: request.headers.get('svix-timestamp'),
+        svixSignature: request.headers.get('svix-signature'),
+        secret,
+      });
+      if (!verify.ok) {
+        console.warn('[resend-inbound] signature rejected:', verify.reason);
+        return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
+      }
+    }
     let payload: ResendInboundPayload;
     try {
-      payload = await request.json();
+      payload = JSON.parse(rawBody);
     } catch {
       return NextResponse.json({ ok: false, error: 'invalid JSON' }, { status: 400 });
     }
 
-    // Optional: verify Resend webhook signature when they support it. As of
-    // writing, Resend's inbound posts a signed payload via Svix-Signature
-    // headers; we'll skip verification here for now and add when stable.
     // For DEFENSE: accept only requests with the expected payload shape.
     const { from, to, subject, text, html, headers } = pluck(payload);
 
