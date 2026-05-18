@@ -245,6 +245,22 @@ export async function POST(request: Request) {
       context,
     });
 
+    let autoRespondResult: { sent: boolean; reason?: string } | null = null;
+    if (
+      classification.actionNeeded === 'auto-respond' &&
+      classification.senderType === 'buyer' &&
+      classification.sentiment !== 'blocking' &&
+      ['ghost', 'scheduling'].includes(classification.objectionCategory)
+    ) {
+      const { maybeAutoRespond } = await import('@/lib/autoRespond');
+      autoRespondResult = await maybeAutoRespond({
+        to: from,
+        subject,
+        bodyContext: bodyForClassify,
+        category: classification.objectionCategory,
+      });
+    }
+
     // Build the Conversations row. Fields that are linked records use arrays.
     const row: Record<string, unknown> = {
       'Timestamp': new Date().toISOString(),
@@ -326,6 +342,12 @@ export async function POST(request: Request) {
         ? '\n👀 Ben to review.'
         : '';
 
+      const autoReplyLine = autoRespondResult?.sent
+        ? '\n🤖 Auto-replied to buyer.'
+        : autoRespondResult
+        ? `\n⚠️ Auto-reply attempt failed: ${autoRespondResult.reason}`
+        : '';
+
       const msg =
         `${senderEmoji} <b>Inbound reply</b> ${sentimentEmoji}\n\n` +
         `<b>From:</b> ${from}\n` +
@@ -333,7 +355,8 @@ export async function POST(request: Request) {
         (context ? `<b>Threaded to:</b> ${context.type}=${context.recordId}\n` : `<b>No thread:</b> reply hit catch-all\n`) +
         `<b>Category:</b> ${classification.objectionCategory}\n\n` +
         `<i>${classification.summary}</i>` +
-        actionLine;
+        actionLine +
+        autoReplyLine;
 
       // Inline buttons only when there's actionable signal
       const inlineKeyboard = classification.actionNeeded === 'propose-close-won' && links.referralId
