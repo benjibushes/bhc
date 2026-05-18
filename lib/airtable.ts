@@ -149,8 +149,13 @@ export async function getAllRecords(tableName: string, filterByFormula?: string)
         .all()
     );
 
+    // Preserve Airtable's autogen createdTime (record metadata, NOT a field).
+    // Multiple callers want "when was this row created" for cohort + recency
+    // analysis (/admin/health new_signups_7d, etc). Without exposing it here,
+    // callers see undefined and report 0. _createdTime is ISO 8601 string.
     const data = records.map((record) => ({
       id: record.id,
+      _createdTime: (record as any)._rawJson?.createdTime || '',
       ...record.fields,
     }));
     if (key) _cache[key] = { ts: Date.now(), data };

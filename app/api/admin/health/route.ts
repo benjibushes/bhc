@@ -132,7 +132,9 @@ export async function GET(request: Request) {
   const totalComm = won.reduce((acc, r) => acc + Number(r['Commission Due'] || 0), 0);
   const D = 86400000;
   const cutoff7 = Date.now() - 7 * D;
-  const recentSignups = consumers.filter((c) => new Date((c as any).createdTime || 0).getTime() > cutoff7).length;
+  // Was (c as any).createdTime — undefined after getAllRecords flatten, so the
+  // counter was always 0. Now uses _createdTime metadata exposed by lib/airtable.
+  const recentSignups = consumers.filter((c) => new Date((c as any)._createdTime || 0).getTime() > cutoff7).length;
   const recentWon = won.filter((r) => {
     const t = r['Closed At'];
     return t && new Date(t).getTime() > cutoff7;
