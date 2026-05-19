@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import {
   TABLES,
+  getAllRecords,
   getRecordById,
   updateRecord,
 } from '@/lib/airtable';
@@ -236,23 +237,50 @@ async function applyAction(
         }
       }
 
-      // Telegram celebration
+      // Telegram celebration — hydrate lifetime/monthly stats from real
+      // referral history so the alert shows accurate milestones (was
+      // hardcoded to 0/0/0/0 for every email-link close, which undermined
+      // the first-sale + milestone celebration UX).
       try {
         const rancherName =
           rancher?.['Operator Name'] ||
           rancher?.['Ranch Name'] ||
           'Rancher';
+
+        let isFirstSaleForRancher = false;
+        let monthlyWins = 0;
+        let monthlyCommission = 0;
+        let lifetimeWins = 0;
+        let lifetimeCommission = 0;
+        try {
+          const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+          const wins = allRefs.filter((r) => {
+            if (r['Status'] !== 'Closed Won') return false;
+            const ids = r['Rancher'] || r['Suggested Rancher'] || [];
+            return Array.isArray(ids) && ids.includes(decoded.rancherId);
+          });
+          isFirstSaleForRancher = wins.length === 1; // includes the one we just closed
+          const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+          const monthWins = wins.filter((r) => new Date(r['Closed At'] || 0).getTime() >= monthStart);
+          monthlyWins = monthWins.length;
+          monthlyCommission = monthWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
+          lifetimeWins = wins.length;
+          lifetimeCommission = wins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
+        } catch (statsErr: any) {
+          console.warn('[quick-action won] stats hydration failed:', statsErr?.message);
+        }
+
         await sendTelegramSaleCelebration({
           referralId: decoded.referralId,
           buyerName: referral['Buyer Name'] || 'Buyer',
           rancherName,
           saleAmount,
           commission: updates['Commission Due'],
-          isFirstSaleForRancher: false,
-          monthlyWins: 0,
-          monthlyCommission: 0,
-          lifetimeWins: 0,
-          lifetimeCommission: 0,
+          isFirstSaleForRancher,
+          monthlyWins,
+          monthlyCommission,
+          lifetimeWins,
+          lifetimeCommission,
         });
       } catch (e: any) {
         console.warn('[quick-action won] telegram celebration error:', e?.message);

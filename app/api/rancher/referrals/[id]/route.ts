@@ -476,6 +476,18 @@ export async function PATCH(
       }
     }
 
+    // HARD GATE: Closed Won MUST have a positive sale amount. Previous code
+    // silently accepted status=Closed Won with no sale → no commission
+    // computed, no Stripe invoice fired, no payment path. Money-losing
+    // failure mode. Now return 400 so the dashboard re-prompts.
+    if (status === 'Closed Won') {
+      if (saleAmount === undefined || saleAmount === null || isNaN(saleAmount) || saleAmount <= 0) {
+        return NextResponse.json({
+          error: 'A positive sale amount is required to close as Won. Enter the actual sale price.',
+        }, { status: 400 });
+      }
+    }
+
     if (saleAmount !== undefined && saleAmount > 0) {
       fields['Sale Amount'] = saleAmount;
       fields['Commission Due'] = calcCommission(saleAmount);
@@ -579,6 +591,17 @@ export async function PATCH(
                 }
               } catch (stripeErr: any) {
                 console.error('Stripe invoice create failed (falling back to plain email):', stripeErr?.message);
+                // Alert admin — Stripe down + Closed Won = manual invoice needed
+                try {
+                  const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+                  await sendOperatorSignal({
+                    urgency: 'loud',
+                    kind: 'system-error',
+                    summary: `Stripe invoice creation FAILED on Closed Won ${id}`,
+                    detail: `Rancher: ${decoded.name}\nBuyer: ${buyerName}\nSale: $${saleAmount}\nCommission: $${commission}\nError: ${stripeErr?.message || 'unknown'}\n\nCreate invoice manually in Stripe + paste hosted_invoice_url into the referral's "Stripe Invoice URL" field. Branded fallback email still firing below.`,
+                    refs: [{ type: 'referral', id, label: `${buyerName} → ${decoded.name}` }],
+                  });
+                } catch {}
               }
 
               // Branded email — always sent. If Stripe invoice succeeded,
