@@ -107,13 +107,25 @@ export async function PATCH(
         'Notes': `${passNote}\n${referral['Notes'] || ''}`.trim(),
       });
 
-      // 2. Decrement rancher's active referral count
+      // 2. Decrement rancher's active referral count. Also flip At Capacity
+      // back to Active if the decrement crossed below max — same pattern
+      // as the capacity-raise flow in /api/rancher/landing-page. Without
+      // this, a rancher who passes their way under cap stays "At Capacity"
+      // until next manual edit or batch-approve self-heal.
       try {
         const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
         const currentCount = rancher['Current Active Referrals'] || 0;
-        await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
-          'Current Active Referrals': Math.max(0, currentCount - 1),
-        });
+        const newCount = Math.max(0, currentCount - 1);
+        const max = Number(rancher['Max Active Referalls'] || rancher['Max Active Referrals'] || 5);
+        const wasAtCap = (rancher['Active Status'] || '') === 'At Capacity';
+        const updates: Record<string, any> = { 'Current Active Referrals': newCount };
+        if (wasAtCap && newCount < max) updates['Active Status'] = 'Active';
+        await updateRecord(TABLES.RANCHERS, decoded.rancherId, updates);
+        if (updates['Active Status'] === 'Active') {
+          // Newly available capacity — drain Waitlisted buyers in their state.
+          const { triggerLaunchWarmup } = await import('@/lib/triggerLaunchWarmup');
+          triggerLaunchWarmup(`pass-action-resume:${decoded.rancherId}`);
+        }
       } catch (e) {
         console.error('Pass: capacity decrement error:', e);
       }
