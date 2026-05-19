@@ -34,14 +34,33 @@ export async function POST(request: Request) {
     });
 
     if (!rancher) {
+      // Collect ALL matching ranchers — a consultant / spouse / hired help
+      // may legitimately be on multiple Team Emails lists. Earlier behavior
+      // was first-match-wins which silently logged them into the wrong
+      // dashboard. Pick the most-recently-active one (latest of:
+      // Last Assigned At, Agreement Signed At, Docs Sent At, _createdTime).
+      const teamMatches: any[] = [];
       for (const r of all) {
         const teamRaw = String(r['Team Emails'] || '').toLowerCase();
         if (!teamRaw) continue;
         const list = teamRaw.split(splitRe).map((s) => s.trim()).filter(Boolean);
-        if (list.includes(normalizedEmail)) {
-          rancher = r;
-          break;
-        }
+        if (list.includes(normalizedEmail)) teamMatches.push(r);
+      }
+      if (teamMatches.length === 1) {
+        rancher = teamMatches[0];
+      } else if (teamMatches.length > 1) {
+        const recencyMs = (r: any): number => {
+          const candidates = [
+            r['Last Assigned At'],
+            r['Agreement Signed At'],
+            r['Docs Sent At'],
+            r._createdTime,
+          ].map((d) => (d ? new Date(d).getTime() : 0));
+          return Math.max(...candidates, 0);
+        };
+        teamMatches.sort((a, b) => recencyMs(b) - recencyMs(a));
+        rancher = teamMatches[0];
+        console.log(`[rancher-login] multi-team-match email=${normalizedEmail} → picked ${rancher.id} of ${teamMatches.length} candidates`);
       }
     }
 

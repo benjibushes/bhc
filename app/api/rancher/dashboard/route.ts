@@ -165,6 +165,11 @@ export async function GET() {
         customProducts: rancher['Custom Products'] || '',
         // Multi-user: additional emails allowed to log into this dashboard.
         teamEmails: rancher['Team Emails'] || '',
+        // Required by /rancher optimization checklist (Gallery + Testimonials
+        // were missing → checklist permanently nagged ranchers who had filled
+        // those out).
+        galleryPhotos: rancher['Gallery Photos'] || '',
+        testimonials: rancher['Testimonials'] || '',
         // Click tracking stats
         quarterClicks: rancher['Quarter Clicks'] || 0,
         halfClicks: rancher['Half Clicks'] || 0,

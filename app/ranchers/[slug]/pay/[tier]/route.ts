@@ -115,8 +115,15 @@ export async function GET(
     try {
       destination = new URL(paymentLink);
     } catch {
-      // Malformed URL in Airtable — just redirect as-is
-      return NextResponse.redirect(paymentLink, { status: 302 });
+      // Malformed URL in Airtable. Try prepending https:// (most common
+      // case: rancher pasted "buy.stripe.com/abc" without scheme). If
+      // that still fails, fall back to the rancher's public page rather
+      // than 500-ing on a raw NextResponse.redirect of an invalid URL.
+      try {
+        destination = new URL(`https://${paymentLink}`);
+      } catch {
+        return NextResponse.redirect(`${siteUrl}/ranchers/${slug}`, { status: 302 });
+      }
     }
 
     destination.searchParams.set('utm_source', utmSource);

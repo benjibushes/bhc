@@ -127,7 +127,7 @@ export default function RancherDashboardPage() {
   // Pass-on-Lead modal — separate from "close deal" because it carries a
   // structured reason and triggers auto-rematch with this rancher excluded.
   const [passModal, setPassModal] = useState<Referral | null>(null);
-  const [passReason, setPassReason] = useState<'out_of_area' | 'at_capacity' | 'not_a_fit'>('not_a_fit');
+  const [passReason, setPassReason] = useState<'out_of_area' | 'at_capacity' | 'not_a_fit' | 'no_response'>('not_a_fit');
   const [passSubmitting, setPassSubmitting] = useState(false);
   const [passResult, setPassResult] = useState<{ rematchOutcome: string; newRancherName: string | null } | null>(null);
   const [pageForm, setPageForm] = useState<Record<string, string>>({});
@@ -299,11 +299,33 @@ export default function RancherDashboardPage() {
   };
 
   const handleMarkLost = async (referral: Referral) => {
-    const reason = window.prompt(
-      `Mark "${referral.buyer_name}" as Closed Lost?\n\nOptional reason (helps us learn):`,
-      ''
+    // Two-step prompt: pick canonical reason first, then optional notes.
+    // The canonical reason flows to closeReason so the backend's buyer-
+    // health auto-flag (Non-Responsive after 2x no_response) actually
+    // fires. Earlier free-text-only prompt meant the flag was dead code
+    // unless the rancher literally typed "no_response".
+    const choice = window.prompt(
+      `Mark "${referral.buyer_name}" as Closed Lost — why?\n\n` +
+      `  1 = Buyer ghosted / never responded\n` +
+      `  2 = Price / budget mismatch\n` +
+      `  3 = Not a fit\n` +
+      `  4 = Other (free text)\n\nEnter 1, 2, 3, or 4:`,
+      '1'
     );
-    if (reason === null) return; // user cancelled
+    if (choice === null) return; // user cancelled
+    const map: Record<string, { code: string; label: string }> = {
+      '1': { code: 'no_response', label: 'Buyer ghosted' },
+      '2': { code: 'price', label: 'Price / budget mismatch' },
+      '3': { code: 'not_a_fit', label: 'Not a fit' },
+      '4': { code: 'other', label: 'Other' },
+    };
+    const picked = map[choice.trim()] || map['4'];
+    let freeText = '';
+    if (picked.code === 'other') {
+      const t = window.prompt('Free-text reason:', '');
+      if (t === null) return;
+      freeText = t.trim();
+    }
     setUpdating(referral.id);
     setUpdateError('');
     try {
@@ -312,8 +334,8 @@ export default function RancherDashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'Closed Lost',
-          closeReason: reason || 'rancher_marked_lost',
-          notes: reason ? `[CLOSED LOST] ${reason}` : undefined,
+          closeReason: picked.code,
+          notes: `[CLOSED LOST · ${picked.label}]${freeText ? ` ${freeText}` : ''}`,
         }),
       });
       if (!res.ok) {
@@ -1851,6 +1873,7 @@ export default function RancherDashboardPage() {
                       ['out_of_area', 'Out of my service area'],
                       ['at_capacity', "I'm at capacity right now"],
                       ['not_a_fit', 'Not a fit (price / timing / other)'],
+                      ['no_response', "Buyer never responded — ghost"],
                     ] as const).map(([value, label]) => (
                       <label key={value} className="flex items-center gap-3 p-3 border border-dust bg-white cursor-pointer hover:border-charcoal">
                         <input
