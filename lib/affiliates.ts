@@ -119,20 +119,4 @@ export async function recordAffiliateClick(rawCode: string): Promise<boolean> {
   }
 }
 
-/**
- * Per-affiliate commission rate. Falls back to AFFILIATE_DEFAULT_COMMISSION_RATE
- * env var (parsed as float, default 0.05 = 5%). Bounded [0, 1].
- */
-export function getAffiliateCommissionRate(affiliateRow: any): number {
-  const raw = affiliateRow?.['Commission Rate'];
-  if (typeof raw === 'number' && !Number.isNaN(raw) && raw > 0) {
-    return Math.min(Math.max(raw, 0), 1);
-  }
-  const envRaw = Number(process.env.AFFILIATE_DEFAULT_COMMISSION_RATE);
-  if (!Number.isNaN(envRaw) && envRaw > 0) {
-    return Math.min(Math.max(envRaw, 0), 1);
-  }
-  return 0.05;
-}
-
 export { createRecord };
