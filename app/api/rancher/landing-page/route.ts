@@ -4,6 +4,7 @@ import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { normalizeStates, stringifyStates } from '@/lib/states';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
+import { MAX_ACTIVE_REFERRALS_FIELD } from '@/lib/rancherCapacity';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -77,7 +78,7 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: 'Capacity must be between 1 and 50' }, { status: 400 });
       }
       await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
-        'Max Active Referalls': maxReferrals,
+        [MAX_ACTIVE_REFERRALS_FIELD]: maxReferrals,
       });
       // If they were at capacity but increased the limit, set back to Active
       const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;

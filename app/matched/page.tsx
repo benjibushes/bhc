@@ -30,9 +30,35 @@ type Props = {
 
 export default async function MatchedPage({ searchParams }: Props) {
   const params = await searchParams;
+  const hasRancherParam = !!(params.rancher && params.rancher.trim());
   const rancherName = (params.rancher || 'your rancher').trim() || 'your rancher';
   const stateLabel = (params.state || '').trim().toUpperCase() || 'your state';
   const isPending = (params.pending || '').toLowerCase() === 'true';
+
+  // No rancher in query string = user landed here directly (back button,
+  // deeplink, manual URL). Show an explicit "are you lost?" state instead
+  // of pretending we matched them. Audit finding 2026-05-20 #27.
+  if (!hasRancherParam && !isPending) {
+    return (
+      <main className="min-h-screen bg-[#F4F1EC] py-16 md:py-24">
+        <Container>
+          <div className="max-w-2xl mx-auto bg-white border border-[#A7A29A] p-10 md:p-14 text-center">
+            <h1 className="font-serif text-3xl md:text-4xl mb-4 text-[#0E0E0E]">
+              No active match found
+            </h1>
+            <p className="text-base text-[#6B4F3F] mb-8">
+              This page shows your most recent rancher introduction — but the link you followed didn&apos;t include one. Head to your dashboard for the latest, or apply for access if you&apos;re new.
+            </p>
+            <Divider />
+            <div className="flex flex-col md:flex-row gap-3 justify-center mt-8">
+              <a href="/member" className="block px-6 py-3 bg-charcoal text-bone text-sm uppercase tracking-wide">Open your dashboard</a>
+              <a href="/access" className="block px-6 py-3 border border-charcoal text-charcoal text-sm uppercase tracking-wide">Apply for access</a>
+            </div>
+          </div>
+        </Container>
+      </main>
+    );
+  }
 
   if (isPending) {
     return (
