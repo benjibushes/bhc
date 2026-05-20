@@ -8,6 +8,7 @@ import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 export const maxDuration = 60;
 
 import { JWT_SECRET } from '@/lib/secrets';
+import { getRancherCommissionRate } from '@/lib/commission';
 
 export async function GET() {
   try {
@@ -34,20 +35,20 @@ export async function GET() {
       return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
     }
 
-    let allReferrals: any[] = [];
+    // Filter at Airtable layer instead of loading every referral row in
+    // the whole DB then filtering client-side. Previously was an
+    // unbounded full-table scan per dashboard load → guaranteed cliff
+    // at scale + 60s timeout risk. Audit finding 2026-05-20 #30.
+    let myReferrals: any[] = [];
     try {
-      allReferrals = await getAllRecords(TABLES.REFERRALS);
+      const safeId = decoded.rancherId.replace(/"/g, '');
+      myReferrals = (await getAllRecords(
+        TABLES.REFERRALS,
+        `OR(FIND("${safeId}", ARRAYJOIN({Rancher})), FIND("${safeId}", ARRAYJOIN({Suggested Rancher})))`,
+      )) as any[];
     } catch (e) {
       console.warn('Referrals table not accessible, returning empty referrals');
     }
-
-    // Filter referrals assigned to this rancher
-    const myReferrals = allReferrals.filter((r: any) => {
-      const assignedIds = r['Rancher'] || [];
-      const suggestedIds = r['Suggested Rancher'] || [];
-      return (Array.isArray(assignedIds) && assignedIds.includes(decoded.rancherId)) ||
-             (Array.isArray(suggestedIds) && suggestedIds.includes(decoded.rancherId));
-    });
 
     const activeReferrals = myReferrals.filter((r: any) =>
       ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r['Status'])
@@ -131,6 +132,11 @@ export async function GET() {
         activeStatus: rancher['Active Status'] || 'Pending',
         onboardingStatus: rancher['Onboarding Status'] || '',
         agreementSigned: rancher['Agreement Signed'] || false,
+        // Per-rancher commission rate, locked at sign-agreement time
+        // (PR #35). Surfaces to the dashboard UI so the close-deal modal
+        // + earnings tab show the correct rate instead of hardcoded 10%.
+        // Audit finding 2026-05-20 #29.
+        commissionRate: getRancherCommissionRate(rancher),
         currentActiveReferrals: rancher['Current Active Referrals'] || 0,
         maxActiveReferrals: getMaxActiveReferrals(rancher),
         monthlyCapacity: rancher['Monthly Capacity'] || 0,

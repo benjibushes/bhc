@@ -14,7 +14,30 @@ import { invalidateSuppressionCache } from '@/lib/email';
 // sender reputation.
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    // Audit finding 2026-05-20 #40: previously unsigned — anyone could POST
+    // email.complained to auto-unsubscribe arbitrary recipients. Verify via
+    // Svix signature when RESEND_WEBHOOK_SECRET set; fail-closed in prod
+    // when unset.
+    const rawBody = await request.text();
+    const secret = process.env.RESEND_WEBHOOK_SECRET || '';
+    if (secret) {
+      const { verifySvixSignature } = await import('@/lib/svixVerify');
+      const verify = verifySvixSignature({
+        body: rawBody,
+        svixId: request.headers.get('svix-id'),
+        svixTimestamp: request.headers.get('svix-timestamp'),
+        svixSignature: request.headers.get('svix-signature'),
+        secret,
+      });
+      if (!verify.ok) {
+        console.warn('[resend] signature rejected:', verify.reason);
+        return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
+      }
+    } else if (process.env.NODE_ENV === 'production') {
+      console.error('[resend] RESEND_WEBHOOK_SECRET unset in prod — refusing all requests');
+      return NextResponse.json({ ok: false, error: 'webhook secret not configured' }, { status: 401 });
+    }
+    const body = JSON.parse(rawBody);
     const { type, data } = body;
 
     if (!type || !data) {

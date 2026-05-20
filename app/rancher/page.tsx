@@ -16,6 +16,7 @@ interface RancherInfo {
   activeStatus: string;
   onboardingStatus: string;
   agreementSigned: boolean;
+  commissionRate?: number;
   currentActiveReferrals: number;
   maxActiveReferrals: number;
   monthlyCapacity: number;
@@ -769,7 +770,7 @@ export default function RancherDashboardPage() {
                 <StatCard label="Active Leads" value={stats.activeReferrals} />
                 <StatCard label="Deals Closed" value={stats.closedWon} />
                 <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
-                <StatCard label="Your Earnings" value={`$${stats.netEarnings.toLocaleString()}`} sub="(after 10% commission)" />
+                <StatCard label="Your Earnings" value={`$${stats.netEarnings.toLocaleString()}`} sub={`(after ${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}% commission)`} />
               </div>
 
               {/* OPTIMIZATION CHECKLIST — drives ranchers to keep filling out
@@ -1145,7 +1146,7 @@ export default function RancherDashboardPage() {
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
-                <StatCard label="Commission (10%)" value={`$${stats.totalCommission.toLocaleString()}`} />
+                <StatCard label={`Commission (${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}%)`} value={`$${stats.totalCommission.toLocaleString()}`} />
                 <StatCard label="Your Net" value={`$${stats.netEarnings.toLocaleString()}`} />
                 <StatCard label="Unpaid Commission" value={`$${stats.unpaidCommission.toLocaleString()}`} sub={stats.unpaidCommission > 0 ? 'Invoice pending' : ''} />
               </div>
@@ -1775,7 +1776,7 @@ export default function RancherDashboardPage() {
                     />
                     {closeForm.saleAmount && parseFloat(closeForm.saleAmount) > 0 && (
                       <p className="text-xs text-saddle mt-1">
-                        Commission (10%): ${(parseFloat(closeForm.saleAmount) * 0.10).toFixed(2)} &middot; You keep: ${(parseFloat(closeForm.saleAmount) * 0.90).toFixed(2)}
+                        Commission ({((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}%): ${(parseFloat(closeForm.saleAmount) * (rancherInfo.commissionRate ?? 0.10)).toFixed(2)} &middot; You keep: ${(parseFloat(closeForm.saleAmount) * (1 - (rancherInfo.commissionRate ?? 0.10))).toFixed(2)}
                       </p>
                     )}
                   </div>
@@ -1789,7 +1790,7 @@ export default function RancherDashboardPage() {
                         <strong>Confirm before submitting:</strong> ${parseFloat(closeForm.saleAmount).toFixed(2)} is the final sale price the buyer agreed to.
                       </p>
                       <p className="text-xs leading-relaxed text-saddle">
-                        Submitting auto-generates a Stripe invoice for <strong>${(parseFloat(closeForm.saleAmount) * 0.10).toFixed(2)}</strong> (10% commission), emailed to your account. Pay by card or ACH on the hosted invoice page within 30 days. The deal won&rsquo;t mark Commission Paid until Stripe confirms payment.
+                        Submitting auto-generates a Stripe invoice for <strong>${(parseFloat(closeForm.saleAmount) * (rancherInfo.commissionRate ?? 0.10)).toFixed(2)}</strong> ({((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}% commission), emailed to your account. Pay by card or ACH on the hosted invoice page within 30 days. The deal won&rsquo;t mark Commission Paid until Stripe confirms payment.
                       </p>
                       <label className="flex items-start gap-2 cursor-pointer">
                         <input

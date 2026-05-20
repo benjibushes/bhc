@@ -517,10 +517,37 @@ export async function POST(request: Request) {
         }
         const currentRefs = (fresh && fresh['Current Active Referrals']) || 0;
         const maxRefsForGuard = getMaxActiveReferrals(topMatch);
-        // Hot leads bypass cap by design (warmup-engaged opt-ins). For cold
-        // leads, if the fresh read shows we'd overflow, downgrade this
-        // referral to Waitlisted rather than corrupting the counter. The
-        // buyer will be re-routed by batch-approve's waitlist-retry path.
+        // Hot leads bypass the soft cap by design (warmup-engaged opt-ins).
+        // For cold leads, if the fresh read shows we'd overflow soft cap,
+        // downgrade to Waitlisted. For HOT leads, still enforce the 1.2×
+        // hard ceiling on refetch — a burst of YES clicks shouldn't smash
+        // the counter past the safety valve. Audit finding 2026-05-20 #18.
+        const HARD_CEILING = Math.ceil(maxRefsForGuard * 1.2);
+        if (isHotLead && maxRefsForGuard > 0 && currentRefs >= HARD_CEILING) {
+          try {
+            await updateRecord(TABLES.REFERRALS, referral.id, {
+              'Status': 'Waitlisted',
+              'Notes': `[capacity-race-hot] Refetched ${currentRefs}/${HARD_CEILING} hard ceiling hit; hot-lead waitlisted.`,
+            });
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'capacity',
+              summary: `HOT-LEAD HARD CEILING HIT: ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) at ${currentRefs}/${HARD_CEILING}. Buyer waitlisted to protect rancher.`,
+              detail: 'Hot-lead burst would have overflowed 1.2× safety valve.',
+              refs: [{ type: 'rancher', id: topMatch.id, label: topMatch['Operator Name'] || topMatch['Ranch Name'] }],
+              dedupeKey: `hard-ceiling:${topMatch.id}`,
+            });
+          } catch (e) {
+            console.error('Hot-lead hard-ceiling downgrade failed:', e);
+          }
+          return NextResponse.json({
+            success: true,
+            matchFound: false,
+            waitlisted: true,
+            reason: 'hard_ceiling',
+            referralId: referral.id,
+          });
+        }
         if (!isHotLead && maxRefsForGuard > 0 && currentRefs >= maxRefsForGuard) {
           try {
             await updateRecord(TABLES.REFERRALS, referral.id, {

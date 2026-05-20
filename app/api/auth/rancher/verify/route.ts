@@ -43,6 +43,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Your account has been deactivated for compliance reasons. Contact support@buyhalfcow.com.' }, { status: 403 });
     }
 
+    // Re-validate token's email claim against current record. If the
+    // rancher's email was changed since the token was minted, the old
+    // token shouldn't grant access. Audit finding 2026-05-20 #46.
+    const tokenEmail = String(decoded.email || '').trim().toLowerCase();
+    const currentEmail = String(rancher['Email'] || '').trim().toLowerCase();
+    if (tokenEmail && currentEmail && tokenEmail !== currentEmail) {
+      // Check Team Emails too — token may have been minted for a teammate
+      // who's still authorized.
+      const teamEmails = String(rancher['Team Emails'] || '')
+        .split(/[\n,]/)
+        .map(e => e.trim().toLowerCase())
+        .filter(Boolean);
+      if (!teamEmails.includes(tokenEmail)) {
+        return NextResponse.json({ error: 'Token no longer valid — email changed. Request a new login link.' }, { status: 401 });
+      }
+    }
+
     const sessionToken = jwt.sign(
       {
         type: 'rancher-session',

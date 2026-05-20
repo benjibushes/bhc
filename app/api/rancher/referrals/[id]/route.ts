@@ -297,7 +297,28 @@ export async function PATCH(
         }
       }
 
-      if (status === 'Closed Won' || status === 'Closed Lost') {
+      // Capacity-freeing transitions. Awaiting Payment counts here too —
+       // the rancher closed the deal off-platform; slot should free for new
+       // leads while we wait for buyer payment confirmation. Audit finding
+       // 2026-05-20 #13: previously only Closed Won/Lost decremented,
+       // leaving Awaiting Payment rows blocking capacity.
+       const isCapacityFreeingClose =
+         status === 'Closed Won' || status === 'Closed Lost' || status === 'Awaiting Payment';
+       // Track previous status so we never double-decrement if the rancher
+       // PATCHes a Closed Won record back to Closed Won (re-edit), or
+       // transitions Awaiting Payment → Closed Won (second close after
+       // already freeing capacity at Awaiting Payment time).
+       const previousStatus = String(referral['Status'] || '');
+       const ACTIVE_REF_STATES_FOR_DECREMENT = new Set([
+         'Intro Sent',
+         'Rancher Contacted',
+         'Negotiation',
+         'Pending Approval',
+       ]);
+       const shouldDecrementCapacity =
+         isCapacityFreeingClose && ACTIVE_REF_STATES_FOR_DECREMENT.has(previousStatus);
+
+      if (status === 'Closed Won' || status === 'Closed Lost' || status === 'Awaiting Payment') {
         fields['Closed At'] = new Date().toISOString();
 
         // ── BUYER STATUS + HEALTH SYNC ─────────────────────────────────
@@ -394,13 +415,16 @@ export async function PATCH(
         // explicitly clearing here when the rancher reaches one of those stages.
         // Actual reset handled in the !closeStatus branch below.
 
-        // Decrement active referral count
+        // Decrement active referral count — guarded by previousStatus check
+        // to prevent double-decrement on re-edit OR Awaiting Payment → Closed Won.
         try {
           const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
           const currentCount = rancher['Current Active Referrals'] || 0;
-          await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
-            'Current Active Referrals': Math.max(0, currentCount - 1),
-          });
+          if (shouldDecrementCapacity) {
+            await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
+              'Current Active Referrals': Math.max(0, currentCount - 1),
+            });
+          }
 
           const rancherState = rancher['State'] || '';
           const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -445,11 +469,14 @@ export async function PATCH(
             }
           }
 
-          // ── CLOSED WON or LOST: Auto-match waiting consumers to freed-up capacity ──
-          // Use isQualifiedForRouting to ensure only opted-in buyers (warmup-engaged
-          // OR fresh hot signups) get auto-matched. Without this, every freed slot
-          // would route an unqualified buyer to the rancher who just closed a deal.
-          if (rancherState) {
+          // ── CLOSED WON / LOST / AWAITING PAYMENT: Auto-match waiting consumers
+          // to freed-up capacity ── Use isQualifiedForRouting to ensure only
+          // opted-in buyers (warmup-engaged OR fresh hot signups) get
+          // auto-matched. Without this, every freed slot would route an
+          // unqualified buyer to the rancher who just closed a deal.
+          // Only fire when capacity actually freed (shouldDecrementCapacity)
+          // so re-edit PATCHes don't trigger a routing storm.
+          if (rancherState && shouldDecrementCapacity) {
             const candidates = await getAllRecords(
               TABLES.CONSUMERS,
               `AND({Status} = "Approved", {Referral Status} = "Unmatched", {State} = "${rancherState}")`,
@@ -520,6 +547,18 @@ export async function PATCH(
     }
 
     if (saleAmount !== undefined && saleAmount > 0) {
+      // Reject Sale Amount edits on already-closed deals. Otherwise the
+      // commission auto-recomputes but the Stripe invoice doesn't refire
+      // → drift between Airtable + actual billed amount. Audit finding
+      // 2026-05-20 #14. Cancel+reissue invoice path is admin-only.
+      const isClosedRow =
+        String(referral['Status'] || '') === 'Closed Won' && !status;
+      if (isClosedRow) {
+        return NextResponse.json({
+          error:
+            'Sale Amount cannot be edited on a closed deal — invoice would drift. Contact support@buyhalfcow.com to cancel and reissue.',
+        }, { status: 400 });
+      }
       fields['Sale Amount'] = saleAmount;
       // Per-rancher commission via locked rate. Falls back to env default
       // only when rancher row has no Commission Rate set (gate above
