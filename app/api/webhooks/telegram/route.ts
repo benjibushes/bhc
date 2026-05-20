@@ -376,12 +376,52 @@ Tap a button to fill in that field:`;
 
 export const maxDuration = 60;
 
+// Idempotency Set for Telegram update_ids. Module-level Map survives within
+// a single Vercel function instance; cold starts reset. Good enough for the
+// common case (Telegram redelivers within seconds, not across instances).
+// Audit finding 2026-05-20 #2.
+const _seenUpdateIds = new Map<number, number>();
+const UPDATE_ID_TTL_MS = 5 * 60_000;
+function _markUpdateSeen(id: number): boolean {
+  // Prune old entries opportunistically
+  const cutoff = Date.now() - UPDATE_ID_TTL_MS;
+  for (const [k, ts] of _seenUpdateIds.entries()) {
+    if (ts < cutoff) _seenUpdateIds.delete(k);
+  }
+  if (_seenUpdateIds.has(id)) return false;
+  _seenUpdateIds.set(id, Date.now());
+  return true;
+}
+
 export async function POST(request: Request) {
+  // Signature verification. Telegram supports X-Telegram-Bot-Api-Secret-Token.
+  // Audit finding 2026-05-20 #1 — without this, anyone can POST forged
+  // callback_query and trigger one-tap admin actions. Gracefully degrades
+  // when secret is unset (warn in prod) to avoid bricking the bot during
+  // rollout.
+  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (expectedSecret) {
+    const provided = request.headers.get('x-telegram-bot-api-secret-token');
+    if (provided !== expectedSecret) {
+      console.warn('[telegram-webhook] signature mismatch — rejecting');
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    }
+  } else if (process.env.NODE_ENV === 'production') {
+    console.warn('[telegram-webhook] TELEGRAM_WEBHOOK_SECRET unset in prod — webhook is unauthenticated');
+  }
+
   let update: any;
   try {
     update = await request.json();
   } catch {
     return NextResponse.json({ ok: true });
+  }
+
+  // Idempotency — Telegram redelivers on any 5xx or timeout. Drop dupes.
+  if (typeof update?.update_id === 'number') {
+    if (!_markUpdateSeen(update.update_id)) {
+      return NextResponse.json({ ok: true, deduped: true });
+    }
   }
 
   // Process the update and respond — Vercel kills the function after response

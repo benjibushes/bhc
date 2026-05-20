@@ -68,9 +68,15 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 function verifyAuth(headers: Headers): boolean {
   const secret = process.env.MANYCHAT_WEBHOOK_SECRET;
   if (!secret) {
-    console.warn(
-      '[manychat webhook] MANYCHAT_WEBHOOK_SECRET not set — skipping auth check'
-    );
+    // Audit finding 2026-05-20 #3: previously returned true (fail-open) in
+    // prod when secret was unset. That made the endpoint anonymous-callable
+    // → spam vector + Claude cost burn. Now: fail-CLOSED in prod, warn
+    // only in non-prod.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[manychat webhook] MANYCHAT_WEBHOOK_SECRET unset in prod — refusing all requests');
+      return false;
+    }
+    console.warn('[manychat webhook] MANYCHAT_WEBHOOK_SECRET not set (non-prod) — skipping auth check');
     return true;
   }
   const got = (headers.get('authorization') || '').replace(/^Bearer\s+/i, '');

@@ -156,8 +156,12 @@ async function handleBrandListingCompleted(session: any) {
 
     console.log(`Brand ${brandId} payment completed — now featured`);
   } catch (error) {
-    console.error('Error processing brand payment webhook:', error);
-    return NextResponse.json({ error: 'Processing error' }, { status: 500 });
+    // Audit finding 2026-05-20 #6: previously returned 500 → Stripe retries
+    // 3× → triple founder welcomes + triple Telegram alerts. Now: log the
+    // error + return 200 so Stripe stops. Idempotency on session_id (see
+    // handleFounderCheckoutCompleted) catches any future retries.
+    console.error('Error processing brand payment webhook (returning 200 to stop retries):', error);
+    return NextResponse.json({ received: true, error: 'logged' });
   }
 
   return NextResponse.json({ received: true });
@@ -293,7 +297,11 @@ async function handleFounderCheckoutCompleted(session: any, metaType: string) {
     }
   } catch (e) {
     console.error('Founder upsert failed:', e);
-    return NextResponse.json({ error: 'Upsert failed' }, { status: 500 });
+    // Return 200 instead of 500 to stop Stripe retry storms (3× → triple
+    // welcomes + alerts). Idempotency via Stripe Session ID prevents
+    // double-processing on retry anyway. Audit finding 2026-05-20 #6.
+    console.error('[stripe-webhook] founder upsert failed (returning 200 to stop retries)');
+    return NextResponse.json({ received: true, error: 'logged' });
   }
 
   // ── 4. Welcome email (skip if already sent — defense in depth) ──
