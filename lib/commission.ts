@@ -33,8 +33,49 @@ export function getCommissionRate(): number {
 
 /**
  * Calculate commission cents-precise. Returns a number rounded to 2 decimals.
+ *
+ * Uses the env-default rate. Prefer calcCommissionForRancher when you have
+ * the rancher record handy — it reads the rancher's locked Commission Rate
+ * so closes always honor what the rancher agreed to at signing time.
  */
 export function calcCommission(saleAmount: number): number {
   const safeAmount = Number(saleAmount) || 0;
   return Math.round(safeAmount * getCommissionRate() * 100) / 100;
+}
+
+/**
+ * Per-rancher commission rate. Reads the rancher's `Commission Rate` field
+ * (locked at sign-agreement time), falls back to env default when empty.
+ * Bounded [0, 1].
+ *
+ * Use this on all close paths so a rancher's invoice always matches what
+ * they signed up for. Drift between deals = the Ashcraft-pattern dispute
+ * (2026-05-20 incident).
+ */
+export function getRancherCommissionRate(rancher: any): number {
+  const raw = rancher?.['Commission Rate'];
+  if (typeof raw === 'number' && !Number.isNaN(raw) && raw > 0) {
+    return Math.min(Math.max(raw, 0), 1);
+  }
+  return getCommissionRate();
+}
+
+/**
+ * Calculate commission for a specific rancher's deal. Per-rancher rate +
+ * cents-precise rounding.
+ */
+export function calcCommissionForRancher(rancher: any, saleAmount: number): number {
+  const safeAmount = Number(saleAmount) || 0;
+  const rate = getRancherCommissionRate(rancher);
+  return Math.round(safeAmount * rate * 100) / 100;
+}
+
+/**
+ * Has this rancher locked an explicit commission rate? Used by close paths
+ * to refuse Closed Won when the rate is missing — forces the ambiguity to
+ * be resolved BEFORE money flows.
+ */
+export function hasLockedCommissionRate(rancher: any): boolean {
+  const raw = rancher?.['Commission Rate'];
+  return typeof raw === 'number' && !Number.isNaN(raw) && raw > 0;
 }
