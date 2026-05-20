@@ -1,10 +1,24 @@
 # Cron Inventory
 
-Generated 2026-05-18. Source: `app/api/cron/*` + `vercel.json`.
+Generated 2026-05-19. Source: `app/api/cron/*` + `vercel.json`.
 
-18 cron route files. 15 scheduled in `vercel.json`. 3 UNSCHEDULED: `buyer-pulse`, `close-detector`, `daily-audit`.
+19 cron route files, all scheduled in `vercel.json`. All times UTC unless noted. MT = America/Denver. Active months 2026-04 to 2026-05; UTC-MT offset = 6h (MDT).
 
-All times below are UTC unless noted. MT = America/Denver. Active months 2026-04 to 2026-05; UTC-MT offset = 6h (MDT).
+## Observability
+
+Every cron is wrapped by `lib/cronRun.ts::withCronRun(name, handler)`. Wrapper:
+1. **Pause gate** — short-circuits with `status='paused'` if a row in `Cron Pauses` matches the cron name with `Paused=true` (set by Telegram `/pausecron`).
+2. **Run** the handler; catch exceptions → `status='error'`.
+3. **Log** to `Cron Runs` table: Name · Started At · Ended At · Duration ms · Status · Records Touched · Notes · (optional) Skip Reason Breakdown JSON.
+
+Inspect last 24h via Telegram `/cronstatus` (`/runs`). Missing cron names from the expected-24h list surface as `🚨 No run in 24h: <names>`.
+
+## Schedule Audit (2026-05-19)
+
+Three known Vercel Hobby-tier limitations identified + worked around:
+- **Monthly slots silently dropped.** `compliance-reminders` + `commission-invoices` had 0 runs in 60 days under `0 X 1 * *` schedules. Fix: schedule daily, exit early with `status='success' notes='skipped — not 1st'` unless `today.getUTCDate() === 1`.
+- **Day-of-week slots dropped.** `rancher-followup` had 0 runs in 14 days under `0 15 * * 1`. Fix: same pattern — daily schedule, in-handler Monday guard.
+- **Groq tool-schema validator rejected integer literal as string** ("/minDays expected number got string") on `daily-audit` 2026-05-19. Fix: added `forceProvider:'anthropic'` param to `callClaudeWithTools`; daily-audit pinned to Anthropic.
 
 ---
 
@@ -12,220 +26,226 @@ All times below are UTC unless noted. MT = America/Denver. Active months 2026-04
 
 | Field | Value |
 |---|---|
-| Purpose | Auto-approve pending consumers, self-heal rancher capacity counters, kick off matching for Beef Buyers. |
-| Schedule | `0 */2 * * *` — every 2h on the hour UTC. |
-| Reads | Airtable: RANCHERS, REFERRALS, CONSUMERS. |
-| Writes | Airtable: rancher `Current Active Referrals` reconciled; consumers approved; new REFERRALS rows via matching. Sends emails (approval, waitlist, backfill, rancher go-live). |
-| Telegram output | `sendTelegramUpdate` / `sendTelegramMessage` to admin chat — batch summary + rancher go-live alerts. |
-| Known issues | Capacity-counter drift is treated symptomatically every 2h; root cause (missed decrements) still unfixed. Runs 12x/day — heaviest cron in the rotation. `maxDuration=120`. |
+| Purpose | Auto-approve pending consumers, self-heal rancher capacity counters, kick off matching for Beef Buyers, retry waitlisted with qualification gate. |
+| Schedule | `0 9 * * *` — daily 9 UTC (3 AM MT). |
+| Reads | RANCHERS, REFERRALS, CONSUMERS. |
+| Writes | Rancher `Current Active Referrals` reconciled; consumers approved; new REFERRALS rows via matching; consumer `Warmup Stage=matched` on hit. |
+| Telegram output | `sendTelegramUpdate` summary card. Waitlist retry card with `unqualified=N capped=M` breakdown. |
+| Cron Runs notes | `approved=N matched=N live=N waitlist=N/N capFix=N errs=N unqualified=N capped=N`. |
+| Skip Reason Breakdown | JSON `{reason: count}` of qualification gate failures (e.g. `{"no explicit consent click yet": 33}`). |
+| Known issues | Capacity-counter drift fixed symptomatically each run; root cause (missed decrements) unfixed. Was `0 */2 * * *` (every 2h) through 2026-05-19; dropped to daily after audit found 11 of 12 daily runs wasted re-scanning a static stuck cohort. |
+| Knobs | `DAILY_INTRO_CAP=25`, `PER_RANCHER_DAILY_CAP=5`, `WARMUP_GRACE_DAYS=3`. |
+| `maxDuration` | 120s. |
 
 ## buyer-pulse
 
 | Field | Value |
 |---|---|
-| Purpose | Email buyers 5+ days post-intro a 3-button pulse (yes/no/stalled) to detect rancher ghosting from the buyer side. |
-| Schedule | UNSCHEDULED — no `vercel.json` entry. |
-| Reads | Airtable: REFERRALS (Intro Sent), RANCHERS. |
-| Writes | Airtable: REFERRALS `Buyer Pulse Sent At`. Sends pulse email via `sendEmail`. |
-| Telegram output | `sendTelegramMessage` to admin on each send. |
-| Known issues | Not in vercel.json — dead code unless triggered manually. `MAX_PULSES_PER_RUN=25`. Idempotent via `Buyer Pulse Sent At`. |
+| Purpose | Buyer-side "did rancher reach out?" email with 3-button click flow (Yes/No/Stop). |
+| Schedule | `0 18 * * *` — daily 18 UTC. |
+| Reads | REFERRALS, CONSUMERS, RANCHERS. |
+| Writes | `Buyer Pulse Sent At` + `Buyer Pulse Response` on REFERRALS. |
+| Telegram output | Summary card with `sent=N failed=N candidates=N`. |
+| Known issues | None as of 2026-05-19. |
 
 ## close-detector
 
 | Field | Value |
 |---|---|
-| Purpose | Post Telegram one-tap card asking Ben "did this close?" for referrals stuck 7+ days. Unlocks Closed Won visibility. |
-| Schedule | UNSCHEDULED — no `vercel.json` entry. |
-| Reads | Airtable: REFERRALS (active statuses), RANCHERS. |
-| Writes | Read-only (Telegram callback handlers do the writes). Field `Close Check Sent At` needs creation in Airtable. |
-| Telegram output | `sendTelegramMessage` to admin — one card per stale referral, max 15/run. |
-| Known issues | Not in vercel.json. Header comment says callback handlers `clcheck_won_*` etc. need wiring in `webhooks/telegram/route.ts` — verify done. |
+| Purpose | Posts Telegram 4-button "Did this close?" cards for stale active referrals. |
+| Schedule | `0 17 * * *` — daily 17 UTC. |
+| Reads | REFERRALS, RANCHERS. |
+| Writes | `Close Check Sent At` on REFERRALS. |
+| Telegram output | Per-referral interactive card (Won / Lost / Working / Stop Asking). |
+| Known issues | None as of 2026-05-19. |
 
 ## commission-invoices
 
 | Field | Value |
 |---|---|
-| Purpose | Monthly: send commission invoices to ranchers with unpaid Closed Won referrals. |
-| Schedule | `0 16 1 * *` — 1st of month 16:00 UTC (10am MT). |
-| Reads | Airtable: REFERRALS (Closed Won, unpaid), RANCHERS. |
-| Writes | Sends invoice email via `sendMonthlyCommissionInvoice`. No direct Airtable writes in top section (invoice marking may happen later in handler). |
-| Telegram output | `sendTelegramUpdate` to admin with run summary. |
-| Known issues | None visible in top 80 lines. |
+| Purpose | Monthly Stripe invoice email to ranchers with unpaid commissions. |
+| Schedule | `0 16 * * *` — daily 16 UTC; in-handler date-1 guard. Was `0 16 1 * *`; Vercel silently dropped monthly slot (0 runs in 60d). |
+| Reads | REFERRALS (unpaid Closed Won), RANCHERS. |
+| Writes | `Stripe Invoice URL` + `Stripe Invoice ID` on REFERRALS. |
+| Telegram output | Summary. |
+| Known issues | Monthly schedule unreliable on Vercel Hobby — daily + date-1 guard workaround. |
 
 ## compliance-reminders
 
 | Field | Value |
 |---|---|
-| Purpose | Monthly reminder to active+signed ranchers to report any off-platform sales. |
-| Schedule | `0 9 1 * *` — 1st of month 09:00 UTC (3am MT — odd hour). |
-| Reads | Airtable: RANCHERS. |
-| Writes | Sends email to each active rancher with `Agreement Signed=true`. |
-| Telegram output | None visible in top 80 lines (likely summary further down). |
-| Known issues | 09:00 UTC = 3am MT — bad delivery window; consider moving to MT business hours. Auth path has explicit comment about historical bypass bug now fixed. |
+| Purpose | Monthly sales-report email to active ranchers; auto-flag non-compliant. |
+| Schedule | `0 9 * * *` — daily 9 UTC; in-handler date-1 guard. Was `0 9 1 * *`; same Hobby-tier issue as commission-invoices. |
+| Reads | RANCHERS. |
+| Writes | Marks ranchers as Non-Compliant after missed cycles. |
+| Telegram output | Send count summary. |
+| Known issues | See commission-invoices. |
 
 ## daily-audit
 
 | Field | Value |
 |---|---|
-| Purpose | AI-powered morning sweep — Claude tool-use against full BHC state. Prioritized issue list. |
-| Schedule | UNSCHEDULED — no `vercel.json` entry. |
-| Reads | Airtable: read-only via AI tools (`get_stalled_referrals`, `get_pending_consumers`, etc.). |
-| Writes | None (read-only by design). All AI tool calls log to AI_AUDIT_LOG. |
-| Telegram output | `sendTelegramMessage` to admin — under 2500 chars, three sections (NEEDS YOU NOW / WORTH A LOOK / HEALTHY). |
-| Known issues | Not in vercel.json — fully orphaned. Header says runs 8am MT (14:00 UTC) but nothing schedules it. `maxDuration=120`. |
+| Purpose | Autonomous morning audit via Anthropic tool-use; produces a prioritized issue list for Telegram. |
+| Schedule | `45 5 * * *` — daily 5:45 UTC. |
+| Reads | All read-only tools registered in `lib/aiTools.ts`. |
+| Writes | None directly; surfaces issues for Ben to act on. |
+| Telegram output | Telegram card with 🚨 / 🟡 / 🟢 sections. |
+| Known issues | Was Groq → failed on tool-schema validation 2026-05-19 ("/minDays expected number got string"). Now pinned to Anthropic via `forceProvider:'anthropic'`. |
+| AI provider | Anthropic (`claude-sonnet-4-6`), max 8 iterations. |
 
 ## daily-digest
 
 | Field | Value |
 |---|---|
-| Purpose | Morning summary: 24h signups, intros, monthly wins, capacity warnings, stalled referrals. |
-| Schedule | `0 14 * * *` — 14:00 UTC (8am MT). |
-| Reads | Airtable: CONSUMERS, RANCHERS, REFERRALS. |
-| Writes | None — pure read + Telegram emit. AI synthesizes opening blurb via `callClaude`. |
-| Telegram output | `sendTelegramMessage` / `sendTelegramUpdate` — HTML-formatted multi-section digest. |
-| Known issues | **CONFLICT**: same minute (14:00 UTC) as `rancher-trust-promotion`. Three reads of full tables — costly on Airtable rate limits if it overlaps. |
+| Purpose | Pipeline KPI Telegram brief with AI top-3 priorities. |
+| Schedule | `0 14 * * *` — daily 14 UTC. |
+| Reads | CONSUMERS, RANCHERS, REFERRALS. |
+| Telegram output | Daily card with drill-down buttons (`brief_leads / brief_stalled / brief_money / brief_pipeline`). |
+| Known issues | None as of 2026-05-19. |
 
 ## email-sequences
 
 | Field | Value |
 |---|---|
-| Purpose | Daily drip emails to approved consumers + abandoned-application 3-email recovery sequence. |
-| Schedule | `0 16 * * *` — 16:00 UTC (10am MT). |
-| Reads | Airtable: CONSUMERS (filtered by Source/Status). |
-| Writes | Airtable: CONSUMERS `Sequence Stage` advances. Sends 7+ email types (abandoned recovery, founder waiting, match check-in, cuts edu, monthly letter, repeat-purchase ask). |
-| Telegram output | `sendTelegramUpdate` for run summary. |
-| Known issues | **CONFLICT**: same minute (16:00 UTC) as `onboarding-stuck`. Header comment says was timing out at 60s, bumped to 180s. 1200+ consumer iterations per run. |
+| Purpose | Buyer-stage drip emails (WAITING / READY / MATCHED / CLOSED), abandoned-recovery, rancher agreement reminders. |
+| Schedule | `0 16 * * *` — daily 16 UTC. |
+| Reads | CONSUMERS, RANCHERS. |
+| Writes | `Sequence Stage` + `Sequence Sent At` on CONSUMERS; rancher reminder timestamps. |
+| Telegram output | Send count summary. |
+| Known issues | READY_NUDGE is one-shot (sets `Sequence Stage='READY_NUDGE'` then never re-fires). Stuck-buyer reanimation now handled by `re-warm-cohort`. |
 
 ## healthcheck
 
 | Field | Value |
 |---|---|
-| Purpose | Pre-business-cron sanity check — hit `/api/health`, Telegram pass/fail. |
-| Schedule | `0 13 * * *` — 13:00 UTC (7am MT, BEFORE other crons). |
-| Reads | Internal `/api/health` (which probes Airtable, Resend, Telegram, AI). |
-| Writes | None. |
-| Telegram output | `sendTelegramMessage` — green "All Systems Go" with per-service ms, OR red "SYSTEM DOWN/DEGRADED" with failure details. |
-| Known issues | None — clean and minimal. `maxDuration=30`. |
+| Purpose | `/api/health` smoke + green/red Telegram card. |
+| Schedule | `0 13 * * *` — daily 13 UTC. |
+| Reads | Airtable, Resend, Telegram, AI provider. |
+| Telegram output | One-line status card. |
+| Known issues | Returns `partial`/`error` for degraded states but HTTP 200 (Vercel doesn't mark cron failed). |
 
 ## nightly-rancher-audit
 
 | Field | Value |
 |---|---|
-| Purpose | Per-rancher pipeline summary + 10 system-wide bug checks (capacity drift, tier mismatches, stalled referrals, etc.). |
-| Schedule | `0 5 * * *` — 05:00 UTC (11pm MT prior day). |
-| Reads | Airtable: RANCHERS, REFERRALS, CONSUMERS (all three full tables). |
-| Writes | Read-only audit; surfaces issues only. |
-| Telegram output | `sendTelegramMessage` — digest of per-rancher pipeline + system issues. |
-| Known issues | Reads three full tables. `maxDuration=180`. Audit-only; doesn't fix anything it finds — overlaps philosophically with `daily-audit`. |
+| Purpose | Per-rancher pipeline summary + 10 system checks (capacity drift, tier mismatches, pilot complete, etc). |
+| Schedule | `0 5 * * *` — daily 5 UTC. |
+| Reads | RANCHERS, REFERRALS, CONSUMERS. |
+| Writes | `Pilot Upsell Notified At` when pilot goal reached (added 2026-05-19). |
+| Telegram output | Multi-chunk audit card with `🚨 critical / 🟡 warn / 🟢 info` issues. |
+| Known issues | Used to bury pilot-complete in critical list; now fires celebration alert + stamps notified-at as a side-effect. |
 
 ## onboarding-stuck
 
 | Field | Value |
 |---|---|
-| Purpose | Nudge ranchers stuck mid-onboarding (Call Complete / Docs Sent / signed-but-not-live) at day 3/7/14. |
-| Schedule | `0 16 * * *` — 16:00 UTC (10am MT). |
-| Reads | Airtable: RANCHERS. |
-| Writes | Airtable: RANCHERS `Last Onboarding Nudge At`. Sends nudge email with setup-link JWT. |
-| Telegram output | `sendTelegramMessage` — admin ping after day-14 final nudge for manual outreach. |
-| Known issues | **CONFLICT**: same minute (16:00 UTC) as `email-sequences`. Both walk RANCHERS / CONSUMERS — Airtable 5 req/sec/base limit could trip. |
+| Purpose | Day 3/7/14 nudges for ranchers stuck at Call Complete / Docs Sent / signed-no-page. |
+| Schedule | `15 16 * * *` — daily 16:15 UTC. |
+| Reads | RANCHERS. |
+| Writes | `Last Onboarding Nudge At`. |
+| Telegram output | Summary card. |
+| Known issues | None as of 2026-05-19. |
 
 ## rancher-followup
 
 | Field | Value |
 |---|---|
-| Purpose | Weekly Monday alert for ranchers stalled at each onboarding stage with action buttons. |
-| Schedule | `0 15 * * 1` — Mondays 15:00 UTC (9am MT). |
-| Reads | Airtable: RANCHERS. |
-| Writes | Sends `sendRancherLeadNudge` email. |
-| Telegram output | `sendTelegramMessage` — stage-by-stage stalled-rancher digest with action buttons. |
-| Known issues | Stage thresholds hardcoded in route file — drift risk vs. `onboarding-stuck`. Two overlapping nudge crons (this + onboarding-stuck). |
+| Purpose | Weekly stalled-stage rancher Telegram alerts + stale-lead nudge emails. |
+| Schedule | `0 15 * * *` — daily 15 UTC; in-handler Monday guard. Was `0 15 * * 1`; Vercel dropped day-of-week (0 runs in 14d). |
+| Reads | RANCHERS. |
+| Telegram output | Stalled-rancher cards with action buttons. |
+| Known issues | See schedule note. |
 
 ## rancher-launch-warmup
 
 | Field | Value |
 |---|---|
-| Purpose | Send buyer-warmup emails to consumers in a rancher's state. Two paths: Trust Mode → drain; non-Trust → throttled batch. Day-7 nudge phase too. |
-| Schedule | `30 13 * * *` — 13:30 UTC (7:30am MT). |
-| Reads | Airtable: RANCHERS, CONSUMERS, REFERRALS (full-table scans likely below line 80). |
-| Writes | Airtable: CONSUMERS `Warmup Engaged At`/stage. RANCHERS `Warmup Last Batch At`. Sends `sendRancherLaunchWarmup` + `sendRancherLaunchWarmupNudge` emails. |
-| Telegram output | `sendTelegramUpdate` for batch summary. |
-| Known issues | Hardcoded caps `WARMUP_CAP_PER_RUN=100`, `NUDGE_CAP_PER_RUN=50` — sender-reputation guardrail. Complex priority scoring. |
+| Purpose | Throttled/trust-mode warmup emails to waitlisted buyers when a rancher goes live, plus Day-7 nudge. |
+| Schedule | `30 13 * * *` — daily 13:30 UTC. |
+| Reads | RANCHERS, CONSUMERS. |
+| Writes | `Warmup Sent At`, `Warmup Stage`, `Buyer Stage=READY`, `Launch Warmup Triggered`, `Warmup Last Batch At` on RANCHERS. |
+| Telegram output | Per-rancher batch summary + global daily total. |
+| Known issues | Phase 1 filter `NOT({Warmup Sent At})` stranded ~679 buyers forever; `re-warm-cohort` cron now reanimates after 60 days (cap 2 lifetime). |
+| Knobs | `WARMUP_CAP_PER_RUN`, per-rancher `Onboarding Intro Pace` (default 5/week), 24h `COOLDOWN_MS`. |
 
 ## rancher-onboarding-drip
 
 | Field | Value |
 |---|---|
-| Purpose | Day 2 / Day 5 / Day 14 nudges for self-submitted ranchers from `/map/add-a-rancher`. |
-| Schedule | `30 17 * * *` — 17:30 UTC (11:30am MT). |
-| Reads | Airtable: RANCHERS (all, filtered in code). |
-| Writes | Airtable: RANCHERS `Self-Submit Drip Stage`. Sends three day-bucketed onboarding emails. |
-| Telegram output | `sendTelegramMessage` — admin summary of sent + stopped. |
-| Known issues | Filters in JS not formula — fine while ranchers table is small; will get slow at scale. |
+| Purpose | Self-submit Day 2/5/14 drip emails. |
+| Schedule | `30 17 * * *` — daily 17:30 UTC. |
+| Reads | RANCHERS. |
+| Writes | `Self-Submit Drip Stage`. |
+| Telegram output | Summary. |
+| Known issues | None as of 2026-05-19. |
 
 ## rancher-trust-promotion
 
 | Field | Value |
 |---|---|
-| Purpose | Flip Trust Mode = TRUE on ranchers who hit 5 Closed Won OR whose Onboarding Phase Until expired. Removes warmup throttle + first-week gate. |
-| Schedule | `0 14 * * *` — 14:00 UTC (8am MT). |
-| Reads | Airtable: RANCHERS, REFERRALS (Closed Won). |
-| Writes | Airtable: RANCHERS `Trust Mode=true`. |
-| Telegram output | `sendTelegramMessage` per promotion + run summary. |
-| Known issues | **CONFLICT**: same minute (14:00 UTC) as `daily-digest`. Both pull full RANCHERS+REFERRALS — guaranteed Airtable rate-limit pressure. |
+| Purpose | Flip `Trust Mode=true` for ranchers who've graduated (5+ closed won OR `Onboarding Phase Until` passed). |
+| Schedule | `45 14 * * *` — daily 14:45 UTC. |
+| Reads | RANCHERS, REFERRALS. |
+| Writes | `Trust Mode` on RANCHERS. |
+| Telegram output | Promotion announcements. |
+| Known issues | None as of 2026-05-19. |
 
 ## referral-chasup
 
 | Field | Value |
 |---|---|
-| Purpose | AI-driven re-engagement emails (max 3/referral) to buyers on stale Intro Sent / Rancher Contacted referrals; auto-close very-stale ones. |
-| Schedule | `0 17 * * *` — 17:00 UTC (11am MT). |
-| Reads | Airtable: REFERRALS (active), CONSUMERS (for unsubscribe set). |
-| Writes | Airtable: REFERRALS `Chase Count`/`Last Chased At`, status flips for auto-close. Sends `sendRepeatPurchaseEmail`/`sendRancherLeadReminder` etc. |
-| Telegram output | `sendTelegramMessage` / `sendTelegramUpdate`. |
-| Known issues | Hard-bails if neither OLLAMA nor Anthropic key set. Recency check uses multiple newer activity fields — must stay in sync with pipeline code. |
+| Purpose | AI re-engagement emails for stale referrals, ghost auto-close, stalled-rancher Telegram nudges. |
+| Schedule | `0 17 * * *` — daily 17 UTC. |
+| Reads | REFERRALS, RANCHERS, CONSUMERS. |
+| Writes | `Last Chased At`, `Chase Count`, `Stalled Alert Sent At`, `Rancher Reminded At`, `AI Chase Draft`, `Repeat Outreach Sent`, status flips to Closed Lost on 30-day ghost. |
+| Telegram output | Multi-section summary: stale chases, rancher reminders, stalled alerts, reassignments. |
+| Known issues | Has its own inline "stalled" definition; new canonical helper `lib/stalledReferrals.ts` exists but not yet folded in here (separate refactor pass). |
+
+## re-warm-cohort
+
+| Field | Value |
+|---|---|
+| Purpose | Reanimate buyers warmed >60 days ago with no engagement by clearing `Warmup Sent At` so `rancher-launch-warmup` Phase 1 re-picks them up. |
+| Schedule | `30 16 * * *` — daily 16:30 UTC (added 2026-05-19). |
+| Reads | CONSUMERS. |
+| Writes | Clears `Warmup Sent At` + `Warmup Stage`; stamps `Warmup Reanimated At`; increments `Re-Warm Attempts`. |
+| Telegram output | "Reanimated N buyers" heads-up so the next launch-warmup batch isn't surprising. |
+| Known issues | None yet. Lifetime cap 2 per buyer; daily cap 50 to bleed cohort in over ~2 weeks. |
 
 ## send-scheduled
 
 | Field | Value |
 |---|---|
-| Purpose | Drain `Campaigns` table where Status=scheduled. Bulk send broadcast emails to filtered audience (consumers/ranchers/state-targeted). |
-| Schedule | `0 * * * *` — every hour on the hour. |
-| Reads | Airtable: CAMPAIGNS, CONSUMERS / RANCHERS depending on audience. |
-| Writes | Airtable: CAMPAIGNS status updates. Sends `sendBroadcastEmail` in batches of 10 (1s delay). |
-| Telegram output | `sendTelegramUpdate` per campaign send. |
-| Known issues | Hourly — only cron that runs every hour. Honors Unsubscribed/Bounced/Complained filter — CAN-SPAM compliance critical. |
+| Purpose | Drain due `Campaigns` table rows. |
+| Schedule | `0 * * * *` — hourly. |
+| Reads | CAMPAIGNS. |
+| Writes | Marks campaigns sent + emits emails. |
+| Telegram output | Per-batch send summary. |
+| Known issues | Mostly idle (`no campaigns due` daily). |
 
 ## stuck-buyer-recovery
 
 | Field | Value |
 |---|---|
-| Purpose | Retry matching for buyers stuck at Buyer Stage=READY + Ready to Buy=true with no active referral. |
-| Schedule | `30 14 * * *` — 14:30 UTC (8:30am MT). |
-| Reads | Airtable: CONSUMERS, REFERRALS. |
-| Writes | Calls `/api/matching/suggest` with `warmupEngaged=true` — that endpoint writes REFERRALS + flips buyer stage. |
-| Telegram output | `sendTelegramMessage` — digest of retried + outcomes. |
-| Known issues | Has explicit `BUG-FIX 2026-05-09` comment about Pending Approval orphan handling — fragile area. Cascade calls `/api/matching/suggest`, so downstream errors propagate here. |
+| Purpose | Retry matching for buyers stuck at `Buyer Stage=READY` with `Ready to Buy=true` and no active referral. |
+| Schedule | `30 14 * * *` — daily 14:30 UTC. |
+| Reads | CONSUMERS, REFERRALS. |
+| Writes | `Last Match Attempt At` (24h cooldown); on match: `Buyer Stage=MATCHED`. |
+| Telegram output | Summary card. |
+| Known issues | None as of 2026-05-19. |
 
 ---
 
-## Schedule Conflicts (same minute UTC)
+## Operator Surfaces (Telegram)
 
-| Minute (UTC) | Crons | Risk |
-|---|---|---|
-| **14:00** | `daily-digest`, `rancher-trust-promotion` | Both read full RANCHERS+REFERRALS — Airtable rate-limit pressure. |
-| **16:00** | `email-sequences`, `onboarding-stuck` | Both walk CONSUMERS / RANCHERS — email-sequences also bumped to 180s because of past timeouts. |
+Added 2026-05-19 — see `lib/cronIntrospection.ts`:
 
-Other 13 schedules sit on unique minutes.
-
-## Unscheduled cron files
-
-These have route files but no `vercel.json` entry — they run only on manual trigger:
-
-- `buyer-pulse`
-- `close-detector`
-- `daily-audit`
-
-## Files-vs-schedule reconciliation
-
-- Files NOT in vercel.json: `buyer-pulse`, `close-detector`, `daily-audit`
-- Schedule entries with NO file: none
+| Command | Purpose |
+|---|---|
+| `/cronstatus`, `/runs` | Last-24h per-cron status + missing-run alerts. |
+| `/pausecron <name>` | Write a `Cron Pauses` row so `withCronRun` short-circuits the cron. |
+| `/resumecron <name>` | Clear the Paused flag (preserves audit trail). |
+| `/forcematch <email-or-recId>` | Direct call to `/api/matching/suggest` with `warmupEngaged=true` bypass. |
+| `/stuckbuyers` | Waitlisted >14d, grouped by state. |
+| `/stuckranchers` | Signed-not-Live + Live-but-quiet (30d). |
+| `/ghostranchers` | Ranchers with 2+ buyer-pulse ghost reports. |
