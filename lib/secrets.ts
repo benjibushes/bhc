@@ -52,9 +52,17 @@ export const ADMIN_PASSWORD = requireEnv('ADMIN_PASSWORD');
 export const CRON_SECRET = requireEnv('CRON_SECRET');
 
 // Internal-API secret for service-to-service calls (e.g., /api/consumers
-// calling /api/matching/suggest). Optional — if absent, internal callers
-// fall back to admin password / member session for auth.
-export const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
+// calling /api/matching/suggest). Required in prod; warn in non-prod.
+// Audit finding 2026-05-20 #43: previously optional → downstream routes
+// would skip auth check entirely if env missing.
+export const INTERNAL_API_SECRET: string = (() => {
+  const v = process.env.INTERNAL_API_SECRET || '';
+  if (!v && process.env.NODE_ENV === 'production') {
+    // Don't throw — would brick deploy. Loudly warn so it surfaces in logs.
+    console.error('[secrets] INTERNAL_API_SECRET unset in production — internal routes will fall back to admin/session auth only.');
+  }
+  return v;
+})();
 
 // ─── Project 1 — Discover Map / AI scraper ──────────────────────────────────
 

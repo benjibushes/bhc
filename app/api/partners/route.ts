@@ -179,6 +179,24 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
       }
 
+      // Dedupe by email. Audit finding 2026-05-20 #48: previously brand
+      // resubmits created duplicate rows + double partner-confirmation
+      // emails.
+      try {
+        const existing = await getAllRecords(
+          TABLES.BRANDS,
+          `LOWER({Email}) = "${escapeAirtableValue(email.trim().toLowerCase())}"`
+        );
+        if (existing.length > 0) {
+          return NextResponse.json({
+            error: 'A brand application with this email already exists. We\'ll follow up — check your inbox or email ben@buyhalfcow.com.',
+          }, { status: 409 });
+        }
+      } catch (e) {
+        // Table may not exist or rate-limited — continue rather than block signup
+        console.error('Brand dedupe check failed:', e);
+      }
+
       tableName = TABLES.BRANDS;
       const brandFields: Record<string, unknown> = {
         'Brand Name': brandName,
@@ -238,6 +256,21 @@ export async function POST(request: Request) {
 
       if (!isValidEmail(email)) {
         return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
+      }
+
+      // Dedupe by email. Same rationale as brand branch (#48).
+      try {
+        const existing = await getAllRecords(
+          TABLES.LAND_DEALS,
+          `LOWER({Email}) = "${escapeAirtableValue(email.trim().toLowerCase())}"`
+        );
+        if (existing.length > 0) {
+          return NextResponse.json({
+            error: 'A land application with this email already exists. We\'ll follow up — check your inbox or email ben@buyhalfcow.com.',
+          }, { status: 409 });
+        }
+      } catch (e) {
+        console.error('Land dedupe check failed:', e);
       }
 
       tableName = TABLES.LAND_DEALS;
