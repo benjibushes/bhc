@@ -24,6 +24,7 @@ export const TABLES = {
   AFFILIATES: 'Affiliates',
   CONVERSATIONS: 'Conversations',
   CRON_RUNS: 'Cron Runs',
+  CRON_PAUSES: 'Cron Pauses',
 };
 
 // Escape a string value for use in Airtable filterByFormula to prevent injection
