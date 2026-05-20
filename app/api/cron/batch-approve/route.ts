@@ -20,8 +20,16 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Runs daily at 9am MT — processes pending consumers who qualify for auto-approval
-// and kicks off rancher matching for approved Beef Buyers
+// Runs daily at 9 UTC (3 AM MT, before daily-digest at 14 UTC) — processes
+// pending consumers who qualify for auto-approval and kicks off rancher
+// matching for approved Beef Buyers.
+//
+// Cadence history: was `0 */2 * * *` (every 2h, 12 runs/day) through
+// 2026-05-19. Audit found 11 of 12 daily runs wasted re-scanning the same
+// stuck waitlist cohort (~33 buyers) — none ever qualified, none ever
+// matched. Dropped to daily; re-warm-cohort cron now handles the stuck
+// cohort reanimation that the 2h cadence was implicitly trying (and failing)
+// to do.
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   // Maintenance short-circuit: do nothing while the platform is paused.
   if (isMaintenanceMode()) {
