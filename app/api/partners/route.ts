@@ -3,6 +3,7 @@ import { createRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable
 import { TABLES } from '@/lib/airtable';
 import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
 import { sendTelegramPartnerAlert } from '@/lib/telegram';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 60;
 
@@ -28,6 +29,24 @@ function isValidEmail(email: string): boolean {
 
 export async function POST(request: Request) {
   try {
+    // Rate limit partner signup. Stricter than buyer signup (less common
+    // but each fires onboarding emails). Audit finding 2026-05-20 #10.
+    const ip = getRequestIp(request);
+    const rlMin = await rateLimit(`partner:${ip}`, { requests: 2, window: '1m' });
+    if (!rlMin.ok) {
+      return NextResponse.json(
+        { error: 'Too many partner applications from this network — wait a minute.' },
+        { status: 429 },
+      );
+    }
+    const rlHour = await rateLimit(`partner-hr:${ip}`, { requests: 10, window: '1h' });
+    if (!rlHour.ok) {
+      return NextResponse.json(
+        { error: 'Too many partner applications from this network in the past hour. Email ben@buyhalfcow.com if this is wrong.' },
+        { status: 429 },
+      );
+    }
+
     let body: any;
     try {
       body = await request.json();

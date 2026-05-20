@@ -16,6 +16,7 @@ async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
     return false;
   }
 }
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy } from '@/lib/email';
 import { normalizeState } from '@/lib/states';
 import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
@@ -68,6 +69,24 @@ function isValidName(name: string): boolean {
 
 export async function POST(request: Request) {
   try {
+    // Rate limit signup. Audit findings 2026-05-20 #9. No-op when Upstash
+    // env unset (safe fallthrough). 5/min/IP + 30/hr/IP.
+    const ip = getRequestIp(request);
+    const rlMin = await rateLimit(`signup:${ip}`, { requests: 5, window: '1m' });
+    if (!rlMin.ok) {
+      return NextResponse.json(
+        { error: 'Too many signups from this network — wait a minute and try again.' },
+        { status: 429 },
+      );
+    }
+    const rlHour = await rateLimit(`signup-hr:${ip}`, { requests: 30, window: '1h' });
+    if (!rlHour.ok) {
+      return NextResponse.json(
+        { error: 'Too many signups from this network in the past hour. Email ben@buyhalfcow.com if this is wrong.' },
+        { status: 429 },
+      );
+    }
+
     let body: any;
     try {
       body = await request.json();
