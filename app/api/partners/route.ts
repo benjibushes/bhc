@@ -3,20 +3,9 @@ import { createRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable
 import { TABLES } from '@/lib/airtable';
 import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
 import { sendTelegramPartnerAlert } from '@/lib/telegram';
+import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 
 export const maxDuration = 60;
-
-async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
-  if (!ref || typeof ref !== 'string' || ref.length > 50) return false;
-  const code = ref.trim();
-  if (!code) return false;
-  try {
-    const affiliates = await getAllRecords(TABLES.AFFILIATES, `AND({Code} = "${escapeAirtableValue(code)}", {Status} = "Active")`);
-    return affiliates.length > 0;
-  } catch {
-    return false;
-  }
-}
 
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -35,7 +24,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
     const { partnerType, ref } = body;
-    const referredBy = ref && (await validateAffiliateRef(ref)) ? ref.trim() : '';
+    // Pull whichever email the body carries (rancher/brand/land each carry
+    // `email` as the primary contact). validateAffiliateRefForSignup uses
+    // it to block self-referral; safe to pass undefined.
+    const partnerEmail = typeof body?.email === 'string' ? body.email : undefined;
+    const referredBy = await validateAffiliateRefForSignup(ref, partnerEmail);
 
     if (!partnerType) {
       return NextResponse.json({ error: 'Partner type is required' }, { status: 400 });

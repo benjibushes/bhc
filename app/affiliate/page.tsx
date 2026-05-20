@@ -9,10 +9,21 @@ import Link from 'next/link';
 interface DashboardData {
   code: string;
   links: { buyer: string; rancher: string };
+  stats?: {
+    clicks: number;
+    signups: number;
+    conversionPct: number;
+    closedWonCount: number;
+    closedWonRevenue: number;
+    commissionRate: number;
+    commissionEarned: number;
+    lastClickAt: string | null;
+  };
   referredConsumersCount: number;
   referredRanchersCount: number;
   referredConsumers: Array<{ id: string; name: string; state: string; created: string }>;
   referredRanchers: Array<{ id: string; name: string; state: string; created: string }>;
+  recentCloses?: Array<{ id: string; buyer: string; sale: number; closedAt: string }>;
 }
 
 function copyToClipboard(text: string) {
@@ -142,6 +153,40 @@ export default function AffiliateDashboardPage() {
               </div>
             </div>
           </div>
+
+          {data.stats && (
+            <div className="p-6 border border-[#A7A29A] bg-white">
+              <h2 className="font-serif text-xl mb-4">Performance</h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-4 border border-[#A7A29A] text-center">
+                  <div className="font-serif text-3xl text-[#0E0E0E]">{data.stats.clicks}</div>
+                  <div className="text-xs text-[#6B4F3F] uppercase tracking-wider mt-1">Clicks</div>
+                </div>
+                <div className="p-4 border border-[#A7A29A] text-center">
+                  <div className="font-serif text-3xl text-[#0E0E0E]">{data.stats.signups}</div>
+                  <div className="text-xs text-[#6B4F3F] uppercase tracking-wider mt-1">Signups</div>
+                </div>
+                <div className="p-4 border border-[#A7A29A] text-center">
+                  <div className="font-serif text-3xl text-[#0E0E0E]">{data.stats.conversionPct}%</div>
+                  <div className="text-xs text-[#6B4F3F] uppercase tracking-wider mt-1">Conversion</div>
+                </div>
+                <div className="p-4 border border-[#A7A29A] text-center">
+                  <div className="font-serif text-3xl text-[#0E0E0E]">{data.stats.closedWonCount}</div>
+                  <div className="text-xs text-[#6B4F3F] uppercase tracking-wider mt-1">Closed Won</div>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 border border-[#A7A29A]">
+                  <div className="text-xs text-[#6B4F3F] uppercase tracking-wider">Revenue Referred</div>
+                  <div className="font-serif text-2xl text-[#0E0E0E] mt-1">${data.stats.closedWonRevenue.toLocaleString()}</div>
+                </div>
+                <div className="p-4 border border-[#A7A29A]">
+                  <div className="text-xs text-[#6B4F3F] uppercase tracking-wider">Your Commission ({(data.stats.commissionRate * 100).toFixed(1)}%)</div>
+                  <div className="font-serif text-2xl text-[#0E0E0E] mt-1">${data.stats.commissionEarned.toLocaleString()}</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="p-6 border border-[#A7A29A] bg-white">
             <h2 className="font-serif text-xl mb-4">Your Referrals</h2>
