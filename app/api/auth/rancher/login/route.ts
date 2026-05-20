@@ -3,6 +3,7 @@ import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
 import { sendEmail } from '@/lib/email';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 60;
 
@@ -19,6 +20,23 @@ export async function POST(request: Request) {
     }
 
     const normalizedEmail = email.trim().toLowerCase().replace(/\s+/g, '');
+
+    // Per-email + per-IP rate limit on magic-link send. #11.
+    const ip = getRequestIp(request);
+    const emailLimit = await rateLimit(`login-rancher-email:${normalizedEmail}`, { requests: 3, window: '15m' });
+    if (!emailLimit.ok) {
+      return NextResponse.json(
+        { error: 'Login link already sent — check your inbox. Try again in 15 minutes if it didn\'t arrive.' },
+        { status: 429 },
+      );
+    }
+    const ipLimit = await rateLimit(`login-rancher-ip:${ip}`, { requests: 10, window: '1h' });
+    if (!ipLimit.ok) {
+      return NextResponse.json(
+        { error: 'Too many login attempts from this network. Try again in an hour.' },
+        { status: 429 },
+      );
+    }
 
     // Both Email and Team Emails matching done server-side. Earlier version
     // used an Airtable formula equality on {Email} — that broke for any
