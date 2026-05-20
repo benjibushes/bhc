@@ -1,11 +1,19 @@
 import { createRecord, TABLES } from './airtable';
 
-type CronStatus = 'success' | 'partial' | 'error' | 'maintenance-blocked';
+type CronStatus = 'success' | 'partial' | 'error' | 'maintenance-blocked' | 'paused';
 
 interface CronRunResult {
   status: CronStatus;
   recordsTouched?: number;
   notes?: string;
+  /**
+   * Optional JSON-serializable map of {skip reason: count}. Persisted to the
+   * `Skip Reason Breakdown` field on the Cron Runs row so day-over-day diffs
+   * reveal real signal vs noise. Cron's that gate records (batch-approve,
+   * referral-chasup, etc) should populate this so the operator can see WHY
+   * the queue isn't draining.
+   */
+  skipReasonBreakdown?: Record<string, number>;
 }
 
 /**
@@ -34,12 +42,14 @@ export function withCronRun<T extends CronRunResult>(
     let status: CronStatus = 'error';
     let recordsTouched = 0;
     let notes = '';
+    let skipReasonBreakdown: Record<string, number> | undefined;
     let returnedResponse: Response | null = null;
     try {
       const result = await fn(request);
       status = result.status;
       recordsTouched = result.recordsTouched ?? 0;
       notes = result.notes ?? '';
+      skipReasonBreakdown = result.skipReasonBreakdown;
       returnedResponse = new Response(
         JSON.stringify({ ok: true, status, recordsTouched, notes }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -54,7 +64,7 @@ export function withCronRun<T extends CronRunResult>(
     } finally {
       endedAt = new Date();
       try {
-        await createRecord(TABLES.CRON_RUNS, {
+        const row: Record<string, unknown> = {
           Name: name,
           'Started At': startedAt.toISOString(),
           'Ended At': endedAt.toISOString(),
@@ -62,7 +72,11 @@ export function withCronRun<T extends CronRunResult>(
           Status: status,
           'Records Touched': recordsTouched,
           Notes: notes,
-        });
+        };
+        if (skipReasonBreakdown && Object.keys(skipReasonBreakdown).length > 0) {
+          row['Skip Reason Breakdown'] = JSON.stringify(skipReasonBreakdown);
+        }
+        await createRecord(TABLES.CRON_RUNS, row);
       } catch (logErr: any) {
         console.error(`[withCronRun:${name}] log write failed:`, logErr?.message);
       }
