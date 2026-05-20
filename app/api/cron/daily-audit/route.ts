@@ -95,6 +95,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       user: AUDIT_USER_PROMPT,
       maxTokens: 2048,
       maxIterations: 8,
+      // Pin to Anthropic — Groq's tool-schema validator rejected valid
+      // integer literals as strings on 2026-05-19 ("/minDays expected
+      // number got string") and silently killed the audit. Anthropic's
+      // tool-call API handles the same schema cleanly. We don't need
+      // Groq's speed for a once-daily cron.
+      forceProvider: 'anthropic',
     });
   } catch (e: any) {
     console.error('[daily-audit] AI call failed:', e?.message);

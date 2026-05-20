@@ -13,6 +13,16 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
 
+  // Date-1 guard. Vercel Hobby tier silently skipped the `0 9 1 * *` monthly
+  // schedule for 60+ days (0 Cron Runs rows between provisioning and
+  // 2026-05-19). Switched to daily 9 UTC + this guard so the cron actually
+  // fires once a month + a Cron Runs row appears every other day proving
+  // we DID check.
+  const today = new Date();
+  if (today.getUTCDate() !== 1) {
+    return { status: 'success', recordsTouched: 0, notes: `skipped — not 1st (UTC day=${today.getUTCDate()})` };
+  }
+
   const ranchers = await getAllRecords(TABLES.RANCHERS);
   const activeRanchers = ranchers.filter((r: any) =>
     r['Active Status'] === 'Active' && r['Agreement Signed'] === true

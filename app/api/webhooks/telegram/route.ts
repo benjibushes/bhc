@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import {
@@ -13,6 +13,7 @@ import { callClaude } from '@/lib/ai';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { normalizeState, normalizeStates } from '@/lib/states';
+import { buildCronStatusCard, pauseCron, resumeCron } from '@/lib/cronIntrospection';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -872,11 +873,41 @@ Source: ${c['Source'] || 'organic'}`;
           const ref: any = await getRecordById(TABLES.REFERRALS, refId);
           await updateRecord(TABLES.REFERRALS, refId, {
             'Commission Paid': true,
+            'Commission Paid At': new Date().toISOString(),
             'Notes': `${ref['Notes'] || ''}\n[Commission marked paid via Telegram ${new Date().toISOString().slice(0, 10)}]`.trim(),
           });
           await answerCallbackQuery(queryId, '💰 Marked paid');
           if (chatId) {
             await sendTelegramMessage(chatId, `💰 <b>COMMISSION PAID</b>\n\n$${(ref['Commission Due'] || 0).toLocaleString()} for ${ref['Buyer Name']} marked as paid.`);
+          }
+
+          // Send a paid-receipt email to the rancher. Closes the loop so the
+          // rancher knows their commission cleared without having to ask.
+          try {
+            const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+            const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+            if (rancherId) {
+              const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+              const rancherEmail = rancher['Email'];
+              const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
+              const buyerName = ref['Buyer Name'] || 'the buyer';
+              const commission = Number(ref['Commission Due']) || 0;
+              if (rancherEmail) {
+                await sendEmail({
+                  to: rancherEmail,
+                  subject: `Commission received — BuyHalfCow`,
+                  html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+                    <p>Hi ${rancherName},</p>
+                    <p>Your commission payment of <b>$${commission.toLocaleString()}</b> for the <b>${buyerName}</b> sale has been received. Thank you for closing this one.</p>
+                    <p>Reply if anything looks off — otherwise we're square. Keep selling.</p>
+                    <p>— Benjamin, BuyHalfCow</p>
+                  </div>`,
+                });
+              }
+            }
+          } catch (receiptErr: any) {
+            // Non-fatal — the Airtable update already succeeded.
+            console.error('[markpaid] receipt email failed:', receiptErr?.message);
           }
         } catch (e: any) {
           await answerCallbackQuery(queryId, `Error: ${e.message}`);
@@ -3812,6 +3843,206 @@ Confirm send?`;
         }
       }
 
+      // ─── Cron + Operator surface (added 2026-05-19) ─────────────────────
+      // Six commands that surface what the crons actually did + let Ben
+      // intervene without opening Airtable or the codebase.
+
+      // /cronstatus, /runs — last 24h cron run status (with missing-run alerts)
+      else if (text === '/cronstatus' || text === '/runs') {
+        try {
+          const card = await buildCronStatusCard();
+          await sendTelegramMessage(chatId, `<b>Cron Runs · Last 24h</b>\n\n${card}`);
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /cronstatus failed: ${e?.message || 'unknown'}`);
+        }
+      }
+
+      // /pausecron <name> — pause a cron from firing until /resumecron
+      else if (text.startsWith('/pausecron ')) {
+        const name = text.slice('/pausecron '.length).trim();
+        if (!name) {
+          await sendTelegramMessage(chatId, 'Usage: <code>/pausecron &lt;cron-name&gt;</code>');
+        } else {
+          try {
+            await pauseCron(name, 'telegram', 'paused via Telegram');
+            await sendTelegramMessage(chatId, `⏸️ Paused <code>${name}</code>. Use <code>/resumecron ${name}</code> to resume.`);
+          } catch (e: any) {
+            await sendTelegramMessage(chatId, `⚠️ Pause failed: ${e?.message || 'unknown'}`);
+          }
+        }
+      }
+
+      // /resumecron <name> — clear a paused state
+      else if (text.startsWith('/resumecron ')) {
+        const name = text.slice('/resumecron '.length).trim();
+        if (!name) {
+          await sendTelegramMessage(chatId, 'Usage: <code>/resumecron &lt;cron-name&gt;</code>');
+        } else {
+          try {
+            await resumeCron(name);
+            await sendTelegramMessage(chatId, `▶️ Resumed <code>${name}</code>.`);
+          } catch (e: any) {
+            await sendTelegramMessage(chatId, `⚠️ Resume failed: ${e?.message || 'unknown'}`);
+          }
+        }
+      }
+
+      // /forcematch <email-or-recId> — bypass batch-approve cooldowns and
+      // call matching/suggest directly. Stops the "why isn't this buyer
+      // matching" investigation loop.
+      else if (text.startsWith('/forcematch ')) {
+        const arg = text.slice('/forcematch '.length).trim();
+        if (!arg) {
+          await sendTelegramMessage(chatId, 'Usage: <code>/forcematch &lt;email-or-recId&gt;</code>');
+        } else {
+          try {
+            const safeArg = escapeAirtableValue(arg);
+            const buyers = (await getAllRecords(
+              TABLES.CONSUMERS,
+              `OR({Email}="${safeArg}", RECORD_ID()="${safeArg}")`,
+            )) as any[];
+            if (!buyers.length) {
+              await sendTelegramMessage(chatId, `❌ No buyer matching <code>${arg}</code>`);
+            } else {
+              const buyer = buyers[0];
+              const res = await fetch(`${SITE_URL}/api/matching/suggest`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(INTERNAL_API_SECRET ? { 'x-internal-secret': INTERNAL_API_SECRET } : {}),
+                },
+                body: JSON.stringify({
+                  buyerState: buyer['State'],
+                  buyerId: buyer.id,
+                  buyerName: buyer['Full Name'],
+                  buyerEmail: buyer['Email'],
+                  buyerPhone: buyer['Phone'],
+                  orderType: buyer['Order Type'],
+                  budgetRange: buyer['Budget'],
+                  intentScore: buyer['Intent Score'],
+                  intentClassification: buyer['Intent Classification'] || '',
+                  notes: buyer['Notes'] || '',
+                  // hot-lead bypass — caller is operator
+                  warmupEngaged: true,
+                }),
+              });
+              const data: any = await res.json().catch(() => ({}));
+              if (data.matchFound) {
+                const ranch = data.suggestedRancher?.['Ranch Name'] || data.suggestedRancher?.['Operator Name'] || 'rancher';
+                await sendTelegramMessage(
+                  chatId,
+                  `✅ Matched <b>${buyer['Full Name']}</b> → <b>${ranch}</b>`,
+                );
+              } else {
+                await sendTelegramMessage(
+                  chatId,
+                  `⏳ No match for <b>${buyer['Full Name']}</b> (${buyer['State']})\nReason: ${data.reason || data.error || 'unknown'}`,
+                );
+              }
+            }
+          } catch (e: any) {
+            await sendTelegramMessage(chatId, `⚠️ /forcematch failed: ${e?.message || 'unknown'}`);
+          }
+        }
+      }
+
+      // /stuckbuyers — buyers waitlisted >14 days grouped by state
+      else if (text === '/stuckbuyers') {
+        try {
+          const cutoff = Date.now() - 14 * 86_400_000;
+          const buyers = (await getAllRecords(
+            TABLES.CONSUMERS,
+            `AND({Status}="Approved", {Referral Status}="Waitlisted", NOT({Unsubscribed}))`,
+          )) as any[];
+          const stuck = buyers.filter((b: any) => {
+            const created = new Date(b['Created'] || b['Approved At'] || 0).getTime();
+            return created > 0 && created < cutoff;
+          });
+          const byState = new Map<string, number>();
+          for (const b of stuck) {
+            const s = normalizeState(b['State']) || '?';
+            byState.set(s, (byState.get(s) || 0) + 1);
+          }
+          const lines = Array.from(byState.entries())
+            .sort((a, b) => b[1] - a[1])
+            .map(([s, n]) => `<code>${s}</code>: ${n}`)
+            .join('\n');
+          await sendTelegramMessage(
+            chatId,
+            `<b>Stuck Buyers</b> (waitlisted &gt;14d, total ${stuck.length})\n\n${lines || 'None'}`,
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /stuckbuyers failed: ${e?.message || 'unknown'}`);
+        }
+      }
+
+      // /stuckranchers — Signed-but-not-Live + Live-but-quiet
+      else if (text === '/stuckranchers') {
+        try {
+          const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+          const signedNotLive = ranchers.filter(
+            (r: any) => r['Agreement Signed'] && !r['Page Live'],
+          );
+          const cutoff = Date.now() - 30 * 86_400_000;
+          const liveButQuiet = ranchers.filter((r: any) => {
+            if (!r['Page Live']) return false;
+            const last =
+              r['Warmup Last Batch At'] ||
+              r['Last Assigned At'] ||
+              r['Onboarding Phase Until'];
+            if (!last) return true;
+            return new Date(last).getTime() < cutoff;
+          });
+          const fmt = (r: any) => `· ${r['Ranch Name'] || r['Operator Name'] || r.id} (${r['State'] || '?'})`;
+          const lines = [
+            `<b>Stuck Ranchers</b>`,
+            '',
+            `🚧 Signed, not Live: <b>${signedNotLive.length}</b>`,
+            ...signedNotLive.slice(0, 10).map(fmt),
+            '',
+            `💤 Live, no activity 30d: <b>${liveButQuiet.length}</b>`,
+            ...liveButQuiet.slice(0, 10).map(fmt),
+          ];
+          await sendTelegramMessage(chatId, lines.join('\n'));
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /stuckranchers failed: ${e?.message || 'unknown'}`);
+        }
+      }
+
+      // /ghostranchers — ranchers with 2+ buyer-pulse ghost reports
+      else if (text === '/ghostranchers') {
+        try {
+          const pulses = (await getAllRecords(
+            TABLES.REFERRALS,
+            `{Buyer Pulse Response}="ghosted"`,
+          )) as any[];
+          const counts = new Map<string, number>();
+          for (const p of pulses) {
+            const ids: string[] = p['Rancher'] || p['Suggested Rancher'] || [];
+            const rid = Array.isArray(ids) ? ids[0] : null;
+            if (!rid) continue;
+            counts.set(rid, (counts.get(rid) || 0) + 1);
+          }
+          const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+          const nameById = new Map<string, string>();
+          for (const r of ranchers) {
+            nameById.set(r.id, r['Ranch Name'] || r['Operator Name'] || r.id);
+          }
+          const sorted = Array.from(counts.entries())
+            .filter(([, n]) => n >= 2)
+            .sort((a, b) => b[1] - a[1]);
+          const lines = sorted.map(
+            ([rid, n]) => `${nameById.get(rid) || rid}: <b>${n}</b> ghost reports`,
+          );
+          await sendTelegramMessage(
+            chatId,
+            `<b>Ghost Ranchers</b> (2+ buyer ghost reports)\n\n${lines.join('\n') || 'None — clean week.'}`,
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /ghostranchers failed: ${e?.message || 'unknown'}`);
+        }
+      }
+
       else if (text === '/help') {
         const msg = `📖 <b>BuyHalfCow Bot — Command Reference</b>
 
@@ -3850,6 +4081,13 @@ Confirm send?`;
 
 <b>⚙️ SYSTEM</b>
 /status — Health check all dependencies (Airtable, Resend, Telegram, AI)
+/cronstatus — Last-24h run status for every cron (catches missing runs)
+/pausecron [name] — Pause a cron from firing
+/resumecron [name] — Resume a paused cron
+/forcematch [email-or-recId] — Bypass cooldowns, match a stuck buyer now
+/stuckbuyers — Waitlisted &gt;14d, grouped by state
+/stuckranchers — Signed-not-Live + Live-but-quiet
+/ghostranchers — Ranchers with 2+ buyer ghost reports
 /start — Welcome + quick tour
 /help — This menu
 

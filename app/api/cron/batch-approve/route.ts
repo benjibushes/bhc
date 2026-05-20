@@ -20,9 +20,17 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Runs daily at 9am MT — processes pending consumers who qualify for auto-approval
-// and kicks off rancher matching for approved Beef Buyers
-async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+// Runs daily at 9 UTC (3 AM MT, before daily-digest at 14 UTC) — processes
+// pending consumers who qualify for auto-approval and kicks off rancher
+// matching for approved Beef Buyers.
+//
+// Cadence history: was `0 */2 * * *` (every 2h, 12 runs/day) through
+// 2026-05-19. Audit found 11 of 12 daily runs wasted re-scanning the same
+// stuck waitlist cohort (~33 buyers) — none ever qualified, none ever
+// matched. Dropped to daily; re-warm-cohort cron now handles the stuck
+// cohort reanimation that the 2h cadence was implicitly trying (and failing)
+// to do.
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   // Maintenance short-circuit: do nothing while the platform is paused.
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
@@ -346,9 +354,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
       const perRancherToday = new Map<string, number>();
 
-      for (const { c: consumer } of queue) {
+      for (let qIdx = 0; qIdx < queue.length; qIdx++) {
+        const consumer = queue[qIdx].c;
         if (waitlistedMatched >= DAILY_INTRO_CAP) {
-          cappedSkipped = queue.length - waitlistedRetried - unqualifiedSkipped;
+          // FIX 2026-05-19: previously computed `cappedSkipped = queue.length
+          // - waitlistedRetried - unqualifiedSkipped`. That mixed buckets —
+          // unreached unqualified buyers (later in the queue) got counted as
+          // "cap-deferred" instead of "no consent signal". Count ONLY the
+          // remaining buyers who WOULD have qualified.
+          for (let j = qIdx; j < queue.length; j++) {
+            const q = isQualifiedForRouting(queue[j].c);
+            if (q.ok) cappedSkipped++;
+          }
           break;
         }
         const cState = consumer['State'];
@@ -453,7 +470,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   return {
     status: errors.length > 0 ? 'partial' : 'success',
     recordsTouched: approved + matched + ranchersGoLive + waitlistedMatched + capacityFixed,
-    notes: `approved=${approved} matched=${matched} live=${ranchersGoLive} waitlist=${waitlistedMatched}/${waitlistedRetried} capFix=${capacityFixed} errs=${errors.length}`,
+    notes: `approved=${approved} matched=${matched} live=${ranchersGoLive} waitlist=${waitlistedMatched}/${waitlistedRetried} capFix=${capacityFixed} errs=${errors.length} unqualified=${unqualifiedSkipped} capped=${cappedSkipped}`,
+    skipReasonBreakdown: Object.keys(unqualifiedReasons).length > 0 ? unqualifiedReasons : undefined,
   };
 }
 
