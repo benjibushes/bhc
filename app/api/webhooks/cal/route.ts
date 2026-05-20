@@ -30,7 +30,12 @@ export const maxDuration = 60;
 function verifyCalSignature(rawBody: string, headers: Headers): boolean {
   const secret = process.env.CAL_WEBHOOK_SECRET;
   if (!secret) {
-    console.warn('[cal webhook] CAL_WEBHOOK_SECRET not set — skipping signature verification');
+    // Audit finding 2026-05-20 #4: fail-CLOSED in prod, warn-only in non-prod.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[cal webhook] CAL_WEBHOOK_SECRET unset in prod — refusing all requests');
+      return false;
+    }
+    console.warn('[cal webhook] CAL_WEBHOOK_SECRET not set (non-prod) — skipping signature verification');
     return true;
   }
   const sig =

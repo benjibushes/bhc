@@ -220,6 +220,12 @@ export async function POST(request: Request) {
         console.warn('[resend-inbound] signature rejected:', verify.reason);
         return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
       }
+    } else if (process.env.NODE_ENV === 'production') {
+      // Audit finding 2026-05-20 #5: secret optional made the endpoint
+      // anonymous-callable → writes to Conversations + Claude classify cost
+      // + admin email spam vector. Fail-closed in prod.
+      console.error('[resend-inbound] RESEND_INBOUND_WEBHOOK_SECRET unset in prod — refusing all requests');
+      return NextResponse.json({ ok: false, error: 'webhook secret not configured' }, { status: 401 });
     }
     let payload: ResendInboundPayload;
     try {

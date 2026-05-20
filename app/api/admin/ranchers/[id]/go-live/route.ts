@@ -4,6 +4,7 @@ import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
+import { isMaintenanceMode } from '@/lib/maintenance';
 
 export const maxDuration = 60;
 
@@ -21,6 +22,16 @@ export async function POST(
 
     if (authCookie?.value !== 'authenticated') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Honor global maintenance mode. Audit finding 2026-05-20 #39: go-live
+    // bypassed MAINTENANCE_MODE → could trigger 50-buyer warmup blast +
+    // matching cycle even when the platform was paused.
+    if (isMaintenanceMode()) {
+      return NextResponse.json(
+        { error: 'Platform in maintenance mode — go-live deferred. Unset MAINTENANCE_MODE first.' },
+        { status: 503 },
+      );
     }
 
     const { id } = await context.params;

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 30;
@@ -10,8 +11,13 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 // Calls /api/health and sends a Telegram summary so Ben knows everything is live.
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'error'; recordsTouched: number; notes: string }> {
   const cronSecret = process.env.CRON_SECRET;
-  const healthUrl = `${SITE_URL}/api/health?secret=${encodeURIComponent(cronSecret || '')}`;
-  const res = await fetch(healthUrl);
+  // Audit finding 2026-05-20 #35: previously `?secret=` query string —
+  // CRON_SECRET leaked into Vercel access logs on every call. Now Bearer
+  // header (not logged).
+  const healthUrl = `${SITE_URL}/api/health`;
+  const res = await fetch(healthUrl, {
+    headers: cronSecret ? { Authorization: `Bearer ${cronSecret}` } : {},
+  });
   const data = await res.json();
 
   const checks = data.checks || {};
@@ -33,6 +39,19 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       .map(([k, v]: any) => `❌ <b>${k}</b>: ${v?.error || 'unknown'}`)
       .join('\n');
 
+    // Audit finding 2026-05-20 #36: route degraded/down through typed
+    // operator signal w/ dedupe so flapping deps don't fire forever.
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'system-error',
+      summary: `System ${data.status === 'down' ? 'DOWN' : 'DEGRADED'}`,
+      detail: failedChecks,
+      dedupeKey: `healthcheck-${data.status}`,
+      dedupeWindowMs: 60 * 60_000, // 1h
+    });
+    // Keep the raw Telegram card too for the rich-formatted status — it's
+    // gated by the operator-signal dedupe so we don't double-fire on a stable
+    // bad state.
     await sendTelegramMessage(
       TELEGRAM_ADMIN_CHAT_ID,
       `🔴 <b>SYSTEM ${data.status === 'down' ? 'DOWN' : 'DEGRADED'}</b>\n\n` +
