@@ -2455,6 +2455,7 @@ I'm your operations assistant — I run the daily ops so you can focus on closin
 /route CO the-high-lonesome-ranch [dry|morning] — Bulk-route stuck buyers
 /setuppage [name] — Build a rancher landing page
 /affiliate [email] — Make an affiliate
+/comp [email] [tier] [#n] [reason] — Comp someone onto Founders Wall (fee waived)
 
 <b>📨 EMAIL</b> bulk sends
 /email checkin — Nudge stalled ranchers
@@ -4040,6 +4041,83 @@ Confirm send?`;
           );
         } catch (e: any) {
           await sendTelegramMessage(chatId, `⚠️ /ghostranchers failed: ${e?.message || 'unknown'}`);
+        }
+      }
+
+      // /comp <email> <tier> [#number] [reason]
+      // Adds someone to the Founders Wall with full tier benefits + waived
+      // fee. Tier must be one of: Herd, Outlaw, Steward, "Founding 100",
+      // "Title Founder". For multi-word tiers, wrap in quotes:
+      //   /comp matt@brimstone.beef "Founding 100" co-build pilot partner
+      else if (text.startsWith('/comp ')) {
+        try {
+          const argString = text.slice('/comp '.length).trim();
+          // Lightweight quoted-arg parser. Handles `/comp email tier rest`
+          // and `/comp email "Founding 100" rest`.
+          const tokens: string[] = [];
+          const re = /"([^"]+)"|(\S+)/g;
+          let match: RegExpExecArray | null;
+          while ((match = re.exec(argString)) !== null) {
+            tokens.push(match[1] !== undefined ? match[1] : match[2]);
+          }
+          const email = tokens[0] || '';
+          const tier = tokens[1] || '';
+
+          // Optional #N — pulls explicit Founder Number out of remaining tokens.
+          let founderNumber: number | undefined;
+          const rest: string[] = [];
+          for (const t of tokens.slice(2)) {
+            const m = t.match(/^#(\d+)$/);
+            if (m && founderNumber === undefined) {
+              founderNumber = Number(m[1]);
+            } else {
+              rest.push(t);
+            }
+          }
+          const reason = rest.join(' ');
+
+          if (!email || !tier) {
+            await sendTelegramMessage(
+              chatId,
+              `Usage: <code>/comp &lt;email&gt; &lt;tier&gt; [#number] [reason]</code>\n\n` +
+                `Tiers: Herd, Outlaw, Steward, "Founding 100", "Title Founder"\n\n` +
+                `Examples:\n` +
+                `<code>/comp matt@brimstone.beef "Founding 100" co-build partner</code>\n` +
+                `<code>/comp jane@x.com Outlaw</code>\n` +
+                `<code>/comp ben@y.com "Title Founder" #3 founding investor</code>`,
+            );
+          } else {
+            const adminPw = process.env.ADMIN_PASSWORD || '';
+            const res = await fetch(`${SITE_URL}/api/admin/founders/comp`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(adminPw ? { 'x-admin-password': adminPw } : {}),
+              },
+              body: JSON.stringify({ email, tier, founderNumber, reason }),
+            });
+            const data: any = await res.json().catch(() => ({}));
+            if (data?.exists) {
+              await sendTelegramMessage(chatId, `ℹ️ ${data.message}`);
+            } else if (data?.ok) {
+              await sendTelegramMessage(
+                chatId,
+                `🎁 <b>Comp added</b>\n\n` +
+                  `${email}\n` +
+                  `Tier: <b>${data.tier}</b>${data.founderNumber ? ` #${data.founderNumber}` : ''}\n` +
+                  `Wall opt-in: ${data.wallOptIn ? '✅' : '❌'}\n` +
+                  `Welcome email: ${data.welcomeSent ? '✅ sent' : '⏸ skipped'}\n\n` +
+                  `<i>Audit note appended to their Consumer Notes.</i>`,
+              );
+            } else {
+              await sendTelegramMessage(
+                chatId,
+                `⚠️ Comp failed: ${data?.error || `HTTP ${res.status}`}`,
+              );
+            }
+          }
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /comp failed: ${e?.message || 'unknown'}`);
         }
       }
 
