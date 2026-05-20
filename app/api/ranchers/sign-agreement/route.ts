@@ -3,6 +3,7 @@ import { getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
+import { getCommissionRate } from '@/lib/commission';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -97,11 +98,23 @@ export async function POST(request: Request) {
     }
 
     const now = new Date().toISOString();
+    // Lock the rancher's Commission Rate at signing time so it can never
+    // drift mid-pipeline. Pre-existing rate (admin pre-set OR sticky from
+    // an earlier signing) wins — otherwise default to env. This stops the
+    // 2026-05-20 Ashcraft pattern where deals closed against ad-hoc rates
+    // because the rancher's row had no Commission Rate set.
+    const existingRate = Number(rancher['Commission Rate']);
+    const rateToLock =
+      Number.isFinite(existingRate) && existingRate > 0
+        ? existingRate
+        : getCommissionRate();
     await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
       'Agreement Signed': true,
       'Agreement Signed At': now,
       'Signature Name': signatureName.trim(),
       'Onboarding Status': 'Agreement Signed',
+      'Commission Rate': rateToLock,
+      'Commission Rate Locked At': now,
     });
 
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
