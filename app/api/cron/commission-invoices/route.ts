@@ -15,6 +15,15 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
 
+  // Date-1 guard. Vercel Hobby tier silently skipped the `0 16 1 * *` monthly
+  // schedule (0 Cron Runs rows in 60+ days). Switched to daily 16 UTC + this
+  // guard so the cron actually fires on the 1st + Cron Runs has a row every
+  // day proving we DID check.
+  const today = new Date();
+  if (today.getUTCDate() !== 1) {
+    return { status: 'success', recordsTouched: 0, notes: `skipped — not 1st (UTC day=${today.getUTCDate()})` };
+  }
+
   // Determine the previous month for the invoice period
   const now = new Date();
   const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);

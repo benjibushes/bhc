@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/compliance-reminders",
-      "schedule": "0 9 1 * *"
+      "schedule": "0 9 * * *"
     },
     {
       "path": "/api/cron/send-scheduled",
@@ -30,7 +30,7 @@
     },
     {
       "path": "/api/cron/commission-invoices",
-      "schedule": "0 16 1 * *"
+      "schedule": "0 16 * * *"
     },
     {
       "path": "/api/cron/healthcheck",
