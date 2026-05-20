@@ -20,6 +20,20 @@
 import Stripe from 'stripe';
 import { getStripe } from '@/lib/stripe';
 import { TABLES, updateRecord } from '@/lib/airtable';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+
+// Sanity gates — refuse to fire an invoice when the inputs don't pass the
+// smell test. The Ashcraft pattern (2026-05-20) shipped a $95 commission
+// against a $1 placeholder sale because nothing checked the ratio. These
+// constants close that hole.
+//
+// MIN_SALE_AMOUNT: no half-cow sells for under $50. If we see less, it's a
+// placeholder OR a mis-keyed amount.
+// MIN_RATIO / MAX_RATIO: a commission outside [3%, 20%] is wrong — either
+// rate not locked, manual override gone bad, or sale amount junk.
+const MIN_SALE_AMOUNT = Number(process.env.MIN_SALE_AMOUNT_FOR_INVOICE) || 50;
+const MIN_RATIO = 0.03;
+const MAX_RATIO = 0.20;
 
 interface CommissionInvoiceArgs {
   rancher: {
@@ -98,6 +112,44 @@ export async function createCommissionInvoice(
   }
   if (args.referral.commissionDue <= 0) {
     throw new Error('Commission due must be > 0');
+  }
+
+  // Sale-amount floor — block placeholder values from generating real
+  // invoices. Surfaces loudly to operator so we know a close attempted to
+  // fire with bad data.
+  if (args.referral.saleAmount < MIN_SALE_AMOUNT) {
+    const msg = `Refused commission invoice: Sale Amount $${args.referral.saleAmount} below $${MIN_SALE_AMOUNT} floor. Referral ${args.referral.id} (${args.referral.buyerName}) → ${args.rancher.operatorName}.`;
+    try {
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'sale',
+        summary: msg,
+        refs: [
+          { type: 'referral', id: args.referral.id, label: args.referral.buyerName },
+          { type: 'rancher', id: args.rancher.id, label: args.rancher.operatorName },
+        ],
+      });
+    } catch {}
+    throw new Error(msg);
+  }
+
+  // Ratio guard — catches placeholder + manual-override drift in one check.
+  // 9500% (Ashcraft) and 2.4% (Lindsay Case undercut) both fail this.
+  const ratio = args.referral.commissionDue / args.referral.saleAmount;
+  if (ratio < MIN_RATIO || ratio > MAX_RATIO) {
+    const msg = `Refused commission invoice: ${(ratio * 100).toFixed(1)}% ratio outside [${MIN_RATIO * 100}%, ${MAX_RATIO * 100}%]. Sale=$${args.referral.saleAmount} Commission=$${args.referral.commissionDue}. Referral ${args.referral.id} → ${args.rancher.operatorName}.`;
+    try {
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'sale',
+        summary: msg,
+        refs: [
+          { type: 'referral', id: args.referral.id, label: args.referral.buyerName },
+          { type: 'rancher', id: args.rancher.id, label: args.rancher.operatorName },
+        ],
+      });
+    } catch {}
+    throw new Error(msg);
   }
 
   const customerId = await ensureStripeCustomer(stripe, args.rancher);
