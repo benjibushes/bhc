@@ -873,11 +873,41 @@ Source: ${c['Source'] || 'organic'}`;
           const ref: any = await getRecordById(TABLES.REFERRALS, refId);
           await updateRecord(TABLES.REFERRALS, refId, {
             'Commission Paid': true,
+            'Commission Paid At': new Date().toISOString(),
             'Notes': `${ref['Notes'] || ''}\n[Commission marked paid via Telegram ${new Date().toISOString().slice(0, 10)}]`.trim(),
           });
           await answerCallbackQuery(queryId, '💰 Marked paid');
           if (chatId) {
             await sendTelegramMessage(chatId, `💰 <b>COMMISSION PAID</b>\n\n$${(ref['Commission Due'] || 0).toLocaleString()} for ${ref['Buyer Name']} marked as paid.`);
+          }
+
+          // Send a paid-receipt email to the rancher. Closes the loop so the
+          // rancher knows their commission cleared without having to ask.
+          try {
+            const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+            const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+            if (rancherId) {
+              const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+              const rancherEmail = rancher['Email'];
+              const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
+              const buyerName = ref['Buyer Name'] || 'the buyer';
+              const commission = Number(ref['Commission Due']) || 0;
+              if (rancherEmail) {
+                await sendEmail({
+                  to: rancherEmail,
+                  subject: `Commission received — BuyHalfCow`,
+                  html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+                    <p>Hi ${rancherName},</p>
+                    <p>Your commission payment of <b>$${commission.toLocaleString()}</b> for the <b>${buyerName}</b> sale has been received. Thank you for closing this one.</p>
+                    <p>Reply if anything looks off — otherwise we're square. Keep selling.</p>
+                    <p>— Benjamin, BuyHalfCow</p>
+                  </div>`,
+                });
+              }
+            }
+          } catch (receiptErr: any) {
+            // Non-fatal — the Airtable update already succeeded.
+            console.error('[markpaid] receipt email failed:', receiptErr?.message);
           }
         } catch (e: any) {
           await answerCallbackQuery(queryId, `Error: ${e.message}`);
