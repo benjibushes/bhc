@@ -916,7 +916,11 @@ export async function sendBuyerIntroNotification(data: {
   // Subject prefix when this buyer confirmed Ready-to-Buy. Tells the recipient
   // (and the rancher when they reply-all) this is a high-priority match that
   // both sides have explicitly opted into.
-  const readyPrefix = data.readyToBuy ? '🔥 READY TO BUY · ' : '';
+  // 2026-05-20: dropped '🔥 READY TO BUY · ' prefix — emoji + ALL-CAPS is
+  // textbook spam-classifier trigger (Spamassassin UPPERCASE_25_50 +
+  // Gmail's emoji-in-subject penalty for unestablished domains). Plain
+  // lowercase founder-voice keeps inbox placement.
+  const readyPrefix = data.readyToBuy ? 'ready to buy — ' : '';
   const readyBlock = data.readyToBuy
     ? `<p style="background:#FFF6E0;border:1px solid #C99A2E;padding:12px 16px;font-size:14px;color:#0E0E0E;"><strong>You confirmed you're ready to buy in the next 1–2 months.</strong> ${esc(data.rancherName)} has been notified and will reach out within 24–48 hours.</p>`
     : '';
@@ -1903,11 +1907,11 @@ export async function sendBroadcastEmail(data: {
               <a href="${data.ctaLink}" class="button">${data.ctaText}</a>
             ` : ''}
             <div class="footer">
-              <p>BuyHalfCow — Private Access Network<br>
-              Not a marketplace. Not e-commerce.<br>
+              <p>BuyHalfCow<br>
+              1001 S. Main St. Ste 600, Kalispell, MT 59901<br>
               Questions? Email ${ADMIN_EMAIL}</p>
-              <p style="margin-top: 12px; font-size: 10px; color: #ccc;">
-                <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.to)}" style="color: #ccc;">Unsubscribe</a> | Campaign: ${data.campaignName}
+              <p style="margin-top: 12px; font-size: 10px; color: #6B4F3F;">
+                <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.to)}" style="color: #6B4F3F;">Unsubscribe</a> | Campaign: ${data.campaignName}
               </p>
             </div>
           </div>

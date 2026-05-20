@@ -160,14 +160,14 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
     // reminder per 4-day window via Rancher Reminded At field.
     let rancherReminders = 0;
     try {
-      // Include both Intro Sent AND Rancher Contacted in stalled-handler
-      // queries. Was Intro Sent only, which silently excluded leads where
-      // the rancher updated to "Rancher Contacted" but then went dormant —
-      // they'd accumulate forever without rancher reminders / stalled
-      // alerts / auto-reassign firing. Critical for ranchers whose habit
-      // is to mark "contacted" then never update again.
+      // 2026-05-20: Rancher reminder email now fires ONLY on 'Intro Sent'.
+      // Per founder directive: when the rancher updates status to Rancher
+      // Contacted OR Negotiation, the deal is THEIRS — stop hounding them
+      // with email reminders. The dashboard + Telegram operator views still
+      // surface stalled-contacted deals for Ben to act on if he wants;
+      // automated rancher email is killed at this status.
       const introSentRefs = referrals.filter(r =>
-        r['Status'] === 'Intro Sent' || r['Status'] === 'Rancher Contacted'
+        r['Status'] === 'Intro Sent'
       );
       const now = Date.now();
       const needsReminder = introSentRefs.filter(r => {
@@ -345,9 +345,13 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
     let autoReassigned = 0;
 
     try {
+      // 2026-05-20: Stale-prompt rancher email + 30-day auto-close fires
+      // ONLY on 'Intro Sent'. Once the rancher self-attests they Contacted
+      // the buyer, the lead is theirs — automated re-engagement email is
+      // killed. Operator can still manually intervene via dashboard or
+      // Telegram action buttons on the Telegram stalled-rancher card.
       const activeStallable = referrals.filter(
-        (r) =>
-          r['Status'] === 'Intro Sent' || r['Status'] === 'Rancher Contacted'
+        (r) => r['Status'] === 'Intro Sent',
       );
       const now = Date.now();
 
