@@ -147,6 +147,14 @@ export async function callClaudeWithTools(params: {
   user: string;
   maxTokens?: number;
   maxIterations?: number;
+  /**
+   * Pin to a specific provider. Default behavior (omitted) routes through
+   * Groq if available then Anthropic. Use 'anthropic' for cron paths that
+   * need reliable tool-schema validation — Groq's strict JSON-schema
+   * validator has rejected valid integer literals as strings in the past
+   * (2026-05-19 daily-audit failure on get_stalled_referrals minDays).
+   */
+  forceProvider?: 'anthropic' | 'groq';
 }): Promise<{ text: string; toolCalls: { name: string; input: any; output: any }[] }> {
   // Inject persistent memory facts into the system prompt
   let memoryBlock = '';
@@ -157,7 +165,17 @@ export async function callClaudeWithTools(params: {
   }
   const systemWithMemory = params.system + memoryBlock;
 
-  // Route to Groq (free) if available, otherwise Anthropic
+  // Explicit pin wins.
+  if (params.forceProvider === 'anthropic') {
+    if (!ANTHROPIC_API_KEY) throw new Error('forceProvider=anthropic but ANTHROPIC_API_KEY unset');
+    return callAnthropicWithTools({ ...params, system: systemWithMemory });
+  }
+  if (params.forceProvider === 'groq') {
+    if (!GROQ_API_KEY) throw new Error('forceProvider=groq but GROQ_API_KEY unset');
+    return callGroqWithTools({ ...params, system: systemWithMemory });
+  }
+
+  // Default: Groq (free) first, then Anthropic. Falls through on missing keys.
   if (GROQ_API_KEY) {
     return callGroqWithTools({ ...params, system: systemWithMemory });
   }
