@@ -32,13 +32,18 @@ export async function requireAdmin(request: Request): Promise<NextResponse | nul
     const headerPw = request.headers.get('x-admin-password');
     if (headerPw && headerPw === adminPassword) return null;
 
-    // 3. Query param auth: ?password=...
-    try {
-      const url = new URL(request.url);
-      const queryPw = url.searchParams.get('password');
-      if (queryPw && queryPw === adminPassword) return null;
-    } catch {
-      // Invalid URL — treat as unauthorized
+    // 3. Query param auth: ?password=... — DEPRECATED 2026-05-20
+    // Audit finding #42: password in URL → Vercel access logs, browser
+    // history, Referer headers to any external resource. Kept for
+    // backwards compat in non-prod (scripts, curl); rejected in prod.
+    if (process.env.NODE_ENV !== 'production') {
+      try {
+        const url = new URL(request.url);
+        const queryPw = url.searchParams.get('password');
+        if (queryPw && queryPw === adminPassword) return null;
+      } catch {
+        // Invalid URL — treat as unauthorized
+      }
     }
   }
 
