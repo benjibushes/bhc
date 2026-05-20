@@ -113,13 +113,16 @@ function TierCard(props: TierCardProps) {
                 {btn.label}
               </a>
             ) : (
-              <span
+              // Dead-button state when Stripe link env var unset. Surface
+              // a working fallback (email Ben) instead of silent "coming soon".
+              // Audit finding 2026-05-20 #22.
+              <a
                 key={i}
-                className="block text-center px-6 py-3.5 text-sm font-medium tracking-wide uppercase bg-dust text-bone cursor-not-allowed"
-                aria-disabled
+                href="mailto:ben@buyhalfcow.com?subject=Founders%20tier%20interest"
+                className="block text-center px-6 py-3.5 text-sm font-medium tracking-wide uppercase bg-charcoal text-bone transition-base hover:bg-divider"
               >
-                {btn.label} (coming soon)
-              </span>
+                Email Ben to claim
+              </a>
             )
           ) : (
             <FounderCheckoutButton

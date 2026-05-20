@@ -109,21 +109,26 @@ export default async function RancherPage(
   const processingFacility = r['Processing Facility'] || '';
 
   // Parse JSON-encoded fields. All wrapped in try/catch — a bad row can't
-  // break the page, just hides the section.
+  // break the page, just hides the section. Audit finding 2026-05-20 #32:
+  // log parse failures so operator can fix the bad data instead of
+  // silently dropping content.
+  const logBadJson = (field: string, err: unknown) => {
+    console.error(`[rancher-page] bad JSON in ${field} for slug=${slug}:`, err);
+  };
   let testimonials: { name: string; quote: string; location?: string; photo?: string }[] = [];
   try {
     if (r['Testimonials']) testimonials = JSON.parse(r['Testimonials']);
-  } catch {}
+  } catch (e) { logBadJson('Testimonials', e); }
 
   let galleryPhotos: string[] = [];
   try {
     if (r['Gallery Photos']) galleryPhotos = JSON.parse(r['Gallery Photos']);
-  } catch {}
+  } catch (e) { logBadJson('Gallery Photos', e); }
 
   let customProducts: { name: string; price: number; description: string; link: string }[] = [];
   try {
     if (r['Custom Products']) customProducts = JSON.parse(r['Custom Products']);
-  } catch {}
+  } catch (e) { logBadJson('Custom Products', e); }
 
   const quarterPrice = r['Quarter Price'];
   const quarterLbs = r['Quarter lbs'] || '';

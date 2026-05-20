@@ -96,11 +96,15 @@ export default function NewsPostPage() {
 
           <Divider />
 
-          {/* Content */}
-          <div 
-            className="prose prose-lg max-w-none leading-relaxed space-y-6"
-            dangerouslySetInnerHTML={{ __html: post.content }}
-          />
+          {/* Content — render as text with paragraph breaks. Previously
+              dangerouslySetInnerHTML opened XSS via Airtable content. Audit
+              finding 2026-05-20 #21. If we need rich content later, swap to
+              Markdown + a vetted renderer (react-markdown). */}
+          <div className="prose prose-lg max-w-none leading-relaxed space-y-6">
+            {post.content.split(/\n\n+/).map((para, idx) => (
+              <p key={idx} className="whitespace-pre-wrap">{para}</p>
+            ))}
+          </div>
 
           <Divider />
 
