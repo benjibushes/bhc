@@ -73,13 +73,12 @@
       "schedule": "0 18 * * *"
     },
     {
-<<<<<<< HEAD
       "path": "/api/cron/re-warm-cohort",
       "schedule": "30 16 * * *"
-=======
+    },
+    {
       "path": "/api/cron/awaiting-payment-nudge",
-      "schedule": "0 17 * * *"
->>>>>>> 7ed2ee9 (feat(cron): awaiting-payment-nudge)
+      "schedule": "10 17 * * *"
     }
   ]
 }
