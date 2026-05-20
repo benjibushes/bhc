@@ -2092,26 +2092,30 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             });
 
             if (action === 'won') {
-              await answerCallbackQuery(queryId, '✅ Marked Closed Won');
-              const updates: Record<string, unknown> = {
-                'Status': 'Closed Won',
-                'Closed At': new Date().toISOString(),
-              };
-              await updateRecord(TABLES.REFERRALS, refId, updates);
-              await logAuditEntry({
-                actor: 'manual',
-                tool: 'clcheck_won',
-                targetType: 'Referral',
-                targetId: refId,
-                args: { callbackData },
-                result: { previousStatus, newStatus: 'Closed Won' },
-                reverseAction: reverse,
-              });
+              // FIX 2026-05-20: previously this immediately flipped Status to
+              // Closed Won with no sale amount captured. Ben routinely never
+              // followed through on the "reply with $ amount" prompt; deals
+              // sat as Closed Won with no Sale Amount + later got patched
+              // manually with placeholder values (Ashcraft/Eric Turner: $1
+              // placeholder, $95 manually-edited commission → $95 invoice
+              // fired on $1 sale = 9500% ratio).
+              //
+              // New flow: tap Won → DOES NOT change Status. Edits the card
+              // with a [BHC:close:refId] marker + asks operator to reply
+              // with sale $ amount OR "awaiting" (off-platform close, buyer
+              // hasn't paid yet). The reply-to-message intercept above
+              // catches replies + processes the actual close.
+              await answerCallbackQuery(queryId, '💰 Reply with sale $');
               await editTelegramMessage(
                 chatId,
                 messageId,
-                `✅ <b>Closed Won</b> — ${buyerName}\n\n` +
-                `Status flipped. Reply with the sale $ amount (e.g. <code>$1100</code>) to record commission, or skip.`
+                `💰 <b>Confirming Closed Won</b> — ${buyerName}\n\n` +
+                `Reply to <i>this message</i> with the sale dollar amount ` +
+                `(e.g. <code>$2400</code>) — I'll fire the invoice automatically.\n\n` +
+                `OR reply <code>awaiting</code> if buyer hasn't paid yet ` +
+                `(off-platform deal, pay on delivery). Status will move to ` +
+                `Awaiting Payment and I'll nudge you in 14 days.\n\n` +
+                `[BHC:close:${refId}]`
               );
             } else if (action === 'lost') {
               await answerCallbackQuery(queryId, '❌ Marked Closed Lost');
@@ -2385,6 +2389,136 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         return t;
       })();
       const chatId = update.message.chat.id.toString();
+
+      // ─── Close-amount reply intercept (added 2026-05-20) ───────────────────
+      // When operator replies to a "💰 Confirming Closed Won" prompt with a
+      // dollar amount OR "awaiting", finalize the close. Marker
+      // [BHC:close:recXXX] is embedded in the prompt message so we can route
+      // the reply back to the right referral without server-side state.
+      const repliedTo: any = (update.message as any)?.reply_to_message;
+      const repliedText: string = repliedTo?.text || repliedTo?.caption || '';
+      const closeMarker = repliedText.match(/\[BHC:close:(rec[A-Za-z0-9]{14})\]/);
+      if (closeMarker && !text.startsWith('/')) {
+        const refId = closeMarker[1];
+        const userReply = text.trim();
+        try {
+          const ref: any = await getRecordById(TABLES.REFERRALS, refId);
+          if (!ref) {
+            await sendTelegramMessage(chatId, `⚠️ Referral ${refId} not found.`);
+            return NextResponse.json({ ok: true });
+          }
+          const buyerName = ref['Buyer Name'] || '(unknown)';
+          const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
+          const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+          if (!rancherId) {
+            await sendTelegramMessage(chatId, `⚠️ ${buyerName} has no rancher linked. Fix the referral first.`);
+            return NextResponse.json({ ok: true });
+          }
+          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+          if (!rancher) {
+            await sendTelegramMessage(chatId, `⚠️ Rancher ${rancherId} not found.`);
+            return NextResponse.json({ ok: true });
+          }
+          const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || '(rancher)';
+
+          // Branch 1: "awaiting" reply → flip to Awaiting Payment + skip invoice
+          if (/^(awaiting|pending|later|not paid|not yet|on delivery)\b/i.test(userReply)) {
+            await updateRecord(TABLES.REFERRALS, refId, {
+              'Status': 'Awaiting Payment',
+              'Closed At': new Date().toISOString(),
+            });
+            await sendTelegramMessage(
+              chatId,
+              `🕓 <b>Awaiting Payment</b> — ${buyerName} → ${rancherName}\n\n` +
+              `Status: Awaiting Payment.\n` +
+              `Use the rancher dashboard "Confirm Payment Received" button (or reply /confirmpaid ${refId} $X here) when buyer pays. Invoice fires automatically at that point.\n\n` +
+              `I'll nudge you at 14 days if it's still unresolved.`,
+            );
+            return NextResponse.json({ ok: true });
+          }
+
+          // Branch 2: parse a dollar amount → run the full close + invoice flow.
+          // Accept $1234 / 1,234 / 1234.56 — strip $ and commas.
+          const amountMatch = userReply.replace(/[$,\s]/g, '').match(/^(\d+(?:\.\d{1,2})?)$/);
+          if (!amountMatch) {
+            await sendTelegramMessage(
+              chatId,
+              `⚠️ Couldn't parse "${userReply}". Reply with a dollar amount (e.g. <code>$2400</code>) or <code>awaiting</code>. Reply to the original prompt message so I know which referral.`,
+            );
+            return NextResponse.json({ ok: true });
+          }
+          const saleAmount = Number(amountMatch[1]);
+
+          // Gate: rancher must have a locked commission rate. Refuse the close
+          // until the rate is set on the rancher's record.
+          const { hasLockedCommissionRate, calcCommissionForRancher, getRancherCommissionRate } = await import('@/lib/commission');
+          if (!hasLockedCommissionRate(rancher)) {
+            await sendTelegramMessage(
+              chatId,
+              `🚫 <b>Refused close</b> — ${rancherName} has no Commission Rate locked.\n\n` +
+              `Set <code>Commission Rate</code> on their Rancher row first (e.g. 0.10 for 10%). Then reply again with the sale amount.`,
+            );
+            return NextResponse.json({ ok: true });
+          }
+
+          const commission = calcCommissionForRancher(rancher, saleAmount);
+          const rate = getRancherCommissionRate(rancher);
+
+          await updateRecord(TABLES.REFERRALS, refId, {
+            'Status': 'Closed Won',
+            'Closed At': new Date().toISOString(),
+            'Sale Amount': saleAmount,
+            'Commission Due': commission,
+          });
+
+          // Fire Stripe invoice. createCommissionInvoice has its own floor +
+          // ratio guards (lib/stripe-commission.ts) — they'll throw before we
+          // generate a bogus invoice.
+          const { createCommissionInvoice } = await import('@/lib/stripe-commission');
+          try {
+            const result = await createCommissionInvoice({
+              rancher: {
+                id: rancher.id,
+                operatorName: rancherName,
+                ranchName: rancher['Ranch Name'] || rancherName,
+                email: rancher['Email'] || '',
+                stripeCustomerId: rancher['Stripe Customer ID'] || undefined,
+              },
+              referral: {
+                id: refId,
+                buyerName,
+                orderType: ref['Order Type'] || '',
+                saleAmount,
+                commissionDue: commission,
+              },
+            });
+            await updateRecord(TABLES.REFERRALS, refId, {
+              'Stripe Invoice ID': result.invoiceId,
+              'Stripe Invoice URL': result.invoiceUrl,
+            });
+            await sendTelegramMessage(
+              chatId,
+              `🎉 <b>Closed Won — invoice sent</b>\n\n` +
+              `${buyerName} → ${rancherName}\n` +
+              `Sale: <b>$${saleAmount.toLocaleString()}</b>\n` +
+              `Commission (${(rate * 100).toFixed(1)}%): <b>$${commission.toLocaleString()}</b>\n` +
+              `Invoice: ${result.invoiceUrl}\n\n` +
+              `Stripe will email ${rancher['Email'] || 'the rancher'} the hosted invoice. Webhook flips Commission Paid on payment.`,
+            );
+          } catch (invoiceErr: any) {
+            // Floor/ratio guards in createCommissionInvoice fire a loud
+            // operator signal of their own. Send a chat-level summary too.
+            await sendTelegramMessage(
+              chatId,
+              `⚠️ Status flipped Closed Won but invoice failed: ${invoiceErr?.message || 'unknown'}\n\n` +
+              `Fix the underlying issue and use the dashboard close flow to re-fire the invoice.`,
+            );
+          }
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ Close-reply handler failed: ${e?.message || 'unknown'}`);
+        }
+        return NextResponse.json({ ok: true });
+      }
 
       // ─── /setuppage wizard: intercept replies for active sessions ──────────
       const spSession = setupPageSessions.get(chatId);

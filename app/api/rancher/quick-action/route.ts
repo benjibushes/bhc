@@ -7,7 +7,7 @@ import {
   updateRecord,
 } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
-import { calcCommission } from '@/lib/commission';
+import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate } from '@/lib/commission';
 import {
   sendTelegramMessage,
   TELEGRAM_ADMIN_CHAT_ID,
@@ -144,9 +144,24 @@ async function applyAction(
     if (!saleAmount || saleAmount <= 0) {
       return { ok: false, message: 'Sale amount required for Closed Won.' };
     }
+    // HARD GATE: rancher must have a locked Commission Rate. Stops the
+    // "we never agreed on a rate" disputes that bit the Ashcraft pattern
+    // (2026-05-20). Pull the rancher row to check + compute per-rancher
+    // commission off their locked rate.
+    let rancherForRate: any = null;
+    try {
+      rancherForRate = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
+    } catch {}
+    if (!hasLockedCommissionRate(rancherForRate)) {
+      return {
+        ok: false,
+        message:
+          'No Commission Rate locked on your account. Please contact support@buyhalfcow.com before closing deals via email.',
+      };
+    }
     updates['Status'] = 'Closed Won';
     updates['Sale Amount'] = saleAmount;
-    updates['Commission Due'] = calcCommission(saleAmount);
+    updates['Commission Due'] = calcCommissionForRancher(rancherForRate, saleAmount);
     updates['Closed At'] = new Date().toISOString();
     summary = `Marked Closed Won at $${saleAmount.toFixed(2)}. Commission ($${updates['Commission Due'].toFixed(2)}) invoice on the way.`;
   } else if (action === 'lost') {

@@ -6,7 +6,7 @@ import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTe
 import { sendRerouteNotification, sendPilotUpsellEmail, sendInstantCommissionInvoice } from '@/lib/email';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
-import { calcCommission } from '@/lib/commission';
+import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, getRancherCommissionRate } from '@/lib/commission';
 import jwt from 'jsonwebtoken';
 
 // Pass reasons a rancher can give when declining a lead.
@@ -273,7 +273,10 @@ export async function PATCH(
     const fields: Record<string, any> = {};
 
     // Ranchers can update to these statuses
-    const allowedStatuses = ['Rancher Contacted', 'Negotiation', 'Closed Won', 'Closed Lost'];
+    // Awaiting Payment added 2026-05-20: off-platform close where buyer
+    // pays on delivery. Status flips but invoice deferred until rancher
+    // hits /confirm-payment endpoint with actual cash received.
+    const allowedStatuses = ['Rancher Contacted', 'Negotiation', 'Closed Won', 'Awaiting Payment', 'Closed Lost'];
     if (status && allowedStatuses.includes(status)) {
       fields['Status'] = status;
 
@@ -488,7 +491,7 @@ export async function PATCH(
       }
     }
 
-    // HARD GATE: Closed Won MUST have a positive sale amount. Previous code
+    // HARD GATE 1: Closed Won MUST have a positive sale amount. Previous code
     // silently accepted status=Closed Won with no sale → no commission
     // computed, no Stripe invoice fired, no payment path. Money-losing
     // failure mode. Now return 400 so the dashboard re-prompts.
@@ -498,11 +501,36 @@ export async function PATCH(
           error: 'A positive sale amount is required to close as Won. Enter the actual sale price.',
         }, { status: 400 });
       }
+      // HARD GATE 2: rancher must have a Commission Rate locked. Stops the
+      // "we never agreed on a rate" disputes (Ashcraft pattern 2026-05-20).
+      // Pull the rancher row defensively — close path mustn't proceed if
+      // we can't read the rate.
+      try {
+        const rancherForCheck = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+        if (!hasLockedCommissionRate(rancherForCheck)) {
+          return NextResponse.json({
+            error: 'No Commission Rate locked on your account. Contact support@buyhalfcow.com to set this before closing deals.',
+          }, { status: 400 });
+        }
+      } catch (e) {
+        return NextResponse.json({
+          error: 'Could not verify Commission Rate. Try again or contact support.',
+        }, { status: 500 });
+      }
     }
 
     if (saleAmount !== undefined && saleAmount > 0) {
       fields['Sale Amount'] = saleAmount;
-      fields['Commission Due'] = calcCommission(saleAmount);
+      // Per-rancher commission via locked rate. Falls back to env default
+      // only when rancher row has no Commission Rate set (gate above
+      // should block Closed Won in that case — but keeps Awaiting Payment
+      // flexible).
+      try {
+        const rancherForRate = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+        fields['Commission Due'] = calcCommissionForRancher(rancherForRate, saleAmount);
+      } catch {
+        fields['Commission Due'] = calcCommission(saleAmount);
+      }
     }
 
     if (notes !== undefined) {
