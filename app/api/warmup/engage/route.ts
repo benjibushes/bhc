@@ -68,6 +68,24 @@ async function stageOnboardingApproval(args: {
   try { rancher = await getRecordById(TABLES.RANCHERS, rancherId); } catch {}
   const ranchName = rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'rancher';
 
+  // Idempotency guard. Audit finding 2026-05-20 #19: warmup/engage fires
+  // every YES click, and previously this function created a NEW
+  // Pending Approval referral + Telegram ping on every click → duplicate
+  // alerts to Ben + orphan referrals. Skip if a Pending Approval row
+  // already exists for this buyer-rancher pair.
+  try {
+    const existing = (await getAllRecords(
+      TABLES.REFERRALS,
+      `AND({Status} = "Pending Approval", FIND("${buyer.id}", ARRAYJOIN({Buyer})), OR(FIND("${rancherId}", ARRAYJOIN({Rancher})), FIND("${rancherId}", ARRAYJOIN({Suggested Rancher}))))`,
+    )) as any[];
+    if (existing.length > 0) {
+      console.log(`[firstweek] skip — pending approval already exists: ${existing[0].id}`);
+      return { stagedRefId: existing[0].id };
+    }
+  } catch (e: any) {
+    console.warn('[firstweek] dedupe check failed; staging anyway:', e?.message);
+  }
+
   let stagedRefId: string | null = null;
   try {
     const ref: any = await createRecord(TABLES.REFERRALS, {

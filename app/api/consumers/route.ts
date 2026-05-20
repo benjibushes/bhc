@@ -75,6 +75,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // Reject unrecognized states at the door. Otherwise buyers with typo
+    // states ("Calfornia", "ZZ", etc.) write through normalizeState's
+    // null-fallback into a permanently-stranded record that matching
+    // engine can never route. Audit finding 2026-05-20 #20.
+    if (!normalizeState(state)) {
+      return NextResponse.json({
+        error: `State "${state}" not recognized — pick from the dropdown or use the 2-letter code (e.g. TX, MT, WV).`,
+      }, { status: 400 });
+    }
+
     if (!isValidName(fullName)) {
       return NextResponse.json({ error: 'Please enter a valid name' }, { status: 400 });
     }
