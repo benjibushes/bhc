@@ -8,11 +8,20 @@ import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 60;
 
-// Runs every Monday at 9am MT — finds ranchers stalled at each onboarding stage
-// and sends Telegram alerts with action buttons
+// Runs daily 15 UTC — exits early unless today is Monday. Vercel Hobby tier
+// silently dropped the original `0 15 * * 1` day-of-week schedule (0 runs in
+// 14 days as of 2026-05-19 audit). Daily wrapper + Monday guard ensures the
+// cron actually fires on Mondays + Cron Runs has a row every day proving we
+// DID check.
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
+
+  // 0=Sunday, 1=Monday. Use UTC so we don't drift across DST.
+  const today = new Date();
+  if (today.getUTCDay() !== 1) {
+    return { status: 'success', recordsTouched: 0, notes: `skipped — not Monday (UTC day=${today.getUTCDay()})` };
   }
 
   const ranchers = await getAllRecords(TABLES.RANCHERS);

@@ -18,7 +18,7 @@
     },
     {
       "path": "/api/cron/rancher-followup",
-      "schedule": "0 15 * * 1"
+      "schedule": "0 15 * * *"
     },
     {
       "path": "/api/cron/email-sequences",
