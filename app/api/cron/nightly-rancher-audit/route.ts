@@ -31,6 +31,10 @@ export const maxDuration = 180;
 //   8. Stale Suggested Rancher Name (cached text doesn't match linked rancher Operator/Ranch)
 //   9. Active rancher with 0 Closed Won in 30+ days but ≥5 referrals routed → underperforming
 //  10. Pilot threshold reached but Pilot Upsell Notified At still empty
+//  11. Closed Won missing Stripe Invoice URL (critical)
+//  12. Closed Won with Sale Amount below $50 floor (critical — likely placeholder)
+//  13. Closed Won with commission/sale ratio outside [3%, 20%] (critical)
+//  14. Awaiting Payment referral aging >14d (warn — needs rancher follow-up)
 //
 // All findings: posted to Telegram + returned in JSON for admin dashboard.
 // ─────────────────────────────────────────────────────────────────────────
@@ -179,6 +183,74 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           rancher: name,
           text: `🎯 ${name} has hit pilot goal (${closes.won}/${summary.pilotGoal}) but Pilot Upsell Notified At is empty. Trigger upsell convo.`,
         });
+      }
+    }
+
+    // ── INVOICE ANOMALY CHECKS (11, 12, 13, 14) ──────────────────────────
+    // Detection net for the invoice-capture bulletproofing (2026-05-20).
+    // The hard gates on close paths prevent NEW bad data; these checks
+    // surface existing bad rows + any drift that sneaks past.
+    const MIN_SALE_FLOOR = 50;
+    const MIN_RATIO = 0.03;
+    const MAX_RATIO = 0.20;
+    for (const ref of referrals) {
+      const status = ref['Status'] || '';
+      const rancherId = (ref['Rancher'] || [])[0] || (ref['Suggested Rancher'] || [])[0];
+      const rancher = rancherId ? rancherById.get(rancherId) : null;
+      const rancherName = rancher ? (rancher['Operator Name'] || rancher['Ranch Name'] || '?') : '?';
+      const buyerName = ref['Buyer Name'] || '?';
+
+      if (status === 'Closed Won') {
+        // Check 11: Closed Won missing Stripe Invoice URL = critical
+        if (!ref['Stripe Invoice URL']) {
+          issues.push({
+            severity: 'critical',
+            rancher: rancherName,
+            refId: ref.id,
+            text: `${rancherName}: ${buyerName} Closed Won missing Stripe Invoice URL`,
+          });
+        }
+
+        const sale = Number(ref['Sale Amount']) || 0;
+        const commission = Number(ref['Commission Due']) || 0;
+
+        // Check 12: Sale Amount below floor = critical
+        if (sale > 0 && sale < MIN_SALE_FLOOR) {
+          issues.push({
+            severity: 'critical',
+            rancher: rancherName,
+            refId: ref.id,
+            text: `${rancherName}: ${buyerName} Sale Amount $${sale} below $${MIN_SALE_FLOOR} floor — likely placeholder`,
+          });
+        }
+
+        // Check 13: Commission/Sale ratio outside [3%, 20%] = critical
+        if (sale > 0 && commission > 0) {
+          const ratio = commission / sale;
+          if (ratio < MIN_RATIO || ratio > MAX_RATIO) {
+            issues.push({
+              severity: 'critical',
+              rancher: rancherName,
+              refId: ref.id,
+              text: `${rancherName}: ${buyerName} ratio ${(ratio * 100).toFixed(1)}% (sale=$${sale} commission=$${commission})`,
+            });
+          }
+        }
+      }
+
+      // Check 14: Awaiting Payment >14d = warn (rancher needs nudge — the
+      // awaiting-payment-nudge cron handles outreach; this surfaces them
+      // in the audit so they're visible in one card)
+      if (status === 'Awaiting Payment') {
+        const closedAt = ref['Closed At'] ? new Date(ref['Closed At']).getTime() : 0;
+        if (closedAt && now - closedAt > 14 * DAY) {
+          issues.push({
+            severity: 'warn',
+            rancher: rancherName,
+            refId: ref.id,
+            text: `${rancherName}: ${buyerName} Awaiting Payment for ${Math.floor((now - closedAt) / DAY)}d — confirm or close lost`,
+          });
+        }
       }
     }
 
