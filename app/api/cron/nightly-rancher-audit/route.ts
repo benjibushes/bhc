@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, TABLES } from '@/lib/airtable';
+import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { withCronRun } from '@/lib/cronRun';
@@ -172,13 +172,32 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         });
       }
 
-      // 10. Pilot threshold reached, no notification fired
+      // 10. Pilot threshold reached, no notification fired — FIRE celebration
+      //     + STAMP Pilot Upsell Notified At so the audit only does this once.
+      //     Previously the audit only surfaced this as a critical issue line
+      //     that got buried in 30+ other warn lines and was easy to miss.
       if (summary.pilotGoal && closes.won >= summary.pilotGoal && !summary.pilotNotifiedAt) {
-        issues.push({
-          severity: 'critical',
-          rancher: name,
-          text: `🎯 ${name} has hit pilot goal (${closes.won}/${summary.pilotGoal}) but Pilot Upsell Notified At is empty. Trigger upsell convo.`,
-        });
+        const celebrationText =
+          `🎉 <b>PILOT COMPLETE — UPSELL TIME</b>\n\n` +
+          `<b>${name}</b> hit pilot goal (<b>${closes.won}</b>/${summary.pilotGoal} closed won)\n\n` +
+          `State: ${r['State'] || '?'}\n` +
+          `Performance Score: ${r['Performance Score'] || '?'}\n\n` +
+          `→ Time to start the retainer conversation.`;
+        try {
+          if (TELEGRAM_ADMIN_CHAT_ID) {
+            await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, celebrationText);
+          }
+          await updateRecord(TABLES.RANCHERS, r.id, {
+            'Pilot Upsell Notified At': new Date().toISOString(),
+          });
+        } catch (e: any) {
+          console.error('[nightly-rancher-audit] pilot celebration failed:', e?.message);
+          issues.push({
+            severity: 'critical',
+            rancher: name,
+            text: `🎯 ${name} hit pilot goal but celebration alert failed: ${e?.message}`,
+          });
+        }
       }
     }
 
