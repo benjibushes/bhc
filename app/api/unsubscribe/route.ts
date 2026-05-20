@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Airtable from 'airtable';
+import { getAllRecords, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { invalidateSuppressionCache } from '@/lib/email';
-
-const apiKey = process.env.AIRTABLE_API_KEY;
-const baseId = process.env.AIRTABLE_BASE_ID;
-const base = new Airtable({ apiKey: apiKey || '' }).base(baseId || '');
 
 // POST /api/unsubscribe — one-click unsubscribe (RFC 8058)
 // Also handles GET for email-client List-Unsubscribe header clicks
@@ -36,48 +32,54 @@ async function handleUnsubscribe(req: NextRequest) {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
+  const safeEmail = escapeAirtableValue(normalizedEmail);
 
   try {
-    // Find consumer by email
-    const records = await base('Consumers')
-      .select({
-        filterByFormula: `LOWER({Email}) = "${normalizedEmail.replace(/"/g, '\\"')}"`,
-        maxRecords: 1,
-      })
-      .firstPage();
-
-    if (records.length > 0) {
-      await base('Consumers').update(records[0].id, {
+    // Use lib helpers — updateRecord strips unknown Airtable fields so we
+    // never 422 because of schema drift (fix 2026-05-20: previous raw
+    // base().update() on Affiliates threw because table has no Unsubscribed
+    // field, burning the whole request as 500).
+    const consumers = await getAllRecords(
+      TABLES.CONSUMERS,
+      `LOWER({Email}) = "${safeEmail}"`,
+    );
+    if (consumers.length > 0) {
+      await updateRecord(TABLES.CONSUMERS, (consumers[0] as any).id, {
         'Unsubscribed': true,
         'Unsubscribed At': new Date().toISOString(),
       });
     }
 
-    // Also check Affiliates table
-    const affiliateRecords = await base('Affiliates')
-      .select({
-        filterByFormula: `LOWER({Email}) = "${normalizedEmail.replace(/"/g, '\\"')}"`,
-        maxRecords: 1,
-      })
-      .firstPage();
-
-    if (affiliateRecords.length > 0) {
-      await base('Affiliates').update(affiliateRecords[0].id, {
+    const ranchers = await getAllRecords(
+      TABLES.RANCHERS,
+      `LOWER({Email}) = "${safeEmail}"`,
+    );
+    if (ranchers.length > 0) {
+      await updateRecord(TABLES.RANCHERS, (ranchers[0] as any).id, {
         'Unsubscribed': true,
       });
     }
 
-    // Invalidate suppression cache so the next email send sees this address
-    // as blocked immediately (prevents the 5-minute lag window where they'd
-    // still get the next batch).
+    try {
+      const affiliates = await getAllRecords(
+        TABLES.AFFILIATES,
+        `LOWER({Email}) = "${safeEmail}"`,
+      );
+      if (affiliates.length > 0) {
+        await updateRecord(TABLES.AFFILIATES, (affiliates[0] as any).id, {
+          'Status': 'Inactive',
+        });
+      }
+    } catch (affErr) {
+      console.error('Unsubscribe affiliate update (non-fatal):', affErr);
+    }
+
     invalidateSuppressionCache();
 
-    // For RFC 8058 one-click, return 200
     if (req.method === 'POST') {
       return NextResponse.json({ success: true });
     }
 
-    // For GET, redirect to the unsubscribe confirmation page
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
     return NextResponse.redirect(`${siteUrl}/unsubscribe?success=true&email=${encodeURIComponent(normalizedEmail)}`);
   } catch (error) {
