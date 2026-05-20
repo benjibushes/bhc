@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getAllRecords, getRecordById, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { normalizeAffiliateCode } from '@/lib/affiliates';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 60;
@@ -39,10 +40,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Your affiliate account is not active' }, { status: 403 });
     }
 
-    const code = affiliate['Code'] || '';
-    if (!code) {
+    const rawCode = affiliate['Code'] || '';
+    if (!rawCode) {
       return NextResponse.json({ error: 'Affiliate code not configured' }, { status: 400 });
     }
+    const code = normalizeAffiliateCode(rawCode);
 
     const safeCode = escapeAirtableValue(String(code));
     const consumerFilter = `{Referred By} = "${safeCode}"`;
@@ -52,6 +54,39 @@ export async function GET() {
       getAllRecords(TABLES.CONSUMERS, consumerFilter).catch(() => []),
       getAllRecords(TABLES.RANCHERS, rancherFilter).catch(() => []),
     ]);
+
+    const referredConsumerIds = new Set((consumers as any[]).map((c: any) => c.id));
+    const referredRancherIds = new Set((ranchers as any[]).map((r: any) => r.id));
+
+    // Count Closed Won deals attributed to this affiliate's referred buyers.
+    // Counts only — no dollar amounts surfaced. Affiliates evangelize the
+    // mission, not chase commissions. Showing $ would create the wrong
+    // incentive + the wrong expectation.
+    let referrals: any[] = [];
+    try {
+      referrals = (await getAllRecords(TABLES.REFERRALS)) as any[];
+    } catch {
+      referrals = [];
+    }
+
+    let closedWonCount = 0;
+    const recentCloses: Array<{ id: string; buyer: string; closedAt: string }> = [];
+    for (const ref of referrals) {
+      if ((ref['Status'] || '') !== 'Closed Won') continue;
+      const buyerIds: string[] = ref['Buyer'] || [];
+      if (!Array.isArray(buyerIds) || !buyerIds.some((b) => referredConsumerIds.has(b))) continue;
+      closedWonCount++;
+      recentCloses.push({
+        id: ref.id,
+        buyer: ref['Buyer Name'] || '',
+        closedAt: ref['Closed At'] || '',
+      });
+    }
+    recentCloses.sort((a, b) => new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime());
+
+    const clicks = Number(affiliate['Click Count']) || 0;
+    const signups = referredConsumerIds.size + referredRancherIds.size;
+    const conversionPct = clicks > 0 ? Math.round((signups / clicks) * 1000) / 10 : 0;
 
     const referredConsumers = (consumers as any[]).map((c) => ({
       id: c.id,
@@ -76,10 +111,18 @@ export async function GET() {
         buyer: buyerLink,
         rancher: rancherLink,
       },
+      stats: {
+        clicks,
+        signups,
+        conversionPct,
+        closedWonCount,
+        lastClickAt: affiliate['Last Click At'] || null,
+      },
       referredConsumersCount: referredConsumers.length,
       referredRanchersCount: referredRanchers.length,
       referredConsumers,
       referredRanchers,
+      recentCloses: recentCloses.slice(0, 20),
     });
   } catch (error: any) {
     console.error('Affiliate dashboard error:', error);

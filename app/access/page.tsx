@@ -231,6 +231,22 @@ function AccessPageContent() {
       }
       return { campaign, source, utmParams, ref };
     });
+
+    // Fire-and-forget affiliate click ping. sessionStorage de-dupes so a
+    // single visit only counts once per browser session; refreshing the
+    // tab won't re-count, but a new tab or returning later will.
+    if (refFromUrl) {
+      const pingKey = `bhc_ref_pinged:${refFromUrl}`;
+      if (typeof window !== 'undefined' && !window.sessionStorage.getItem(pingKey)) {
+        window.sessionStorage.setItem(pingKey, '1');
+        // Use fetch with keepalive so navigation doesn't kill the request.
+        // No await — failures are silent by design.
+        fetch(`/api/affiliates/track-click?ref=${encodeURIComponent(refFromUrl)}`, {
+          method: 'POST',
+          keepalive: true,
+        }).catch(() => {});
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParamsString]);
 

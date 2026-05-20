@@ -52,6 +52,18 @@ function PartnerPageContent() {
     if (refFromUrl) localStorage.setItem('bhc_ref', refFromUrl);
     const next = refFromUrl || localStorage.getItem('bhc_ref') || '';
     setRef((prev) => (prev === next ? prev : next));
+
+    // Affiliate click ping (de-duped per browser session).
+    if (refFromUrl) {
+      const pingKey = `bhc_ref_pinged:${refFromUrl}`;
+      if (typeof window !== 'undefined' && !window.sessionStorage.getItem(pingKey)) {
+        window.sessionStorage.setItem(pingKey, '1');
+        fetch(`/api/affiliates/track-click?ref=${encodeURIComponent(refFromUrl)}`, {
+          method: 'POST',
+          keepalive: true,
+        }).catch(() => {});
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParamsString]);
 

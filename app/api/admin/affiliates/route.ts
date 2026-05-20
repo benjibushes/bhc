@@ -3,16 +3,11 @@ import { getAllRecords, createRecord, escapeAirtableValue } from '@/lib/airtable
 import { TABLES } from '@/lib/airtable';
 import { sendAffiliateWelcome } from '@/lib/email';
 import { requireAdmin } from '@/lib/adminAuth';
+import { generateAffiliateCode } from '@/lib/affiliates';
 
 export const maxDuration = 60;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
-
-function generateCode(name: string): string {
-  const base = (name.split(' ')[0] || 'bhc').toLowerCase().replace(/[^a-z]/g, '');
-  const suffix = Math.random().toString(36).slice(2, 6);
-  return `${base}${suffix}`;
-}
 
 export async function POST(request: Request) {
   try {
@@ -45,7 +40,11 @@ export async function POST(request: Request) {
       });
     }
 
-    const code = generateCode(name);
+    // generateAffiliateCode (lib/affiliates.ts) checks for code collisions
+    // against the Affiliates table before returning. The legacy inline
+    // generator did not — two "Ben"s could collide and silently overwrite
+    // attribution.
+    const code = await generateAffiliateCode(name);
 
     await createRecord(TABLES.AFFILIATES, {
       'Name': name,

@@ -2,20 +2,9 @@ import { NextResponse } from 'next/server';
 import { createRecord, updateRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
+import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 
 export const maxDuration = 90;
-
-async function validateAffiliateRef(ref: string | undefined): Promise<boolean> {
-  if (!ref || typeof ref !== 'string' || ref.length > 50) return false;
-  const code = ref.trim();
-  if (!code) return false;
-  try {
-    const affiliates = await getAllRecords(TABLES.AFFILIATES, `AND({Code} = "${escapeAirtableValue(code)}", {Status} = "Active")`);
-    return affiliates.length > 0;
-  } catch {
-    return false;
-  }
-}
 import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy } from '@/lib/email';
 import { normalizeState } from '@/lib/states';
 import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
@@ -178,7 +167,10 @@ export async function POST(request: Request) {
     const status = deriveStatus(consumerSegment, serverIntentClassification);
     const firstName = fullName.split(' ')[0];
 
-    const referredBy = ref && (await validateAffiliateRef(ref)) ? ref.trim() : '';
+    // validateAffiliateRefForSignup normalizes case + blocks self-referrals
+    // (when the affiliate's own email matches the buyer's). Returns '' if
+    // the ref is invalid for any reason. Stored lowercased.
+    const referredBy = await validateAffiliateRefForSignup(ref, email);
 
     const consumerFields: Record<string, unknown> = {
       'Full Name': fullName.trim(),
