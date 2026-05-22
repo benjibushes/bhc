@@ -3325,3 +3325,176 @@ export async function sendRancherOnboardingDripDay14(data: {
     return { success: false, error };
   }
 }
+
+// =====================================================
+// ROUTING-SEGMENT TEMPLATES — drives /api/cron/email-sequences branching
+// per lib/routingSegment.ts. Each template targets one segment + one JTBD.
+// =====================================================
+
+/**
+ * MATCH_NOW segment — buyer clicked "Ready to Buy" and there's a covered-
+ * state rancher with capacity. This email is sent BEFORE the system stages
+ * a Pending Approval referral, so the buyer knows an intro is coming.
+ *
+ * Cadence: 1 lifetime send.
+ */
+export async function sendMatchNowRescue(data: {
+  email: string;
+  firstName: string;
+  buyerState: string;
+}) {
+  const first = data.firstName || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `your rancher is lined up — intro coming in 24 hours`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}</style>
+</head><body><div class="container">
+  <h1>Your rancher is lined up</h1>
+  <p>Hi ${esc(first)},</p>
+  <p>You clicked "ready to buy" — thanks for the signal. I've matched you with a verified rancher in ${esc(data.buyerState)} who's got capacity for you this season.</p>
+  <p>You'll get a second email within the next 24 hours with their name, pricing (Quarter / Half / Whole), processing date, and direct contact info. They'll also reach out to you within 48 hours.</p>
+  <p>From there it's between you and the ranch — pickup date, cut sheet, payment method. We take 10% only when the deal closes. The rancher keeps 90.</p>
+  <p>If anything changes, reply to this email and I'll handle it.</p>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending match-now rescue:', error);
+    return { success: false, error };
+  }
+}
+
+/**
+ * NUDGE_TO_ENGAGE segment — buyer is qualified + in a covered state but
+ * has never engaged with a warmup. This is the second-touch nudge with a
+ * sharper R2B button.
+ *
+ * Cadence: up to 2 lifetime sends, 7d apart.
+ */
+export async function sendNudgeToEngage(data: {
+  email: string;
+  firstName: string;
+  buyerState: string;
+  engageUrl: string;
+}) {
+  const first = data.firstName || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `quick question on your ${data.buyerState} beef timing`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:16px 20px;margin:24px 0;font-family:Georgia,serif;font-size:18px}</style>
+</head><body><div class="container">
+  <h1>One question on timing</h1>
+  <p>Hi ${esc(first)},</p>
+  <p>You signed up for BuyHalfCow a while back and we've got verified ranchers in ${esc(data.buyerState)} with capacity right now. Before I introduce you, I want to make sure the timing is right.</p>
+  <div class="q"><strong>Are you ready to buy in the next 1–2 months?</strong></div>
+  <p>If yes, tap below and I'll send the rancher's full info within 24 hours. They reach out to you direct. No middleman, no markup — we take 10% only when the deal closes.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
+  </div>
+  <p style="font-size:14px;">If not yet, just don't click. You stay on the list and we'll check back in a couple weeks. No pressure.</p>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending nudge-to-engage:', error);
+    return { success: false, error };
+  }
+}
+
+/**
+ * WARM_LEAD segment — buyer clicked YES on warmup ("I'm interested") but
+ * has NOT clicked "Ready to Buy" yet. Bi-weekly "ready yet?" nudge with a
+ * sharper R2B button.
+ *
+ * Cadence: up to 4 lifetime sends, 14d apart.
+ */
+export async function sendWarmLeadReadyCheck(data: {
+  email: string;
+  firstName: string;
+  buyerState: string;
+  engageUrl: string;
+}) {
+  const first = data.firstName || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `ready to buy yet? quick check-in`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}</style>
+</head><body><div class="container">
+  <h1>Ready yet?</h1>
+  <p>Hi ${esc(first)},</p>
+  <p>You said you were interested in beef from a ${esc(data.buyerState)} rancher. We've still got capacity and I want to make sure I introduce you at the right time.</p>
+  <p><strong>If you're ready to buy in the next 1–2 months</strong>, tap below and I'll send rancher info within 24 hours. If timing isn't right yet, just sit tight — I'll check back in a couple weeks.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
+  </div>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending warm-lead check:', error);
+    return { success: false, error };
+  }
+}
+
+/**
+ * OUT_OF_STATE_FOUNDER_PITCH segment — buyer is high-intent but lives in
+ * an uncovered state. Honest pitch: "no rancher in your state yet, here's
+ * how to back the platform + jump the queue when one signs up."
+ *
+ * Cadence: 1 lifetime send, then monthly community letter.
+ */
+export async function sendOutOfStateFounderPitch(data: {
+  email: string;
+  firstName: string;
+  buyerState: string;
+}) {
+  const first = data.firstName || 'there';
+  const FOUNDERS_URL = `${SITE_URL}/founders`;
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `no rancher in ${data.buyerState} yet — but we will`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+</head><body><div class="container">
+  <h1>Straight up: no rancher in ${esc(data.buyerState)} yet</h1>
+  <p>Hi ${esc(first)},</p>
+  <p>You signed up with real intent — order type, budget, the works. I appreciate that. Here's the honest read: we don't have a verified rancher in ${esc(data.buyerState)} yet.</p>
+  <p>I'm scouting actively. When one signs on, you're on the list to get matched first.</p>
+  <div class="divider"></div>
+  <p><strong>If you want to back the mission while we recruit your state</strong>, there's a Founding Herd. 100 backers, numbered patch, quarterly expense ledger in your inbox, your name on the founders wall if you opt in. Tiers from $100 to $15k.</p>
+  <p>I'm not selling equity. I'm not running a crowdfund I'm going to disappear from. I'm building a marketplace I'd want to use, and the Founding Herd capital is what funds the recruiting team that gets your state covered.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${FOUNDERS_URL}" class="cta">See the Founding Herd</a>
+  </div>
+  <p style="font-size:14px;">If that's not for you, no problem — you stay on the waitlist and I'll email when ${esc(data.buyerState)} comes online.</p>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending out-of-state founder pitch:', error);
+    return { success: false, error };
+  }
+}

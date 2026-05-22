@@ -12,7 +12,12 @@ import {
   sendCutsEducation,
   sendClosedMonthlyLetter,
   sendRepeatPurchaseAsk,
+  sendMatchNowRescue,
+  sendNudgeToEngage,
+  sendWarmLeadReadyCheck,
+  sendOutOfStateFounderPitch,
 } from '@/lib/email';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
@@ -194,6 +199,16 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       }
     }
 
+    // Routing-segment counters (added 2026-05-22). Separate from the legacy
+    // stage counters because these emails branch on Routing Segment (set
+    // nightly by reclassify-buyers), not on Buyer Stage.
+    const segmentCounters = {
+      match_now_rescue: 0,
+      nudge_to_engage: 0,
+      warm_lead_check: 0,
+      out_of_state_pitch: 0,
+    };
+
     for (const consumer of approved) {
       if (totalSent >= MAX_EMAILS_PER_RUN) break;
       try {
@@ -213,6 +228,80 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         if (lastSentAt && (now - new Date(lastSentAt).getTime()) < DAY_MS) continue;
 
         let fired = false;
+
+        // ── ROUTING-SEGMENT BRANCH ──────────────────────────────────────────
+        // Pre-stage email driven by lib/routingSegment.ts classification.
+        // Runs BEFORE the legacy stage-machine branch so segment-specific
+        // emails take priority when applicable. Each segment caps its own
+        // send count + cadence via Routing Segment Send Count + Routing
+        // Segment Last Sent At fields.
+        const segmentRaw = consumer['Routing Segment'];
+        const segment =
+          typeof segmentRaw === 'object' && segmentRaw !== null && 'name' in segmentRaw
+            ? String((segmentRaw as any).name || '')
+            : String(segmentRaw || '');
+        const segmentCount = Number(consumer['Routing Segment Send Count'] || 0);
+        const segmentLastSentRaw = consumer['Routing Segment Last Sent At'];
+        const segmentLastSent = segmentLastSentRaw ? new Date(segmentLastSentRaw).getTime() : 0;
+        const daysSinceSegmentSend = segmentLastSent ? (now - segmentLastSent) / DAY_MS : Infinity;
+        const buyerStateNorm = (consumer['State'] || '').toString().toUpperCase().slice(0, 2);
+
+        if (segment === 'MATCH_NOW' && segmentCount < 1) {
+          await sendMatchNowRescue({ email, firstName, buyerState: buyerStateNorm || stateLabel });
+          await updateRecord(TABLES.CONSUMERS, consumerId, {
+            'Routing Segment Send Count': segmentCount + 1,
+            'Routing Segment Last Sent At': new Date().toISOString(),
+            'Sequence Sent At': new Date().toISOString(),
+          });
+          // Loud Telegram so operator stages Pending Approval w/ /forcematch
+          try {
+            await sendOperatorSignal({
+              urgency: 'normal',
+              kind: 'recovery-suggestion',
+              summary: `MATCH_NOW buyer ready — ${firstName} (${buyerStateNorm || stateLabel})`,
+              detail: `${email}\nR2B clicked, awaiting rancher intro. Run <code>/forcematch ${email}</code> to stage Pending Approval.`,
+              refs: [{ type: 'consumer', id: consumerId, label: firstName }],
+              dedupeKey: `match-now-${consumerId}`,
+              dedupeWindowMs: 86400000,
+            });
+          } catch {}
+          segmentCounters.match_now_rescue++; totalSent++; fired = true;
+        }
+        else if (segment === 'NUDGE_TO_ENGAGE' && segmentCount < 2 && daysSinceSegmentSend >= 7) {
+          const engageToken = jwt.sign({ type: 'warmup-engage', consumerId }, JWT_SECRET, { expiresIn: '30d' });
+          const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
+          await sendNudgeToEngage({ email, firstName, buyerState: buyerStateNorm || stateLabel, engageUrl });
+          await updateRecord(TABLES.CONSUMERS, consumerId, {
+            'Routing Segment Send Count': segmentCount + 1,
+            'Routing Segment Last Sent At': new Date().toISOString(),
+            'Sequence Sent At': new Date().toISOString(),
+          });
+          segmentCounters.nudge_to_engage++; totalSent++; fired = true;
+        }
+        else if (segment === 'WARM_LEAD' && segmentCount < 4 && daysSinceSegmentSend >= 14) {
+          const engageToken = jwt.sign({ type: 'warmup-engage', consumerId, r2b: true }, JWT_SECRET, { expiresIn: '30d' });
+          const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
+          await sendWarmLeadReadyCheck({ email, firstName, buyerState: buyerStateNorm || stateLabel, engageUrl });
+          await updateRecord(TABLES.CONSUMERS, consumerId, {
+            'Routing Segment Send Count': segmentCount + 1,
+            'Routing Segment Last Sent At': new Date().toISOString(),
+            'Sequence Sent At': new Date().toISOString(),
+          });
+          segmentCounters.warm_lead_check++; totalSent++; fired = true;
+        }
+        else if (segment === 'OUT_OF_STATE_FOUNDER_PITCH' && segmentCount < 1) {
+          await sendOutOfStateFounderPitch({ email, firstName, buyerState: buyerStateNorm || stateLabel });
+          await updateRecord(TABLES.CONSUMERS, consumerId, {
+            'Routing Segment Send Count': segmentCount + 1,
+            'Routing Segment Last Sent At': new Date().toISOString(),
+            'Sequence Sent At': new Date().toISOString(),
+          });
+          segmentCounters.out_of_state_pitch++; totalSent++; fired = true;
+        }
+
+        // If segment branch fired, skip the legacy stage-machine branch this
+        // run. Each buyer gets at most one automated email per day.
+        if (fired) continue;
 
         if (buyerStage === 'WAITING') {
           // Letter 1 at Day 7
@@ -457,11 +546,20 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       await sendTelegramUpdate(`📋 <b>Rancher Agreement Reminders</b>: ${rancherReminders} sent`);
     }
 
-  const grandTotal = total + rancherReminders + abandonedRecovered;
+  const segmentTotal =
+    segmentCounters.match_now_rescue +
+    segmentCounters.nudge_to_engage +
+    segmentCounters.warm_lead_check +
+    segmentCounters.out_of_state_pitch;
+  const grandTotal = total + rancherReminders + abandonedRecovered + segmentTotal;
+  const segmentNote =
+    segmentTotal > 0
+      ? ` segment=${segmentTotal}(match_now=${segmentCounters.match_now_rescue} nudge=${segmentCounters.nudge_to_engage} warm=${segmentCounters.warm_lead_check} oos=${segmentCounters.out_of_state_pitch})`
+      : '';
   return {
     status: errors > 0 ? 'partial' : 'success',
     recordsTouched: grandTotal,
-    notes: `sent=${grandTotal} (stage=${total} rancherReminders=${rancherReminders} abandoned=${abandonedRecovered}) errors=${errors}`,
+    notes: `sent=${grandTotal} (stage=${total} rancherReminders=${rancherReminders} abandoned=${abandonedRecovered}${segmentNote}) errors=${errors}`,
   };
 }
 
