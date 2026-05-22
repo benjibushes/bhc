@@ -4032,6 +4032,37 @@ Confirm send?`;
         }
       }
 
+      // /routingstatus, /segments — buyer routing-segment breakdown.
+      // Lets the operator see how the 1500+ Consumers funnel splits: how
+      // many are MATCH_NOW (ready, in-state rancher) vs OUT_OF_STATE_FOUNDER_PITCH
+      // (high-intent but no rancher) vs UNQUALIFIED_NURTURE. Drives the
+      // decision about where to push manual energy + which states to recruit.
+      else if (text === '/routingstatus' || text === '/segments') {
+        try {
+          const consumers = (await getAllRecords(TABLES.CONSUMERS)) as any[];
+          const counts: Record<string, number> = {};
+          for (const c of consumers) {
+            const seg = c['Routing Segment'];
+            const name =
+              typeof seg === 'object' && seg !== null && 'name' in seg
+                ? String((seg as any).name || '')
+                : String(seg || '');
+            const key = name || 'UNCLASSIFIED';
+            counts[key] = (counts[key] || 0) + 1;
+          }
+          const total = consumers.length;
+          const lines = Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([k, v]) => `${k}: <b>${v}</b> (${Math.round((v / total) * 100)}%)`);
+          await sendTelegramMessage(
+            chatId,
+            `<b>📊 Routing Status · ${total} buyers</b>\n\n${lines.join('\n')}\n\nReclassifies nightly at 04:00 UTC via <code>reclassify-buyers</code> cron.`,
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /routingstatus failed: ${e?.message || 'unknown'}`);
+        }
+      }
+
       // /pausecron <name> — pause a cron from firing until /resumecron
       else if (text.startsWith('/pausecron ')) {
         const name = text.slice('/pausecron '.length).trim();
@@ -4334,6 +4365,7 @@ Confirm send?`;
 <b>⚙️ SYSTEM</b>
 /status — Health check all dependencies (Airtable, Resend, Telegram, AI)
 /cronstatus — Last-24h run status for every cron (catches missing runs)
+/routingstatus — Buyer routing-segment breakdown (MATCH_NOW · WARM_LEAD · etc)
 /pausecron [name] — Pause a cron from firing
 /resumecron [name] — Resume a paused cron
 /forcematch [email-or-recId] — Bypass cooldowns, match a stuck buyer now
