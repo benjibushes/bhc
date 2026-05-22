@@ -73,11 +73,21 @@ async function stageOnboardingApproval(args: {
   // Pending Approval referral + Telegram ping on every click → duplicate
   // alerts to Ben + orphan referrals. Skip if a Pending Approval row
   // already exists for this buyer-rancher pair.
+  //
+  // Filter client-side because Airtable filterByFormula's ARRAYJOIN
+  // on linked-record fields renders the primary-field VALUE, not the
+  // record ID — so FIND(id, ARRAYJOIN({Rancher})) silently never
+  // matches. Same bug as the rancher dashboard (PR #36 audit #30).
   try {
-    const existing = (await getAllRecords(
-      TABLES.REFERRALS,
-      `AND({Status} = "Pending Approval", FIND("${buyer.id}", ARRAYJOIN({Buyer})), OR(FIND("${rancherId}", ARRAYJOIN({Rancher})), FIND("${rancherId}", ARRAYJOIN({Suggested Rancher}))))`,
-    )) as any[];
+    const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+    const existing = allRefs.filter((r: any) => {
+      if (r['Status'] !== 'Pending Approval') return false;
+      const buyers = Array.isArray(r['Buyer']) ? r['Buyer'] : [];
+      if (!buyers.includes(buyer.id)) return false;
+      const rancher = Array.isArray(r['Rancher']) ? r['Rancher'] : [];
+      const suggested = Array.isArray(r['Suggested Rancher']) ? r['Suggested Rancher'] : [];
+      return rancher.includes(rancherId) || suggested.includes(rancherId);
+    });
     if (existing.length > 0) {
       console.log(`[firstweek] skip — pending approval already exists: ${existing[0].id}`);
       return { stagedRefId: existing[0].id };

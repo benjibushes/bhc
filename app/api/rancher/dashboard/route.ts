@@ -35,17 +35,22 @@ export async function GET() {
       return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
     }
 
-    // Filter at Airtable layer instead of loading every referral row in
-    // the whole DB then filtering client-side. Previously was an
-    // unbounded full-table scan per dashboard load → guaranteed cliff
-    // at scale + 60s timeout risk. Audit finding 2026-05-20 #30.
+    // Load + filter client-side. The Airtable filterByFormula
+    // optimization attempted in PR #36 (audit #30) used
+    // FIND(rancherId, ARRAYJOIN({Rancher})) — but Airtable's ARRAYJOIN
+    // on a linked-record field renders the linked record's PRIMARY
+    // FIELD VALUE (e.g. "Sackett Ranch"), not its record ID. So FIND
+    // could never match and every rancher saw 0 referrals. Reverted
+    // here pending a proper Lookup-field-based optimization.
     let myReferrals: any[] = [];
     try {
-      const safeId = decoded.rancherId.replace(/"/g, '');
-      myReferrals = (await getAllRecords(
-        TABLES.REFERRALS,
-        `OR(FIND("${safeId}", ARRAYJOIN({Rancher})), FIND("${safeId}", ARRAYJOIN({Suggested Rancher})))`,
-      )) as any[];
+      const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+      const myId = decoded.rancherId;
+      myReferrals = allRefs.filter((r: any) => {
+        const rancher = Array.isArray(r['Rancher']) ? r['Rancher'] : [];
+        const suggested = Array.isArray(r['Suggested Rancher']) ? r['Suggested Rancher'] : [];
+        return rancher.includes(myId) || suggested.includes(myId);
+      });
     } catch (e) {
       console.warn('Referrals table not accessible, returning empty referrals');
     }
