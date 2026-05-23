@@ -3455,6 +3455,51 @@ export async function sendWarmLeadReadyCheck(data: {
 }
 
 /**
+ * INCOMPLETE_PROFILE segment — buyer signed up but Order Type or Budget
+ * is missing/ambiguous. Without those signals matching can't route them.
+ * One-question email asks them to pick Quarter/Half/Whole inline so the
+ * next reclassify-buyers run can promote them into the funnel.
+ *
+ * Cadence: 1 lifetime send.
+ */
+export async function sendIncompleteProfileAsk(data: {
+  email: string;
+  firstName: string;
+  buyerState: string;
+}) {
+  const first = data.firstName || 'there';
+  const accessUrl = `${SITE_URL}/access`;
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `two questions on your beef — 30 seconds`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:16px 20px;margin:16px 0;font-family:Georgia,serif;font-size:16px}</style>
+</head><body><div class="container">
+  <h1>Two quick questions</h1>
+  <p>Hi ${esc(first)},</p>
+  <p>You signed up for BuyHalfCow but I don't have enough info to match you with the right rancher in ${esc(data.buyerState)}. Two questions, 30 seconds.</p>
+  <div class="q"><strong>1.</strong> How much beef do you want? <em>(Quarter ≈ 90 lbs, Half ≈ 180 lbs, Whole ≈ 360 lbs)</em></div>
+  <div class="q"><strong>2.</strong> What's your budget?</div>
+  <p>Tap below to update your profile — takes less than a minute and gets you matched.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${accessUrl}" class="cta">Finish my profile</a>
+  </div>
+  <p style="font-size:14px;">If you'd rather just talk it through, reply to this email and I'll help you figure out what makes sense.</p>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending incomplete-profile ask:', error);
+    return { success: false, error };
+  }
+}
+
+/**
  * OUT_OF_STATE_FOUNDER_PITCH segment — buyer is high-intent but lives in
  * an uncovered state. Honest pitch: "no rancher in your state yet, here's
  * how to back the platform + jump the queue when one signs up."

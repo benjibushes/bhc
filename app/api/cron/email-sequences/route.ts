@@ -16,6 +16,7 @@ import {
   sendNudgeToEngage,
   sendWarmLeadReadyCheck,
   sendOutOfStateFounderPitch,
+  sendIncompleteProfileAsk,
 } from '@/lib/email';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { normalizeState, normalizeStates } from '@/lib/states';
@@ -207,6 +208,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       nudge_to_engage: 0,
       warm_lead_check: 0,
       out_of_state_pitch: 0,
+      incomplete_profile: 0,
     };
 
     for (const consumer of approved) {
@@ -297,6 +299,15 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             'Sequence Sent At': new Date().toISOString(),
           });
           segmentCounters.out_of_state_pitch++; totalSent++; fired = true;
+        }
+        else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 1) {
+          await sendIncompleteProfileAsk({ email, firstName, buyerState: buyerStateNorm || stateLabel });
+          await updateRecord(TABLES.CONSUMERS, consumerId, {
+            'Routing Segment Send Count': segmentCount + 1,
+            'Routing Segment Last Sent At': new Date().toISOString(),
+            'Sequence Sent At': new Date().toISOString(),
+          });
+          segmentCounters.incomplete_profile++; totalSent++; fired = true;
         }
 
         // If segment branch fired, skip the legacy stage-machine branch this
@@ -550,11 +561,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     segmentCounters.match_now_rescue +
     segmentCounters.nudge_to_engage +
     segmentCounters.warm_lead_check +
-    segmentCounters.out_of_state_pitch;
+    segmentCounters.out_of_state_pitch +
+    segmentCounters.incomplete_profile;
   const grandTotal = total + rancherReminders + abandonedRecovered + segmentTotal;
   const segmentNote =
     segmentTotal > 0
-      ? ` segment=${segmentTotal}(match_now=${segmentCounters.match_now_rescue} nudge=${segmentCounters.nudge_to_engage} warm=${segmentCounters.warm_lead_check} oos=${segmentCounters.out_of_state_pitch})`
+      ? ` segment=${segmentTotal}(match_now=${segmentCounters.match_now_rescue} nudge=${segmentCounters.nudge_to_engage} warm=${segmentCounters.warm_lead_check} oos=${segmentCounters.out_of_state_pitch} incomplete=${segmentCounters.incomplete_profile})`
       : '';
   return {
     status: errors > 0 ? 'partial' : 'success',
