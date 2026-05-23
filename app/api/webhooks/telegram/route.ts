@@ -4032,6 +4032,94 @@ Confirm send?`;
         }
       }
 
+      // /bulkfire — promote every Pending Approval referral to Intro Sent
+      // + fire intro emails to buyer + rancher. Clears the gate-staged
+      // backlog in one tap. Caps at 50 per run for safety.
+      else if (text === '/bulkfire') {
+        try {
+          const all = (await getAllRecords(TABLES.REFERRALS)) as any[];
+          const stuck = all.filter((r: any) => r['Status'] === 'Pending Approval').slice(0, 50);
+          if (stuck.length === 0) {
+            await sendTelegramMessage(chatId, '✅ No Pending Approval referrals to fire.');
+          } else {
+            let fired = 0;
+            let errored = 0;
+            for (const ref of stuck) {
+              try {
+                const rancherId = ref['Rancher']?.[0] || ref['Suggested Rancher']?.[0];
+                if (!rancherId) { errored++; continue; }
+                const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+                if (!rancher) { errored++; continue; }
+                const rancherEmail = rancher['Email'];
+                const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+                const buyerName = ref['Buyer Name'] || 'Buyer';
+                const buyerEmail = ref['Buyer Email'] || '';
+                const buyerPhone = ref['Buyer Phone'] || '';
+                const buyerState = ref['Buyer State'] || '';
+                const orderType = ref['Order Type'] || '';
+                const budgetRange = ref['Budget Range'] || '';
+                const notes = ref['Notes'] || '';
+
+                if (rancherEmail) {
+                  await sendBuyerIntroNotification({
+                    firstName: buyerName.split(' ')[0] || 'there',
+                    email: buyerEmail,
+                    rancherName,
+                    rancherEmail,
+                    rancherPhone: rancher['Phone'] || '',
+                    rancherSlug: rancher['Slug'] || '',
+                    loginUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/member`,
+                    quarterPrice: Number(rancher['Quarter Price']) || undefined,
+                    quarterLbs: rancher['Quarter lbs'] || '',
+                    halfPrice: Number(rancher['Half Price']) || undefined,
+                    halfLbs: rancher['Half lbs'] || '',
+                    wholePrice: Number(rancher['Whole Price']) || undefined,
+                    wholeLbs: rancher['Whole lbs'] || '',
+                    nextProcessingDate: rancher['Next Processing Date'] || '',
+                  }).catch((e: any) => console.error('[bulkfire] buyer intro failed:', e?.message));
+
+                  await sendEmail({
+                    to: rancherEmail,
+                    subject: `BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+                    html: `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+<h1 style="font-family:Georgia,serif;">New buyer lead</h1>
+<p>Hi ${rancherName},</p>
+<p>New buyer matched to you on BuyHalfCow. Reach out today:</p>
+<div style="background:#F4F1EC;padding:20px;margin:20px 0;">
+  <p><strong>Buyer:</strong> ${buyerName}</p>
+  <p><strong>Email:</strong> ${buyerEmail}</p>
+  <p><strong>Phone:</strong> ${buyerPhone}</p>
+  <p><strong>Location:</strong> ${buyerState}</p>
+  <p><strong>Order:</strong> ${orderType}</p>
+  <p><strong>Budget:</strong> ${budgetRange}</p>
+  ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ''}
+</div>
+<p>— Ben, BuyHalfCow</p>
+</body></html>`,
+                  }).catch((e: any) => console.error('[bulkfire] rancher intro failed:', e?.message));
+                }
+
+                await updateRecord(TABLES.REFERRALS, ref.id, {
+                  'Status': 'Intro Sent',
+                  'Approval Status': 'approved',
+                  'Intro Sent At': new Date().toISOString(),
+                });
+                fired++;
+              } catch (e: any) {
+                console.error('[bulkfire] referral failed:', e?.message);
+                errored++;
+              }
+            }
+            await sendTelegramMessage(
+              chatId,
+              `🔥 <b>BULK FIRE COMPLETE</b>\n\nPromoted <b>${fired}</b> Pending Approval → Intro Sent\nErrors: ${errored}\n\nBuyers + ranchers both got intro emails.`,
+            );
+          }
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /bulkfire failed: ${e?.message || 'unknown'}`);
+        }
+      }
+
       // /routingstatus, /segments — buyer routing-segment breakdown.
       // Lets the operator see how the 1500+ Consumers funnel splits: how
       // many are MATCH_NOW (ready, in-state rancher) vs OUT_OF_STATE_FOUNDER_PITCH
@@ -4366,6 +4454,7 @@ Confirm send?`;
 /status — Health check all dependencies (Airtable, Resend, Telegram, AI)
 /cronstatus — Last-24h run status for every cron (catches missing runs)
 /routingstatus — Buyer routing-segment breakdown (MATCH_NOW · WARM_LEAD · etc)
+/bulkfire — Promote all Pending Approval → Intro Sent + fire emails (max 50)
 /pausecron [name] — Pause a cron from firing
 /resumecron [name] — Resume a paused cron
 /forcematch [email-or-recId] — Bypass cooldowns, match a stuck buyer now
