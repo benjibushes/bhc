@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById, updateRecord, escapeAirtableValue } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, createRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import {
@@ -455,6 +455,116 @@ async function processUpdate(update: any) {
 
       const [action, referralId] = callbackData.split('_', 2);
       const fullReferralId = callbackData.substring(action.length + 1);
+
+      // ─── /match Direct routing actions ──────────────────────────────────
+      // Fires when operator taps "✅ Fire intro now" or "❌ Cancel" on a
+      // /match confirmation card. matchfire creates a Pending Approval +
+      // immediately fires intro emails to buyer + rancher. matchcancel is
+      // a no-op so the operator can back out.
+
+      if (action === 'matchfire') {
+        await answerCallbackQuery(queryId, 'Firing…');
+        try {
+          const restAfter = callbackData.substring('matchfire_'.length);
+          const sepIdx = restAfter.lastIndexOf('_');
+          const buyerRecId = restAfter.slice(0, sepIdx);
+          const rancherRecId = restAfter.slice(sepIdx + 1);
+          if (!buyerRecId || !rancherRecId) {
+            if (chatId) await sendTelegramMessage(chatId, '⚠️ Malformed matchfire callback');
+            return NextResponse.json({ ok: true });
+          }
+          const [buyer, rancher] = await Promise.all([
+            getRecordById(TABLES.CONSUMERS, buyerRecId) as Promise<any>,
+            getRecordById(TABLES.RANCHERS, rancherRecId) as Promise<any>,
+          ]);
+          const now = new Date().toISOString();
+          const refRecord: any = await createRecord(TABLES.REFERRALS, {
+            'Buyer': [buyer.id],
+            'Rancher': [rancher.id],
+            'Suggested Rancher': [rancher.id],
+            'Suggested Rancher Name': rancher['Operator Name'] || rancher['Ranch Name'] || '',
+            'Suggested Rancher State': rancher['State'] || '',
+            'Status': 'Intro Sent',
+            'Approval Status': 'approved',
+            'Approved At': now,
+            'Intro Sent At': now,
+            'Buyer Name': buyer['Full Name'] || '',
+            'Buyer Email': buyer['Email'] || '',
+            'Buyer Phone': buyer['Phone'] || '',
+            'Buyer State': buyer['State'] || '',
+            'Order Type': buyer['Order Type'] || '',
+            'Budget Range': buyer['Budget'] || '',
+            'Intent Score': buyer['Intent Score'] || 0,
+            'Intent Classification': buyer['Intent Classification'] || '',
+            'Notes': buyer['Notes'] || '',
+            'Match Type': 'Local',
+          });
+          await updateRecord(TABLES.CONSUMERS, buyer.id, {
+            'Buyer Stage': 'MATCHED',
+            'Buyer Stage Updated At': now,
+          });
+          const rancherEmail = rancher['Email'];
+          const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+          const buyerName = buyer['Full Name'] || 'Buyer';
+          if (rancherEmail) {
+            await sendBuyerIntroNotification({
+              firstName: (buyerName.split(' ')[0]) || 'there',
+              email: buyer['Email'] || '',
+              rancherName,
+              rancherEmail,
+              rancherPhone: rancher['Phone'] || '',
+              rancherSlug: rancher['Slug'] || '',
+              loginUrl: `${SITE_URL}/member`,
+              quarterPrice: Number(rancher['Quarter Price']) || undefined,
+              quarterLbs: rancher['Quarter lbs'] || '',
+              halfPrice: Number(rancher['Half Price']) || undefined,
+              halfLbs: rancher['Half lbs'] || '',
+              wholePrice: Number(rancher['Whole Price']) || undefined,
+              wholeLbs: rancher['Whole lbs'] || '',
+              nextProcessingDate: rancher['Next Processing Date'] || '',
+            }).catch((e: any) => console.error('[match] buyer intro failed:', e?.message));
+            await sendEmail({
+              to: rancherEmail,
+              subject: `BuyHalfCow Introduction: ${buyerName} in ${buyer['State'] || ''}`,
+              html: `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+<h1 style="font-family:Georgia,serif;">New buyer lead</h1>
+<p>Hi ${rancherName},</p>
+<p>You've got a new buyer matched to you on BuyHalfCow. Reach out today:</p>
+<div style="background:#F4F1EC;padding:20px;margin:20px 0;">
+  <p><strong>Buyer:</strong> ${buyerName}</p>
+  <p><strong>Email:</strong> ${buyer['Email'] || ''}</p>
+  <p><strong>Phone:</strong> ${buyer['Phone'] || ''}</p>
+  <p><strong>Location:</strong> ${buyer['State'] || ''}</p>
+  <p><strong>Order:</strong> ${buyer['Order Type'] || ''}</p>
+  <p><strong>Budget:</strong> ${buyer['Budget'] || ''}</p>
+  ${buyer['Notes'] ? `<p><strong>Notes:</strong> ${buyer['Notes']}</p>` : ''}
+</div>
+<p>— Ben, BuyHalfCow</p>
+</body></html>`,
+            }).catch((e: any) => console.error('[match] rancher intro failed:', e?.message));
+          }
+          if (chatId && messageId) {
+            await editTelegramMessage(chatId, messageId,
+              `✅ <b>INTRO FIRED</b>\n\n` +
+              `👤 ${buyerName} → 🤠 ${rancherName}\n\n` +
+              `Referral: <code>${refRecord.id}</code>\n` +
+              `Status: Intro Sent\n` +
+              `Both emails dispatched.`
+            );
+          }
+        } catch (e: any) {
+          if (chatId) await sendTelegramMessage(chatId, `⚠️ matchfire failed: ${e?.message || 'unknown'}`);
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      if (action === 'matchcancel') {
+        await answerCallbackQuery(queryId, 'Cancelled');
+        if (chatId && messageId) {
+          await editTelegramMessage(chatId, messageId, '❌ <b>Match cancelled.</b> No referral created. Re-run <code>/match</code> with different search terms.');
+        }
+        return NextResponse.json({ ok: true });
+      }
 
       // ─── Referral actions ───────────────────────────────────────────────
 
@@ -4181,6 +4291,95 @@ Confirm send?`;
         }
       }
 
+      // /match <buyer-search> <rancher-search> — interactive buyer-to-rancher
+      // direct routing w/ fuzzy name search + inline confirm button.
+      //
+      // Example: "/match katie renick" → finds Katie Hunter (or whoever
+      // matches "katie") + Renick Valley Meats (matches "renick") → shows
+      // a confirmation card w/ ✅ Fire intro / ❌ Cancel buttons. Tap to
+      // create Pending Approval + fire intro emails to both sides.
+      //
+      // Single command, two fuzzy args. If ambiguous, returns top 3 of
+      // each w/ instructions. Always shows the chosen match before firing.
+      else if (text.startsWith('/match ')) {
+        const rest = text.slice('/match '.length).trim();
+        const parts = rest.split(/\s+/);
+        if (parts.length < 2) {
+          await sendTelegramMessage(chatId, 'Usage: <code>/match &lt;buyer-search&gt; &lt;rancher-search&gt;</code>\n\nExample: <code>/match katie renick</code>\n\nFuzzy matches buyer name/email + rancher name/operator. Returns confirm card.');
+        } else {
+          // Take everything as 2 args — last word = rancher, rest = buyer.
+          // Allows multi-word buyer names like "katie hunter".
+          const rancherSearch = parts[parts.length - 1].toLowerCase();
+          const buyerSearch = parts.slice(0, -1).join(' ').toLowerCase();
+          try {
+            const [allBuyers, allRanchers] = await Promise.all([
+              getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
+              getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
+            ]);
+            const buyerMatches = allBuyers.filter((b: any) => {
+              const name = String(b['Full Name'] || '').toLowerCase();
+              const email = String(b['Email'] || '').toLowerCase();
+              return name.includes(buyerSearch) || email.includes(buyerSearch);
+            });
+            const rancherMatches = allRanchers.filter((r: any) => {
+              const name = String(r['Ranch Name'] || '').toLowerCase();
+              const op = String(r['Operator Name'] || '').toLowerCase();
+              const slug = String(r['Slug'] || '').toLowerCase();
+              return (name.includes(rancherSearch) || op.includes(rancherSearch) || slug.includes(rancherSearch))
+                && r['Active Status'] === 'Active'
+                && r['Agreement Signed'] === true;
+            });
+
+            if (buyerMatches.length === 0) {
+              await sendTelegramMessage(chatId, `❌ No buyer matching "<b>${buyerSearch}</b>"`);
+              return NextResponse.json({ ok: true });
+            }
+            if (rancherMatches.length === 0) {
+              await sendTelegramMessage(chatId, `❌ No active+signed rancher matching "<b>${rancherSearch}</b>"`);
+              return NextResponse.json({ ok: true });
+            }
+            if (buyerMatches.length > 1) {
+              const list = buyerMatches.slice(0, 5).map((b: any, i: number) => `${i + 1}. <b>${b['Full Name']}</b> · ${b['Email']} · ${b['State'] || '?'}`).join('\n');
+              await sendTelegramMessage(chatId, `🔍 Multiple buyers matching "<b>${buyerSearch}</b>":\n\n${list}\n\nRefine search w/ more of their name OR full email.`);
+              return NextResponse.json({ ok: true });
+            }
+            if (rancherMatches.length > 1) {
+              const list = rancherMatches.slice(0, 5).map((r: any, i: number) => `${i + 1}. <b>${r['Ranch Name']}</b> (${r['Operator Name']}, ${r['State']})`).join('\n');
+              await sendTelegramMessage(chatId, `🔍 Multiple ranchers matching "<b>${rancherSearch}</b>":\n\n${list}\n\nRefine search w/ more of their name OR slug.`);
+              return NextResponse.json({ ok: true });
+            }
+
+            const buyer = buyerMatches[0];
+            const rancher = rancherMatches[0];
+            const buyerName = buyer['Full Name'] || 'Buyer';
+            const rancherName = rancher['Ranch Name'] || rancher['Operator Name'] || 'Rancher';
+            const operatorName = rancher['Operator Name'] || '';
+            const buyerState = buyer['State'] || '?';
+            const rancherState = rancher['State'] || '?';
+            const orderType = buyer['Order Type'] || '?';
+            const budget = buyer['Budget'] || '?';
+            const stateWarn = buyerState !== rancherState && !(rancher['Admin Approved Multi-State']) ? '\n⚠️ Buyer state ≠ rancher state + multi-state NOT admin-approved. Match may fail downstream gates.' : '';
+
+            await sendTelegramMessage(
+              chatId,
+              `🎯 <b>CONFIRM MATCH</b>\n\n` +
+              `👤 <b>${buyerName}</b> · ${buyer['Email']} · ${buyerState}\n` +
+              `🥩 ${orderType} · 💰 ${budget}\n\n` +
+              `🤠 <b>${rancherName}</b> (${operatorName}, ${rancherState})\n${stateWarn}\n\n` +
+              `Tap to fire intro emails to both. Creates Pending Approval row → flips to Intro Sent → buyer + rancher get contact info within seconds.`,
+              {
+                inline_keyboard: [[
+                  { text: '✅ Fire intro now', callback_data: `matchfire_${buyer.id}_${rancher.id}` },
+                  { text: '❌ Cancel', callback_data: `matchcancel_${buyer.id}` },
+                ]],
+              }
+            );
+          } catch (e: any) {
+            await sendTelegramMessage(chatId, `⚠️ /match failed: ${e?.message || 'unknown'}`);
+          }
+        }
+      }
+
       // /forcematch <email-or-recId> — bypass batch-approve cooldowns and
       // call matching/suggest directly. Stops the "why isn't this buyer
       // matching" investigation loop.
@@ -4458,6 +4657,7 @@ Confirm send?`;
 /pausecron [name] — Pause a cron from firing
 /resumecron [name] — Resume a paused cron
 /forcematch [email-or-recId] — Bypass cooldowns, match a stuck buyer now
+/match [buyer-name] [rancher-name] — Fuzzy match buyer→rancher w/ inline confirm. e.g. <code>/match katie renick</code>
 /stuckbuyers — Waitlisted &gt;14d, grouped by state
 /stuckranchers — Signed-not-Live + Live-but-quiet
 /ghostranchers — Ranchers with 2+ buyer ghost reports
