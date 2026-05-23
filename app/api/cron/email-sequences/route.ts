@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
@@ -13,6 +13,7 @@ import {
   sendClosedMonthlyLetter,
   sendRepeatPurchaseAsk,
   sendMatchNowRescue,
+  sendBuyerIntroNotification,
   sendNudgeToEngage,
   sendWarmLeadReadyCheck,
   sendNoBudgetFounderPitch,
@@ -258,6 +259,89 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           // to sendMatchNowRescue + Telegram alert w/ /match selector
           // suggestion so the operator can pick an alternative.
           let autoRouted = false;
+
+          // PRE-CHECK: existing Pending Approval rows. matching/suggest
+          // returns alreadyActive for any buyer w/ a non-closed referral
+          // and won't promote Pending Approval to Intro Sent — so the
+          // referral would stay stuck forever. Catch + promote here
+          // (mirrors /bulkfire telegram command logic) before falling
+          // through to matching/suggest.
+          try {
+            const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+            const stuckRef = allRefs.find((r: any) => {
+              if (r['Status'] !== 'Pending Approval') return false;
+              const buyers = Array.isArray(r['Buyer']) ? r['Buyer'] : [];
+              return buyers.includes(consumerId);
+            });
+            if (stuckRef) {
+              const rancherId = stuckRef['Rancher']?.[0] || stuckRef['Suggested Rancher']?.[0];
+              if (rancherId) {
+                const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+                const rancherEmail = rancher['Email'];
+                const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+                if (rancherEmail && consumer['Email']) {
+                  // Buyer-side intro (w/ rancher pricing + contact)
+                  await sendBuyerIntroNotification({
+                    firstName,
+                    email: consumer['Email'],
+                    rancherName,
+                    rancherEmail,
+                    rancherPhone: rancher['Phone'] || '',
+                    rancherSlug: rancher['Slug'] || '',
+                    loginUrl: `${SITE_URL}/member`,
+                    quarterPrice: Number(rancher['Quarter Price']) || undefined,
+                    quarterLbs: rancher['Quarter lbs'] || '',
+                    halfPrice: Number(rancher['Half Price']) || undefined,
+                    halfLbs: rancher['Half lbs'] || '',
+                    wholePrice: Number(rancher['Whole Price']) || undefined,
+                    wholeLbs: rancher['Whole lbs'] || '',
+                    nextProcessingDate: rancher['Next Processing Date'] || '',
+                  }).catch((e: any) => console.warn('[promote-pa] buyer intro failed:', e?.message));
+                  // Rancher-side intro
+                  await sendEmail({
+                    to: rancherEmail,
+                    subject: `BuyHalfCow Introduction: ${stuckRef['Buyer Name'] || firstName} in ${stuckRef['Buyer State'] || ''}`,
+                    html: `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+<h1 style="font-family:Georgia,serif;">New buyer lead</h1>
+<p>Hi ${rancherName},</p>
+<p>You have a new buyer matched to you on BuyHalfCow. Reach out today:</p>
+<div style="background:#F4F1EC;padding:20px;margin:20px 0;">
+  <p><strong>Buyer:</strong> ${stuckRef['Buyer Name'] || firstName}</p>
+  <p><strong>Email:</strong> ${stuckRef['Buyer Email'] || consumer['Email']}</p>
+  <p><strong>Phone:</strong> ${stuckRef['Buyer Phone'] || consumer['Phone'] || ''}</p>
+  <p><strong>Location:</strong> ${stuckRef['Buyer State'] || ''}</p>
+  <p><strong>Order:</strong> ${stuckRef['Order Type'] || ''}</p>
+  <p><strong>Budget:</strong> ${stuckRef['Budget Range'] || ''}</p>
+  ${stuckRef['Notes'] ? `<p><strong>Notes:</strong> ${stuckRef['Notes']}</p>` : ''}
+</div>
+<p>— Ben, BuyHalfCow</p>
+</body></html>`,
+                  }).catch((e: any) => console.warn('[promote-pa] rancher intro failed:', e?.message));
+                }
+                await updateRecord(TABLES.REFERRALS, stuckRef.id, {
+                  'Status': 'Intro Sent',
+                  'Approval Status': 'approved',
+                  'Intro Sent At': new Date().toISOString(),
+                });
+                autoRouted = true;
+                await updateRecord(TABLES.CONSUMERS, consumerId, {
+                  'Routing Segment Send Count': segmentCount + 1,
+                  'Routing Segment Last Sent At': new Date().toISOString(),
+                  'Sequence Sent At': new Date().toISOString(),
+                  'Buyer Stage': 'MATCHED',
+                  'Buyer Stage Updated At': new Date().toISOString(),
+                });
+                segmentCounters.match_now_rescue++; totalSent++; fired = true;
+              }
+            }
+          } catch (e: any) {
+            console.warn(`[match-now promote-PA] failed for ${consumerId}:`, e?.message);
+          }
+
+          if (autoRouted) {
+            continue;
+          }
+
           try {
             const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
               method: 'POST',
