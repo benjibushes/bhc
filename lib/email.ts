@@ -3500,13 +3500,15 @@ export async function sendIncompleteProfileAsk(data: {
 }
 
 /**
- * OUT_OF_STATE_FOUNDER_PITCH segment — buyer is high-intent but lives in
- * an uncovered state. Honest pitch: "no rancher in your state yet, here's
- * how to back the platform + jump the queue when one signs up."
+ * NO_BUDGET_FOUNDER_PITCH segment — buyer signed up wanting BHC beef but
+ * their budget is under share-cost (<$500). They care about the mission
+ * but can't drop $1k+ on a Quarter this year. Pitch them the Founding
+ * Herd — back the platform for $100, get a numbered patch, quarterly
+ * ledger, founders-wall placement. Works in any state.
  *
  * Cadence: 1 lifetime send, then monthly community letter.
  */
-export async function sendOutOfStateFounderPitch(data: {
+export async function sendNoBudgetFounderPitch(data: {
   email: string;
   firstName: string;
   buyerState: string;
@@ -3517,29 +3519,77 @@ export async function sendOutOfStateFounderPitch(data: {
     await resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `no rancher in ${data.buyerState} yet — but we will`,
+      subject: `beef's not in the budget? back the mission for $100`,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
 </head><body><div class="container">
-  <h1>Straight up: no rancher in ${esc(data.buyerState)} yet</h1>
+  <h1>Beef this year isn't in the budget? I get it.</h1>
   <p>Hi ${esc(first)},</p>
-  <p>You signed up with real intent — order type, budget, the works. I appreciate that. Here's the honest read: we don't have a verified rancher in ${esc(data.buyerState)} yet.</p>
-  <p>I'm scouting actively. When one signs on, you're on the list to get matched first.</p>
+  <p>You signed up for BuyHalfCow. You care about how cattle gets raised. You're on the right side of the food fight. But buying a Quarter is $650–$1,000 — that's not in the budget for a lot of people this year. I won't pretend otherwise.</p>
+  <p>Here's another way to be part of this without the freezer commitment.</p>
   <div class="divider"></div>
-  <p><strong>If you want to back the mission while we recruit your state</strong>, there's a Founding Herd. 100 backers, numbered patch, quarterly expense ledger in your inbox, your name on the founders wall if you opt in. Tiers from $100 to $15k.</p>
-  <p>I'm not selling equity. I'm not running a crowdfund I'm going to disappear from. I'm building a marketplace I'd want to use, and the Founding Herd capital is what funds the recruiting team that gets your state covered.</p>
+  <p><strong>The Founding Herd.</strong> 100 numbered spots. Back the platform from $100 (Herd) to $1k (Outlaw+) to $15k (Title Founder). You get:</p>
+  <ul style="color:#6B4F3F;padding-left:20px;">
+    <li>Numbered embroidered patch shipped to your door</li>
+    <li>Quarterly expense ledger in your inbox — see exactly where every dollar went</li>
+    <li>Name on the public Founders Wall (opt-in)</li>
+    <li>First-pick access when a rancher comes online in your state</li>
+    <li>Voting rights on platform direction decisions</li>
+  </ul>
+  <p>I'm not selling equity. I'm not running a crowdfund I'm going to disappear from. I'm building a marketplace I'd want to use, and the Founding Herd capital is what funds the recruiting team that brings ranchers + buyers together.</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${FOUNDERS_URL}" class="cta">See the Founding Herd</a>
   </div>
-  <p style="font-size:14px;">If that's not for you, no problem — you stay on the waitlist and I'll email when ${esc(data.buyerState)} comes online.</p>
+  <p style="font-size:14px;">If $100 isn't in the budget either, no worries — you stay on the list and I'll email when ${esc(data.buyerState)} comes online. The work continues either way.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
   ${emailFooter(data.email)}
 </div></body></html>`,
     });
     return { success: true };
   } catch (error) {
-    console.error('Error sending out-of-state founder pitch:', error);
+    console.error('Error sending no-budget founder pitch:', error);
+    return { success: false, error };
+  }
+}
+
+/**
+ * STATE_WAITLIST segment — buyer is qualified (budget + Order Type set,
+ * not no-budget) but lives in an uncovered state. They CAN afford the
+ * beef, we just don't have a rancher in their state yet. Soft "we're
+ * scouting [state]" letter w/ no hard CTA. Monthly cadence keeps them
+ * warm until a local rancher signs.
+ *
+ * Cadence: 1 lifetime send, then monthly community letter takes over.
+ */
+export async function sendStateWaitlistLetter(data: {
+  email: string;
+  firstName: string;
+  buyerState: string;
+}) {
+  const first = data.firstName || 'there';
+  try {
+    await resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject: `scouting ranchers in ${data.buyerState} — you're on the list`,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}</style>
+</head><body><div class="container">
+  <h1>We're scouting ${esc(data.buyerState)}</h1>
+  <p>Hi ${esc(first)},</p>
+  <p>Thanks for signing up. Straight read: we don't have a verified rancher in ${esc(data.buyerState)} yet. You're on the waitlist.</p>
+  <p>I cold-email D2C ranchers in uncovered states every week. ${esc(data.buyerState)} is on the list. When one signs the agreement + goes live, you're one of the first I match them to.</p>
+  <p>I'll email when it happens. No spam in the meantime — just one short monthly note so you know the platform is still building.</p>
+  <p>Thanks for being patient w/ a small platform doing it right.</p>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending state-waitlist letter:', error);
     return { success: false, error };
   }
 }

@@ -26,24 +26,12 @@ export type RoutingSegment =
   | 'MATCH_NOW'
   | 'WARM_LEAD'
   | 'NUDGE_TO_ENGAGE'
-  | 'OUT_OF_STATE_FOUNDER_PITCH'
+  | 'NO_BUDGET_FOUNDER_PITCH'
+  | 'STATE_WAITLIST'
   | 'COMMUNITY_NURTURE'
   | 'INCOMPLETE_PROFILE'
   | 'UNQUALIFIED_NURTURE'
   | 'TERMINAL';
-
-const HIGH_BUDGET_PATTERNS = [
-  '$1000',
-  '$1500',
-  '$2000',
-  '$2500',
-  '$4000',
-  '$5000',
-];
-
-function hasHighBudget(budget: string): boolean {
-  return HIGH_BUDGET_PATTERNS.some((p) => budget.includes(p));
-}
 
 function readEnumOrString(v: unknown): string {
   if (!v) return '';
@@ -103,13 +91,19 @@ export function classifyBuyer(
   const orderType = readEnumOrString(buyer['Order Type']);
   const budget = readEnumOrString(buyer['Budget']);
   const orderMissing = !orderType || orderType === 'Not Sure';
-  const budgetMissing =
-    !budget || budget === 'Unsure' || budget === 'Just exploring' || budget === '';
+  const budgetMissing = !budget || budget === 'Unsure' || budget === '';
   if (orderMissing || budgetMissing) return 'INCOMPLETE_PROFILE';
 
-  // Reject `<$500` as below-share-cost — push to nurture instead of pretending
-  // they can afford a Quarter. Rancher Quarter pricing starts ~$650.
-  if (budget === '<$500' || budget === '>$500') return 'COMMUNITY_NURTURE';
+  // "Just exploring" = explicit not-buying-yet signal → passive nurture
+  // (monthly founder letter only, no pitch). Keep them warm without
+  // burning them out.
+  if (budget === 'Just exploring') return 'COMMUNITY_NURTURE';
+
+  // Below-share-cost budget anywhere → Founder Herd pitch (mission backing
+  // for buyers who care about regen-ag but can't drop $1k on beef this
+  // year). Budget-driven, not state-driven — works in any state. Rancher
+  // Quarter pricing starts ~$650 so <$500 = can't afford beef.
+  if (budget === '<$500' || budget === '>$500') return 'NO_BUDGET_FOUNDER_PITCH';
 
   const state = normalizeState(buyer['State']);
   const covered = getCoveredStates(ranchers);
@@ -118,21 +112,20 @@ export function classifyBuyer(
   const readyToBuy = buyer['Ready to Buy'] === true;
   const engaged = !!buyer['Warmup Engaged At'];
 
-  // Covered state + explicit purchase intent -> intro to rancher.
+  // Covered state + explicit purchase intent → intro to rancher.
   if (inCoveredState && readyToBuy) return 'MATCH_NOW';
 
-  // Covered state + soft engagement (clicked warmup YES) -> bi-weekly
-  // "ready yet?" nudge until they hit the R2B button. Don't burn rancher
-  // time on a "maybe."
+  // Covered state + soft engagement (clicked warmup YES) → bi-weekly
+  // "ready yet?" nudge until they hit the R2B button.
   if (inCoveredState && engaged) return 'WARM_LEAD';
 
-  // Covered state, qualified profile, no engagement signal -> first
+  // Covered state, qualified profile, no engagement signal → first
   // re-warmup. They got an initial warmup, never clicked.
   if (inCoveredState) return 'NUDGE_TO_ENGAGE';
 
-  // Uncovered state — branch on intent strength.
-  const highIntent = readyToBuy || engaged || hasHighBudget(budget);
-  if (highIntent) return 'OUT_OF_STATE_FOUNDER_PITCH';
-
-  return 'COMMUNITY_NURTURE';
+  // Uncovered state w/ valid budget + Order Type — they CAN afford it,
+  // they want it, we just don't have a rancher in their state yet. Goes
+  // on the waitlist + monthly "we're scouting [state]" letter. NOT a
+  // founder pitch — that's reserved for the no-budget audience above.
+  return 'STATE_WAITLIST';
 }

@@ -15,7 +15,8 @@ import {
   sendMatchNowRescue,
   sendNudgeToEngage,
   sendWarmLeadReadyCheck,
-  sendOutOfStateFounderPitch,
+  sendNoBudgetFounderPitch,
+  sendStateWaitlistLetter,
   sendIncompleteProfileAsk,
 } from '@/lib/email';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
@@ -207,7 +208,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       match_now_rescue: 0,
       nudge_to_engage: 0,
       warm_lead_check: 0,
-      out_of_state_pitch: 0,
+      no_budget_founder_pitch: 0,
+      state_waitlist: 0,
       incomplete_profile: 0,
     };
 
@@ -291,14 +293,23 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           });
           segmentCounters.warm_lead_check++; totalSent++; fired = true;
         }
-        else if (segment === 'OUT_OF_STATE_FOUNDER_PITCH' && segmentCount < 1) {
-          await sendOutOfStateFounderPitch({ email, firstName, buyerState: buyerStateNorm || stateLabel });
+        else if (segment === 'NO_BUDGET_FOUNDER_PITCH' && segmentCount < 1) {
+          await sendNoBudgetFounderPitch({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
             'Sequence Sent At': new Date().toISOString(),
           });
-          segmentCounters.out_of_state_pitch++; totalSent++; fired = true;
+          segmentCounters.no_budget_founder_pitch++; totalSent++; fired = true;
+        }
+        else if (segment === 'STATE_WAITLIST' && segmentCount < 1) {
+          await sendStateWaitlistLetter({ email, firstName, buyerState: buyerStateNorm || stateLabel });
+          await updateRecord(TABLES.CONSUMERS, consumerId, {
+            'Routing Segment Send Count': segmentCount + 1,
+            'Routing Segment Last Sent At': new Date().toISOString(),
+            'Sequence Sent At': new Date().toISOString(),
+          });
+          segmentCounters.state_waitlist++; totalSent++; fired = true;
         }
         else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 1) {
           await sendIncompleteProfileAsk({ email, firstName, buyerState: buyerStateNorm || stateLabel });
@@ -561,12 +572,13 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     segmentCounters.match_now_rescue +
     segmentCounters.nudge_to_engage +
     segmentCounters.warm_lead_check +
-    segmentCounters.out_of_state_pitch +
+    segmentCounters.no_budget_founder_pitch +
+    segmentCounters.state_waitlist +
     segmentCounters.incomplete_profile;
   const grandTotal = total + rancherReminders + abandonedRecovered + segmentTotal;
   const segmentNote =
     segmentTotal > 0
-      ? ` segment=${segmentTotal}(match_now=${segmentCounters.match_now_rescue} nudge=${segmentCounters.nudge_to_engage} warm=${segmentCounters.warm_lead_check} oos=${segmentCounters.out_of_state_pitch} incomplete=${segmentCounters.incomplete_profile})`
+      ? ` segment=${segmentTotal}(match_now=${segmentCounters.match_now_rescue} nudge=${segmentCounters.nudge_to_engage} warm=${segmentCounters.warm_lead_check} no_budget=${segmentCounters.no_budget_founder_pitch} waitlist=${segmentCounters.state_waitlist} incomplete=${segmentCounters.incomplete_profile})`
       : '';
   return {
     status: errors > 0 ? 'partial' : 'success',
