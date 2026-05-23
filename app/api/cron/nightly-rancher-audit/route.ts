@@ -191,8 +191,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           if (TELEGRAM_ADMIN_CHAT_ID) {
             await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, celebrationText);
           }
+          // Backstop auto-pause if the close-handler path missed it
+          // (e.g., admin closed via Airtable bypassing the rancher PATCH).
           await updateRecord(TABLES.RANCHERS, r.id, {
             'Pilot Upsell Notified At': new Date().toISOString(),
+            'Active Status': 'Paused',
           });
         } catch (e: any) {
           console.error('[nightly-rancher-audit] pilot celebration failed:', e?.message);

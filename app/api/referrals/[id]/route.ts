@@ -227,8 +227,12 @@ export async function PATCH(
                   console.error('Pilot upsell email send error (admin path):', e);
                 }
               }
+              // Auto-pause at pilot completion. Same behavior as the
+              // rancher-side PATCH path so closing via admin Airtable also
+              // halts new lead routing pending retainer conversation.
               await updateRecord(TABLES.RANCHERS, rancherId, {
                 'Pilot Upsell Notified At': new Date().toISOString(),
+                'Active Status': 'Paused',
               });
             }
           } catch (e) {

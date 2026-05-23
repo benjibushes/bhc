@@ -744,9 +744,19 @@ export async function PATCH(
                 console.error('Pilot upsell email send error:', e);
               }
             }
+            // Auto-pause rancher routing at pilot completion.
+            // POC proves it works, then we pause new lead flow until the
+            // upsell conversation lands. Prevents over-routing while the
+            // retainer pitch is in flight + protects rancher attention.
+            // Resume via Telegram or Airtable when ready.
             await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
               'Pilot Upsell Notified At': new Date().toISOString(),
+              'Active Status': 'Paused',
             });
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `⏸️ <b>${ranchName} auto-paused</b> at pilot goal. No new leads route to them until you unpause (Airtable Active Status → Active OR Telegram dashboard).`
+            );
           }
         } catch (e) {
           console.error('Pilot milestone check error:', e);
