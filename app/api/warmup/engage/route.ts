@@ -204,42 +204,20 @@ export async function GET(request: Request) {
       });
     }
 
-    // ── FIRST-WEEK FOUNDER APPROVAL GATE (Project 2) ─────────────────────
-    // Sits IN FRONT of matching/suggest. Local-only — find an
-    // operationally-Live rancher serving the buyer's state. If they're
-    // still in their onboarding window (Trust Mode=false AND <5 intros
-    // since they went live), stage a pending-approval referral + ping
-    // Telegram, redirect with ?pending=true, and SKIP matching/suggest.
+    // ── FIRST-WEEK FOUNDER APPROVAL GATE — REMOVED 2026-05-22 ─────────────
+    // Per ops directive: "Customers identify if they get contacted by the
+    // rancher based on if they're Ready to Buy." Clicking YES on the warmup
+    // email already flips Ready to Buy = true (above) — that IS the consent
+    // gate. Inserting a second human-approval gate behind it forced manual
+    // taps in Telegram for every R2B buyer, defeating the autonomous
+    // routing engine. Removed.
     //
-    // If Trust Mode=true OR intro budget already met, gate releases and
-    // we fall through to the normal immediate-route block below.
-    let gateActive = false;
-    let gateRancherName = '';
-    let gateRancherState = '';
-    if (consumer['Email'] && consumer['State']) {
-      try {
-        const inStateRancher = await findInStateRancher(consumer['State']);
-        if (inStateRancher && !inStateRancher['Trust Mode']) {
-          // Approved At is the closest "rancher went live" timestamp we
-          // have without adding new schema. Falls back to created/null
-          // (counts all-time) which is fine — the threshold still gates.
-          const sinceISO: string | null = inStateRancher['Approved At']
-            || inStateRancher['Agreement Signed At']
-            || null;
-          const onboardingIntros = await countOnboardingIntros(inStateRancher.id, sinceISO);
-          if (onboardingIntros < 5) {
-            await stageOnboardingApproval({ rancherId: inStateRancher.id, buyer: consumer });
-            gateActive = true;
-            gateRancherName = inStateRancher['Operator Name'] || inStateRancher['Ranch Name'] || '';
-            gateRancherState = inStateRancher['State'] || normalizeState(consumer['State']);
-          }
-        }
-      } catch (e: any) {
-        // Fail open: if the gate logic errors, fall through to immediate
-        // route. Better to ship the buyer than to strand them on an error.
-        console.error('[firstweek-gate] error, failing open:', e?.message);
-      }
-    }
+    // The stageOnboardingApproval function is preserved in this file in
+    // case a future scenario (e.g. brand-new rancher's first-ever buyer
+    // needs a different vetting policy) wants to re-enable selectively.
+    const gateActive = false;
+    const gateRancherName = '';
+    const gateRancherState = '';
 
     let matchedRancherName = '';
     let matchedRancherState = '';
