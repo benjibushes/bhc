@@ -251,25 +251,76 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         const buyerStateNorm = (consumer['State'] || '').toString().toUpperCase().slice(0, 2);
 
         if (segment === 'MATCH_NOW' && segmentCount < 1) {
-          await sendMatchNowRescue({ email, firstName, buyerState: buyerStateNorm || stateLabel });
-          await updateRecord(TABLES.CONSUMERS, consumerId, {
-            'Routing Segment Send Count': segmentCount + 1,
-            'Routing Segment Last Sent At': new Date().toISOString(),
-            'Sequence Sent At': new Date().toISOString(),
-          });
-          // Loud Telegram so operator stages Pending Approval w/ /forcematch
+          // AUTO-ROUTE: fire matching/suggest directly. If a rancher is
+          // available the endpoint auto-stages a referral + fires intro
+          // emails to both sides — no operator tap, zero gate. If no
+          // rancher available (state uncovered, all over cap), fall back
+          // to sendMatchNowRescue + Telegram alert w/ /match selector
+          // suggestion so the operator can pick an alternative.
+          let autoRouted = false;
           try {
-            await sendOperatorSignal({
-              urgency: 'normal',
-              kind: 'recovery-suggestion',
-              summary: `MATCH_NOW buyer ready — ${firstName} (${buyerStateNorm || stateLabel})`,
-              detail: `${email}\nR2B clicked, awaiting rancher intro. Run <code>/forcematch ${email}</code> to stage Pending Approval.`,
-              refs: [{ type: 'consumer', id: consumerId, label: firstName }],
-              dedupeKey: `match-now-${consumerId}`,
-              dedupeWindowMs: 86400000,
+            const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
+              },
+              body: JSON.stringify({
+                buyerState: consumer['State'],
+                buyerId: consumerId,
+                buyerName: consumer['Full Name'] || '',
+                buyerEmail: email,
+                buyerPhone: consumer['Phone'] || '',
+                orderType: consumer['Order Type'] || '',
+                budgetRange: consumer['Budget'] || '',
+                intentScore: consumer['Intent Score'] || 0,
+                intentClassification: consumer['Intent Classification'] || '',
+                notes: consumer['Notes'] || '',
+                // hot-lead bypass: R2B buyer can route to over-cap rancher
+                warmupEngaged: true,
+              }),
             });
-          } catch {}
-          segmentCounters.match_now_rescue++; totalSent++; fired = true;
+            if (matchRes.ok) {
+              const j = await matchRes.json().catch(() => ({}));
+              if (j.matchFound || j.alreadyActive) {
+                autoRouted = true;
+                await updateRecord(TABLES.CONSUMERS, consumerId, {
+                  'Routing Segment Send Count': segmentCount + 1,
+                  'Routing Segment Last Sent At': new Date().toISOString(),
+                  'Sequence Sent At': new Date().toISOString(),
+                  'Buyer Stage': 'MATCHED',
+                  'Buyer Stage Updated At': new Date().toISOString(),
+                });
+                segmentCounters.match_now_rescue++; totalSent++; fired = true;
+              }
+            }
+          } catch (e: any) {
+            console.warn(`[match-now auto-route] failed for ${consumerId}:`, e?.message);
+          }
+
+          if (!autoRouted) {
+            // Auto-route failed (no available rancher) — soft fallback w/
+            // rescue email + Telegram /match suggestion. Operator picks an
+            // alternative rancher manually via the inline-button selector.
+            await sendMatchNowRescue({ email, firstName, buyerState: buyerStateNorm || stateLabel });
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Routing Segment Send Count': segmentCount + 1,
+              'Routing Segment Last Sent At': new Date().toISOString(),
+              'Sequence Sent At': new Date().toISOString(),
+            });
+            try {
+              await sendOperatorSignal({
+                urgency: 'normal',
+                kind: 'recovery-suggestion',
+                summary: `MATCH_NOW buyer needs manual route — ${firstName} (${buyerStateNorm || stateLabel})`,
+                detail: `${email}\nAuto-route failed (no rancher w/ capacity in state). Run <code>/match ${firstName.toLowerCase().split(' ')[0]} &lt;rancher-name&gt;</code> to pick an alternative + fire intro.`,
+                refs: [{ type: 'consumer', id: consumerId, label: firstName }],
+                dedupeKey: `match-now-${consumerId}`,
+                dedupeWindowMs: 86400000,
+              });
+            } catch {}
+            segmentCounters.match_now_rescue++; totalSent++; fired = true;
+          }
         }
         else if (segment === 'NUDGE_TO_ENGAGE' && segmentCount < 2 && daysSinceSegmentSend >= 7) {
           const engageToken = jwt.sign({ type: 'warmup-engage', consumerId }, JWT_SECRET, { expiresIn: '30d' });
