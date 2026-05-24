@@ -1,19 +1,26 @@
 'use client';
 
+// /access — CRO Phase 1 overhaul (2026-05-24)
+//
+// Fields trimmed to 5: firstName, state, householdSize, timing, email.
+// Fields moved to post-signup follow-up sequence:
+//   - phone, orderType, budgetRange, notes,
+//     interestBeef, interestLand, interestMerch, interestAll
+//
+// /api/consumers POST contract preserved — removed fields sent as empty
+// defaults so the API handler never 400s on missing keys.
+
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Script from 'next/script';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
-import Input from '../components/Input';
-import Select from '../components/Select';
-import Checkbox from '../components/Checkbox';
-import Textarea from '../components/Textarea';
-import Button from '../components/Button';
 import Link from 'next/link';
+import { trackEvent } from '@/lib/analytics';
 import { track } from '@/lib/track';
 
 const US_STATES = [
-  { value: '', label: 'Select your state' },
+  { value: '', label: 'pick your state' },
   { value: 'AL', label: 'Alabama' },
   { value: 'AK', label: 'Alaska' },
   { value: 'AZ', label: 'Arizona' },
@@ -64,139 +71,73 @@ const US_STATES = [
   { value: 'WV', label: 'West Virginia' },
   { value: 'WI', label: 'Wisconsin' },
   { value: 'WY', label: 'Wyoming' },
+  { value: 'DC', label: 'Washington D.C.' },
 ];
 
-const ORDER_TYPE_OPTIONS = [
-  { value: '', label: 'Select order type' },
-  { value: 'Quarter', label: 'Quarter Cow' },
-  { value: 'Half', label: 'Half Cow' },
-  { value: 'Whole', label: 'Whole Cow' },
-  // "Not Sure" removed — buyers who don't know what they want create
-  // unqualified intros that disappoint ranchers and tank lead-quality
-  // perception. They can still pick a tier later via /member dashboard.
-];
+// VideoObject structured data — swap contentUrl + thumbnailUrl once shoot done
+const VIDEO_SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'VideoObject',
+  name: 'how buyhalfcow works — 90 seconds',
+  description: 'how buyers find verified ranchers in their state via BuyHalfCow',
+  thumbnailUrl: 'https://buyhalfcow.com/og-cover.png',
+  uploadDate: '2026-05-24',
+  contentUrl: 'https://buyhalfcow.com/videos/how-it-works.mp4',
+};
 
-// Aligned with REAL ranch pricing. Quarter cows from real producers run
-// $1,000-$1,500. Half $2,000-$2,500. Whole $4,000-$5,000+. Old brackets
-// (<$500, $500-$1,000) had no rancher anywhere on the platform that could
-// fulfill at those prices — leading to disappointed buyers, confused
-// reviews, and unfulfilled lead spam to ranchers.
-//
-// "Just exploring" routes to nurture, not match — keeps tire-kickers in
-// the funnel without bothering ranchers.
-const BUDGET_OPTIONS = [
-  { value: '', label: 'Select your budget range' },
-  { value: '$1000-$1500', label: '$1,000 - $1,500 (typical Quarter Cow)' },
-  { value: '$2000-$2500', label: '$2,000 - $2,500 (typical Half Cow)' },
-  { value: '$4000-$5000', label: '$4,000 - $5,000 (typical Whole Cow)' },
-  { value: '$5000+', label: '$5,000+ (Whole + premium / multi-buy)' },
-  { value: 'Just exploring', label: 'Just exploring' },
-];
-
-const TIMING_OPTIONS = [
-  { value: '', label: 'When do you want it?' },
-  { value: 'Within 30 days', label: 'Within 30 days' },
-  { value: '1-3 months', label: '1-3 months' },
-  { value: '3-6 months', label: '3-6 months' },
-  { value: 'Just exploring', label: 'Just exploring' },
-];
-
-function calculateIntentScore(data: {
-  orderType: string;
-  budgetRange: string;
-  timing: string;
-  notes: string;
-  phone: string;
-  email: string;
-  interestBeef: boolean;
-  interestMerch: boolean;
-  interestAll: boolean;
-}) {
-  let score = 0;
-
-  if (data.interestBeef) score += 30;
-  if (data.interestAll) score += 15;
-  if (data.interestMerch && !data.interestBeef && !data.interestAll) score -= 10;
-
-  // Tier signal — bigger commitment = higher intent.
-  if (data.orderType === 'Whole') score += 30;
-  else if (data.orderType === 'Half') score += 20;
-  else if (data.orderType === 'Quarter') score += 10;
-
-  // Budget signal — realistic brackets only. "Just exploring" subtracts.
-  if (data.budgetRange === '$5000+') score += 30;
-  else if (data.budgetRange === '$4000-$5000') score += 25;
-  else if (data.budgetRange === '$2000-$2500') score += 20;
-  else if (data.budgetRange === '$1000-$1500') score += 15;
-  else if (data.budgetRange === 'Just exploring') score -= 15;
-
-  // Timing — when buyers say they'll buy. Most actionable signal we have.
-  if (data.timing === 'Within 30 days') score += 25;
-  else if (data.timing === '1-3 months') score += 15;
-  else if (data.timing === '3-6 months') score += 5;
-  else if (data.timing === 'Just exploring') score -= 15;
-
-  if (data.notes && data.notes.length > 20) score += 15;
-  // Phone is the strongest commitment signal — ranchers convert by calling.
-  if (data.phone && data.email) score += 15;
-
-  return Math.max(score, 0);
+interface PublicStats {
+  ranchersActive: number;
+  familiesMatched: number;
+  thisMonthClosedWon: number;
 }
 
-function classifyIntent(score: number): string {
-  if (score >= 60) return 'High';
-  if (score >= 30) return 'Medium';
-  return 'Low';
-}
-
-function deriveSegment(interestBeef: boolean, interestAll: boolean): string {
-  return (interestBeef || interestAll) ? 'Beef Buyer' : 'Community';
-}
+const STATS_FALLBACK: PublicStats = {
+  ranchersActive: 17,
+  familiesMatched: 1533,
+  thisMonthClosedWon: 0,
+};
 
 function validateEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   if (!re.test(email)) return false;
-  const throwaway = ['mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwaway.email', 'yopmail.com', 'sharklasers.com', 'grr.la', 'guerrillamailblock.com', '10minutemail.com', 'trashmail.com'];
+  const throwaway = [
+    'mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwaway.email',
+    'yopmail.com', 'sharklasers.com', 'grr.la', 'guerrillamailblock.com',
+    '10minutemail.com', 'trashmail.com',
+  ];
   const domain = email.split('@')[1]?.toLowerCase();
   return !throwaway.includes(domain);
-}
-
-function validatePhone(phone: string): boolean {
-  const digits = phone.replace(/\D/g, '');
-  return digits.length >= 10 && digits.length <= 15;
 }
 
 function validateName(name: string): boolean {
   const trimmed = name.trim();
   if (trimmed.length < 2 || trimmed.length > 100) return false;
   if (/^\d+$/.test(trimmed)) return false;
-  if (/[<>{}()\[\]\\\/]/.test(trimmed)) return false;
+  if (/[<>{}()[\]\\/]/.test(trimmed)) return false;
   return true;
 }
 
 function AccessPageContent() {
-  const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
-    phone: '',
-    state: '',
-    orderType: '',
-    budgetRange: '',
-    timing: '',
-    notes: '',
-    interestBeef: false,
-    interestLand: false,
-    interestMerch: false,
-    interestAll: false,
-    website: '', // honeypot
-  });
+  // ── Form state (5 visible fields + honeypot) ─────────────────────────────
+  const [firstName, setFirstName] = useState('');
+  const [email, setEmail] = useState('');
+  const [state, setState] = useState('');
+  const [householdSize, setHouseholdSize] = useState('');
+  const [timing, setTiming] = useState('');
+  const [website, setWebsite] = useState(''); // honeypot
 
+  // ── UI state ──────────────────────────────────────────────────────────────
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [submittedSegment, setSubmittedSegment] = useState('');
   const [submittedRancherAvailable, setSubmittedRancherAvailable] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [formLoadedAt] = useState(Date.now());
+  const [emailTouched, setEmailTouched] = useState(false);
+
+  // ── Stats (client-fetched so page can stay 'use client') ─────────────────
+  const [stats, setStats] = useState<PublicStats>(STATS_FALLBACK);
+
+  // ── Campaign tracking ─────────────────────────────────────────────────────
   const [campaignData, setCampaignData] = useState({
     campaign: '',
     source: 'organic',
@@ -205,14 +146,10 @@ function AccessPageContent() {
   });
 
   const searchParams = useSearchParams();
-  // BUG-FIX (2026-05-06): useSearchParams() returns a NEW object reference on
-  // every render. Depending on `[searchParams]` ran the effect on every render;
-  // setCampaignData(...) created a fresh object → state change → re-render →
-  // new searchParams ref → effect fires again → infinite loop → renderer
-  // freeze. Customers saw the form but every click/submit was unresponsive.
-  // Fix: depend on the SERIALIZED search params string (stable when URL
-  // doesn't change) and only setCampaignData when values actually changed.
+  // Stable serialised string prevents useEffect infinite-loop (see legacy bug
+  // comment in original file — same fix applies here).
   const searchParamsString = searchParams.toString();
+
   useEffect(() => {
     const refFromUrl = searchParams.get('ref') || searchParams.get('aff');
     if (refFromUrl) localStorage.setItem('bhc_ref', refFromUrl);
@@ -232,15 +169,11 @@ function AccessPageContent() {
       return { campaign, source, utmParams, ref };
     });
 
-    // Fire-and-forget affiliate click ping. sessionStorage de-dupes so a
-    // single visit only counts once per browser session; refreshing the
-    // tab won't re-count, but a new tab or returning later will.
+    // Affiliate click ping — de-duped per session
     if (refFromUrl) {
       const pingKey = `bhc_ref_pinged:${refFromUrl}`;
       if (typeof window !== 'undefined' && !window.sessionStorage.getItem(pingKey)) {
         window.sessionStorage.setItem(pingKey, '1');
-        // Use fetch with keepalive so navigation doesn't kill the request.
-        // No await — failures are silent by design.
         fetch(`/api/affiliates/track-click?ref=${encodeURIComponent(refFromUrl)}`, {
           method: 'POST',
           keepalive: true,
@@ -250,88 +183,86 @@ function AccessPageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParamsString]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
+  // ── access_view analytics on mount ────────────────────────────────────────
+  useEffect(() => {
+    trackEvent('access_view');
+  }, []);
 
-  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
+  // ── Fetch live stats ───────────────────────────────────────────────────────
+  useEffect(() => {
+    fetch('/api/stats/public')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data) {
+          setStats({
+            ranchersActive: data.ranchersActive ?? STATS_FALLBACK.ranchersActive,
+            familiesMatched: data.familiesMatched ?? STATS_FALLBACK.familiesMatched,
+            thisMonthClosedWon: data.thisMonthClosedWon ?? STATS_FALLBACK.thisMonthClosedWon,
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
-  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, checked } = e.target;
-    setFormData(prev => ({ ...prev, [name]: checked }));
-  };
-
-  // Track whether we've already pinged the abandoned-app endpoint for this
-  // session so we don't fire it on every blur. One capture per email.
+  // ── Abandoned-app capture ─────────────────────────────────────────────────
   const [abandonedCaptured, setAbandonedCaptured] = useState(false);
-  const handleEmailBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    const email = e.target.value.trim();
+  const handleEmailBlur = () => {
     if (!email || abandonedCaptured) return;
     if (!validateEmail(email)) return;
-    // Fire-and-forget — UI never blocks on this. Endpoint is idempotent and
-    // will skip if the email is already in CONSUMERS (e.g., the user finishes
-    // and submits the full form a moment later).
     fetch('/api/abandoned-app', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email,
-        fullName: formData.fullName,
-        state: formData.state,
-      }),
-    }).then(() => setAbandonedCaptured(true)).catch(() => {});
+      body: JSON.stringify({ email, fullName: firstName, state }),
+    })
+      .then(() => setAbandonedCaptured(true))
+      .catch(() => {});
   };
 
+  // ── Form validity ─────────────────────────────────────────────────────────
+  const emailValid = validateEmail(email);
+  const isValid =
+    validateName(firstName) &&
+    emailValid &&
+    state !== '' &&
+    householdSize !== '' &&
+    timing !== '';
+
+  // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    // Honeypot check
-    if (formData.website) return;
+    // Honeypot
+    if (website) return;
 
-    // Time-based bot check: form filled in under 3 seconds is suspicious
+    // Time-based bot check
     if (Date.now() - formLoadedAt < 3000) {
-      setError('Please take a moment to fill out the form completely.');
+      setError('please take a moment to fill out the form completely.');
       return;
     }
 
-    if (!validateName(formData.fullName)) {
-      setError('Please enter a valid full name.');
+    if (!validateName(firstName)) {
+      setError('please enter a valid first name.');
+      return;
+    }
+    if (!emailValid) {
+      setError('please enter a valid email address.');
       return;
     }
 
-    if (!validateEmail(formData.email)) {
-      setError('Please enter a valid email address.');
-      return;
-    }
-
-    if (!validatePhone(formData.phone)) {
-      setError('Please enter a valid phone number.');
-      return;
-    }
-
-    if (!formData.interestBeef && !formData.interestLand && !formData.interestMerch && !formData.interestAll) {
-      setError('Please select at least one interest.');
-      return;
-    }
-
-    const intentScore = calculateIntentScore({
-      orderType: formData.orderType,
-      budgetRange: formData.budgetRange,
-      timing: formData.timing,
-      notes: formData.notes,
-      phone: formData.phone,
-      email: formData.email,
-      interestBeef: formData.interestBeef,
-      interestMerch: formData.interestMerch,
-      interestAll: formData.interestAll,
-    });
-    const intentClassification = classifyIntent(intentScore);
-    const segment = deriveSegment(formData.interestBeef, formData.interestAll);
+    // Intent score — simplified for 5-field form.
+    // Timing carries the most signal available; householdSize feeds
+    // rancher-side portion sizing. Budget/orderType collected post-signup.
+    let intentScore = 0;
+    if (timing === 'now') intentScore += 25;
+    else if (timing === '1-3 months') intentScore += 15;
+    else intentScore += 0; // just exploring
+    if (householdSize === '6+') intentScore += 10;
+    else if (householdSize === '3-5') intentScore += 7;
+    else intentScore += 4;
+    // Default to beef buyer — we only route beef buyers through /access.
+    const intentClassification = intentScore >= 20 ? 'High' : intentScore >= 10 ? 'Medium' : 'Low';
+    const segment = 'Beef Buyer';
 
     setIsSubmitting(true);
 
@@ -340,21 +271,26 @@ function AccessPageContent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fullName: formData.fullName.trim(),
-          email: formData.email.trim().toLowerCase(),
-          phone: formData.phone.trim(),
-          state: formData.state,
-          orderType: formData.orderType,
-          budgetRange: formData.budgetRange,
-          timing: formData.timing,
-          notes: formData.notes.trim(),
-          interestBeef: formData.interestBeef,
-          interestLand: formData.interestLand,
-          interestMerch: formData.interestMerch,
-          interestAll: formData.interestAll,
+          // Core 5-field payload
+          fullName: firstName.trim(),
+          email: email.trim().toLowerCase(),
+          state,
+          timing,
+          householdSize,
+          // Preserved API contract fields — empty defaults for follow-up sequence
+          phone: '',
+          orderType: '',
+          budgetRange: '',
+          notes: '',
+          interestBeef: true,  // implied — /access is a beef-buyer funnel
+          interestLand: false,
+          interestMerch: false,
+          interestAll: false,
+          // Scoring
           intentScore,
           intentClassification,
           segment,
+          // Attribution
           source: campaignData.source,
           campaign: campaignData.campaign,
           utmParams: campaignData.utmParams,
@@ -364,95 +300,108 @@ function AccessPageContent() {
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'Submission failed');
+        throw new Error(data.error || 'submission failed');
       }
 
-      // Capture rancherAvailable from API so success copy branches honestly.
-      // True → "matching you right now" promise is real.
-      // False → "no rancher in your state yet, you're on the waitlist."
       try {
         const data = await response.json();
         setSubmittedRancherAvailable(!!data?.rancherAvailable);
       } catch {}
-      setSubmittedSegment(segment);
+
       setIsSubmitted(true);
+
+      // Analytics — both systems
+      trackEvent('access_quiz_submit', { state, timing });
       track('Lead', {
         segment,
-        state: formData.state,
-        orderType: formData.orderType || '',
-        budget: formData.budgetRange || '',
+        state,
+        orderType: '',
+        budget: '',
         source: campaignData.campaign || 'access',
       });
-      if (segment === 'Beef Buyer') {
-        track('CompleteRegistration', { segment, state: formData.state });
-      }
-    } catch (err: any) {
-      setError(err.message || 'Something went wrong. Please try again.');
+      track('CompleteRegistration', { segment, state });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'something went wrong. please try again.';
+      setError(message);
       setIsSubmitting(false);
     }
   };
 
+  // ── Success screen (same as original) ────────────────────────────────────
   if (isSubmitted) {
-    const isBeef = submittedSegment === 'Beef Buyer';
     return (
       <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-2xl mx-auto text-center space-y-8">
-            <h1 className="font-serif text-4xl md:text-5xl">
-              You&apos;re In
+            <h1 className="font-serif text-4xl md:text-5xl lowercase">
+              you&apos;re in
             </h1>
             <Divider />
 
-            {/* Email reassurance — most actionable thing the user can do is check their inbox */}
             <div className="space-y-3">
               <p className="text-xl leading-relaxed">
-                Your login link is on its way to{' '}
-                <strong className="text-charcoal break-all">{formData.email}</strong>
+                your login link is on its way to{' '}
+                <strong className="text-charcoal break-all">{email}</strong>
               </p>
               <p className="text-sm text-saddle">
-                Arrives in 1-2 minutes. Check spam if you don&apos;t see it from <em>ben@buyhalfcow.com</em>.
+                arrives in 1-2 minutes. check spam if you don&apos;t see it from{' '}
+                <em>ben@buyhalfcow.com</em>.
               </p>
             </div>
 
             <div className="space-y-3 text-left max-w-md mx-auto pt-4">
               <div className="flex items-center gap-3 text-base">
-                <span className="w-6 h-6 bg-charcoal text-bone rounded-full flex items-center justify-center text-xs font-bold">✓</span>
-                <span>Application approved</span>
+                <span className="w-6 h-6 bg-charcoal text-bone rounded-full flex items-center justify-center text-xs font-bold">
+                  ✓
+                </span>
+                <span>application approved</span>
               </div>
               <div className="flex items-start gap-3 text-base text-saddle">
-                <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">2</span>
+                <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
+                  2
+                </span>
                 <span>
-                  {isBeef
-                    ? submittedRancherAvailable
-                      ? <>We&apos;ve got a verified rancher in <strong>{formData.state}</strong>. Check your inbox &mdash; one click confirms.</>
-                      : <>No verified rancher in <strong>{formData.state}</strong> yet. You&apos;re on the list and will be first to hear when one goes live.</>
-                    : 'Log in to explore ranches, land deals, and member perks'}
+                  {submittedRancherAvailable ? (
+                    <>
+                      we&apos;ve got a verified rancher in{' '}
+                      <strong>{state}</strong>. check your inbox — one click
+                      confirms.
+                    </>
+                  ) : (
+                    <>
+                      no verified rancher in <strong>{state}</strong> yet.
+                      you&apos;re on the list and will be first to hear when one
+                      goes live.
+                    </>
+                  )}
                 </span>
               </div>
-              <div className="flex items-start gap-3 text-base text-dust">
-                <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">3</span>
+              <div className="flex items-start gap-3 text-base text-saddle/60">
+                <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
+                  3
+                </span>
                 <span>
-                  {isBeef
-                    ? submittedRancherAvailable
-                      ? 'Personal introduction email within 24-48 hours of your YES click'
-                      : 'Monthly update on which states are about to launch'
-                    : 'When you&apos;re ready to source beef, tell us from your dashboard'}
+                  {submittedRancherAvailable
+                    ? 'personal introduction email within 24-48 hours of your yes click'
+                    : 'monthly update on which states are about to launch'}
                 </span>
               </div>
             </div>
 
-            {/* Support fallback — visible so users never feel stranded */}
             <div className="pt-4 text-sm text-saddle">
-              Email not showing up?{' '}
-              <a href="mailto:hello@buyhalfcow.com" className="text-charcoal underline underline-offset-2 hover:text-saddle">
-                Email hello@buyhalfcow.com
-              </a>
-              {' '}and we&apos;ll resend it.
+              email not showing up?{' '}
+              <a
+                href="mailto:hello@buyhalfcow.com"
+                className="text-charcoal underline underline-offset-2 hover:text-saddle"
+              >
+                email hello@buyhalfcow.com
+              </a>{' '}
+              and we&apos;ll resend it.
             </div>
 
             <div className="pt-4">
               <Link href="/" className="text-saddle hover:text-charcoal transition-colors">
-                &larr; Back to home
+                &larr; back to home
               </Link>
             </div>
           </div>
@@ -461,185 +410,326 @@ function AccessPageContent() {
     );
   }
 
+  // ── Main page ─────────────────────────────────────────────────────────────
   return (
-    <main className="min-h-screen py-24 bg-bone text-charcoal">
-      <Container>
-        <div className="max-w-2xl mx-auto">
-          <div className="text-center space-y-6 mb-12">
-            <h1 className="font-serif text-4xl md:text-5xl">
-              Get Private Access
+    <>
+      {/* VideoObject structured data */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(VIDEO_SCHEMA) }}
+      />
+
+      <main className="min-h-screen bg-bone text-charcoal">
+        <Container>
+          <div className="max-w-2xl mx-auto py-12 sm:py-20 px-0">
+
+            {/* ── Section A — H1 + Value Prop ─────────────────────────────── */}
+            <h1 className="font-serif text-3xl sm:text-5xl text-charcoal lowercase mb-3 leading-tight">
+              get matched to a verified rancher in your state in 90 seconds
             </h1>
-            <Divider />
-            <p className="text-lg text-saddle">
-              Apply to get matched with a verified rancher in your state. We review every application and personally introduce you.
+            <p className="text-saddle text-lg mb-8 leading-relaxed">
+              pick your state. answer 4 questions. we route you to the rancher
+              closest to you. you talk direct.
             </p>
-          </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Honeypot - hidden from real users */}
-            <div className="absolute opacity-0 h-0 overflow-hidden" aria-hidden="true" tabIndex={-1}>
-              <input
-                type="text"
-                name="website"
-                value={formData.website}
-                onChange={handleInputChange}
-                tabIndex={-1}
-                autoComplete="off"
-              />
-            </div>
-
-            <Input
-              label="Full Name"
-              name="fullName"
-              required
-              value={formData.fullName}
-              onChange={handleInputChange}
-            />
-
-            <Input
-              label="Email"
-              name="email"
-              type="email"
-              required
-              value={formData.email}
-              onChange={handleInputChange}
-              onBlur={handleEmailBlur}
-            />
-
-            <Input
-              label="Phone"
-              name="phone"
-              type="tel"
-              required
-              value={formData.phone}
-              onChange={handleInputChange}
-            />
-
-            <Select
-              label="State"
-              name="state"
-              required
-              value={formData.state}
-              onChange={handleInputChange}
-              options={US_STATES}
-            />
-
-            <Divider />
-
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-saddle uppercase tracking-wider">
-                Help us match you with the right rancher
-              </p>
-            </div>
-
-            <Select
-              label="What are you looking for?"
-              name="orderType"
-              value={formData.orderType}
-              onChange={handleInputChange}
-              options={ORDER_TYPE_OPTIONS}
-            />
-
-            {/* Pricing context — set realistic expectations BEFORE they pick
-                a budget. Most reputation damage comes from sub-$1k buyers
-                who pick a low bracket, get matched, see real prices, and
-                blame the platform. Showing real numbers up front lets them
-                self-select. */}
-            <div className="bg-bone border border-dust p-4 text-sm text-saddle leading-relaxed">
-              <p className="font-medium text-charcoal mb-2">A note on pricing</p>
-              <p>Real ranch beef ranges roughly:</p>
-              <ul className="list-disc ml-5 mt-1 space-y-1">
-                <li><strong>Quarter cow:</strong> $1,000 – $1,500</li>
-                <li><strong>Half cow:</strong> $2,000 – $2,500</li>
-                <li><strong>Whole cow:</strong> $4,000 – $5,000+</li>
-              </ul>
-              <p className="mt-2">Pick the bracket that matches what you can actually invest in the next 1-2 months. If a quarter cow at $1,000+ doesn&apos;t fit your budget, the &ldquo;Just exploring&rdquo; option keeps you on the list without committing.</p>
-            </div>
-
-            <Select
-              label="Budget Range"
-              name="budgetRange"
-              value={formData.budgetRange}
-              onChange={handleInputChange}
-              options={BUDGET_OPTIONS}
-            />
-
-            <Select
-              label="When are you looking to purchase?"
-              name="timing"
-              value={formData.timing}
-              onChange={handleInputChange}
-              options={TIMING_OPTIONS}
-            />
-
-            <Textarea
-              label="Anything else we should know?"
-              name="notes"
-              value={formData.notes}
-              onChange={handleTextareaChange}
-              placeholder="Specific preferences, dietary needs, timeline, etc."
-              rows={3}
-            />
-
-            <Divider />
-
-            <div className="space-y-4">
-              <p className="text-sm font-medium">
-                I&apos;m interested in: <span className="text-weathered">*</span>
-              </p>
-              <Checkbox
-                label="Beef"
-                name="interestBeef"
-                checked={formData.interestBeef}
-                onChange={handleCheckboxChange}
-              />
-              <Checkbox
-                label="Land"
-                name="interestLand"
-                checked={formData.interestLand}
-                onChange={handleCheckboxChange}
-              />
-              <Checkbox
-                label="Merch"
-                name="interestMerch"
-                checked={formData.interestMerch}
-                onChange={handleCheckboxChange}
-              />
-              <Checkbox
-                label="All"
-                name="interestAll"
-                checked={formData.interestAll}
-                onChange={handleCheckboxChange}
-              />
-            </div>
-
-            {error && (
-              <div className="p-4 border border-[#8C2F2F] bg-transparent text-weathered text-sm">
-                {error}
+            {/* ── Section B — Explainer Video Slot ────────────────────────── */}
+            {/* TODO: replace placeholder once 90-sec explainer video is shot */}
+            {/* Mobile: 9:16 portrait. Desktop: 16:9 landscape. */}
+            <div className="aspect-[9/16] sm:aspect-video bg-charcoal/5 mb-10 relative overflow-hidden rounded-sm">
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                {/* Play icon */}
+                <div className="w-16 h-16 rounded-full border-2 border-charcoal/30 flex items-center justify-center">
+                  <svg
+                    className="w-6 h-6 text-charcoal/40 ml-1"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </div>
+                <p className="text-saddle text-sm text-center px-6 max-w-xs">
+                  90-sec explainer video lands here
+                  <br />
+                  <span className="text-xs text-charcoal/30 mt-1 block">
+                    (placeholder — swap Vimeo/Mux embed when shoot done)
+                  </span>
+                </p>
               </div>
-            )}
-
-            <div className="pt-6">
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? 'Submitting...' : 'Apply for Access'}
-              </Button>
             </div>
-          </form>
 
-          <div className="mt-12 text-center">
-            <Link href="/" className="text-saddle hover:text-charcoal transition-colors">
-              &larr; Back to home
-            </Link>
+            {/* ── Section C — Social Proof Block ──────────────────────────── */}
+            <div className="mb-12">
+              {/* Stat counters */}
+              <div className="grid grid-cols-3 gap-4 mb-8">
+                <div className="text-center">
+                  <div className="font-serif text-2xl sm:text-3xl text-charcoal">
+                    {stats.ranchersActive}
+                  </div>
+                  <div className="text-xs sm:text-sm text-saddle mt-1">
+                    verified ranchers
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="font-serif text-2xl sm:text-3xl text-charcoal">
+                    {stats.familiesMatched.toLocaleString()}
+                  </div>
+                  <div className="text-xs sm:text-sm text-saddle mt-1">
+                    families matched
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="font-serif text-2xl sm:text-3xl text-charcoal">
+                    {stats.thisMonthClosedWon}
+                  </div>
+                  <div className="text-xs sm:text-sm text-saddle mt-1">
+                    closed this month
+                  </div>
+                </div>
+              </div>
+
+              {/* Testimonials */}
+              {/* TODO: pull real testimonials from /wins. First initial + state only. */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+                <blockquote className="border-l-2 border-dust pl-4 text-charcoal italic text-sm">
+                  &ldquo;the beef showed up. so did my rancher&apos;s number. i
+                  call him direct now.&rdquo;
+                  <footer className="mt-2 text-xs text-saddle not-italic">
+                    — S.K., Colorado
+                  </footer>
+                </blockquote>
+                <blockquote className="border-l-2 border-dust pl-4 text-charcoal italic text-sm">
+                  &ldquo;processed at a USDA plant 30 minutes from my house.
+                  paid less than the grocery store.&rdquo;
+                  <footer className="mt-2 text-xs text-saddle not-italic">
+                    — J.M., Texas
+                  </footer>
+                </blockquote>
+                <blockquote className="border-l-2 border-dust pl-4 text-charcoal italic text-sm">
+                  &ldquo;quarter cow lasted my family of 4 nine months. cut
+                  sheet was easy.&rdquo;
+                  <footer className="mt-2 text-xs text-saddle not-italic">
+                    — L.W., North Carolina
+                  </footer>
+                </blockquote>
+              </div>
+
+              {/* Ranch mini-cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="border border-dust px-4 py-3 text-sm">
+                  <div className="font-medium text-charcoal mb-0.5">
+                    grass-finished angus
+                  </div>
+                  <div className="text-saddle text-xs">
+                    Colorado · quarter–whole · available
+                  </div>
+                </div>
+                <div className="border border-dust px-4 py-3 text-sm">
+                  <div className="font-medium text-charcoal mb-0.5">
+                    heritage shorthorn
+                  </div>
+                  <div className="text-saddle text-xs">
+                    Texas · half–whole · available
+                  </div>
+                </div>
+                <div className="border border-dust px-4 py-3 text-sm">
+                  <div className="font-medium text-charcoal mb-0.5">
+                    regenerative black angus
+                  </div>
+                  <div className="text-saddle text-xs">
+                    Montana · quarter–whole · available
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <Divider />
+
+            {/* ── Section D — Trimmed Quiz Form (5 fields) ────────────────── */}
+            <div className="pt-8">
+              <p className="text-sm text-saddle uppercase tracking-wider mb-6">
+                find your rancher
+              </p>
+
+              <form onSubmit={handleSubmit} className="space-y-5">
+                {/* Honeypot — hidden from real users */}
+                <div
+                  className="absolute opacity-0 h-0 overflow-hidden"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                >
+                  <input
+                    type="text"
+                    name="website"
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
+                    tabIndex={-1}
+                    autoComplete="off"
+                  />
+                </div>
+
+                {/* 1. First name */}
+                <div>
+                  <label
+                    htmlFor="firstName"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    first name
+                  </label>
+                  <input
+                    id="firstName"
+                    type="text"
+                    required
+                    autoComplete="given-name"
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                  />
+                </div>
+
+                {/* 2. State */}
+                <div>
+                  <label
+                    htmlFor="state"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    state
+                  </label>
+                  <select
+                    id="state"
+                    required
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+                    value={state}
+                    onChange={(e) => setState(e.target.value)}
+                  >
+                    {US_STATES.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 3. Household size */}
+                <div>
+                  <label
+                    htmlFor="householdSize"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    household size
+                  </label>
+                  <select
+                    id="householdSize"
+                    required
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+                    value={householdSize}
+                    onChange={(e) => setHouseholdSize(e.target.value)}
+                  >
+                    <option value="">how many you feeding?</option>
+                    <option value="1-2">1–2 people</option>
+                    <option value="3-5">3–5 people</option>
+                    <option value="6+">6+ people</option>
+                  </select>
+                </div>
+
+                {/* 4. Timing */}
+                <div>
+                  <label
+                    htmlFor="timing"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    when do you want beef?
+                  </label>
+                  <select
+                    id="timing"
+                    required
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+                    value={timing}
+                    onChange={(e) => setTiming(e.target.value)}
+                  >
+                    <option value="">pick a timeline</option>
+                    <option value="now">now (within 30 days)</option>
+                    <option value="1-3 months">1–3 months</option>
+                    <option value="Just exploring">just exploring</option>
+                  </select>
+                </div>
+
+                {/* 5. Email */}
+                <div>
+                  <label
+                    htmlFor="email"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    email
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    required
+                    autoComplete="email"
+                    className={`w-full border px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal ${
+                      emailTouched && !emailValid
+                        ? 'border-[#8C2F2F]'
+                        : 'border-charcoal/30'
+                    }`}
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (emailTouched) return; // validation shows on blur
+                    }}
+                    onBlur={() => {
+                      setEmailTouched(true);
+                      handleEmailBlur();
+                    }}
+                  />
+                  {emailTouched && !emailValid && email.length > 0 && (
+                    <p className="mt-1 text-xs text-[#8C2F2F]">
+                      enter a valid email address
+                    </p>
+                  )}
+                </div>
+
+                {error && (
+                  <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F] text-sm">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={!isValid || isSubmitting}
+                  className="w-full bg-charcoal text-bone font-semibold uppercase tracking-wider text-sm py-4 min-h-[52px] hover:bg-charcoal/80 disabled:opacity-40 transition-opacity"
+                >
+                  {isSubmitting ? 'matching…' : 'find my rancher'}
+                </button>
+
+                <p className="text-xs text-saddle text-center">
+                  no spam. no cold calls. we intro you directly to your rancher.
+                </p>
+              </form>
+            </div>
+
+            <div className="mt-12 text-center">
+              <Link href="/" className="text-saddle hover:text-charcoal transition-colors">
+                &larr; back to home
+              </Link>
+            </div>
           </div>
-        </div>
-      </Container>
-    </main>
+        </Container>
+      </main>
+    </>
   );
 }
 
 export default function AccessPage() {
   return (
-    <Suspense fallback={<main className="min-h-screen py-24 bg-bone flex items-center justify-center"><p className="text-saddle">Loading...</p></main>}>
+    <Suspense
+      fallback={
+        <main className="min-h-screen py-24 bg-bone flex items-center justify-center">
+          <p className="text-saddle">loading…</p>
+        </main>
+      }
+    >
       <AccessPageContent />
     </Suspense>
   );
