@@ -10,7 +10,7 @@
 // /api/consumers POST contract preserved — removed fields sent as empty
 // defaults so the API handler never 400s on missing keys.
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Script from 'next/script';
 import Container from '../components/Container';
@@ -202,6 +202,26 @@ function AccessPageContent() {
         }
       })
       .catch(() => {});
+  }, []);
+
+  // ── Mobile sticky CTA (CRO Phase 2) ──────────────────────────────────────
+  const formRef = useRef<HTMLFormElement>(null);
+  const [stickyVisible, setStickyVisible] = useState(false);
+
+  useEffect(() => {
+    if (!formRef.current) return;
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    if (!isMobile) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        // Show sticky CTA when form is NOT visible (user scrolled past)
+        setStickyVisible(!entry.isIntersecting);
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(formRef.current);
+    return () => observer.disconnect();
   }, []);
 
   // ── Abandoned-app capture ─────────────────────────────────────────────────
@@ -413,6 +433,18 @@ function AccessPageContent() {
   // ── Main page ─────────────────────────────────────────────────────────────
   return (
     <>
+      {/* Mobile sticky CTA — shows when form is scrolled out of view */}
+      {stickyVisible && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-bone border-t border-dust p-3 sm:hidden">
+          <button
+            onClick={() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+            className="block w-full bg-charcoal text-bone font-semibold uppercase tracking-wider text-sm py-4 min-h-[52px]"
+          >
+            find my rancher ↑
+          </button>
+        </div>
+      )}
+
       {/* VideoObject structured data */}
       <script
         type="application/ld+json"
@@ -551,7 +583,7 @@ function AccessPageContent() {
                 find your rancher
               </p>
 
-              <form onSubmit={handleSubmit} className="space-y-5">
+              <form ref={formRef} onSubmit={handleSubmit} className="space-y-5">
                 {/* Honeypot — hidden from real users */}
                 <div
                   className="absolute opacity-0 h-0 overflow-hidden"
