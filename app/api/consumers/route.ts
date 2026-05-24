@@ -234,7 +234,12 @@ export async function POST(request: Request) {
       // ready-to-buy at creation so matching/suggest sees the flag and
       // formats the rancher's intro email with the 🔥 prefix + READY TO BUY
       // banner. Telegram fires the READY-TO-BUY MATCH alert too.
-      'Ready to Buy': isRancherPageLead,
+      // High-intent timing at signup is equivalent to clicking YES on the warmup email.
+      // 'Within 30 days' and '1-3 months' both indicate immediate purchase intent, so
+      // set Ready to Buy = true at creation. This puts the buyer into the MATCH_NOW
+      // segment on the next reclassify-buyers run and fires intro same-second rather
+      // than waiting for a warmup email + YES click (multi-day delay).
+      'Ready to Buy': isRancherPageLead || timing === 'Within 30 days' || timing === '1-3 months',
     };
     if (referredBy) consumerFields['Referred By'] = referredBy;
 
