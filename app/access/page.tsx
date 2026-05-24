@@ -685,31 +685,22 @@ function AccessPageContent() {
               closest to you. you talk direct.
             </p>
 
-            {/* ── Section B — Explainer Video Slot ────────────────────────── */}
-            {/* TODO: replace placeholder once 90-sec explainer video is shot */}
-            {/* Mobile: 9:16 portrait. Desktop: 16:9 landscape. */}
-            <div className="aspect-[9/16] sm:aspect-video bg-charcoal/5 mb-10 relative overflow-hidden rounded-sm">
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-                {/* Play icon */}
-                <div className="w-16 h-16 rounded-full border-2 border-charcoal/30 flex items-center justify-center">
-                  <svg
-                    className="w-6 h-6 text-charcoal/40 ml-1"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </div>
-                <p className="text-saddle text-sm text-center px-6 max-w-xs">
-                  90-sec explainer video lands here
-                  <br />
-                  <span className="text-xs text-charcoal/30 mt-1 block">
-                    (placeholder — swap Vimeo/Mux embed when shoot done)
-                  </span>
-                </p>
+            {/* ── Section B — Explainer Video Slot ──────────────────────────
+                Renders YouTube embed when NEXT_PUBLIC_ACCESS_VIDEO_ID is set.
+                Otherwise hidden entirely — no placeholder copy visible to
+                paid traffic. Mobile: 9:16 portrait. Desktop: 16:9 landscape. */}
+            {process.env.NEXT_PUBLIC_ACCESS_VIDEO_ID && (
+              <div className="aspect-[9/16] sm:aspect-video bg-charcoal mb-10 relative overflow-hidden rounded-sm">
+                <iframe
+                  src={`https://www.youtube.com/embed/${process.env.NEXT_PUBLIC_ACCESS_VIDEO_ID}?rel=0&modestbranding=1`}
+                  title="BuyHalfCow — 90-second explainer"
+                  className="absolute inset-0 w-full h-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allowFullScreen
+                />
               </div>
-            </div>
+            )}
 
             {/* ── Section C — Social Proof Block ──────────────────────────── */}
             <div className="mb-12">
