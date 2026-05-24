@@ -47,6 +47,33 @@ export const metadata: Metadata = {
 
 export const revalidate = 600;
 
+interface PublicStats {
+  ranchersActive: number;
+  familiesMatched: number;
+  foundersBacked: number;
+  foundersCap: number;
+  totalClosedWon: number;
+  thisMonthClosedWon: number;
+}
+
+async function fetchPublicStats(): Promise<PublicStats> {
+  try {
+    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+    const res = await fetch(`${SITE_URL}/api/stats/public`, { next: { revalidate: 300 } });
+    if (!res.ok) throw new Error(`stats fetch returned ${res.status}`);
+    return await res.json();
+  } catch {
+    return {
+      ranchersActive: 17,
+      familiesMatched: 1533,
+      foundersBacked: 0,
+      foundersCap: 100,
+      totalClosedWon: 11,
+      thisMonthClosedWon: 0,
+    };
+  }
+}
+
 async function countFoundersByTier(tier: string): Promise<number> {
   try {
     const rows = await getAllRecords(
@@ -153,10 +180,17 @@ export default async function FoundersPage({
   const paidTier = (params.paid || params.tier || '').toString().replace(/-/g, ' ');
 
   // Live counts for the hero counter + sold-out gating on capped tiers.
-  const [founding100Count, titleFounderCount] = await Promise.all([
+  // Also fetch /api/stats/public (ISR 300s) for the scarcity counter above tiers.
+  const [founding100Count, titleFounderCount, publicStats] = await Promise.all([
     countFoundersByTier('Founding 100'),
     countFoundersByTier('Title Founder'),
+    fetchPublicStats(),
   ]);
+
+  const scarcityBacked = publicStats.foundersBacked;
+  const scarcityCap = publicStats.foundersCap || FOUNDING_100_CAP;
+  const scarcityRemaining = scarcityCap - scarcityBacked;
+  const scarcityPct = Math.round((scarcityBacked / scarcityCap) * 100);
 
   const founding100PriceLabel = getFounding100PriceLabel();
   const founding100Cents = getFounding100PriceCents();
@@ -306,6 +340,48 @@ export default async function FoundersPage({
                 and what's been claimed. — Ben
               </p>
             </div>
+          </div>
+        </Container>
+      </section>
+
+      {/* SCARCITY COUNTER — CRO Phase 1.
+          Pulls from /api/stats/public (ISR 300s). Visible loss-aversion signal
+          above the tier grid. Copy intensifies as cap fills (<30 remaining). */}
+      <section className="py-10 bg-bone-deep border-y border-dust/60">
+        <Container>
+          <div className="max-w-3xl mx-auto bg-bone border border-charcoal p-6 sm:p-8">
+            <div className="flex items-baseline justify-between mb-3">
+              <div>
+                <div className="font-serif text-3xl sm:text-4xl text-charcoal">
+                  {scarcityBacked}{' '}
+                  <span className="text-saddle text-xl sm:text-2xl">
+                    of {scarcityCap}
+                  </span>
+                </div>
+                <div className="text-sm text-saddle mt-1">
+                  founders claimed
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="font-serif text-2xl sm:text-3xl text-charcoal">
+                  {scarcityRemaining}
+                </div>
+                <div className="text-sm text-saddle mt-1">
+                  spots remaining
+                </div>
+              </div>
+            </div>
+            <div className="w-full bg-dust/30 h-3 mt-4 overflow-hidden">
+              <div
+                className="h-full bg-charcoal transition-all duration-500"
+                style={{ width: `${Math.max(2, scarcityPct)}%` }}
+              />
+            </div>
+            <p className="text-xs text-saddle mt-3">
+              {scarcityRemaining < 30
+                ? `${scarcityRemaining} numbered spots left. founding herd closes at ${scarcityCap}.`
+                : `numbered patches ship at claim. ledger sent quarterly. real receipts.`}
+            </p>
           </div>
         </Container>
       </section>
