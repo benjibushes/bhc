@@ -150,9 +150,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         html: emailHtml(name, missing, setupUrl, bucket),
         _replyContext: { type: 'rnc', recordId: r.id },
       } as any);
-      const hasErr = result?.error;
+      const hasErr = result?.suppressed;
       if (hasErr) {
-        console.error('Stuck-onboarding send error:', JSON.stringify(result.error));
+        console.error('Stuck-onboarding send suppressed:', result.reason ?? 'no reason');
         continue;
       }
       await updateRecord(TABLES.RANCHERS, r.id, {

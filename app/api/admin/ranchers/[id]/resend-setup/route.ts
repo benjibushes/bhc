@@ -95,7 +95,7 @@ export async function POST(
         html,
         _replyContext: { type: 'rnc', recordId: id },
       } as any);
-      if (r && r.error) { sendOk = false; sendErr = JSON.stringify(r.error).slice(0, 200); }
+      if (r && r.suppressed) { sendOk = false; sendErr = r.reason ?? 'suppressed'; }
     } catch (e: any) {
       sendOk = false;
       sendErr = e?.message || 'unknown';

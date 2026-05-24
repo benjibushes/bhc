@@ -737,9 +737,9 @@ export async function POST(request: Request) {
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
               </div>` as any,
             } as any);
-            if (emailResult && emailResult.error) {
+            if (emailResult && emailResult.suppressed) {
               introSendOk = false;
-              introSendErr = typeof emailResult.error === 'string' ? emailResult.error : JSON.stringify(emailResult.error);
+              introSendErr = emailResult.reason ?? 'suppressed';
             }
           } catch (e: any) {
             introSendOk = false;
