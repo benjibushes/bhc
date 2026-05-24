@@ -1,20 +1,29 @@
-// /start — bio-link router page.
+// /start — revenue funnel router page.
 //
-// Treated as a REVENUE FUNNEL ROUTER, not just a "who are you" picker.
-// Above-fold scarcity bar + price-anchored CTAs in revenue-tier order
-// drive every visitor toward the action that maps to their intent +
-// our $-priority. Below the fold: stats, recent close (social proof of
-// transaction velocity), real testimonial, share+earn affiliate hook.
+// Visual hierarchy:
+//   1. Hero (tight, lowercase, brand voice)
+//   2. Recent close strip (immediate social proof of transaction velocity)
+//   3. PRIMARY CTA — buyer get matched (visually dominant, charcoal slab)
+//   4. Secondary CTAs — founders herd (bone-warm card w/ "be founder #N"
+//      framing) + brand partner (bone card w/ outline). NOT same visual
+//      weight as primary — eye knows which to pick.
+//   5. Live ranchers preview (3 random Page-Live ranchers → discovery)
+//   6. Stats trio (real, ISR 300s)
+//   7. Real testimonial (renders only if explicit Testimonial field set)
+//   8. Tertiary text link — rancher join (supply side, indirect $)
+//   9. Affiliate share ribbon
 //
-// Shell is a Server Component. Click-tracking buttons + affiliate
-// share UI are in client subcomponents so analytics fire without
-// blocking SSR.
+// Shell = Server Component. Buttons + tracking = client subcomponents.
 
 import type { Metadata } from 'next';
-import StartButtons from './StartButtons';
+import PrimaryBuyerCTA, {
+  FounderCTA,
+  BrandCTA,
+  RancherTextLink,
+} from './StartButtons';
 import ExitIntentModal from '@/app/components/ExitIntentModal';
 import { getRecentTestimonials, type Testimonial } from '@/lib/testimonials';
-import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
+import { getAllRecords, getActiveRancherPages, getRecordById, TABLES } from '@/lib/airtable';
 
 export const metadata: Metadata = {
   title: 'who are you? — buyhalfcow',
@@ -26,7 +35,6 @@ export const metadata: Metadata = {
   },
 };
 
-// Revalidate every 5 min — stats don't need to be real-time on this page.
 export const revalidate = 300;
 
 interface PublicStats {
@@ -47,7 +55,6 @@ async function fetchStats(): Promise<PublicStats> {
     if (!res.ok) throw new Error(`stats fetch returned ${res.status}`);
     return await res.json();
   } catch {
-    // Fallback to known-good baseline if API unavailable at build time.
     return {
       ranchersActive: 17,
       familiesMatched: 1533,
@@ -68,9 +75,6 @@ interface RecentClose {
   daysAgo: number;
 }
 
-// Pulls the most recently Closed Won referral for the "just closed"
-// strip. Privacy: first name + state only. Failure-safe: returns null,
-// strip is hidden.
 async function fetchLatestClose(): Promise<RecentClose | null> {
   try {
     const refs = (await getAllRecords(
@@ -112,6 +116,46 @@ async function fetchLatestClose(): Promise<RecentClose | null> {
   }
 }
 
+interface RancherPreview {
+  id: string;
+  slug: string;
+  ranchName: string;
+  operatorName: string;
+  state: string;
+  beefTypes: string;
+  cuts: string;
+}
+
+async function fetchRancherPreview(): Promise<RancherPreview[]> {
+  try {
+    const ranchers = (await getActiveRancherPages()) as any[];
+    if (ranchers.length === 0) return [];
+    // Fisher-Yates shuffle for variety on each page render
+    const shuffled = [...ranchers];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, 3).map((r: any) => {
+      const cutList: string[] = [];
+      if (r['Quarter Price']) cutList.push('quarter');
+      if (r['Half Price']) cutList.push('half');
+      if (r['Whole Price']) cutList.push('whole');
+      return {
+        id: r.id,
+        slug: (r['Slug'] || '').toString(),
+        ranchName: (r['Ranch Name'] || '').toString(),
+        operatorName: (r['Operator Name'] || '').toString(),
+        state: (r['State'] || '').toString(),
+        beefTypes: (r['Beef Types'] || '').toString(),
+        cuts: cutList.length > 0 ? cutList.join('–') : 'beef',
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 function formatDaysAgo(days: number): string {
   if (days <= 0) return 'today';
   if (days === 1) return 'yesterday';
@@ -121,120 +165,146 @@ function formatDaysAgo(days: number): string {
 }
 
 export default async function StartPage() {
-  const [stats, testimonials, latestClose] = await Promise.all([
+  const [stats, testimonials, latestClose, ranchers] = await Promise.all([
     fetchStats(),
     getRecentTestimonials(1),
     fetchLatestClose(),
+    fetchRancherPreview(),
   ]);
   const featured: Testimonial | null = testimonials[0] || null;
-  const foundersLeft = Math.max(0, stats.foundersCap - stats.foundersBacked);
-  const foundersPct = Math.min(100, (stats.foundersBacked / stats.foundersCap) * 100);
 
   return (
-    <main className="min-h-screen bg-bone text-charcoal px-4 py-12 sm:py-20">
-      <div className="mx-auto max-w-2xl">
+    <main className="min-h-screen bg-bone text-charcoal">
+      <div className="mx-auto max-w-2xl px-4 py-10 sm:py-16">
         {/* ── HERO ──────────────────────────────────────────────────────── */}
-        <h1 className="font-serif text-4xl sm:text-5xl mb-3 text-charcoal lowercase leading-tight">
-          real beef. real ranchers. direct.
-        </h1>
-        <p className="text-saddle text-lg mb-8">
-          pick one. i&apos;ll route you in 5 seconds.
-        </p>
+        <header className="mb-8">
+          <h1 className="font-serif text-3xl sm:text-4xl text-charcoal lowercase leading-[1.1] mb-2">
+            real beef.<br />real ranchers. direct.
+          </h1>
+          <p className="text-saddle text-base sm:text-lg">
+            pick your state. talk to the rancher direct.
+          </p>
+        </header>
 
-        {/* ── FOUNDING HERD SCARCITY BAR ───────────────────────────────── */}
-        {foundersLeft > 0 ? (
-          <div className="mb-8 bg-bone-warm border border-charcoal p-4">
-            <div className="flex items-baseline justify-between mb-2">
-              <span className="text-xs uppercase tracking-wider text-saddle">
-                founding herd
-              </span>
-              <span className="text-xs font-semibold text-charcoal">
-                {stats.foundersBacked} / {stats.foundersCap} claimed
-              </span>
-            </div>
-            <div className="h-2 bg-bone border border-dust overflow-hidden">
-              <div
-                className="h-full bg-charcoal"
-                style={{ width: `${foundersPct}%` }}
-                aria-label={`${stats.foundersBacked} of ${stats.foundersCap} founding members claimed`}
-              />
-            </div>
-            <p className="text-xs text-saddle mt-2">
-              {foundersLeft} spots left · $100 backs the mission · $15k locks
-              founder #1-10 forever
-            </p>
-          </div>
-        ) : (
-          <div className="mb-8 bg-charcoal text-bone p-4">
-            <p className="text-xs uppercase tracking-wider mb-1">founding herd</p>
-            <p className="text-sm">
-              all 100 spots claimed · waitlist + behind-the-scenes drops on /founders →
-            </p>
-          </div>
-        )}
-
-        {/* ── CTAs ─────────────────────────────────────────────────────── */}
-        <StartButtons
-          foundersBacked={stats.foundersBacked}
-          foundersCap={stats.foundersCap}
-        />
-
-        {/* ── STATS ────────────────────────────────────────────────────── */}
-        <div className="mt-14 grid grid-cols-3 gap-4 sm:gap-8">
-          <div className="text-center">
-            <div className="font-serif text-3xl sm:text-4xl text-charcoal">
-              {stats.ranchersActive}
-            </div>
-            <div className="text-xs sm:text-sm text-saddle mt-1">verified ranchers</div>
-          </div>
-          <div className="text-center">
-            <div className="font-serif text-3xl sm:text-4xl text-charcoal">
-              {stats.familiesMatched.toLocaleString()}
-            </div>
-            <div className="text-xs sm:text-sm text-saddle mt-1">families in pipeline</div>
-          </div>
-          <div className="text-center">
-            <div className="font-serif text-3xl sm:text-4xl text-charcoal">
-              {stats.totalClosedWon}
-            </div>
-            <div className="text-xs sm:text-sm text-saddle mt-1">deals closed</div>
-          </div>
-        </div>
-
-        {/* ── RECENT CLOSE — proof of transaction velocity ───────────── */}
+        {/* ── RECENT CLOSE — proof BEFORE the ask ──────────────────────── */}
         {latestClose && (
-          <div className="mt-10 bg-bone-warm border-l-4 border-charcoal pl-4 py-3 pr-4">
-            <p className="text-xs uppercase tracking-wider text-saddle mb-1">
-              just closed · {formatDaysAgo(latestClose.daysAgo)}
-            </p>
-            <p className="text-sm text-charcoal">
+          <div className="mb-6 flex items-center gap-3 text-xs sm:text-sm">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-sage/15 text-sage-dark border border-sage/30 font-semibold uppercase tracking-wider text-[10px]">
+              <span className="w-1.5 h-1.5 bg-sage-dark rounded-full animate-pulse" />
+              just closed
+            </span>
+            <span className="text-saddle">
               {latestClose.firstName} got a {latestClose.orderType.toLowerCase()} from{' '}
               {latestClose.ranchSlug ? (
                 <a
                   href={`/ranchers/${latestClose.ranchSlug}`}
-                  className="underline underline-offset-2 hover:text-saddle"
+                  className="text-charcoal underline underline-offset-2 hover:text-saddle font-medium"
                 >
                   {latestClose.ranchName}
                 </a>
               ) : (
-                latestClose.ranchName
+                <span className="text-charcoal font-medium">{latestClose.ranchName}</span>
               )}
-              {latestClose.buyerState ? ` · ${latestClose.buyerState}` : ''}
-            </p>
+              {latestClose.buyerState && ` · ${latestClose.buyerState}`}
+              {' '}· {formatDaysAgo(latestClose.daysAgo)}
+            </span>
           </div>
         )}
 
-        {/* ── FOUNDER LINE ─────────────────────────────────────────────── */}
-        <p className="mt-12 text-saddle text-center text-sm sm:text-base">
-          built by ben, 26, from a truck. no ads. no vc.
-        </p>
+        {/* ── PRIMARY CTA — buyer gets visual dominance ────────────────── */}
+        <PrimaryBuyerCTA />
 
-        {/* ── TESTIMONIAL — real quotes only ───────────────────────────
-            Renders only when a Closed Won referral has an explicit
-            Testimonial field populated. Hides entirely otherwise (no
-            fabricated S.K./Colorado fallback — that was impersonation). */}
+        {/* ── SECONDARY CTAs — founders + brand, differentiated treatment */}
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <FounderCTA
+            foundersBacked={stats.foundersBacked}
+            foundersCap={stats.foundersCap}
+          />
+          <BrandCTA />
+        </div>
+
+        {/* ── RANCHERS PREVIEW — live discovery surface ────────────────── */}
+        {ranchers.length > 0 && (
+          <section className="mt-12">
+            <div className="flex items-baseline justify-between mb-3">
+              <h2 className="text-xs uppercase tracking-wider text-saddle">
+                verified ranchers · in stock
+              </h2>
+              <a
+                href="/map"
+                className="text-xs text-charcoal underline underline-offset-2 hover:text-saddle"
+              >
+                see all {stats.ranchersActive} →
+              </a>
+            </div>
+            <div className="space-y-2">
+              {ranchers.map((r) => (
+                <a
+                  key={r.id}
+                  href={`/ranchers/${r.slug}`}
+                  className="group flex items-baseline justify-between gap-3 py-3 px-4 border border-dust hover:border-charcoal hover:bg-bone-warm transition-base"
+                >
+                  <div className="text-left min-w-0">
+                    <div className="font-medium text-sm text-charcoal truncate">
+                      {r.ranchName}
+                    </div>
+                    {r.beefTypes && (
+                      <div className="text-xs text-saddle truncate">
+                        {r.beefTypes.toLowerCase()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-xs text-charcoal uppercase tracking-wider font-semibold">
+                      {r.state}
+                    </div>
+                    <div className="text-xs text-saddle">{r.cuts}</div>
+                  </div>
+                  <span
+                    aria-hidden="true"
+                    className="text-charcoal flex-shrink-0 transition-transform group-hover:translate-x-1"
+                  >
+                    →
+                  </span>
+                </a>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── STATS — bigger, bolder, real numbers ─────────────────────── */}
+        <section className="mt-12 py-6 border-y border-dust">
+          <div className="grid grid-cols-3 gap-4 sm:gap-8">
+            <div className="text-center">
+              <div className="font-serif text-3xl sm:text-4xl text-charcoal leading-none">
+                {stats.ranchersActive}
+              </div>
+              <div className="text-[10px] sm:text-xs uppercase tracking-wider text-saddle mt-2">
+                verified ranchers
+              </div>
+            </div>
+            <div className="text-center border-x border-dust">
+              <div className="font-serif text-3xl sm:text-4xl text-charcoal leading-none">
+                {stats.familiesMatched.toLocaleString()}
+              </div>
+              <div className="text-[10px] sm:text-xs uppercase tracking-wider text-saddle mt-2">
+                families
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="font-serif text-3xl sm:text-4xl text-charcoal leading-none">
+                {stats.totalClosedWon}
+              </div>
+              <div className="text-[10px] sm:text-xs uppercase tracking-wider text-saddle mt-2">
+                deals closed
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── REAL TESTIMONIAL — renders only if explicit Testimonial set */}
         {featured && (
-          <blockquote className="mt-10 border-l-2 border-dust pl-6 text-charcoal italic">
+          <blockquote className="mt-10 border-l-2 border-charcoal pl-5 text-charcoal italic">
             &ldquo;{featured.quote}&rdquo;
             <footer className="mt-2 text-sm text-saddle not-italic">
               {featured.ranchSlug ? (
@@ -252,21 +322,33 @@ export default async function StartPage() {
           </blockquote>
         )}
 
-        {/* ── SHARE + EARN RIBBON ──────────────────────────────────────
-            Bottom hook for repeat visitors / fans. Drives compounded
-            sign-ups via affiliate code. Existing /access thank-you
-            already has the full affiliate flow — this is a top-of-funnel
-            entry point for warm visitors. */}
-        <div className="mt-16 pt-8 border-t border-dust">
-          <p className="text-xs uppercase tracking-wider text-saddle mb-2">
-            already love us?
-          </p>
-          <a
-            href="/access?ref=share"
-            className="inline-flex items-center gap-2 text-sm text-charcoal underline underline-offset-2 hover:text-saddle"
-          >
-            share your link · refer 3 friends · earn a free half →
-          </a>
+        {/* ── FOUNDER LINE ─────────────────────────────────────────────── */}
+        <p className="mt-10 text-saddle text-center text-sm">
+          built by ben, 26, from a truck. no ads. no vc.
+        </p>
+
+        {/* ── RANCHER TEXT LINK + AFFILIATE SHARE ──────────────────────── */}
+        <div className="mt-12 pt-8 border-t border-dust space-y-4">
+          <RancherTextLink />
+          <div className="text-sm">
+            <a
+              href="/access?ref=share"
+              className="group inline-flex items-baseline gap-2 text-charcoal hover:text-saddle transition-base"
+            >
+              <span>
+                already love us?{' '}
+                <span className="underline underline-offset-2">
+                  share your link · refer 3 friends · earn a free half
+                </span>
+              </span>
+              <span
+                aria-hidden="true"
+                className="text-charcoal transition-transform group-hover:translate-x-1"
+              >
+                →
+              </span>
+            </a>
+          </div>
         </div>
       </div>
       <ExitIntentModal />
