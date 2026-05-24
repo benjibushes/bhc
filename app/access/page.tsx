@@ -98,6 +98,48 @@ const STATS_FALLBACK: PublicStats = {
   thisMonthClosedWon: 0,
 };
 
+// ── Testimonial slot ────────────────────────────────────────────────────
+// Real testimonials are fetched client-side from /api/testimonials (which
+// pulls Closed Won referrals from Airtable). When the API returns 0
+// results — cold start, Airtable outage, or no closed deals — we render
+// these original placeholder cards so the social-proof block is never
+// empty. First initial + state only for privacy on the placeholders.
+
+interface TestimonialCard {
+  quote: string;
+  rancherName?: string;
+  ranchSlug?: string;
+  buyerState?: string;
+  footerOverride?: string; // for legacy placeholder copy
+}
+
+interface ApiTestimonial {
+  buyerName: string;
+  buyerState: string;
+  rancherName: string;
+  ranchSlug: string;
+  saleAmount: number;
+  orderType: string;
+  quote: string;
+  daysAgo: number;
+  closedAt: string;
+}
+
+const FALLBACK_TESTIMONIALS: TestimonialCard[] = [
+  {
+    quote: 'the beef showed up. so did my rancher’s number. i call him direct now.',
+    footerOverride: '— S.K., Colorado',
+  },
+  {
+    quote: 'processed at a USDA plant 30 minutes from my house. paid less than the grocery store.',
+    footerOverride: '— J.M., Texas',
+  },
+  {
+    quote: 'quarter cow lasted my family of 4 nine months. cut sheet was easy.',
+    footerOverride: '— L.W., North Carolina',
+  },
+];
+
 function validateEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
   if (!re.test(email)) return false;
@@ -145,6 +187,11 @@ function AccessPageContent() {
 
   // ── Stats (client-fetched so page can stay 'use client') ─────────────────
   const [stats, setStats] = useState<PublicStats>(STATS_FALLBACK);
+
+  // ── Real testimonials (client-fetched from /api/testimonials) ────────────
+  // Initial state = empty, which makes us render FALLBACK_TESTIMONIALS until
+  // the real ones arrive. Keeps SSR markup deterministic + avoids flash.
+  const [realTestimonials, setRealTestimonials] = useState<ApiTestimonial[]>([]);
 
   // ── Campaign tracking ─────────────────────────────────────────────────────
   const [campaignData, setCampaignData] = useState({
@@ -208,6 +255,20 @@ function AccessPageContent() {
             familiesMatched: data.familiesMatched ?? STATS_FALLBACK.familiesMatched,
             thisMonthClosedWon: data.thisMonthClosedWon ?? STATS_FALLBACK.thisMonthClosedWon,
           });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // ── Fetch real testimonials ───────────────────────────────────────────────
+  // Hits the same in-process cache the /start page uses, so this is cheap
+  // even at scale. On failure we silently keep the placeholder cards.
+  useEffect(() => {
+    fetch('/api/testimonials?limit=3')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.testimonials) && data.testimonials.length > 0) {
+          setRealTestimonials(data.testimonials);
         }
       })
       .catch(() => {});
@@ -680,30 +741,49 @@ function AccessPageContent() {
                 </div>
               </div>
 
-              {/* Testimonials */}
-              {/* TODO: pull real testimonials from /wins. First initial + state only. */}
+              {/* Testimonials — real Closed Won quotes from /api/testimonials,
+                  padded with placeholders if fewer than 3 are available. */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-                <blockquote className="border-l-2 border-dust pl-4 text-charcoal italic text-sm">
-                  &ldquo;the beef showed up. so did my rancher&apos;s number. i
-                  call him direct now.&rdquo;
-                  <footer className="mt-2 text-xs text-saddle not-italic">
-                    — S.K., Colorado
-                  </footer>
-                </blockquote>
-                <blockquote className="border-l-2 border-dust pl-4 text-charcoal italic text-sm">
-                  &ldquo;processed at a USDA plant 30 minutes from my house.
-                  paid less than the grocery store.&rdquo;
-                  <footer className="mt-2 text-xs text-saddle not-italic">
-                    — J.M., Texas
-                  </footer>
-                </blockquote>
-                <blockquote className="border-l-2 border-dust pl-4 text-charcoal italic text-sm">
-                  &ldquo;quarter cow lasted my family of 4 nine months. cut
-                  sheet was easy.&rdquo;
-                  <footer className="mt-2 text-xs text-saddle not-italic">
-                    — L.W., North Carolina
-                  </footer>
-                </blockquote>
+                {(() => {
+                  const cards: TestimonialCard[] =
+                    realTestimonials.length > 0
+                      ? realTestimonials.map((t) => ({
+                          quote: t.quote,
+                          rancherName: t.rancherName,
+                          ranchSlug: t.ranchSlug,
+                          buyerState: t.buyerState,
+                        }))
+                      : [...FALLBACK_TESTIMONIALS];
+                  // Pad to 3 with placeholders so the grid stays balanced.
+                  while (cards.length < 3) cards.push(FALLBACK_TESTIMONIALS[cards.length]);
+                  return cards.slice(0, 3).map((c, i) => (
+                    <blockquote
+                      key={i}
+                      className="border-l-2 border-dust pl-4 text-charcoal italic text-sm"
+                    >
+                      &ldquo;{c.quote}&rdquo;
+                      <footer className="mt-2 text-xs text-saddle not-italic">
+                        {c.footerOverride ? (
+                          c.footerOverride
+                        ) : (
+                          <>
+                            {c.ranchSlug ? (
+                              <a
+                                href={`/ranchers/${c.ranchSlug}`}
+                                className="hover:text-charcoal underline underline-offset-2"
+                              >
+                                {c.rancherName}
+                              </a>
+                            ) : (
+                              c.rancherName
+                            )}
+                            {c.buyerState ? ` · ${c.buyerState}` : ''}
+                          </>
+                        )}
+                      </footer>
+                    </blockquote>
+                  ));
+                })()}
               </div>
 
               {/* Ranch mini-cards */}

@@ -10,6 +10,7 @@
 import type { Metadata } from 'next';
 import StartButtons from './StartButtons';
 import ExitIntentModal from '@/app/components/ExitIntentModal';
+import { getRecentTestimonials, type Testimonial } from '@/lib/testimonials';
 
 export const metadata: Metadata = {
   title: 'who are you? — buyhalfcow',
@@ -56,7 +57,13 @@ async function fetchStats(): Promise<PublicStats> {
 }
 
 export default async function StartPage() {
-  const stats = await fetchStats();
+  // Parallel fetch — stats + testimonials. Both have their own internal
+  // error handling and never throw, so Promise.all is safe.
+  const [stats, testimonials] = await Promise.all([
+    fetchStats(),
+    getRecentTestimonials(1),
+  ]);
+  const featured: Testimonial | null = testimonials[0] || null;
 
   return (
     <main className="min-h-screen bg-bone text-charcoal px-4 py-12 sm:py-20">
@@ -102,15 +109,35 @@ export default async function StartPage() {
           built by ben, 26, from a truck. no ads. no vc.
         </p>
 
-        {/* Testimonial */}
-        {/* TODO: real testimonial */}
-        <blockquote className="mt-12 border-l-2 border-dust pl-6 text-charcoal italic">
-          &ldquo;the beef showed up. so did my rancher&apos;s number. i call him direct
-          now.&rdquo;
-          <footer className="mt-2 text-sm text-saddle not-italic">
-            — S.K., Colorado
-          </footer>
-        </blockquote>
+        {/* Testimonial — real Closed Won referral, synthesized quote in
+            brand voice. Falls back to placeholder if Airtable is empty
+            or errored. */}
+        {featured ? (
+          <blockquote className="mt-12 border-l-2 border-dust pl-6 text-charcoal italic">
+            &ldquo;{featured.quote}&rdquo;
+            <footer className="mt-2 text-sm text-saddle not-italic">
+              {featured.ranchSlug ? (
+                <a
+                  href={`/ranchers/${featured.ranchSlug}`}
+                  className="hover:text-charcoal underline underline-offset-2"
+                >
+                  {featured.rancherName}
+                </a>
+              ) : (
+                featured.rancherName
+              )}
+              {featured.buyerState ? ` · ${featured.buyerState}` : ''}
+            </footer>
+          </blockquote>
+        ) : (
+          <blockquote className="mt-12 border-l-2 border-dust pl-6 text-charcoal italic">
+            &ldquo;the beef showed up. so did my rancher&apos;s number. i call him direct
+            now.&rdquo;
+            <footer className="mt-2 text-sm text-saddle not-italic">
+              — S.K., Colorado
+            </footer>
+          </blockquote>
+        )}
       </div>
       <ExitIntentModal />
     </main>
