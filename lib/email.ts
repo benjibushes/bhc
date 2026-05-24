@@ -771,6 +771,11 @@ export async function sendCutsEducation(data: {
 
   <p>Reply with what you've cooked so far — I'm collecting first-cook stories.</p>
   <p style="margin-top:32px;">— Ben</p>
+  <div style="border-top: 1px solid #A7A29A; margin-top: 30px; padding-top: 24px;">
+    <p style="color: #6B4F3F; font-size: 14px;">
+      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="https://buyhalfcow.com/shop" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
+    </p>
+  </div>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
     <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
@@ -1563,6 +1568,11 @@ a{color:#0E0E0E;}
     works too — it lands directly with me.
   </p>
   <p style="margin-top:28px;">— Ben</p>
+  <div style="border-top: 1px solid #A7A29A; margin-top: 30px; padding-top: 24px;">
+    <p style="color: #6B4F3F; font-size: 14px;">
+      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="https://buyhalfcow.com/shop" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
+    </p>
+  </div>
   <div class="footer">
     <p style="margin:0;">${BUSINESS_ADDRESS}</p>
     <p style="margin:6px 0 0;">

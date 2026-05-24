@@ -21,6 +21,7 @@
 import Link from 'next/link';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
+import MerchCTA from './MerchCTA';
 
 export const dynamic = 'force-dynamic'; // query params change per visit
 
@@ -168,6 +169,8 @@ export default async function MatchedPage({ searchParams }: Props) {
               Or go to your member dashboard →
             </Link>
           </div>
+
+          <MerchCTA />
         </div>
       </Container>
     </main>

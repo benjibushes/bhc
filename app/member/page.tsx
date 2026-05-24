@@ -6,6 +6,7 @@ import Divider from '../components/Divider';
 import MemberAuthGuard from '../components/MemberAuthGuard';
 import ContactRancherButton from '../components/ContactRancherButton';
 import Link from 'next/link';
+import { trackEvent } from '@/lib/analytics';
 
 interface Rancher {
   id: string;
@@ -241,6 +242,21 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
           </div>
 
           <Divider />
+
+          {/* Merch banner — drives traffic to Shopify /shop from highest-engagement surface */}
+          <a
+            href="https://buyhalfcow.com/shop"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => trackEvent('shop_click', { surface: 'member' })}
+            className="block my-6 border border-dust p-4 bg-bone hover:bg-divider transition flex items-center justify-between"
+          >
+            <div>
+              <div className="font-serif text-lg text-charcoal">rep the rebuild</div>
+              <p className="text-saddle text-sm mt-1">patches · hats · shirts</p>
+            </div>
+            <span className="text-charcoal font-semibold uppercase tracking-wider text-xs">shop →</span>
+          </a>
 
           {/* Tabs */}
           <div className="flex flex-wrap gap-2">
