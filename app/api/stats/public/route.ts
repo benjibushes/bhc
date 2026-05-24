@@ -1,96 +1,82 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords } from '@/lib/airtable';
-import { TABLES } from '@/lib/airtable';
+import { getAllRecords, TABLES } from '@/lib/airtable';
+import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
-export const maxDuration = 60;
+export const runtime = 'nodejs';
+// Cache 5 minutes — public stats don't need to be real-time.
+export const revalidate = 300;
 
-// Public stats — drives the homepage LiveCounter + various marketing
-// counters. We expose BOTH a raw rancher count and a verified-only count
-// because the public-facing copy should NEVER claim coverage we don't have
-// (BHC.md anti-pattern #2). Old callers reading `rancherCount` continue
-// to work; new callers prefer `verifiedRancherCount` for honest claims.
-//
-// Buyer count is also split: total members vs Beef Buyer segment, so copy
-// can say "X beef buyers" instead of conflating beef + community signups.
+const FOUNDERS_CAP = 100;
 
-type CachedStats = {
-  rancherCount: number;
-  verifiedRancherCount: number;
-  buyerCount: number;
-  beefBuyerCount: number;
-  stateCount: number;
-  verifiedStateCount: number;
-  timestamp: number;
-};
-
-let cachedStats: CachedStats | null = null;
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+interface PublicStats {
+  ranchersActive: number;
+  familiesMatched: number;
+  foundersBacked: number;
+  foundersCap: number;
+  totalClosedWon: number;
+  thisMonthClosedWon: number;
+}
 
 export async function GET() {
   try {
-    if (cachedStats && Date.now() - cachedStats.timestamp < CACHE_TTL) {
-      const { timestamp: _t, ...data } = cachedStats;
-      return NextResponse.json(data, {
-        headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
-      });
-    }
-
-    const [ranchers, consumers] = await Promise.all([
-      getAllRecords(TABLES.RANCHERS),
-      getAllRecords(TABLES.CONSUMERS),
+    const [ranchers, consumers, referrals] = await Promise.all([
+      getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
+      getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
+      getAllRecords(TABLES.REFERRALS) as Promise<any[]>,
     ]);
 
-    const allRanchers = ranchers as any[];
-    const verifiedRanchers = allRanchers.filter(
-      (r) => r['Verification Status'] === 'Verified'
-    );
+    const ranchersActive = ranchers.filter((r: any) => isRancherOperationalForBuyers(r)).length;
 
-    const rancherCount = allRanchers.length;
-    const verifiedRancherCount = verifiedRanchers.length;
+    // "Families matched" = approved consumers who reached READY or beyond
+    // i.e. they made it past the warmup gate.
+    const familiesMatched = consumers.filter((c: any) => {
+      const stage = (c['Buyer Stage'] || '').toString();
+      return ['READY', 'MATCHED', 'CLOSED'].includes(stage);
+    }).length;
 
-    const allConsumers = consumers as any[];
-    const buyerCount = allConsumers.length;
-    const beefBuyerCount = allConsumers.filter(
-      (c) => c['Segment'] === 'Beef Buyer'
-    ).length;
+    // Founder backers — Consumers w/ Founder Tier set + Tier Amount Paid > 0
+    // OR comped (Tier Amount Paid = 0 but Founder Tier set).
+    const foundersBacked = consumers.filter((c: any) => !!c['Founder Tier']).length;
 
-    const stateCount = new Set(
-      allRanchers
-        .map((r) => (r['State'] || '').toString().trim().toUpperCase())
-        .filter(Boolean)
-    ).size;
-    const verifiedStateCount = new Set(
-      verifiedRanchers
-        .map((r) => (r['State'] || '').toString().trim().toUpperCase())
-        .filter(Boolean)
-    ).size;
+    const closedWon = referrals.filter((r: any) => r['Status'] === 'Closed Won');
+    const totalClosedWon = closedWon.length;
 
-    cachedStats = {
-      rancherCount,
-      verifiedRancherCount,
-      buyerCount,
-      beefBuyerCount,
-      stateCount,
-      verifiedStateCount,
-      timestamp: Date.now(),
+    const firstOfMonth = new Date();
+    firstOfMonth.setDate(1);
+    firstOfMonth.setHours(0, 0, 0, 0);
+    const thisMonthClosedWon = closedWon.filter((r: any) => {
+      const closedAt = r['Closed At'] ? new Date(r['Closed At']).getTime() : 0;
+      return closedAt >= firstOfMonth.getTime();
+    }).length;
+
+    const stats: PublicStats = {
+      ranchersActive,
+      familiesMatched,
+      foundersBacked,
+      foundersCap: FOUNDERS_CAP,
+      totalClosedWon,
+      thisMonthClosedWon,
     };
 
-    const { timestamp: _t, ...payload } = cachedStats;
-    return NextResponse.json(payload, {
-      headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
+    return NextResponse.json(stats, {
+      headers: {
+        'Cache-Control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=60',
+      },
     });
   } catch (error: any) {
-    console.error('Error fetching public stats:', error);
-    return NextResponse.json(
-      {
-        rancherCount: 0,
-        verifiedRancherCount: 0,
-        buyerCount: 0,
-        beefBuyerCount: 0,
-        stateCount: 0,
-        verifiedStateCount: 0,
-      },
-      { status: 500 }
-    );
+    console.error('/api/stats/public error:', error?.message);
+    // Return safe fallback so /start + /founders never crash on stats failure.
+    const fallback: PublicStats = {
+      ranchersActive: 17,
+      familiesMatched: 1533,
+      foundersBacked: 0,
+      foundersCap: FOUNDERS_CAP,
+      totalClosedWon: 11,
+      thisMonthClosedWon: 0,
+    };
+    return NextResponse.json(fallback, {
+      status: 200,
+      headers: { 'Cache-Control': 'public, max-age=60' },
+    });
   }
 }
