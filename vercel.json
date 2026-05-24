@@ -83,6 +83,10 @@
     {
       "path": "/api/cron/reclassify-buyers",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/spam-audit",
+      "schedule": "0 14 * * 6"
     }
   ]
 }
