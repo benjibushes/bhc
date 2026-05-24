@@ -130,10 +130,18 @@ function AccessPageContent() {
   // ── UI state ──────────────────────────────────────────────────────────────
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submittedRancherAvailable, setSubmittedRancherAvailable] = useState(false);
+  const [submittedConsumerId, setSubmittedConsumerId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [formLoadedAt] = useState(Date.now());
   const [emailTouched, setEmailTouched] = useState(false);
+
+  // ── Affiliate signup state (thank-you card) ──────────────────────────────
+  const [affiliateBusy, setAffiliateBusy] = useState(false);
+  const [affiliateCode, setAffiliateCode] = useState<string>('');
+  const [affiliateShareUrl, setAffiliateShareUrl] = useState<string>('');
+  const [affiliateError, setAffiliateError] = useState<string>('');
+  const [affiliateCopied, setAffiliateCopied] = useState(false);
 
   // ── Stats (client-fetched so page can stay 'use client') ─────────────────
   const [stats, setStats] = useState<PublicStats>(STATS_FALLBACK);
@@ -327,6 +335,10 @@ function AccessPageContent() {
       try {
         const data = await response.json();
         setSubmittedRancherAvailable(!!data?.rancherAvailable);
+        const consumerId = data?.consumer?.id;
+        if (typeof consumerId === 'string' && consumerId.startsWith('rec')) {
+          setSubmittedConsumerId(consumerId);
+        }
       } catch {}
 
       setIsSubmitted(true);
@@ -347,6 +359,59 @@ function AccessPageContent() {
       setIsSubmitting(false);
     }
   };
+
+  // ── Affiliate signup handler (thank-you card) ────────────────────────────
+  const handleAffiliateSignup = async () => {
+    if (affiliateBusy || affiliateCode) return;
+    setAffiliateError('');
+    setAffiliateBusy(true);
+    trackEvent('affiliate_signup_click');
+    try {
+      const res = await fetch('/api/affiliates/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          fullName: firstName.trim(),
+          consumerRecordId: submittedConsumerId || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || 'could not create your share link');
+      }
+      setAffiliateCode(String(data.code || ''));
+      setAffiliateShareUrl(String(data.shareUrl || ''));
+      trackEvent('affiliate_signup_success', { code: String(data.code || '') });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'something went wrong';
+      setAffiliateError(message);
+    } finally {
+      setAffiliateBusy(false);
+    }
+  };
+
+  const handleAffiliateCopy = async () => {
+    if (!affiliateShareUrl) return;
+    try {
+      await navigator.clipboard.writeText(affiliateShareUrl);
+      setAffiliateCopied(true);
+      trackEvent('affiliate_link_copied', { code: affiliateCode });
+      window.setTimeout(() => setAffiliateCopied(false), 2000);
+    } catch {
+      // Fallback: select-into-prompt would be jarring on mobile; just ignore.
+    }
+  };
+
+  const affiliateShareText = encodeURIComponent(
+    'I just signed up for BuyHalfCow — direct-from-rancher beef, no middleman. Refer 3 friends, get a free Half ($800 value).',
+  );
+  const tweetUrl = affiliateShareUrl
+    ? `https://twitter.com/intent/tweet?text=${affiliateShareText}&url=${encodeURIComponent(affiliateShareUrl)}`
+    : '';
+  const smsUrl = affiliateShareUrl
+    ? `sms:?&body=${affiliateShareText}%20${encodeURIComponent(affiliateShareUrl)}`
+    : '';
 
   // ── Success screen (same as original) ────────────────────────────────────
   if (isSubmitted) {
@@ -407,6 +472,100 @@ function AccessPageContent() {
                     : 'monthly update on which states are about to launch'}
                 </span>
               </div>
+            </div>
+
+            {/* ── Affiliate signup card ─────────────────────────────── */}
+            {/*
+              Surfaces post-quiz: every completer becomes a potential
+              affiliate with one click. Headline is the hook ("free Half"),
+              body sets the bar ("3 friends + complete a purchase"), button
+              mints the code via /api/affiliates/signup (idempotent by email).
+            */}
+            <div className="mt-8 border border-dust bg-divider/30 p-6 text-left">
+              {!affiliateCode ? (
+                <>
+                  <h2 className="font-serif text-2xl lowercase text-charcoal mb-2">
+                    want a free Half? share your link.
+                  </h2>
+                  <p className="text-saddle text-sm leading-relaxed mb-4">
+                    refer 3 friends who sign up + complete a purchase &rarr;
+                    you get a free Half (worth $800). no caps, no expiry,
+                    stacks with future referrals.
+                  </p>
+                  {affiliateError && (
+                    <p className="text-xs text-[#8C2F2F] mb-3">{affiliateError}</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAffiliateSignup}
+                    disabled={affiliateBusy}
+                    className="w-full bg-charcoal text-bone font-semibold uppercase tracking-wider text-sm py-3 min-h-[48px] hover:bg-charcoal/80 disabled:opacity-40 transition-opacity"
+                  >
+                    {affiliateBusy ? 'minting your link…' : 'get my share link'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h2 className="font-serif text-2xl lowercase text-charcoal mb-2">
+                    your share link is live.
+                  </h2>
+                  <p className="text-saddle text-sm leading-relaxed mb-4">
+                    3 friends who sign up + buy &rarr; free Half on us. track
+                    progress at{' '}
+                    <a
+                      href="/affiliate"
+                      className="text-charcoal underline underline-offset-2 hover:text-saddle"
+                    >
+                      /affiliate
+                    </a>
+                    .
+                  </p>
+                  <div className="flex items-stretch gap-2 mb-3">
+                    <input
+                      type="text"
+                      readOnly
+                      value={affiliateShareUrl}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="flex-1 min-w-0 border border-dust px-3 py-2 bg-bone text-charcoal text-sm font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAffiliateCopy}
+                      className="bg-charcoal text-bone uppercase tracking-wider text-xs font-semibold px-4 min-h-[44px] hover:bg-charcoal/80 transition-opacity whitespace-nowrap"
+                    >
+                      {affiliateCopied ? 'copied' : 'copy link'}
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <a
+                      href={tweetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() =>
+                        trackEvent('affiliate_link_shared', {
+                          code: affiliateCode,
+                          channel: 'twitter',
+                        })
+                      }
+                      className="flex-1 border border-dust text-charcoal uppercase tracking-wider text-xs font-semibold px-4 py-2 min-h-[40px] flex items-center justify-center hover:bg-bone transition-colors"
+                    >
+                      tweet
+                    </a>
+                    <a
+                      href={smsUrl}
+                      onClick={() =>
+                        trackEvent('affiliate_link_shared', {
+                          code: affiliateCode,
+                          channel: 'sms',
+                        })
+                      }
+                      className="flex-1 border border-dust text-charcoal uppercase tracking-wider text-xs font-semibold px-4 py-2 min-h-[40px] flex items-center justify-center hover:bg-bone transition-colors"
+                    >
+                      text
+                    </a>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="pt-4 text-sm text-saddle">

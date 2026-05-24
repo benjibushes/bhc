@@ -42,7 +42,11 @@ export type AnalyticsEventName =
   | 'start_button_click'
   | 'shop_click'
   | 'exit_intent_shown'
-  | 'exit_intent_capture';
+  | 'exit_intent_capture'
+  | 'affiliate_signup_click'
+  | 'affiliate_signup_success'
+  | 'affiliate_link_copied'
+  | 'affiliate_link_shared';
 
 export function trackEvent(
   event: AnalyticsEventName,
