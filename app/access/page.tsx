@@ -98,20 +98,13 @@ const STATS_FALLBACK: PublicStats = {
   thisMonthClosedWon: 0,
 };
 
-// ── Testimonial slot ────────────────────────────────────────────────────
-// Real testimonials are fetched client-side from /api/testimonials (which
-// pulls Closed Won referrals from Airtable). When the API returns 0
-// results — cold start, Airtable outage, or no closed deals — we render
-// these original placeholder cards so the social-proof block is never
-// empty. First initial + state only for privacy on the placeholders.
-
-interface TestimonialCard {
-  quote: string;
-  rancherName?: string;
-  ranchSlug?: string;
-  buyerState?: string;
-  footerOverride?: string; // for legacy placeholder copy
-}
+// ── Testimonial type ────────────────────────────────────────────────────
+// Real testimonials only — fetched client-side from /api/testimonials
+// (which pulls Closed Won referrals w/ explicit Testimonial field
+// populated). When zero exist, the testimonial row hides entirely.
+// We previously shipped invented S.K./J.M./L.W. placeholder fallbacks
+// but pulled them: fabricated quotes attributed to fabricated initials
+// presented as real customer voices was impersonation-class risk.
 
 interface ApiTestimonial {
   buyerName: string;
@@ -124,21 +117,6 @@ interface ApiTestimonial {
   daysAgo: number;
   closedAt: string;
 }
-
-const FALLBACK_TESTIMONIALS: TestimonialCard[] = [
-  {
-    quote: 'the beef showed up. so did my rancher’s number. i call him direct now.',
-    footerOverride: '— S.K., Colorado',
-  },
-  {
-    quote: 'processed at a USDA plant 30 minutes from my house. paid less than the grocery store.',
-    footerOverride: '— J.M., Texas',
-  },
-  {
-    quote: 'quarter cow lasted my family of 4 nine months. cut sheet was easy.',
-    footerOverride: '— L.W., North Carolina',
-  },
-];
 
 function validateEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -189,9 +167,30 @@ function AccessPageContent() {
   const [stats, setStats] = useState<PublicStats>(STATS_FALLBACK);
 
   // ── Real testimonials (client-fetched from /api/testimonials) ────────────
-  // Initial state = empty, which makes us render FALLBACK_TESTIMONIALS until
-  // the real ones arrive. Keeps SSR markup deterministic + avoids flash.
+  // Integrity rule: render real quotes only. If zero are available (no
+  // operator-collected Testimonial fields yet), the entire testimonials
+  // row hides — we never show invented quotes attributed to invented
+  // initials (S.K./J.M./L.W. fallbacks were impersonation-class risk).
   const [realTestimonials, setRealTestimonials] = useState<ApiTestimonial[]>([]);
+
+  // ── Real ranch cards (client-fetched from /api/public/ranchers) ──────────
+  // Replaces the 3 hardcoded generic mini-cards ("grass-finished angus —
+  // Colorado") with 3 random live ranchers from the Page-Live set. Each
+  // card links to /ranchers/[slug] so the social-proof block doubles as
+  // a discovery surface. If 0 ranchers (cold start, API outage), the
+  // entire row hides.
+  interface PublicRancher {
+    id: string;
+    slug: string;
+    ranch_name: string;
+    operator_name: string;
+    state: string;
+    beef_types: string;
+    quarter_price: number | null;
+    half_price: number | null;
+    whole_price: number | null;
+  }
+  const [realRanchers, setRealRanchers] = useState<PublicRancher[]>([]);
 
   // ── Campaign tracking ─────────────────────────────────────────────────────
   const [campaignData, setCampaignData] = useState({
@@ -262,13 +261,33 @@ function AccessPageContent() {
 
   // ── Fetch real testimonials ───────────────────────────────────────────────
   // Hits the same in-process cache the /start page uses, so this is cheap
-  // even at scale. On failure we silently keep the placeholder cards.
+  // even at scale. On failure we silently render empty (testimonial row hides).
   useEffect(() => {
     fetch('/api/testimonials?limit=3')
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data && Array.isArray(data.testimonials) && data.testimonials.length > 0) {
           setRealTestimonials(data.testimonials);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // ── Fetch real ranchers for mini-cards ──────────────────────────────────
+  // Pick 3 at random from the Page-Live set so repeat visitors don't see
+  // the same 3 every time. Server endpoint is unauthenticated + ISR-friendly.
+  useEffect(() => {
+    fetch('/api/public/ranchers')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.ranchers) && data.ranchers.length > 0) {
+          // Fisher-Yates shuffle truncated to 3
+          const arr = [...data.ranchers] as PublicRancher[];
+          for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+          }
+          setRealRanchers(arr.slice(0, 3));
         }
       })
       .catch(() => {});
@@ -732,78 +751,64 @@ function AccessPageContent() {
                 </div>
               </div>
 
-              {/* Testimonials — real Closed Won quotes from /api/testimonials,
-                  padded with placeholders if fewer than 3 are available. */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-                {(() => {
-                  const cards: TestimonialCard[] =
-                    realTestimonials.length > 0
-                      ? realTestimonials.map((t) => ({
-                          quote: t.quote,
-                          rancherName: t.rancherName,
-                          ranchSlug: t.ranchSlug,
-                          buyerState: t.buyerState,
-                        }))
-                      : [...FALLBACK_TESTIMONIALS];
-                  // Pad to 3 with placeholders so the grid stays balanced.
-                  while (cards.length < 3) cards.push(FALLBACK_TESTIMONIALS[cards.length]);
-                  return cards.slice(0, 3).map((c, i) => (
+              {/* Testimonials — REAL Closed Won quotes only. Row hides when
+                  zero real quotes exist (no fabricated S.K./J.M./L.W. fakes). */}
+              {realTestimonials.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+                  {realTestimonials.slice(0, 3).map((t, i) => (
                     <blockquote
                       key={i}
                       className="border-l-2 border-dust pl-4 text-charcoal italic text-sm"
                     >
-                      &ldquo;{c.quote}&rdquo;
+                      &ldquo;{t.quote}&rdquo;
                       <footer className="mt-2 text-xs text-saddle not-italic">
-                        {c.footerOverride ? (
-                          c.footerOverride
+                        {t.ranchSlug ? (
+                          <a
+                            href={`/ranchers/${t.ranchSlug}`}
+                            className="hover:text-charcoal underline underline-offset-2"
+                          >
+                            {t.rancherName}
+                          </a>
                         ) : (
-                          <>
-                            {c.ranchSlug ? (
-                              <a
-                                href={`/ranchers/${c.ranchSlug}`}
-                                className="hover:text-charcoal underline underline-offset-2"
-                              >
-                                {c.rancherName}
-                              </a>
-                            ) : (
-                              c.rancherName
-                            )}
-                            {c.buyerState ? ` · ${c.buyerState}` : ''}
-                          </>
+                          t.rancherName
                         )}
+                        {t.buyerState ? ` · ${t.buyerState}` : ''}
                       </footer>
                     </blockquote>
-                  ));
-                })()}
-              </div>
+                  ))}
+                </div>
+              )}
 
-              {/* Ranch mini-cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="border border-dust px-4 py-3 text-sm">
-                  <div className="font-medium text-charcoal mb-0.5">
-                    grass-finished angus
-                  </div>
-                  <div className="text-saddle text-xs">
-                    Colorado · quarter–whole · available
-                  </div>
+              {/* Ranch mini-cards — REAL Page-Live ranchers. Pulls 3 random
+                  from /api/public/ranchers; links to /ranchers/[slug] so the
+                  social-proof block doubles as discovery. Hides when none. */}
+              {realRanchers.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {realRanchers.map((r) => {
+                    const cuts: string[] = [];
+                    if (r.quarter_price) cuts.push('quarter');
+                    if (r.half_price) cuts.push('half');
+                    if (r.whole_price) cuts.push('whole');
+                    const cutSummary = cuts.length > 0 ? cuts.join('–') : 'beef';
+                    const headline =
+                      r.beef_types || r.ranch_name || 'verified rancher';
+                    return (
+                      <a
+                        key={r.id}
+                        href={`/ranchers/${r.slug}`}
+                        className="border border-dust px-4 py-3 text-sm block hover:bg-bone-warm transition-base"
+                      >
+                        <div className="font-medium text-charcoal mb-0.5 lowercase">
+                          {headline}
+                        </div>
+                        <div className="text-saddle text-xs">
+                          {r.state} · {cutSummary} · available
+                        </div>
+                      </a>
+                    );
+                  })}
                 </div>
-                <div className="border border-dust px-4 py-3 text-sm">
-                  <div className="font-medium text-charcoal mb-0.5">
-                    heritage shorthorn
-                  </div>
-                  <div className="text-saddle text-xs">
-                    Texas · half–whole · available
-                  </div>
-                </div>
-                <div className="border border-dust px-4 py-3 text-sm">
-                  <div className="font-medium text-charcoal mb-0.5">
-                    regenerative black angus
-                  </div>
-                  <div className="text-saddle text-xs">
-                    Montana · quarter–whole · available
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
 
             <Divider />

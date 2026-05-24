@@ -229,8 +229,11 @@ export default async function StartPage() {
           built by ben, 26, from a truck. no ads. no vc.
         </p>
 
-        {/* ── TESTIMONIAL ──────────────────────────────────────────────── */}
-        {featured ? (
+        {/* ── TESTIMONIAL — real quotes only ───────────────────────────
+            Renders only when a Closed Won referral has an explicit
+            Testimonial field populated. Hides entirely otherwise (no
+            fabricated S.K./Colorado fallback — that was impersonation). */}
+        {featured && (
           <blockquote className="mt-10 border-l-2 border-dust pl-6 text-charcoal italic">
             &ldquo;{featured.quote}&rdquo;
             <footer className="mt-2 text-sm text-saddle not-italic">
@@ -245,14 +248,6 @@ export default async function StartPage() {
                 featured.rancherName
               )}
               {featured.buyerState ? ` · ${featured.buyerState}` : ''}
-            </footer>
-          </blockquote>
-        ) : (
-          <blockquote className="mt-10 border-l-2 border-dust pl-6 text-charcoal italic">
-            &ldquo;the beef showed up. so did my rancher&apos;s number. i call him direct
-            now.&rdquo;
-            <footer className="mt-2 text-sm text-saddle not-italic">
-              — S.K., Colorado
             </footer>
           </blockquote>
         )}
