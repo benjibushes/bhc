@@ -146,7 +146,15 @@ export async function logEmailSend(input: {
     // Invalidate the cap cache for this recipient — next send will refresh.
     _countCache.delete(input.recipientEmail.toLowerCase());
   } catch (e: any) {
-    console.warn(`[freqGuard] logEmailSend failed:`, e?.message);
+    // Use console.error so this surfaces in Vercel log API (console.warn is invisible there).
+    // Log the full error object — statusCode + errors array — so the root cause is findable
+    // without a deploy. Previously this only logged e?.message which hid 403/422 details.
+    console.error(
+      `[freqGuard] logEmailSend FAILED for ${input.recipientEmail} / ${input.templateName}:`,
+      e?.message,
+      'statusCode:', e?.statusCode,
+      'FULL ERROR:', JSON.stringify(e?.errors || e?.error || e),
+    );
   }
 }
 
