@@ -4291,6 +4291,181 @@ Confirm send?`;
         }
       }
 
+      // /emaillog <email-or-name> — show last 30d of emails sent to a Consumer.
+      else if (text.startsWith('/emaillog ')) {
+        const arg = text.slice('/emaillog '.length).trim().toLowerCase();
+        if (!arg) {
+          await sendTelegramMessage(chatId, 'Usage: <code>/emaillog &lt;email&gt;</code>');
+        } else {
+          try {
+            const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+            const sinceISO = new Date(Date.now() - THIRTY_DAYS_MS).toISOString();
+            const safeArg = arg.replace(/"/g, '');
+            const sends = (await getAllRecords(
+              TABLES.EMAIL_SENDS,
+              `AND(LOWER({Recipient Email})="${safeArg}", {Sent At} > "${sinceISO}")`,
+            )) as any[];
+            if (sends.length === 0) {
+              await sendTelegramMessage(chatId, `📭 No emails sent to <code>${arg}</code> in last 30d.`);
+            } else {
+              const sorted = sends.sort((a, b) =>
+                new Date(b['Sent At']).getTime() - new Date(a['Sent At']).getTime()
+              ).slice(0, 30);
+              const lines = sorted.map((s: any) => {
+                const ts = new Date(s['Sent At']).toISOString().slice(0, 16).replace('T', ' ');
+                const status = (s['Status'] || '').toString();
+                const tag = status === 'sent' ? '✅' : status === 'suppressed' ? '⏸️' : '⚠️';
+                return `${tag} ${ts} · <b>${s['Template Name'] || '?'}</b>${s['Suppression Reason'] ? ` (${s['Suppression Reason']})` : ''}`;
+              });
+              const sentCount = sends.filter((s: any) => s['Status'] === 'sent').length;
+              const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+              const sevenDaysAgo = Date.now() - SEVEN_DAYS_MS;
+              const last7d = sends.filter((s: any) =>
+                new Date(s['Sent At']).getTime() > sevenDaysAgo && s['Status'] === 'sent'
+              ).length;
+              await sendTelegramMessage(
+                chatId,
+                `📧 <b>EMAIL LOG</b> · ${arg}\n\n` +
+                `Past 30d: ${sentCount} sent, ${sends.length - sentCount} suppressed\n` +
+                `Past 7d: ${last7d} sent\n\n` +
+                lines.join('\n')
+              );
+            }
+          } catch (e: any) {
+            await sendTelegramMessage(chatId, `⚠️ /emaillog failed: ${e?.message || 'unknown'}`);
+          }
+        }
+      }
+
+      // /pausemail <template-name> — kill a specific email template
+      else if (text.startsWith('/pausemail ')) {
+        const name = text.slice('/pausemail '.length).trim();
+        if (!name) {
+          await sendTelegramMessage(chatId, 'Usage: <code>/pausemail &lt;template-name&gt;</code>\n\nExample: <code>/pausemail sendRancherCheckIn</code>');
+        } else {
+          try {
+            await pauseCron(name, 'telegram', 'paused via /pausemail');
+            await sendTelegramMessage(chatId, `⏸️ Paused email template <code>${name}</code>. Use <code>/resumemail ${name}</code> to resume.`);
+          } catch (e: any) {
+            await sendTelegramMessage(chatId, `⚠️ /pausemail failed: ${e?.message || 'unknown'}`);
+          }
+        }
+      }
+
+      // /resumemail <template-name> — re-enable a template
+      else if (text.startsWith('/resumemail ')) {
+        const name = text.slice('/resumemail '.length).trim();
+        if (!name) {
+          await sendTelegramMessage(chatId, 'Usage: <code>/resumemail &lt;template-name&gt;</code>');
+        } else {
+          try {
+            await resumeCron(name);
+            await sendTelegramMessage(chatId, `▶️ Resumed email template <code>${name}</code>.`);
+          } catch (e: any) {
+            await sendTelegramMessage(chatId, `⚠️ /resumemail failed: ${e?.message || 'unknown'}`);
+          }
+        }
+      }
+
+      // /freqcap <number> | show — global rolling 7d cap per Consumer
+      else if (text === '/freqcap show' || text === '/freqcap') {
+        const cap = process.env.EMAIL_FREQUENCY_CAP_PER_WEEK || '10 (default)';
+        await sendTelegramMessage(
+          chatId,
+          `<b>Frequency cap</b>: ${cap} emails/Consumer/7d\n\n` +
+          `Change via Vercel env var <code>EMAIL_FREQUENCY_CAP_PER_WEEK</code> + redeploy.\n` +
+          `Transactional templates (invoices, intros, approvals) bypass the cap.`
+        );
+      }
+
+      // /templatestats — per-template send count last 30 days
+      else if (text === '/templatestats') {
+        try {
+          const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+          const sinceISO = new Date(Date.now() - THIRTY_DAYS_MS).toISOString();
+          const sends = (await getAllRecords(
+            TABLES.EMAIL_SENDS,
+            `{Sent At} > "${sinceISO}"`,
+          )) as any[];
+          const byTemplate: Record<string, { sent: number; suppressed: number }> = {};
+          for (const s of sends) {
+            const t = String(s['Template Name'] || '?');
+            byTemplate[t] = byTemplate[t] || { sent: 0, suppressed: 0 };
+            if (s['Status'] === 'sent') byTemplate[t].sent++;
+            else if (s['Status'] === 'suppressed') byTemplate[t].suppressed++;
+          }
+          const ranked = Object.entries(byTemplate)
+            .sort((a, b) => b[1].sent - a[1].sent)
+            .slice(0, 25);
+          const lines = ranked.map(([t, v]) =>
+            `${v.sent.toString().padStart(4)} sent${v.suppressed > 0 ? ` · ${v.suppressed} supp` : ''}  ${t}`
+          );
+          await sendTelegramMessage(
+            chatId,
+            `📈 <b>TEMPLATE STATS</b> · Last 30 days\n\n` +
+            `<pre>${lines.join('\n')}</pre>\n\n` +
+            `Open/click data not yet wired (Phase 2 via Resend webhooks).`
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /templatestats failed: ${e?.message || 'unknown'}`);
+        }
+      }
+
+      // /whatfired today | yesterday | YYYY-MM-DD — daily activity summary
+      else if (text.startsWith('/whatfired')) {
+        const arg = text.slice('/whatfired'.length).trim() || 'today';
+        try {
+          let targetDate: Date;
+          if (arg === 'today') targetDate = new Date();
+          else if (arg === 'yesterday') targetDate = new Date(Date.now() - 86400000);
+          else targetDate = new Date(arg);
+          if (isNaN(targetDate.getTime())) {
+            await sendTelegramMessage(chatId, 'Usage: <code>/whatfired today</code> or <code>/whatfired yesterday</code> or <code>/whatfired YYYY-MM-DD</code>');
+            return NextResponse.json({ ok: true });
+          }
+          const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+          const dayEnd = new Date(dayStart.getTime() + 86400000);
+          const [cronRuns, sends] = await Promise.all([
+            getAllRecords(
+              TABLES.CRON_RUNS,
+              `AND({Started At} >= "${dayStart.toISOString()}", {Started At} < "${dayEnd.toISOString()}")`,
+            ) as Promise<any[]>,
+            getAllRecords(
+              TABLES.EMAIL_SENDS,
+              `AND({Sent At} >= "${dayStart.toISOString()}", {Sent At} < "${dayEnd.toISOString()}")`,
+            ) as Promise<any[]>,
+          ]);
+          const cronByName: Record<string, { count: number; lastStatus: string }> = {};
+          for (const c of cronRuns) {
+            const n = String(c['Name'] || '?');
+            cronByName[n] = cronByName[n] || { count: 0, lastStatus: '' };
+            cronByName[n].count++;
+            cronByName[n].lastStatus = String(c['Status'] || '');
+          }
+          const sendsByTemplate: Record<string, number> = {};
+          for (const s of sends) {
+            if (s['Status'] !== 'sent') continue;
+            const t = String(s['Template Name'] || '?');
+            sendsByTemplate[t] = (sendsByTemplate[t] || 0) + 1;
+          }
+          const cronLines = Object.entries(cronByName).map(([n, v]) =>
+            `${v.lastStatus === 'success' ? '✅' : v.lastStatus === 'partial' ? '🟡' : v.lastStatus === 'paused' ? '⏸️' : '❌'} ${n} (×${v.count})`
+          );
+          const sendLines = Object.entries(sendsByTemplate)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 15)
+            .map(([t, n]) => `${n}× ${t}`);
+          await sendTelegramMessage(
+            chatId,
+            `🤖 <b>WHAT FIRED</b> · ${dayStart.toISOString().slice(0, 10)}\n\n` +
+            `<b>Crons (${cronRuns.length} runs)</b>:\n${cronLines.join('\n') || 'none'}\n\n` +
+            `<b>Emails sent (${sends.filter(s => s['Status'] === 'sent').length} total)</b>:\n${sendLines.join('\n') || 'none'}`
+          );
+        } catch (e: any) {
+          await sendTelegramMessage(chatId, `⚠️ /whatfired failed: ${e?.message || 'unknown'}`);
+        }
+      }
+
       // /match <buyer-search> <rancher-search> — interactive buyer-to-rancher
       // direct routing w/ fuzzy name search + inline confirm button.
       //
@@ -4653,6 +4828,12 @@ Confirm send?`;
 /status — Health check all dependencies (Airtable, Resend, Telegram, AI)
 /cronstatus — Last-24h run status for every cron (catches missing runs)
 /routingstatus — Buyer routing-segment breakdown (MATCH_NOW · WARM_LEAD · etc)
+/emaillog [email] — Last 30d email log for a Consumer
+/pausemail [template] — Kill a specific email template
+/resumemail [template] — Re-enable a paused template
+/freqcap — Show current frequency cap
+/templatestats — Per-template send count last 30d
+/whatfired [today|yesterday|YYYY-MM-DD] — Daily activity summary
 /bulkfire — Promote all Pending Approval → Intro Sent + fire emails (max 50)
 /pausecron [name] — Pause a cron from firing
 /resumecron [name] — Resume a paused cron
