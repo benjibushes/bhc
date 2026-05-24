@@ -18,6 +18,7 @@ import Divider from '../components/Divider';
 import Link from 'next/link';
 import { trackEvent } from '@/lib/analytics';
 import { track } from '@/lib/track';
+import ExitIntentModal from '@/app/components/ExitIntentModal';
 
 const US_STATES = [
   { value: '', label: 'pick your state' },
@@ -748,6 +749,7 @@ function AccessPageContent() {
             </div>
           </div>
         </Container>
+        <ExitIntentModal />
       </main>
     </>
   );

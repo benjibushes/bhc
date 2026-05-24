@@ -38,6 +38,7 @@ import {
 } from '@/lib/secrets';
 import FoundersWall from './components/FoundersWall';
 import FounderCheckoutButton from './components/FounderCheckoutButton';
+import ExitIntentModal from '@/app/components/ExitIntentModal';
 
 export const metadata: Metadata = {
   title: 'The Founding Herd — back BuyHalfCow',
@@ -697,6 +698,7 @@ export default async function FoundersPage({
 
       {/* Spacer so the sticky CTA doesn't cover footer content on mobile */}
       <div className="md:hidden h-14" aria-hidden="true" />
+      <ExitIntentModal />
     </main>
   );
 }

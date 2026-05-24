@@ -9,6 +9,7 @@
 
 import type { Metadata } from 'next';
 import StartButtons from './StartButtons';
+import ExitIntentModal from '@/app/components/ExitIntentModal';
 
 export const metadata: Metadata = {
   title: 'who are you? — buyhalfcow',
@@ -111,6 +112,7 @@ export default async function StartPage() {
           </footer>
         </blockquote>
       </div>
+      <ExitIntentModal />
     </main>
   );
 }
