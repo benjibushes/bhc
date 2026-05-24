@@ -1,18 +1,19 @@
-// /start — editorial-style bio router. Quiet typography, whitespace as
-// design tool, single primary CTA, secondary routes as text-link rows.
+// /start — conversion-optimized bio router.
 //
-// Hierarchy:
+// Layout:
 //   1. Hero (tight serif headline + subhead)
-//   2. Recent close (1-line italic proof, no badges/borders)
-//   3. PRIMARY CTA — buyer (single clean charcoal button)
-//   4. Stats line (real, comma-separated)
-//   5. Verified ranchers list (clean text rows, no boxes)
-//   6. Secondary routes (founders / brand / rancher join — quiet text-link rows)
-//   7. Testimonial (real quote only, hides if empty)
-//   8. Footer (founder line + share)
+//   2. Live recent-close badge (real transaction in last N days)
+//   3. PRIMARY CTA — buyer "get matched" (full-width charcoal slab)
+//   4. Trust line below CTA — "free · no card · routed in your state"
+//   5. Big stats (3 large serif numbers, no boxes)
+//   6. Featured ranchers (3-up card grid w/ logos, prices, state) → /ranchers/[slug]
+//   7. Founders Herd card (distinct, scarcity bar + claim CTA)
+//   8. Brand Partner card (distinct, tier prices + CTA)
+//   9. Real testimonial (only if explicit Testimonial field set)
+//  10. Footer (rancher join text-link + share-earn text-link)
 
 import type { Metadata } from 'next';
-import PrimaryBuyerCTA, { SecondaryLink } from './StartButtons';
+import PrimaryBuyerCTA, { FounderCard, BrandCard } from './StartButtons';
 import ExitIntentModal from '@/app/components/ExitIntentModal';
 import { getRecentTestimonials, type Testimonial } from '@/lib/testimonials';
 import {
@@ -117,24 +118,44 @@ interface RancherPreview {
   ranchName: string;
   state: string;
   beefTypes: string;
+  logoUrl: string;
+  startingPrice: number | null;
 }
 
 async function fetchRancherPreview(): Promise<RancherPreview[]> {
   try {
     const ranchers = (await getActiveRancherPages()) as any[];
     if (ranchers.length === 0) return [];
-    const shuffled = [...ranchers];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled.slice(0, 3).map((r: any) => ({
-      id: r.id,
-      slug: (r['Slug'] || '').toString(),
-      ranchName: (r['Ranch Name'] || '').toString(),
-      state: (r['State'] || '').toString(),
-      beefTypes: (r['Beef Types'] || '').toString(),
-    }));
+    // Prefer ranchers WITH logos so the card grid looks intentional.
+    // Fall through to no-logo ranchers if fewer than 3 logos exist.
+    const withLogo = ranchers.filter((r: any) => (r['Logo URL'] || '').toString());
+    const withoutLogo = ranchers.filter((r: any) => !(r['Logo URL'] || '').toString());
+    const shuffle = (arr: any[]) => {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+    const pool = [...shuffle(withLogo), ...shuffle(withoutLogo)];
+    return pool.slice(0, 3).map((r: any) => {
+      const prices = [
+        Number(r['Quarter Price']) || null,
+        Number(r['Half Price']) || null,
+        Number(r['Whole Price']) || null,
+      ].filter((p): p is number => p !== null && p > 0);
+      const startingPrice = prices.length > 0 ? Math.min(...prices) : null;
+      return {
+        id: r.id,
+        slug: (r['Slug'] || '').toString(),
+        ranchName: (r['Ranch Name'] || '').toString(),
+        state: (r['State'] || '').toString(),
+        beefTypes: (r['Beef Types'] || '').toString(),
+        logoUrl: (r['Logo URL'] || '').toString(),
+        startingPrice,
+      };
+    });
   } catch {
     return [];
   }
@@ -148,6 +169,10 @@ function formatDaysAgo(days: number): string {
   return `${Math.floor(days / 30)} months ago`;
 }
 
+function rancherInitial(name: string): string {
+  return name.trim().charAt(0).toUpperCase() || '?';
+}
+
 export default async function StartPage() {
   const [stats, testimonials, latestClose, ranchers] = await Promise.all([
     fetchStats(),
@@ -156,138 +181,141 @@ export default async function StartPage() {
     fetchRancherPreview(),
   ]);
   const featured: Testimonial | null = testimonials[0] || null;
-  const foundersLeft = Math.max(0, stats.foundersCap - stats.foundersBacked);
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      <div className="mx-auto max-w-xl px-5 sm:px-6 py-14 sm:py-20">
+      <div className="mx-auto max-w-2xl px-5 sm:px-6 py-10 sm:py-16">
         {/* HERO */}
-        <h1 className="font-serif text-3xl sm:text-4xl text-charcoal lowercase leading-[1.05] mb-3">
+        <h1 className="font-serif text-4xl sm:text-5xl text-charcoal lowercase leading-[1.05] mb-3">
           real beef.<br />
-          real ranchers.<br />
-          direct.
+          real ranchers. direct.
         </h1>
-        <p className="text-saddle text-base mb-10">
+        <p className="text-saddle text-base sm:text-lg mb-6">
           pick your state. talk to the rancher direct.
         </p>
 
-        {/* RECENT CLOSE — quiet single line */}
+        {/* LIVE RECENT CLOSE BADGE */}
         {latestClose && (
-          <p className="text-sm text-saddle italic mb-8">
-            just closed · {latestClose.firstName} got a{' '}
-            {latestClose.orderType.toLowerCase()} from{' '}
-            {latestClose.ranchSlug ? (
-              <a
-                href={`/ranchers/${latestClose.ranchSlug}`}
-                className="text-charcoal not-italic hover:underline"
-              >
-                {latestClose.ranchName}
-              </a>
-            ) : (
-              <span className="text-charcoal not-italic">{latestClose.ranchName}</span>
-            )}
-            {latestClose.buyerState && ` · ${latestClose.buyerState}`}
-            {' · '}
-            {formatDaysAgo(latestClose.daysAgo)}
-          </p>
+          <div className="mb-6 inline-flex items-center gap-2 text-xs sm:text-sm">
+            <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-sage/15 text-sage-dark border border-sage/40 font-semibold uppercase tracking-wider text-[10px]">
+              live
+            </span>
+            <span className="text-saddle">
+              {latestClose.firstName} got a {latestClose.orderType.toLowerCase()} from{' '}
+              {latestClose.ranchSlug ? (
+                <a
+                  href={`/ranchers/${latestClose.ranchSlug}`}
+                  className="text-charcoal underline underline-offset-2 hover:text-saddle font-medium"
+                >
+                  {latestClose.ranchName}
+                </a>
+              ) : (
+                <span className="text-charcoal font-medium">{latestClose.ranchName}</span>
+              )}
+              {latestClose.buyerState && ` · ${latestClose.buyerState}`}
+              {' · '}
+              {formatDaysAgo(latestClose.daysAgo)}
+            </span>
+          </div>
         )}
 
-        {/* PRIMARY CTA */}
+        {/* PRIMARY CTA + TRUST LINE */}
         <PrimaryBuyerCTA />
-
-        {/* STATS — minimal, single line on desktop */}
-        <p className="mt-8 text-sm text-saddle">
-          <span className="text-charcoal font-medium">{stats.ranchersActive}</span> verified
-          ranchers ·{' '}
-          <span className="text-charcoal font-medium">
-            {stats.familiesMatched.toLocaleString()}
-          </span>{' '}
-          families ·{' '}
-          <span className="text-charcoal font-medium">{stats.totalClosedWon}</span> deals
-          closed
+        <p className="mt-3 text-xs sm:text-sm text-saddle">
+          free · no card · routed in your state · you talk direct
         </p>
 
-        {/* RANCHERS PREVIEW — clean rows, no boxes */}
+        {/* BIG STATS — visual punch, no boxes */}
+        <div className="mt-10 grid grid-cols-3 gap-4">
+          <div>
+            <div className="font-serif text-3xl sm:text-5xl text-charcoal leading-none">
+              {stats.ranchersActive}
+            </div>
+            <div className="text-[10px] sm:text-xs uppercase tracking-wider text-saddle mt-2">
+              verified ranchers
+            </div>
+          </div>
+          <div>
+            <div className="font-serif text-3xl sm:text-5xl text-charcoal leading-none">
+              {stats.familiesMatched.toLocaleString()}
+            </div>
+            <div className="text-[10px] sm:text-xs uppercase tracking-wider text-saddle mt-2">
+              families
+            </div>
+          </div>
+          <div>
+            <div className="font-serif text-3xl sm:text-5xl text-charcoal leading-none">
+              {stats.totalClosedWon}
+            </div>
+            <div className="text-[10px] sm:text-xs uppercase tracking-wider text-saddle mt-2">
+              deals closed
+            </div>
+          </div>
+        </div>
+
+        {/* FEATURED RANCHERS — logo grid, real visual punch */}
         {ranchers.length > 0 && (
           <section className="mt-12">
             <div className="flex items-baseline justify-between mb-4">
-              <h2 className="text-xs uppercase tracking-wider text-saddle">
+              <h2 className="text-xs uppercase tracking-wider text-saddle font-semibold">
                 ranchers in stock
               </h2>
               <a
                 href="/map"
                 className="text-xs text-saddle hover:text-charcoal underline underline-offset-2"
               >
-                see all {stats.ranchersActive}
+                see all {stats.ranchersActive} →
               </a>
             </div>
-            <div>
+            <div className="grid grid-cols-3 gap-3">
               {ranchers.map((r) => (
                 <a
                   key={r.id}
                   href={`/ranchers/${r.slug}`}
-                  className="group flex items-baseline justify-between gap-4 py-3 border-b border-dust hover:border-charcoal transition-base"
+                  className="group block border border-dust hover:border-charcoal hover:bg-bone-warm transition-base p-3 sm:p-4"
                 >
-                  <span className="text-charcoal min-w-0 truncate">
-                    {r.ranchName}
-                    {r.beefTypes && (
-                      <span className="text-saddle text-sm ml-2 normal-case">
-                        · {r.beefTypes.toLowerCase()}
+                  {/* Logo or initial fallback */}
+                  <div className="aspect-square w-full bg-bone-warm border border-dust mb-3 overflow-hidden flex items-center justify-center">
+                    {r.logoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={r.logoUrl}
+                        alt={`${r.ranchName} logo`}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="font-serif text-3xl text-saddle">
+                        {rancherInitial(r.ranchName)}
                       </span>
                     )}
-                  </span>
-                  <span className="flex items-baseline gap-3 flex-shrink-0">
-                    <span className="text-xs uppercase tracking-wider text-saddle">
-                      {r.state}
-                    </span>
-                    <span
-                      aria-hidden="true"
-                      className="text-charcoal transition-transform group-hover:translate-x-1"
-                    >
-                      →
-                    </span>
-                  </span>
+                  </div>
+                  <div className="font-medium text-xs sm:text-sm text-charcoal leading-tight mb-1 line-clamp-2">
+                    {r.ranchName}
+                  </div>
+                  <div className="text-[10px] sm:text-xs text-saddle uppercase tracking-wider">
+                    {r.state}
+                    {r.startingPrice && ` · from $${r.startingPrice.toLocaleString()}`}
+                  </div>
                 </a>
               ))}
             </div>
           </section>
         )}
 
-        {/* SECONDARY ROUTES — quiet text-link rows */}
-        <section className="mt-12">
-          <h2 className="text-xs uppercase tracking-wider text-saddle mb-4">
-            also
-          </h2>
-          {foundersLeft > 0 ? (
-            <SecondaryLink
-              href="/founders"
-              label="back the founding herd"
-              meta={`${stats.foundersBacked} / ${stats.foundersCap} claimed · from $100`}
-              route="founder"
-            />
-          ) : (
-            <SecondaryLink
-              href="/wins"
-              label="see what the herd built"
-              meta="herd full · waitlist"
-              route="founder"
-            />
-          )}
-          <SecondaryLink
-            href="/brand-partners"
-            label="become a brand partner"
-            meta="from $99/mo"
-            route="brand"
-          />
-          <SecondaryLink
-            href="/map/add-a-rancher"
-            label="run a ranch · join the network"
-            meta="free · keep 90%"
-            route="rancher"
+        {/* FOUNDERS HERD — distinct visual card */}
+        <section className="mt-10">
+          <FounderCard
+            foundersBacked={stats.foundersBacked}
+            foundersCap={stats.foundersCap}
           />
         </section>
 
-        {/* TESTIMONIAL — real only */}
+        {/* BRAND PARTNER — distinct visual card */}
+        <section className="mt-4">
+          <BrandCard />
+        </section>
+
+        {/* TESTIMONIAL — real quotes only */}
         {featured && (
           <blockquote className="mt-12 border-l-2 border-charcoal pl-5 text-charcoal italic text-base">
             &ldquo;{featured.quote}&rdquo;
@@ -307,16 +335,46 @@ export default async function StartPage() {
           </blockquote>
         )}
 
-        {/* FOOTER */}
-        <footer className="mt-16 pt-8 border-t border-dust space-y-3 text-sm">
-          <p className="text-saddle">
-            built by ben, 26, from a truck. no ads. no vc.
-          </p>
+        {/* FOUNDER LINE */}
+        <p className="mt-12 text-saddle text-center text-sm">
+          built by ben, 26, from a truck. no ads. no vc.
+        </p>
+
+        {/* TERTIARY ROUTES — rancher join + share */}
+        <footer className="mt-10 pt-6 border-t border-dust space-y-3 text-sm">
+          <a
+            href="/map/add-a-rancher"
+            className="group flex items-baseline justify-between gap-4 py-2 hover:text-saddle transition-base"
+          >
+            <span>
+              <span className="text-saddle">run a ranch? </span>
+              <span className="text-charcoal underline underline-offset-2">
+                join the network
+              </span>
+            </span>
+            <span
+              aria-hidden="true"
+              className="text-charcoal transition-transform group-hover:translate-x-1"
+            >
+              →
+            </span>
+          </a>
           <a
             href="/access?ref=share"
-            className="block text-saddle hover:text-charcoal underline underline-offset-2"
+            className="group flex items-baseline justify-between gap-4 py-2 hover:text-saddle transition-base"
           >
-            already love us? share + earn a free half
+            <span>
+              <span className="text-saddle">already love us? </span>
+              <span className="text-charcoal underline underline-offset-2">
+                share + earn a free half
+              </span>
+            </span>
+            <span
+              aria-hidden="true"
+              className="text-charcoal transition-transform group-hover:translate-x-1"
+            >
+              →
+            </span>
           </a>
         </footer>
       </div>
