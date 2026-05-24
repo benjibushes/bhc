@@ -27,14 +27,15 @@ export const metadata: Metadata = {
     'Three tiers, real distribution. Get your brand in front of D2C ranchers + the families who buy their beef. Logo placement, posts, pinned features.',
 };
 
-// NEXT_PUBLIC_ vars are inlined at build time — safe to read here in a
-// Server Component because Next.js bakes them in at compile time.
-const spotlightLink =
-  process.env.NEXT_PUBLIC_BRAND_SPOTLIGHT_LINK || '#contact';
-const featuredLink =
-  process.env.NEXT_PUBLIC_BRAND_FEATURED_LINK || '#contact';
+// CTAs route through /api/checkout/brand server-side redirect, which
+// reads existing STRIPE_BRAND_LINK_* env vars (no NEXT_PUBLIC_ prefix
+// needed). Founding $1,500 tier goes to co-marketed Stripe link
+// (intentional friction = high-ticket qualification still required
+// via post-purchase intake form).
+const spotlightLink = '/api/checkout/brand?tier=spotlight';
+const featuredLink = '/api/checkout/brand?tier=featured';
 const foundingCalendly =
-  process.env.NEXT_PUBLIC_BRAND_FOUNDING_CALENDLY || 'https://buyhalfcow.com/call';
+  process.env.NEXT_PUBLIC_BRAND_FOUNDING_CALENDLY || '/api/checkout/brand?tier=founding';
 
 // TODO: wire real Airtable count via /api/stats/public once endpoint exposes
 // founding_brand_partners_remaining. For now hardcode 5.

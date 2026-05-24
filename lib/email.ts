@@ -3616,6 +3616,50 @@ export async function sendNoBudgetFounderPitch(data: {
  *
  * Cadence: 1 lifetime send, then monthly community letter takes over.
  */
+// =====================================================
+// TESTIMONIAL ASK — post-purchase quote request
+// Sent ~14 days after Closed Won. Asks for one sentence
+// for the marketing pages. Reply lands in Conversations
+// via tagged Reply-To; operator pastes into Referrals.Testimonial.
+// =====================================================
+export async function sendTestimonialAsk(data: {
+  email: string;
+  firstName: string;
+  ranchName: string;
+  orderType: string;
+  referralId: string;
+}) {
+  const first = data.firstName || 'there';
+  const cut = (data.orderType || 'beef').toLowerCase();
+  const cutPhrase = /half|whole|quarter/.test(cut) ? `a ${cut}` : 'beef';
+  const subject = `quick favor — one sentence about your ${cut}?`;
+  return guardedSend({
+    templateName: 'sendTestimonialAsk',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      _replyContext: { type: 'ref', recordId: data.referralId },
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}</style>
+</head><body><div class="container">
+  <h1>Quick favor, ${esc(first)}.</h1>
+  <p>Hey ${esc(first)} — Ben here, founder of BuyHalfCow.</p>
+  <p>You got ${cutPhrase} from ${esc(data.ranchName)} a couple weeks back. How is it?</p>
+  <p>If you have 30 seconds, hit reply with <strong>one sentence</strong> about your experience. Real words, your voice. I'd like to share it on the site (first name + state only — no last name, no email).</p>
+  <p>Nothing fancy. Just a sentence. Something like:</p>
+  <p style="border-left:3px solid #A7A29A;padding-left:14px;color:#6B4F3F;font-style:italic;">"freezer's full, family's fed, talked to the rancher direct."</p>
+  <p>If you'd rather not, totally fine — no follow-up.</p>
+  <p>Thanks for backing real ranchers.</p>
+  <p style="font-size:13px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+</div></body></html>`,
+    }),
+  });
+}
+
 export async function sendStateWaitlistLetter(data: {
   email: string;
   firstName: string;
