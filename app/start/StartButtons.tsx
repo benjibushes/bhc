@@ -4,142 +4,117 @@ import Link from 'next/link';
 import { useEffect } from 'react';
 import { trackEvent } from '@/lib/analytics';
 
-// Primary buyer CTA — full-width charcoal slab. No subtext crammed
-// inside; trust signal renders directly below the button in the page.
+// Audience self-select grid. 4 equal-weight cards — one per audience
+// (buyer / rancher / backer / brand). Each card carries its own proof
+// point + price/value anchor + CTA. Visual differentiation via bg color
+// helps visitors spot their card instantly.
+//
+// Mobile: 1-col stack. Desktop: 2x2 grid.
 
-export default function PrimaryBuyerCTA() {
+export function PageViewTracker() {
   useEffect(() => {
     trackEvent('start_view');
   }, []);
-
-  return (
-    <Link
-      href="/access"
-      onClick={() => trackEvent('start_button_click', { route: 'buyer' })}
-      className="group block w-full bg-charcoal text-bone hover:bg-divider transition-base"
-    >
-      <div className="px-6 py-5 sm:py-6 flex items-center justify-between">
-        <span className="font-medium text-base sm:text-lg uppercase tracking-wider">
-          get matched in 90 seconds
-        </span>
-        <span
-          aria-hidden="true"
-          className="text-2xl transition-transform group-hover:translate-x-1"
-        >
-          →
-        </span>
-      </div>
-    </Link>
-  );
+  return null;
 }
 
-// Founders Herd card — distinct card w/ scarcity progress + scarcity
-// copy. Bone-warm bg, charcoal border, prominent claim button.
+interface AudienceCardProps {
+  href: string;
+  label: string; // BUYERS / RANCHERS / etc
+  meta?: string; // proof / scarcity / price (right-aligned with label)
+  headline: string; // main value prop
+  proofLine1?: string; // first proof bullet
+  proofLine2?: string; // second proof bullet
+  body: string; // descriptive copy
+  ctaLabel: string; // button text
+  route: 'buyer' | 'rancher' | 'founder' | 'brand';
+  // Visual variant — bone-warm (buyer, home/warm), bone (rancher, neutral),
+  // charcoal (backer, aspirational dark), bone-deep (brand, institutional)
+  variant: 'warm' | 'neutral' | 'dark' | 'deep';
+}
 
-export function FounderCard({
-  foundersBacked,
-  foundersCap,
-}: {
-  foundersBacked: number;
-  foundersCap: number;
-}) {
-  const foundersLeft = Math.max(0, foundersCap - foundersBacked);
-  const foundersFullyClaimed = foundersLeft === 0;
-  const pct = Math.min(100, (foundersBacked / foundersCap) * 100);
+const variantClasses: Record<AudienceCardProps['variant'], string> = {
+  warm: 'bg-bone-warm border-2 border-charcoal hover:bg-bone-deep text-charcoal',
+  neutral: 'bg-bone border-2 border-charcoal hover:bg-bone-warm text-charcoal',
+  dark: 'bg-charcoal border-2 border-charcoal hover:bg-divider text-bone',
+  deep: 'bg-bone-deep border-2 border-charcoal hover:bg-bone-warm text-charcoal',
+};
 
-  if (foundersFullyClaimed) {
-    return (
-      <Link
-        href="/wins"
-        onClick={() => trackEvent('start_button_click', { route: 'founder' })}
-        className="group block bg-charcoal text-bone hover:bg-divider transition-base p-6"
-      >
-        <div className="text-xs uppercase tracking-wider text-bone/60 mb-2">
-          founding herd · 100 / 100 claimed
-        </div>
-        <div className="font-serif text-2xl leading-tight mb-2">
-          see what the herd built
-        </div>
-        <div className="flex items-center justify-between mt-4">
-          <span className="text-sm uppercase tracking-wider font-semibold">
-            view wins
+export function AudienceCard({
+  href,
+  label,
+  meta,
+  headline,
+  proofLine1,
+  proofLine2,
+  body,
+  ctaLabel,
+  route,
+  variant,
+}: AudienceCardProps) {
+  const isDark = variant === 'dark';
+  return (
+    <Link
+      href={href}
+      onClick={() => trackEvent('start_button_click', { route })}
+      className={`group block transition-base p-5 sm:p-6 flex flex-col ${variantClasses[variant]}`}
+    >
+      {/* Header: label + meta */}
+      <div className="flex items-baseline justify-between mb-3">
+        <span
+          className={`text-xs uppercase tracking-wider font-semibold ${
+            isDark ? 'text-bone/70' : 'text-saddle'
+          }`}
+        >
+          {label}
+        </span>
+        {meta && (
+          <span
+            className={`text-xs font-semibold ${
+              isDark ? 'text-bone' : 'text-charcoal'
+            }`}
+          >
+            {meta}
           </span>
-          <span aria-hidden="true" className="transition-transform group-hover:translate-x-1">→</span>
-        </div>
-      </Link>
-    );
-  }
+        )}
+      </div>
 
-  return (
-    <Link
-      href="/founders"
-      onClick={() => trackEvent('start_button_click', { route: 'founder' })}
-      className="group block bg-bone-warm border-2 border-charcoal hover:bg-bone-deep transition-base p-6"
-    >
-      <div className="flex items-baseline justify-between mb-3">
-        <span className="text-xs uppercase tracking-wider text-saddle font-semibold">
-          founding herd
-        </span>
-        <span className="text-xs font-semibold text-charcoal">
-          {foundersBacked} / {foundersCap} claimed
-        </span>
+      {/* Headline */}
+      <div
+        className={`font-serif text-xl sm:text-2xl leading-tight mb-3 ${
+          isDark ? 'text-bone' : 'text-charcoal'
+        }`}
+      >
+        {headline}
       </div>
-      <div className="h-1 bg-bone border border-dust mb-4 overflow-hidden">
-        <div className="h-full bg-charcoal" style={{ width: `${pct}%` }} />
-      </div>
-      <div className="font-serif text-xl sm:text-2xl text-charcoal leading-tight mb-2">
-        back the founding herd
-      </div>
-      <p className="text-sm text-saddle mb-5">
-        from $100. lock founder #1-10 status with $15k tier. funds the next
-        100 ranchers we onboard.
+
+      {/* Proof lines */}
+      {(proofLine1 || proofLine2) && (
+        <ul className={`text-sm mb-3 space-y-1 ${isDark ? 'text-bone/80' : 'text-saddle'}`}>
+          {proofLine1 && <li>· {proofLine1}</li>}
+          {proofLine2 && <li>· {proofLine2}</li>}
+        </ul>
+      )}
+
+      {/* Body */}
+      <p className={`text-sm mb-5 ${isDark ? 'text-bone/80' : 'text-saddle'}`}>
+        {body}
       </p>
-      <div className="flex items-center justify-between">
-        <span className="text-sm uppercase tracking-wider font-semibold text-charcoal">
-          back the herd
-        </span>
+
+      {/* CTA — pushed to bottom of card */}
+      <div className="mt-auto flex items-center justify-between">
         <span
-          aria-hidden="true"
-          className="text-charcoal transition-transform group-hover:translate-x-1"
+          className={`text-sm uppercase tracking-wider font-semibold ${
+            isDark ? 'text-bone' : 'text-charcoal'
+          }`}
         >
-          →
-        </span>
-      </div>
-    </Link>
-  );
-}
-
-// Brand Partner card — bone bg, charcoal border, tier price list.
-
-export function BrandCard() {
-  return (
-    <Link
-      href="/brand-partners"
-      onClick={() => trackEvent('start_button_click', { route: 'brand' })}
-      className="group block bg-bone border-2 border-charcoal hover:bg-bone-warm transition-base p-6"
-    >
-      <div className="flex items-baseline justify-between mb-3">
-        <span className="text-xs uppercase tracking-wider text-saddle font-semibold">
-          brand partner
-        </span>
-        <span className="text-xs font-semibold text-charcoal">
-          from $99/mo
-        </span>
-      </div>
-      <div className="font-serif text-xl sm:text-2xl text-charcoal leading-tight mb-2">
-        get your brand in front of d2c ranchers
-      </div>
-      <p className="text-sm text-saddle mb-5">
-        $99 spotlight · $499 featured · $1,500 founding partner. the
-        families who buy direct + the ranchers who feed them.
-      </p>
-      <div className="flex items-center justify-between">
-        <span className="text-sm uppercase tracking-wider font-semibold text-charcoal">
-          see tiers
+          {ctaLabel}
         </span>
         <span
           aria-hidden="true"
-          className="text-charcoal transition-transform group-hover:translate-x-1"
+          className={`text-xl transition-transform group-hover:translate-x-1 ${
+            isDark ? 'text-bone' : 'text-charcoal'
+          }`}
         >
           →
         </span>

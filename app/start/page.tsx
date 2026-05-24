@@ -1,19 +1,31 @@
-// /start — conversion-optimized bio router.
+// /start — 4-audience self-select landing page.
 //
-// Layout:
-//   1. Hero (tight serif headline + subhead)
-//   2. Live recent-close badge (real transaction in last N days)
-//   3. PRIMARY CTA — buyer "get matched" (full-width charcoal slab)
-//   4. Trust line below CTA — "free · no card · routed in your state"
-//   5. Big stats (3 large serif numbers, no boxes)
-//   6. Featured ranchers (3-up card grid w/ logos, prices, state) → /ranchers/[slug]
-//   7. Founders Herd card (distinct, scarcity bar + claim CTA)
-//   8. Brand Partner card (distinct, tier prices + CTA)
-//   9. Real testimonial (only if explicit Testimonial field set)
-//  10. Footer (rancher join text-link + share-earn text-link)
+// Visitors arrive from bio links (IG/X/TikTok/LinkedIn) + don't know
+// what role they fit. The page surfaces all 4 paths with equal visual
+// weight + audience-specific proof points so each visitor self-selects
+// in <5 seconds.
+//
+// Audiences:
+//   1. BUYERS — find real beef in your state → /access
+//   2. RANCHERS — sell direct, keep 90% → /map/add-a-rancher
+//   3. BACKERS — back the founding herd → /founders
+//   4. BRANDS — get in front of d2c ranchers → /brand-partners
+//
+// Each audience card carries:
+//   - audience label (BUYERS / etc)
+//   - scarcity or price anchor (right-aligned with label)
+//   - headline (1-line value prop)
+//   - 1-2 proof points (audience-specific stats)
+//   - body copy (descriptive)
+//   - CTA button label
+//
+// Layout: 2x2 grid on desktop, 1-col stack on mobile.
+//
+// Above the grid: hero + LIVE recent-close badge (proves network works).
+// Below the grid: ranchers preview (logos), real testimonial, footer.
 
 import type { Metadata } from 'next';
-import PrimaryBuyerCTA, { FounderCard, BrandCard } from './StartButtons';
+import { PageViewTracker, AudienceCard } from './StartButtons';
 import ExitIntentModal from '@/app/components/ExitIntentModal';
 import { getRecentTestimonials, type Testimonial } from '@/lib/testimonials';
 import {
@@ -25,10 +37,10 @@ import {
 
 export const metadata: Metadata = {
   title: 'buyhalfcow — real beef. real ranchers. direct.',
-  description: "pick your state. talk to the rancher direct.",
+  description: "pick who you are. we route you in 5 seconds. buyers, ranchers, backers, brands.",
   openGraph: {
     title: 'buyhalfcow — real beef. real ranchers. direct.',
-    description: "pick your state. talk to the rancher direct.",
+    description: "pick who you are. we route you in 5 seconds.",
     type: 'website',
   },
 };
@@ -117,17 +129,14 @@ interface RancherPreview {
   slug: string;
   ranchName: string;
   state: string;
-  beefTypes: string;
   logoUrl: string;
-  startingPrice: number | null;
 }
 
 async function fetchRancherPreview(): Promise<RancherPreview[]> {
   try {
     const ranchers = (await getActiveRancherPages()) as any[];
     if (ranchers.length === 0) return [];
-    // Prefer ranchers WITH logos so the card grid looks intentional.
-    // Fall through to no-logo ranchers if fewer than 3 logos exist.
+    // Prefer ranchers WITH logos so the strip looks intentional.
     const withLogo = ranchers.filter((r: any) => (r['Logo URL'] || '').toString());
     const withoutLogo = ranchers.filter((r: any) => !(r['Logo URL'] || '').toString());
     const shuffle = (arr: any[]) => {
@@ -139,23 +148,13 @@ async function fetchRancherPreview(): Promise<RancherPreview[]> {
       return a;
     };
     const pool = [...shuffle(withLogo), ...shuffle(withoutLogo)];
-    return pool.slice(0, 3).map((r: any) => {
-      const prices = [
-        Number(r['Quarter Price']) || null,
-        Number(r['Half Price']) || null,
-        Number(r['Whole Price']) || null,
-      ].filter((p): p is number => p !== null && p > 0);
-      const startingPrice = prices.length > 0 ? Math.min(...prices) : null;
-      return {
-        id: r.id,
-        slug: (r['Slug'] || '').toString(),
-        ranchName: (r['Ranch Name'] || '').toString(),
-        state: (r['State'] || '').toString(),
-        beefTypes: (r['Beef Types'] || '').toString(),
-        logoUrl: (r['Logo URL'] || '').toString(),
-        startingPrice,
-      };
-    });
+    return pool.slice(0, 4).map((r: any) => ({
+      id: r.id,
+      slug: (r['Slug'] || '').toString(),
+      ranchName: (r['Ranch Name'] || '').toString(),
+      state: (r['State'] || '').toString(),
+      logoUrl: (r['Logo URL'] || '').toString(),
+    }));
   } catch {
     return [];
   }
@@ -181,22 +180,26 @@ export default async function StartPage() {
     fetchRancherPreview(),
   ]);
   const featured: Testimonial | null = testimonials[0] || null;
+  const foundersLeft = Math.max(0, stats.foundersCap - stats.foundersBacked);
+  const backerCardClaimed = stats.foundersBacked >= stats.foundersCap;
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      <div className="mx-auto max-w-2xl px-5 sm:px-6 py-10 sm:py-16">
+      <PageViewTracker />
+      <div className="mx-auto max-w-4xl px-5 sm:px-6 py-10 sm:py-16">
         {/* HERO */}
-        <h1 className="font-serif text-4xl sm:text-5xl text-charcoal lowercase leading-[1.05] mb-3">
-          real beef.<br />
-          real ranchers. direct.
-        </h1>
-        <p className="text-saddle text-base sm:text-lg mb-6">
-          pick your state. talk to the rancher direct.
-        </p>
+        <div className="max-w-2xl mb-8">
+          <h1 className="font-serif text-3xl sm:text-5xl text-charcoal lowercase leading-[1.05] mb-3">
+            real beef. real ranchers. direct.
+          </h1>
+          <p className="text-saddle text-base sm:text-lg">
+            pick who you are. we route you in 5 seconds.
+          </p>
+        </div>
 
-        {/* LIVE RECENT CLOSE BADGE */}
+        {/* LIVE RECENT CLOSE — proof network works, sits above audience grid */}
         {latestClose && (
-          <div className="mb-6 inline-flex items-center gap-2 text-xs sm:text-sm">
+          <div className="mb-8 inline-flex items-center gap-2 text-xs sm:text-sm">
             <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-sage/15 text-sage-dark border border-sage/40 font-semibold uppercase tracking-wider text-[10px]">
               live
             </span>
@@ -219,46 +222,86 @@ export default async function StartPage() {
           </div>
         )}
 
-        {/* PRIMARY CTA + TRUST LINE */}
-        <PrimaryBuyerCTA />
-        <p className="mt-3 text-xs sm:text-sm text-saddle">
-          free · no card · routed in your state · you talk direct
-        </p>
+        {/* ──────── AUDIENCE SELF-SELECT GRID ──────── */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          {/* BUYERS */}
+          <AudienceCard
+            href="/access"
+            label="buyers"
+            meta="free quiz · 90 sec"
+            headline="find real beef in your state"
+            proofLine1={`${stats.familiesMatched.toLocaleString()} families matched`}
+            proofLine2={`${stats.totalClosedWon} deals closed`}
+            body="we route you to a verified rancher in your state. you talk to them direct — no middleman, no markup."
+            ctaLabel="get matched"
+            route="buyer"
+            variant="warm"
+          />
 
-        {/* BIG STATS — visual punch, no boxes */}
-        <div className="mt-10 grid grid-cols-3 gap-4">
-          <div>
-            <div className="font-serif text-3xl sm:text-5xl text-charcoal leading-none">
-              {stats.ranchersActive}
-            </div>
-            <div className="text-[10px] sm:text-xs uppercase tracking-wider text-saddle mt-2">
-              verified ranchers
-            </div>
-          </div>
-          <div>
-            <div className="font-serif text-3xl sm:text-5xl text-charcoal leading-none">
-              {stats.familiesMatched.toLocaleString()}
-            </div>
-            <div className="text-[10px] sm:text-xs uppercase tracking-wider text-saddle mt-2">
-              families
-            </div>
-          </div>
-          <div>
-            <div className="font-serif text-3xl sm:text-5xl text-charcoal leading-none">
-              {stats.totalClosedWon}
-            </div>
-            <div className="text-[10px] sm:text-xs uppercase tracking-wider text-saddle mt-2">
-              deals closed
-            </div>
-          </div>
-        </div>
+          {/* RANCHERS */}
+          <AudienceCard
+            href="/map/add-a-rancher"
+            label="ranchers"
+            meta="free · 5-min setup"
+            headline="sell direct · keep 90%"
+            proofLine1={`${stats.ranchersActive} verified ranchers active`}
+            proofLine2="we route buyers to you in your state"
+            body="cut out grocery middlemen. set your prices, set your dates. we handle the routing, the email, the closing nudge. you raise the cattle."
+            ctaLabel="join the network"
+            route="rancher"
+            variant="neutral"
+          />
 
-        {/* FEATURED RANCHERS — logo grid, real visual punch */}
+          {/* BACKERS — founding herd */}
+          {backerCardClaimed ? (
+            <AudienceCard
+              href="/wins"
+              label="backers · founding herd"
+              meta="100 / 100 claimed"
+              headline="see what the herd built"
+              proofLine1="founding 100 sold out"
+              proofLine2="waitlist + behind-the-scenes drops"
+              body="the first 100 backers funded the platform you see today. follow the build, get first access to the next 100 spots."
+              ctaLabel="view wins"
+              route="founder"
+              variant="dark"
+            />
+          ) : (
+            <AudienceCard
+              href="/founders"
+              label="backers · founding herd"
+              meta={`${stats.foundersBacked} / ${stats.foundersCap} claimed`}
+              headline="back the food revolution"
+              proofLine1={`${foundersLeft} of 100 spots left`}
+              proofLine2="from $100 · $15k locks founder #1-10"
+              body="fund the next 100 ranchers we onboard. lifetime founder status, quarterly behind-the-scenes drops, equity-in-mission ownership."
+              ctaLabel="back the herd"
+              route="founder"
+              variant="dark"
+            />
+          )}
+
+          {/* BRANDS */}
+          <AudienceCard
+            href="/brand-partners"
+            label="brands"
+            meta="from $99/mo"
+            headline="get in front of d2c ranchers"
+            proofLine1="$99 spotlight · $499 featured"
+            proofLine2="$1,500 founding partner"
+            body="logo placement on /map + /matched. pinned posts in member feed. access to ranchers + families who already buy direct."
+            ctaLabel="see tiers"
+            route="brand"
+            variant="deep"
+          />
+        </section>
+
+        {/* RANCHERS PREVIEW STRIP — visual proof of supply */}
         {ranchers.length > 0 && (
-          <section className="mt-12">
+          <section className="mt-14">
             <div className="flex items-baseline justify-between mb-4">
               <h2 className="text-xs uppercase tracking-wider text-saddle font-semibold">
-                ranchers in stock
+                verified ranchers · in stock
               </h2>
               <a
                 href="/map"
@@ -267,15 +310,14 @@ export default async function StartPage() {
                 see all {stats.ranchersActive} →
               </a>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {ranchers.map((r) => (
                 <a
                   key={r.id}
                   href={`/ranchers/${r.slug}`}
-                  className="group block border border-dust hover:border-charcoal hover:bg-bone-warm transition-base p-3 sm:p-4"
+                  className="group block border border-dust hover:border-charcoal hover:bg-bone-warm transition-base p-3"
                 >
-                  {/* Logo or initial fallback */}
-                  <div className="aspect-square w-full bg-bone-warm border border-dust mb-3 overflow-hidden flex items-center justify-center">
+                  <div className="aspect-square w-full bg-bone-warm border border-dust mb-2 overflow-hidden flex items-center justify-center">
                     {r.logoUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -289,12 +331,11 @@ export default async function StartPage() {
                       </span>
                     )}
                   </div>
-                  <div className="font-medium text-xs sm:text-sm text-charcoal leading-tight mb-1 line-clamp-2">
+                  <div className="font-medium text-xs sm:text-sm text-charcoal leading-tight line-clamp-2">
                     {r.ranchName}
                   </div>
-                  <div className="text-[10px] sm:text-xs text-saddle uppercase tracking-wider">
+                  <div className="text-[10px] sm:text-xs text-saddle uppercase tracking-wider mt-0.5">
                     {r.state}
-                    {r.startingPrice && ` · from $${r.startingPrice.toLocaleString()}`}
                   </div>
                 </a>
               ))}
@@ -302,22 +343,9 @@ export default async function StartPage() {
           </section>
         )}
 
-        {/* FOUNDERS HERD — distinct visual card */}
-        <section className="mt-10">
-          <FounderCard
-            foundersBacked={stats.foundersBacked}
-            foundersCap={stats.foundersCap}
-          />
-        </section>
-
-        {/* BRAND PARTNER — distinct visual card */}
-        <section className="mt-4">
-          <BrandCard />
-        </section>
-
-        {/* TESTIMONIAL — real quotes only */}
+        {/* REAL TESTIMONIAL — renders only if explicit Testimonial set */}
         {featured && (
-          <blockquote className="mt-12 border-l-2 border-charcoal pl-5 text-charcoal italic text-base">
+          <blockquote className="mt-14 max-w-2xl border-l-2 border-charcoal pl-5 text-charcoal italic text-base sm:text-lg">
             &ldquo;{featured.quote}&rdquo;
             <footer className="mt-2 text-sm text-saddle not-italic">
               {featured.ranchSlug ? (
@@ -335,36 +363,17 @@ export default async function StartPage() {
           </blockquote>
         )}
 
-        {/* FOUNDER LINE */}
-        <p className="mt-12 text-saddle text-center text-sm">
-          built by ben, 26, from a truck. no ads. no vc.
-        </p>
-
-        {/* TERTIARY ROUTES — rancher join + share */}
-        <footer className="mt-10 pt-6 border-t border-dust space-y-3 text-sm">
-          <a
-            href="/map/add-a-rancher"
-            className="group flex items-baseline justify-between gap-4 py-2 hover:text-saddle transition-base"
-          >
-            <span>
-              <span className="text-saddle">run a ranch? </span>
-              <span className="text-charcoal underline underline-offset-2">
-                join the network
-              </span>
-            </span>
-            <span
-              aria-hidden="true"
-              className="text-charcoal transition-transform group-hover:translate-x-1"
-            >
-              →
-            </span>
-          </a>
+        {/* FOUNDER LINE + SHARE */}
+        <footer className="mt-14 pt-8 border-t border-dust max-w-2xl">
+          <p className="text-saddle text-sm mb-4">
+            built by ben, 26, from a truck. no ads. no vc.
+          </p>
           <a
             href="/access?ref=share"
-            className="group flex items-baseline justify-between gap-4 py-2 hover:text-saddle transition-base"
+            className="group inline-flex items-baseline gap-2 text-sm text-saddle hover:text-charcoal transition-base"
           >
             <span>
-              <span className="text-saddle">already love us? </span>
+              already love us?{' '}
               <span className="text-charcoal underline underline-offset-2">
                 share + earn a free half
               </span>
