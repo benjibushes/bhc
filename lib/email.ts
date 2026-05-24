@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
 import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
+import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
 
 const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
 
@@ -232,6 +233,47 @@ function getUnsubscribeHeaders(email: string) {
   };
 }
 
+/**
+ * Wrap a Resend send call with the frequency guard + audit log.
+ * Returns {success, suppressed?, reason?} for callers that want to
+ * surface suppression to their cron summary.
+ */
+async function guardedSend(opts: {
+  templateName: string;
+  recipientEmail: string;
+  recipientConsumerId?: string;
+  subject: string;
+  send: () => Promise<unknown>;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const gate = await checkFrequencyCap(opts.recipientEmail, opts.templateName);
+  if (!gate.ok) {
+    await logEmailSend({
+      recipientEmail: opts.recipientEmail,
+      recipientConsumerId: opts.recipientConsumerId,
+      templateName: opts.templateName,
+      subject: opts.subject,
+      status: 'suppressed',
+      suppressionReason: gate.reason || 'unknown',
+    });
+    return { success: false, suppressed: true, reason: gate.reason };
+  }
+  try {
+    await opts.send();
+    await logEmailSend({
+      recipientEmail: opts.recipientEmail,
+      recipientConsumerId: opts.recipientConsumerId,
+      templateName: opts.templateName,
+      subject: opts.subject,
+      status: 'sent',
+    });
+    return { success: true };
+  } catch (error: any) {
+    // Don't log to Email Sends as 'sent' if Resend threw — that would
+    // poison the cap calc. Let the caller see the error.
+    throw error;
+  }
+}
+
 // Physical address required by CAN-SPAM Act. Update via BUSINESS_ADDRESS env var.
 const BUSINESS_ADDRESS = process.env.BUSINESS_ADDRESS || 'BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901';
 
@@ -278,11 +320,15 @@ export async function sendConsumerConfirmation(data: {
   email: string;
   state: string;
 }) {
-  try {
-    await resend.emails.send({
+  const subject = 'Application Received — BuyHalfCow';
+  return guardedSend({
+    templateName: 'sendConsumerConfirmation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: 'Application Received — BuyHalfCow',
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -313,12 +359,8 @@ export async function sendConsumerConfirmation(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending consumer confirmation:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendConsumerApproval(data: {
@@ -372,13 +414,17 @@ export async function sendConsumerApproval(data: {
     <p>When you're ready to explore buying direct from a rancher, you can upgrade anytime from your member dashboard. We'll match you personally.</p>
   `;
 
-  try {
-    await resend.emails.send({
+  const subject = isBeef
+    ? "You're Approved — Let's Find Your Rancher"
+    : 'Welcome to BuyHalfCow';
+  return guardedSend({
+    templateName: 'sendConsumerApproval',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: isBeef
-        ? "You're Approved — Let's Find Your Rancher"
-        : 'Welcome to BuyHalfCow',
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -405,13 +451,10 @@ export async function sendConsumerApproval(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending consumer approval:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
+
 
 // =====================================================
 // READY-TO-BUY PROMPT — sent right after the welcome email so every signup
@@ -453,13 +496,17 @@ export async function sendWelcomeAndReadyToBuy(data: {
       </div>
     `;
 
-  try {
-    await resend.emails.send({
+  const subject = data.rancherAvailable
+    ? `${first}, you're in — quick question to lock in your match`
+    : `${first}, you're in — what's happening in ${stateLabel}`;
+  return guardedSend({
+    templateName: 'sendWelcomeAndReadyToBuy',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: data.rancherAvailable
-        ? `${first}, you're in — quick question to lock in your match`
-        : `${first}, you're in — what's happening in ${stateLabel}`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:18px 22px;margin:24px 0;font-family:Georgia,serif;font-size:18px;color:#0E0E0E}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -474,12 +521,8 @@ export async function sendWelcomeAndReadyToBuy(data: {
     <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending welcome+RTB:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // ── WAITING + Day 7 / monthly: founder letter ────────────────────────────────
@@ -551,8 +594,11 @@ export async function sendFounderLetterWaiting(data: {
   <p>If you've gotten this far, you're committed — and I appreciate it. The wait is real, but so is the network we're building. Reply if you have questions or know a rancher I should meet.</p>
   `;
 
-  try {
-    await resend.emails.send({
+  return guardedSend({
+    templateName: 'sendFounderLetterWaiting',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
       subject,
@@ -567,12 +613,8 @@ export async function sendFounderLetterWaiting(data: {
     <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending founder letter:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // ── MATCHED + Day 4: did-you-connect check-in ────────────────────────────────
@@ -585,11 +627,15 @@ export async function sendMatchedDay4CheckIn(data: {
   rancherName: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = data.firstName || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `did you connect with ${data.rancherName}?`;
+  return guardedSend({
+    templateName: 'sendMatchedDay4CheckIn',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `did you connect with ${data.rancherName}?`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -605,12 +651,8 @@ export async function sendMatchedDay4CheckIn(data: {
     <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending Day 4 check-in:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // ── CLOSED Day 0: post-purchase welcome ─────────────────────────────────────
@@ -631,11 +673,15 @@ export async function sendPostPurchaseWelcome(data: {
   const lbsApprox = tier === 'quarter' ? '~85 lbs' : tier === 'half' ? '~170 lbs' : tier === 'whole' ? '~340 lbs' : '85–340 lbs';
   const cuFt = tier === 'quarter' ? '~3–4 cu ft' : tier === 'half' ? '~6–8 cu ft' : tier === 'whole' ? '~12–16 cu ft' : '3–16 cu ft';
 
-  try {
-    await resend.emails.send({
+  const subject = `welcome to your first ranch order — what to expect`;
+  return guardedSend({
+    templateName: 'sendPostPurchaseWelcome',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `welcome to your first ranch order — what to expect`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -665,12 +711,8 @@ export async function sendPostPurchaseWelcome(data: {
     <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending post-purchase welcome:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // ── CLOSED Day 14: cuts education + first-cook playbook ──────────────────────
@@ -689,11 +731,15 @@ export async function sendCutsEducation(data: {
     : data.orderType?.toLowerCase().includes('whole') ? 'whole'
     : 'share';
 
-  try {
-    await resend.emails.send({
+  const subject = `your ${tier} cheat sheet — what to cook first`;
+  return guardedSend({
+    templateName: 'sendCutsEducation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `your ${tier} cheat sheet — what to cook first`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}h2{font-family:Georgia,serif;font-size:18px;margin:24px 0 8px;color:#0E0E0E}p{margin:14px 0;color:#2A2A2A}ul{color:#2A2A2A;line-height:2}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -730,12 +776,8 @@ export async function sendCutsEducation(data: {
     <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending cuts education:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // ── CLOSED Day 60: monthly long-quiet letter ────────────────────────────────
@@ -748,11 +790,15 @@ export async function sendClosedMonthlyLetter(data: {
   monthNumber: number;
 }): Promise<{ success: boolean; error?: any }> {
   const first = data.firstName || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `month ${data.monthNumber} — what's happening in the network`;
+  return guardedSend({
+    templateName: 'sendClosedMonthlyLetter',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `month ${data.monthNumber} — what's happening in the network`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -773,12 +819,8 @@ export async function sendClosedMonthlyLetter(data: {
     <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending monthly letter:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // ── CLOSED Month 5: re-engagement / repeat purchase ─────────────────────────
@@ -791,11 +833,15 @@ export async function sendRepeatPurchaseAsk(data: {
   rancherName: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = data.firstName || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `running low? want me to ping ${data.rancherName}?`;
+  return guardedSend({
+    templateName: 'sendRepeatPurchaseAsk',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `running low? want me to ping ${data.rancherName}?`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -811,12 +857,8 @@ export async function sendRepeatPurchaseAsk(data: {
     <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending repeat-purchase ask:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -924,23 +966,28 @@ export async function sendBuyerIntroNotification(data: {
   const readyBlock = data.readyToBuy
     ? `<p style="background:#FFF6E0;border:1px solid #C99A2E;padding:12px 16px;font-size:14px;color:#0E0E0E;"><strong>You confirmed you're ready to buy in the next 1–2 months.</strong> ${esc(data.rancherName)} has been notified and will reach out within 24–48 hours.</p>`
     : '';
-  try {
-    const introEmailData: any = {
-      from: getFromEmail(),
-      to: data.email,
-      subject: `${readyPrefix}Meet your rancher — ${esc(data.rancherName)}`,
-      headers: getUnsubscribeHeaders(data.email),
-    };
-    if (data.scheduledAt) {
-      introEmailData.scheduledAt = data.scheduledAt;
-    }
-    // Tag Reply-To so any buyer reply lands in /api/webhooks/resend-inbound
-    // and gets classified + logged to the Conversations table. Without
-    // referralId we fall through to the default ben@<domain> Reply-To.
-    if (data.referralId) {
-      introEmailData._replyContext = { type: 'ref', recordId: data.referralId };
-    }
-    introEmailData.html = `<!DOCTYPE html><html><head>
+  const introSubject = `${readyPrefix}Meet your rancher — ${esc(data.rancherName)}`;
+  return guardedSend({
+    templateName: 'sendBuyerIntroNotification',
+    recipientEmail: data.email,
+    subject: introSubject,
+    send: () => {
+      const introEmailData: any = {
+        from: getFromEmail(),
+        to: data.email,
+        subject: introSubject,
+        headers: getUnsubscribeHeaders(data.email),
+      };
+      if (data.scheduledAt) {
+        introEmailData.scheduledAt = data.scheduledAt;
+      }
+      // Tag Reply-To so any buyer reply lands in /api/webhooks/resend-inbound
+      // and gets classified + logged to the Conversations table. Without
+      // referralId we fall through to the default ben@<domain> Reply-To.
+      if (data.referralId) {
+        introEmailData._replyContext = { type: 'ref', recordId: data.referralId };
+      }
+      introEmailData.html = `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.contact-box{background:#F4F1EC;border:1px solid #A7A29A;padding:20px 24px;margin:20px 0}.contact-box p{margin:6px 0;color:#0E0E0E}.cta{display:inline-block;padding:16px 32px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
 </head><body><div class="container">
   <h1>Your Rancher Introduction</h1>
@@ -964,12 +1011,9 @@ export async function sendBuyerIntroNotification(data: {
     <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`;
-    await resend.emails.send(introEmailData);
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending buyer intro notification:', error);
-    return { success: false, error };
-  }
+      return resend.emails.send(introEmailData);
+    },
+  });
 }
 
 // =====================================================
@@ -981,11 +1025,15 @@ export async function sendRancherApproval(data: {
   ranchName: string;
   email: string;
 }) {
-  try {
-    await resend.emails.send({
+  const subject = "You're Approved — BuyHalfCow Partnership";
+  return guardedSend({
+    templateName: 'sendRancherApproval',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: 'You\'re Approved — BuyHalfCow Partnership',
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -1023,12 +1071,8 @@ export async function sendRancherApproval(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher approval email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1043,11 +1087,15 @@ export async function sendRancherGoLiveEmail(data: {
 }) {
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
   const dashboardUrl = data.dashboardUrl || `${baseUrl}/rancher`;
-  try {
-    await resend.emails.send({
+  const subject = "You're Live — Buyer Leads Are Coming";
+  return guardedSend({
+    templateName: 'sendRancherGoLiveEmail',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: "You're Live — Buyer Leads Are Coming",
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -1085,12 +1133,8 @@ export async function sendRancherGoLiveEmail(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher go-live email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1110,15 +1154,19 @@ export async function sendPilotUpsellEmail(data: {
   pilotGoal: number;
 }) {
   const firstName = String(data.operatorName || '').trim().split(/\s+/)[0] || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `you just hit ${data.closesHit}. let's run it.`;
+  return guardedSend({
+    templateName: 'sendPilotUpsellEmail',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
       // Reply-To deliberately omitted — wrapper auto-fills with
       // inbox@replies.buyhalfcow.com (Resend inbound webhook captures the
       // reply into Conversations). Previously routed to ADMIN_EMAIL which
       // polluted Ben's personal Gmail with rancher replies.
-      subject: `you just hit ${data.closesHit}. let's run it.`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
@@ -1158,12 +1206,8 @@ h2{font-family:Georgia,serif;font-size:20px;margin:26px 0 8px;color:#0E0E0E;}
 </div>
 
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending pilot upsell email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1181,11 +1225,15 @@ export async function sendPartnerConfirmation(data: {
     land: 'Land Deal'
   };
 
-  try {
-    await resend.emails.send({
+  const subject = `${typeLabels[data.type]} Application Received — BuyHalfCow`;
+  return guardedSend({
+    templateName: 'sendPartnerConfirmation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `${typeLabels[data.type]} Application Received — BuyHalfCow`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -1245,12 +1293,8 @@ export async function sendPartnerConfirmation(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending partner confirmation:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1264,11 +1308,15 @@ export async function sendBrandApprovalWithPayment(data: {
   paymentUrl: string;
   listingPrice: string;
 }) {
-  try {
-    await resend.emails.send({
+  const subject = `You're Approved — Complete Your Brand Listing on BuyHalfCow`;
+  return guardedSend({
+    templateName: 'sendBrandApprovalWithPayment',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `You're Approved — Complete Your Brand Listing on BuyHalfCow`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -1313,12 +1361,8 @@ export async function sendBrandApprovalWithPayment(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending brand approval with payment:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendBrandListingConfirmation(data: {
@@ -1326,11 +1370,15 @@ export async function sendBrandListingConfirmation(data: {
   email: string;
   amountPaid: string;
 }) {
-  try {
-    await resend.emails.send({
+  const subject = `You're Live — ${data.brandName} is Now on BuyHalfCow`;
+  return guardedSend({
+    templateName: 'sendBrandListingConfirmation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `You're Live — ${data.brandName} is Now on BuyHalfCow`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -1364,12 +1412,8 @@ export async function sendBrandListingConfirmation(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending brand listing confirmation:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1483,8 +1527,11 @@ export async function sendFoundingHerdWelcome(data: {
     </p>
   `;
 
-  try {
-    await resend.emails.send({
+  return guardedSend({
+    templateName: 'sendFoundingHerdWelcome',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
       subject,
@@ -1523,12 +1570,8 @@ a{color:#0E0E0E;}
     </p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending founding herd welcome:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1540,11 +1583,15 @@ export async function sendAffiliateLoginLink(data: {
   loginUrl: string;
   name?: string;
 }) {
-  try {
-    await resend.emails.send({
+  const subject = 'Your BuyHalfCow Affiliate Login Link';
+  return guardedSend({
+    templateName: 'sendAffiliateLoginLink',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: 'Your BuyHalfCow Affiliate Login Link',
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -1572,12 +1619,8 @@ export async function sendAffiliateLoginLink(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending affiliate login link:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendAffiliateInvite(data: {
@@ -1588,11 +1631,15 @@ export async function sendAffiliateInvite(data: {
   buyerLink: string;
   rancherLink: string;
 }) {
-  try {
-    await resend.emails.send({
+  const affiliateInviteSubject = "You're a BuyHalfCow Affiliate — Here Are Your Links";
+  return guardedSend({
+    templateName: 'sendAffiliateInvite',
+    recipientEmail: data.email,
+    subject: affiliateInviteSubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: "You're a BuyHalfCow Affiliate — Here Are Your Links",
+      subject: affiliateInviteSubject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -1625,12 +1672,8 @@ export async function sendAffiliateInvite(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending affiliate invite:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1643,11 +1686,15 @@ export async function sendAdminAlert(data: {
   email: string;
   details: Record<string, any>;
 }) {
-  try {
-    await resend.emails.send({
+  const subject = `New ${data.type.charAt(0).toUpperCase() + data.type.slice(1)} Application`;
+  return guardedSend({
+    templateName: 'sendAdminAlert',
+    recipientEmail: ADMIN_EMAIL,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: ADMIN_EMAIL,
-      subject: `New ${data.type.charAt(0).toUpperCase() + data.type.slice(1)} Application`,
+      subject,
       html: `
         <!DOCTYPE html>
         <html>
@@ -1677,12 +1724,8 @@ export async function sendAdminAlert(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending admin alert:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1707,12 +1750,16 @@ export async function sendInquiryToRancher(data: {
     custom: 'Custom Order'
   };
 
-  try {
-    await resend.emails.send({
+  const inquirySubject = `New Inquiry from BuyHalfCow Member`;
+  return guardedSend({
+    templateName: 'sendInquiryToRancher',
+    recipientEmail: data.rancherEmail,
+    subject: inquirySubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.rancherEmail,
       replyTo: data.consumerEmail, // Rancher can reply directly to consumer
-      subject: `New Inquiry from BuyHalfCow Member`,
+      subject: inquirySubject,
       headers: getUnsubscribeHeaders(data.rancherEmail),
       html: `
         <!DOCTYPE html>
@@ -1768,12 +1815,8 @@ export async function sendInquiryToRancher(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending inquiry to rancher:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendInquiryAlertToAdmin(data: {
@@ -1792,11 +1835,15 @@ export async function sendInquiryAlertToAdmin(data: {
     custom: 'Custom Order'
   };
 
-  try {
-    await resend.emails.send({
+  const adminInquirySubject = `New Inquiry: ${data.consumerName} → ${data.ranchName}`;
+  return guardedSend({
+    templateName: 'sendInquiryAlertToAdmin',
+    recipientEmail: ADMIN_EMAIL,
+    subject: adminInquirySubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: ADMIN_EMAIL,
-      subject: `New Inquiry: ${data.consumerName} → ${data.ranchName}`,
+      subject: adminInquirySubject,
       html: `
         <!DOCTYPE html>
         <html>
@@ -1838,12 +1885,8 @@ export async function sendInquiryAlertToAdmin(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending inquiry alert to admin:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1861,26 +1904,27 @@ export async function sendBroadcastEmail(data: {
   ctaLink: string;
   htmlBody?: string;
 }) {
-  try {
-    if (data.htmlBody) {
-      await resend.emails.send({
+  const formattedMessage = esc(data.message).replace(/\n/g, '<br>');
+  return guardedSend({
+    templateName: 'sendBroadcastEmail',
+    recipientEmail: data.to,
+    subject: data.subject,
+    send: () => {
+      if (data.htmlBody) {
+        return resend.emails.send({
+          from: getFromEmail(),
+          to: data.to,
+          subject: data.subject,
+          headers: getUnsubscribeHeaders(data.to),
+          html: data.htmlBody,
+        });
+      }
+      return resend.emails.send({
         from: getFromEmail(),
         to: data.to,
         subject: data.subject,
         headers: getUnsubscribeHeaders(data.to),
-        html: data.htmlBody,
-      });
-      return { success: true };
-    }
-
-    const formattedMessage = esc(data.message).replace(/\n/g, '<br>');
-
-    await resend.emails.send({
-      from: getFromEmail(),
-      to: data.to,
-      subject: data.subject,
-      headers: getUnsubscribeHeaders(data.to),
-      html: `
+        html: `
         <!DOCTYPE html>
         <html>
         <head>
@@ -1918,12 +1962,9 @@ export async function sendBroadcastEmail(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending broadcast email:', error);
-    return { success: false, error };
-  }
+      });
+    },
+  });
 }
 
 // =====================================================
@@ -1935,14 +1976,18 @@ export async function sendMerchEmail(data: {
   email: string;
 }) {
   const firstName = esc(data.firstName);
-  try {
-    await resend.emails.send({
+  const subject = 'quick story behind the hat';
+  return guardedSend({
+    templateName: 'sendMerchEmail',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
       // Lowercase, personal-feeling subject avoids the marketing-spam pattern
       // and consistently outperforms title-case "Represent American..." style
       // subjects (~2-3x open rate in our tests).
-      subject: 'quick story behind the hat',
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head><style>
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
@@ -1966,12 +2011,8 @@ a{color:#0E0E0E;}
 <p style="margin:6px 0 0;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
 </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending merch email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -1987,11 +2028,15 @@ export async function sendAffiliateWelcome(data: {
   rancherLink: string;
 }) {
   const firstName = esc(data.name.split(' ')[0] || data.name);
-  try {
-    await resend.emails.send({
+  const affiliateWelcomeSubject = "You're a BuyHalfCow Affiliate — Here Are Your Links";
+  return guardedSend({
+    templateName: 'sendAffiliateWelcome',
+    recipientEmail: data.email,
+    subject: affiliateWelcomeSubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: "You're a BuyHalfCow Affiliate — Here Are Your Links",
+      subject: affiliateWelcomeSubject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
@@ -2033,12 +2078,8 @@ p { color: #6B4F3F; margin: 12px 0; }
 </div>
 </body>
 </html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending affiliate welcome email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -2051,11 +2092,15 @@ export async function sendWaitlistEmail(data: {
   state: string;
   loginUrl?: string;
 }) {
-  try {
-    await resend.emails.send({
+  const subject = "You're Approved — We're Expanding to Your Area";
+  return guardedSend({
+    templateName: 'sendWaitlistEmail',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: "You're Approved — We're Expanding to Your Area",
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
@@ -2094,12 +2139,8 @@ p { color: #6B4F3F; margin: 12px 0; }
 </div>
 </body>
 </html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending waitlist email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendRancherLeadNudge(data: {
@@ -2111,11 +2152,15 @@ export async function sendRancherLeadNudge(data: {
   const leadRows = data.leads.map(l =>
     `<tr><td style="padding:8px 12px;border-bottom:1px solid #A7A29A;">${esc(l.buyerName)}</td><td style="padding:8px 12px;border-bottom:1px solid #A7A29A;">${esc(l.status)}</td><td style="padding:8px 12px;border-bottom:1px solid #A7A29A;color:#6B4F3F;">${l.daysSince}d ago</td></tr>`
   ).join('');
-  try {
-    await resend.emails.send({
+  const subject = `You have ${data.leads.length} lead${data.leads.length === 1 ? '' : 's'} waiting on an update`;
+  return guardedSend({
+    templateName: 'sendRancherLeadNudge',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `You have ${data.leads.length} lead${data.leads.length === 1 ? '' : 's'} waiting on an update`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
@@ -2155,12 +2200,8 @@ th { text-align: left; padding: 8px 12px; background: #F4F1EC; font-size: 11px; 
 </div>
 </body>
 </html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher lead nudge email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendRepeatPurchaseEmail(data: {
@@ -2169,11 +2210,15 @@ export async function sendRepeatPurchaseEmail(data: {
   rancherName: string;
   loginUrl: string;
 }) {
-  try {
-    await resend.emails.send({
+  const subject = `Time for another half, ${esc(data.firstName)}?`;
+  return guardedSend({
+    templateName: 'sendRepeatPurchaseEmail',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `Time for another half, ${esc(data.firstName)}?`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html>
 <html>
@@ -2210,12 +2255,8 @@ p { color: #6B4F3F; margin: 12px 0; }
 </div>
 </body>
 </html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending repeat purchase email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -2268,7 +2309,12 @@ p { color: #6B4F3F; margin: 12px 0; }
 </div>
 </body>
 </html>`;
-  await resend.emails.send({ from: getFromEmail(), to: email, subject, html, headers: getUnsubscribeHeaders(email) });
+  await guardedSend({
+    templateName: 'sendBackfillEmail',
+    recipientEmail: email,
+    subject,
+    send: () => resend.emails.send({ from: getFromEmail(), to: email, subject, html, headers: getUnsubscribeHeaders(email) }),
+  });
 }
 
 // =====================================================
@@ -2296,11 +2342,15 @@ export async function sendRancherCheckIn(data: {
     ? "Your verification is in progress."
     : "We'd love to get you up and running.";
 
-  try {
-    await resend.emails.send({
+  const checkInSubject = `Quick check-in — ${data.ranchName} + BuyHalfCow`;
+  return guardedSend({
+    templateName: 'sendRancherCheckIn',
+    recipientEmail: data.email,
+    subject: checkInSubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `Quick check-in — ${data.ranchName} + BuyHalfCow`,
+      subject: checkInSubject,
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -2353,12 +2403,8 @@ export async function sendRancherCheckIn(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher check-in email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -2465,8 +2511,11 @@ export async function sendPipelineUpdateEmail(data: {
     ctaUrl = data.dashboardLink || `${SITE_URL}/rancher/login`;
   }
 
-  try {
-    await resend.emails.send({
+  return guardedSend({
+    templateName: 'sendPipelineUpdateEmail',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
       subject,
@@ -2505,12 +2554,8 @@ export async function sendPipelineUpdateEmail(data: {
         </body>
         </html>
       `,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending pipeline update email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendTrackedContactEmail(data: {
@@ -2521,13 +2566,17 @@ export async function sendTrackedContactEmail(data: {
   buyerPhone: string;
   message: string;
 }) {
-  try {
-    await resend.emails.send({
+  const trackedSubject = `New message from ${esc(data.buyerName)} via BuyHalfCow`;
+  return guardedSend({
+    templateName: 'sendTrackedContactEmail',
+    recipientEmail: data.rancherEmail,
+    subject: trackedSubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.rancherEmail,
       cc: ADMIN_EMAIL,
       replyTo: data.buyerEmail,
-      subject: `New message from ${esc(data.buyerName)} via BuyHalfCow`,
+      subject: trackedSubject,
       headers: getUnsubscribeHeaders(data.rancherEmail),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.field{margin:12px 0;padding:12px;background:#F4F1EC}.label{font-weight:bold;color:#6B4F3F}.message-box{padding:16px;background:#F4F1EC;border-left:3px solid #6B4F3F;margin:20px 0}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
@@ -2555,12 +2604,8 @@ export async function sendTrackedContactEmail(data: {
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending tracked contact email:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -2577,29 +2622,30 @@ export async function sendEmail(params: {
   // so any reply lands in /api/webhooks/resend-inbound for classification + logging.
   _replyContext?: { type: 'ref' | 'usr' | 'rnc' | 'inq'; recordId: string };
 }) {
-  try {
-    const emailData: any = {
-      from: getFromEmail(),
-      to: params.to,
-      subject: params.subject,
-      html: params.html,
-      headers: getUnsubscribeHeaders(params.to),
-    };
-    if (params.attachments && params.attachments.length > 0) {
-      emailData.attachments = params.attachments;
-    }
-    if (params.scheduledAt) {
-      emailData.scheduledAt = params.scheduledAt;
-    }
-    if (params._replyContext) {
-      emailData._replyContext = params._replyContext;
-    }
-    await resend.emails.send(emailData);
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending email:', error);
-    return { success: false, error };
-  }
+  return guardedSend({
+    templateName: 'sendEmail',
+    recipientEmail: params.to,
+    subject: params.subject,
+    send: () => {
+      const emailData: any = {
+        from: getFromEmail(),
+        to: params.to,
+        subject: params.subject,
+        html: params.html,
+        headers: getUnsubscribeHeaders(params.to),
+      };
+      if (params.attachments && params.attachments.length > 0) {
+        emailData.attachments = params.attachments;
+      }
+      if (params.scheduledAt) {
+        emailData.scheduledAt = params.scheduledAt;
+      }
+      if (params._replyContext) {
+        emailData._replyContext = params._replyContext;
+      }
+      return resend.emails.send(emailData);
+    },
+  });
 }
 
 // =====================================================
@@ -2635,11 +2681,15 @@ export async function sendInstantCommissionInvoice(data: {
     .toISOString()
     .slice(2, 10)
     .replace(/-/g, '')}-${data.email.slice(0, 4).toUpperCase()}`;
-  try {
-    await resend.emails.send({
+  const invoiceSubject = `Commission invoice: ${data.buyerName} — ${data.ranchName}`;
+  return guardedSend({
+    templateName: 'sendInstantCommissionInvoice',
+    recipientEmail: data.email,
+    subject: invoiceSubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `Commission invoice: ${data.buyerName} — ${data.ranchName}`,
+      subject: invoiceSubject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head><style>
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
@@ -2685,12 +2735,8 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#6B4F3F;fo
   <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
   ${emailFooter(data.email)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending instant commission invoice:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -2706,8 +2752,7 @@ export async function sendMonthlyCommissionInvoice(data: {
   totalCommissionDue: number;
   runningTotalUnpaid: number;
 }) {
-  try {
-    const rows = data.lineItems
+  const rows = data.lineItems
       .map(
         (item) =>
           `<tr>
@@ -2719,10 +2764,15 @@ export async function sendMonthlyCommissionInvoice(data: {
       )
       .join('');
 
-    await resend.emails.send({
+  const monthlyInvoiceSubject = `Commission Invoice — ${esc(data.monthYear)} — BuyHalfCow`;
+  return guardedSend({
+    templateName: 'sendMonthlyCommissionInvoice',
+    recipientEmail: data.email,
+    subject: monthlyInvoiceSubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `Commission Invoice — ${esc(data.monthYear)} — BuyHalfCow`,
+      subject: monthlyInvoiceSubject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}table{width:100%;border-collapse:collapse;margin:20px 0}th{text-align:left;padding:10px 12px;border-bottom:2px solid #2A2A2A;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;color:#0E0E0E}td{font-size:14px}.totals{background:#F4F1EC;border:1px solid #A7A29A;padding:20px 24px;margin:20px 0}.totals p{margin:6px 0;color:#0E0E0E}</style>
@@ -2778,12 +2828,8 @@ export async function sendMonthlyCommissionInvoice(data: {
     <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending commission invoice:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -2799,11 +2845,15 @@ export async function sendRancherLaunchWarmup(data: {
   engageUrl: string;
 }) {
   const first = data.firstName || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `${data.ranchName} just went live in ${data.buyerState} — ready to buy?`;
+  return guardedSend({
+    templateName: 'sendRancherLaunchWarmup',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `${data.ranchName} just went live in ${data.buyerState} — ready to buy?`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:16px 20px;margin:24px 0;font-family:Georgia,serif;font-size:18px;color:#0E0E0E}</style>
@@ -2822,12 +2872,8 @@ export async function sendRancherLaunchWarmup(data: {
   <p style="font-size:14px;">Not ready yet? Just don't click — you stay on the list and we'll check back when timing fits. No pressure, no hard feelings.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher launch warmup:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendRancherLaunchWarmupNudge(data: {
@@ -2837,11 +2883,15 @@ export async function sendRancherLaunchWarmupNudge(data: {
   engageUrl: string;
 }) {
   const first = data.firstName || 'there';
-  try {
-    await resend.emails.send({
+  const nudgeSubject = `Last call — ${data.ranchName} still has slots`;
+  return guardedSend({
+    templateName: 'sendRancherLaunchWarmupNudge',
+    recipientEmail: data.email,
+    subject: nudgeSubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `Last call — ${data.ranchName} still has slots`,
+      subject: nudgeSubject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}</style>
@@ -2855,12 +2905,8 @@ export async function sendRancherLaunchWarmupNudge(data: {
   </div>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending warmup nudge:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 
@@ -2881,11 +2927,15 @@ export async function sendRancherLeadReminder(data: {
   dashboardUrl: string;
 }) {
   const firstName = data.operatorName.split(' ')[0] || 'there';
-  try {
-    await resend.emails.send({
+  const reminderSubject = `Reminder — ${data.buyerName} is waiting (${data.daysSinceIntro}d since intro)`;
+  return guardedSend({
+    templateName: 'sendRancherLeadReminder',
+    recipientEmail: data.rancherEmail,
+    subject: reminderSubject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.rancherEmail,
-      subject: `Reminder — ${data.buyerName} is waiting (${data.daysSinceIntro}d since intro)`,
+      subject: reminderSubject,
       headers: getUnsubscribeHeaders(data.rancherEmail),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.divider{height:1px;background:#A7A29A;margin:24px 0}.lead-box{background:#F4F1EC;border-left:3px solid #0E0E0E;padding:16px 20px;margin:20px 0}.lead-box p{margin:6px 0;color:#0E0E0E;font-size:14px}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;margin:10px 0}</style>
@@ -2907,12 +2957,8 @@ export async function sendRancherLeadReminder(data: {
   <p style="font-size:13px;">If you can't take this lead, just reply to this email with "pass" and I'll route them to another rancher.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher lead reminder:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -2962,8 +3008,11 @@ export async function sendAbandonedRecoveryEmail(data: {
       <p>BuyHalfCow isn't a marketplace. It's a private network where I personally introduce serious buyers to verified ranchers. Most members save 30-50% vs grocery beef and end up with 6-12 months of premium cuts in their freezer.</p>
       <p>If you're still interested, finishing the form takes a minute. If not, no hard feelings — I'll stop the emails after this one.</p>`;
 
-  try {
-    await resend.emails.send({
+  return guardedSend({
+    templateName: 'sendAbandonedRecoveryEmail',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
       subject,
@@ -2978,12 +3027,8 @@ export async function sendAbandonedRecoveryEmail(data: {
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Abandoned recovery email error:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -3026,8 +3071,11 @@ export async function sendRerouteNotification(data: {
     <p>We're working on finding you another rancher in <strong>${esc(data.state)}</strong> right now. As soon as we have a confirmed match, you'll get an introduction email with their contact info and pricing.</p>
     <p>This usually takes 24-48 hours. If we don't have anyone available in your state yet, I'll personally reach out with options.</p>`;
 
-  try {
-    await resend.emails.send({
+  return guardedSend({
+    templateName: 'sendRerouteNotification',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
       subject,
@@ -3045,12 +3093,8 @@ export async function sendRerouteNotification(data: {
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
   </div>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending reroute notification:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -3067,11 +3111,15 @@ export async function sendProspectClaimMagicLink(data: {
   link: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `confirm your ${data.ranchName} listing on BuyHalfCow`;
+  return guardedSend({
+    templateName: 'sendProspectClaimMagicLink',
+    recipientEmail: data.to,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.to,
-      subject: `confirm your ${data.ranchName} listing on BuyHalfCow`,
+      subject,
       headers: getUnsubscribeHeaders(data.to),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
@@ -3087,12 +3135,8 @@ export async function sendProspectClaimMagicLink(data: {
   <p style="font-size:13px;color:#2A2A2A;">A bit of context: I'm Ben, founder of BuyHalfCow. We're building the public hit list of every direct-to-consumer rancher in America so families can find you instead of buying mystery beef from a grocery chain. Your listing was discovered from public info — it's currently a "prospect" pin (grey, no pricing) until you claim it.</p>
   <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending prospect claim magic link:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3137,11 +3181,15 @@ export async function sendRancherSelfSubmitWelcome(data: {
     }
   }
 
-  try {
-    await resend.emails.send({
+  const subject = `${data.ranchName} is on the map — set up your page`;
+  return guardedSend({
+    templateName: 'sendRancherSelfSubmitWelcome',
+    recipientEmail: data.to,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.to,
-      subject: `${data.ranchName} is on the map — set up your page`,
+      subject,
       headers: getUnsubscribeHeaders(data.to),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.cta-secondary{display:inline-block;padding:14px 30px;border:1px solid #0E0E0E;color:#0E0E0E !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
@@ -3167,12 +3215,8 @@ export async function sendRancherSelfSubmitWelcome(data: {
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
   ${emailFooter(data.to)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher self-submit welcome:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendRancherCommunityIntro(data: {
@@ -3186,11 +3230,15 @@ export async function sendRancherCommunityIntro(data: {
   const relationLine = data.relationship
     ? ` ${esc(data.submitterName)} described the connection as: "${esc(data.relationship)}".`
     : '';
-  try {
-    await resend.emails.send({
+  const subject = `${data.submitterName} thinks you should know about us`;
+  return guardedSend({
+    templateName: 'sendRancherCommunityIntro',
+    recipientEmail: data.to,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.to,
-      subject: `${data.submitterName} thinks you should know about us`,
+      subject,
       headers: getUnsubscribeHeaders(data.to),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
@@ -3209,12 +3257,8 @@ export async function sendRancherCommunityIntro(data: {
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
   ${emailFooter(data.to)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher community intro:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3228,11 +3272,15 @@ export async function sendRancherOnboardingDripDay2(data: {
   operatorName: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `Re: ${data.ranchName} on the map`;
+  return guardedSend({
+    templateName: 'sendRancherOnboardingDripDay2',
+    recipientEmail: data.to,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.to,
-      subject: `Re: ${data.ranchName} on the map`,
+      subject,
       headers: getUnsubscribeHeaders(data.to),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
@@ -3247,12 +3295,8 @@ export async function sendRancherOnboardingDripDay2(data: {
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
   ${emailFooter(data.to)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher onboarding drip Day 2:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendRancherOnboardingDripDay5(data: {
@@ -3261,11 +3305,15 @@ export async function sendRancherOnboardingDripDay5(data: {
   operatorName: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `What we actually do for ranchers like you`;
+  return guardedSend({
+    templateName: 'sendRancherOnboardingDripDay5',
+    recipientEmail: data.to,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.to,
-      subject: `What we actually do for ranchers like you`,
+      subject,
       headers: getUnsubscribeHeaders(data.to),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}ul{margin:14px 0;padding-left:22px}li{margin:6px 0}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
@@ -3284,12 +3332,8 @@ export async function sendRancherOnboardingDripDay5(data: {
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
   ${emailFooter(data.to)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher onboarding drip Day 5:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 export async function sendRancherOnboardingDripDay14(data: {
@@ -3298,11 +3342,15 @@ export async function sendRancherOnboardingDripDay14(data: {
   operatorName: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `Last note from me`;
+  return guardedSend({
+    templateName: 'sendRancherOnboardingDripDay14',
+    recipientEmail: data.to,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.to,
-      subject: `Last note from me`,
+      subject,
       headers: getUnsubscribeHeaders(data.to),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
@@ -3318,12 +3366,8 @@ export async function sendRancherOnboardingDripDay14(data: {
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
   ${emailFooter(data.to)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending rancher onboarding drip Day 14:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 // =====================================================
@@ -3344,11 +3388,15 @@ export async function sendMatchNowRescue(data: {
   buyerState: string;
 }) {
   const first = data.firstName || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `your rancher is lined up — intro coming in 24 hours`;
+  return guardedSend({
+    templateName: 'sendMatchNowRescue',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `your rancher is lined up — intro coming in 24 hours`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}</style>
@@ -3362,12 +3410,8 @@ export async function sendMatchNowRescue(data: {
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
   ${emailFooter(data.email)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending match-now rescue:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 /**
@@ -3384,11 +3428,15 @@ export async function sendNudgeToEngage(data: {
   engageUrl: string;
 }) {
   const first = data.firstName || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `quick question on your ${data.buyerState} beef timing`;
+  return guardedSend({
+    templateName: 'sendNudgeToEngage',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `quick question on your ${data.buyerState} beef timing`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:16px 20px;margin:24px 0;font-family:Georgia,serif;font-size:18px}</style>
@@ -3405,12 +3453,8 @@ export async function sendNudgeToEngage(data: {
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
   ${emailFooter(data.email)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending nudge-to-engage:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 /**
@@ -3427,11 +3471,15 @@ export async function sendWarmLeadReadyCheck(data: {
   engageUrl: string;
 }) {
   const first = data.firstName || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `ready to buy yet? quick check-in`;
+  return guardedSend({
+    templateName: 'sendWarmLeadReadyCheck',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `ready to buy yet? quick check-in`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}</style>
@@ -3446,12 +3494,8 @@ export async function sendWarmLeadReadyCheck(data: {
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
   ${emailFooter(data.email)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending warm-lead check:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 /**
@@ -3469,11 +3513,15 @@ export async function sendIncompleteProfileAsk(data: {
 }) {
   const first = data.firstName || 'there';
   const accessUrl = `${SITE_URL}/access`;
-  try {
-    await resend.emails.send({
+  const subject = `two questions on your beef — 30 seconds`;
+  return guardedSend({
+    templateName: 'sendIncompleteProfileAsk',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `two questions on your beef — 30 seconds`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:16px 20px;margin:16px 0;font-family:Georgia,serif;font-size:16px}</style>
@@ -3491,12 +3539,8 @@ export async function sendIncompleteProfileAsk(data: {
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
   ${emailFooter(data.email)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending incomplete-profile ask:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 /**
@@ -3515,11 +3559,15 @@ export async function sendNoBudgetFounderPitch(data: {
 }) {
   const first = data.firstName || 'there';
   const FOUNDERS_URL = `${SITE_URL}/founders`;
-  try {
-    await resend.emails.send({
+  const subject = `beef's not in the budget? back the mission for $100`;
+  return guardedSend({
+    templateName: 'sendNoBudgetFounderPitch',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `beef's not in the budget? back the mission for $100`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
@@ -3545,12 +3593,8 @@ export async function sendNoBudgetFounderPitch(data: {
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
   ${emailFooter(data.email)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending no-budget founder pitch:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }
 
 /**
@@ -3568,11 +3612,15 @@ export async function sendStateWaitlistLetter(data: {
   buyerState: string;
 }) {
   const first = data.firstName || 'there';
-  try {
-    await resend.emails.send({
+  const subject = `scouting ranchers in ${data.buyerState} — you're on the list`;
+  return guardedSend({
+    templateName: 'sendStateWaitlistLetter',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
-      subject: `scouting ranchers in ${data.buyerState} — you're on the list`,
+      subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}</style>
@@ -3586,10 +3634,6 @@ export async function sendStateWaitlistLetter(data: {
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
   ${emailFooter(data.email)}
 </div></body></html>`,
-    });
-    return { success: true };
-  } catch (error) {
-    console.error('Error sending state-waitlist letter:', error);
-    return { success: false, error };
-  }
+    }),
+  });
 }

@@ -189,7 +189,7 @@ export async function POST(
     });
 
     if (!emailResult.success) {
-      console.error('Email send failed for', rancherEmail, emailResult.error);
+      console.error('Email send failed for', rancherEmail, emailResult.reason);
       // Don't touch Airtable — caller can retry cleanly.
       await sendTelegramUpdate(
         `⚠️ <b>Onboarding email FAILED</b> for <b>${rancherName}</b> (${rancherEmail})\nRetry from the admin dashboard or via curl.`
