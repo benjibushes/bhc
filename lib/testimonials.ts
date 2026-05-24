@@ -1,14 +1,15 @@
 // Real testimonials pulled from Closed Won referrals.
 //
-// We don't have a dedicated Testimonial field on Referrals (verified in
-// Airtable on 2026-05-24 — the Notes field is internal ops chatter, not
-// quotable). So we synthesize each card from buyer first name + state +
-// ranch name + order type, in the BHC brand voice — short, lowercase,
-// direct. As soon as we add a real `Testimonial` field on Referrals, this
-// helper will prefer it over the synthesized quote.
+// **Integrity rule: REAL quotes only.** We never put fabricated words
+// in a real buyer's mouth — that's impersonation, even with first-name-
+// only anonymization. The helper reads explicit `Testimonial` or
+// `Quote` text fields on Referrals; if the buyer hasn't supplied one,
+// they're excluded from the result. Until Referrals gains those fields
+// + the operator collects real quotes, this returns `[]` and callers
+// gracefully fall back to clearly-labeled placeholder copy.
 //
 // Used by /start and /access social-proof slots. Falls back to [] on any
-// Airtable error so the pages never crash and can render placeholders.
+// Airtable error or missing-quote condition so pages never crash.
 //
 // 5-min in-process cache. Page-level `export const revalidate = 300` on
 // callers handles ISR; this cache stops repeated calls within one render
@@ -48,43 +49,15 @@ function daysBetween(iso: string): number {
   return Math.max(0, Math.floor((Date.now() - then) / 86_400_000));
 }
 
-// Brand voice: lowercase, short, no marketing slop. Variants keep the
-// page from feeling like ChatGPT wrote it. Picked deterministically from
-// the referral id so a given buyer always gets the same quote.
-function synthesizeQuote(opts: {
-  firstName: string;
-  rancherName: string;
-  orderType: string;
-  id: string;
-}): string {
-  const { firstName, rancherName, orderType, id } = opts;
-  const ranch = rancherName || 'a verified rancher';
-  const cut = (orderType || 'beef').toLowerCase();
-  const cutPhrase = /half|whole|quarter/.test(cut) ? `a ${cut}` : 'beef';
-
-  const variants = [
-    `got ${cutPhrase} from ${ranch}. best beef i've had.`,
-    `${ranch} delivered. freezer full, family fed.`,
-    `picked up ${cutPhrase} from ${ranch}. talked to the rancher direct.`,
-    `${ranch} hooked it up. cleanest beef i've bought.`,
-    `${cutPhrase} from ${ranch} — straight from the ranch to my freezer.`,
-  ];
-
-  // Deterministic hash of the referral id → variant index. Same buyer
-  // always sees the same quote across renders.
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
-  const idx = Math.abs(h) % variants.length;
-  return variants[idx] + ` — ${firstName.toLowerCase()}`;
-}
-
 /**
- * Fetch recent Closed Won referrals, hydrated with rancher info and a
- * synthesized testimonial quote. Returns `[]` on any error so callers can
- * fall back to placeholder copy without try/catch.
+ * Fetch recent Closed Won referrals that have an explicit Testimonial
+ * or Quote field populated. Returns `[]` on any error OR when no real
+ * quotes exist so callers can fall back to placeholder copy without
+ * try/catch.
  *
- * Sorted newest-first by Closed At. Skips referrals missing rancher links
- * or with zero sale amount (same hygiene rule as /wins).
+ * Sorted newest-first by Closed At. Skips referrals missing rancher
+ * links, zero sale amount (same hygiene rule as /wins), or empty
+ * quote field.
  */
 export async function getRecentTestimonials(limit: number = 3): Promise<Testimonial[]> {
   // Cache hit — return slice (cached array may be larger than requested limit).
@@ -148,17 +121,13 @@ export async function getRecentTestimonials(limit: number = 3): Promise<Testimon
         const orderType = (ref['Order Type'] || 'Beef').toString();
         const closedAt = (ref['Closed At'] || '').toString();
 
-        // If Airtable ever gains a Testimonial / Quote field, prefer it
-        // verbatim. Until then we synthesize.
+        // REAL QUOTES ONLY. If the buyer hasn't supplied a Testimonial
+        // or Quote, exclude them — never fabricate words attributed to
+        // a real named buyer (impersonation). Operator collects real
+        // quotes via post-purchase email + writes into the field.
         const explicit = (ref['Testimonial'] || ref['Quote'] || '').toString().trim();
-        const quote = explicit
-          ? explicit
-          : synthesizeQuote({
-              firstName: buyerName,
-              rancherName,
-              orderType,
-              id: ref.id || `${buyerName}-${closedAt}`,
-            });
+        if (!explicit) return null;
+        const quote = explicit;
 
         return {
           buyerName,
