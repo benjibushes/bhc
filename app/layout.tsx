@@ -4,6 +4,7 @@ import "./globals.css";
 import Header from "./components/Header";
 import PromoBar from "./components/PromoBar";
 import Analytics from "./components/Analytics";
+import PixelTracker from "./components/PixelTracker";
 
 const playfair = Playfair_Display({
   variable: "--font-playfair",
@@ -98,6 +99,7 @@ export default function RootLayout({
       <body
         className={`${playfair.variable} ${inter.variable} antialiased`}
       >
+        <PixelTracker />
         <Analytics />
         <PromoBar />
         <Header />
