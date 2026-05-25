@@ -35,7 +35,7 @@ import { createRecord, getAllRecords, escapeAirtableValue } from './airtable';
 const AUDIT_TABLE = 'AI Audit Log';
 
 export type AuditActor = 'ai-auto' | 'ai-confirmed' | 'cron' | 'manual';
-export type AuditTargetType = 'Consumer' | 'Rancher' | 'Referral' | 'Inquiry' | 'Other';
+export type AuditTargetType = 'Consumer' | 'Rancher' | 'Referral' | 'Inquiry' | 'Thread' | 'Other';
 
 export type ReverseAction =
   | {
