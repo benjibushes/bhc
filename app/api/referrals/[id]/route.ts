@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { sendTelegramSaleCelebration } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
 import { calcCommission, getCommissionRate } from '@/lib/commission';
+import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 
 export async function PATCH(
   request: Request,
@@ -34,11 +35,12 @@ export async function PATCH(
           const referral = await getRecordById(TABLES.REFERRALS, id);
           const rancherId = (referral as any)['Rancher']?.[0];
           if (rancherId) {
-            const rancher = await getRecordById(TABLES.RANCHERS, rancherId);
-            const currentCount = (rancher as any)['Current Active Referrals'] || 0;
-            await updateRecord(TABLES.RANCHERS, rancherId, {
-              'Current Active Referrals': Math.max(0, currentCount - 1),
-            });
+            // Atomic DECR via Redis (see lib/rancherCapacity) — concurrent
+            // admin closes can't race the counter past 0 or skip a slot
+            // release. syncCapacityToAirtable mirrors the new value back so
+            // dashboards stay accurate.
+            const newCount = await decrementCapacity(rancherId);
+            await syncCapacityToAirtable(rancherId, newCount);
           }
         } catch (e) {
           console.error('Error decrementing rancher referrals:', e);

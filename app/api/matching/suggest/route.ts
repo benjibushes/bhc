@@ -8,7 +8,7 @@ import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
-import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
 export const maxDuration = 90;
@@ -502,37 +502,52 @@ export async function POST(request: Request) {
     const now = new Date().toISOString();
     if (topMatch) {
       try {
-        // ── Atomic-ish capacity bump ─────────────────────────────────────
-        // The scoring snapshot (taken at request start) reflects whatever
-        // counts existed then. Under burst load, multiple concurrent buyers
-        // can all score against the SAME stale count and all bump it past
-        // cap. Re-read the rancher right before write to shrink the race
-        // window. Not truly atomic (Airtable has no CAS), but cuts the
-        // overflow rate from "guaranteed" to "rare".
-        let fresh: any = topMatch;
-        try {
-          fresh = await getRecordById(TABLES.RANCHERS, topMatch.id);
-        } catch (e) {
-          console.warn('Capacity refetch failed; using snapshot count:', (e as any)?.message);
-        }
-        const currentRefs = (fresh && fresh['Current Active Referrals']) || 0;
+        // ── Atomic capacity bump via Upstash Redis INCR ──────────────────
+        // Pre-2026-05-24: this was a check-then-write against Airtable. Two
+        // concurrent buyers routed to the same rancher could both pass the
+        // gate + both write N+1, overflowing capacity by 1-2 under burst.
+        // Round 6 audit deferred as Tier 2 hardening; shipped now.
+        //
+        // New flow:
+        //   1. INCR Redis counter → get atomic newRefs
+        //   2. If newRefs > cap (or > hard ceiling for hot leads), DECR
+        //      back to undo the slot claim, downgrade referral to
+        //      Waitlisted, and short-circuit. Counter stays consistent.
+        //   3. Otherwise sync the new value back to Airtable so
+        //      dashboards + cron reads see it.
+        //
+        // Failure mode: if Redis env missing OR INCR throws, the lib falls
+        // back to legacy Airtable read+1 (race-prone but functional) with
+        // console.error so the regression surfaces.
         const maxRefsForGuard = getMaxActiveReferrals(topMatch);
-        // Hot leads bypass the soft cap by design (warmup-engaged opt-ins).
-        // For cold leads, if the fresh read shows we'd overflow soft cap,
-        // downgrade to Waitlisted. For HOT leads, still enforce the 1.2×
-        // hard ceiling on refetch — a burst of YES clicks shouldn't smash
-        // the counter past the safety valve. Audit finding 2026-05-20 #18.
         const HARD_CEILING = Math.ceil(maxRefsForGuard * 1.2);
-        if (isHotLead && maxRefsForGuard > 0 && currentRefs >= HARD_CEILING) {
+        const newRefs = await incrementCapacity(topMatch.id);
+
+        // Hot-lead hard-ceiling guard: hot leads bypass the soft cap by
+        // design (warmup-engaged opt-ins shouldn't sit in queue), but a
+        // burst of YES clicks shouldn't smash past the 1.2× safety valve.
+        // Audit finding 2026-05-20 #18.
+        if (isHotLead && maxRefsForGuard > 0 && newRefs > HARD_CEILING) {
+          // Undo the slot claim — return the counter to its pre-INCR value
+          // so we don't strand capacity on a referral we're about to waitlist.
+          let restored = newRefs - 1;
+          try {
+            restored = await decrementCapacity(topMatch.id);
+          } catch (e) {
+            console.error('Hot-lead hard-ceiling DECR rollback failed:', e);
+          }
+          try {
+            await syncCapacityToAirtable(topMatch.id, restored);
+          } catch {}
           try {
             await updateRecord(TABLES.REFERRALS, referral.id, {
               'Status': 'Waitlisted',
-              'Notes': `[capacity-race-hot] Refetched ${currentRefs}/${HARD_CEILING} hard ceiling hit; hot-lead waitlisted.`,
+              'Notes': `[capacity-race-hot] Atomic INCR hit ${newRefs}/${HARD_CEILING} hard ceiling; hot-lead waitlisted + slot released.`,
             });
             await sendOperatorSignal({
               urgency: 'loud',
               kind: 'capacity',
-              summary: `HOT-LEAD HARD CEILING HIT: ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) at ${currentRefs}/${HARD_CEILING}. Buyer waitlisted to protect rancher.`,
+              summary: `HOT-LEAD HARD CEILING HIT: ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) at ${newRefs}/${HARD_CEILING}. Buyer waitlisted to protect rancher.`,
               detail: 'Hot-lead burst would have overflowed 1.2× safety valve.',
               refs: [{ type: 'rancher', id: topMatch.id, label: topMatch['Operator Name'] || topMatch['Ranch Name'] }],
               dedupeKey: `hard-ceiling:${topMatch.id}`,
@@ -548,16 +563,28 @@ export async function POST(request: Request) {
             referralId: referral.id,
           });
         }
-        if (!isHotLead && maxRefsForGuard > 0 && currentRefs >= maxRefsForGuard) {
+        // Cold-lead soft-cap guard. Atomic INCR makes this the authoritative
+        // gate — if we ended up over cap, exactly one buyer per overflow
+        // event sees the rollback path (the others observed a safe newRefs).
+        if (!isHotLead && maxRefsForGuard > 0 && newRefs > maxRefsForGuard) {
+          let restored = newRefs - 1;
+          try {
+            restored = await decrementCapacity(topMatch.id);
+          } catch (e) {
+            console.error('Capacity-race DECR rollback failed:', e);
+          }
+          try {
+            await syncCapacityToAirtable(topMatch.id, restored);
+          } catch {}
           try {
             await updateRecord(TABLES.REFERRALS, referral.id, {
               'Status': 'Waitlisted',
-              'Notes': `[capacity-race] Refetched ${currentRefs}/${maxRefsForGuard} before bump; waitlisted to avoid overflow.`,
+              'Notes': `[capacity-race] Atomic INCR hit ${newRefs}/${maxRefsForGuard}; waitlisted + slot released.`,
             });
             await sendOperatorSignal({
               urgency: 'digest',
               kind: 'capacity',
-              summary: `CAPACITY RACE CAUGHT: ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) was at cap on refetch — buyer routed to Waitlisted instead of overflowing counter.`,
+              summary: `CAPACITY RACE CAUGHT: ${topMatch['Operator Name'] || topMatch['Ranch Name'] || 'Unknown'} (${topMatch['State'] || '?'}) hit cap on atomic INCR — buyer routed to Waitlisted instead of overflowing counter.`,
               detail: 'Indicates burst-traffic scenario.',
               refs: [{ type: 'rancher', id: topMatch.id, label: topMatch['Operator Name'] || topMatch['Ranch Name'] }],
               dedupeKey: `capacity-race:${topMatch.id}`,
@@ -573,7 +600,11 @@ export async function POST(request: Request) {
             referralId: referral.id,
           });
         }
-        const newRefs = currentRefs + 1;
+        // Within cap — sync to Airtable + stamp Last Assigned At in the same
+        // write so dashboards see both fields update together. Direct
+        // updateRecord (instead of syncCapacityToAirtable) lets us bundle
+        // the timestamp field; the counter value is already authoritative
+        // from the atomic INCR above.
         await updateRecord(TABLES.RANCHERS, topMatch.id, {
           'Current Active Referrals': newRefs,
           'Last Assigned At': now,

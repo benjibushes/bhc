@@ -8,6 +8,7 @@ import {
 } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate } from '@/lib/commission';
+import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import {
   sendTelegramMessage,
   TELEGRAM_ADMIN_CHAT_ID,
@@ -190,14 +191,14 @@ async function applyAction(
     return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
   }
 
-  // Decrement rancher counter if this is the first transition to a terminal status
+  // Decrement rancher counter if this is the first transition to a terminal
+  // status. Uses atomic Redis DECR (see lib/rancherCapacity) so concurrent
+  // closes on the same rancher don't race the counter past 0 / off by 1.
+  // syncCapacityToAirtable mirrors the new value so dashboards stay accurate.
   if (wasActiveBefore && TERMINAL_STATUSES.includes(updates['Status'])) {
     try {
-      const rancher: any = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
-      const cur = Number(rancher['Current Active Referrals'] || 0);
-      await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
-        'Current Active Referrals': Math.max(0, cur - 1),
-      });
+      const newCount = await decrementCapacity(decoded.rancherId);
+      await syncCapacityToAirtable(decoded.rancherId, newCount);
     } catch (e: any) {
       console.warn('[quick-action] counter decrement failed:', e?.message);
     }
