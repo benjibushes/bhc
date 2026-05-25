@@ -29,7 +29,7 @@ import { getActiveRancherPages } from '@/lib/airtable';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 
 export const metadata: Metadata = {
-  title: 'buyhalfcow — real beef. real ranchers. direct.',
+  title: 'real beef. real ranchers. direct.',
   description: "pick who you are. we route you in 5 seconds. buyers, ranchers, backers, brands.",
   openGraph: {
     title: 'real beef. real ranchers. direct.',

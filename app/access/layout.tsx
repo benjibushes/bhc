@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Get Access — BuyHalfCow',
+  title: 'Get Access',
   description: 'Apply for access to BuyHalfCow — source ranch beef direct from a verified rancher in your state.',
   openGraph: {
     title: 'Get Access — BuyHalfCow',
