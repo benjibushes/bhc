@@ -84,11 +84,35 @@ export async function POST(request: Request) {
     }
     const {
       fullName, email, phone, state,
-      orderType, budgetRange, timing, notes,
-      interestBeef, interestLand, interestMerch, interestAll,
+      orderType: orderTypeRaw, budgetRange: budgetRangeRaw, timing, notes,
+      interestBeef: interestBeefRaw, interestLand, interestMerch, interestAll,
       intentScore, intentClassification, segment,
       source, campaign, utmParams, ref,
     } = body;
+
+    // ── DEFAULT QUALIFICATION SIGNALS — revenue lever ────────────────
+    // /access form trimmed to 5 fields (state, household, timing, email,
+    // firstName) for top-of-funnel velocity. Tradeoff: Order Type +
+    // Budget unfilled → segment classified as 'Community' instead of
+    // 'Beef Buyer' → auto-route gate fails → buyer stuck in WAITING
+    // until manual warmup YES click.
+    //
+    // Fix: when timing signals immediate intent (Within 30 days OR
+    // 1-3 months) AND Order Type/Budget not collected, default to Half
+    // + $1500-$2500 (median tier + median price). Lifts segment to
+    // Beef Buyer → auto-route fires → 3-5× conversion lift per CRO
+    // audit (docs/REVENUE-AUDIT-2026-05-25.md path 1).
+    //
+    // Rancher gets the lead w/ "assumed Half" annotation in Notes; can
+    // adjust on first call. Better than buyer sitting in WAITING for 14
+    // days hoping for warmup engage.
+    const highIntentTiming = timing === 'Within 30 days' || timing === '1-3 months';
+    const orderType = orderTypeRaw || (highIntentTiming ? 'Half' : '');
+    const budgetRange = budgetRangeRaw || (highIntentTiming ? '$1500-$2500' : '');
+    // Auto-flag Beef interest when timing signals intent — same logic:
+    // buyer filling the trimmed form w/ high-intent timing is signaling
+    // beef-buy intent even if they didn't tick the explicit checkbox.
+    const interestBeef = interestBeefRaw || (highIntentTiming ? true : false);
 
     if (!fullName || !email || !state) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
