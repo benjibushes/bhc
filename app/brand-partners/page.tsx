@@ -54,9 +54,52 @@ const foundingCalendly =
 // founding_brand_partners_remaining. For now hardcode 5.
 const FOUNDING_SPOTS_REMAINING: number = 5;
 
+// JSON-LD Schema.org Service markup — Google rich-result eligibility for
+// brand partner placements. Three tiers mirror the page below. Renders via
+// JSON.stringify (XSS-safe).
+const brandPartnersJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Service',
+  name: 'BuyHalfCow Brand Partner Placements',
+  description:
+    'Logo placement, founder broadcast features, and co-branded social posts in front of D2C ranchers and the families who buy direct. Three tiers.',
+  provider: {
+    '@type': 'Organization',
+    name: 'BuyHalfCow',
+    url: 'https://www.buyhalfcow.com',
+  },
+  offers: [
+    {
+      '@type': 'Offer',
+      name: 'Spotlight',
+      price: '99',
+      priceCurrency: 'USD',
+      url: 'https://www.buyhalfcow.com/brand-partners#tiers',
+    },
+    {
+      '@type': 'Offer',
+      name: 'Featured',
+      price: '499',
+      priceCurrency: 'USD',
+      url: 'https://www.buyhalfcow.com/brand-partners#tiers',
+    },
+    {
+      '@type': 'Offer',
+      name: 'Founding Brand Partner',
+      price: '1500',
+      priceCurrency: 'USD',
+      url: 'https://www.buyhalfcow.com/brand-partners#tiers',
+    },
+  ],
+};
+
 export default function BrandPartnersPage() {
   return (
     <main className="min-h-screen bg-bone text-charcoal">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(brandPartnersJsonLd) }}
+      />
       {/* Page-view tracking — client component, no render output */}
       <BrandPartnersViewTracker />
 

@@ -226,8 +226,71 @@ export default async function FoundersPage({
   const founding100SoldOut = founding100Count >= FOUNDING_100_CAP;
   const titleFounderSoldOut = titleFounderCount >= TITLE_FOUNDER_CAP;
 
+  // JSON-LD Schema.org Product markup — Google rich-result eligibility for
+  // the Founding Herd as a backable product. Tier prices reflect current
+  // /founders tier rows (one-time + monthly subscriptions). Renders via
+  // JSON.stringify (XSS-safe).
+  const foundersJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: 'The Founding Herd',
+    description:
+      'Five-tier backing program for BuyHalfCow. Numbered placement, lifetime founder status, monthly letter from the road. 100 numbered Founding 100 spots plus 10 Title Founder slots.',
+    brand: {
+      '@type': 'Brand',
+      name: 'BuyHalfCow',
+    },
+    offers: [
+      {
+        '@type': 'Offer',
+        name: 'Title Founder',
+        price: '15000',
+        priceCurrency: 'USD',
+        availability: titleFounderSoldOut
+          ? 'https://schema.org/SoldOut'
+          : 'https://schema.org/InStock',
+        url: 'https://www.buyhalfcow.com/founders#tiers',
+      },
+      {
+        '@type': 'Offer',
+        name: 'Founding 100',
+        price: (founding100Cents / 100).toString(),
+        priceCurrency: 'USD',
+        availability: founding100SoldOut
+          ? 'https://schema.org/SoldOut'
+          : 'https://schema.org/InStock',
+        url: 'https://www.buyhalfcow.com/founders#tiers',
+      },
+      {
+        '@type': 'Offer',
+        name: 'Steward (monthly)',
+        price: '75',
+        priceCurrency: 'USD',
+        url: 'https://www.buyhalfcow.com/founders#tiers',
+      },
+      {
+        '@type': 'Offer',
+        name: 'Outlaw (monthly)',
+        price: '25',
+        priceCurrency: 'USD',
+        url: 'https://www.buyhalfcow.com/founders#tiers',
+      },
+      {
+        '@type': 'Offer',
+        name: 'Herd (monthly)',
+        price: '9',
+        priceCurrency: 'USD',
+        url: 'https://www.buyhalfcow.com/founders#tiers',
+      },
+    ],
+  };
+
   return (
     <main className="min-h-screen bg-bone text-charcoal">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(foundersJsonLd) }}
+      />
       {/* POST-CHECKOUT BANNER — Stripe redirect lands here. Without this, backers
           see no acknowledgment after paying. Welcome email is the next signal
           but takes 30s+ to arrive. */}

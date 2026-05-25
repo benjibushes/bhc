@@ -232,8 +232,26 @@ export default async function StartPage({
     ? `we route you to a verified rancher in ${detectedState}. you talk to them direct in 24 hours — no middleman, no markup, no grocery middleman.`
     : 'we route you to a verified rancher in your state. you talk to them direct in 24 hours — no middleman, no markup.';
 
+  // JSON-LD Schema.org Organization markup — Google rich-result eligibility
+  // for BuyHalfCow as a primary entity. Renders via JSON.stringify (XSS-safe).
+  const orgJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: 'BuyHalfCow',
+    url: 'https://www.buyhalfcow.com',
+    logo: 'https://www.buyhalfcow.com/og-image.png',
+    founder: {
+      '@type': 'Person',
+      name: 'Ben Beauchman',
+    },
+  };
+
   return (
     <main className="min-h-screen bg-bone text-charcoal">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
+      />
       <PageViewTracker />
       <div className="mx-auto max-w-4xl px-5 sm:px-6 py-10 sm:py-16">
         {/* HERO */}
@@ -460,6 +478,7 @@ export default async function StartPage({
                       <img
                         src={r.logoUrl}
                         alt={`${r.ranchName} logo`}
+                        loading="lazy"
                         className="w-full h-full object-cover"
                       />
                     ) : (

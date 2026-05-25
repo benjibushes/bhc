@@ -96,6 +96,7 @@ export default function LivePreview(props: PreviewProps) {
               <img
                 src={logoUrl}
                 alt={ranchName ? `${ranchName} logo` : 'Logo'}
+                loading="lazy"
                 className="h-12 w-12 object-contain bg-bone p-1 border border-bone/40"
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).style.display = 'none';

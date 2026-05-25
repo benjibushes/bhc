@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
+import Anthropic from '@anthropic-ai/sdk';
 import { JWT_SECRET } from '@/lib/secrets';
 
 // Auto-fill About from website. Rancher pastes their site URL → we hit
-// Tavily's content extraction → return concatenated content as a draft About
-// the rancher edits and saves. Cuts the blank-page paralysis.
+// Tavily's content extraction → optionally pass through Claude for a
+// brand-voice 150-word summary → return a draft About the rancher
+// edits and saves. Cuts the blank-page paralysis.
 //
-// Without Anthropic, we don't summarize — we return raw extracted content
-// so the rancher edits it down. Once we add an Anthropic key, swap in a
-// Claude summarize call here. Tavily already returns clean content_text
-// snippets so the raw concatenation is decent baseline.
+// When ANTHROPIC_API_KEY is set, the cleaned Tavily output is fed to Claude
+// with the BuyHalfCow voice prompt for a ~150-word paragraph. If the Claude
+// call fails for any reason we fall back to the cleaned Tavily content
+// (fail-open — never block the wizard on a model hiccup).
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -92,7 +94,8 @@ export async function POST(req: Request) {
         .filter(Boolean)
         .join('\n\n')
         .slice(0, 2000);
-      return NextResponse.json({ success: true, suggested: text });
+      const summarized = await summarizeWithClaude(text);
+      return NextResponse.json({ success: true, suggested: summarized });
     }
 
     const data: any = await res.json();
@@ -113,14 +116,43 @@ export async function POST(req: Request) {
 
     // Light cleanup — strip menus, footers, common boilerplate noise.
     const cleaned = cleanScrape(text);
+    const summarized = await summarizeWithClaude(cleaned);
 
-    return NextResponse.json({ success: true, suggested: cleaned });
+    return NextResponse.json({ success: true, suggested: summarized });
   } catch (e: any) {
     console.error('[auto-about] tavily failed:', e?.message);
     return NextResponse.json(
       { error: 'Could not fetch site — paste manually' },
       { status: 500 }
     );
+  }
+}
+
+// Claude brand-voice summarization pass. Takes the Tavily-cleaned content
+// and asks Claude for a ~150-word About paragraph in BuyHalfCow's voice
+// (lowercase, direct, no corporate). Fail-open: any error returns the
+// original Tavily content unchanged so the wizard never blocks.
+async function summarizeWithClaude(content: string): Promise<string> {
+  if (!content || content.trim().length < 80) return content;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return content;
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const prompt = `Write a 150-word About paragraph for this rancher in BuyHalfCow's voice: lowercase, direct, no corporate. Based on the following research: ${content}. Output JUST the paragraph text, no markdown headers.`;
+
+    const message = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 400,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const block = message.content.find((b) => b.type === 'text');
+    const summary = block && block.type === 'text' ? block.text.trim() : '';
+    return summary || content;
+  } catch (e: any) {
+    console.error('[auto-about] claude summarize failed:', e?.message);
+    return content;
   }
 }
 

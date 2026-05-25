@@ -667,6 +667,7 @@ function PastOrdersSection({
                     <img
                       src={normalizeImageUrl(rancher['Logo URL'] || '')}
                       alt={rancher['Ranch Name']}
+                      loading="lazy"
                       className="w-12 h-12 object-cover border border-dust flex-shrink-0"
                     />
                   )}
@@ -817,6 +818,7 @@ function YourMatchHero({ rancher, status }: { rancher: Rancher; status: string }
           <img
             src={normalizeImageUrl(rancher['Logo URL'] || '')}
             alt={rancher['Ranch Name']}
+            loading="lazy"
             className="w-20 h-20 object-cover border border-dust flex-shrink-0"
           />
         )}
@@ -899,7 +901,7 @@ function RancherCard({ rancher }: { rancher: Rancher }) {
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3 min-w-0">
           {rancher['Logo URL'] && (
-            <img src={normalizeImageUrl(rancher['Logo URL'] || '')} alt={rancher['Ranch Name']} className="w-12 h-12 object-cover border border-dust flex-shrink-0" />
+            <img src={normalizeImageUrl(rancher['Logo URL'] || '')} alt={rancher['Ranch Name']} loading="lazy" className="w-12 h-12 object-cover border border-dust flex-shrink-0" />
           )}
           <div className="min-w-0">
             <h3 className="font-serif text-xl">{rancher['Ranch Name']}</h3>
