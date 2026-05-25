@@ -721,17 +721,19 @@ async function processUpdate(update: any) {
             'Closed At': new Date().toISOString(),
           });
 
+          // MISMATCH FIX: use atomic Redis DECR (lib/rancherCapacity) so
+          // concurrent reject/closelost clicks on the same rancher don't
+          // under-decrement via read-then-write race. Prior code read
+          // currentRefs from a possibly-stale snapshot + wrote currentRefs-1.
           const assignedRancherIds = referral['Rancher'] || referral['Suggested Rancher'] || [];
           if (Array.isArray(assignedRancherIds) && assignedRancherIds.length > 0) {
             try {
-              const rancher: any = await getRecordById(TABLES.RANCHERS, assignedRancherIds[0]);
-              const currentRefs = rancher['Current Active Referrals'] || 0;
-              if (currentRefs > 0) {
-                await updateRecord(TABLES.RANCHERS, assignedRancherIds[0], {
-                  'Current Active Referrals': currentRefs - 1,
-                });
-              }
-            } catch { /* rancher lookup failed, skip decrement */ }
+              const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
+              const newCount = await decrementCapacity(assignedRancherIds[0]);
+              await syncCapacityToAirtable(assignedRancherIds[0], newCount);
+            } catch (capErr: any) {
+              console.warn('[telegram reject] atomic decrement failed:', capErr?.message);
+            }
           }
 
           await answerCallbackQuery(queryId, 'Rejected');
@@ -1224,15 +1226,16 @@ Source: ${c['Source'] || 'organic'}`;
             result: { previousStatus, newStatus: 'Closed Lost' },
             reverseAction: reverse,
           });
-          // Free up rancher capacity
+          // MISMATCH FIX: atomic Redis DECR same as reject path above —
+          // protects against concurrent closelost clicks under-decrementing.
           if (Array.isArray(rancherIds) && rancherIds[0]) {
             try {
-              const rancher: any = await getRecordById(TABLES.RANCHERS, rancherIds[0]);
-              const count = rancher['Current Active Referrals'] || 0;
-              if (count > 0) {
-                await updateRecord(TABLES.RANCHERS, rancherIds[0], { 'Current Active Referrals': count - 1 });
-              }
-            } catch { /* non-critical */ }
+              const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
+              const newCount = await decrementCapacity(rancherIds[0]);
+              await syncCapacityToAirtable(rancherIds[0], newCount);
+            } catch (capErr: any) {
+              console.warn('[telegram closelost] atomic decrement failed:', capErr?.message);
+            }
           }
           await answerCallbackQuery(queryId, '🔒 Closed Lost');
           if (chatId && messageId) {

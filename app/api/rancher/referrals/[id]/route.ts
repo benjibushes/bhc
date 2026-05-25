@@ -629,7 +629,12 @@ export async function PATCH(
         const monthlyWinsForRancher = rancherWins.filter((r) => new Date(r['Closed At'] || 0).getTime() >= monthStart);
         const monthlyCommission = monthlyWinsForRancher.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
         const lifetimeCommission = rancherWins.reduce((s, r) => s + (r['Commission Due'] || 0), 0);
-        const commission = calcCommission(saleAmount || 0);
+        // MISMATCH FIX: prior code computed `commission` with env-default
+        // rate while the DB row was written with the per-rancher locked
+        // rate (line 593). Telegram showed a different $ than what the
+        // rancher would be invoiced for. Use the actual Commission Due
+        // value that was just written (already in `fields['Commission Due']`).
+        const commission = Number(fields['Commission Due']) || calcCommission(saleAmount || 0);
 
         await sendTelegramSaleCelebration({
           referralId: id,

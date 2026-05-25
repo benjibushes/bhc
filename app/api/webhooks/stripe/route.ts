@@ -446,7 +446,10 @@ async function handleCommissionInvoicePaid(invoice: any) {
 
   // Mark the referral as commission paid + persist amount + paid date.
   // Tolerate a missing record id — Stripe might fire a delayed event after
-  // we've archived/restructured. Just log and move on.
+  // we've archived/restructured. Log AND track the failure so Telegram
+  // celebrates honestly (was: silent swallow + lying celebration).
+  let airtableWriteOk = true;
+  let airtableWriteError = '';
   try {
     await updateRecord(TABLES.REFERRALS, referralId, {
       'Commission Paid': true,
@@ -454,10 +457,14 @@ async function handleCommissionInvoicePaid(invoice: any) {
       'Stripe Invoice URL': invoice.hosted_invoice_url || '',
     });
   } catch (e: any) {
-    console.error('[stripe webhook] mark commission paid failed:', e?.message);
+    airtableWriteOk = false;
+    airtableWriteError = e?.message || 'unknown';
+    console.error('[stripe webhook] mark commission paid failed:', airtableWriteError);
   }
 
-  // Telegram celebration — same chat that gets sale alerts.
+  // Telegram celebration — same chat that gets sale alerts. MISMATCH FIX:
+  // surface Airtable write status in the message so operator knows whether
+  // the DB actually reflects the Stripe-confirmed payment.
   try {
     if (TELEGRAM_ADMIN_CHAT_ID) {
       let rancherLine = '';
@@ -480,13 +487,16 @@ async function handleCommissionInvoicePaid(invoice: any) {
           /* non-fatal */
         }
       }
+      const statusFooter = airtableWriteOk
+        ? `<i>Stripe invoice ${invoice.id}. Referral marked Commission Paid.</i>`
+        : `⚠️ <b>AIRTABLE WRITE FAILED</b> — Stripe confirms paid but Referral row NOT updated. Fix Referral ${referralId} manually.\n<i>Error: ${airtableWriteError.slice(0, 150)}</i>`;
       await sendTelegramMessage(
         TELEGRAM_ADMIN_CHAT_ID,
         `💰 <b>COMMISSION PAID</b>\n\n` +
           `<b>$${amountPaidDollars.toFixed(2)}</b> just landed in BHC's Stripe.` +
           rancherLine +
           buyerLine +
-          `\n\n<i>Stripe invoice ${invoice.id}. Referral marked Commission Paid.</i>`
+          `\n\n${statusFooter}`
       );
     }
   } catch (e: any) {

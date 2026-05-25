@@ -191,7 +191,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             });
             if (matchRes.ok) {
               const matchData = await matchRes.json().catch(() => ({}));
-              const didMatch = !!(matchData.rancherId || matchData.referralId || matchData.rancher || matchData.matched);
+              // MISMATCH FIX: prior heuristic counted referralId presence
+              // as "matched". But matching/suggest creates a Status=Waitlisted
+              // referral row even when no rancher accepts the lead — so
+              // referralId was set in BOTH match AND waitlist outcomes.
+              // Result: Telegram digest claimed "X matched" while Airtable
+              // had X waitlisted rows. Use matching/suggest's canonical
+              // response shape: matchFound=true AND !waitlisted.
+              const didMatch = !!(matchData.matchFound && !matchData.waitlisted);
               if (didMatch) {
                 matched++;
               } else {

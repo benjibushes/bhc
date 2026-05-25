@@ -97,7 +97,14 @@ async function realHandler(
     // rancher, mark Closed Lost, or let it ride another week. Keeping
     // this operator-mediated for now; a per-rancher email nudge can layer
     // on later (in a separate task) once we see how often this fires.
+    // MISMATCH FIX: stamp throttle BEFORE Telegram. Prior order sent
+    // the visible card then attempted the throttle stamp — if the stamp
+    // write failed, next cron run had no throttle filter and duplicate-
+    // nudged. Now: if throttle write fails, abort BEFORE the card.
     try {
+      await updateRecord(TABLES.REFERRALS, ref.id, {
+        'Rancher Reminded At': new Date().toISOString(),
+      });
       if (TELEGRAM_ADMIN_CHAT_ID) {
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
@@ -110,9 +117,6 @@ async function realHandler(
             `• Re-nudge rancher: <code>${SITE_URL}/rancher</code>`,
         );
       }
-      await updateRecord(TABLES.REFERRALS, ref.id, {
-        'Rancher Reminded At': new Date().toISOString(),
-      });
       nudged++;
     } catch (e: any) {
       errors.push(`${ref.id}: ${e?.message?.slice(0, 100)}`);

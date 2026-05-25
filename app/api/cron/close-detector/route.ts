@@ -136,6 +136,29 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           ],
         };
 
+        // MISMATCH FIX: stamp throttle BEFORE posting Telegram card so a
+        // field-missing failure aborts the visible side effect. Prior order
+        // sent the card first then attempted stamp; if stamp failed, every
+        // subsequent cron run re-posted the same card forever.
+        const { updateRecord } = await import('@/lib/airtable');
+        let throttleStamped = false;
+        try {
+          await updateRecord(TABLES.REFERRALS, ref.id, {
+            'Close Check Sent At': new Date().toISOString(),
+          });
+          throttleStamped = true;
+        } catch (fieldErr: any) {
+          // Field doesn't exist yet OR write failed. ABORT — don't post a
+          // card we can't throttle. Surface the missing field in skip reasons
+          // so operator sees what to add.
+          if (skippedReasons.length === 0) {
+            skippedReasons.push(`Add "Close Check Sent At" datetime field to Referrals table — cron aborts posting until then. (${fieldErr?.message})`);
+          }
+        }
+
+        // Only post the visible card if the throttle stamp succeeded.
+        if (!throttleStamped) continue;
+
         // sendTelegramMessage signature is (chatId, text, replyMarkup?). Parse
         // mode defaults to HTML inside the helper. Pass the inline keyboard
         // directly — the helper JSON.stringifies it for the Telegram API.
@@ -144,21 +167,6 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           text,
           inlineKeyboard
         );
-
-        // Mark as checked so we don't re-ask within the cooldown.
-        const { updateRecord } = await import('@/lib/airtable');
-        try {
-          await updateRecord(TABLES.REFERRALS, ref.id, {
-            'Close Check Sent At': new Date().toISOString(),
-          });
-        } catch (fieldErr: any) {
-          // Field doesn't exist yet — track in console but don't fail the cron.
-          // Ben can add the field via Airtable UI; until then, every run will
-          // re-ask which is louder than ideal but not broken.
-          if (skippedReasons.length === 0) {
-            skippedReasons.push(`Add "Close Check Sent At" datetime field to Referrals table — until then cards re-fire each run. (${fieldErr?.message})`);
-          }
-        }
 
         posted++;
         // Pace 600ms between Telegram sends to avoid hitting their per-bot rate limit.

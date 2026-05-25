@@ -500,6 +500,11 @@ export async function POST(request: Request) {
 
     // Increment rancher's active referral count so capacity limit works in real-time
     const now = new Date().toISOString();
+    // MISMATCH FIX: hoist newRefs so we can return the post-INCR value in
+    // the response. Was: response returned `topMatch['Current Active
+    // Referrals'] || 0` from the pre-INCR snapshot → Telegram + dashboard
+    // showed counter one-less than reality.
+    let finalActiveReferrals = topMatch ? (topMatch['Current Active Referrals'] || 0) : 0;
     if (topMatch) {
       try {
         // ── Atomic capacity bump via Upstash Redis INCR ──────────────────
@@ -609,6 +614,10 @@ export async function POST(request: Request) {
           'Current Active Referrals': newRefs,
           'Last Assigned At': now,
         });
+        // MISMATCH FIX: persist newRefs for the response builder so the
+        // returned activeReferrals reflects post-INCR reality, not the
+        // stale pre-INCR snapshot from `topMatch['Current Active Referrals']`.
+        finalActiveReferrals = newRefs;
 
         // Capacity alerts
         const maxRefs = getMaxActiveReferrals(topMatch);
@@ -923,7 +932,7 @@ export async function POST(request: Request) {
         name: topMatch['Operator Name'] || topMatch['Ranch Name'],
         state: topMatch['State'],
         shipsNationwide: topMatch['Ships Nationwide'] === true,
-        activeReferrals: topMatch['Current Active Referrals'] || 0,
+        activeReferrals: finalActiveReferrals,
         maxReferrals: getMaxActiveReferrals(topMatch),
       } : null,
     });
