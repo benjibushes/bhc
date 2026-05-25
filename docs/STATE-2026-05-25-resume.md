@@ -6,6 +6,23 @@
 
 ---
 
+## ⏱ Execution progress checkpoint (auto-updated)
+
+**Tasks shipped via subagent-driven dispatch:**
+
+| # | Task | Commits |
+|---|------|---------|
+| 2 | lib/tiers.ts source of truth | `21a54f8` + `42d4b30` fix |
+| 7 | Stripe Connect V2 onboarding | `37f252a` |
+| 4 | Tier subscription endpoints | `9f33ffa` |
+| 5 | Tier checkout + /rancher/billing UI | `baf717a` + `85868b1` fix |
+
+**Up next:** Task 6a (subscription webhooks) → Task 8 (buyer deposit) → Task 6b (payment webhooks) → Task 9 (fulfillment confirm + payout) → Task 11 (setup wizard + banners) → Task 11.5 (legacy opt-in) → Task 12 (admin payments) → Task 10 (add-ons). Then Phase 2 infra parallel.
+
+**Process per task:** implementer → spec-reviewer → code-quality-reviewer → mark complete. Deferred NITs (rate limits, funnel emits) tracked for end-of-Phase-1 cleanup pass.
+
+---
+
 ## 30-second resume orientation
 
 Read this section first if picking up cold.
