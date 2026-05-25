@@ -202,19 +202,24 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               if (didMatch) {
                 matched++;
               } else {
-                // No rancher available in their state — waitlist them
+                // No rancher available in their state — waitlist them.
+                // MISMATCH FIX: stamp Sequence Stage='waitlisted' BEFORE the
+                // email send. Prior order sent email then stamped; if the
+                // stamp write threw, the next cron run saw stage != waitlisted
+                // and re-sent the same waitlist email → buyer received the
+                // "we're looking for a rancher" letter on consecutive days.
                 const currentStage = consumer['Sequence Stage'] || 'none';
                 if (currentStage !== 'waitlisted' && email) {
-                  await sendWaitlistEmail({ firstName, email, state: consumer['State'], loginUrl });
                   await updateRecord(TABLES.CONSUMERS, consumerId, { 'Sequence Stage': 'waitlisted' });
+                  await sendWaitlistEmail({ firstName, email, state: consumer['State'], loginUrl });
                 }
               }
             } else {
               // Match API error — still no rancher, notify via waitlist
               const currentStage = consumer['Sequence Stage'] || 'none';
               if (currentStage !== 'waitlisted' && email) {
-                await sendWaitlistEmail({ firstName, email, state: consumer['State'], loginUrl });
                 await updateRecord(TABLES.CONSUMERS, consumerId, { 'Sequence Stage': 'waitlisted' });
+                await sendWaitlistEmail({ firstName, email, state: consumer['State'], loginUrl });
               }
             }
           } catch (matchErr) {

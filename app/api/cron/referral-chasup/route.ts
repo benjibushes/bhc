@@ -437,6 +437,16 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
             { expiresIn: '30d' }
           );
           const base = `${SITE_URL}/api/rancher/quick-action?token=${token}`;
+          // MISMATCH FIX: stamp throttle BEFORE send. Prior order sent email,
+          // then attempted stamp; if Airtable threw, the next cron run had no
+          // Last Chased At and re-sent the same 4-button card. Stamp-first
+          // means at worst we lose one chase if the email send throws — much
+          // safer than spamming the rancher with duplicate prompts.
+          const chaseCount = (referrals.find((r: any) => r.id === p.refId)?.['Chase Count'] || 0) + 1;
+          await updateRecord(TABLES.REFERRALS, p.refId, {
+            'Last Chased At': new Date().toISOString(),
+            'Chase Count': chaseCount,
+          });
           await sendEmail({
             to: p.rancherEmail,
             subject: `Quick check — ${p.buyerName}: still working it?`,
@@ -457,11 +467,6 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
             </div>` as any,
             _replyContext: { type: 'ref', recordId: p.refId },
           } as any);
-          // Stamp Last Chased At for throttle
-          await updateRecord(TABLES.REFERRALS, p.refId, {
-            'Last Chased At': new Date().toISOString(),
-            'Chase Count': (referrals.find((r: any) => r.id === p.refId)?.['Chase Count'] || 0) + 1,
-          });
           stalePromptsFired++;
         } catch (e: any) {
           console.error('[chasup-prompt]', e?.message);

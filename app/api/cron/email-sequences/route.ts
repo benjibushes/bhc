@@ -95,11 +95,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         if (!send) continue;
 
         try {
-          await sendAbandonedRecoveryEmail({ email, firstName, stage: send });
+          // MISMATCH FIX: stamp Sequence Stage + Sent At BEFORE send. Prior
+          // order sent email first → if Airtable stamp threw, next run repeated
+          // the same email (buyer received "abandoned cart" reminder twice).
           await updateRecord(TABLES.CONSUMERS, rec.id, {
             'Sequence Stage': nextStage,
             'Sequence Sent At': new Date().toISOString(),
           });
+          await sendAbandonedRecoveryEmail({ email, firstName, stage: send });
           abandonedRecovered++;
           abandonSent++;
         } catch (e: any) {
@@ -386,12 +389,15 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             // Auto-route failed (no available rancher) — soft fallback w/
             // rescue email + Telegram /match suggestion. Operator picks an
             // alternative rancher manually via the inline-button selector.
-            await sendMatchNowRescue({ email, firstName, buyerState: buyerStateNorm || stateLabel });
+            // MISMATCH FIX (all segment branches): stamp throttle BEFORE send.
+            // Prior order sent email then stamped; if stamp threw, next cron
+            // run re-sent the same email → buyer received duplicate marketing.
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Routing Segment Send Count': segmentCount + 1,
               'Routing Segment Last Sent At': new Date().toISOString(),
               'Sequence Sent At': new Date().toISOString(),
             });
+            await sendMatchNowRescue({ email, firstName, buyerState: buyerStateNorm || stateLabel });
             try {
               await sendOperatorSignal({
                 urgency: 'normal',
@@ -409,50 +415,50 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         else if (segment === 'NUDGE_TO_ENGAGE' && segmentCount < 2 && daysSinceSegmentSend >= 7) {
           const engageToken = jwt.sign({ type: 'warmup-engage', consumerId }, JWT_SECRET, { expiresIn: '30d' });
           const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
-          await sendNudgeToEngage({ email, firstName, buyerState: buyerStateNorm || stateLabel, engageUrl });
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
             'Sequence Sent At': new Date().toISOString(),
           });
+          await sendNudgeToEngage({ email, firstName, buyerState: buyerStateNorm || stateLabel, engageUrl });
           segmentCounters.nudge_to_engage++; totalSent++; fired = true;
         }
         else if (segment === 'WARM_LEAD' && segmentCount < 4 && daysSinceSegmentSend >= 14) {
           const engageToken = jwt.sign({ type: 'warmup-engage', consumerId, r2b: true }, JWT_SECRET, { expiresIn: '30d' });
           const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
-          await sendWarmLeadReadyCheck({ email, firstName, buyerState: buyerStateNorm || stateLabel, engageUrl });
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
             'Sequence Sent At': new Date().toISOString(),
           });
+          await sendWarmLeadReadyCheck({ email, firstName, buyerState: buyerStateNorm || stateLabel, engageUrl });
           segmentCounters.warm_lead_check++; totalSent++; fired = true;
         }
         else if (segment === 'NO_BUDGET_FOUNDER_PITCH' && segmentCount < 1) {
-          await sendNoBudgetFounderPitch({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
             'Sequence Sent At': new Date().toISOString(),
           });
+          await sendNoBudgetFounderPitch({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           segmentCounters.no_budget_founder_pitch++; totalSent++; fired = true;
         }
         else if (segment === 'STATE_WAITLIST' && segmentCount < 1) {
-          await sendStateWaitlistLetter({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
             'Sequence Sent At': new Date().toISOString(),
           });
+          await sendStateWaitlistLetter({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           segmentCounters.state_waitlist++; totalSent++; fired = true;
         }
         else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 1) {
-          await sendIncompleteProfileAsk({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
             'Sequence Sent At': new Date().toISOString(),
           });
+          await sendIncompleteProfileAsk({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           segmentCounters.incomplete_profile++; totalSent++; fired = true;
         }
 
@@ -463,20 +469,20 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         if (buyerStage === 'WAITING') {
           // Letter 1 at Day 7
           if (daysInStage >= 7 && !seqStage.startsWith('WAITING_')) {
-            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 1 });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'WAITING_L1',
               'Sequence Sent At': new Date().toISOString(),
             });
+            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 1 });
             counters.waiting_l1++; fired = true;
           }
           // Letter 2 at Day 30
           else if (daysInStage >= 30 && seqStage === 'WAITING_L1') {
-            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 2 });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'WAITING_L2',
               'Sequence Sent At': new Date().toISOString(),
             });
+            await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: 2 });
             counters.waiting_l2++; fired = true;
           }
           // Letters 3+ rolling monthly: Day 60, 90, 120, ...
@@ -484,11 +490,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             const lastN = parseInt(seqStage.replace('WAITING_L', ''), 10) || 1;
             const expectedDays = (lastN + 1 === 3 ? 60 : 30 * (lastN + 1));
             if (daysInStage >= expectedDays) {
-              await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: lastN + 1 });
               await updateRecord(TABLES.CONSUMERS, consumerId, {
                 'Sequence Stage': `WAITING_L${lastN + 1}`,
                 'Sequence Sent At': new Date().toISOString(),
               });
+              await sendFounderLetterWaiting({ firstName, email, state: stateLabel, letterNumber: lastN + 1 });
               counters.waiting_monthly++; fired = true;
             }
           }
@@ -503,6 +509,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
             // Nudge template — same shape as sendRancherLaunchWarmupNudge but inline
             // here so we don't have to import yet another email function. Kept short.
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Sequence Stage': 'READY_NUDGE',
+              'Sequence Sent At': new Date().toISOString(),
+            });
             await sendEmail({
               to: email,
               subject: `last call — ${rancherName} is open in ${stateLabel}`,
@@ -514,10 +524,6 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 <p style="font-size:12px;color:#A7A29A;">— Ben</p>
               </div>`,
             });
-            await updateRecord(TABLES.CONSUMERS, consumerId, {
-              'Sequence Stage': 'READY_NUDGE',
-              'Sequence Sent At': new Date().toISOString(),
-            });
             counters.ready_nudge++; fired = true;
           }
         }
@@ -526,11 +532,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           // Day 4 check-in
           if (daysInStage >= 4 && seqStage !== 'MATCHED_D4') {
             const rancherName = buyerActiveRancher.get(consumerId) || 'your rancher';
-            await sendMatchedDay4CheckIn({ firstName, email, rancherName });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'MATCHED_D4',
               'Sequence Sent At': new Date().toISOString(),
             });
+            await sendMatchedDay4CheckIn({ firstName, email, rancherName });
             counters.matched_d4++; fired = true;
           }
         }
@@ -546,45 +552,45 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           // Day 14 cuts education (Day 0 fires from the close-handler event,
           // not from this cron — see app/api/rancher/referrals/[id]/route.ts)
           if (daysInStage >= 14 && seqStage !== 'CLOSED_CUTS' && !seqStage.startsWith('CLOSED_M') && seqStage !== 'CLOSED_REPEAT') {
-            await sendCutsEducation({ firstName, email, orderType });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_CUTS',
               'Sequence Sent At': new Date().toISOString(),
             });
+            await sendCutsEducation({ firstName, email, orderType });
             counters.closed_cuts++; fired = true;
           }
           // Monthly letters at Day 60, 90, 120 (months 2, 3, 4 post-purchase)
           else if (seqStage === 'CLOSED_CUTS' && daysInStage >= 60) {
-            await sendClosedMonthlyLetter({ firstName, email, monthNumber: 2 });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_M2',
               'Sequence Sent At': new Date().toISOString(),
             });
+            await sendClosedMonthlyLetter({ firstName, email, monthNumber: 2 });
             counters.closed_monthly++; fired = true;
           }
           else if (seqStage === 'CLOSED_M2' && daysInStage >= 90) {
-            await sendClosedMonthlyLetter({ firstName, email, monthNumber: 3 });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_M3',
               'Sequence Sent At': new Date().toISOString(),
             });
+            await sendClosedMonthlyLetter({ firstName, email, monthNumber: 3 });
             counters.closed_monthly++; fired = true;
           }
           else if (seqStage === 'CLOSED_M3' && daysInStage >= 120) {
-            await sendClosedMonthlyLetter({ firstName, email, monthNumber: 4 });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_M4',
               'Sequence Sent At': new Date().toISOString(),
             });
+            await sendClosedMonthlyLetter({ firstName, email, monthNumber: 4 });
             counters.closed_monthly++; fired = true;
           }
           // Month 5 re-engagement ask
           else if ((seqStage === 'CLOSED_M4' || seqStage === 'CLOSED_M3') && daysInStage >= 150) {
-            await sendRepeatPurchaseAsk({ firstName, email, rancherName });
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_REPEAT',
               'Sequence Sent At': new Date().toISOString(),
             });
+            await sendRepeatPurchaseAsk({ firstName, email, rancherName });
             counters.closed_repeat++; fired = true;
           }
         }
