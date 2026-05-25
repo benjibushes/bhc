@@ -71,7 +71,7 @@ export const TIERS: Record<TierSlug, TierConfig> = {
     slug: 'operator',
     label: 'Operator',
     monthlyCents: 50000,
-    commissionRate: 0,
+    commissionRate: 0, // zero commission — flat subscription only
     stripePriceIdEnv: 'STRIPE_OPERATOR_PRICE_ID',
     promise: 'We send you buyers, position you, and run your marketing',
     perks: [
@@ -126,19 +126,27 @@ export const ADD_ONS: AddOnConfig[] = [
     slug: 'brand_intro',
     label: 'Brand partner intro + negotiation',
     description: 'We pair you with cooler/knife/supplement brands looking for D2C rancher partners',
+    // No Stripe Price ID — billed manually (15% of closed deal value).
     pricing: { kind: 'percent_of_deal', rate: 0.15 },
   },
   {
     slug: 'ppc',
     label: 'PPC management for your direct site',
     description: 'Google + Meta ads for your own ranch site (not BHC)',
+    // No Stripe Price ID — billed manually (15% of ad spend, $500/mo min).
     pricing: { kind: 'percent_plus_minimum', rate: 0.15, monthlyMinCents: 50000 },
   },
 ];
 
 export function tierFor(rancher: any): TierSlug | null {
-  const raw = String(rancher?.['Tier'] || '').toLowerCase();
-  if (raw === 'pasture' || raw === 'ranch' || raw === 'operator') return raw as TierSlug;
+  const raw = rancher?.['Tier'];
+  // Airtable singleSelect fields can return either a string ('Pasture') or
+  // an object ({id, name, color}). Handle both shapes.
+  const tierStr = (raw && typeof raw === 'object' && 'name' in raw)
+    ? String(raw.name)
+    : (raw ?? '');
+  const slug = String(tierStr).toLowerCase();
+  if (slug === 'pasture' || slug === 'ranch' || slug === 'operator') return slug as TierSlug;
   return null;
 }
 
