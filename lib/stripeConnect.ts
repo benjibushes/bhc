@@ -171,5 +171,12 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       stripeAccount: input.rancherConnectAccountId,
     },
   );
-  return { url: session.url || '', paymentIntentId: String(session.payment_intent || '') };
+  const url = session.url;
+  const paymentIntentId = session.payment_intent ? String(session.payment_intent) : '';
+  if (!url || !paymentIntentId) {
+    // Stripe should always populate both for a payment-mode Checkout Session.
+    // If either is missing the downstream Airtable + webhook lookup keys break.
+    throw new Error(`Stripe Checkout Session returned incomplete fields (url=${!!url}, payment_intent=${!!paymentIntentId})`);
+  }
+  return { url, paymentIntentId };
 }

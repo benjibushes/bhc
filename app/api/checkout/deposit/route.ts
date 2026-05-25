@@ -155,7 +155,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `Checkout failed: ${e?.message || 'unknown'}` }, { status: 500 });
   }
 
-  // Record pending payment
+  // Record pending payment. If this fails the buyer must NOT be sent to Stripe —
+  // a paid PaymentIntent with no Payments row is invisible to the webhook
+  // (markDepositSucceeded looks up by Stripe Payment Intent Id) and produces
+  // an orphan deposit. Fail the request and let the buyer retry; the Stripe
+  // session will expire harmlessly.
   try {
     await recordDeposit({
       referralId,
@@ -167,7 +171,8 @@ export async function POST(req: Request) {
       stripePaymentIntentId: result.paymentIntentId,
     });
   } catch (e: any) {
-    console.warn('[checkout/deposit] recordDeposit failed (Stripe Checkout still proceeding):', e?.message);
+    console.error('[checkout/deposit] recordDeposit failed — aborting redirect to prevent orphan payment:', e);
+    return NextResponse.json({ error: 'Could not record deposit. Please try again.' }, { status: 500 });
   }
 
   return NextResponse.json({ url: result.url });
