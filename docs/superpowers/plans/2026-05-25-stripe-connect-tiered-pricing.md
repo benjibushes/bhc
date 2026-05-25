@@ -143,6 +143,29 @@ Monthly subscription (separate flow, runs in parallel):
 
 ---
 
+<!-- STRIPE-IDS — created 2026-05-25 via Stripe MCP on acct_1TSn5PGTWWNqassH (LIVE mode)
+TIER SUBSCRIPTIONS (recurring monthly):
+  Pasture  · prod_UaDjcxTLJgoblh · price_1Tb3IWGTWWNqassHaIvpNXeC · $150/mo
+  Ranch    · prod_UaDkkVbIpp1ceb · price_1Tb3IyGTWWNqassHynt7qAJn · $350/mo
+  Operator · prod_UaDkDg1aeV38mO · price_1Tb3JLGTWWNqassH0UPyua3j · $500/mo
+
+ADD-ON PRODUCTS (one-time):
+  Video Shoot     · prod_UaDlkbPgjnQmOj · price_1Tb3JhGTWWNqassHXZ8nSuW5 · $2,500
+  Photo Refresh   · prod_UaDlRFwseE37T8 · price_1Tb3K4GTWWNqassHvTC4w9KE · $1,500
+  Founder Letter  · prod_UaDljHPDbVVmSF · price_1Tb3KPGTWWNqassHdBaWY8Z8 · $750
+
+Set these on Vercel Preview env (then prod when canary unlocks):
+  STRIPE_PASTURE_PRICE_ID=price_1Tb3IWGTWWNqassHaIvpNXeC
+  STRIPE_RANCH_PRICE_ID=price_1Tb3IyGTWWNqassHynt7qAJn
+  STRIPE_OPERATOR_PRICE_ID=price_1Tb3JLGTWWNqassH0UPyua3j
+  STRIPE_ADDON_VIDEO_PRICE_ID=price_1Tb3JhGTWWNqassHXZ8nSuW5
+  STRIPE_ADDON_PHOTO_PRICE_ID=price_1Tb3K4GTWWNqassHvTC4w9KE
+  STRIPE_ADDON_FOUNDER_LETTER_PRICE_ID=price_1Tb3KPGTWWNqassHdBaWY8Z8
+
+Brand Intro (15% of deal) + PPC Mgmt (15% + $500/mo min) NOT created — manual billing for v1.
+3 perm-test products in account flagged for cleanup (prod_URhMlTT4gOV6IO, prod_URh8Ib9Edjglxf, prod_URh61K4OzhZJGD).
+-->
+
 ## Stripe V2 API Reference (locked — supersedes earlier plan drafts)
 
 Stripe's official integration prompt (2026-05) directs us to use the **V2 Accounts API** for Connect onboarding. V2 unifies Express / Standard / Custom into a single `account` object with `configuration.merchant` + `configuration.customer` capability blocks. This is the API we build against. Older `type: 'express'` / `type: 'standard'` patterns from V1 are obsolete.
