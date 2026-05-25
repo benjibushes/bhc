@@ -25,6 +25,19 @@ export const metadata: Metadata = {
   title: 'Brand Partners — get your brand in front of d2c ranchers',
   description:
     'Three tiers, real distribution. Get your brand in front of D2C ranchers + the families who buy their beef. Logo placement, posts, pinned features.',
+  openGraph: {
+    title: 'Brand Partners · get in front of d2c ranchers',
+    description:
+      '$99 spotlight · $499 featured · $1,500 founding partner. Logo placement, pinned posts, audience access.',
+    type: 'website',
+    url: 'https://www.buyhalfcow.com/brand-partners',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Brand Partners · get in front of d2c ranchers',
+    description:
+      '$99 spotlight · $499 featured · $1,500 founding partner.',
+  },
 };
 
 // CTAs route through /api/checkout/brand server-side redirect, which

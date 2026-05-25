@@ -35,6 +35,12 @@ export const metadata: Metadata = {
     title: 'real beef. real ranchers. direct.',
     description: "pick who you are. we route you in 5 seconds.",
     type: 'website',
+    url: 'https://www.buyhalfcow.com/start',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'real beef. real ranchers. direct.',
+    description: "pick who you are. we route you in 5 seconds.",
   },
 };
 
