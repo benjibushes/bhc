@@ -267,6 +267,131 @@ Expected ~40+ files including lib/contracts/*, lib/funnelMetrics.ts, lib/rancher
 
 ---
 
+## Endpoint inventory — what stays / changes / dies / gets added
+
+### Endpoints that need Pricing Model branch (legacy vs tier_v2)
+
+Each must check the rancher's `Pricing Model` field and route accordingly. List + behavior delta:
+
+| Endpoint | Legacy behavior (unchanged) | Tier_v2 behavior (new) |
+|----------|------------------------------|------------------------|
+| `/api/cron/commission-invoices` | Sends 10% Stripe Invoice post-close | SKIP — commission already taken via `application_fee_amount` on deposit |
+| `/api/rancher/quick-action` (won) | Fires `createCommissionInvoice` | SKIP invoice — already taken; just record close + payout-pending |
+| `/api/rancher/referrals/[id]` PATCH (close path) | Existing post-close invoice via `sendInstantCommissionInvoice` | SKIP invoice — fire payout-pending email instead |
+| `/api/orders/request` (direct rancher-page) | Create Referral + email rancher (current flow) | Create Referral + redirect to `/checkout/[refId]/deposit` |
+| `/api/matching/suggest` | No Connect status gate | If `Pricing Model=tier_v2` AND `Stripe Connect Status !== 'active'`: skip routing to this rancher |
+| `/api/cron/nightly-rancher-audit` | Audits all ranchers w/ same checks | Split digest by Pricing Model; add tier_v2-specific checks (Connect status drift, subscription status, stuck payouts) |
+| `/api/cron/awaiting-payment-nudge` | Nudges Awaiting Payment referrals 14d+ | SKIP tier_v2 ranchers (their deposit happens pre-fulfillment, no Awaiting Payment state) |
+| `/api/stats/public` | Existing counters | Add tier_v2 metrics: # tier subscribers per tier, MRR, total platform fees retained, # paid out to ranchers this month |
+
+### Endpoints that go fully obsolete (delete after Phase 4 ships)
+
+NONE for v1. All legacy ranchers stay on old model indefinitely. Only obsolete IF/WHEN every legacy rancher upgrades — defer cleanup to a future stage-4.
+
+### NEW endpoints to add (beyond plan Tasks 2-16)
+
+Tasks 2-16 cover the canonical flow. These extras surfaced during planning:
+
+1. **`/api/rancher/connect/status` GET** — already in plan Task 7 Step 3. Live Stripe Connect status read (never cached). Used by `/rancher/billing` dashboard.
+
+2. **`/api/rancher/billing/data` GET** — JSON for `/rancher/billing` page. Returns: tier, subscription status, connect status, last 30d payouts, add-on history, next invoice date. Implicit in Task 5 but make explicit.
+
+3. **`/api/rancher/fulfillment/update` PATCH** — let rancher edit Fulfillment Types / Pickup City / Lead Time / Refund Policy AFTER onboarding. Currently captured only in setup wizard (Task 11). Need post-onboarding edit surface on `/rancher` dashboard. Add as **Task 11.6**.
+
+4. **`/api/admin/ranchers/[id]/comp-tier` POST** — operator one-tap comp a tier subscription for pilot ranchers (Task 16 phase 3). Uses Stripe coupon w/ 100% discount applied to subscription. Add as **Task 16.5**.
+
+5. **`/api/admin/ranchers/[id]/migrate-to-tier` POST** — admin-initiated forced migration override (legacy → tier_v2) in case the rancher self-serve opt-in flow (Task 11.5) breaks. Add as **Task 11.7**.
+
+6. **`/api/admin/payments/refund/[paymentId]` POST** — one-click refund a deposit via Stripe API. Calls `stripe.refunds.create(...)` + updates Payments row + nudges rancher via Telegram. Currently "manual via Stripe Dashboard" — make it ergonomic. Defer to **Task 25** (Phase 2).
+
+7. **`/api/rancher/payout/manual-trigger` POST** — rancher manually triggers payout from their Connect balance to bank (otherwise Stripe's schedule controls timing). Optional but high-trust for first-payout celebration moment. Add as **Task 9.5**.
+
+### Telegram callback handlers to add
+
+New `callbackData` prefixes:
+- `tcomp_<rancherId>_<tier>` — Telegram one-tap comp a tier for pilot rancher (Task 16.5)
+- `tabandon_<rancherId>` — manually re-fire abandoned tier recovery email (Task 22)
+- `payoutreview_<paymentId>` — operator reviews stuck payout (Task 13)
+- `tiermigrate_<rancherId>_<tier>` — admin force-migrate a legacy rancher (Task 11.7)
+- `kycremind_<rancherId>` — operator re-fires KYC reminder email (new Task 22.5 or fold into existing nudge cron)
+
+### Email helpers to add (`lib/email.ts`)
+
+| Helper | Trigger | Task |
+|--------|---------|------|
+| `sendTierWelcome` | Stripe Checkout subscription success | Task 5 |
+| `sendKycReminder` | 24h after subscription start w/o Connect activate | NEW Task 22.5 |
+| `sendFirstPayoutCelebration` | First successful payout to rancher | Task 18 |
+| `sendTierUpgradeNudge` | Loss-aversion cron weekly Monday | Task 21 |
+| `sendTierAbandonedRecovery` | Abandoned tier-select recovery cron daily | Task 22 |
+| `sendBuyerDepositConfirmation` | Stripe `payment_intent.succeeded` for deposit | Task 8 |
+| `sendRancherFulfillmentReminder` | 7d after deposit if no fulfillment confirm | NEW Task 13.5 |
+| `sendBuyerFulfillmentNotification` | Rancher confirms fulfillment | Task 9 |
+
+### Email helpers that need branching (legacy vs tier_v2)
+
+- `sendInstantCommissionInvoice` — only fires for legacy ranchers post-close. Tier_v2 skips.
+- `sendPilotUpsellEmail` — copy mentions "retainer / Operator tier" instead of generic upsell.
+- `sendRancherLeadNudge` (stale-lead cron) — same copy works for both; no branch needed.
+- `sendCompletedRancherIntro` — same copy; no branch.
+
+### CRONs to add
+
+Beyond Tasks 17-24 plan:
+- **Task 22.5: KYC reminder cron** — daily 14 UTC. Find ranchers w/ subscription active >24h + Connect status != active. Fire `sendKycReminder` (max 3 reminders 24h apart, then escalate to Telegram).
+- **Task 13.5: Fulfillment-confirm reminder cron** — daily 17 UTC. Find Payments w/ Status=succeeded + no Payout row + Captured At > 7d. Email rancher reminder + Telegram operator.
+
+### Existing CRONs to gate by Pricing Model
+
+These already exist + work fine for legacy. They need a Pricing Model filter to avoid double-processing tier_v2 ranchers:
+
+- `commission-invoices` (1st of month, post-close invoicing) → `Pricing Model = 'legacy'` only
+- `awaiting-payment-nudge` (14d Awaiting Payment chase) → `Pricing Model = 'legacy'` only
+- `nightly-rancher-audit` (per-rancher health check) → both, but split audit sections
+
+### Stripe Webhook event handlers to ADD
+
+In `app/api/webhooks/stripe/route.ts` (platform endpoint):
+- `customer.subscription.created` → write tier + sub id to Ranchers
+- `customer.subscription.updated` → update tier on upgrade/downgrade
+- `customer.subscription.deleted` → clear tier, set Subscription Status=canceled
+- `invoice.paid` (subscription) → no-op (sub renewal)
+- `invoice.paid` (add-on) → flip Add-On Purchases row to paid
+- `invoice.payment_failed` → Telegram alert + email rancher to update card
+- `payment_intent.succeeded` (deposit) → mark Payment row succeeded + funnel emit
+- `application_fee.created` → audit log
+- `charge.refunded` → flip Payments row to refunded + Telegram alert
+
+In `app/api/webhooks/stripe-connect/route.ts` (Connect endpoint, THIN events):
+- `v2.core.account[requirements].updated` → re-retrieve account, update Status
+- `v2.core.account[configuration.merchant].capability_status_updated` → check card_payments status, flip Active if appropriate, fire launch warmup
+- `v2.core.account[configuration.customer].capability_status_updated` → no-op for now
+- `v2.core.account[.recipient].capability_status_updated` → audit log
+
+### V1 webhook events to KEEP handling (legacy + founders + brands)
+
+These are unchanged from current production:
+- `checkout.session.completed` (Founders Herd + Brand Partner Stripe Payment Links) → existing handler stays
+- `invoice.paid` (legacy commission invoices) → existing handler stays
+- `invoice.payment_failed` (legacy commission) → existing handler stays
+
+All existing handlers must check `event.account` — if present (Connect event), route to stripe-connect handler logic; if absent (platform event), process as before.
+
+### Rate-limit additions
+
+Already locked in plan:
+- POST `/api/threads/[id]/message` → 10/min per sender (shipped Task 33)
+
+New ones needed:
+- POST `/api/rancher/tier/select` → 5/min per rancher (anti-spam tier flip)
+- POST `/api/rancher/connect/start` → 5/min per rancher (anti-spam Connect link gen)
+- POST `/api/checkout/deposit` → 10/min per buyer (anti-spam Checkout Session creation)
+- POST `/api/rancher/addons/purchase` → 5/min per rancher (anti-spam invoice creation)
+
+Add to each task's implementation. Update `tools/check-vertical-boundaries.ts` allowed shared prefix to confirm `@/lib/rateLimit` is on the list (it is).
+
+---
+
 ## Caveman mode note for next session
 
 User is on Caveman mode (terse responses, fragments OK). Maintain in next session unless user says "stop caveman" or "normal mode". Code/commits/security write normal.
