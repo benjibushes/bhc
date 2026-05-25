@@ -267,6 +267,26 @@ Expected ~40+ files including lib/contracts/*, lib/funnelMetrics.ts, lib/rancher
 
 ---
 
+## Marketing delivery game plan
+
+Separate doc: `docs/MARKETING-DELIVERY-GAMEPLAN.md`. Read alongside this resume.
+
+Covers what fires marketing-wise when a rancher subscribes to a tier:
+- Per-tier ritual matrix (Pasture autopilot, Ranch active, Operator managed)
+- Capacity math: ~60 hr/mo Ben-time → max 4 Operators OR 15 Ranches OR 120 Pastures
+- New Marketing Deliverables Airtable table + weekly Monday digest cron
+- Onboarding launch sequence (Day 0/1/3-7/14/30/90 per new rancher)
+- Hiring trigger thresholds (3 Operators = video editor, 5 = VA, 30 Ranches = writer)
+- 5 AI-automation candidates deferred to Stage-4
+- Quality gates: human-in-the-loop on every deliverable
+- Anti-patterns blocked
+
+Action item folded into Task 17 (Onboarding stage-time analytics) — when
+that subagent ships, include the Marketing Deliverables table + digest
+cron + close-handler auto-insert logic per the game plan doc.
+
+---
+
 ## Endpoint inventory — what stays / changes / dies / gets added
 
 ### Endpoints that need Pricing Model branch (legacy vs tier_v2)
