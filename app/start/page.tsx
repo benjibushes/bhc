@@ -25,12 +25,7 @@ import {
 } from './StartButtons';
 import ExitIntentModal from '@/app/components/ExitIntentModal';
 import { getRecentTestimonials, type Testimonial } from '@/lib/testimonials';
-import {
-  getAllRecords,
-  getActiveRancherPages,
-  getRecordById,
-  TABLES,
-} from '@/lib/airtable';
+import { getActiveRancherPages } from '@/lib/airtable';
 
 export const metadata: Metadata = {
   title: 'buyhalfcow — real beef. real ranchers. direct.',
@@ -47,6 +42,21 @@ export const metadata: Metadata = {
 // fetches via Next.js fetch revalidate instead.
 export const dynamic = 'force-dynamic';
 
+interface RecentClose {
+  firstName: string;
+  orderType: string;
+  ranchName: string;
+  ranchSlug: string;
+  buyerState: string;
+  daysAgo: number;
+}
+
+interface Activity24h {
+  closes: number;
+  matched: number;
+  signups: number;
+}
+
 interface PublicStats {
   ranchersActive: number;
   familiesMatched: number;
@@ -54,8 +64,14 @@ interface PublicStats {
   foundersCap: number;
   totalClosedWon: number;
   thisMonthClosedWon: number;
+  latestClose: RecentClose | null;
+  activity24h: Activity24h;
 }
 
+// /api/stats/public is ISR-cached 5 min + Cache-Control 5 min, so this
+// fetch hits CDN/edge cache on most requests. /start no longer needs to
+// re-query Airtable directly — single cached endpoint feeds stats +
+// latestClose + activity24h.
 async function fetchStats(): Promise<PublicStats> {
   try {
     const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -72,100 +88,10 @@ async function fetchStats(): Promise<PublicStats> {
       foundersCap: 100,
       totalClosedWon: 11,
       thisMonthClosedWon: 0,
+      latestClose: null,
+      activity24h: { closes: 0, matched: 0, signups: 0 },
     };
   }
-}
-
-interface RecentClose {
-  firstName: string;
-  orderType: string;
-  ranchName: string;
-  ranchSlug: string;
-  buyerState: string;
-  daysAgo: number;
-}
-
-interface Activity24h {
-  closes: number;
-  matched: number;
-  signups: number;
-}
-
-// Fetch latest Closed Won referral for the LIVE badge AND aggregate
-// 24h activity counters in one pass to keep the page render fast.
-async function fetchLatestCloseAndActivity(): Promise<{
-  latestClose: RecentClose | null;
-  activity: Activity24h;
-}> {
-  const out = {
-    latestClose: null as RecentClose | null,
-    activity: { closes: 0, matched: 0, signups: 0 },
-  };
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const since = Date.now() - DAY_MS;
-
-  try {
-    const refs = (await getAllRecords(
-      TABLES.REFERRALS,
-      `OR({Status} = "Closed Won", {Status} = "Intro Sent")`,
-    )) as any[];
-
-    const closedWon = refs.filter((r) => r['Status'] === 'Closed Won' && Number(r['Sale Amount']) > 0);
-    // 24h closes
-    out.activity.closes = closedWon.filter(
-      (r) => new Date((r['Closed At'] || '').toString()).getTime() >= since,
-    ).length;
-    // 24h matched (Intro Sent or any Closed Won intro within 24h)
-    out.activity.matched = refs.filter(
-      (r) => new Date((r['Intro Sent At'] || '').toString()).getTime() >= since,
-    ).length;
-
-    // Latest close hydration
-    closedWon.sort((a, b) => {
-      const aT = new Date((a['Closed At'] || '').toString()).getTime() || 0;
-      const bT = new Date((b['Closed At'] || '').toString()).getTime() || 0;
-      return bT - aT;
-    });
-    if (closedWon.length > 0) {
-      const ref = closedWon[0];
-      const buyerName = (ref['Buyer Name'] || '').toString();
-      const firstName = buyerName.trim().split(/\s+/)[0] || 'a buyer';
-      const orderType = (ref['Order Type'] || 'Beef').toString();
-      const buyerState = (ref['Buyer State'] || '').toString();
-      const closedAt = (ref['Closed At'] || '').toString();
-      const daysAgo = closedAt
-        ? Math.max(0, Math.floor((Date.now() - new Date(closedAt).getTime()) / DAY_MS))
-        : 0;
-      let ranchName = 'a verified rancher';
-      let ranchSlug = '';
-      const rancherIds: string[] = (ref['Rancher'] || []) as string[];
-      if (rancherIds[0]) {
-        try {
-          const rancher: any = await getRecordById(TABLES.RANCHERS, rancherIds[0]);
-          ranchName = (rancher['Ranch Name'] || rancher['Operator Name'] || ranchName).toString();
-          ranchSlug = (rancher['Slug'] || '').toString();
-        } catch {
-          // fall through
-        }
-      }
-      out.latestClose = { firstName, orderType, ranchName, ranchSlug, buyerState, daysAgo };
-    }
-  } catch {
-    // proceed with zeros
-  }
-
-  // 24h signups — count Consumers with Created within 24h
-  try {
-    const consumers = (await getAllRecords(TABLES.CONSUMERS)) as any[];
-    out.activity.signups = consumers.filter((c) => {
-      const ts = new Date((c['Created'] || c['Created At'] || '').toString()).getTime();
-      return ts >= since;
-    }).length;
-  } catch {
-    // proceed
-  }
-
-  return out;
 }
 
 interface RancherPreview {
@@ -256,15 +182,14 @@ export default async function StartPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const params = await searchParams;
-  const [stats, testimonials, closeAndActivity, ranchers, detectedState] =
-    await Promise.all([
-      fetchStats(),
-      getRecentTestimonials(1),
-      fetchLatestCloseAndActivity(),
-      fetchRancherPreview(),
-      detectState(params),
-    ]);
-  const { latestClose, activity } = closeAndActivity;
+  const [stats, testimonials, ranchers, detectedState] = await Promise.all([
+    fetchStats(),
+    getRecentTestimonials(1),
+    fetchRancherPreview(),
+    detectState(params),
+  ]);
+  const latestClose = stats.latestClose;
+  const activity = stats.activity24h;
   const featured: Testimonial | null = testimonials[0] || null;
   const foundersLeft = Math.max(0, stats.foundersCap - stats.foundersBacked);
   const backerCardClaimed = stats.foundersBacked >= stats.foundersCap;
