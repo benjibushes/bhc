@@ -12,6 +12,8 @@ import { sendBrandListingConfirmation, sendFoundingHerdWelcome } from '@/lib/ema
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { commissionRateForTier, TierSlug } from '@/lib/tiers';
 import { rancherIdFromSubscription } from '@/lib/stripeSubscription';
+import { markDepositSucceeded, markDepositRefunded } from '@/lib/contracts/payments';
+import { recordClose } from '@/lib/contracts/rancher';
 
 // Airtable table name for Stripe Events (Task 24 idempotency log)
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -174,6 +176,104 @@ export async function POST(request: Request) {
         await alertInvoicePaymentFailed(invoice);
       } catch (e) {
         console.error('Error handling invoice.payment_failed:', e);
+      }
+      break;
+    }
+
+    // ── Task 6b — buyer deposit settlement (tier_v2 Connect direct charge) ──
+    // PaymentIntent metadata.type='buyer_deposit' is stamped by
+    // lib/stripeConnect.createDepositCheckout. Fires on the Connect account
+    // (event.account=acct_*). Idempotency is double-guarded by the Stripe
+    // Events table at the top of this handler AND markDepositSucceeded's
+    // own status check.
+    case 'payment_intent.succeeded': {
+      const pi = event.data.object as any;
+      const metaType = pi?.metadata?.type;
+      if (metaType !== 'buyer_deposit') {
+        // Other PI succeeded events (founder one-shots, brand listings)
+        // flow through checkout.session.completed. Skip.
+        break;
+      }
+      try {
+        const referralId = String(pi.metadata?.referralId || '');
+        const rancherId = String(pi.metadata?.rancherId || '');
+        const tier = String(pi.metadata?.tier || '');
+        const amountCents = Number(pi.amount || 0);
+
+        if (!referralId || !rancherId || !pi.id) {
+          throw new Error(`buyer_deposit missing metadata (refId=${!!referralId}, rancherId=${!!rancherId}, piId=${!!pi.id})`);
+        }
+
+        // Flip Payments row pending → succeeded (idempotent — no-op on retry).
+        await markDepositSucceeded(pi.id);
+
+        // Flip Referral → Closed Won. Deposit = sale for tier_v2 (Connect direct
+        // charge already captured funds; payout split happens on fulfillment
+        // confirm via Task 9). recordClose decrements rancher capacity + flips
+        // Buyer Stage to CLOSED + closes Threads.
+        await recordClose({
+          referralId,
+          rancherId,
+          outcome: 'won',
+          saleAmount: amountCents / 100,
+        });
+
+        // Telegram celebration to admin chat.
+        try {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `💰 DEPOSIT PAID — $${(amountCents / 100).toFixed(2)} (${tier} tier, ref=${referralId.slice(-6)})`,
+          );
+        } catch (e: any) {
+          console.warn('[stripe webhook] telegram deposit alert failed:', e?.message);
+        }
+      } catch (e: any) {
+        console.error('[stripe webhook] payment_intent.succeeded (buyer_deposit) failed:', e);
+        await flipStripeEventFailed(event.id, e?.message || 'unknown');
+        // 200 to Stripe — don't retry on a code bug (Stripe Events row is now
+        // 'failed' so manual replay is possible). Returning 500 would create
+        // a retry storm against a guaranteed-broken handler.
+        return NextResponse.json({ received: true });
+      }
+      break;
+    }
+
+    case 'payment_intent.payment_failed': {
+      const pi = event.data.object as any;
+      const metaType = pi?.metadata?.type;
+      if (metaType !== 'buyer_deposit') break;
+      try {
+        const errMsg = pi?.last_payment_error?.message || pi?.last_payment_error?.code || 'unknown';
+        const referralId = String(pi.metadata?.referralId || '?');
+        const tier = String(pi.metadata?.tier || '?');
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `⚠️ DEPOSIT FAILED — ${tier} tier, ref=${referralId.slice(-6)}, reason: ${errMsg}`,
+        );
+      } catch (e: any) {
+        console.error('[stripe webhook] payment_intent.payment_failed handler:', e);
+      }
+      break;
+    }
+
+    case 'charge.refunded': {
+      // Refund on a buyer deposit. Find the parent PI, flip Payments row to refunded.
+      const charge = event.data.object as any;
+      const metaType = charge?.metadata?.type || charge?.payment_intent_metadata?.type;
+      // For Connect direct charges the metadata is on the parent PI, not the charge.
+      // We can't always inspect both from a single webhook payload; if charge metadata
+      // isn't present, fall back to checking payment_intent string + looking up the row.
+      const piId = typeof charge?.payment_intent === 'string' ? charge.payment_intent : '';
+      if (!piId) break;
+      try {
+        // If we have an existing Payments row keyed by this PI ID, refund it.
+        await markDepositRefunded(piId);
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
+        );
+      } catch (e: any) {
+        console.warn('[stripe webhook] charge.refunded handler:', e?.message);
       }
       break;
     }
