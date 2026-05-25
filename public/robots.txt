@@ -5,5 +5,9 @@ Disallow: /admin
 Disallow: /admin/*
 Disallow: /api/*
 Disallow: /update-profile
+Disallow: /unsubscribe
+Disallow: /member
+Disallow: /rancher
+Disallow: /matched
 
-Sitemap: https://buyhalfcow.com/sitemap.xml
+Sitemap: https://www.buyhalfcow.com/sitemap.xml
