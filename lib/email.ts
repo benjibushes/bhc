@@ -1550,7 +1550,7 @@ a{color:#0E0E0E;}
 .cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;}
 .footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
 </style></head><body><div class="container">
-  <p>Hey ${first},</p>
+  <p>Hey ${esc(first)},</p>
   <p>Quick note — your Founding Herd backing just landed. Receipt's already
   in your inbox from Stripe; this is the human follow-up.</p>
   ${dynamicBlock}
@@ -2007,7 +2007,7 @@ a{color:#0E0E0E;}
 .link{display:inline-block;margin:18px 0;font-weight:600;text-decoration:underline;color:#0E0E0E;word-break:break-all;}
 .footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
 </style></head><body><div class="container">
-<p>Hi ${firstName},</p>
+<p>Hi ${esc(firstName)},</p>
 <p>When I started BuyHalfCow, the goal was bigger than helping you find a freezer of beef. The goal was to put a dent in how American families think about food — to swing them away from sterile grocery aisles and back toward the ranchers who've been doing it right for generations.</p>
 <p>One family at a time, one hat at a time.</p>
 <p>That's why the merch exists. Every cap, every shirt, every patch you wear is a quiet billboard for ranch-direct beef. A stranger in line at the coffee shop asks about the logo, and now another family knows there's a better way to feed their kids than ground chuck wrapped in plastic.</p>
@@ -2066,7 +2066,7 @@ p { color: #6B4F3F; margin: 12px 0; }
 </head>
 <body>
 <div class="container">
-  <h1>Welcome to the Program, ${firstName}</h1>
+  <h1>Welcome to the Program, ${esc(firstName)}</h1>
   <p>You're now an official BuyHalfCow affiliate. Every buyer or rancher who signs up through your link is tracked to you automatically.</p>
   <div class="divider"></div>
   <p><strong>Your affiliate code:</strong></p>
