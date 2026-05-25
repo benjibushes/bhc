@@ -4,11 +4,19 @@
 // Stripe redirects here after successful subscription Checkout.
 // Pushes the rancher into the Connect onboarding flow next.
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 export default function TierCheckoutSuccessPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-bg text-text-primary flex items-center justify-center"><p>Loading…</p></div>}>
+      <TierCheckoutSuccessContent />
+    </Suspense>
+  );
+}
+
+function TierCheckoutSuccessContent() {
   const params = useParams<{ tier: string }>();
   const search = useSearchParams();
   const sessionId = search.get('session_id') || '';

@@ -5,7 +5,7 @@
 // post-Checkout timeline, fires POST /api/rancher/tier/select on click.
 // On 401/missing session: redirects to /rancher/login?return=/partner/checkout/<tier>.
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -16,6 +16,14 @@ const TIER_DATA: Record<string, { label: string; monthly: number; rate: number; 
 };
 
 export default function TierCheckoutPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-bg text-text-primary flex items-center justify-center"><p>Loading…</p></div>}>
+      <TierCheckoutContent />
+    </Suspense>
+  );
+}
+
+function TierCheckoutContent() {
   const params = useParams<{ tier: string }>();
   const router = useRouter();
   const search = useSearchParams();

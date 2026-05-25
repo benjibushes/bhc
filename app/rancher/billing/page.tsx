@@ -4,7 +4,7 @@
 // Tier badge + subscription status + connect status + payouts + add-on shop
 // + Stripe Customer Portal link.
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -44,6 +44,14 @@ const ADDON_CATALOG = [
 ];
 
 export default function RancherBillingPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-bg text-text-primary flex items-center justify-center"><p>Loading billing…</p></div>}>
+      <RancherBillingContent />
+    </Suspense>
+  );
+}
+
+function RancherBillingContent() {
   const search = useSearchParams();
   const [data, setData] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);

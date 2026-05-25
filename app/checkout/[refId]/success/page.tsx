@@ -2,7 +2,7 @@
 
 // Stage-3 Task 8 — post-deposit success page.
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -11,6 +11,14 @@ interface Info {
 }
 
 export default function DepositSuccessPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-bg text-text-primary flex items-center justify-center"><p>Loading…</p></div>}>
+      <DepositSuccessContent />
+    </Suspense>
+  );
+}
+
+function DepositSuccessContent() {
   const params = useParams<{ refId: string }>();
   const search = useSearchParams();
   const refId = params.refId;

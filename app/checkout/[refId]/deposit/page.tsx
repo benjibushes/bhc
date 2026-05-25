@@ -4,7 +4,7 @@
 // Renders rancher's fulfillment info + refund policy + cut selector
 // + Continue to Stripe Checkout button. Fires POST /api/checkout/deposit.
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -27,6 +27,14 @@ interface DepositInfo {
 }
 
 export default function DepositPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-bg text-text-primary flex items-center justify-center"><p>Loading checkout…</p></div>}>
+      <DepositPageContent />
+    </Suspense>
+  );
+}
+
+function DepositPageContent() {
   const params = useParams<{ refId: string }>();
   const search = useSearchParams();
   const refId = params.refId;
