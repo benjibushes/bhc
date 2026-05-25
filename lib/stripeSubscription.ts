@@ -1,0 +1,75 @@
+// lib/stripeSubscription.ts
+//
+// Stage-3 Task 4 — V2 Stripe Subscription helpers for the 3-tier model.
+//
+// V2 unifies Customer + Connected Account. The rancher's acct_* ID is used
+// as both:
+//   - the Connected Account (receives buyer deposits via direct charge)
+//   - the Customer (billed for monthly tier subscription)
+// Pass `customer_account: 'acct_*'` to checkout.sessions.create + billingPortal.
+// Do NOT create a separate cus_* customer.
+//
+// Each rancher gets ONE subscription. Tier changes proration via
+// subscriptions.update.
+
+import Stripe from 'stripe';
+import { TIERS, TierSlug } from '@/lib/tiers';
+
+// Stripe Client — SDK auto-sets API version 2026-04-22.dahlia
+const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY || '');
+
+export interface TierCheckoutInput {
+  rancherId: string;
+  connectedAccountId: string;  // acct_XXX — must exist before this call (Task 7 creates)
+  tier: TierSlug;
+  successUrl: string;
+  cancelUrl: string;
+}
+
+export async function createTierCheckoutSession(input: TierCheckoutInput): Promise<{ url: string }> {
+  const priceId = process.env[TIERS[input.tier].stripePriceIdEnv];
+  if (!priceId) throw new Error(`Missing env var: ${TIERS[input.tier].stripePriceIdEnv}`);
+
+  // V2: the connected account IS the customer. Use customer_account, NOT customer.
+  const session = await stripeClient.checkout.sessions.create({
+    mode: 'subscription',
+    customer_account: input.connectedAccountId,
+    line_items: [{ price: priceId, quantity: 1 }],
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    metadata: { rancherId: input.rancherId, tier: input.tier },
+    subscription_data: { metadata: { rancherId: input.rancherId, tier: input.tier } },
+  } as any);  // customer_account is V2 — types may lag in SDK 20.4.1
+  return { url: session.url || '' };
+}
+
+export async function changeSubscriptionTier(subscriptionId: string, newTier: TierSlug): Promise<void> {
+  const newPriceId = process.env[TIERS[newTier].stripePriceIdEnv];
+  if (!newPriceId) throw new Error(`Missing env var: ${TIERS[newTier].stripePriceIdEnv}`);
+  const sub = await stripeClient.subscriptions.retrieve(subscriptionId);
+  const itemId = sub.items.data[0].id;
+  await stripeClient.subscriptions.update(subscriptionId, {
+    items: [{ id: itemId, price: newPriceId }],
+    proration_behavior: 'always_invoice',
+    metadata: { ...sub.metadata, tier: newTier },
+  });
+}
+
+export async function createBillingPortalSession(
+  connectedAccountId: string,
+  returnUrl: string,
+): Promise<{ url: string }> {
+  // V2: use customer_account, not customer
+  const session = await stripeClient.billingPortal.sessions.create({
+    customer_account: connectedAccountId,
+    return_url: returnUrl,
+  } as any);
+  return { url: session.url };
+}
+
+// Helper to extract V2 connected account id from a subscription webhook payload.
+// V2: subscription.customer_account is the acct_* id.
+// subscription.customer DOES NOT EXIST on V2.
+export function rancherIdFromSubscription(subscription: any): { connectedAccountId: string } {
+  return { connectedAccountId: subscription.customer_account as string };
+}
