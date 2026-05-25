@@ -1869,3 +1869,281 @@ Operator pre-flight required regardless:
 - Resend Dashboard: confirm catch-all on `replies.<domain>` already routes `thread-<id>@...`
 
 Say go when ready. Recommend Subagent-Driven for this plan's size (~16 tasks, several touching Stripe API which subagents handle well in isolation).
+
+---
+
+## Research-backed Infrastructure Additions (Tasks 17-24)
+
+Bolt-on tasks that compound marketing leverage + de-risk operations. Each cites the research backing.
+
+### Task 17: Onboarding stage-time analytics
+
+**Research backing:** Drop-off curves (Nielsen Norman Group · Hick's Law). The longest step in a funnel is where you lose people. Without per-stage time-to-complete data, you optimize blind.
+
+**Files:**
+- Modify: `lib/funnelMetrics.ts` — emit stage-time alongside stage transitions
+- Modify: `app/admin/funnel/page.tsx` — add per-stage avg/median time-to-complete column
+
+- [ ] **Step 1: Extend funnelRecord to compute time-since-previous-stage**
+
+```ts
+// lib/funnelMetrics.ts
+// Add an optional 'sinceStage' field that funnelRecord queries for the
+// recipient's most-recent prior stage event, computes elapsed seconds,
+// and stamps onto the new event's Metadata JSON.
+
+export interface FunnelEvent {
+  // ...existing fields...
+  sinceStage?: string;  // e.g. 'signup' when emitting 'engaged'
+}
+
+// In funnelRecord:
+let elapsedSeconds: number | undefined;
+if (event.sinceStage && (event.buyerId || event.rancherId)) {
+  try {
+    const targetId = event.buyerId || event.rancherId;
+    const linkField = event.buyerId ? 'Buyer' : 'Rancher';
+    const safeId = (targetId || '').replace(/"/g, '\\"');
+    const safeStage = event.sinceStage.replace(/"/g, '\\"');
+    const priors: any[] = await getAllRecords(
+      FUNNEL_TABLE,
+      `AND(SEARCH("${safeId}", ARRAYJOIN({${linkField}})), {Stage} = "${safeStage}")`,
+    );
+    priors.sort((a: any, b: any) => new Date(b['Created At']).getTime() - new Date(a['Created At']).getTime());
+    if (priors[0]) {
+      elapsedSeconds = Math.floor((Date.now() - new Date(priors[0]['Created At']).getTime()) / 1000);
+    }
+  } catch (e: any) {
+    console.warn('[funnelMetrics] stage-time computation failed:', e?.message);
+  }
+}
+// Write elapsedSeconds into Metadata JSON.
+```
+
+- [ ] **Step 2: Update contracts to pass sinceStage**
+
+In `lib/contracts/buyer.ts` transitionBuyerStage → pass `sinceStage: 'signup'` when transitioning OUT of NEW. Similar threading through other contracts.
+
+- [ ] **Step 3: Dashboard renders P50 + P95 stage time**
+
+Aggregate Metadata.elapsedSeconds per stage; render in /admin/funnel as a third column on the stage table.
+
+- [ ] **Step 4: Type-check, commit, push**
+
+### Task 18: Activation-moment automation (peak-end memory anchor)
+
+**Research backing:** Peak-end rule (Kahneman). People remember an experience by its peak moment + its end. First successful payout IS the peak. Engineering an explicit celebration with verifiable proof (Stripe payout screenshot) makes it sticky.
+
+**Files:**
+- Modify: `app/api/webhooks/stripe-connect/route.ts` — on payout success, fire celebration
+- Create: `lib/firstPayoutCelebration.ts` — generate shareable proof
+- Modify: `lib/email.ts` — new sendFirstPayoutCelebration template
+
+- [ ] **Step 1: Build celebration helper**
+
+```ts
+// lib/firstPayoutCelebration.ts
+// Triggered ONCE per rancher on their FIRST successful payout.
+// Emits:
+//   - Email to rancher with payout details + suggested social share text
+//   - Telegram celebration to operator with rancher + amount
+//   - Funnel event 'first_payout_celebrated' for analytics
+// Stripe payout URL goes in the email so rancher has verifiable proof
+// they can screenshot + post.
+
+export async function celebrateFirstPayout(input: {
+  rancherId: string;
+  payoutId: string;
+  amountCents: number;
+  stripePayoutUrl: string;  // https://dashboard.stripe.com/payouts/po_xxx
+}) {
+  // Read rancher row, check if Already-Celebrated field set; if so, skip.
+  // If not: set field, fire email + Telegram + funnel.
+}
+```
+
+New Ranchers field: `First Payout Celebrated At` (datetime) — idempotency guard.
+
+- [ ] **Step 2: Wire into stripe-connect webhook on `payout.paid`**
+
+Check if rancher has prior payouts. If this is the first paid one → call celebrateFirstPayout.
+
+- [ ] **Step 3: Type-check, commit, push**
+
+### Task 19: Stripe Tax + branded Customer Portal (operator config)
+
+**Research backing:** Cognitive consistency (Cialdini) — when buyer is handed off to Stripe Checkout / Customer Portal, brand discontinuity erodes trust. Branding Stripe surfaces = "feels still on BHC."
+
+**Files:** Operator-only — no code.
+
+- [ ] **Step 1: Brand Customer Portal in Stripe Dashboard**
+
+Settings → Branding → upload BHC logo, set primary color charcoal `#0E0E0E`, accent saddle `#6B4F3F`. Affects: hosted Checkout, Customer Portal, hosted Invoice, payout statements.
+
+- [ ] **Step 2: Enable Stripe Tax for platform fees**
+
+Settings → Tax → Activate. Stripe automatically calculates + collects state sales tax on platform commission revenue. Reduces 1099/sales-tax compliance burden — research-backed risk reducer for small platforms.
+
+- [ ] **Step 3: Document in operator playbook**
+
+Add note to `docs/SYSTEM-MAP.md` or ops doc: "Stripe Tax handles platform's state sales tax. Each rancher handles their own state sales tax on the meat itself (rancher's responsibility per Business Model section)."
+
+### Task 20: Airtable daily backup to Vercel Blob
+
+**Research backing:** Disaster recovery (Google SRE book). Airtable doesn't auto-backup. A single accidental table delete = recoverable from Stripe + Airtable Activity log but only if you know it happened within 7 days. Daily JSON snapshot pushed to Vercel Blob = 1 week of point-in-time restores.
+
+**Files:**
+- Create: `app/api/cron/airtable-backup/route.ts`
+- Modify: `vercel.json` — new cron schedule
+
+- [ ] **Step 1: Backup cron**
+
+```ts
+// Snapshot Ranchers + Consumers + Referrals + Payments + Payouts +
+// Add-On Purchases + Threads + Thread Messages + Funnel Events tables
+// as JSON. Upload to Vercel Blob with date-stamped key. Keep 14 days
+// of snapshots (delete older).
+```
+
+- [ ] **Step 2: Schedule daily 03:00 UTC**
+
+Add to vercel.json: `{ "path": "/api/cron/airtable-backup", "schedule": "0 3 * * *" }`
+
+- [ ] **Step 3: Restore docs**
+
+Write `docs/RESTORE-FROM-BACKUP.md`: how to pull a backup + restore via Airtable MCP.
+
+- [ ] **Step 4: Type-check, commit, push**
+
+### Task 21: Tier upgrade nudge cron (loss-aversion retention lever)
+
+**Research backing:** Loss aversion (Kahneman). Showing a Pasture rancher who closed 3+ deals last month "If you'd been on Ranch you'd have saved $X in commission" is a heavier persuasion than "Upgrade for marketing perks." Loss framing > gain framing in retention contexts (research consensus: ~2x stronger).
+
+**Files:**
+- Create: `app/api/cron/tier-upgrade-nudge/route.ts`
+- Create: `lib/email.ts` new helper `sendTierUpgradeNudge`
+
+- [ ] **Step 1: Cron logic**
+
+Weekly Monday 14 UTC. For each Pasture rancher:
+- Sum Sale Amount of last-30d Closed Won referrals
+- Compute commission paid at Pasture rate (7%)
+- Compute commission they WOULD have paid at Ranch rate (3%)
+- Delta = savings if they'd been on Ranch
+- If delta > Ranch monthly fee ($350) - Pasture monthly fee ($150) = $200/mo:
+  fire `sendTierUpgradeNudge` with: deltaSavings, dealCount, dealVolume
+
+Throttle: max 1 nudge per rancher per 30 days (use new Ranchers field `Tier Upgrade Nudge Sent At`).
+
+- [ ] **Step 2: Email template**
+
+Loss-aversion copy:
+> 💸 You paid $X in BHC commission last month.
+> On Ranch tier, that would have been $Y.
+> Net savings if you'd been on Ranch: $Z/mo.
+>
+> Upgrade is one click + proration handled by Stripe. Cancel anytime.
+> [ Upgrade to Ranch → ]
+
+- [ ] **Step 3: Type-check, commit, push**
+
+### Task 22: Abandoned tier-select recovery cron
+
+**Research backing:** Abandoned-cart recovery is the highest-ROI email type in e-commerce (Baymard Institute · ~30% recovery rate on simple reminders).
+
+**Files:**
+- Create: `app/api/cron/tier-abandoned-recovery/route.ts`
+
+- [ ] **Step 1: Cron logic**
+
+Daily 16 UTC. Find ranchers where:
+- `Pricing Model = tier_v2`
+- `Subscription Status` in (none, null, canceled)
+- `Created` (signup) > 24h ago AND < 7 days ago
+- Has at least 1 Stripe Checkout Session (we know they started)
+
+For each: send recovery email with prefilled tier-pick link. Stamp `Tier Abandoned Recovery Sent At` to throttle.
+
+- [ ] **Step 2: Email template**
+
+> Saw you started picking a plan but didn't finish.
+>
+> Quick recap: the only thing standing between you and a buyer in <state> is picking your tier. Takes 90 seconds.
+>
+> [ Pick Pasture · $150 ]  [ Pick Ranch · $350 ]  [ Pick Operator · $500 ]
+>
+> Reply if you have questions — Ben.
+
+- [ ] **Step 3: Type-check, commit, push**
+
+### Task 23: UTM attribution through full funnel
+
+**Research backing:** Channel ROAS measurement (HubSpot · Mixpanel). Without per-channel signup → close attribution, ad spend optimization is blind. BHC already captures UTM on signup; extend to persist through to first payout so marketing channel CAC + LTV are computable.
+
+**Files:**
+- Modify: `lib/contracts/buyer.ts` — pass UTM through createBuyer
+- Modify: `lib/funnelMetrics.ts` — attach utm to all subsequent events for the same buyer
+- Modify: `app/admin/funnel/page.tsx` — UTM breakdown view
+
+- [ ] **Step 1: Read consumer.Campaign + UTM Parameters on every funnel event**
+
+In `funnelRecord`, if `buyerId` set, look up the consumer's `Campaign` + `UTM Parameters` and include in Metadata JSON. So 'deposit_paid' event for buyer X carries the same UTM as their 'signup' event.
+
+- [ ] **Step 2: Admin dashboard tab — per-UTM funnel**
+
+New page `/admin/funnel/attribution`. Tabbed view: pivot by Campaign, by UTM Source, by UTM Medium. Computes signup → engaged → matched → deposit_paid → close:won per cell.
+
+- [ ] **Step 3: Type-check, commit, push**
+
+### Task 24: Stripe Events table — idempotency + audit trail
+
+**Research backing:** Stripe webhook docs explicitly recommend storing event ids for idempotency. Without it, retries (Stripe retries up to 3 days) can re-process the same event → double-charge / double-payout / corrupt state.
+
+**Files:**
+- Create: Airtable `Stripe Events` table (via MCP)
+- Modify: `app/api/webhooks/stripe/route.ts` — dedup on `event.id` before processing
+- Modify: `app/api/webhooks/stripe-connect/route.ts` — dedup on `thinEvent.id`
+
+**Schema:**
+- Stripe Events: Event Id (primary, text), Event Type (text), Account Id (text, nullable for platform events), Received At (datetime), Processed At (datetime), Status (singleSelect: received / processed / failed), Error (long text)
+
+- [ ] **Step 1: Create table via MCP**
+
+- [ ] **Step 2: Wrap webhook handlers**
+
+At start of every webhook POST: check Stripe Events table for existing row with same Event Id. If found AND status='processed' → return 200 immediately. Else: create row with status='received', process, then update status='processed' (or 'failed' + Error on throw).
+
+- [ ] **Step 3: Type-check, commit, push**
+
+---
+
+## Final ladder (24 tasks)
+
+| # | Task | Where |
+|---|------|-------|
+| 0 | Stripe MCP product setup + Vercel env | This session |
+| 1 | Airtable schema (incl. legacy backfill) | This session |
+| 2 | lib/tiers.ts | This session |
+| 3 | /partner public page | Subagent or this session |
+| 4 | Tier subscription endpoints | Subagent |
+| 5 | Tier checkout landing + /rancher/billing | Subagent |
+| 6 | Stripe webhooks (V2 thin events) | Subagent |
+| 7 | Connect Express onboarding (V2 API) | Subagent |
+| 8 | Buyer deposit flow + fulfillment-aware page | Subagent |
+| 9 | Fulfillment confirm + payout release | Subagent |
+| 10 | Add-on à la carte purchase | Subagent |
+| 11 | Setup wizard tier + fulfillment + dashboard banners | Subagent |
+| 11.5 | Legacy rancher opt-in upgrade | Subagent |
+| 12 | Admin payments dashboard | Subagent |
+| 13 | Payout reconcile + stuck-deposit guards | Subagent |
+| 14 | 7-day soak | Operator + me observing |
+| 15 | 3-pass audit | Subagent |
+| 16 | Canary ship (5-phase ladder) | Operator + me |
+| 17 | Onboarding stage-time analytics | Subagent |
+| 18 | Activation moment automation | Subagent |
+| 19 | Stripe Tax + branded portal (config) | Operator |
+| 20 | Airtable backup cron | Subagent |
+| 21 | Tier upgrade nudge cron | Subagent |
+| 22 | Abandoned tier-select recovery cron | Subagent |
+| 23 | UTM attribution through funnel | Subagent |
+| 24 | Stripe Events table + webhook idempotency | Subagent |
