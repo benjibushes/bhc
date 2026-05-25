@@ -267,6 +267,144 @@ Expected ~40+ files including lib/contracts/*, lib/funnelMetrics.ts, lib/rancher
 
 ---
 
+## Buyer qualification + routing gates (locked)
+
+Tier_v2 ranchers pay $150-500/mo + commission. **Only qualified buyers get routed.** Same qualification gates that protect legacy ranchers also apply to tier_v2. NO new gates added — existing routing engine is the source of truth. Tier_v2 inherits.
+
+### Buyer qualification fields (Consumers table)
+
+| Field | What it means | Set by | Gates routing? |
+|-------|---------------|--------|----------------|
+| `Intent Score` | 0-100 server-computed at signup | `/api/consumers` POST | Yes — low score (<30) waits longer in queue |
+| `Intent Classification` | High / Medium / Low | Derived from Intent Score | Yes — Low can be deprioritized |
+| `Ready to Buy` | Buyer clicked YES on warmup OR signed up with Within 30 days timing | `/api/warmup/engage` + signup form | Yes — REQUIRED for immediate routing |
+| `Warmup Engaged At` | Timestamp of YES click | `/api/warmup/engage` | Yes — proves active intent |
+| `Buyer Health` | Active / Non-Responsive (terminal) | Auto-flagged after 2+ Closed Lost w/ no_response reason | YES — Non-Responsive excluded from ALL routing |
+| `Buyer Stage` | NEW / WAITING / READY / MATCHED / CLOSED | Contract `transitionBuyerStage` | Yes — only READY + MATCHED enter matching queue |
+| `Missed Responses` | Count of consecutive ghosted closes | Auto-increments on Closed Lost no_response | Yes — at ≥2 auto-flags Non-Responsive |
+| `Unsubscribed` | Email opt-out flag | Resend webhook + manual unsubscribe link | Yes — excludes from all email + routing |
+| `Bounced` | Hard bounce flag | Resend `email.bounced` webhook | Yes — excludes from email + routing |
+| `Complained` | Marked-as-spam flag | Resend `email.complained` webhook | Yes — excludes from email + routing |
+| `Routing Segment` | MATCH_NOW / WARM_LEAD / NUDGE / etc | Nightly `reclassify-buyers` cron | Yes — drives `email-sequences` branch + match priority |
+
+### What "qualified buyer" means at routing time
+
+`/api/matching/suggest` runs these filters before considering a rancher match (logic already shipped in production):
+
+1. **Consent gate (3 paths — any one passes):**
+   - `Ready to Buy = true` (signup-time intent OR warmup YES click), OR
+   - `Warmup Engaged At` set within last 90d, OR
+   - Fresh signup (`Created` < 7d ago) with `Intent Score ≥ 60`
+
+2. **Health gate:**
+   - `Buyer Health` ≠ Non-Responsive
+   - `Missed Responses` < 2
+
+3. **Suppression gate:**
+   - `Unsubscribed` = false
+   - `Bounced` = false
+   - `Complained` = false
+
+4. **Lifecycle gate:**
+   - `Buyer Stage` in {READY, MATCHED}
+   - `Referral Status` ≠ Closed Won (active referral guard — no double-routing)
+   - No active referral row already open for this buyer
+
+5. **Targeting gate:**
+   - Buyer's `State` is in rancher's `Routing States` (or rancher's home `State` if Admin Approved Multi-State = false)
+   - Buyer's `Order Type` matches rancher's `Tier Specialty` (Quarter buyer → Quarter-or-omnivore rancher only)
+   - `excludeRancherIds` (no re-routing buyer to a rancher who already Closed Lost them)
+
+All 5 gates must pass before a buyer enters the matching pool for any rancher.
+
+### NEW gates added by Stage-3 (rancher-side, protecting buyer experience)
+
+Tier_v2 ranchers get matches ONLY if these conditions hold (added in Task 6 webhook + Task 4 matching/suggest extend):
+
+1. `Pricing Model` = tier_v2 OR legacy (legacy keeps existing gates; tier_v2 adds the next 3)
+2. `Subscription Status` = active (no past_due / canceled ranchers receive new matches)
+3. `Stripe Connect Status` = active (can't receive a deposit if Connect isn't activated)
+4. `Tier` ∈ {Pasture, Ranch, Operator} (not None)
+5. `Fulfillment Types` is non-empty (rancher must have specced how they deliver, else buyer can't make informed deposit)
+6. `Refund Policy` is non-empty (rancher must have written their policy, else buyer can't make informed deposit)
+
+If any of 5+6 missing → rancher is hidden from matching engine until they complete the fulfillment step. Dashboard banner #4 (yellow) surfaces this gate to the rancher.
+
+### Rancher quality protection (existing, applies to all tiers)
+
+These already exist + protect the rancher experience. Tier_v2 inherits unchanged:
+
+- **Capacity hard cap:** `getLiveCapacity()` from `lib/rancherCapacity` — atomic Redis counter, clamps at `Max Active Referalls` field. Hot-lead bypass at 1.2× ceiling.
+- **At-capacity skip:** matching/suggest skips ranchers at cap; waitlists buyer until capacity opens
+- **Tier specialty filter:** Quarter buyer routed only to Quarter-eligible ranchers
+- **State match:** buyer's state must be in rancher's Routing States
+- **Trust Mode + Onboarding Phase pacing:** during first 30d of going live, rancher gets throttled warmup batches (5/wk default) to avoid first-impression overload
+
+### Re-qualification on tier upgrade/downgrade
+
+When rancher changes tier (Task 4 Step 3):
+- No buyer-side change — existing qualification gates continue
+- Capacity setting unchanged
+- Routing priority increases on Ranch (priority over Pasture in same state)
+- Operator → 0% commission applied to NEW deposits only; existing pre-tier-change deposits keep their original split
+
+### Stage-3 routing change for legacy vs tier_v2
+
+In `/api/matching/suggest` (existing endpoint, extend in Task 6):
+
+```ts
+// Pseudocode of the new branch
+const candidates = await getEligibleRanchers(buyerState, buyerOrderType);
+
+// Within-state ranchers split by Pricing Model
+const tier_v2_candidates = candidates.filter(r =>
+  r['Pricing Model'] === 'tier_v2'
+  && r['Subscription Status'] === 'active'
+  && r['Stripe Connect Status'] === 'active'
+  && r['Tier']
+  && (r['Fulfillment Types']?.length || 0) > 0
+  && r['Refund Policy']
+);
+const legacy_candidates = candidates.filter(r => r['Pricing Model'] === 'legacy');
+
+// Priority order: Ranch+ tier_v2 → Pasture tier_v2 → legacy
+// Within each: existing sort by Performance Score + capacity + state-match + round-robin
+const prioritized = [
+  ...sortByExistingRules(tier_v2_candidates.filter(r => r['Tier'] === 'Operator')),
+  ...sortByExistingRules(tier_v2_candidates.filter(r => r['Tier'] === 'Ranch')),
+  ...sortByExistingRules(tier_v2_candidates.filter(r => r['Tier'] === 'Pasture')),
+  ...sortByExistingRules(legacy_candidates),
+];
+
+const topMatch = prioritized.find(r => atomic_capacity_check(r));
+```
+
+This guarantees:
+- Ranch tier ranchers get FIRST CRACK at buyers in their state (the "priority routing" perk they pay for)
+- Operator ranchers get even higher priority (they pay most + get 0% commission)
+- Legacy ranchers still get matches when no tier_v2 rancher is available — no abandonment
+- All ranchers still receive only buyers passing the 5-gate qualification
+
+### Buyer-side experience NEVER degrades
+
+Buyer doesn't see or care about tier. They see:
+- Quality matches (qualification gates protect them from mismatched ranchers)
+- Rancher's fulfillment + refund policy on deposit page (tier_v2) OR rancher's external Payment Link (legacy) — both work
+- Same /access flow, same matching email, same dashboard, same Threads
+
+Tier system is rancher-facing only. Buyer experience is unified.
+
+### Routing audit log (already shipped)
+
+Every match attempt is logged to:
+- `Funnel Events` table (signup → engaged → transition:MATCHED → close events)
+- `AI Audit Log` table (every state mutation via contracts emits an audit row)
+- Telegram operator alerts on every match (existing)
+
+If a routing decision is questioned later, full trail exists.
+
+---
+
 ## Marketing delivery game plan
 
 Separate doc: `docs/MARKETING-DELIVERY-GAMEPLAN.md`. Read alongside this resume.
