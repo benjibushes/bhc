@@ -201,10 +201,28 @@ export async function POST(request: Request) {
     // the ref is invalid for any reason. Stored lowercased.
     const referredBy = await validateAffiliateRefForSignup(ref, email);
 
+    // ── Stamp lifecycle fields at signup ────────────────────────────────
+    // Previously these were written by downstream crons (reclassify-buyers,
+    // batch-approve) on their next nightly run, leaving fresh signups with
+    // NULL Created + NULL Buyer Stage. Side effects:
+    //   - /api/stats/public activity24h.signups filters by Created → 0
+    //   - familiesMatched stat filters by Buyer Stage IN
+    //     [READY,MATCHED,CLOSED] → fresh signups missing
+    //   - Operator views looked like "no data attached"
+    // Now: every signup self-stamps these so dashboards + counters reflect
+    // reality immediately, and downstream crons take over to transition
+    // through subsequent stages.
+    const nowIso = new Date().toISOString();
+    const todayDate = nowIso.slice(0, 10); // YYYY-MM-DD (Date field type)
+
     const consumerFields: Record<string, unknown> = {
       'Full Name': fullName.trim(),
       'Email': email.trim().toLowerCase(),
       'Phone': phone || '',
+      'Created': todayDate,
+      'Approved At': nowIso,
+      'Buyer Stage': 'NEW',
+      'Buyer Stage Updated At': nowIso,
       // Always store as canonical 2-letter code via normalizeState so all
       // downstream comparisons (matching, warmup, sequences) hit the same
       // value. Form may submit "Montana", "montana", "MT", or " mt " —

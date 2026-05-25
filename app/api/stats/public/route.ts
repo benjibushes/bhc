@@ -49,9 +49,21 @@ export async function GET() {
 
     const ranchersActive = ranchers.filter((r: any) => isRancherOperationalForBuyers(r)).length;
 
+    // "Families in pipeline" = anyone past raw lead status.
+    // Includes NEW (just signed up) + WAITING (no rancher in state yet) +
+    // READY (rancher exists, hasn't engaged) + MATCHED (intro fired) +
+    // CLOSED (purchased or ghosted). Excludes nothing — fresh signups
+    // should show in the public counter so /start + /access reflect real
+    // pipeline depth, not just downstream-cron-promoted records.
     const familiesMatched = consumers.filter((c: any) => {
       const stage = (c['Buyer Stage'] || '').toString();
-      return ['READY', 'MATCHED', 'CLOSED'].includes(stage);
+      const status = (c['Status'] || '').toString();
+      // Stage-based count if Buyer Stage set
+      if (stage) {
+        return ['NEW', 'WAITING', 'READY', 'MATCHED', 'CLOSED'].includes(stage);
+      }
+      // Fallback for legacy records w/o Buyer Stage: count Approved
+      return status === 'Approved';
     }).length;
 
     const foundersBacked = consumers.filter((c: any) => !!c['Founder Tier']).length;
