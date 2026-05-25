@@ -90,15 +90,31 @@ export async function POST(request: Request) {
       const metaType = session.metadata?.type;
 
       if (metaType === 'brand-listing') {
-        // ── BRAND LISTING (Stage 1) — UNCHANGED ──
-        // These handlers do their own idempotency internally; return early
-        // to preserve original behaviour (they return their own responses).
-        return await handleBrandListingCompleted(session);
+        // ── BRAND LISTING (Stage 1) ──
+        // CRITICAL: do NOT return early — must reach end-of-handler idempotency
+        // flip. Wrap in try/catch + break so processed-flip always fires.
+        try {
+          await handleBrandListingCompleted(session);
+        } catch (err: any) {
+          console.error('[stripe webhook] brand-listing handler failed:', err?.message);
+          await flipStripeEventFailed(event.id, err?.message);
+          return NextResponse.json({ received: true, error: 'logged' });
+        }
+        break;
       }
 
       if (metaType === 'founder-subscription' || metaType === 'founder-lifetime') {
         // ── FOUNDING HERD (Project 3) ──
-        return await handleFounderCheckoutCompleted(session, metaType);
+        // CRITICAL: do NOT return early — must reach end-of-handler idempotency
+        // flip. Wrap in try/catch + break so processed-flip always fires.
+        try {
+          await handleFounderCheckoutCompleted(session, metaType);
+        } catch (err: any) {
+          console.error('[stripe webhook] founder-checkout handler failed:', err?.message);
+          await flipStripeEventFailed(event.id, err?.message);
+          return NextResponse.json({ received: true, error: 'logged' });
+        }
+        break;
       }
 
       // Unknown metadata.type — accept the webhook but no-op.
