@@ -175,29 +175,53 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
       ) as any[];
 
       const fiveDaysAgo = now.getTime() - 5 * DAY_MS;
+      const sevenDaysAgo = now.getTime() - 7 * DAY_MS;
       const staleOnes = staleReferrals.filter(r => {
         const ts = r['Intro Sent At'] || r['Created'] || r.createdTime;
         return ts && new Date(ts).getTime() < fiveDaysAgo;
       });
 
-      // Group by rancher
-      const byRancher: Record<string, { rancherId: string; leads: Array<{ buyerName: string; status: string; daysSince: number }> }> = {};
+      // Group by rancher. Also tracks referral IDs so we can stamp throttle
+      // per-referral after sending. Prior version had no throttle at all —
+      // if Monday cron retried (or rancher's leads stayed stale week-over-week
+      // without rancher engagement) ranchers received the same nudge weekly
+      // until they replied. 7-day per-referral throttle prevents this.
+      const byRancher: Record<string, {
+        rancherId: string;
+        leads: Array<{ buyerName: string; status: string; daysSince: number }>;
+        refIds: string[];
+      }> = {};
       for (const r of staleOnes) {
         const rancherIds: string[] = r['Rancher'] || r['Suggested Rancher'] || [];
         if (!Array.isArray(rancherIds) || rancherIds.length === 0) continue;
+
+        // Per-referral throttle: skip if Rancher Reminded At within last 7d.
+        // Mirrors awaiting-payment-nudge pattern using the same field name.
+        const lastReminderAt = r['Rancher Reminded At']
+          ? new Date(r['Rancher Reminded At']).getTime()
+          : 0;
+        if (lastReminderAt && lastReminderAt > sevenDaysAgo) continue;
+
         const rancherId = rancherIds[0];
         const ts = r['Intro Sent At'] || r['Created'] || r.createdTime;
         const daysSince = Math.floor((now.getTime() - new Date(ts).getTime()) / DAY_MS);
-        if (!byRancher[rancherId]) byRancher[rancherId] = { rancherId, leads: [] };
+        if (!byRancher[rancherId]) byRancher[rancherId] = { rancherId, leads: [], refIds: [] };
         byRancher[rancherId].leads.push({
           buyerName: r['Buyer Name'] || 'Unknown Buyer',
           status: r['Status'] || 'Unknown',
           daysSince,
         });
+        byRancher[rancherId].refIds.push(r.id);
       }
 
-      // Send nudge to each rancher with stale leads
-      for (const [rancherId, { leads }] of Object.entries(byRancher)) {
+      // Send nudge to each rancher with stale leads. MISMATCH FIX: stamp
+      // Rancher Reminded At on EACH referral in the bundle BEFORE the send.
+      // If the email fires but the stamp write fails, the next cron run would
+      // re-send a duplicate nudge. Stamping first means at worst we don't
+      // nudge this week if the stamp lands but the email throws — the next
+      // cron run will retry (since the stamp expires after 7d).
+      const { updateRecord } = await import('@/lib/airtable');
+      for (const [rancherId, { leads, refIds }] of Object.entries(byRancher)) {
         try {
           const rancher = ranchers.find((r: any) => r.id === rancherId) as any;
           if (!rancher) continue;
@@ -205,6 +229,20 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
           if (!rancherEmail) continue;
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
           const dashboardUrl = `${SITE_URL}/rancher`;
+
+          // Stamp throttle on all referrals in the bundle first.
+          const stampNow = new Date().toISOString();
+          for (const refId of refIds) {
+            try {
+              await updateRecord(TABLES.REFERRALS, refId, {
+                'Rancher Reminded At': stampNow,
+              });
+            } catch (stampErr: any) {
+              console.warn('[rancher-followup] referral throttle stamp failed:', refId, stampErr?.message);
+              // Continue — better to nudge with imperfect throttle than skip.
+            }
+          }
+
           await sendRancherLeadNudge({ rancherName, email: rancherEmail, leads, dashboardUrl });
           nudgesSent++;
         } catch (e: any) {

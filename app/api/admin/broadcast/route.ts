@@ -73,11 +73,21 @@ export async function POST(request: Request) {
       });
     }
 
-    // Duplicate campaign protection
+    // Duplicate campaign protection. Now checks for ANY prior row with the
+    // same Campaign Name — including ones in Status='Sending' (a crashed
+    // mid-flight broadcast we should NOT silently retry). Prior bug: dupe
+    // check existed but the Campaigns row was only logged AFTER the full send
+    // loop completed (~17min for large lists), so a crash before logging
+    // bypassed the dupe gate on the next attempt → operator double-sent half
+    // the audience.
     try {
       const existing = await getAllRecords(TABLES.CAMPAIGNS, `{Campaign Name} = "${escapeAirtableValue(campaignName)}"`);
       if (existing.length > 0) {
-        return NextResponse.json({ error: `Campaign "${campaignName}" has already been sent. Use a different campaign name.` }, { status: 409 });
+        const first = existing[0] as any;
+        const status = String(first['Status'] || first['status'] || 'Sent');
+        return NextResponse.json({
+          error: `Campaign "${campaignName}" already exists (Status: ${status}). Use a different campaign name${status === 'Sending' ? ' — the prior run is mid-flight or crashed' : ''}.`,
+        }, { status: 409 });
       }
     } catch {
       // If campaigns table doesn't exist, skip dupe check
@@ -128,6 +138,29 @@ export async function POST(request: Request) {
       }
     }
 
+    // RESERVE the Campaigns row BEFORE sending. If the route crashes mid-send,
+    // this row persists with Status='Sending' so the dupe gate above catches
+    // any retry. End-of-loop update flips Status='Sent' (or 'Partial' if
+    // any failures). Reservation failure is non-fatal — we still send.
+    let reservedCampaignId: string | null = null;
+    try {
+      const reserved: any = await createRecord(TABLES.CAMPAIGNS, {
+        'Campaign Name': campaignName,
+        'Subject': subject,
+        'Audience': audienceType === 'consumers-by-state'
+          ? `state:${selectedStates?.join(',')}`
+          : audienceType,
+        'Sent At': new Date().toISOString(),
+        'Recipients': recipients.length,
+        'Status': 'Sending',
+        'Sent': 0,
+        'Failed': 0,
+      });
+      reservedCampaignId = reserved?.id || null;
+    } catch (e: any) {
+      console.warn('[broadcast] campaign reservation skipped:', e?.message);
+    }
+
     // Batch send with rate limiting
     let sent = 0;
     let failed = 0;
@@ -156,19 +189,32 @@ export async function POST(request: Request) {
       }
     }
 
-    // Log campaign to Airtable
+    // Finalize the reserved Campaigns row — flip Status, write final counts.
+    // If reservation failed earlier, fall back to creating a fresh row so we
+    // still have an audit trail (with the caveat that dupe protection won't
+    // catch a crashed retry in that fallback path).
     try {
-      await createRecord(TABLES.CAMPAIGNS, {
-        'Campaign Name': campaignName,
-        'Subject': subject,
-        'Audience': audienceType === 'consumers-by-state'
-          ? `state:${selectedStates?.join(',')}`
-          : audienceType,
-        'Sent At': new Date().toISOString(),
-        'Recipients': recipients.length,
-        'Sent': sent,
-        'Failed': failed,
-      });
+      if (reservedCampaignId) {
+        const { updateRecord } = await import('@/lib/airtable');
+        await updateRecord(TABLES.CAMPAIGNS, reservedCampaignId, {
+          'Status': failed > 0 ? 'Partial' : 'Sent',
+          'Sent': sent,
+          'Failed': failed,
+        });
+      } else {
+        await createRecord(TABLES.CAMPAIGNS, {
+          'Campaign Name': campaignName,
+          'Subject': subject,
+          'Audience': audienceType === 'consumers-by-state'
+            ? `state:${selectedStates?.join(',')}`
+            : audienceType,
+          'Sent At': new Date().toISOString(),
+          'Recipients': recipients.length,
+          'Sent': sent,
+          'Failed': failed,
+          'Status': failed > 0 ? 'Partial' : 'Sent',
+        });
+      }
     } catch (campaignError) {
       console.error('Failed to log campaign (non-fatal):', campaignError);
     }

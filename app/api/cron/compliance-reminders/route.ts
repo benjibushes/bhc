@@ -31,12 +31,47 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   const month = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
   let sentCount = 0;
   let nonCompliantCount = 0;
+  let skippedDuplicateCount = 0;
+  let throttleFieldMissing = false;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+  // Per-rancher dedup window. Monthly cadence intent = 28 days minimum between
+  // compliance emails. Prevents duplicate sends if Vercel retries the cron OR
+  // if the date-1 guard fires twice (DST drift, manual replay, etc.).
+  const COMPLIANCE_DEDUP_DAYS = 25;
 
   for (const rancher of activeRanchers as any[]) {
     const email = rancher['Email'];
     const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
 
     if (!email) continue;
+
+    // Throttle: skip if we sent compliance to this rancher in the past 25 days.
+    // Field is new — graceful fallback if Airtable doesn't have it yet.
+    const lastSent = rancher['Last Compliance Reminder Sent At'];
+    if (lastSent) {
+      const daysSince = (nowMs - new Date(lastSent).getTime()) / DAY_MS;
+      if (daysSince < COMPLIANCE_DEDUP_DAYS) {
+        skippedDuplicateCount++;
+        continue;
+      }
+    }
+
+    // MISMATCH FIX: stamp throttle BEFORE sending email. Prior order had no
+    // throttle at all — a cron retry on the 1st would re-fire all emails.
+    // If the throttle write fails (field doesn't exist), surface that to the
+    // operator via skippedReasons but STILL send the email — compliance is
+    // mission-critical, dedup is opportunistic.
+    let throttleStamped = false;
+    try {
+      await updateRecord(TABLES.RANCHERS, rancher.id, {
+        'Last Compliance Reminder Sent At': new Date().toISOString(),
+      });
+      throttleStamped = true;
+    } catch (fieldErr: any) {
+      throttleFieldMissing = true;
+      // Don't continue — we still want to send. Operator will see warning.
+    }
 
     await sendEmail({
       to: email,
@@ -88,8 +123,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   }
 
   try {
+    const warningSuffix = throttleFieldMissing
+      ? `\n\n⚠️ Add "Last Compliance Reminder Sent At" datetime field to Ranchers table so dedup throttle activates next month.`
+      : '';
+    const skipSuffix = skippedDuplicateCount > 0
+      ? ` (skipped ${skippedDuplicateCount} already-reminded within ${25}d)`
+      : '';
     await sendTelegramUpdate(
-      `📋 <b>Compliance reminders sent</b>\n\nSent to ${sentCount} active rancher(s) for ${month}`
+      `📋 <b>Compliance reminders sent</b>\n\nSent to ${sentCount} active rancher(s) for ${month}${skipSuffix}${warningSuffix}`
     );
   } catch (e) {
     console.error('Telegram error:', e);
@@ -98,7 +139,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   return {
     status: 'success',
     recordsTouched: sentCount + nonCompliantCount,
-    notes: `${month}: sent ${sentCount} reminders, ${nonCompliantCount} marked non-compliant`,
+    notes: `${month}: sent ${sentCount} reminders, ${nonCompliantCount} non-compliant, ${skippedDuplicateCount} skipped (dedup)${throttleFieldMissing ? ' WARN: throttle field missing' : ''}`,
   };
 }
 

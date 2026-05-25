@@ -180,29 +180,56 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       //     + STAMP Pilot Upsell Notified At so the audit only does this once.
       //     Previously the audit only surfaced this as a critical issue line
       //     that got buried in 30+ other warn lines and was easy to miss.
+      //
+      // MISMATCH FIX: stamp Airtable BEFORE Telegram. Prior order sent the
+      // celebration first, then attempted the pause+stamp write. If the write
+      // threw, operator saw a "pilot complete, paused" Telegram but the rancher
+      // was actually still Active in Airtable → kept routing leads while
+      // operator believed pause was in effect. Worse: NEXT NIGHT'S audit fires
+      // the SAME celebration again (Pilot Upsell Notified At never landed).
       if (summary.pilotGoal && closes.won >= summary.pilotGoal && !summary.pilotNotifiedAt) {
-        const celebrationText =
-          `🎉 <b>PILOT COMPLETE — UPSELL TIME</b>\n\n` +
-          `<b>${name}</b> hit pilot goal (<b>${closes.won}</b>/${summary.pilotGoal} closed won)\n\n` +
-          `State: ${r['State'] || '?'}\n` +
-          `Performance Score: ${r['Performance Score'] || '?'}\n\n` +
-          `→ Time to start the retainer conversation.`;
+        let pauseWriteOk = false;
+        let pauseWriteErr = '';
         try {
-          if (TELEGRAM_ADMIN_CHAT_ID) {
-            await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, celebrationText);
-          }
-          // Backstop auto-pause if the close-handler path missed it
-          // (e.g., admin closed via Airtable bypassing the rancher PATCH).
           await updateRecord(TABLES.RANCHERS, r.id, {
             'Pilot Upsell Notified At': new Date().toISOString(),
             'Active Status': 'Paused',
           });
+          pauseWriteOk = true;
+        } catch (pauseErr: any) {
+          pauseWriteErr = pauseErr?.message || 'unknown';
+          console.error('[nightly-rancher-audit] pilot pause write failed:', pauseErr?.message);
+        }
+
+        const celebrationText = pauseWriteOk
+          ? `🎉 <b>PILOT COMPLETE — UPSELL TIME</b>\n\n` +
+            `<b>${name}</b> hit pilot goal (<b>${closes.won}</b>/${summary.pilotGoal} closed won)\n\n` +
+            `State: ${r['State'] || '?'}\n` +
+            `Performance Score: ${r['Performance Score'] || '?'}\n\n` +
+            `Auto-paused — no new leads route to them until you flip Active Status → Active.\n` +
+            `→ Time to start the retainer conversation.`
+          : `⚠️ <b>PILOT COMPLETE but AUTO-PAUSE FAILED</b>\n\n` +
+            `<b>${name}</b> hit pilot goal (<b>${closes.won}</b>/${summary.pilotGoal} closed won)\n\n` +
+            `Airtable write error: ${pauseWriteErr}\n` +
+            `MANUAL ACTION: flip Active Status → Paused so leads stop routing while you pitch the retainer.`;
+        try {
+          if (TELEGRAM_ADMIN_CHAT_ID) {
+            await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, celebrationText);
+          }
         } catch (e: any) {
-          console.error('[nightly-rancher-audit] pilot celebration failed:', e?.message);
+          console.error('[nightly-rancher-audit] pilot celebration alert failed:', e?.message);
           issues.push({
             severity: 'critical',
             rancher: name,
-            text: `🎯 ${name} hit pilot goal but celebration alert failed: ${e?.message}`,
+            text: `🎯 ${name} hit pilot goal but Telegram alert failed: ${e?.message}${pauseWriteOk ? ' (pause stamped OK)' : ' (pause ALSO failed — fix manually)'}`,
+          });
+        }
+        if (!pauseWriteOk) {
+          // Surface as critical issue so it shows in the digest too.
+          issues.push({
+            severity: 'critical',
+            rancher: name,
+            text: `🎯 ${name} hit pilot goal — auto-pause write failed (${pauseWriteErr}). Manually pause in Airtable.`,
           });
         }
       }

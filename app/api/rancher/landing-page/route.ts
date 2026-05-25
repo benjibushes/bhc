@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
+import { updateRecord, getRecordById, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { normalizeStates, stringifyStates } from '@/lib/states';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
@@ -226,10 +226,55 @@ export async function PATCH(request: Request) {
       fields['Ships Nationwide'] = fields['Ships Nationwide'] === 'true' || fields['Ships Nationwide'] === true;
     }
 
-    // Validate slug: lowercase alphanumeric + hyphens only
+    // Validate slug: lowercase alphanumeric + hyphens only.
+    // MISMATCH FIX: enforce uniqueness across ranchers. Two ranchers picking
+    // the same slug would silently overwrite each other in Airtable; whichever
+    // record Airtable returned first from getRancherBySlug would steal all the
+    // direct-page traffic for that URL. Now a duplicate is rejected with 409 +
+    // a suggested alternative (slug-2, slug-3, …). Empty/blank slugs skip the
+    // check (rancher clearing their slug back to unset is allowed).
     if (fields['Slug'] !== undefined && fields['Slug'] !== null) {
       const slug = String(fields['Slug']).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
       fields['Slug'] = slug;
+
+      if (slug) {
+        try {
+          const safeSlug = escapeAirtableValue(slug);
+          const collisions: any[] = await getAllRecords(
+            TABLES.RANCHERS,
+            `LOWER({Slug}) = "${safeSlug}"`
+          );
+          // OK if the only match is the calling rancher's own record.
+          const otherOwners = collisions.filter((r: any) => r.id !== decoded.rancherId);
+          if (otherOwners.length > 0) {
+            // Suggest the next available numbered variant.
+            let suffix = 2;
+            let candidate = `${slug}-${suffix}`;
+            while (suffix < 50) {
+              const safeCandidate = escapeAirtableValue(candidate);
+              const taken: any[] = await getAllRecords(
+                TABLES.RANCHERS,
+                `LOWER({Slug}) = "${safeCandidate}"`
+              );
+              if (taken.length === 0) break;
+              suffix++;
+              candidate = `${slug}-${suffix}`;
+            }
+            return NextResponse.json(
+              {
+                error: `Slug "${slug}" is already taken by another rancher. Try "${candidate}" or a different name.`,
+                suggested: candidate,
+              },
+              { status: 409 }
+            );
+          }
+        } catch (slugErr: any) {
+          console.warn('[landing-page] slug uniqueness check failed (allowing through):', slugErr?.message);
+          // Fail-open: if the uniqueness query fails (Airtable hiccup), let the
+          // write through. Worst case we get a duplicate; the nightly audit
+          // can surface it.
+        }
+      }
     }
 
     // Validate URL fields
