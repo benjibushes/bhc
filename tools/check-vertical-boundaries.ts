@@ -20,6 +20,7 @@ const VERTICALS: Record<'buyer' | 'rancher' | 'admin', string[]> = {
     'app/member/',
     'app/start/',
     'app/wins/',
+    'app/checkout/',
     'app/api/consumers/',
     'app/api/warmup/',
     'app/api/member/',

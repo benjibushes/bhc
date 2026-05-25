@@ -7,10 +7,11 @@
 // ADDRESS FORMAT: <prefix>-<airtableRecordId>@replies.buyhalfcow.com
 //
 // Prefix table:
-//   ref  → Referral (highest-context: buyer + rancher already paired)
-//   usr  → Consumer (buyer-side, no active referral yet)
-//   rnc  → Rancher (rancher-side, e.g. onboarding/launch warmup replies)
-//   inq  → Inquiry (rancher-page contact form replies)
+//   ref     → Referral (highest-context: buyer + rancher already paired)
+//   usr     → Consumer (buyer-side, no active referral yet)
+//   rnc     → Rancher (rancher-side, e.g. onboarding/launch warmup replies)
+//   inq     → Inquiry (rancher-page contact form replies)
+//   thread  → Thread (buyer↔rancher message thread; inbound replies post into the thread)
 //
 // Why prefixed (not raw record IDs): record IDs all start with "rec" but
 // Airtable doesn't have a global lookup — you have to know which TABLE to
@@ -22,7 +23,7 @@
 
 export const REPLIES_DOMAIN = process.env.REPLIES_DOMAIN || 'replies.buyhalfcow.com';
 
-export type ReplyContextType = 'ref' | 'usr' | 'rnc' | 'inq';
+export type ReplyContextType = 'ref' | 'usr' | 'rnc' | 'inq' | 'thread';
 
 export interface ReplyContext {
   type: ReplyContextType;
@@ -69,7 +70,7 @@ export function parseReplyAddress(rawAddress: string): ReplyContext | null {
   if (localPart === 'inbox') return null;
 
   // Prefix-record format
-  const prefixMatch = localPart.match(/^(ref|usr|rnc|inq)-(rec[a-z0-9]+)$/i);
+  const prefixMatch = localPart.match(/^(ref|usr|rnc|inq|thread)-(rec[a-z0-9]+)$/i);
   if (!prefixMatch) return null;
 
   const type = prefixMatch[1].toLowerCase() as ReplyContextType;

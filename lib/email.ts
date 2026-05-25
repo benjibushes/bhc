@@ -171,7 +171,7 @@ const resend = {
       if (!params.replyTo) {
         const { replyToFor, REPLIES_DOMAIN } = await import('./replyAddressing');
         if (params._replyContext) {
-          const ctx = params._replyContext as { type: 'ref'|'usr'|'rnc'|'inq'; recordId: string };
+          const ctx = params._replyContext as { type: 'ref'|'usr'|'rnc'|'inq'|'thread'; recordId: string };
           params.replyTo = replyToFor(ctx.type, ctx.recordId);
         } else {
           params.replyTo = `inbox@${REPLIES_DOMAIN}`;
@@ -2630,7 +2630,7 @@ export async function sendEmail(params: {
   scheduledAt?: string; // ISO date string — Resend holds + delivers at this time
   // Tagged Reply-To: when present, sets Reply-To to <type>-<recordId>@replies.buyhalfcow.com
   // so any reply lands in /api/webhooks/resend-inbound for classification + logging.
-  _replyContext?: { type: 'ref' | 'usr' | 'rnc' | 'inq'; recordId: string };
+  _replyContext?: { type: 'ref' | 'usr' | 'rnc' | 'inq' | 'thread'; recordId: string };
 }) {
   return guardedSend({
     templateName: 'sendEmail',
