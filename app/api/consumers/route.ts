@@ -386,6 +386,29 @@ export async function POST(request: Request) {
               if (matchRes.ok) {
                 const j = await matchRes.json();
                 if (j.matchFound) autoRouted = true;
+              } else {
+                // MISMATCH FIX: previously this branch fell through silently —
+                // non-2xx from matching/suggest (auth fail, 5xx, rate limit)
+                // left autoRouted=false with no operator alert. Now ping admin
+                // so the orphan is visible. Same shape as the fetch-failure
+                // catch below so operator sees a uniform "signup matching
+                // failed" alert regardless of failure mode.
+                const status = matchRes.status;
+                let bodySnippet = '';
+                try {
+                  bodySnippet = (await matchRes.text()).slice(0, 200);
+                } catch {}
+                console.error(`Signup auto-route HTTP ${status}:`, bodySnippet);
+                try {
+                  const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+                  await sendTelegramMessage(
+                    TELEGRAM_ADMIN_CHAT_ID,
+                    `⚠️ <b>SIGNUP MATCHING HTTP ${status}</b>\n\n` +
+                    `Buyer: ${fullName} (${email})\nState: ${state}\nScore: ${serverIntentScore}\n\n` +
+                    `Body: <code>${bodySnippet.slice(0, 160).replace(/</g, '&lt;')}</code>\n\n` +
+                    `<i>Consumer record was created; matching/suggest returned non-2xx. batch-approve will retry within 2h.</i>`
+                  );
+                } catch {}
               }
             } catch (e: any) {
               // Hardening 2026-05-13: fetch failures used to log-and-forget,

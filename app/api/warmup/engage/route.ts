@@ -291,6 +291,13 @@ export async function GET(request: Request) {
 
       // Now flip stage based on outcome. READY means "engaged + waiting for
       // capacity"; the stuck-buyer-recovery cron retries READY buyers daily.
+      //
+      // MISMATCH FIX: prior version swallowed errors silently. Buyer's
+      // Warmup Engaged At was already stamped (line 254 above), so on a
+      // stage-flip failure the buyer entered a half-engaged state: cron
+      // can't see them in MATCHED/READY and skips, but Warmup Engaged At=true
+      // marks them as "already engaged" for re-warm-cohort. Now: surface to
+      // Telegram so operator can manually fix the stage.
       try {
         await updateRecord(TABLES.CONSUMERS, payload.consumerId, {
           'Buyer Stage': matchOutcome === 'matched' ? 'MATCHED' : 'READY',
@@ -298,6 +305,17 @@ export async function GET(request: Request) {
         });
       } catch (e: any) {
         console.error('[warmup/engage] stage flip failed:', e?.message);
+        try {
+          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+          await sendOperatorSignal({
+            urgency: 'loud',
+            kind: 'system-error',
+            summary: `🚨 ENGAGE STAGE FLIP FAILED: ${consumer['Full Name'] || consumer['Email'] || payload.consumerId} clicked YES but Buyer Stage write threw`,
+            detail: `Warmup Engaged At stamped (Ready to Buy=true). Manually set Buyer Stage='${matchOutcome === 'matched' ? 'MATCHED' : 'READY'}' in Airtable so cron picks them up. Error: ${(e?.message || 'unknown').slice(0, 200)}`,
+            refs: [{ type: 'consumer', id: payload.consumerId, label: consumer['Full Name'] || consumer['Email'] || '?' }],
+            dedupeKey: `engage-stage-fail:${payload.consumerId}`,
+          });
+        } catch {}
       }
     }
 

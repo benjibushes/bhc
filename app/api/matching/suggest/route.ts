@@ -671,13 +671,43 @@ export async function POST(request: Request) {
     // If a rancher matched, fire intros immediately. No manual approval friction.
     if (topMatch) {
       try {
-        // Update referral to Intro Sent immediately
-        await updateRecord(TABLES.REFERRALS, referral.id, {
-          'Status': 'Intro Sent',
-          'Rancher': [topMatch.id],
-          'Approved At': now,
-          'Intro Sent At': now,
-        });
+        // MISMATCH FIX: Update referral to Intro Sent immediately.
+        // If THIS write throws, we leave behind a Pending Approval orphan
+        // (referral row created at L486, never linked to rancher, never
+        // assigned an Intro Sent At). Pattern reproduced 2026-05-06 — the
+        // capacity counter was bumped but the referral was orphaned →
+        // rancher "lost" a slot to a referral they never saw. Now: on
+        // failure, roll back the capacity INCR we did above so the slot
+        // returns to the rancher, and surface a loud operator signal.
+        try {
+          await updateRecord(TABLES.REFERRALS, referral.id, {
+            'Status': 'Intro Sent',
+            'Rancher': [topMatch.id],
+            'Approved At': now,
+            'Intro Sent At': now,
+          });
+        } catch (introErr: any) {
+          console.error('[matching/suggest] Intro Sent flip failed — rolling back capacity:', introErr?.message);
+          try {
+            const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
+            const rolledBack = await decrementCapacity(topMatch.id);
+            await syncCapacityToAirtable(topMatch.id, rolledBack);
+          } catch (rollbackErr: any) {
+            console.error('[matching/suggest] capacity rollback also failed:', rollbackErr?.message);
+          }
+          try {
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'system-error',
+              summary: `🚨 ORPHAN REFERRAL: ${referral.id} stuck Pending Approval — Intro Sent write threw`,
+              detail: `Capacity rolled back on ${topMatch['Operator Name'] || topMatch['Ranch Name'] || topMatch.id}. ` +
+                `Manually fix the referral in Airtable (set Rancher=[${topMatch.id}], Status=Intro Sent) OR delete it so the buyer re-routes via batch-approve. Original error: ${(introErr?.message || 'unknown').slice(0, 200)}`,
+              refs: [{ type: 'rancher', id: topMatch.id, label: topMatch['Operator Name'] || '?' }],
+              dedupeKey: `orphan-referral:${referral.id}`,
+            });
+          } catch {}
+          throw introErr; // bubble to outer try so the buyer also gets re-tried via batch-approve
+        }
 
         // Update consumer status + Buyer Stage transition to MATCHED
         await updateRecord(TABLES.CONSUMERS, buyerId, {

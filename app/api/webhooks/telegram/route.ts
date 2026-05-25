@@ -1153,6 +1153,24 @@ Source: ${c['Source'] || 'organic'}`;
             await sendTelegramMessage(chatId!, '⚠️ No rancher linked to this referral.');
             return NextResponse.json({ ok: true });
           }
+
+          // IDEMPOTENCY GUARD: a Telegram double-tap (network lag, retry) would
+          // fire two thank-you emails to the rancher. Stamp `Thank You Sent At`
+          // on the referral row and short-circuit if already stamped within
+          // the last 30 days. Stamp BEFORE the email so a swallowed network
+          // error doesn't double-fire on next tap.
+          const previouslyThanked = ref['Thank You Sent At'];
+          if (previouslyThanked) {
+            const ageDays = (Date.now() - new Date(previouslyThanked).getTime()) / (24 * 60 * 60 * 1000);
+            if (ageDays < 30) {
+              await answerCallbackQuery(queryId, 'Already thanked');
+              if (chatId && messageId) {
+                await editTelegramMessage(chatId, messageId, `🙏 <b>Already thanked</b>\n\nThank-you email already sent ${Math.floor(ageDays)}d ago. No duplicate fired.`);
+              }
+              return NextResponse.json({ ok: true });
+            }
+          }
+
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           const rancherEmail = rancher['Email'];
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
@@ -1161,6 +1179,16 @@ Source: ${c['Source'] || 'organic'}`;
             await sendTelegramMessage(chatId!, `⚠️ ${rancherName} has no email on file.`);
             return NextResponse.json({ ok: true });
           }
+
+          // Stamp throttle first — non-fatal if field doesn't exist yet.
+          try {
+            await updateRecord(TABLES.REFERRALS, refId, {
+              'Thank You Sent At': new Date().toISOString(),
+            });
+          } catch (stampErr: any) {
+            console.warn('[thankrancher] throttle stamp failed (field may be missing):', stampErr?.message);
+          }
+
           await sendEmail({
             to: rancherEmail,
             subject: `Thanks for closing ${buyerName}!`,
@@ -1193,6 +1221,25 @@ Source: ${c['Source'] || 'organic'}`;
             await sendTelegramMessage(chatId!, '⚠️ No rancher linked to this referral.');
             return NextResponse.json({ ok: true });
           }
+
+          // IDEMPOTENCY GUARD: reuse the `Rancher Reminded At` field used by
+          // cron stale-lead nudge + awaiting-payment-nudge. 3-day dedup window
+          // since manual nudges from Telegram are higher-touch than cron nudges
+          // (operator just decided to ping this specific rancher right now).
+          // Prior bug: double-tap on the Telegram button fired the email twice
+          // back-to-back, embarrassing the operator on partner check-ins.
+          const previouslyNudged = ref['Rancher Reminded At'];
+          if (previouslyNudged) {
+            const ageDays = (Date.now() - new Date(previouslyNudged).getTime()) / (24 * 60 * 60 * 1000);
+            if (ageDays < 3) {
+              await answerCallbackQuery(queryId, 'Already nudged');
+              if (chatId && messageId) {
+                await editTelegramMessage(chatId, messageId, `📞 <b>Already nudged</b>\n\nRancher emailed ${Math.floor(ageDays * 24)}h ago. No duplicate fired (3d dedup window).`);
+              }
+              return NextResponse.json({ ok: true });
+            }
+          }
+
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           const rancherEmail = rancher['Email'];
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
@@ -1207,6 +1254,16 @@ Source: ${c['Source'] || 'organic'}`;
           if (!rancherEmail) {
             await sendTelegramMessage(chatId!, `⚠️ ${rancherName} has no email on file.`);
             return NextResponse.json({ ok: true });
+          }
+
+          // Stamp throttle first so double-tap protection survives swallowed
+          // network errors on the email send.
+          try {
+            await updateRecord(TABLES.REFERRALS, refId, {
+              'Rancher Reminded At': new Date().toISOString(),
+            });
+          } catch (stampErr: any) {
+            console.warn('[nudgerancher] throttle stamp failed:', stampErr?.message);
           }
 
           await sendEmail({
@@ -2390,6 +2447,43 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                 'Status': 'Closed Lost',
                 'Closed At': new Date().toISOString(),
               });
+
+              // MISMATCH FIX: parity with rancher dashboard PATCH + quick-action
+              // close-lost path. clcheck_lost previously flipped Referral status
+              // only — capacity stayed bumped (rancher remained "full" with a
+              // closed lead) AND Buyer Stage stayed MATCHED forever, breaking
+              // /api/stats/public.familiesMatched + blocking the email-sequences
+              // cron from re-routing the buyer. Now: atomic capacity decrement +
+              // Buyer Stage flip mirror the canonical close-completion path.
+              const ACTIVE_REF_STATES_FOR_LOST_DECREMENT = new Set([
+                'Intro Sent',
+                'Rancher Contacted',
+                'Negotiation',
+                'Pending Approval',
+              ]);
+              const rancherIdsForLost: string[] = before?.['Rancher'] || before?.['Suggested Rancher'] || [];
+              const rancherIdForLost = Array.isArray(rancherIdsForLost) ? rancherIdsForLost[0] : null;
+              if (rancherIdForLost && ACTIVE_REF_STATES_FOR_LOST_DECREMENT.has(String(previousStatus || ''))) {
+                try {
+                  const newCap = await decrementCapacity(rancherIdForLost);
+                  await syncCapacityToAirtable(rancherIdForLost, newCap);
+                } catch (capErr: any) {
+                  console.warn('[clcheck_lost] capacity decrement failed:', capErr?.message);
+                }
+              }
+              const buyerIdsForLost: string[] = (before?.['Buyer'] || []) as string[];
+              const buyerIdForLost = Array.isArray(buyerIdsForLost) ? buyerIdsForLost[0] : null;
+              if (buyerIdForLost) {
+                try {
+                  await updateRecord(TABLES.CONSUMERS, buyerIdForLost, {
+                    'Buyer Stage': 'CLOSED',
+                    'Buyer Stage Updated At': new Date().toISOString(),
+                  });
+                } catch (e: any) {
+                  console.warn('[clcheck_lost] Buyer Stage flip failed:', e?.message);
+                }
+              }
+
               await logAuditEntry({
                 actor: 'manual',
                 tool: 'clcheck_lost',
@@ -2399,7 +2493,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                 result: { previousStatus, newStatus: 'Closed Lost' },
                 reverseAction: reverse,
               });
-              await editTelegramMessage(chatId, messageId, `❌ <b>Closed Lost</b> — ${buyerName}\n\nReferral closed out. Buyer stays in network.`);
+              await editTelegramMessage(chatId, messageId, `❌ <b>Closed Lost</b> — ${buyerName}\n\nReferral closed out. Capacity freed. Buyer Stage → CLOSED.`);
             } else if (action === 'working') {
               await answerCallbackQuery(queryId, '⏳ Will check again in 7 days');
               // Just reset the cooldown timestamp — no status change.
