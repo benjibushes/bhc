@@ -367,6 +367,28 @@ export default async function StartPage({
           )}
         </div>
 
+        {/* ──────── EXPLAINER VIDEO ──────────────────────────────────────
+            Renders YouTube embed when NEXT_PUBLIC_START_VIDEO_ID is set.
+            Otherwise hidden — no placeholder copy visible to paid traffic.
+            Above-the-fold position: hero + LIVE strip frames the video,
+            video frames the audience grid below. Decision happens AFTER
+            watching the explainer.
+            Format: 16:9 desktop, 16:9 mobile (vs /access which is 9:16
+            for ad-landing vertical-first). /start serves all 4 audiences
+            so we want desktop-friendly aspect. */}
+        {process.env.NEXT_PUBLIC_START_VIDEO_ID && (
+          <div className="aspect-video bg-charcoal mb-10 overflow-hidden">
+            <iframe
+              src={`https://www.youtube.com/embed/${process.env.NEXT_PUBLIC_START_VIDEO_ID}?rel=0&modestbranding=1`}
+              title="BuyHalfCow — what we do, why it matters"
+              className="w-full h-full"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerPolicy="strict-origin-when-cross-origin"
+              allowFullScreen
+            />
+          </div>
+        )}
+
         {/* ──────── AUDIENCE SELF-SELECT GRID ──────── */}
         <section
           id="audience-grid"
