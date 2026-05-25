@@ -87,5 +87,30 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     amount: input.saleAmount,
   });
 
+  // Close any open Threads for this referral on terminal close. Awaiting
+  // Payment keeps threads Active (deal still in progress; rancher may still
+  // need to message buyer about delivery). Non-fatal: a Threads write failure
+  // shouldn't block the close.
+  if (input.outcome === 'won' || input.outcome === 'lost') {
+    try {
+      const { getAllRecords, updateRecord } = await import('@/lib/airtable');
+      const { THREADS_TABLE } = await import('./threads');
+      const safeRefId = input.referralId.replace(/"/g, '\\"');
+      const threads: any[] = await getAllRecords(
+        THREADS_TABLE,
+        `AND(SEARCH("${safeRefId}", ARRAYJOIN({Referral})), {Status} = "Active")`,
+      );
+      for (const t of threads) {
+        try {
+          await updateRecord(THREADS_TABLE, t.id, { 'Status': 'Closed' });
+        } catch (e: any) {
+          console.warn('[contracts.recordClose] thread close failed:', t.id, e?.message);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[contracts.recordClose] thread close lookup failed:', e?.message);
+    }
+  }
+
   return { ok: true, capacityFreed };
 }

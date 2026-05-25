@@ -433,6 +433,32 @@ export async function POST(request: Request) {
           sentVia: 'email',
           emailMessageId,
         });
+
+        // Telegram visibility — operator sees every thread message inbound so
+        // they can intervene if a deal gets stuck in a back-and-forth. Mute
+        // by ignoring 'system' senders. Dedupe via Message-Id so Resend
+        // webhook retries don't double-ping.
+        try {
+          const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+          const senderEmoji = senderType === 'buyer' ? '👤' : senderType === 'rancher' ? '🤠' : '📨';
+          const truncated = bodyForClassify.length > 300
+            ? bodyForClassify.slice(0, 300) + '…'
+            : bodyForClassify;
+          const safeBody = truncated
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `💬 <b>Thread message</b> ${senderEmoji}\n\n` +
+            `<b>From:</b> ${String(from || '').slice(0, 100)}\n` +
+            `<b>Thread:</b> <code>${links.threadId}</code>` +
+            (links.referralId ? `\n<b>Referral:</b> <code>${links.referralId}</code>` : '') +
+            `\n\n<i>${safeBody}</i>`,
+          );
+        } catch (telErr: any) {
+          console.warn('[resend-inbound] thread Telegram alert failed:', telErr?.message);
+        }
       } catch (e: any) {
         console.warn('[resend-inbound] thread message post failed:', e?.message);
       }

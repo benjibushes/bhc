@@ -17,6 +17,7 @@ import { postMessage, listThreadMessages, THREADS_TABLE } from '@/lib/contracts/
 import { getRecordById, TABLES } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { sendEmail } from '@/lib/email';
+import { rateLimit } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -87,6 +88,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await authBuyerOrRancher();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // Rate limit: 10 messages per 60s per sender. Anti-spam guard so a runaway
+  // client OR malicious actor can't flood the rancher's inbox. Buyers and
+  // ranchers each get their own bucket scoped by sender id.
+  const rl = await rateLimit(`threads:msg:${auth.kind}:${auth.id}`, { requests: 10, window: '1m' });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Slow down — too many messages. Wait a minute and try again.' },
+      { status: 429 },
+    );
+  }
+
   const { id } = await params;
   const own = await assertThreadOwnership(id, auth);
   if (!own.ok) return NextResponse.json({ error: own.error }, { status: own.error === 'Forbidden' ? 403 : 404 });
