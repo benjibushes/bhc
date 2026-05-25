@@ -1,4 +1,9 @@
 {
+  "env": {
+    "STRIPE_CONNECT_ENABLED": "false",
+    "ON_PLATFORM_MESSAGING_ENABLED": "false",
+    "VERTICAL_BOUNDARY_ENFORCE": "warn"
+  },
   "crons": [
     {
       "path": "/api/cron/compliance-reminders",
