@@ -56,19 +56,20 @@ export async function markDepositSucceeded(stripePaymentIntentId: string): Promi
   });
 }
 
-export async function markDepositRefunded(stripePaymentIntentId: string): Promise<void> {
+export async function markDepositRefunded(stripePaymentIntentId: string): Promise<{ flipped: boolean }> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
   const existing: any[] = await getAllRecords(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`
   );
-  if (existing.length === 0) return;
+  if (existing.length === 0) return { flipped: false };
   const payment = existing[0];
-  if (payment['Status'] === 'refunded') return;
+  if (payment['Status'] === 'refunded') return { flipped: false };
   await updateRecord(PAYMENTS_TABLE, payment.id, {
     'Status': 'refunded',
     'Refunded At': new Date().toISOString(),
   });
+  return { flipped: true };
 }
 
 export interface ReleasePayoutInput {

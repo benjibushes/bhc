@@ -201,7 +201,8 @@ export async function POST(request: Request) {
         const amountCents = Number(pi.amount || 0);
 
         if (!referralId || !rancherId || !pi.id) {
-          throw new Error(`buyer_deposit missing metadata (refId=${!!referralId}, rancherId=${!!rancherId}, piId=${!!pi.id})`);
+          const metadataKeys = Object.keys(pi.metadata || {}).join(',');
+          throw new Error(`buyer_deposit missing required ids — refId=${!!referralId} rancherId=${!!rancherId} piId=${!!pi.id} actualMetadataKeys=[${metadataKeys}]`);
         }
 
         // Flip Payments row pending → succeeded (idempotent — no-op on retry).
@@ -257,21 +258,22 @@ export async function POST(request: Request) {
     }
 
     case 'charge.refunded': {
-      // Refund on a buyer deposit. Find the parent PI, flip Payments row to refunded.
+      // Refund on a charge. For Connect direct charges metadata lives on the
+      // parent PaymentIntent, not the Charge — so we look up the Payments
+      // row by PI id. markDepositRefunded returns flipped:false when no row
+      // matches (founder lifetime refunds, brand listing refunds), so we
+      // only fire the admin Telegram alert when an actual deposit row flipped.
       const charge = event.data.object as any;
-      const metaType = charge?.metadata?.type || charge?.payment_intent_metadata?.type;
-      // For Connect direct charges the metadata is on the parent PI, not the charge.
-      // We can't always inspect both from a single webhook payload; if charge metadata
-      // isn't present, fall back to checking payment_intent string + looking up the row.
       const piId = typeof charge?.payment_intent === 'string' ? charge.payment_intent : '';
       if (!piId) break;
       try {
-        // If we have an existing Payments row keyed by this PI ID, refund it.
-        await markDepositRefunded(piId);
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
-        );
+        const { flipped } = await markDepositRefunded(piId);
+        if (flipped) {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
+          );
+        }
       } catch (e: any) {
         console.warn('[stripe webhook] charge.refunded handler:', e?.message);
       }
