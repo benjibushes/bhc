@@ -115,7 +115,7 @@ export default function RancherBillingPage() {
         )}
 
         {data.pricingModel === 'legacy' && (
-          <div className="border border-dust bg-bone p-4 mb-6" style={{ borderColor: '#C99A2E' }}>
+          <div className="border border-amber-dark bg-bone p-4 mb-6">
             <p className="text-sm">
               🎁 You're on the legacy 10% post-close commission model.{' '}
               <Link href="/partner?from=upgrade" className="underline">Upgrade to a tier →</Link>{' '}

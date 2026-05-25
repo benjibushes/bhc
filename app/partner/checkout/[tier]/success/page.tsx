@@ -58,6 +58,7 @@ export default function TierCheckoutSuccessPage() {
           <h2 className="text-xl mb-3" style={{ fontFamily: 'Georgia, serif' }}>
             One more step — connect your bank
           </h2>
+          <p className="text-sm text-saddle mb-2"><strong>Why this step?</strong></p>
           <p className="mb-4">
             By federal law (KYC), any platform handling payments must verify your identity before sending money. Stripe (not BHC) holds your data.
           </p>
