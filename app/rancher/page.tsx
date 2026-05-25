@@ -53,6 +53,13 @@ interface RancherInfo {
   // the Airtable side; parsed lazily where used).
   galleryPhotos?: string;
   testimonials?: string;
+  // Stage-3 tier subscription + Connect status (Task 11C banner cascade).
+  // Pricing Model gates which banners render: 'legacy' = old commission
+  // model, no tier banners; 'tier_v2' = subscription required.
+  pricingModel?: string;
+  tier?: string | null;
+  subscriptionStatus?: string;
+  connectStatus?: string;
 }
 
 interface Stats {
@@ -568,6 +575,18 @@ export default function RancherDashboardPage() {
           </div>
 
           <Divider />
+
+          {/* Stage-3 Task 11C — Banner cascade for tier_v2 ranchers.
+              Shows ALL applicable banners stacked. Priority (top → bottom):
+                1. No tier picked yet (blue) → /partner
+                2. Connect not_connected (amber) → /api/rancher/connect/start
+                3. Connect onboarding (amber) → resume same link
+                4. Connect restricted (red) → billing portal
+                5. Subscription past_due (red) → billing portal
+              Legacy ranchers (Pricing Model !== 'tier_v2') see nothing here. */}
+          {rancherInfo.pricingModel === 'tier_v2' && (
+            <DashboardBannerCascade rancher={rancherInfo} />
+          )}
 
           {/* Onboarding Banner */}
           {rancherInfo.onboardingStatus && rancherInfo.onboardingStatus !== 'Live' && (() => {
@@ -2158,6 +2177,148 @@ function ReferralCard({
           Pass on Lead
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Stage-3 Task 11C — Dashboard banner cascade ───────────────────────────
+// Five states, ALL stacked when applicable (no priority short-circuit).
+// State → color → CTA:
+//   1. No tier picked  → blue   → /partner
+//   2. Connect not_connected  → amber  → POST /api/rancher/connect/start
+//   3. Connect onboarding     → amber  → same as #2 (resume)
+//   4. Connect restricted     → red    → GET /api/rancher/tier/portal
+//   5. Subscription past_due  → red    → GET /api/rancher/tier/portal
+//
+// Gated by Pricing Model === 'tier_v2' at the caller — legacy ranchers
+// never see this section. Each banner opens its target in a new tab so the
+// dashboard state stays around for refresh-based feedback.
+function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
+  const noTier = !rancher.tier;
+  const subActive = rancher.subscriptionStatus === 'active';
+  const connect = rancher.connectStatus || 'not_connected';
+
+  // Banner gates follow the spec literal — only #2 (Connect not_connected)
+  // requires the rancher to have an active subscription first, so we don't
+  // ask them to connect a bank before they've even paid for a tier. States
+  // 3/4/5 fire on the singular field condition.
+  const showConnectNotConnected = !noTier && subActive && connect === 'not_connected';
+  const showConnectOnboarding = connect === 'onboarding';
+  const showConnectRestricted = connect === 'restricted';
+  const showPastDue = rancher.subscriptionStatus === 'past_due';
+
+  const anyBanner =
+    noTier || showConnectNotConnected || showConnectOnboarding || showConnectRestricted || showPastDue;
+  if (!anyBanner) return null;
+
+  // Opens Stripe Connect onboarding link from /api/rancher/connect/start in
+  // a new tab. Same handler powers #2 + #3 (start auto-resumes existing
+  // onboarding when account already exists).
+  async function openConnectOnboarding() {
+    try {
+      const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
+      const data = await res.json();
+      if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
+      else alert(data?.error || 'Could not start Stripe Connect onboarding.');
+    } catch {
+      alert('Network error — try again in a moment.');
+    }
+  }
+
+  // Opens Stripe Customer Portal (used for billing past_due + restricted
+  // Connect cases where the portal lets the rancher fix payment method or
+  // resolve the dispute that flagged them).
+  async function openBillingPortal() {
+    try {
+      const res = await fetch('/api/rancher/tier/portal', { credentials: 'include' });
+      const data = await res.json();
+      if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
+      else alert(data?.error || 'Could not open billing portal.');
+    } catch {
+      alert('Network error — try again in a moment.');
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {noTier && (
+        <div className="p-4 border-l-4 border-blue-500 bg-blue-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-blue-900">
+            <strong>Pick your plan to start receiving buyers.</strong>{' '}
+            Choose Pasture, Ranch, or Operator on /partner.
+          </p>
+          <a
+            href="/partner"
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-blue-700 text-white hover:bg-blue-800 transition-colors"
+          >
+            See plans →
+          </a>
+        </div>
+      )}
+
+      {showConnectNotConnected && (
+        <div className="p-4 border-l-4 border-yellow-500 bg-yellow-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-yellow-900">
+            <strong>Connect your bank account so we can pay you.</strong>{' '}
+            Stripe Connect onboarding takes ~5 minutes.
+          </p>
+          <button
+            type="button"
+            onClick={openConnectOnboarding}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors"
+          >
+            Connect bank →
+          </button>
+        </div>
+      )}
+
+      {showConnectOnboarding && (
+        <div className="p-4 border-l-4 border-yellow-500 bg-yellow-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-yellow-900">
+            <strong>Finish identity verification with Stripe.</strong>{' '}
+            Resume where you left off — Stripe will pick up at the next required step.
+          </p>
+          <button
+            type="button"
+            onClick={openConnectOnboarding}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors"
+          >
+            Resume verification →
+          </button>
+        </div>
+      )}
+
+      {showConnectRestricted && (
+        <div className="p-4 border-l-4 border-red-600 bg-red-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-red-900">
+            <strong>Stripe needs more info to keep payouts active.</strong>{' '}
+            Your Connect account is restricted — open the portal to clear the flag.
+          </p>
+          <button
+            type="button"
+            onClick={openBillingPortal}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors"
+          >
+            Open portal →
+          </button>
+        </div>
+      )}
+
+      {showPastDue && (
+        <div className="p-4 border-l-4 border-red-600 bg-red-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-red-900">
+            <strong>Your tier payment failed — update your card.</strong>{' '}
+            Payouts continue, but new leads pause until the subscription is current again.
+          </p>
+          <button
+            type="button"
+            onClick={openBillingPortal}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors"
+          >
+            Update card →
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -66,6 +66,13 @@ const ALLOWED_FIELDS = new Set([
   'Testimonials',
   'Custom Products',
   'Certifications',
+  // Stage-3 Task 11B — fulfillment + refund policy (shown to buyers verbatim)
+  'Fulfillment Types',
+  'Pickup City',
+  'Delivery Radius Miles',
+  'Shipping Lead Time Days',
+  'Refund Policy',
+  'Fulfillment Cost Notes',
 ]);
 
 function verifyToken(token: string): { rancherId: string } | null {
@@ -111,6 +118,11 @@ export async function GET(req: Request) {
     // ranchers whose Onboarding Status got bumped to a non-canonical
     // value (e.g. "Docs Sent") while skipping past "Call Complete".
     callCompletedAt: rancher['Call Completed At'] || '',
+    // Stage-3 Task 11 — surface tier subscription state so the wizard's
+    // Pick-Your-Plan step can detect when checkout completed.
+    Tier: rancher['Tier'] || '',
+    'Subscription Status': rancher['Subscription Status'] || '',
+    'Pricing Model': rancher['Pricing Model'] || '',
   };
   for (const f of ALLOWED_FIELDS) {
     if (rancher[f] !== undefined) out[f] = rancher[f];

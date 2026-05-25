@@ -185,6 +185,20 @@ export async function GET() {
         quarterClicks: rancher['Quarter Clicks'] || 0,
         halfClicks: rancher['Half Clicks'] || 0,
         wholeClicks: rancher['Whole Clicks'] || 0,
+        // Stage-3 Task 11C — fields the dashboard banner cascade needs.
+        // Pricing Model gates legacy vs tier_v2 ranchers. Tier is the
+        // singleSelect string (Airtable returns either a string or
+        // {id,name,color} — coerce to string here). Connect status is
+        // the Airtable cache; the /api/rancher/billing/data endpoint
+        // refreshes it live. Banner cascade is OK with the cache.
+        pricingModel: String(rancher['Pricing Model'] || 'legacy'),
+        tier: (() => {
+          const raw = rancher['Tier'];
+          if (raw && typeof raw === 'object' && 'name' in (raw as any)) return String((raw as any).name);
+          return raw ? String(raw) : null;
+        })(),
+        subscriptionStatus: String(rancher['Subscription Status'] || ''),
+        connectStatus: String(rancher['Stripe Connect Status'] || 'not_connected'),
       },
       stats: {
         totalReferrals: myReferrals.length,

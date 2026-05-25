@@ -54,7 +54,69 @@ type Rancher = {
   'Whole Payment Link'?: string;
   'Tier Specialty'?: string[];
   'Custom Notes'?: string;
+  // Stage-3 tier subscription state (Task 11)
+  Tier?: string | { name: string };
+  'Subscription Status'?: string;
+  'Pricing Model'?: string;
+  // Stage-3 fulfillment fields (Task 11B)
+  'Fulfillment Types'?: string[];
+  'Pickup City'?: string;
+  'Delivery Radius Miles'?: number;
+  'Shipping Lead Time Days'?: number;
+  'Refund Policy'?: string;
+  'Fulfillment Cost Notes'?: string;
 };
+
+// Tier card data. Source of truth lives in lib/tiers.ts; mirrored here as
+// static copy so the wizard renders without an extra fetch. If lib/tiers.ts
+// changes, update these. The slugs MUST match TierSlug exactly.
+const TIER_CARDS: Array<{
+  slug: 'pasture' | 'ranch' | 'operator';
+  label: string;
+  price: string;
+  promise: string;
+  perks: string[];
+}> = [
+  {
+    slug: 'pasture',
+    label: 'Pasture',
+    price: '$150/mo + 7%',
+    promise: 'We send you buyers.',
+    perks: ['Buyer matching for your states', 'Stripe Connect payouts', 'Lead inbox'],
+  },
+  {
+    slug: 'ranch',
+    label: 'Ranch',
+    price: '$350/mo + 3%',
+    promise: 'We send you buyers AND make sure they see you first.',
+    perks: ['Priority placement', 'Featured ranch badge', 'Homepage rotation slot'],
+  },
+  {
+    slug: 'operator',
+    label: 'Operator',
+    price: '$500/mo + 0%',
+    promise: 'We send you buyers, position you, and run your marketing.',
+    perks: ['0% commission', 'Dedicated brand strategist', 'Monthly content + social cadence'],
+  },
+];
+
+// Pull tier slug from a Rancher record. Mirrors lib/tiers.ts tierFor() but
+// operates on the wizard's lighter `Rancher` shape (Airtable returns either
+// a string or {name} for singleSelect fields).
+function tierSlugFromRancher(r: Rancher | null): 'pasture' | 'ranch' | 'operator' | null {
+  if (!r) return null;
+  const raw = r.Tier;
+  const str = raw && typeof raw === 'object' && 'name' in raw ? String(raw.name) : String(raw || '');
+  const slug = str.toLowerCase();
+  if (slug === 'pasture' || slug === 'ranch' || slug === 'operator') return slug;
+  return null;
+}
+
+const FULFILLMENT_OPTIONS = [
+  { value: 'Local Pickup', label: 'Local pickup at my ranch' },
+  { value: 'Local Delivery', label: 'Local delivery (within driving distance)' },
+  { value: 'Cold-Chain Shipping', label: 'Cold-chain shipping (FedEx/UPS)' },
+] as const;
 
 const CALENDLY_LINK = 'https://cal.com/ben-beauchman-1itnsg/30min';
 
@@ -79,9 +141,15 @@ export default function RancherSetupWizard() {
   //            rancher already has Onboarding Status = 'Call Complete' set
   //            (Ben backfilled it for an existing rancher OR finished the
   //            call already and tapped the Telegram callback).
+  //   Step 7 = Pick Your Plan (tier subscription) [Stage-3 Task 11A]
+  //   Step 8 = Fulfillment + Refund Policy [Stage-3 Task 11B]
   //   Step 5 = inline agreement signing
   //   Step 6 = done (logged in, dashboard auto-link)
-  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(0);
+  //
+  // Order is 0→1→2→3→4→7→8→5→6 (steps 7/8 are wedged after Call, before Sign).
+  // Numbering is awkward to preserve existing setStep call sites; do NOT
+  // re-sequence without auditing every setStep(...) in this file.
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8>(0);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false); // mobile accordion state
@@ -150,6 +218,15 @@ export default function RancherSetupWizard() {
               ? data.rancher['Tier Specialty']
               : [],
             'Custom Notes': data.rancher['Custom Notes'] || '',
+            // Stage-3 Task 11B — fulfillment + refund fields
+            'Fulfillment Types': Array.isArray(data.rancher['Fulfillment Types'])
+              ? data.rancher['Fulfillment Types']
+              : [],
+            'Pickup City': data.rancher['Pickup City'] || '',
+            'Delivery Radius Miles': data.rancher['Delivery Radius Miles'] || '',
+            'Shipping Lead Time Days': data.rancher['Shipping Lead Time Days'] || '',
+            'Refund Policy': data.rancher['Refund Policy'] || '',
+            'Fulfillment Cost Notes': data.rancher['Fulfillment Cost Notes'] || '',
           });
         }
       } catch {
@@ -478,6 +555,8 @@ export default function RancherSetupWizard() {
 
   // Show live preview on data-entry steps (1, 2, 3) — not on the intro,
   // sign, or done screens. Step 4 sign-step shows its own listing review.
+  // Tier-pick (7) + fulfillment (8) hide it because the page-preview chrome
+  // isn't relevant to plan selection or fulfillment policy capture.
   const showLivePreview = step >= 1 && step <= 3;
 
   return (
@@ -1095,10 +1174,10 @@ export default function RancherSetupWizard() {
                   // After pricing, route to step 4 (Book Call). If the rancher
                   // already has Call Complete on file (e.g. Ben backfilled or
                   // they came back to a partially-onboarded record), skip the
-                  // booking step and prime the signing token for step 5.
+                  // booking step and jump straight to tier-pick (step 7).
+                  // Tier-pick + fulfillment (7/8) always run before sign (5).
                   if (canSkipBooking()) {
-                    primeSigningToken();
-                    setStep(5);
+                    setStep(7);
                   } else {
                     setStep(4);
                   }
@@ -1112,12 +1191,42 @@ export default function RancherSetupWizard() {
         {step === 4 && (
           <CallStep
             rancher={rancher}
-            onAlreadyComplete={() => {
-              primeSigningToken();
-              setStep(5);
-            }}
+            onAlreadyComplete={() => setStep(7)}
             onBack={() => setStep(3)}
-            onProceedAnyway={() => {
+            onProceedAnyway={() => setStep(7)}
+          />
+        )}
+
+        {/* STEP 7 — Pick Your Plan (Stage-3 Task 11A) */}
+        {step === 7 && (
+          <TierPickStep
+            token={token}
+            currentTier={tierSlugFromRancher(rancher)}
+            subscriptionStatus={String((rancher as any)['Subscription Status'] || '')}
+            onBack={() => setStep(canSkipBooking() ? 3 : 4)}
+            onContinue={(updated) => {
+              // updated holds the latest Rancher snapshot from polling — merge
+              // it into our local rancher state so the fulfillment + sign
+              // screens see the new Tier / Subscription Status without a
+              // page refresh.
+              if (updated) setRancher(updated);
+              setStep(8);
+            }}
+          />
+        )}
+
+        {/* STEP 8 — Fulfillment + Refund Policy (Stage-3 Task 11B) */}
+        {step === 8 && (
+          <FulfillmentStep
+            token={token}
+            form={form}
+            setField={setField}
+            saving={saving}
+            saveStep={saveStep}
+            onBack={() => setStep(7)}
+            onContinue={() => {
+              // After fulfillment is saved, prime the signing token + jump to
+              // the signature step.
               primeSigningToken();
               setStep(5);
             }}
@@ -1137,7 +1246,7 @@ export default function RancherSetupWizard() {
             setAgreedToTerms={setAgreedToTerms}
             signing={signing}
             onSign={signAgreement}
-            onBack={() => setStep(canSkipBooking() ? 3 : 4)}
+            onBack={() => setStep(8)}
           />
         )}
 
@@ -1775,6 +1884,425 @@ function CallStep({
           title={alreadyBooked ? '' : 'Book a call first'}
         >
           {alreadyBooked ? 'Continue to agreement →' : 'Book a call to continue'}
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-sm text-saddle hover:text-charcoal underline underline-offset-4"
+        >
+          ← Back
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// ── Step 7 — Pick Your Plan (Stage-3 Task 11A) ────────────────────────────
+// Rancher picks one of the three tiers. Each card opens
+// /partner/checkout/[tier] in a new tab. While the rancher is in the
+// Stripe Checkout tab, we poll /api/rancher/setup every 4s to detect when
+// Tier + Subscription Status='active' have been written to Airtable (via
+// the Stripe webhook). When detected, the card shows a ✓ and Continue
+// enables. The rancher can also tap "I picked my plan, continue" once a
+// tier+active subscription is confirmed.
+//
+// We DO NOT advance automatically — rancher confirms to keep them in
+// control (and so we don't blow past mid-loaded state during webhook lag).
+function TierPickStep({
+  token,
+  currentTier,
+  subscriptionStatus,
+  onBack,
+  onContinue,
+}: {
+  token: string;
+  currentTier: 'pasture' | 'ranch' | 'operator' | null;
+  subscriptionStatus: string;
+  onBack: () => void;
+  onContinue: (updated: Rancher | null) => void;
+}) {
+  const [polledTier, setPolledTier] = useState<'pasture' | 'ranch' | 'operator' | null>(currentTier);
+  const [polledStatus, setPolledStatus] = useState<string>(subscriptionStatus);
+  const [lastRancher, setLastRancher] = useState<Rancher | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const isActive = polledStatus === 'active' || polledStatus === 'trialing';
+  const planLocked = !!polledTier && isActive;
+
+  // Poll for Tier + Subscription Status. Runs every 4s while the step is
+  // mounted. Stops once both are set + active (saves Airtable read budget).
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled || planLocked) return;
+      try {
+        const res = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !data?.rancher) return;
+        const r = data.rancher as Rancher;
+        setLastRancher(r);
+        const slug = tierSlugFromRancher(r);
+        setPolledTier(slug);
+        setPolledStatus(String(r['Subscription Status'] || ''));
+      } catch {
+        /* non-fatal; will retry */
+      }
+    };
+    // Fire immediately so a returning rancher sees state without 4s wait.
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [token, planLocked]);
+
+  // Manual refresh button — gives the rancher an "I just paid, check now"
+  // affordance without waiting for the next 4s tick.
+  async function refreshNow() {
+    setChecking(true);
+    try {
+      const res = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.rancher) {
+          const r = data.rancher as Rancher;
+          setLastRancher(r);
+          setPolledTier(tierSlugFromRancher(r));
+          setPolledStatus(String(r['Subscription Status'] || ''));
+        }
+      }
+    } catch {
+      /* non-fatal */
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
+      <header>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 5 · Pick Your Plan</p>
+        <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
+          Pick the marketing engine that fits your ranch.
+        </h2>
+        <p className="text-sm text-saddle mt-1">
+          We send you buyers. You raise the cattle. Cancel anytime.
+        </p>
+      </header>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {TIER_CARDS.map((card) => {
+          const selected = polledTier === card.slug;
+          const showCheckmark = selected && isActive;
+          return (
+            <div
+              key={card.slug}
+              className={`relative bg-white border p-4 md:p-5 flex flex-col ${
+                showCheckmark
+                  ? 'border-2 border-sage'
+                  : selected
+                  ? 'border-2 border-charcoal'
+                  : 'border-divider'
+              }`}
+            >
+              {showCheckmark && (
+                <span className="absolute -top-2.5 right-3 bg-sage text-bone text-[10px] tracking-widest uppercase px-2 py-1 font-bold">
+                  ✓ Active
+                </span>
+              )}
+              {selected && !isActive && (
+                <span className="absolute -top-2.5 right-3 bg-charcoal text-bone text-[10px] tracking-widest uppercase px-2 py-1 font-bold">
+                  Selected
+                </span>
+              )}
+              <h3 className="font-serif text-xl text-charcoal mb-1">{card.label}</h3>
+              <p className="text-sm font-semibold text-charcoal mb-1">{card.price}</p>
+              <p className="text-sm text-saddle min-h-[3rem] mb-3">{card.promise}</p>
+              <ul className="border-t border-divider pt-2.5 mb-3 space-y-1 text-sm text-charcoal/85">
+                {card.perks.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+              <a
+                href={`/partner/checkout/${card.slug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`mt-auto text-center text-[11px] tracking-widest uppercase border px-3 py-2 transition-base ${
+                  showCheckmark
+                    ? 'border-sage text-sage-dark bg-bone-warm hover:bg-bone'
+                    : selected
+                    ? 'border-charcoal bg-charcoal text-bone hover:bg-divider'
+                    : 'border-charcoal text-charcoal hover:bg-charcoal hover:text-bone'
+                }`}
+              >
+                {showCheckmark
+                  ? `Manage ${card.label} →`
+                  : selected
+                  ? `Resume checkout →`
+                  : `Pick ${card.label}`}
+              </a>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="border border-dust bg-bone-warm p-4 text-sm text-charcoal/85 leading-relaxed">
+        {planLocked ? (
+          <p>
+            <span aria-hidden className="text-sage mr-1.5">✓</span>
+            Plan confirmed — <strong>{TIER_CARDS.find((c) => c.slug === polledTier)?.label || polledTier}</strong>.
+            Hit continue to set up fulfillment.
+          </p>
+        ) : polledTier && !isActive ? (
+          <p>
+            You picked <strong>{TIER_CARDS.find((c) => c.slug === polledTier)?.label || polledTier}</strong> but
+            we haven&rsquo;t seen the subscription clear yet (status: {polledStatus || 'pending'}).
+            Finish checkout in the Stripe tab. We&rsquo;ll auto-detect when it&rsquo;s active.
+          </p>
+        ) : (
+          <p>
+            Picking a plan opens Stripe Checkout in a new tab. Once you finish,
+            come back here — we&rsquo;ll auto-detect your active subscription
+            and unlock the continue button.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={refreshNow}
+          disabled={checking}
+          className="mt-2 text-xs uppercase tracking-widest text-saddle underline underline-offset-2 hover:text-charcoal disabled:opacity-50"
+        >
+          {checking ? 'Checking…' : 'Refresh status now'}
+        </button>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center pt-2 border-t border-dust">
+        <button
+          type="button"
+          onClick={() => onContinue(lastRancher)}
+          disabled={!planLocked}
+          className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-40 disabled:cursor-not-allowed"
+          title={planLocked ? '' : 'Pick a plan + finish checkout first'}
+        >
+          {planLocked ? 'I picked my plan, continue →' : 'Pick a plan to continue'}
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-sm text-saddle hover:text-charcoal underline underline-offset-4"
+        >
+          ← Back
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// ── Step 8 — Fulfillment + Refund Policy (Stage-3 Task 11B) ───────────────
+// Captures how the rancher delivers beef to buyers + their refund policy.
+// Refund Policy is shown verbatim on the buyer's pre-payment page so this
+// is the rancher's single-source-of-truth answer to "what happens if…".
+function FulfillmentStep({
+  token,
+  form,
+  setField,
+  saving,
+  saveStep,
+  onBack,
+  onContinue,
+}: {
+  token: string;
+  form: Record<string, any>;
+  setField: (key: string, value: any) => void;
+  saving: boolean;
+  saveStep: (slice: Record<string, any>) => Promise<boolean>;
+  onBack: () => void;
+  onContinue: () => void;
+}) {
+  const [localError, setLocalError] = useState('');
+
+  const types: string[] = Array.isArray(form['Fulfillment Types']) ? form['Fulfillment Types'] : [];
+  const hasPickup = types.includes('Local Pickup');
+  const hasDelivery = types.includes('Local Delivery');
+  const hasShipping = types.includes('Cold-Chain Shipping');
+
+  const refundPolicy: string = String(form['Refund Policy'] || '');
+  const refundLen = refundPolicy.trim().length;
+
+  const toggle = (val: string) => {
+    const cur = new Set(types);
+    if (cur.has(val)) cur.delete(val);
+    else cur.add(val);
+    setField('Fulfillment Types', Array.from(cur));
+  };
+
+  async function handleContinue() {
+    setLocalError('');
+    // Validation: at least one fulfillment type, conditional sub-fields,
+    // and refund policy 20–500 chars.
+    if (types.length === 0) {
+      setLocalError('Pick at least one fulfillment option.');
+      return;
+    }
+    if (hasPickup && !String(form['Pickup City'] || '').trim()) {
+      setLocalError('Pickup city is required when Local Pickup is selected.');
+      return;
+    }
+    if (hasDelivery) {
+      const n = Number(form['Delivery Radius Miles']);
+      if (!isFinite(n) || n <= 0) {
+        setLocalError('Delivery radius miles is required when Local Delivery is selected.');
+        return;
+      }
+    }
+    if (hasShipping) {
+      const n = Number(form['Shipping Lead Time Days']);
+      if (!isFinite(n) || n <= 0) {
+        setLocalError('Shipping lead time (days) is required when Cold-Chain Shipping is selected.');
+        return;
+      }
+    }
+    if (refundLen < 20) {
+      setLocalError('Refund policy must be at least 20 characters — buyers see this verbatim.');
+      return;
+    }
+    if (refundLen > 500) {
+      setLocalError('Refund policy must be 500 characters or fewer.');
+      return;
+    }
+
+    // PATCH the new fields. Coerce numerics so Airtable stores them as
+    // numbers (the route casts price fields but not these); we send Number
+    // values so they round-trip cleanly.
+    const payload: Record<string, any> = {
+      'Fulfillment Types': types,
+      'Pickup City': hasPickup ? String(form['Pickup City'] || '').trim() : '',
+      'Delivery Radius Miles': hasDelivery ? Number(form['Delivery Radius Miles']) : null,
+      'Shipping Lead Time Days': hasShipping ? Number(form['Shipping Lead Time Days']) : null,
+      'Refund Policy': refundPolicy.trim(),
+      'Fulfillment Cost Notes': String(form['Fulfillment Cost Notes'] || '').trim(),
+    };
+    const ok = await saveStep(payload);
+    if (ok) onContinue();
+  }
+
+  return (
+    <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
+      <header>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 6 · Fulfillment</p>
+        <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
+          How do you get the beef to buyers?
+        </h2>
+        <p className="text-sm text-saddle mt-1">
+          Pick all that apply. Buyers see these options on your listing.
+        </p>
+      </header>
+
+      <div className="border-t border-b border-divider divide-y divide-divider">
+        {FULFILLMENT_OPTIONS.map((opt) => {
+          const checked = types.includes(opt.value);
+          return (
+            <label
+              key={opt.value}
+              className="flex items-center gap-3 py-3 cursor-pointer text-charcoal/90"
+            >
+              <span
+                aria-hidden
+                className={`inline-flex items-center justify-center w-5 h-5 border transition-base ${
+                  checked ? 'bg-charcoal border-charcoal text-bone' : 'bg-white border-charcoal text-transparent'
+                }`}
+              >
+                ✓
+              </span>
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={checked}
+                onChange={() => toggle(opt.value)}
+              />
+              <span className="text-sm">{opt.label}</span>
+            </label>
+          );
+        })}
+      </div>
+
+      {hasPickup && (
+        <Field
+          label="Pickup city + state"
+          required
+          value={form['Pickup City']}
+          onChange={(v) => setField('Pickup City', v)}
+          placeholder="e.g., Bandera, TX"
+        />
+      )}
+
+      {hasDelivery && (
+        <Field
+          label="Delivery radius (miles)"
+          required
+          type="number"
+          value={form['Delivery Radius Miles']}
+          onChange={(v) => setField('Delivery Radius Miles', v)}
+          placeholder="50"
+        />
+      )}
+
+      {hasShipping && (
+        <Field
+          label="Shipping lead time (days after processing)"
+          required
+          type="number"
+          value={form['Shipping Lead Time Days']}
+          onChange={(v) => setField('Shipping Lead Time Days', v)}
+          placeholder="3"
+        />
+      )}
+
+      <TextareaField
+        label="Fulfillment cost notes (optional)"
+        value={form['Fulfillment Cost Notes']}
+        onChange={(v) => setField('Fulfillment Cost Notes', v)}
+        rows={2}
+        placeholder='e.g., "Cooler shipping $45 add-on, paid at pickup."'
+      />
+
+      <div className="space-y-1.5">
+        <TextareaField
+          label="Refund policy (required, 20–500 chars)"
+          value={form['Refund Policy']}
+          onChange={(v) => setField('Refund Policy', v)}
+          rows={4}
+          placeholder={`Tip: "Full refund within 7 days if cattle isn't processed yet. After processing, store credit only."`}
+        />
+        <p className="text-xs text-saddle italic">
+          Shown verbatim to buyers on the pre-payment page. {refundLen}/500
+          {refundLen < 20 && ' — need at least 20'}
+          {refundLen > 500 && ' — too long, trim it down'}
+        </p>
+      </div>
+
+      <div className="bg-bone-warm border border-dust p-4 text-sm text-saddle">
+        <strong className="text-charcoal">Why we ask:</strong> buyers see the
+        refund policy verbatim on your deposit page so they can decide before
+        paying. Less back-and-forth for you.
+      </div>
+
+      {localError && (
+        <div role="alert" className="text-sm text-weathered border border-weathered/40 bg-weathered/5 p-3">
+          {localError}
+        </div>
+      )}
+
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center pt-2 border-t border-dust">
+        <button
+          type="button"
+          onClick={handleContinue}
+          disabled={saving}
+          className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save & continue →'}
         </button>
         <button
           type="button"
