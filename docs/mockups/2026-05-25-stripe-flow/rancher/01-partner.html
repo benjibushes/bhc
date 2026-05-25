@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BuyHalfCow — Partner Tiers</title>
+<style>
+  :root{
+    --bone:#F4F1EC;
+    --charcoal:#0E0E0E;
+    --saddle:#6B4F3F;
+    --dust:#A7A29A;
+    --divider:#E8E3DA;
+    --gold:#C99A2E;
+    --crimson:#8B2C2C;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bone);
+    color:var(--charcoal);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .serif{font-family:Georgia,serif}
+  a{color:var(--charcoal)}
+  .nav{
+    border-bottom:1px solid var(--divider);
+    padding:20px 24px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .nav .brand{
+    font-family:Georgia,serif;
+    font-size:22px;
+    letter-spacing:0.04em;
+  }
+  .back{
+    font-size:13px;
+    color:var(--saddle);
+    text-decoration:none;
+  }
+  .wrap{
+    max-width:1100px;
+    margin:0 auto;
+    padding:48px 24px 80px;
+  }
+  h1.title{
+    font-family:Georgia,serif;
+    font-size:40px;
+    line-height:1.2;
+    margin:0 0 16px;
+    font-weight:500;
+    max-width:760px;
+  }
+  .sub{
+    color:var(--saddle);
+    font-size:16px;
+    max-width:680px;
+    margin:0 0 28px;
+  }
+  .counter{
+    border-top:1px solid var(--divider);
+    border-bottom:1px solid var(--divider);
+    padding:14px 0;
+    display:flex;
+    gap:32px;
+    flex-wrap:wrap;
+    font-size:13px;
+    color:var(--saddle);
+    margin-bottom:40px;
+  }
+  .counter strong{color:var(--charcoal);font-weight:600}
+  .tiers{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:20px;
+  }
+  @media (max-width:880px){
+    .tiers{grid-template-columns:1fr}
+    h1.title{font-size:32px}
+  }
+  .tier{
+    background:#fff;
+    border:1px solid var(--divider);
+    padding:28px 24px;
+    display:flex;
+    flex-direction:column;
+    position:relative;
+  }
+  .tier .badge{
+    position:absolute;
+    top:-12px;
+    left:24px;
+    background:var(--charcoal);
+    color:var(--bone);
+    font-size:10px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    padding:5px 10px;
+  }
+  .tier h2{
+    font-family:Georgia,serif;
+    font-size:24px;
+    margin:0 0 8px;
+    font-weight:500;
+  }
+  .price{
+    font-size:15px;
+    color:var(--charcoal);
+    margin:0 0 4px;
+    font-weight:600;
+  }
+  .promise{
+    color:var(--saddle);
+    font-size:14px;
+    margin:0 0 18px;
+    min-height:42px;
+  }
+  ul.perks{
+    list-style:none;
+    padding:0;
+    margin:0 0 16px;
+    border-top:1px solid var(--divider);
+    padding-top:16px;
+  }
+  ul.perks li{
+    font-size:14px;
+    padding:6px 0;
+    color:var(--charcoal);
+    border-bottom:1px solid var(--divider);
+  }
+  ul.perks li:last-child{border-bottom:0}
+  .sla{
+    font-size:12px;
+    color:var(--saddle);
+    border-top:1px solid var(--divider);
+    padding-top:12px;
+    margin:0 0 18px;
+    font-style:italic;
+  }
+  .cta{
+    margin-top:auto;
+    display:inline-block;
+    text-align:center;
+    background:var(--charcoal);
+    color:var(--bone);
+    text-decoration:none;
+    padding:14px 18px;
+    font-size:12px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    font-weight:600;
+  }
+  details.addons{
+    margin-top:48px;
+    border-top:1px solid var(--divider);
+    border-bottom:1px solid var(--divider);
+    padding:18px 0;
+  }
+  details.addons summary{
+    cursor:pointer;
+    font-family:Georgia,serif;
+    font-size:20px;
+    list-style:none;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+  }
+  details.addons summary::after{content:'+';font-size:24px;color:var(--saddle)}
+  details.addons[open] summary::after{content:'–'}
+  .addon-list{
+    margin-top:18px;
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:12px 32px;
+  }
+  @media (max-width:680px){.addon-list{grid-template-columns:1fr}}
+  .addon-list .item{
+    border-bottom:1px solid var(--divider);
+    padding:10px 0;
+    display:flex;
+    justify-content:space-between;
+    gap:16px;
+    font-size:14px;
+  }
+  .addon-list .item .name{color:var(--charcoal)}
+  .addon-list .item .cost{color:var(--saddle);white-space:nowrap}
+</style>
+</head>
+<body>
+  <div class="nav">
+    <div style="display:flex;gap:24px;align-items:center">
+      <a class="back" href="../index.html">← Back to tour</a>
+      <div class="brand">BUYHALFCOW</div>
+    </div>
+    <div style="font-size:12px;color:var(--saddle)">/partner</div>
+  </div>
+
+  <main class="wrap">
+    <h1 class="title">Pick the marketing engine that fits your ranch.</h1>
+    <p class="sub">We send you buyers. You raise the cattle. Cancel anytime.</p>
+
+    <div class="counter">
+      <div><strong>1,533</strong> verified buyers across 47 states</div>
+      <div><strong>11</strong> deals closed this month</div>
+      <div><strong>$20,165</strong> paid to ranchers this month</div>
+    </div>
+
+    <div class="tiers">
+      <!-- PASTURE -->
+      <div class="tier">
+        <div class="badge">Most ranchers start here</div>
+        <h2>Pasture</h2>
+        <p class="price">$150/mo + 7% commission</p>
+        <p class="promise">We send you buyers.</p>
+        <ul class="perks">
+          <li>Listed in buyer matching for your states</li>
+          <li>Verified rancher profile page</li>
+          <li>Lead inbox with buyer details</li>
+          <li>Stripe Connect payouts (next-day)</li>
+          <li>Fulfillment + refund policy on listing</li>
+          <li>Standard placement in match results</li>
+          <li>Email support (48hr response)</li>
+          <li>Cancel anytime, no contract</li>
+        </ul>
+        <a href="02-checkout-tier.html" class="cta">Get Started</a>
+      </div>
+
+      <!-- RANCH -->
+      <div class="tier">
+        <h2>Ranch</h2>
+        <p class="price">$350/mo + 3% commission</p>
+        <p class="promise">We send you buyers AND make sure they see you first.</p>
+        <ul class="perks">
+          <li>Everything in Pasture</li>
+          <li>Priority placement in match results</li>
+          <li>"Featured ranch" badge on profile</li>
+          <li>Homepage rotation slot (state-targeted)</li>
+          <li>Quarterly brand photo on your listing</li>
+          <li>Featured in monthly buyer newsletter</li>
+          <li>Dedicated email support (24hr response)</li>
+          <li>Lower 3% deal commission</li>
+        </ul>
+        <a href="02-checkout-tier.html" class="cta">Get Started</a>
+      </div>
+
+      <!-- OPERATOR -->
+      <div class="tier">
+        <h2>Operator</h2>
+        <p class="price">$500/mo + 0% commission</p>
+        <p class="promise">We send you buyers, position you, and run your marketing.</p>
+        <ul class="perks">
+          <li>Everything in Ranch</li>
+          <li>Top placement + "Operator" badge</li>
+          <li>0% commission on every deal</li>
+          <li>Dedicated brand strategist</li>
+          <li>Monthly content + social cadence</li>
+          <li>Quarterly strategy call</li>
+          <li>Done-for-you marketing engine</li>
+          <li>Direct line support</li>
+        </ul>
+        <p class="sla">SLA: 2 reels + 1 email + listing updates + quarterly call. Anything beyond that is a separate project quote.</p>
+        <a href="02-checkout-tier.html" class="cta">Get Started</a>
+      </div>
+    </div>
+
+    <details class="addons">
+      <summary>Add-on menu</summary>
+      <div class="addon-list">
+        <div class="item"><span class="name">Custom video shoot</span><span class="cost">$2,500 + travel</span></div>
+        <div class="item"><span class="name">Brand photo refresh</span><span class="cost">$1,500</span></div>
+        <div class="item"><span class="name">Founder-letter campaign</span><span class="cost">$750</span></div>
+        <div class="item"><span class="name">Brand partner intro</span><span class="cost">15% of deal</span></div>
+        <div class="item"><span class="name">PPC management</span><span class="cost">15% of ad spend, $500/mo min</span></div>
+      </div>
+    </details>
+  </main>
+</body>
+</html>

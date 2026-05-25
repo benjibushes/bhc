@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BuyHalfCow Admin — Payments</title>
+<style>
+  :root{
+    --bone:#F4F1EC;
+    --charcoal:#0E0E0E;
+    --saddle:#6B4F3F;
+    --dust:#A7A29A;
+    --divider:#E8E3DA;
+    --gold:#C99A2E;
+    --crimson:#8B2C2C;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bone);
+    color:var(--charcoal);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .serif{font-family:Georgia,serif}
+  a{color:var(--charcoal)}
+  .nav{
+    border-bottom:1px solid var(--divider);
+    padding:20px 24px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .nav .brand{
+    font-family:Georgia,serif;
+    font-size:22px;
+    letter-spacing:0.04em;
+  }
+  .back{
+    font-size:13px;
+    color:var(--saddle);
+    text-decoration:none;
+  }
+  /* Admin shell */
+  .shell{
+    display:grid;
+    grid-template-columns:220px 1fr;
+    min-height:calc(100vh - 64px);
+  }
+  @media (max-width:880px){
+    .shell{grid-template-columns:1fr}
+    .sidebar{display:none}
+  }
+  .sidebar{
+    border-right:1px solid var(--divider);
+    background:#fff;
+    padding:24px 0;
+  }
+  .sidebar .label{
+    padding:0 20px;
+    font-size:10px;
+    text-transform:uppercase;
+    letter-spacing:0.12em;
+    color:var(--dust);
+    margin-bottom:8px;
+  }
+  .sidebar a{
+    display:block;
+    padding:9px 20px;
+    text-decoration:none;
+    color:var(--saddle);
+    font-size:13px;
+    border-left:3px solid transparent;
+  }
+  .sidebar a.active{
+    color:var(--charcoal);
+    font-weight:600;
+    border-left-color:var(--charcoal);
+    background:var(--bone);
+  }
+  .sidebar .group{margin-bottom:18px}
+  .main{
+    padding:36px 36px 80px;
+    min-width:0;
+  }
+  @media (max-width:880px){.main{padding:24px 20px 60px}}
+  h1.page-title{
+    font-family:Georgia,serif;
+    font-size:28px;
+    margin:0 0 6px;
+    font-weight:500;
+  }
+  .page-sub{
+    color:var(--saddle);
+    font-size:14px;
+    margin:0 0 28px;
+  }
+  .section-title{
+    font-family:Georgia,serif;
+    font-size:18px;
+    font-weight:500;
+    margin:32px 0 14px;
+    padding-bottom:8px;
+    border-bottom:1px solid var(--divider);
+  }
+  /* Tier MRR cards */
+  .mrr-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:14px;
+    margin-bottom:8px;
+  }
+  @media (max-width:980px){.mrr-grid{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:520px){.mrr-grid{grid-template-columns:1fr}}
+  .mrr-card{
+    background:#fff;
+    border:1px solid var(--divider);
+    padding:18px 18px 16px;
+  }
+  .mrr-card.gold{
+    background:#FFF6E0;
+    border:1px solid var(--gold);
+  }
+  .mrr-card .tier{
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.1em;
+    color:var(--saddle);
+    margin-bottom:4px;
+    font-weight:600;
+  }
+  .mrr-card .price{
+    color:var(--saddle);
+    font-size:13px;
+    margin-bottom:10px;
+  }
+  .mrr-card .value{
+    font-family:Georgia,serif;
+    font-size:26px;
+    color:var(--charcoal);
+    line-height:1.1;
+    margin-bottom:4px;
+  }
+  .mrr-card .meta{
+    font-size:12px;
+    color:var(--saddle);
+  }
+  .mrr-card.gold .meta{color:#A07520;font-weight:600}
+
+  /* Tables */
+  .table-wrap{
+    background:#fff;
+    border:1px solid var(--divider);
+    overflow-x:auto;
+  }
+  table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:13px;
+  }
+  thead th{
+    text-align:left;
+    padding:12px 16px;
+    background:var(--bone);
+    border-bottom:1px solid var(--divider);
+    font-weight:600;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--saddle);
+    white-space:nowrap;
+  }
+  tbody td{
+    padding:12px 16px;
+    border-bottom:1px solid var(--divider);
+    vertical-align:top;
+  }
+  tbody tr:last-child td{border-bottom:0}
+  .status-pill{
+    display:inline-block;
+    padding:2px 8px;
+    font-size:10px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    font-weight:600;
+  }
+  .status-paid{background:#DDF3E0;color:#1A6B2D}
+  .status-pending{background:#FFF6E0;color:#A07520}
+  .stripe-link{
+    color:var(--saddle);
+    text-decoration:underline;
+    font-size:12px;
+    white-space:nowrap;
+  }
+  /* Commission summary */
+  .commission-box{
+    background:#fff;
+    border:1px solid var(--divider);
+    padding:20px 22px;
+  }
+  .commission-box .line{
+    display:flex;
+    justify-content:space-between;
+    padding:8px 0;
+    border-bottom:1px solid var(--divider);
+    font-size:14px;
+  }
+  .commission-box .line:last-child{border-bottom:0}
+  .commission-box .line.total{
+    margin-top:6px;
+    padding-top:14px;
+    border-top:2px solid var(--charcoal);
+    border-bottom:0;
+    font-weight:600;
+    font-size:15px;
+  }
+  .commission-box .line .label{color:var(--saddle)}
+  .commission-box .line.total .label{color:var(--charcoal)}
+
+  .stripe-cta{
+    display:inline-block;
+    margin-top:36px;
+    color:var(--saddle);
+    font-size:15px;
+    text-decoration:underline;
+    font-weight:600;
+  }
+</style>
+</head>
+<body>
+  <div class="nav">
+    <div style="display:flex;gap:24px;align-items:center">
+      <a class="back" href="../index.html">← Back to tour</a>
+      <div class="brand">BUYHALFCOW</div>
+    </div>
+    <div style="font-size:12px;color:var(--saddle)">/admin/payments</div>
+  </div>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="group">
+        <div class="label">Operations</div>
+        <a href="#">Overview</a>
+        <a href="#">Ranchers</a>
+        <a href="#">Buyers</a>
+        <a href="#">Referrals</a>
+      </div>
+      <div class="group">
+        <div class="label">Money</div>
+        <a href="#" class="active">Payments</a>
+        <a href="#">Payouts</a>
+        <a href="#">Subscriptions</a>
+        <a href="#">Add-ons</a>
+      </div>
+      <div class="group">
+        <div class="label">Growth</div>
+        <a href="#">Funnel</a>
+        <a href="02-funnel-attribution.html">Attribution</a>
+        <a href="#">Cohorts</a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <h1 class="page-title">Payments</h1>
+      <p class="page-sub">BHC platform revenue · subscription MRR · payouts · add-ons</p>
+
+      <!-- ROW 1 — PER-TIER MRR -->
+      <div class="section-title">Per-tier MRR snapshot</div>
+      <div class="mrr-grid">
+        <div class="mrr-card">
+          <div class="tier">Pasture</div>
+          <div class="price">$150/mo</div>
+          <div class="value">$1,800</div>
+          <div class="meta">12 active · MRR</div>
+        </div>
+        <div class="mrr-card">
+          <div class="tier">Ranch</div>
+          <div class="price">$350/mo</div>
+          <div class="value">$1,750</div>
+          <div class="meta">5 active · MRR</div>
+        </div>
+        <div class="mrr-card">
+          <div class="tier">Operator</div>
+          <div class="price">$500/mo</div>
+          <div class="value">$1,000</div>
+          <div class="meta">2 active · MRR</div>
+        </div>
+        <div class="mrr-card gold">
+          <div class="tier">Total MRR</div>
+          <div class="price">All tiers</div>
+          <div class="value">$4,550</div>
+          <div class="meta">+$1,000 vs last month</div>
+        </div>
+      </div>
+
+      <!-- ROW 2 — PAYOUTS -->
+      <div class="section-title">Payouts last 30d</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Rancher</th>
+              <th>Tier</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Stripe link</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>2026-05-24</td>
+              <td>Ashcraft Beef</td>
+              <td>Pasture</td>
+              <td>$643</td>
+              <td><span class="status-pill status-paid">Paid</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>2026-05-22</td>
+              <td>Wagonwheel Cattle Co.</td>
+              <td>Ranch</td>
+              <td>$1,455</td>
+              <td><span class="status-pill status-paid">Paid</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>2026-05-20</td>
+              <td>Sunrise Ridge Ranch</td>
+              <td>Operator</td>
+              <td>$2,180</td>
+              <td><span class="status-pill status-paid">Paid</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>2026-05-18</td>
+              <td>Hollow Creek Beef</td>
+              <td>Pasture</td>
+              <td>$540</td>
+              <td><span class="status-pill status-paid">Paid</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>2026-05-15</td>
+              <td>Bar-T Ranch</td>
+              <td>Ranch</td>
+              <td>$960</td>
+              <td><span class="status-pill status-pending">Pending</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>2026-05-12</td>
+              <td>Driftwood Farm</td>
+              <td>Pasture</td>
+              <td>$725</td>
+              <td><span class="status-pill status-paid">Paid</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>2026-05-08</td>
+              <td>Ashcraft Beef</td>
+              <td>Pasture</td>
+              <td>$815</td>
+              <td><span class="status-pill status-paid">Paid</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>2026-05-04</td>
+              <td>Coyote Mesa Cattle</td>
+              <td>Operator</td>
+              <td>$1,640</td>
+              <td><span class="status-pill status-pending">Pending</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ROW 3 — COMMISSION RETAINED -->
+      <div class="section-title">Platform commission retained last 30d</div>
+      <div class="commission-box">
+        <div class="line">
+          <span class="label">Pasture commissions (7%)</span>
+          <span>$487</span>
+        </div>
+        <div class="line">
+          <span class="label">Ranch commissions (3%)</span>
+          <span>$138</span>
+        </div>
+        <div class="line">
+          <span class="label">Operator commissions (0%)</span>
+          <span>$0</span>
+        </div>
+        <div class="line total">
+          <span class="label">Total platform fees retained</span>
+          <span>$625</span>
+        </div>
+      </div>
+
+      <!-- ROW 4 — ADD-ONS -->
+      <div class="section-title">Add-on purchases last 30d</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Add-on</th>
+              <th>Rancher</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Stripe link</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Video Shoot</td>
+              <td>Ashcraft Beef</td>
+              <td>$2,500</td>
+              <td><span class="status-pill status-paid">Paid May 12</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>Brand Photo Refresh</td>
+              <td>Wagonwheel Cattle Co.</td>
+              <td>$1,500</td>
+              <td><span class="status-pill status-paid">Paid May 19</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>Founder-Letter Campaign</td>
+              <td>Sunrise Ridge Ranch</td>
+              <td>$750</td>
+              <td><span class="status-pill status-paid">Paid May 14</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+            <tr>
+              <td>PPC Management</td>
+              <td>Coyote Mesa Cattle</td>
+              <td>$500</td>
+              <td><span class="status-pill status-paid">Paid May 1</span></td>
+              <td><a class="stripe-link" href="#">view →</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <a href="#" class="stripe-cta">Open Stripe Dashboard →</a>
+    </main>
+  </div>
+</body>
+</html>

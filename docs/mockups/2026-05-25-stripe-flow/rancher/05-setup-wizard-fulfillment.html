@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BuyHalfCow — Setup · Fulfillment</title>
+<style>
+  :root{
+    --bone:#F4F1EC;
+    --charcoal:#0E0E0E;
+    --saddle:#6B4F3F;
+    --dust:#A7A29A;
+    --divider:#E8E3DA;
+    --gold:#C99A2E;
+    --crimson:#8B2C2C;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bone);
+    color:var(--charcoal);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .nav{
+    border-bottom:1px solid var(--divider);
+    padding:20px 24px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .nav .brand{
+    font-family:Georgia,serif;
+    font-size:22px;
+    letter-spacing:0.04em;
+  }
+  .back{
+    font-size:13px;
+    color:var(--saddle);
+    text-decoration:none;
+  }
+  .progress-wrap{
+    border-bottom:1px solid var(--divider);
+    padding:14px 24px;
+    background:#fff;
+  }
+  .progress-label{
+    font-size:12px;
+    color:var(--saddle);
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    margin-bottom:8px;
+  }
+  .progress-bar{
+    height:4px;
+    background:var(--dust);
+    position:relative;
+    overflow:hidden;
+  }
+  .progress-bar::after{
+    content:'';
+    position:absolute;
+    top:0;left:0;bottom:0;
+    width:83.33%;
+    background:var(--charcoal);
+  }
+  .shell{
+    max-width:1100px;
+    margin:0 auto;
+    padding:40px 24px 80px;
+    display:grid;
+    grid-template-columns:240px 1fr;
+    gap:48px;
+  }
+  @media (max-width:780px){
+    .shell{grid-template-columns:1fr;gap:24px}
+  }
+  aside .step{
+    padding:10px 0;
+    border-bottom:1px solid var(--divider);
+    font-size:14px;
+    color:var(--saddle);
+    display:flex;
+    justify-content:space-between;
+  }
+  aside .step.done{color:var(--charcoal)}
+  aside .step.active{
+    color:var(--charcoal);
+    font-weight:600;
+  }
+  h1{
+    font-family:Georgia,serif;
+    font-size:30px;
+    line-height:1.25;
+    margin:0 0 8px;
+    font-weight:500;
+  }
+  .lede{
+    color:var(--saddle);
+    margin:0 0 32px;
+    font-size:15px;
+  }
+  .checkbox-row{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding:14px 0;
+    border-bottom:1px solid var(--divider);
+    font-size:15px;
+    cursor:pointer;
+  }
+  .checkbox-row:first-of-type{border-top:1px solid var(--divider)}
+  .box{
+    width:22px;
+    height:22px;
+    border:1.5px solid var(--charcoal);
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    flex-shrink:0;
+    font-size:14px;
+    line-height:1;
+    background:#fff;
+  }
+  .box.checked{
+    background:var(--charcoal);
+    color:var(--bone);
+  }
+  .checkbox-block{
+    margin-bottom:28px;
+  }
+  .field{
+    margin-bottom:18px;
+  }
+  .field label{
+    display:block;
+    font-size:13px;
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+    color:var(--saddle);
+    margin-bottom:6px;
+    font-weight:600;
+  }
+  .field input,
+  .field textarea{
+    width:100%;
+    background:#fff;
+    border:1px solid var(--divider);
+    padding:12px 14px;
+    font-family:inherit;
+    font-size:15px;
+    color:var(--charcoal);
+    resize:vertical;
+  }
+  .field .helper{
+    font-size:12px;
+    color:var(--saddle);
+    margin-top:6px;
+    font-style:italic;
+  }
+  .why{
+    background:var(--bone);
+    border:1px solid var(--divider);
+    padding:14px 16px;
+    font-size:13px;
+    color:var(--saddle);
+    margin:24px 0 28px;
+  }
+  .why strong{color:var(--charcoal)}
+  .cta{
+    display:inline-block;
+    background:var(--charcoal);
+    color:var(--bone);
+    text-decoration:none;
+    padding:14px 24px;
+    font-size:13px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    font-weight:600;
+  }
+</style>
+</head>
+<body>
+  <div class="nav">
+    <div style="display:flex;gap:24px;align-items:center">
+      <a class="back" href="../index.html">← Back to tour</a>
+      <div class="brand">BUYHALFCOW</div>
+    </div>
+    <div style="font-size:12px;color:var(--saddle)">/rancher/setup</div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-label">Step 5 of 6: Fulfillment</div>
+    <div class="progress-bar"></div>
+  </div>
+
+  <div class="shell">
+    <aside>
+      <div class="step done"><span>Profile</span><span>✓</span></div>
+      <div class="step done"><span>Ranch Details</span><span>✓</span></div>
+      <div class="step done"><span>States Served</span><span>✓</span></div>
+      <div class="step done"><span>Pick Your Plan</span><span>✓</span></div>
+      <div class="step active"><span>Fulfillment</span><span>5</span></div>
+      <div class="step"><span>Connect Bank</span><span>6</span></div>
+    </aside>
+
+    <section>
+      <h1>How do you get the beef to buyers?</h1>
+      <p class="lede">Pick all that apply. Buyers see these options on your listing.</p>
+
+      <div class="checkbox-block">
+        <div class="checkbox-row">
+          <span class="box checked">✓</span>
+          <span>Local pickup at my ranch</span>
+        </div>
+        <div class="checkbox-row">
+          <span class="box"></span>
+          <span>Local delivery (within driving distance)</span>
+        </div>
+        <div class="checkbox-row">
+          <span class="box"></span>
+          <span>Cold-chain shipping (FedEx/UPS)</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Pickup city + state</label>
+        <input type="text" placeholder="e.g., Bandera, TX" />
+      </div>
+
+      <div class="field">
+        <label>Delivery radius (miles, optional)</label>
+        <input type="number" placeholder="50" />
+      </div>
+
+      <div class="field">
+        <label>Typical lead time after processing (days)</label>
+        <input type="number" placeholder="3" />
+      </div>
+
+      <div class="field">
+        <label>Extras (optional)</label>
+        <input type="text" placeholder="" />
+        <div class="helper">e.g., "Cooler shipping $45"</div>
+      </div>
+
+      <div class="field">
+        <label>Refund policy (required, min 20 chars)</label>
+        <textarea rows="4" placeholder=""></textarea>
+        <div class="helper">Tip: "Full refund within 7 days if cattle isn't processed yet. After processing, store credit only."</div>
+      </div>
+
+      <div class="why">
+        <strong>Why we ask:</strong> buyers see this verbatim on your deposit page so they can decide before paying. Less back-and-forth for you.
+      </div>
+
+      <a class="cta" href="03-kyc-interstitial.html">Save + continue →</a>
+    </section>
+  </div>
+</body>
+</html>

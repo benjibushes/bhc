@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tier Welcome · Email Mockup</title>
+<style>
+  :root {
+    --bone: #F4F1EC;
+    --charcoal: #0E0E0E;
+    --saddle: #6B4F3F;
+    --dust: #A7A29A;
+    --divider: #E8E3DA;
+    --gold: #C99A2E;
+    --crimson: #8B2C2C;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #e9e7e3;
+    color: var(--charcoal);
+    line-height: 1.6;
+    padding: 24px 20px 80px;
+  }
+  .back {
+    display: inline-block;
+    color: var(--saddle);
+    text-decoration: none;
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .back:hover { text-decoration: underline; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+
+  .email-frame {
+    background: #fff;
+    border: 1px solid var(--dust);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .email-header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--divider);
+    background: #fafafa;
+  }
+  .email-header .subject {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--charcoal);
+    margin-bottom: 10px;
+    line-height: 1.3;
+  }
+  .email-header .meta {
+    font-size: 13px;
+    color: var(--saddle);
+    line-height: 1.6;
+  }
+  .email-header .meta .label {
+    color: var(--dust);
+    display: inline-block;
+    width: 50px;
+  }
+  .email-body {
+    background: var(--bone);
+    padding: 36px 32px;
+  }
+  h1 {
+    font-family: Georgia, serif;
+    font-size: 28px;
+    line-height: 1.2;
+    margin-bottom: 20px;
+    color: var(--charcoal);
+  }
+  p {
+    font-size: 15px;
+    margin-bottom: 18px;
+    color: var(--charcoal);
+  }
+  ol.timeline {
+    list-style: none;
+    counter-reset: step;
+    margin: 22px 0 28px;
+  }
+  ol.timeline li {
+    counter-increment: step;
+    position: relative;
+    padding: 14px 18px 14px 56px;
+    background: #fff;
+    border: 1px solid var(--divider);
+    margin-bottom: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  ol.timeline li::before {
+    content: counter(step);
+    position: absolute;
+    left: 14px;
+    top: 14px;
+    width: 26px;
+    height: 26px;
+    background: var(--charcoal);
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: Georgia, serif;
+  }
+  ol.timeline li strong {
+    color: var(--saddle);
+    font-weight: 600;
+  }
+  .cta {
+    display: block;
+    text-align: center;
+    background: var(--charcoal);
+    color: #fff;
+    text-decoration: none;
+    padding: 16px 22px;
+    font-size: 15px;
+    font-weight: 500;
+    margin: 8px 0 14px;
+  }
+  .cta:hover { background: #000; }
+  .alt-line {
+    font-size: 13px;
+    color: var(--saddle);
+    text-align: center;
+    margin-bottom: 24px;
+  }
+  .earn-card {
+    background: var(--bone);
+    border: 1px solid var(--dust);
+    padding: 18px 22px;
+    margin: 8px 0 22px;
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--charcoal);
+  }
+  .earn-card .earn-q {
+    font-weight: 600;
+    color: var(--charcoal);
+    margin-bottom: 8px;
+  }
+  .earn-card .earn-body { color: var(--saddle); }
+  .sign {
+    margin-top: 22px;
+    font-size: 14px;
+    color: var(--saddle);
+    line-height: 1.5;
+  }
+  @media (max-width: 520px) {
+    .email-body { padding: 24px 20px; }
+    h1 { font-size: 23px; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <a href="../index.html" class="back">&larr; Back to tour</a>
+
+    <div class="email-frame">
+      <div class="email-header">
+        <div class="subject">Welcome to BuyHalfCow Pasture &middot; One more step</div>
+        <div class="meta">
+          <div><span class="label">From:</span> BuyHalfCow &lt;ben@buyhalfcow.com&gt;</div>
+          <div><span class="label">To:</span> john@ashcraftbeef.com</div>
+        </div>
+      </div>
+
+      <div class="email-body">
+        <h1>&#128002; You're in.</h1>
+        <p>Congrats &mdash; you just paid your first month of Pasture ($150). Here's what happens next, step by step:</p>
+
+        <ol class="timeline">
+          <li><strong>Right now:</strong> Connect your bank with Stripe (5 min) &mdash; REQUIRED to receive buyer payments</li>
+          <li><strong>Within 30 min:</strong> We flip you to Live on the map at buyhalfcow.com/map</li>
+          <li><strong>Within 24&ndash;48 hours:</strong> First buyer in Texas gets matched to you</li>
+          <li><strong>Within 7 days:</strong> First close is realistic (median for ranchers in your state)</li>
+          <li><strong>Then it's just:</strong> buyers come in, you reply, deals close, payouts hit your bank</li>
+        </ol>
+
+        <a href="#" class="cta">Connect your bank now &rarr;</a>
+        <p class="alt-line">Or come back tomorrow &mdash; your spot's saved. Pasture starts billing on Jun 25, 2026.</p>
+
+        <div class="earn-card">
+          <div class="earn-q">What can I expect to earn?</div>
+          <div class="earn-body">Median Texas rancher on Pasture: 2 deals/month at $700 avg = $1,400 &minus; 7% commission &minus; $150 fee = <strong style="color:var(--charcoal)">$1,148 net to your bank</strong>. First 30 days: aim for 1 deal to learn the flow.</div>
+        </div>
+
+        <p class="sign">&mdash; Ben Beauchman, Founder, BuyHalfCow<br>Reply if anything's confusing</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

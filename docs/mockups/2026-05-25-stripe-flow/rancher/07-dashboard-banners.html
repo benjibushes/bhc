@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BuyHalfCow — Dashboard Banner Cascade</title>
+<style>
+  :root{
+    --bone:#F4F1EC;
+    --charcoal:#0E0E0E;
+    --saddle:#6B4F3F;
+    --dust:#A7A29A;
+    --divider:#E8E3DA;
+    --gold:#C99A2E;
+    --crimson:#8B2C2C;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bone);
+    color:var(--charcoal);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .nav{
+    border-bottom:1px solid var(--divider);
+    padding:20px 24px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .nav .brand{
+    font-family:Georgia,serif;
+    font-size:22px;
+    letter-spacing:0.04em;
+  }
+  .back{
+    font-size:13px;
+    color:var(--saddle);
+    text-decoration:none;
+  }
+  .wrap{
+    max-width:1100px;
+    margin:0 auto;
+    padding:32px 24px 80px;
+  }
+  .preview-note{
+    background:#fff;
+    border:1px dashed var(--dust);
+    padding:12px 16px;
+    font-size:12px;
+    color:var(--saddle);
+    margin-bottom:32px;
+  }
+  .rancher-header{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    margin-bottom:8px;
+    flex-wrap:wrap;
+  }
+  .rancher-header h1{
+    font-family:Georgia,serif;
+    font-size:24px;
+    font-weight:500;
+    margin:0;
+  }
+  .rancher-header .meta{
+    color:var(--saddle);
+    font-size:14px;
+  }
+  .active-pill{
+    display:inline-block;
+    background:#E8F2E5;
+    color:#2E7D32;
+    border:1px solid #2E7D32;
+    font-size:10px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    padding:3px 8px;
+    font-weight:600;
+  }
+  hr.divider{
+    border:0;
+    border-top:1px solid var(--divider);
+    margin:18px 0 24px;
+  }
+  .state-label{
+    font-size:10px;
+    letter-spacing:0.18em;
+    text-transform:uppercase;
+    color:var(--saddle);
+    margin:24px 0 6px;
+    font-weight:700;
+  }
+  .banner{
+    padding:14px 18px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:16px;
+    font-size:14px;
+    flex-wrap:wrap;
+  }
+  .banner a{
+    color:inherit;
+    text-decoration:underline;
+    font-weight:600;
+  }
+  .banner.gold{
+    background:#FBF2DC;
+    border-left:4px solid var(--gold);
+    color:#4A3A0E;
+  }
+  .banner.yellow{
+    background:#FBF2DC;
+    border-left:4px solid var(--gold);
+    color:#4A3A0E;
+  }
+  .banner.crimson{
+    background:#F4DCDC;
+    border-left:4px solid var(--crimson);
+    color:#4A1010;
+  }
+  .banner.dust{
+    background:var(--bone);
+    border-left:4px solid var(--dust);
+    color:var(--saddle);
+    font-style:italic;
+  }
+  .banner .dismiss{
+    font-size:11px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    background:transparent;
+    border:1px solid currentColor;
+    padding:5px 10px;
+    color:inherit;
+    cursor:pointer;
+    font-weight:600;
+  }
+  .dash-cards{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:16px;
+    margin-top:36px;
+  }
+  @media (max-width:780px){.dash-cards{grid-template-columns:1fr}}
+  .placeholder{
+    background:#EEEAE2;
+    border:1px solid var(--divider);
+    height:160px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--saddle);
+    font-size:13px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+  }
+</style>
+</head>
+<body>
+  <div class="nav">
+    <div style="display:flex;gap:24px;align-items:center">
+      <a class="back" href="../index.html">← Back to tour</a>
+      <div class="brand">BUYHALFCOW</div>
+    </div>
+    <div style="font-size:12px;color:var(--saddle)">/rancher</div>
+  </div>
+
+  <main class="wrap">
+    <div class="preview-note">
+      Preview view: all 5 banner states rendered stacked so you can see the cascade. In production only the highest-priority applicable banner shows.
+    </div>
+
+    <div class="rancher-header">
+      <h1>🐂 John Ashcraft · Ashcraft Beef · Texas</h1>
+      <span class="active-pill">Active</span>
+    </div>
+    <div class="meta" style="color:var(--saddle);font-size:14px">Pasture tier · acct_•••3829</div>
+
+    <hr class="divider" />
+
+    <div class="state-label">1 · Gold (legacy upgrade prompt)</div>
+    <div class="banner gold">
+      <div>🎁 Upgrade to a tier with marketing perks · <a href="01-partner.html">See /partner →</a></div>
+      <button class="dismiss">Dismiss for 30 days</button>
+    </div>
+
+    <div class="state-label">2 · Crimson (tier missing — hard block)</div>
+    <div class="banner crimson">
+      <div>⛔ Pick your plan to start receiving leads · <a href="01-partner.html">/partner →</a></div>
+    </div>
+
+    <div class="state-label">3 · Crimson (bank missing — hard block)</div>
+    <div class="banner crimson">
+      <div>💳 Connect your bank — 5 minutes to start receiving payouts <a href="03-kyc-interstitial.html">→</a></div>
+    </div>
+
+    <div class="state-label">4 · Yellow/Gold (fulfillment missing)</div>
+    <div class="banner yellow">
+      <div>📦 Tell us how you deliver — buyers see this before they pay <a href="05-setup-wizard-fulfillment.html">→</a></div>
+    </div>
+
+    <div class="state-label">5 · Dust (going-live wait)</div>
+    <div class="banner dust">
+      <div>⏳ You're 60s away from live · matching engine starting…</div>
+    </div>
+
+    <div class="dash-cards">
+      <div class="placeholder">Lead pipeline</div>
+      <div class="placeholder">Recent closes</div>
+      <div class="placeholder">Performance</div>
+    </div>
+  </main>
+</body>
+</html>

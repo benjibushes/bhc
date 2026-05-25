@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BuyHalfCow — Rancher Dashboard (Legacy + Upgrade Banner)</title>
+<style>
+  :root{
+    --bone:#F4F1EC;
+    --charcoal:#0E0E0E;
+    --saddle:#6B4F3F;
+    --dust:#A7A29A;
+    --divider:#E8E3DA;
+    --gold:#C99A2E;
+    --crimson:#8B2C2C;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bone);
+    color:var(--charcoal);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .serif{font-family:Georgia,serif}
+  a{color:var(--charcoal)}
+  .nav{
+    border-bottom:1px solid var(--divider);
+    padding:20px 24px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .nav .brand{
+    font-family:Georgia,serif;
+    font-size:22px;
+    letter-spacing:0.04em;
+  }
+  .back{
+    font-size:13px;
+    color:var(--saddle);
+    text-decoration:none;
+  }
+  .wrap{
+    max-width:1100px;
+    margin:0 auto;
+    padding:32px 24px 80px;
+  }
+  .page-header{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    margin-bottom:24px;
+    flex-wrap:wrap;
+  }
+  .page-header .who{
+    font-family:Georgia,serif;
+    font-size:24px;
+    font-weight:500;
+  }
+  .pill{
+    display:inline-block;
+    padding:3px 10px;
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    font-weight:600;
+  }
+  .pill-active{
+    background:#DDF3E0;
+    color:#1A6B2D;
+  }
+  /* GOLD UPGRADE BANNER */
+  .upgrade-banner{
+    background:#FFF6E0;
+    border:1px solid var(--gold);
+    padding:16px 20px;
+    margin-bottom:32px;
+    display:flex;
+    gap:24px;
+    align-items:center;
+    justify-content:space-between;
+    flex-wrap:wrap;
+  }
+  .upgrade-banner .copy{
+    font-size:14px;
+    color:var(--charcoal);
+    flex:1;
+    min-width:280px;
+    line-height:1.55;
+  }
+  .upgrade-banner .copy strong{
+    color:var(--charcoal);
+    font-weight:600;
+  }
+  .upgrade-banner .actions{
+    display:flex;
+    gap:12px;
+    align-items:center;
+    flex-wrap:wrap;
+  }
+  .btn-primary{
+    display:inline-block;
+    background:var(--charcoal);
+    color:var(--bone);
+    text-decoration:none;
+    padding:12px 18px;
+    font-size:12px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    font-weight:600;
+    white-space:nowrap;
+  }
+  .btn-text{
+    color:var(--saddle);
+    background:transparent;
+    border:0;
+    font-size:12px;
+    text-decoration:underline;
+    cursor:pointer;
+    padding:6px 4px;
+    font-family:inherit;
+  }
+  /* Dashboard cards */
+  .cards{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:20px;
+    margin-bottom:32px;
+  }
+  @media (max-width:780px){.cards{grid-template-columns:1fr}}
+  .card{
+    background:#fff;
+    border:1px solid var(--divider);
+    padding:22px 22px 20px;
+  }
+  .card h3{
+    font-family:Georgia,serif;
+    font-size:18px;
+    margin:0 0 14px;
+    font-weight:500;
+  }
+  .row{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:12px;
+    padding:10px 0;
+    border-bottom:1px solid var(--divider);
+    font-size:13px;
+  }
+  .row:last-child{border-bottom:0}
+  .row .name{font-weight:600}
+  .row .meta{color:var(--saddle);font-size:12px;margin-top:2px}
+  .row .status{
+    color:var(--saddle);
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    white-space:nowrap;
+  }
+  .stat-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:14px 24px;
+  }
+  .stat-grid .item .label{
+    font-size:11px;
+    color:var(--saddle);
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    margin-bottom:2px;
+  }
+  .stat-grid .item .value{
+    font-family:Georgia,serif;
+    font-size:22px;
+    color:var(--charcoal);
+  }
+  .capacity-bar{
+    background:var(--divider);
+    height:8px;
+    margin:12px 0 8px;
+    position:relative;
+  }
+  .capacity-bar > span{
+    display:block;
+    background:var(--charcoal);
+    height:100%;
+    width:37.5%;
+  }
+  .capacity-text{
+    color:var(--saddle);
+    font-size:12px;
+  }
+  .footer-legacy{
+    margin-top:36px;
+    padding-top:20px;
+    border-top:1px solid var(--divider);
+    font-size:12px;
+    color:var(--saddle);
+    max-width:760px;
+  }
+  .footer-legacy a{color:var(--saddle);text-decoration:underline}
+</style>
+</head>
+<body>
+  <div class="nav">
+    <div style="display:flex;gap:24px;align-items:center">
+      <a class="back" href="../index.html">← Back to tour</a>
+      <div class="brand">BUYHALFCOW</div>
+    </div>
+    <div style="font-size:12px;color:var(--saddle)">/rancher</div>
+  </div>
+
+  <main class="wrap">
+    <div class="page-header">
+      <div class="who">🤠 John Ashcraft · Ashcraft Beef · Texas</div>
+      <span class="pill pill-active">Active</span>
+    </div>
+
+    <!-- GOLD UPGRADE BANNER -->
+    <div class="upgrade-banner">
+      <div class="copy">
+        🎁 <strong>Upgrade to a tier with marketing perks</strong> · Go from 10% post-close → 7% (Pasture) or 3% (Ranch) commission + priority routing + social posts + brand co-marketing. <strong>One-click upgrade · keeps all your closed deal history</strong>.
+      </div>
+      <div class="actions">
+        <a href="02-partner-from-upgrade.html" class="btn-primary">See plans →</a>
+        <button class="btn-text" type="button">Dismiss for 30 days</button>
+      </div>
+    </div>
+
+    <div class="cards">
+      <!-- Lead pipeline -->
+      <div class="card">
+        <h3>Lead pipeline</h3>
+        <div class="row">
+          <div>
+            <div class="name">Sarah Brown</div>
+            <div class="meta">Quarter Cow · TX · 2 days ago</div>
+          </div>
+          <div class="status">Intro Sent</div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="name">Mike Reyes</div>
+            <div class="meta">Half Cow · TX · 5 days ago</div>
+          </div>
+          <div class="status">In Talks</div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="name">Daniel Liu</div>
+            <div class="meta">Whole Cow · OK · 8 days ago</div>
+          </div>
+          <div class="status">Awaiting Reply</div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="name">Maria Hernandez</div>
+            <div class="meta">Quarter Cow · TX · 12 days ago</div>
+          </div>
+          <div class="status">Cold</div>
+        </div>
+      </div>
+
+      <!-- Performance -->
+      <div class="card">
+        <h3>Performance</h3>
+        <div class="stat-grid">
+          <div class="item">
+            <div class="label">Closed Won (90d)</div>
+            <div class="value">23</div>
+          </div>
+          <div class="item">
+            <div class="label">Total volume</div>
+            <div class="value">$18,400</div>
+          </div>
+          <div class="item">
+            <div class="label">Commission paid</div>
+            <div class="value">$1,840</div>
+          </div>
+          <div class="item">
+            <div class="label">Avg deal</div>
+            <div class="value">$800</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent closes -->
+      <div class="card">
+        <h3>Recent closes</h3>
+        <div class="row">
+          <div>
+            <div class="name">Tom Pearson</div>
+            <div class="meta">Half Cow · $850 · May 18</div>
+          </div>
+          <div class="status">Won</div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="name">Rachel Kim</div>
+            <div class="meta">Quarter Cow · $425 · May 11</div>
+          </div>
+          <div class="status">Won</div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="name">Carlos Mendez</div>
+            <div class="meta">Whole Cow · $1,650 · May 4</div>
+          </div>
+          <div class="status">Won</div>
+        </div>
+      </div>
+
+      <!-- Capacity -->
+      <div class="card">
+        <h3>Capacity</h3>
+        <div class="capacity-bar"><span></span></div>
+        <div class="capacity-text">3 of 8 active referrals · 5 open slots</div>
+      </div>
+    </div>
+
+    <p class="footer-legacy">
+      You're on the legacy 10% post-close commission model. New ranchers signing up after May 25 are on subscription tiers — see <a href="02-partner-from-upgrade.html">/partner</a>.
+    </p>
+  </main>
+</body>
+</html>

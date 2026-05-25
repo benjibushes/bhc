@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BuyHalfCow — Confirm Plan</title>
+<style>
+  :root{
+    --bone:#F4F1EC;
+    --charcoal:#0E0E0E;
+    --saddle:#6B4F3F;
+    --dust:#A7A29A;
+    --divider:#E8E3DA;
+    --gold:#C99A2E;
+    --crimson:#8B2C2C;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bone);
+    color:var(--charcoal);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .nav{
+    border-bottom:1px solid var(--divider);
+    padding:20px 24px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .nav .brand{
+    font-family:Georgia,serif;
+    font-size:22px;
+    letter-spacing:0.04em;
+  }
+  .back{
+    font-size:13px;
+    color:var(--saddle);
+    text-decoration:none;
+  }
+  .wrap{
+    max-width:680px;
+    margin:0 auto;
+    padding:56px 24px 80px;
+  }
+  h1{
+    font-family:Georgia,serif;
+    font-size:34px;
+    line-height:1.2;
+    margin:0 0 8px;
+    font-weight:500;
+  }
+  .price-line{
+    color:var(--saddle);
+    font-size:15px;
+    margin-bottom:36px;
+  }
+  h2.step-heading{
+    font-family:Georgia,serif;
+    font-size:18px;
+    font-weight:500;
+    margin:0 0 18px;
+  }
+  ol.steps{
+    list-style:none;
+    counter-reset:s;
+    padding:0;
+    margin:0 0 40px;
+    border-top:1px solid var(--divider);
+  }
+  ol.steps li{
+    counter-increment:s;
+    padding:18px 0 18px 52px;
+    border-bottom:1px solid var(--divider);
+    position:relative;
+    font-size:15px;
+  }
+  ol.steps li::before{
+    content:counter(s);
+    position:absolute;
+    left:0;
+    top:18px;
+    width:32px;
+    height:32px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border:1px solid var(--charcoal);
+    border-radius:50%;
+    font-family:Georgia,serif;
+    font-size:14px;
+    font-weight:600;
+  }
+  .cta{
+    display:block;
+    width:100%;
+    background:var(--charcoal);
+    color:var(--bone);
+    text-decoration:none;
+    padding:18px 24px;
+    text-align:center;
+    font-size:14px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    font-weight:600;
+    border:0;
+    cursor:pointer;
+  }
+  .trust{
+    text-align:center;
+    color:var(--saddle);
+    font-size:12px;
+    margin-top:18px;
+  }
+  .pill{
+    display:inline-block;
+    border:1px solid var(--charcoal);
+    padding:4px 10px;
+    font-size:11px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    margin-bottom:18px;
+  }
+</style>
+</head>
+<body>
+  <div class="nav">
+    <div style="display:flex;gap:24px;align-items:center">
+      <a class="back" href="../index.html">← Back to tour</a>
+      <div class="brand">BUYHALFCOW</div>
+    </div>
+    <div style="font-size:12px;color:var(--saddle)">/rancher/checkout</div>
+  </div>
+
+  <main class="wrap">
+    <span class="pill">PASTURE</span>
+    <h1>You're about to start Pasture — $150/mo</h1>
+    <p class="price-line">$150/mo + 7% commission · Cancel anytime</p>
+
+    <h2 class="step-heading">Here's what happens in the next 5 minutes:</h2>
+    <ol class="steps">
+      <li>You pay your first month ($150) — Stripe Checkout (next screen)</li>
+      <li>We create your Stripe Connect account so you can receive buyer payments</li>
+      <li>You verify identity + bank account at Stripe (~5 min)</li>
+      <li>We email you when you're live (usually under 30 minutes)</li>
+      <li>Buyers in your state start matching automatically</li>
+    </ol>
+
+    <a class="cta" href="03-kyc-interstitial.html">Continue to Stripe Checkout →</a>
+
+    <p class="trust">Powered by Stripe · BuyHalfCow doesn't store card data · Cancel anytime</p>
+  </main>
+</body>
+</html>

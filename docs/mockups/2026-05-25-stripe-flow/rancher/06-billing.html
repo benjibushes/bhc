@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BuyHalfCow — Billing</title>
+<style>
+  :root{
+    --bone:#F4F1EC;
+    --charcoal:#0E0E0E;
+    --saddle:#6B4F3F;
+    --dust:#A7A29A;
+    --divider:#E8E3DA;
+    --gold:#C99A2E;
+    --crimson:#8B2C2C;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bone);
+    color:var(--charcoal);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .nav{
+    border-bottom:1px solid var(--divider);
+    padding:20px 24px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .nav .brand{
+    font-family:Georgia,serif;
+    font-size:22px;
+    letter-spacing:0.04em;
+  }
+  .back{
+    font-size:13px;
+    color:var(--saddle);
+    text-decoration:none;
+  }
+  .wrap{
+    max-width:920px;
+    margin:0 auto;
+    padding:48px 24px 80px;
+  }
+  .header-row{
+    display:flex;
+    align-items:center;
+    gap:16px;
+    margin-bottom:8px;
+    flex-wrap:wrap;
+  }
+  .tier-pill{
+    background:var(--charcoal);
+    color:var(--bone);
+    font-size:11px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    padding:6px 12px;
+    font-weight:600;
+  }
+  .price-line{
+    color:var(--saddle);
+    font-size:15px;
+  }
+  h1{
+    font-family:Georgia,serif;
+    font-size:34px;
+    margin:0 0 32px;
+    font-weight:500;
+  }
+  h2{
+    font-family:Georgia,serif;
+    font-size:20px;
+    font-weight:500;
+    margin:36px 0 14px;
+  }
+  .status-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:14px;
+  }
+  @media (max-width:720px){.status-grid{grid-template-columns:1fr}}
+  .status-card{
+    background:#fff;
+    border:1px solid var(--divider);
+    padding:18px 20px;
+  }
+  .status-card .label{
+    font-size:11px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:var(--saddle);
+    margin-bottom:8px;
+  }
+  .status-card .value{
+    font-size:15px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .check{color:#2E7D32;font-weight:700}
+  table.payouts{
+    width:100%;
+    border-collapse:collapse;
+    background:#fff;
+    border:1px solid var(--divider);
+  }
+  table.payouts th,
+  table.payouts td{
+    text-align:left;
+    padding:12px 16px;
+    border-bottom:1px solid var(--divider);
+    font-size:14px;
+  }
+  table.payouts th{
+    font-size:11px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:var(--saddle);
+    font-weight:600;
+    background:var(--bone);
+  }
+  table.payouts tr:last-child td{border-bottom:0}
+  .pending{color:var(--saddle);font-style:italic}
+  .manage-link{
+    font-size:14px;
+    color:var(--saddle);
+    margin:14px 0 0;
+    display:inline-block;
+  }
+  .addons{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:14px;
+    margin-top:14px;
+  }
+  @media (max-width:780px){.addons{grid-template-columns:1fr}}
+  .addon{
+    background:#fff;
+    border:1px solid var(--divider);
+    padding:18px;
+    display:flex;
+    flex-direction:column;
+  }
+  .addon h3{
+    font-family:Georgia,serif;
+    font-size:18px;
+    margin:0 0 4px;
+    font-weight:500;
+  }
+  .addon .cost{
+    font-size:13px;
+    color:var(--saddle);
+    margin:0 0 16px;
+  }
+  .addon button{
+    margin-top:auto;
+    background:transparent;
+    border:1px solid var(--charcoal);
+    color:var(--charcoal);
+    padding:9px 14px;
+    font-size:11px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    font-weight:600;
+    cursor:pointer;
+  }
+  details.faq{
+    margin-top:48px;
+    border-top:1px solid var(--divider);
+    border-bottom:1px solid var(--divider);
+    padding:18px 0;
+  }
+  details.faq summary{
+    cursor:pointer;
+    font-family:Georgia,serif;
+    font-size:16px;
+    list-style:none;
+    display:flex;
+    justify-content:space-between;
+  }
+  details.faq summary::after{content:'+';color:var(--saddle)}
+  details.faq[open] summary::after{content:'–'}
+  details.faq p{
+    margin:14px 0 0;
+    font-size:14px;
+    color:var(--saddle);
+    max-width:700px;
+  }
+</style>
+</head>
+<body>
+  <div class="nav">
+    <div style="display:flex;gap:24px;align-items:center">
+      <a class="back" href="../index.html">← Back to tour</a>
+      <div class="brand">BUYHALFCOW</div>
+    </div>
+    <div style="font-size:12px;color:var(--saddle)">/rancher/billing</div>
+  </div>
+
+  <main class="wrap">
+    <div class="header-row">
+      <span class="tier-pill">PASTURE</span>
+      <span class="price-line">$150/mo + 7% commission</span>
+    </div>
+    <h1>Billing</h1>
+
+    <div class="status-grid">
+      <div class="status-card">
+        <div class="label">Subscription Status</div>
+        <div class="value"><span class="check">✅</span> Active · Next invoice Jun 25, 2026 — $150</div>
+      </div>
+      <div class="status-card">
+        <div class="label">Connect Status</div>
+        <div class="value"><span class="check">✅</span> Bank connected · acct_•••3829 · Connected May 25, 2026</div>
+      </div>
+    </div>
+
+    <h2>Payouts</h2>
+    <table class="payouts">
+      <thead>
+        <tr><th>Amount</th><th>Status</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>$371</td><td>Paid</td><td>May 24, 2026</td></tr>
+        <tr><td>$743</td><td>Paid</td><td>May 18, 2026</td></tr>
+        <tr><td>$929</td><td class="pending">Pending fulfillment confirm</td><td>—</td></tr>
+      </tbody>
+    </table>
+
+    <a href="#" class="manage-link">Manage payment method / cancel subscription → (Stripe Customer Portal)</a>
+
+    <h2>Add-on shop</h2>
+    <div class="addons">
+      <div class="addon">
+        <h3>Video shoot</h3>
+        <p class="cost">$2,500 + travel</p>
+        <button>Purchase →</button>
+      </div>
+      <div class="addon">
+        <h3>Photo refresh</h3>
+        <p class="cost">$1,500</p>
+        <button>Purchase →</button>
+      </div>
+      <div class="addon">
+        <h3>Founder letter</h3>
+        <p class="cost">$750</p>
+        <button>Purchase →</button>
+      </div>
+    </div>
+
+    <details class="faq">
+      <summary>What if I downgrade or cancel?</summary>
+      <p>You can downgrade or cancel anytime in the Stripe Customer Portal. Downgrades take effect at the start of your next billing cycle — you keep current-tier features until then. Cancelling stops new leads at the end of the cycle; in-flight deals close out normally and you still receive payouts. No contracts, no cancellation fees.</p>
+    </details>
+  </main>
+</body>
+</html>

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tier Upgrade Nudge · Email Mockup</title>
+<style>
+  :root {
+    --bone: #F4F1EC;
+    --charcoal: #0E0E0E;
+    --saddle: #6B4F3F;
+    --dust: #A7A29A;
+    --divider: #E8E3DA;
+    --gold: #C99A2E;
+    --crimson: #8B2C2C;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #e9e7e3;
+    color: var(--charcoal);
+    line-height: 1.6;
+    padding: 24px 20px 80px;
+  }
+  .back {
+    display: inline-block;
+    color: var(--saddle);
+    text-decoration: none;
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .back:hover { text-decoration: underline; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+
+  .email-frame {
+    background: #fff;
+    border: 1px solid var(--dust);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .email-header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--divider);
+    background: #fafafa;
+  }
+  .email-header .subject {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--charcoal);
+    margin-bottom: 10px;
+    line-height: 1.3;
+  }
+  .email-header .meta {
+    font-size: 13px;
+    color: var(--saddle);
+    line-height: 1.6;
+  }
+  .email-header .meta .label {
+    color: var(--dust);
+    display: inline-block;
+    width: 50px;
+  }
+  .email-body {
+    background: var(--bone);
+    padding: 36px 32px;
+  }
+  h1 {
+    font-family: Georgia, serif;
+    font-size: 28px;
+    line-height: 1.2;
+    margin-bottom: 20px;
+    color: var(--charcoal);
+  }
+  p {
+    font-size: 15px;
+    margin-bottom: 18px;
+    color: var(--charcoal);
+  }
+  .compare {
+    background: #fff;
+    border: 1px solid var(--dust);
+    padding: 4px 0;
+    margin: 22px 0;
+  }
+  .compare .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 12px 22px;
+    font-size: 14px;
+    border-bottom: 1px solid var(--divider);
+  }
+  .compare .row:last-child { border-bottom: none; }
+  .compare .row .k {
+    color: var(--saddle);
+  }
+  .compare .row .v {
+    color: var(--charcoal);
+    font-weight: 500;
+    text-align: right;
+  }
+  .compare .row.savings {
+    background: var(--bone);
+    border-top: 2px solid var(--charcoal);
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+  .compare .row.savings .k {
+    color: var(--charcoal);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 12px;
+  }
+  .compare .row.savings .v {
+    color: var(--gold);
+    font-size: 20px;
+    font-family: Georgia, serif;
+    font-weight: 700;
+  }
+  .cta {
+    display: block;
+    text-align: center;
+    background: var(--charcoal);
+    color: #fff;
+    text-decoration: none;
+    padding: 16px 22px;
+    font-size: 15px;
+    font-weight: 500;
+    margin: 26px 0 18px;
+  }
+  .cta:hover { background: #000; }
+  .sign {
+    margin-top: 24px;
+    font-size: 14px;
+    color: var(--saddle);
+  }
+  @media (max-width: 520px) {
+    .email-body { padding: 24px 20px; }
+    h1 { font-size: 22px; }
+    .compare .row { padding: 10px 16px; flex-direction: column; align-items: flex-start; gap: 4px; }
+    .compare .row .v { text-align: left; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <a href="../index.html" class="back">&larr; Back to tour</a>
+
+    <div class="email-frame">
+      <div class="email-header">
+        <div class="subject">You paid $560 in commission last month &mdash; would have been $240 on Ranch</div>
+        <div class="meta">
+          <div><span class="label">From:</span> BuyHalfCow &lt;ben@buyhalfcow.com&gt;</div>
+          <div><span class="label">To:</span> john@ashcraftbeef.com</div>
+        </div>
+      </div>
+
+      <div class="email-body">
+        <h1>&#128184; You closed 10 deals last month.</h1>
+        <p>Quick math on what that cost you:</p>
+
+        <div class="compare">
+          <div class="row">
+            <span class="k">Your tier</span>
+            <span class="v">Pasture &middot; 7% commission</span>
+          </div>
+          <div class="row">
+            <span class="k">Closed Won last 30d</span>
+            <span class="v">10 deals &middot; $8,000 total</span>
+          </div>
+          <div class="row">
+            <span class="k">Commission paid to BHC</span>
+            <span class="v">$560</span>
+          </div>
+          <div class="row">
+            <span class="k">If you'd been on Ranch (3%)</span>
+            <span class="v">$240</span>
+          </div>
+          <div class="row">
+            <span class="k">Ranch fee delta (vs Pasture)</span>
+            <span class="v">+$200/mo</span>
+          </div>
+          <div class="row savings">
+            <span class="k">Net savings on Ranch</span>
+            <span class="v">$120 / mo</span>
+          </div>
+        </div>
+
+        <p>If you keep closing at this rate, you'd save <strong>$1,440/year</strong> by being on Ranch. Plus you get priority routing + quarterly listing rewrites + social case studies + featured in 1 founder letter per quarter.</p>
+
+        <a href="#" class="cta">Upgrade to Ranch &mdash; one click &middot; Stripe handles the proration &rarr;</a>
+
+        <p class="sign">Want to stay on Pasture? No problem &mdash; this nudge won't fire again for 30 days.<br>&mdash; Ben</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
