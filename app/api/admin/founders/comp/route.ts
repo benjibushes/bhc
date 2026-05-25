@@ -211,6 +211,7 @@ export async function POST(request: Request) {
       amountCents: 0,
       isLifetime: NUMBERED_TIERS.has(tier),
       consumerId,
+      isComped: true,
     });
   } catch (e) {
     console.error('[comp] Telegram alert failed:', e);

@@ -12,6 +12,7 @@ import {
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { JWT_SECRET } from '@/lib/secrets';
+import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 
 // Order request endpoint — buyer fills inline form on rancher landing page.
 // No external redirect to rancher's website. We capture the request, link
@@ -206,11 +207,15 @@ export async function POST(req: Request) {
     );
   }
 
-  // Bump rancher's active referral count
+  // Atomic capacity bump — read-then-write was racey under burst (two concurrent
+  // direct-page orders for the same rancher could both observe N and both write
+  // N+1, silently overflowing). Redis INCR + Airtable mirror solves it.
+  // Also stamp Last Assigned At separately so timestamp updates even if Redis
+  // is unavailable (fail-open path inside incrementCapacity).
   try {
-    const current = Number(rancher['Current Active Referrals'] || 0);
+    const newCount = await incrementCapacity(rancher.id);
+    await syncCapacityToAirtable(rancher.id, newCount);
     await updateRecord(TABLES.RANCHERS, rancher.id, {
-      'Current Active Referrals': current + 1,
       'Last Assigned At': new Date().toISOString(),
     });
   } catch (e: any) {
@@ -218,6 +223,11 @@ export async function POST(req: Request) {
   }
 
   // ── Email rancher (reply-to=buyer for direct conversation) ──
+  // Track outcome so Telegram alert reflects what actually shipped (or didn't).
+  let rancherEmailSent = false;
+  let rancherEmailErr = '';
+  let buyerEmailSent = false;
+  let buyerEmailErr = '';
   if (rancherEmail) {
     try {
       const subject = `New order request: ${TIER_LABELS[tier]} — ${buyerName}`;
@@ -244,7 +254,9 @@ ${message ? `<div style="background:#F4F1EC;padding:16px;margin:18px 0;border-le
         html,
         _replyContext: { type: 'ref', recordId: referral.id },
       });
+      rancherEmailSent = true;
     } catch (e: any) {
+      rancherEmailErr = e?.message || 'unknown';
       console.error('[orders/request] rancher email failed:', e?.message);
     }
   }
@@ -266,13 +278,25 @@ ${message ? `<div style="background:#F4F1EC;padding:16px;margin:18px 0;border-le
       subject,
       html,
     });
+    buyerEmailSent = true;
   } catch (e: any) {
+    buyerEmailErr = e?.message || 'unknown';
     console.error('[orders/request] buyer email failed:', e?.message);
   }
 
   // ── Telegram alert to Ben ──
+  // Truthful footer: surface whichever side's email failed so operator can
+  // manually outreach. Prior alert claimed "Rancher emailed. Buyer confirmation
+  // sent." regardless of actual outcome — silent failures bit Ashcraft-pattern
+  // 2026-05-20 (rancher never got the lead, buyer thought we'd handed it off).
   try {
     if (TELEGRAM_ADMIN_CHAT_ID) {
+      const rancherStatus = rancherEmail
+        ? (rancherEmailSent ? '✅ rancher emailed' : `⚠️ RANCHER EMAIL FAILED (${rancherEmailErr})`)
+        : '⚠️ rancher has no email on file';
+      const buyerStatus = buyerEmailSent
+        ? '✅ buyer confirmation sent'
+        : `⚠️ BUYER EMAIL FAILED (${buyerEmailErr})`;
       await sendTelegramMessage(
         TELEGRAM_ADMIN_CHAT_ID,
         `🛒 <b>NEW ORDER REQUEST</b>\n\n` +
@@ -285,7 +309,7 @@ ${message ? `<div style="background:#F4F1EC;padding:16px;margin:18px 0;border-le
           (message
             ? `\n<b>Note:</b> ${message.length > 200 ? message.slice(0, 200) + '…' : message}\n`
             : '') +
-          `\n<i>Rancher emailed (reply-to=buyer). Buyer confirmation sent. Referral ${referral.id}.</i>`
+          `\n<i>${rancherStatus} · ${buyerStatus} · Referral ${referral.id}.</i>`
       );
     }
   } catch (e: any) {

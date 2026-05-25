@@ -307,10 +307,48 @@ export async function POST(request: Request) {
       try {
         const now = new Date().toISOString();
         const refUpdates: Record<string, any> = {};
-        if (classification.senderType === 'rancher') {
+
+        // Resolve sender deterministically. AI may classify senderType='unknown'
+        // for short/ambiguous replies. Don't let that silently SKIP stamping
+        // (prior bug: chasup cron then auto-killed the lead, e.g. Ashcraft 2026-05-20).
+        // Fall back to matching `from` against the rancher/buyer email on the
+        // referral record. If we still can't decide, stamp Last Buyer Activity At
+        // as the safe default — over-stamping buyer activity is harmless,
+        // under-stamping rancher activity kills leads.
+        let effectiveSenderType: 'rancher' | 'buyer' | 'unknown' = classification.senderType as any;
+        if (effectiveSenderType === 'unknown' || !effectiveSenderType) {
+          try {
+            const { getRecordById, TABLES } = await import('@/lib/airtable');
+            const refRow: any = await getRecordById(TABLES.REFERRALS, links.referralId);
+            const buyerEmail = String(refRow?.['Buyer Email'] || '').toLowerCase().trim();
+            const rancherIds: string[] = refRow?.['Rancher'] || refRow?.['Suggested Rancher'] || [];
+            const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+            let rancherEmail = '';
+            if (rancherId) {
+              const rancherRow: any = await getRecordById(TABLES.RANCHERS, rancherId);
+              rancherEmail = String(rancherRow?.['Email'] || '').toLowerCase().trim();
+            }
+            const fromLower = String(from || '').toLowerCase().trim();
+            // Robust match: extract bare address from "Name <addr@host>"
+            const addrMatch = fromLower.match(/<([^>]+)>/);
+            const fromAddr = addrMatch ? addrMatch[1] : fromLower;
+            if (rancherEmail && fromAddr.includes(rancherEmail)) {
+              effectiveSenderType = 'rancher';
+            } else if (buyerEmail && fromAddr.includes(buyerEmail)) {
+              effectiveSenderType = 'buyer';
+            } else {
+              effectiveSenderType = 'buyer'; // safe default — chasup uses both stamps
+            }
+          } catch (lookupErr: any) {
+            console.warn('[resend-inbound] sender resolve fallback failed:', lookupErr?.message);
+            effectiveSenderType = 'buyer';
+          }
+        }
+
+        if (effectiveSenderType === 'rancher') {
           refUpdates['Last Rancher Activity At'] = now;
           refUpdates['Rancher Engaged Flag'] = true;
-        } else if (classification.senderType === 'buyer') {
+        } else {
           refUpdates['Last Buyer Activity At'] = now;
         }
         if (Object.keys(refUpdates).length > 0) {

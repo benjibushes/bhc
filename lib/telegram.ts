@@ -365,14 +365,26 @@ export async function sendTelegramFounderBacker(data: {
   amountCents: number;
   isLifetime: boolean;
   consumerId: string;
+  /**
+   * True when this row was comped via /api/admin/founders/comp (not a Stripe
+   * payment). Renders distinctly so operator never confuses a comp with a
+   * failed payment ($0 lifetime would otherwise look like a webhook bug).
+   */
+  isComped?: boolean;
 }) {
   const amountStr = `$${(data.amountCents / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
   const numberStr = data.founderNumber ? ` (#${data.founderNumber})` : '';
   const lifetimeStr = data.isLifetime ? ' lifetime' : '/recurring';
+  const header = data.isComped
+    ? `🎁 <b>Founding Herd — COMPED</b>\n\n`
+    : `🪙 <b>Founding Herd Backer</b>\n\n`;
+  const amountLine = data.isComped
+    ? `Tier: ${escapeHtml(data.tier)} · <i>comped (no charge)</i>`
+    : `Tier: ${escapeHtml(data.tier)} · ${amountStr}${lifetimeStr}`;
   const message =
-    `🪙 <b>Founding Herd Backer</b>\n\n` +
+    header +
     `<b>${escapeHtml(data.name || data.email)}</b>${numberStr}\n` +
-    `Tier: ${escapeHtml(data.tier)} · ${amountStr}${lifetimeStr}\n` +
+    amountLine + `\n` +
     `Email: <code>${escapeHtml(data.email)}</code>`;
 
   // Action buttons. No group-invite — backers wanted email, not Telegram.

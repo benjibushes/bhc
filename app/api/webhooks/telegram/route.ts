@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, createRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { getMaxActiveReferrals, getLiveCapacity, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import {
   sendTelegramMessage,
   editTelegramMessage,
@@ -608,7 +608,12 @@ async function processUpdate(update: any) {
           }
 
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
-          const currentRefs = rancher['Current Active Referrals'] || 0;
+          // Live Redis counter — Airtable's Current Active Referrals is the
+          // eventually-consistent MIRROR of the Redis counter and can lag under
+          // burst. Reading the mirror could let an over-cap referral through if
+          // a concurrent matching/suggest INCR hasn't synced yet. getLiveCapacity
+          // reads Redis directly (Airtable fallback only if Redis is down).
+          const currentRefs = await getLiveCapacity(rancherId);
           const maxRefs = getMaxActiveReferrals(rancher);
 
           if (currentRefs >= maxRefs) {
@@ -621,6 +626,24 @@ async function processUpdate(update: any) {
 
           const now = new Date().toISOString();
 
+          // Capacity reconciliation: if upstream matching/suggest already
+          // incremented when this referral was first created, the live count
+          // is already correct. But for Pending Approval referrals that
+          // pre-date the Redis counter (or were inserted manually / via
+          // /assignto / direct page) the counter may not reflect this
+          // referral yet. Detect by comparing previous status — only INCR
+          // when the referral wasn't already in an ACTIVE_REF state
+          // (Intro Sent et al). This is idempotent: a re-tapped approve
+          // button on an already-approved referral was rejected earlier by
+          // the "already approved" guard, so we don't double-INCR.
+          const prevStatus = String(referral['Status'] || '');
+          const ACTIVE_REF_STATES = new Set([
+            'Intro Sent',
+            'Rancher Contacted',
+            'Negotiation',
+          ]);
+          const shouldIncrement = !ACTIVE_REF_STATES.has(prevStatus);
+
           await updateRecord(TABLES.REFERRALS, fullReferralId, {
             'Status': 'Intro Sent',
             'Rancher': [rancherId],
@@ -628,8 +651,14 @@ async function processUpdate(update: any) {
             'Intro Sent At': now,
           });
 
-          // Note: Current Active Referrals is incremented at match creation time
-          // in /api/matching/suggest — only update Last Assigned At here to avoid double-counting
+          if (shouldIncrement) {
+            try {
+              const newCount = await incrementCapacity(rancherId);
+              await syncCapacityToAirtable(rancherId, newCount);
+            } catch (capErr: any) {
+              console.warn('[telegram approve_] capacity INCR failed:', capErr?.message);
+            }
+          }
           await updateRecord(TABLES.RANCHERS, rancherId, {
             'Last Assigned At': now,
           });
@@ -802,17 +831,26 @@ async function processUpdate(update: any) {
           const referral: any = await getRecordById(TABLES.REFERRALS, refId);
 
           const oldRancherId = referral['Rancher']?.[0] || referral['Suggested Rancher']?.[0];
-          if (oldRancherId && oldRancherId !== newRancherId) {
+          // Atomic decrement on the OLD rancher only if the referral was in
+          // an active state (occupying a slot). Read-then-write here was racy
+          // with concurrent close-completions; Redis DECR clamps at 0.
+          const ACTIVE_REF_STATES_REASSIGN = new Set([
+            'Intro Sent',
+            'Rancher Contacted',
+            'Negotiation',
+            'Pending Approval',
+          ]);
+          const prevStatusForReassign = String(referral['Status'] || '');
+          if (
+            oldRancherId &&
+            oldRancherId !== newRancherId &&
+            ACTIVE_REF_STATES_REASSIGN.has(prevStatusForReassign)
+          ) {
             try {
-              const oldRancher: any = await getRecordById(TABLES.RANCHERS, oldRancherId);
-              const oldCount = oldRancher['Current Active Referrals'] || 0;
-              if (oldCount > 0) {
-                await updateRecord(TABLES.RANCHERS, oldRancherId, {
-                  'Current Active Referrals': oldCount - 1,
-                });
-              }
-            } catch (e) {
-              console.error('Error decrementing old rancher count:', e);
+              const newOldCount = await decrementCapacity(oldRancherId);
+              await syncCapacityToAirtable(oldRancherId, newOldCount);
+            } catch (e: any) {
+              console.error('[telegram assignto] old rancher decrement failed:', e?.message);
             }
           }
 
@@ -829,10 +867,17 @@ async function processUpdate(update: any) {
             'Intro Sent At': now,
           });
 
-          const currentRefs = rancher['Current Active Referrals'] || 0;
+          // Atomic INCR on NEW rancher. No previous-state guard needed here —
+          // a reassign always moves the slot from old → new, and we already
+          // decremented the old side above. Mirror to Airtable for dashboards.
+          try {
+            const newCount = await incrementCapacity(newRancherId);
+            await syncCapacityToAirtable(newRancherId, newCount);
+          } catch (e: any) {
+            console.error('[telegram assignto] new rancher INCR failed:', e?.message);
+          }
           await updateRecord(TABLES.RANCHERS, newRancherId, {
             'Last Assigned At': now,
-            'Current Active Referrals': currentRefs + 1,
           });
 
           const updatedReferral: any = await getRecordById(TABLES.REFERRALS, refId);
@@ -2643,16 +2688,45 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           }
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || '(rancher)';
 
+          // Capacity-freeing transitions need previous-status tracking so we
+          // don't double-decrement when operator re-replies to the same prompt.
+          // Mirrors logic in app/api/rancher/referrals/[id]/route.ts:312-320.
+          const previousStatus = String(ref['Status'] || '');
+          const ACTIVE_REF_STATES_FOR_DECREMENT = new Set([
+            'Intro Sent',
+            'Rancher Contacted',
+            'Negotiation',
+            'Pending Approval',
+          ]);
+
           // Branch 1: "awaiting" reply → flip to Awaiting Payment + skip invoice
           if (/^(awaiting|pending|later|not paid|not yet|on delivery)\b/i.test(userReply)) {
             await updateRecord(TABLES.REFERRALS, refId, {
               'Status': 'Awaiting Payment',
               'Closed At': new Date().toISOString(),
+              // Stamp rancher activity — operator just confirmed close on behalf
+              // of rancher; freshness window extends so chasup doesn't kill it.
+              'Last Rancher Activity At': new Date().toISOString(),
+              'Rancher Engaged Flag': true,
             });
+
+            // Capacity decrement — Awaiting Payment frees the slot per the
+            // 2026-05-20 audit. Atomic Redis DECR + Airtable mirror so dashboards
+            // and routing both see the new count. Gate prevents double-decrement.
+            if (ACTIVE_REF_STATES_FOR_DECREMENT.has(previousStatus)) {
+              try {
+                const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
+                const newCount = await decrementCapacity(rancherId);
+                await syncCapacityToAirtable(rancherId, newCount);
+              } catch (capErr: any) {
+                console.warn('[telegram close-reply awaiting] capacity decrement failed:', capErr?.message);
+              }
+            }
+
             await sendTelegramMessage(
               chatId,
               `🕓 <b>Awaiting Payment</b> — ${buyerName} → ${rancherName}\n\n` +
-              `Status: Awaiting Payment.\n` +
+              `Status: Awaiting Payment. Capacity slot freed.\n` +
               `Use the rancher dashboard "Confirm Payment Received" button (or reply /confirmpaid ${refId} $X here) when buyer pays. Invoice fires automatically at that point.\n\n` +
               `I'll nudge you at 14 days if it's still unresolved.`,
             );
@@ -2686,17 +2760,81 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           const commission = calcCommissionForRancher(rancher, saleAmount);
           const rate = getRancherCommissionRate(rancher);
 
+          const closedAtIso = new Date().toISOString();
           await updateRecord(TABLES.REFERRALS, refId, {
             'Status': 'Closed Won',
-            'Closed At': new Date().toISOString(),
+            'Closed At': closedAtIso,
             'Sale Amount': saleAmount,
             'Commission Due': commission,
+            // Stamp rancher activity — extends chasup freshness window so the
+            // rancher's other open referrals don't get nuked while they're
+            // closing this one.
+            'Last Rancher Activity At': closedAtIso,
+            'Rancher Engaged Flag': true,
           });
+
+          // ── Capacity decrement (atomic Redis DECR + Airtable mirror) ───────
+          // Gate on previous status so a re-reply to the same prompt doesn't
+          // double-decrement. Mirrors rancher dashboard PATCH logic.
+          let capacityDecremented = false;
+          if (ACTIVE_REF_STATES_FOR_DECREMENT.has(previousStatus)) {
+            try {
+              const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
+              const newCount = await decrementCapacity(rancherId);
+              await syncCapacityToAirtable(rancherId, newCount);
+              capacityDecremented = true;
+            } catch (capErr: any) {
+              console.warn('[telegram close-reply won] capacity decrement failed:', capErr?.message);
+            }
+          }
+
+          // ── Flip Consumer Buyer Stage + post-purchase track ────────────────
+          // Without this, the buyer stays MATCHED forever and the post-purchase
+          // email sequence never starts. Mirrors dashboard PATCH (lines 330-372).
+          const buyerIds: string[] = (ref['Buyer'] || []) as string[];
+          const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+          let buyerRecord: any = null;
+          if (buyerId) {
+            try {
+              await updateRecord(TABLES.CONSUMERS, buyerId, {
+                'Referral Status': 'Closed Won',
+                'Sequence Stage': '',
+                'Buyer Health': 'Closed Won',
+                'Missed Responses': 0,
+                'Buyer Stage': 'CLOSED',
+                'Buyer Stage Updated At': closedAtIso,
+              });
+            } catch (e: any) {
+              console.error('[telegram close-reply won] Consumer stage flip failed:', e?.message);
+            }
+
+            // Fire Day-0 post-purchase welcome email to buyer.
+            try {
+              buyerRecord = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+              const buyerEmail = buyerRecord?.['Email'] || '';
+              const buyerFullName = buyerRecord?.['Full Name'] || '';
+              const orderType = buyerRecord?.['Order Type'] || ref['Order Type'] || 'Not Sure';
+              if (buyerEmail) {
+                const { sendPostPurchaseWelcome } = await import('@/lib/email');
+                await sendPostPurchaseWelcome({
+                  firstName: (buyerFullName || '').split(' ')[0] || 'there',
+                  email: buyerEmail,
+                  rancherName,
+                  orderType,
+                });
+              }
+            } catch (e: any) {
+              console.error('[telegram close-reply won] post-purchase email failed:', e?.message);
+            }
+          }
 
           // Fire Stripe invoice. createCommissionInvoice has its own floor +
           // ratio guards (lib/stripe-commission.ts) — they'll throw before we
           // generate a bogus invoice.
           const { createCommissionInvoice } = await import('@/lib/stripe-commission');
+          let stripeInvoiceUrl = '';
+          let invoiceFailed = false;
+          let invoiceErrMsg = '';
           try {
             const result = await createCommissionInvoice({
               rancher: {
@@ -2714,28 +2852,103 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                 commissionDue: commission,
               },
             });
+            stripeInvoiceUrl = result.invoiceUrl;
             await updateRecord(TABLES.REFERRALS, refId, {
               'Stripe Invoice ID': result.invoiceId,
               'Stripe Invoice URL': result.invoiceUrl,
             });
-            await sendTelegramMessage(
-              chatId,
-              `🎉 <b>Closed Won — invoice sent</b>\n\n` +
-              `${buyerName} → ${rancherName}\n` +
-              `Sale: <b>$${saleAmount.toLocaleString()}</b>\n` +
-              `Commission (${(rate * 100).toFixed(1)}%): <b>$${commission.toLocaleString()}</b>\n` +
-              `Invoice: ${result.invoiceUrl}\n\n` +
-              `Stripe will email ${rancher['Email'] || 'the rancher'} the hosted invoice. Webhook flips Commission Paid on payment.`,
-            );
           } catch (invoiceErr: any) {
-            // Floor/ratio guards in createCommissionInvoice fire a loud
-            // operator signal of their own. Send a chat-level summary too.
-            await sendTelegramMessage(
-              chatId,
-              `⚠️ Status flipped Closed Won but invoice failed: ${invoiceErr?.message || 'unknown'}\n\n` +
-              `Fix the underlying issue and use the dashboard close flow to re-fire the invoice.`,
-            );
+            invoiceFailed = true;
+            invoiceErrMsg = invoiceErr?.message || 'unknown';
           }
+
+          // ── Instant commission invoice email to rancher (branded) ──────────
+          // Mirrors quick-action(won) behavior. Even if Stripe invoice failed,
+          // the branded email keeps the rancher informed of the close.
+          if (rancher['Email']) {
+            try {
+              const { sendInstantCommissionInvoice } = await import('@/lib/email');
+              await sendInstantCommissionInvoice({
+                operatorName: rancher['Operator Name'] || rancher['Ranch Name'] || rancherName,
+                ranchName: rancher['Ranch Name'] || '',
+                email: rancher['Email'],
+                buyerName,
+                orderType: ref['Order Type'] || 'Beef order',
+                saleAmount,
+                commissionDue: commission,
+                closedAt: closedAtIso,
+                stripeInvoiceUrl: stripeInvoiceUrl || undefined,
+              });
+            } catch (e: any) {
+              console.error('[telegram close-reply won] commission email failed:', e?.message);
+            }
+          }
+
+          // ── Telegram sale celebration with hydrated stats ──────────────────
+          // Replaces the bespoke "🎉 invoice sent" one-liner. Operator sees
+          // first-sale milestone, monthly cadence, lifetime totals — same UX
+          // as dashboard close and quick-action close.
+          try {
+            const { sendTelegramSaleCelebration } = await import('@/lib/telegram');
+            let isFirstSaleForRancher = false;
+            let monthlyWins = 0;
+            let monthlyCommission = 0;
+            let lifetimeWins = 0;
+            let lifetimeCommission = 0;
+            try {
+              const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+              const wins = allRefs.filter((r: any) => {
+                if (r['Status'] !== 'Closed Won') return false;
+                const ids = r['Rancher'] || r['Suggested Rancher'] || [];
+                return Array.isArray(ids) && ids.includes(rancherId);
+              });
+              isFirstSaleForRancher = wins.length === 1; // includes the one we just closed
+              const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+              const monthWins = wins.filter((r: any) => new Date(r['Closed At'] || 0).getTime() >= monthStart);
+              monthlyWins = monthWins.length;
+              monthlyCommission = monthWins.reduce((s: number, r: any) => s + (r['Commission Due'] || 0), 0);
+              lifetimeWins = wins.length;
+              lifetimeCommission = wins.reduce((s: number, r: any) => s + (r['Commission Due'] || 0), 0);
+            } catch (statsErr: any) {
+              console.warn('[telegram close-reply won] stats hydration failed:', statsErr?.message);
+            }
+
+            await sendTelegramSaleCelebration({
+              referralId: refId,
+              buyerName,
+              rancherName,
+              saleAmount,
+              commission,
+              isFirstSaleForRancher,
+              monthlyWins,
+              monthlyCommission,
+              lifetimeWins,
+              lifetimeCommission,
+            });
+          } catch (celebrErr: any) {
+            console.warn('[telegram close-reply won] sale celebration failed:', celebrErr?.message);
+          }
+
+          // Operator-facing status line — capacity/invoice/email truthful so
+          // we never claim success on a write that didn't land.
+          const statusLines: string[] = [];
+          statusLines.push(`Sale: <b>$${saleAmount.toLocaleString()}</b>`);
+          statusLines.push(`Commission (${(rate * 100).toFixed(1)}%): <b>$${commission.toLocaleString()}</b>`);
+          statusLines.push(`Capacity slot: ${capacityDecremented ? '✅ freed' : (ACTIVE_REF_STATES_FOR_DECREMENT.has(previousStatus) ? '⚠️ decrement failed' : 'already free')}`);
+          if (invoiceFailed) {
+            statusLines.push(`Invoice: ⚠️ failed (${invoiceErrMsg})`);
+          } else if (stripeInvoiceUrl) {
+            statusLines.push(`Invoice: ${stripeInvoiceUrl}`);
+          }
+          await sendTelegramMessage(
+            chatId,
+            `🎉 <b>Closed Won — finalized</b>\n\n` +
+            `${buyerName} → ${rancherName}\n` +
+            statusLines.join('\n') +
+            (invoiceFailed
+              ? `\n\nFix the underlying issue and use the dashboard close flow to re-fire the invoice.`
+              : `\n\nStripe will email ${rancher['Email'] || 'the rancher'} the hosted invoice. Webhook flips Commission Paid on payment.`),
+          );
         } catch (e: any) {
           await sendTelegramMessage(chatId, `⚠️ Close-reply handler failed: ${e?.message || 'unknown'}`);
         }

@@ -172,6 +172,41 @@ async function currentAirtableCount(rancherId: string): Promise<number> {
   return Number(rec?.['Current Active Referrals'] || 0);
 }
 
+/**
+ * Live capacity read — Redis first, Airtable fallback. Use this anywhere you
+ * want to *check* current capacity without mutating (e.g. Telegram approve_
+ * "at capacity?" gate). Reading from Airtable directly is stale-prone under
+ * burst because mirror writes are eventually-consistent post-INCR/DECR.
+ *
+ * Bootstraps Redis from Airtable on first read if the key doesn't exist,
+ * mirroring the lazy-init pattern used by decrementCapacity. This means the
+ * very first read after a fresh Redis cycle pays one Airtable hop, but all
+ * subsequent reads are sub-millisecond Redis lookups.
+ *
+ * Fail-open: any Redis error falls back to the Airtable read so the caller
+ * never crashes on a Redis outage.
+ */
+export async function getLiveCapacity(rancherId: string): Promise<number> {
+  const redis = getRedis();
+  if (!redis) {
+    return await currentAirtableCount(rancherId);
+  }
+  try {
+    const key = capacityKey(rancherId);
+    const exists = await redis.exists(key);
+    if (!exists) {
+      const live = await currentAirtableCount(rancherId);
+      await redis.set(key, live);
+      return live;
+    }
+    const raw = await redis.get<number>(key);
+    return Number(raw || 0);
+  } catch (e: any) {
+    console.error('[getLiveCapacity] Redis GET failed, falling back to Airtable:', e?.message);
+    return await currentAirtableCount(rancherId);
+  }
+}
+
 async function legacyIncrement(rancherId: string): Promise<number> {
   try {
     const live = await currentAirtableCount(rancherId);

@@ -778,13 +778,30 @@ export async function PATCH(
             // upsell conversation lands. Prevents over-routing while the
             // retainer pitch is in flight + protects rancher attention.
             // Resume via Telegram or Airtable when ready.
-            await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
-              'Pilot Upsell Notified At': new Date().toISOString(),
-              'Active Status': 'Paused',
-            });
+            //
+            // MISMATCH FIX: stamp the pause BEFORE the Telegram message so a
+            // failed write doesn't produce a "rancher paused" alert while the
+            // rancher is still Active in Airtable. Prior order: if updateRecord
+            // threw, the Telegram message still fired, leaving operator believing
+            // the rancher was paused (and skipping manual pause) while routing
+            // happily over-saturated them.
+            let pilotPauseWriteOk = false;
+            let pilotPauseErr = '';
+            try {
+              await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
+                'Pilot Upsell Notified At': new Date().toISOString(),
+                'Active Status': 'Paused',
+              });
+              pilotPauseWriteOk = true;
+            } catch (pauseErr: any) {
+              pilotPauseErr = pauseErr?.message || 'unknown';
+              console.error('[pilot upsell] auto-pause Airtable write failed:', pauseErr?.message);
+            }
             await sendTelegramMessage(
               TELEGRAM_ADMIN_CHAT_ID,
-              `⏸️ <b>${ranchName} auto-paused</b> at pilot goal. No new leads route to them until you unpause (Airtable Active Status → Active OR Telegram dashboard).`
+              pilotPauseWriteOk
+                ? `⏸️ <b>${ranchName} auto-paused</b> at pilot goal. No new leads route to them until you unpause (Airtable Active Status → Active OR Telegram dashboard).`
+                : `⚠️ <b>${ranchName} hit pilot goal but auto-pause FAILED</b> (${pilotPauseErr}). Manually flip Active Status → Paused in Airtable so leads stop routing while you pitch the retainer.`
             );
           }
         } catch (e) {
