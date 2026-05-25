@@ -10,6 +10,11 @@ import {
 } from '@/lib/airtable';
 import { sendBrandListingConfirmation, sendFoundingHerdWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { commissionRateForTier, TierSlug } from '@/lib/tiers';
+import { rancherIdFromSubscription } from '@/lib/stripeSubscription';
+
+// Airtable table name for Stripe Events (Task 24 idempotency log)
+const STRIPE_EVENTS_TABLE = 'Stripe Events';
 
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 
@@ -52,6 +57,30 @@ export async function POST(request: Request) {
   }
 
   // ------------------------------------------------------------------
+  // IDEMPOTENCY: Stripe retries webhooks up to 3 days. Dedupe via Stripe
+  // Events table. Skip if event.id already processed.
+  // ------------------------------------------------------------------
+  try {
+    const safeEventId = event.id.replace(/"/g, '\\"');
+    const existing: any[] = await getAllRecords(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
+    if (existing.length > 0 && existing[0]['Status'] === 'processed') {
+      return NextResponse.json({ ok: true, skipped: 'duplicate event' });
+    }
+    // Insert received row (status=received). Will flip to processed at end of handler.
+    if (existing.length === 0) {
+      await createRecord(STRIPE_EVENTS_TABLE, {
+        'Event Id': event.id,
+        'Event Type': event.type,
+        'Account Id': (event as any).account || '',
+        'Received At': new Date().toISOString(),
+        'Status': 'received',
+      });
+    }
+  } catch (e: any) {
+    console.warn('[stripe webhook] idempotency check failed (continuing):', e?.message);
+  }
+
+  // ------------------------------------------------------------------
   // Convert legacy flat-if to switch so we can add multiple event types
   // (founder churn + invoice failures) without nesting.
   // ------------------------------------------------------------------
@@ -62,6 +91,8 @@ export async function POST(request: Request) {
 
       if (metaType === 'brand-listing') {
         // ── BRAND LISTING (Stage 1) — UNCHANGED ──
+        // These handlers do their own idempotency internally; return early
+        // to preserve original behaviour (they return their own responses).
         return await handleBrandListingCompleted(session);
       }
 
@@ -71,17 +102,54 @@ export async function POST(request: Request) {
       }
 
       // Unknown metadata.type — accept the webhook but no-op.
-      return NextResponse.json({ received: true });
+      break;
+    }
+
+    case 'customer.subscription.created': {
+      const sub = event.data.object as any;
+      try {
+        await handleTierSubscriptionUpsert(sub);
+      } catch (err: any) {
+        console.error('[stripe webhook] subscription.created handler error:', err?.message);
+        await flipStripeEventFailed(event.id, err?.message);
+        return NextResponse.json({ received: true, error: 'logged' });
+      }
+      break;
+    }
+
+    case 'customer.subscription.updated': {
+      const sub = event.data.object as any;
+      try {
+        await handleTierSubscriptionUpsert(sub);
+      } catch (err: any) {
+        console.error('[stripe webhook] subscription.updated handler error:', err?.message);
+        await flipStripeEventFailed(event.id, err?.message);
+        return NextResponse.json({ received: true, error: 'logged' });
+      }
+      break;
     }
 
     case 'customer.subscription.deleted': {
       const sub = event.data.object as any;
+      // ── Stage-3 tier subscription deletion ──
+      // If the sub has a customer_account (V2 rancher sub), handle as tier cancellation.
+      if (sub.customer_account) {
+        try {
+          await handleTierSubscriptionDeleted(sub);
+        } catch (err: any) {
+          console.error('[stripe webhook] tier subscription.deleted handler error:', err?.message);
+          await flipStripeEventFailed(event.id, err?.message);
+          return NextResponse.json({ received: true, error: 'logged' });
+        }
+        break;
+      }
+      // ── Legacy Founders Herd cancellation ──
       try {
         await markSubscriptionCancelled(sub.id);
       } catch (e) {
         console.error('Error handling subscription.deleted:', e);
       }
-      return NextResponse.json({ received: true });
+      break;
     }
 
     case 'invoice.payment_failed': {
@@ -91,7 +159,7 @@ export async function POST(request: Request) {
       } catch (e) {
         console.error('Error handling invoice.payment_failed:', e);
       }
-      return NextResponse.json({ received: true });
+      break;
     }
 
     case 'invoice.paid': {
@@ -100,21 +168,53 @@ export async function POST(request: Request) {
       // creation in lib/stripe-commission.ts. Other invoice.paid events
       // (founder subscriptions, brand listings) flow through their own paths
       // so we early-out unless metadata.type matches.
-      const invoice = event.data.object as any;
+      const inv = event.data.object as any;
       try {
-        if (invoice?.metadata?.type === 'commission-invoice') {
-          await handleCommissionInvoicePaid(invoice);
+        // ── Add-On purchase settlement ──
+        if (inv?.metadata?.addOnPurchaseId) {
+          const addOnId: string = inv.metadata.addOnPurchaseId;
+          await updateRecord('Add-On Purchases', addOnId, { 'Status': 'paid' });
+          console.log(`[stripe webhook] add-on purchase ${addOnId} marked paid`);
+        }
+
+        // ── Tier subscription renewal invoice — no-op (subscription.updated handles status) ──
+        if (inv?.subscription) {
+          console.log('[stripe webhook] subscription invoice paid (no-op):', inv.id);
+          // intentional no-op — subscription.updated event carries status changes
+        }
+
+        // ── Legacy commission invoice ──
+        if (inv?.metadata?.type === 'commission-invoice') {
+          await handleCommissionInvoicePaid(inv);
         }
       } catch (e) {
         console.error('Error handling invoice.paid:', e);
       }
-      return NextResponse.json({ received: true });
+      break;
     }
 
     default:
       // Ignore unhandled event types — Stripe sends many we don't care about.
-      return NextResponse.json({ received: true });
+      break;
   }
+
+  // ------------------------------------------------------------------
+  // IDEMPOTENCY: flip Stripe Events row to processed.
+  // ------------------------------------------------------------------
+  try {
+    const safeEventId = event.id.replace(/"/g, '\\"');
+    const eventRows: any[] = await getAllRecords(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
+    if (eventRows[0]) {
+      await updateRecord(STRIPE_EVENTS_TABLE, eventRows[0].id, {
+        'Status': 'processed',
+        'Processed At': new Date().toISOString(),
+      });
+    }
+  } catch (e: any) {
+    console.warn('[stripe webhook] idempotency processed-flip failed:', e?.message);
+  }
+
+  return NextResponse.json({ received: true });
 }
 
 // ============================================================================
@@ -501,6 +601,113 @@ async function handleCommissionInvoicePaid(invoice: any) {
     }
   } catch (e: any) {
     console.error('[stripe webhook] commission-paid telegram alert failed:', e?.message);
+  }
+}
+
+// ============================================================================
+// TIER SUBSCRIPTION UPSERT — handles subscription.created + subscription.updated
+// Writes tier, subscription status, commission rate etc. to the Ranchers row.
+// ============================================================================
+async function handleTierSubscriptionUpsert(sub: any): Promise<void> {
+  // V2: sub.customer_account is the acct_* connected account id
+  const { connectedAccountId } = rancherIdFromSubscription(sub);
+
+  // Prefer metadata.rancherId if available (set in Task 4 checkout); fall back
+  // to a lookup by Stripe Connect Account Id.
+  let rancherRecordId: string = sub.metadata?.rancherId || '';
+
+  if (!rancherRecordId) {
+    if (!connectedAccountId) {
+      console.warn('[stripe webhook] tier sub upsert: no customer_account and no rancherId metadata — skipping');
+      return;
+    }
+    const matches: any[] = await getAllRecords(
+      TABLES.RANCHERS,
+      `{Stripe Connect Account Id} = "${escapeAirtableValue(connectedAccountId)}"`
+    );
+    if (matches.length === 0) {
+      console.warn(`[stripe webhook] tier sub upsert: no rancher found for acct ${connectedAccountId}`);
+      return;
+    }
+    rancherRecordId = matches[0].id as string;
+  }
+
+  // Tier from metadata (lowercase: 'pasture' | 'ranch' | 'operator')
+  const tierSlug = (sub.metadata?.tier || '').toLowerCase() as TierSlug;
+  if (!tierSlug || !['pasture', 'ranch', 'operator'].includes(tierSlug)) {
+    console.warn(`[stripe webhook] tier sub upsert: unknown tier slug "${tierSlug}" on sub ${sub.id}`);
+    return;
+  }
+
+  const tierLabel = tierSlug.charAt(0).toUpperCase() + tierSlug.slice(1); // Pasture / Ranch / Operator
+  const commissionRate = commissionRateForTier(tierSlug);
+  const nextInvoiceAt = sub.current_period_end
+    ? new Date(sub.current_period_end * 1000).toISOString()
+    : null;
+
+  const fields: Record<string, any> = {
+    'Tier': tierLabel,
+    'Stripe Subscription Id': sub.id,
+    'Subscription Status': sub.status,
+    'Subscription Started At': new Date(sub.start_date * 1000).toISOString(),
+    'Commission Rate': commissionRate,
+    'Commission Rate Locked At': new Date().toISOString(),
+  };
+  if (nextInvoiceAt !== null) {
+    fields['Subscription Next Invoice At'] = nextInvoiceAt;
+  }
+
+  await updateRecord(TABLES.RANCHERS, rancherRecordId, fields);
+  console.log(`[stripe webhook] tier sub upsert: rancher ${rancherRecordId} → tier=${tierLabel}, status=${sub.status}`);
+}
+
+// ============================================================================
+// TIER SUBSCRIPTION DELETED — clears tier + sub id, marks canceled.
+// Preserves Commission Rate + Commission Rate Locked At as historical record.
+// ============================================================================
+async function handleTierSubscriptionDeleted(sub: any): Promise<void> {
+  const { connectedAccountId } = rancherIdFromSubscription(sub);
+
+  if (!connectedAccountId) {
+    console.warn('[stripe webhook] tier sub deleted: no customer_account — skipping');
+    return;
+  }
+
+  const matches: any[] = await getAllRecords(
+    TABLES.RANCHERS,
+    `{Stripe Connect Account Id} = "${escapeAirtableValue(connectedAccountId)}"`
+  );
+  if (matches.length === 0) {
+    console.warn(`[stripe webhook] tier sub deleted: no rancher found for acct ${connectedAccountId}`);
+    return;
+  }
+
+  const rancherRecordId: string = matches[0].id;
+  await updateRecord(TABLES.RANCHERS, rancherRecordId, {
+    'Subscription Status': 'canceled',
+    'Tier': 'None',
+    'Stripe Subscription Id': '',
+    // Commission Rate + Commission Rate Locked At intentionally NOT cleared
+    // — keep as historical record of the rancher's last tier.
+  });
+  console.log(`[stripe webhook] tier sub deleted: rancher ${rancherRecordId} marked canceled`);
+}
+
+// ============================================================================
+// IDEMPOTENCY FAILURE HELPER — flips a Stripe Events row to failed.
+// ============================================================================
+async function flipStripeEventFailed(eventId: string, errorMessage: string): Promise<void> {
+  try {
+    const safeEventId = eventId.replace(/"/g, '\\"');
+    const eventRows: any[] = await getAllRecords(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
+    if (eventRows[0]) {
+      await updateRecord(STRIPE_EVENTS_TABLE, eventRows[0].id, {
+        'Status': 'failed',
+        'Error': (errorMessage || 'unknown').slice(0, 500),
+      });
+    }
+  } catch (e: any) {
+    console.warn('[stripe webhook] flipStripeEventFailed — could not update Stripe Events row:', e?.message);
   }
 }
 
