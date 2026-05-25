@@ -2195,20 +2195,31 @@ function ReferralCard({
 // dashboard state stays around for refresh-based feedback.
 function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
   const noTier = !rancher.tier;
-  const subActive = rancher.subscriptionStatus === 'active';
+  const status = rancher.subscriptionStatus || '';
+  // Treat trialing as "subscription is paying-or-pre-paying" — consistent with
+  // wizard TierPickStep which unlocks on either active OR trialing. A trialing
+  // rancher will still need a connected bank when their trial converts.
+  const subPaying = status === 'active' || status === 'trialing';
+  // Broken-subscription states. past_due is the canonical needs-card-update,
+  // but incomplete/incomplete_expired/unpaid/canceled all mean the subscription
+  // is not paying us and the rancher can't receive new leads. Group them
+  // under one banner so no state falls through silently.
+  const subBroken = status === 'past_due' || status === 'unpaid'
+    || status === 'incomplete' || status === 'incomplete_expired'
+    || status === 'canceled';
   const connect = rancher.connectStatus || 'not_connected';
 
   // Banner gates follow the spec literal — only #2 (Connect not_connected)
-  // requires the rancher to have an active subscription first, so we don't
-  // ask them to connect a bank before they've even paid for a tier. States
-  // 3/4/5 fire on the singular field condition.
-  const showConnectNotConnected = !noTier && subActive && connect === 'not_connected';
+  // requires the rancher to have a paying subscription first, so we don't
+  // ask them to connect a bank before they've picked a plan. States 3/4
+  // fire on the singular Connect field. State 5 catches any broken sub.
+  const showConnectNotConnected = !noTier && subPaying && connect === 'not_connected';
   const showConnectOnboarding = connect === 'onboarding';
   const showConnectRestricted = connect === 'restricted';
-  const showPastDue = rancher.subscriptionStatus === 'past_due';
+  const showSubBroken = !noTier && subBroken;
 
   const anyBanner =
-    noTier || showConnectNotConnected || showConnectOnboarding || showConnectRestricted || showPastDue;
+    noTier || showConnectNotConnected || showConnectOnboarding || showConnectRestricted || showSubBroken;
   if (!anyBanner) return null;
 
   // Opens Stripe Connect onboarding link from /api/rancher/connect/start in
@@ -2304,18 +2315,24 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
         </div>
       )}
 
-      {showPastDue && (
+      {showSubBroken && (
         <div className="p-4 border-l-4 border-red-600 bg-red-50 flex items-center justify-between gap-4 flex-wrap">
           <p className="text-sm text-red-900">
-            <strong>Your tier payment failed — update your card.</strong>{' '}
-            Payouts continue, but new leads pause until the subscription is current again.
+            <strong>
+              {status === 'canceled'
+                ? 'Your tier subscription is canceled.'
+                : status === 'past_due' || status === 'unpaid'
+                ? 'Your tier payment failed — update your card.'
+                : 'Your tier subscription needs attention.'}
+            </strong>{' '}
+            New leads pause until the subscription is current again.
           </p>
           <button
             type="button"
             onClick={openBillingPortal}
             className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors"
           >
-            Update card →
+            {status === 'canceled' ? 'Reactivate →' : 'Update card →'}
           </button>
         </div>
       )}

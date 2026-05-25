@@ -155,6 +155,45 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
   }
 
+  // Stage-3 Task 11B — server-side validation for fulfillment fields. These
+  // render verbatim on the buyer deposit page; the client-side gate alone is
+  // not enough since a buggy or malicious client can still write garbage.
+  if ('Refund Policy' in updates) {
+    const policy = String(updates['Refund Policy'] || '').trim();
+    if (policy.length < 20 || policy.length > 500) {
+      return NextResponse.json({
+        error: 'Refund Policy must be 20–500 characters.',
+      }, { status: 400 });
+    }
+    updates['Refund Policy'] = policy;
+  }
+  if ('Delivery Radius Miles' in updates) {
+    const v = Number(updates['Delivery Radius Miles']);
+    if (!Number.isInteger(v) || v <= 0 || v > 500) {
+      return NextResponse.json({
+        error: 'Delivery Radius Miles must be a positive whole number ≤ 500.',
+      }, { status: 400 });
+    }
+    updates['Delivery Radius Miles'] = v;
+  }
+  if ('Shipping Lead Time Days' in updates) {
+    const v = Number(updates['Shipping Lead Time Days']);
+    if (!Number.isInteger(v) || v <= 0 || v > 180) {
+      return NextResponse.json({
+        error: 'Shipping Lead Time Days must be a positive whole number ≤ 180.',
+      }, { status: 400 });
+    }
+    updates['Shipping Lead Time Days'] = v;
+  }
+  if ('Fulfillment Cost Notes' in updates) {
+    const notes = String(updates['Fulfillment Cost Notes'] || '').trim().slice(0, 500);
+    updates['Fulfillment Cost Notes'] = notes;
+  }
+  if ('Pickup City' in updates) {
+    const city = String(updates['Pickup City'] || '').trim().slice(0, 100);
+    updates['Pickup City'] = city;
+  }
+
   // If ZIP / City / State changed, re-geocode and store fresh lat/lng so the
   // public map reflects the rancher's chosen location accurately. ZIP-first
   // for ~3-5 mi accuracy; falls back to city centroid if zippopotam misses.
