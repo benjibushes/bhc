@@ -143,6 +143,44 @@ Monthly subscription (separate flow, runs in parallel):
 
 ---
 
+<!-- AIRTABLE-IDS — created 2026-05-25 via Airtable MCP on appgLT4z009iwAfhs
+TABLES (existing + new from Task 1):
+  Ranchers          : tbl08y9Be45zNG0OG
+  Consumers         : tblAbjQDnLrOtjpoE
+  Referrals         : tblBfimb4Gt8C0fu4
+  Threads           : tblIuMAlScXBTNF5w   (Task 7 baseline)
+  Thread Messages   : tbl5ORgGghoqabyXr   (Task 7 baseline)
+  Funnel Events     : tblpm57rUJJT103l2   (Task 2 baseline)
+  Payments          : tblPfESJ4lxwtGThy   (Task 1 stage-3)
+  Payouts           : tbl2lEnCbz0o3VqbH   (Task 1 stage-3)
+  Add-On Purchases  : tblebGHKDzRMc9epT   (Task 1 stage-3)
+  Stripe Events     : tblPiw7jB7Mm7OxeN   (Task 1 stage-3)
+
+NEW RANCHERS FIELD IDS (Task 1):
+  Pricing Model                 : fldaIFuo7rCSQvHP6
+  Tier                          : fldPY17Titdz4S0EN
+  Stripe Subscription Id        : fldJaOgCoQNkHuuMl
+  Subscription Status           : fldapRsuf6ITnWJkV
+  Subscription Started At       : fldR3vip22BKA6wEV
+  Subscription Next Invoice At  : fldP6ZkH4QreqlFy9
+  Stripe Connect Account Id     : fldrUOFCKOXQBA40x
+  Stripe Connect Status         : fldTdzuQp2sYIlsqV
+  Stripe Connect Connected At   : fldaofYC2bcbhLWlX
+  Fulfillment Types             : fldvaMCn1ZlAP66OA
+  Pickup City                   : fld8mbzIPdZh1NPna
+  Delivery Radius Miles         : fld5T3P6sR9IUgAv6
+  Shipping Lead Time Days       : fldk282GhxCkc1fZf
+  Refund Policy                 : fldAxqGkbCSSTWuMX
+  Fulfillment Cost Notes        : fldnhUCDOBljUJX23
+  First Payout Celebrated At    : fld8MRiO1aRG1IUJz
+  Tier Upgrade Nudge Sent At    : fld2eNbxzO9AzzYPz
+  Tier Abandoned Recovery At    : fldErK3OgWGqxTYr0
+
+BACKFILL: 64/64 existing ranchers set Pricing Model='legacy' via batched
+update_records_for_table on 2026-05-25 — protects existing performers
+from accidental tier_v2 path.
+-->
+
 <!-- STRIPE-IDS — created 2026-05-25 via Stripe MCP on acct_1TSn5PGTWWNqassH (LIVE mode)
 TIER SUBSCRIPTIONS (recurring monthly):
   Pasture  · prod_UaDjcxTLJgoblh · price_1Tb3IWGTWWNqassHaIvpNXeC · $150/mo
