@@ -267,6 +267,25 @@ Expected ~40+ files including lib/contracts/*, lib/funnelMetrics.ts, lib/rancher
 
 ---
 
+## Shopify-for-ranchers scope (post-Stage-3 roadmap)
+
+Separate doc: `docs/SHOPIFY-FOR-RANCHERS-SCOPE.md`. Read after Stage-3 ships.
+
+TL;DR: 80% of plumbing is in Stage-3. Multi-product catalog + cart + variants + inventory + cut sheets = **2-3 weeks subagent-driven** on top of Stage-3.
+
+Phases:
+- **Phase A (Stage-3, in progress):** 3 hardcoded tiers (Quarter/Half/Whole) via Stripe Connect direct charge
+- **Phase B (~2 weeks after Stage-3):** unlimited products per rancher + buyer cart + product/order management UIs + multi-line Checkout
+- **Phase C (~1 week after Phase B):** variants + inventory tracking + cut sheets
+
+Total Stage-3 → full Shopify-for-ranchers w/ marketing engine + tiered commission: **~5-6 weeks subagent-driven**.
+
+Killer differentiator vs Shopify: cut sheets (50 decisions per cow) + 0% Operator commission + qualified lead matching. Shopify gives a store; BHC gives a store + qualified buyers + marketing-as-service.
+
+Ship Stage-3 first. Validate w/ 5-10 tier_v2 ranchers. Then write a Phase B plan referencing the scope doc as spec.
+
+---
+
 ## Buyer qualification + routing gates (locked)
 
 Tier_v2 ranchers pay $150-500/mo + commission. **Only qualified buyers get routed.** Same qualification gates that protect legacy ranchers also apply to tier_v2. NO new gates added — existing routing engine is the source of truth. Tier_v2 inherits.
