@@ -2448,8 +2448,8 @@ export async function sendPipelineUpdateEmail(data: {
     subject = `${firstName}, let's get ${ranchName} live on BuyHalfCow`;
     headline = 'Your Spot Is Waiting';
     bodyHtml = `
-      <p>Hi ${firstName},</p>
-      <p>We spoke about getting <strong>${ranchName}</strong> listed on BuyHalfCow — a private network connecting independent ranchers directly with qualified beef buyers.</p>
+      <p>Hi ${esc(firstName)},</p>
+      <p>We spoke about getting <strong>${esc(ranchName)}</strong> listed on BuyHalfCow — a private network connecting independent ranchers directly with qualified beef buyers.</p>
       <p>We have buyers actively looking for ranch-direct beef in your area. Here's what's needed to get you live:</p>
       <div class="step"><strong>1. Sign the Commission Agreement</strong> — 10% on referred sales, no upfront fees, buyers pay you directly</div>
       <div class="step"><strong>2. Set up your ranch page</strong> — Logo, pricing, about text (takes 5 minutes)</div>
@@ -2464,8 +2464,8 @@ export async function sendPipelineUpdateEmail(data: {
     subject = `${firstName}, your agreement is ready to sign`;
     headline = 'One Signature Away';
     bodyHtml = `
-      <p>Hi ${firstName},</p>
-      <p>Just checking in — your BuyHalfCow Commission Agreement for <strong>${ranchName}</strong> is still waiting for your signature.</p>
+      <p>Hi ${esc(firstName)},</p>
+      <p>Just checking in — your BuyHalfCow Commission Agreement for <strong>${esc(ranchName)}</strong> is still waiting for your signature.</p>
       <p><strong>Quick recap:</strong></p>
       <ul style="color: #6B4F3F; line-height: 2;">
         <li>10% commission on referred sales only — no upfront fees</li>
@@ -2482,7 +2482,7 @@ export async function sendPipelineUpdateEmail(data: {
     subject = `${firstName}, set up your ranch page while we verify`;
     headline = 'Agreement Signed — Let\'s Get You Live';
     bodyHtml = `
-      <p>Hi ${firstName},</p>
+      <p>Hi ${esc(firstName)},</p>
       <p>Your agreement is signed and on file — great! While we handle verification, you can get a head start on your ranch page.</p>
       <p><strong>What you can do right now:</strong></p>
       <div class="step step-done">✅ <strong>Agreement signed</strong> — Done</div>
@@ -2498,8 +2498,8 @@ export async function sendPipelineUpdateEmail(data: {
     subject = `${firstName}, verification update for ${ranchName}`;
     headline = 'Verification In Progress';
     bodyHtml = `
-      <p>Hi ${firstName},</p>
-      <p>Quick update — we're reviewing the verification materials for <strong>${ranchName}</strong>. We'll let you know as soon as it's complete.</p>
+      <p>Hi ${esc(firstName)},</p>
+      <p>Quick update — we're reviewing the verification materials for <strong>${esc(ranchName)}</strong>. We'll let you know as soon as it's complete.</p>
       <p><strong>In the meantime:</strong> Make sure your ranch page is fully set up with testimonials, photos, and pricing so we can go live the moment verification clears.</p>
       <div class="step step-done">✅ Agreement signed</div>
       <div class="step">🖥️ <strong>Finish your ranch page</strong> — pricing, photos, testimonials, about text</div>
@@ -2514,8 +2514,8 @@ export async function sendPipelineUpdateEmail(data: {
     subject = `${firstName}, update from BuyHalfCow`;
     headline = 'Quick Update';
     bodyHtml = `
-      <p>Hi ${firstName},</p>
-      <p>Just checking in on <strong>${ranchName}</strong>. Log in to your dashboard to see your current status and next steps.</p>
+      <p>Hi ${esc(firstName)},</p>
+      <p>Just checking in on <strong>${esc(ranchName)}</strong>. Log in to your dashboard to see your current status and next steps.</p>
     `;
     ctaText = 'GO TO DASHBOARD';
     ctaUrl = data.dashboardLink || `${SITE_URL}/rancher/login`;
