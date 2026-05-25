@@ -19,7 +19,9 @@ export interface CreateDepositInput {
   referralId: string;
   buyerId: string;
   rancherId: string;
+  tier: 'Pasture' | 'Ranch' | 'Operator';  // NEW — tier_v2 only
   amountCents: number;
+  platformFeeCents: number;  // NEW — BHC's cut of the deposit
   stripePaymentIntentId: string;
 }
 
@@ -28,7 +30,9 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
     'Referral': [input.referralId],
     'Buyer': [input.buyerId],
     'Rancher': [input.rancherId],
+    'Tier': input.tier,
     'Amount Cents': input.amountCents,
+    'Platform Fee Cents': input.platformFeeCents,
     'Stripe Payment Intent Id': input.stripePaymentIntentId,
     'Status': 'pending',
     'Created At': new Date().toISOString(),

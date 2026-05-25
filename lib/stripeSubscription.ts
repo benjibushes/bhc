@@ -15,8 +15,19 @@
 import Stripe from 'stripe';
 import { TIERS, TierSlug } from '@/lib/tiers';
 
-// Stripe Client — SDK auto-sets API version 2026-04-22.dahlia
-const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY || '');
+// Lazy Stripe client init — constructing at module load fails Vercel's
+// build-time page-data collection (env vars not available). Defer until
+// first runtime call.
+let _stripeClient: Stripe | null = null;
+function getStripeClient(): Stripe {
+  if (_stripeClient) return _stripeClient;
+  const apiKey = process.env.STRIPE_SECRET_KEY;
+  if (!apiKey) {
+    throw new Error('STRIPE_SECRET_KEY environment variable is required');
+  }
+  _stripeClient = new Stripe(apiKey);
+  return _stripeClient;
+}
 
 export interface TierCheckoutInput {
   rancherId: string;
@@ -31,7 +42,8 @@ export async function createTierCheckoutSession(input: TierCheckoutInput): Promi
   if (!priceId) throw new Error(`Missing env var: ${TIERS[input.tier].stripePriceIdEnv}`);
 
   // V2: the connected account IS the customer. Use customer_account, NOT customer.
-  const session = await stripeClient.checkout.sessions.create({
+  const stripe = getStripeClient();
+  const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     customer_account: input.connectedAccountId,
     line_items: [{ price: priceId, quantity: 1 }],
@@ -46,9 +58,10 @@ export async function createTierCheckoutSession(input: TierCheckoutInput): Promi
 export async function changeSubscriptionTier(subscriptionId: string, newTier: TierSlug): Promise<void> {
   const newPriceId = process.env[TIERS[newTier].stripePriceIdEnv];
   if (!newPriceId) throw new Error(`Missing env var: ${TIERS[newTier].stripePriceIdEnv}`);
-  const sub = await stripeClient.subscriptions.retrieve(subscriptionId);
+  const stripe = getStripeClient();
+  const sub = await stripe.subscriptions.retrieve(subscriptionId);
   const itemId = sub.items.data[0].id;
-  await stripeClient.subscriptions.update(subscriptionId, {
+  await stripe.subscriptions.update(subscriptionId, {
     items: [{ id: itemId, price: newPriceId }],
     proration_behavior: 'always_invoice',
     metadata: { ...sub.metadata, tier: newTier },
@@ -60,7 +73,8 @@ export async function createBillingPortalSession(
   returnUrl: string,
 ): Promise<{ url: string }> {
   // V2: use customer_account, not customer
-  const session = await stripeClient.billingPortal.sessions.create({
+  const stripe = getStripeClient();
+  const session = await stripe.billingPortal.sessions.create({
     customer_account: connectedAccountId,
     return_url: returnUrl,
   } as any);

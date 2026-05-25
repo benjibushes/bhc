@@ -12,8 +12,19 @@
 
 import Stripe from 'stripe';
 
-// SDK auto-sets API version 2026-04-22.dahlia
-const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY || '');
+// Lazy Stripe client init — constructing at module load fails Vercel's
+// build-time page-data collection (env vars not available). Defer until
+// first runtime call.
+let _stripeClient: Stripe | null = null;
+function getStripeClient(): Stripe {
+  if (_stripeClient) return _stripeClient;
+  const apiKey = process.env.STRIPE_SECRET_KEY;
+  if (!apiKey) {
+    throw new Error('STRIPE_SECRET_KEY environment variable is required');
+  }
+  _stripeClient = new Stripe(apiKey);
+  return _stripeClient;
+}
 
 export interface CreateConnectAccountInput {
   email: string;
@@ -22,7 +33,8 @@ export interface CreateConnectAccountInput {
 }
 
 export async function createConnectAccount(input: CreateConnectAccountInput): Promise<{ accountId: string }> {
-  const account = await (stripeClient.v2.core.accounts as any).create({
+  const stripe = getStripeClient();
+  const account = await (stripe.v2.core.accounts as any).create({
     display_name: input.displayName,
     contact_email: input.email,
     identity: { country: 'us' },
@@ -53,7 +65,8 @@ export interface OnboardingLinkInput {
 }
 
 export async function createOnboardingLink(input: OnboardingLinkInput): Promise<{ url: string }> {
-  const link = await (stripeClient.v2.core.accountLinks as any).create({
+  const stripe = getStripeClient();
+  const link = await (stripe.v2.core.accountLinks as any).create({
     account: input.accountId,
     use_case: {
       type: 'account_onboarding',
@@ -77,7 +90,8 @@ export interface ConnectStatusReadResult {
 }
 
 export async function getConnectAccountStatus(accountId: string): Promise<ConnectStatusReadResult> {
-  const account = await (stripeClient.v2.core.accounts as any).retrieve(accountId, {
+  const stripe = getStripeClient();
+  const account = await (stripe.v2.core.accounts as any).retrieve(accountId, {
     include: ['configuration.merchant', 'requirements'],
   });
   const cardPaymentsActive =
@@ -89,4 +103,58 @@ export async function getConnectAccountStatus(accountId: string): Promise<Connec
     reqStatus === 'past_due' ? 'restricted' :
     'onboarding';
   return { cardPaymentsActive, onboardingComplete, requirementsStatus: reqStatus, status };
+}
+
+// ---------------------------------------------------------------------------
+// Stage-3 Task 8 — buyer deposit direct-charge Checkout Session
+// ---------------------------------------------------------------------------
+
+import { TIERS, TierSlug } from '@/lib/tiers';
+
+export interface CreateDepositCheckoutInput {
+  rancherConnectAccountId: string;  // acct_* — direct charge target
+  tier: TierSlug;
+  amountCents: number;
+  buyerEmail: string;
+  referralId: string;
+  productLabel: string;  // e.g. "Half Cow — Ashcraft Beef"
+  successUrl: string;
+  cancelUrl: string;
+}
+
+export async function createDepositCheckout(input: CreateDepositCheckoutInput): Promise<{ url: string; paymentIntentId: string }> {
+  const feeRate = TIERS[input.tier].commissionRate;  // 0.07 / 0.03 / 0
+  const platformFeeCents = Math.round(input.amountCents * feeRate);
+
+  // Direct charge w/ application_fee_amount. stripeAccount header routes
+  // the charge to the rancher's Connect account; Stripe splits funds
+  // automatically (rancher gets amount - fee, platform gets fee).
+  const stripe = getStripeClient();
+  const session = await stripe.checkout.sessions.create(
+    {
+      mode: 'payment',
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: { name: input.productLabel },
+            unit_amount: input.amountCents,
+          },
+          quantity: 1,
+        },
+      ],
+      customer_email: input.buyerEmail,
+      payment_intent_data: {
+        application_fee_amount: platformFeeCents,
+        metadata: { referralId: input.referralId, tier: input.tier },
+      },
+      metadata: { referralId: input.referralId, tier: input.tier, platformFeeCents: String(platformFeeCents) },
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+    },
+    {
+      stripeAccount: input.rancherConnectAccountId,
+    },
+  );
+  return { url: session.url || '', paymentIntentId: String(session.payment_intent || '') };
 }
