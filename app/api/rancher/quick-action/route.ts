@@ -185,48 +185,52 @@ async function applyAction(
     return { ok: false, message: 'Unknown action.' };
   }
 
-  try {
-    await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
-  } catch (e: any) {
-    return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
-  }
-
-  // Decrement rancher counter if this is the first transition to a terminal
-  // status. Uses atomic Redis DECR (see lib/rancherCapacity) so concurrent
-  // closes on the same rancher don't race the counter past 0 / off by 1.
-  // syncCapacityToAirtable mirrors the new value so dashboards stay accurate.
-  if (wasActiveBefore && TERMINAL_STATUSES.includes(updates['Status'])) {
+  // ROUTE CLOSE PATHS THROUGH CONTRACT.
+  // For close transitions (won/lost/pass), recordClose() handles:
+  //   - Status flip + Closed At + Last Rancher Activity At + Rancher Engaged Flag
+  //   - Sale Amount stamp (won only)
+  //   - Atomic capacity decrement (if was active before)
+  //   - Buyer Stage flip → CLOSED (won/lost only; pass→lost handled too)
+  //   - Funnel event emit (close:won|lost|awaiting_payment)
+  // Supplemental fields not in contract (Commission Due, Notes) still written
+  // here as a follow-up updateRecord.
+  if (action === 'won' || action === 'lost' || action === 'pass') {
+    const { recordClose } = await import('@/lib/contracts');
+    const closeOutcome = action === 'won' ? 'won' : 'lost';
     try {
-      const newCount = await decrementCapacity(decoded.rancherId);
-      await syncCapacityToAirtable(decoded.rancherId, newCount);
+      await recordClose({
+        referralId: decoded.referralId,
+        rancherId: decoded.rancherId,
+        outcome: closeOutcome,
+        saleAmount: action === 'won' ? saleAmount : undefined,
+        reason,
+      });
     } catch (e: any) {
-      console.warn('[quick-action] counter decrement failed:', e?.message);
+      return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
     }
-
-    // ── Flip Consumer.Buyer Stage to CLOSED ──────────────────────────
-    // Audit finding: prior to this commit, Closed Won/Lost only flipped
-    // the Referral row. The buyer stayed in MATCHED stage indefinitely,
-    // which:
-    //   - Skewed /api/stats/public.familiesMatched (counts MATCHED as
-    //     "in pipeline" when buyer actually purchased/closed)
-    //   - Broke 90-day repeat cron's eligibility check (expects CLOSED)
-    //   - Confused operator views ("why is Eric still MATCHED if he
-    //     closed last week?")
-    //
-    // Look up the buyer linked to the referral + flip stage to CLOSED.
-    // CLOSED is terminal for both purchased + ghosted/non-responsive
-    // (per Airtable Buyer Stage field doc).
+    // Supplemental fields: Commission Due (won) + Notes append (lost/pass).
+    // Both are non-fatal — contract already landed the core state change.
     try {
-      const refRow: any = await getRecordById(TABLES.REFERRALS, decoded.referralId);
-      const buyerIds: string[] = (refRow?.['Buyer'] || []) as string[];
-      if (buyerIds[0]) {
-        await updateRecord(TABLES.CONSUMERS, buyerIds[0], {
-          'Buyer Stage': 'CLOSED',
-          'Buyer Stage Updated At': new Date().toISOString(),
-        });
+      const supp: Record<string, any> = {};
+      if (action === 'won' && typeof updates['Commission Due'] === 'number') {
+        supp['Commission Due'] = updates['Commission Due'];
+      }
+      if (updates['Notes']) {
+        supp['Notes'] = updates['Notes'];
+      }
+      if (Object.keys(supp).length > 0) {
+        await updateRecord(TABLES.REFERRALS, decoded.referralId, supp);
       }
     } catch (e: any) {
-      console.warn('[quick-action] Consumer Buyer Stage flip failed:', e?.message);
+      console.warn('[quick-action] supplemental field write failed:', e?.message);
+    }
+  } else {
+    // Non-close transition (e.g. in_talks → Rancher Contacted) — direct write
+    // since contract scope is close-completion only.
+    try {
+      await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
+    } catch (e: any) {
+      return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
     }
   }
 

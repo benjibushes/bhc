@@ -612,6 +612,26 @@ export async function PATCH(
 
     await updateRecord(TABLES.REFERRALS, id, fields);
 
+    // Funnel telemetry — emit close event so the admin dashboard sees this
+    // dashboard-PATCH close in the same conversion funnel as quick-action and
+    // Telegram closes. Contract recordClose() handles the canonical mutation
+    // (Status, Closed At, capacity, Buyer Stage); legacy dashboard PATCH
+    // already executed those inline above. funnelRecord here is the bridge
+    // until a future refactor consolidates the close path through recordClose().
+    if (status === 'Closed Won' || status === 'Closed Lost' || status === 'Awaiting Payment') {
+      const { funnelRecord } = await import('@/lib/funnelMetrics');
+      const outcomeKey = status === 'Closed Won' ? 'close:won' :
+                         status === 'Closed Lost' ? 'close:lost' :
+                         'close:awaiting_payment';
+      await funnelRecord({
+        stage: outcomeKey,
+        rancherId: decoded.rancherId,
+        referralId: id,
+        amount: status === 'Closed Won' ? (saleAmount || 0) : undefined,
+        reason: `dashboard-PATCH:${status}`,
+      });
+    }
+
     // Notify admin via Telegram
     try {
       const buyerName = referral['Buyer Name'] || 'Unknown';

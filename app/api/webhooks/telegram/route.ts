@@ -2493,6 +2493,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                 result: { previousStatus, newStatus: 'Closed Lost' },
                 reverseAction: reverse,
               });
+              try {
+                const { funnelRecord } = await import('@/lib/funnelMetrics');
+                await funnelRecord({
+                  stage: 'close:lost',
+                  rancherId: rancherIdForLost || undefined,
+                  referralId: refId,
+                  reason: 'telegram-clcheck_lost',
+                });
+              } catch {}
               await editTelegramMessage(chatId, messageId, `❌ <b>Closed Lost</b> — ${buyerName}\n\nReferral closed out. Capacity freed. Buyer Stage → CLOSED.`);
             } else if (action === 'working') {
               await answerCallbackQuery(queryId, '⏳ Will check again in 7 days');
@@ -2824,6 +2833,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               `Use the rancher dashboard "Confirm Payment Received" button (or reply /confirmpaid ${refId} $X here) when buyer pays. Invoice fires automatically at that point.\n\n` +
               `I'll nudge you at 14 days if it's still unresolved.`,
             );
+            try {
+              const { funnelRecord } = await import('@/lib/funnelMetrics');
+              await funnelRecord({
+                stage: 'close:awaiting_payment',
+                rancherId,
+                referralId: refId,
+                reason: 'telegram-awaiting-reply',
+              });
+            } catch {}
             return NextResponse.json({ ok: true });
           }
 
@@ -3043,6 +3061,18 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               ? `\n\nFix the underlying issue and use the dashboard close flow to re-fire the invoice.`
               : `\n\nStripe will email ${rancher['Email'] || 'the rancher'} the hosted invoice. Webhook flips Commission Paid on payment.`),
           );
+
+          // Funnel telemetry — bridge until full close path migrates to recordClose.
+          try {
+            const { funnelRecord } = await import('@/lib/funnelMetrics');
+            await funnelRecord({
+              stage: 'close:won',
+              rancherId,
+              referralId: refId,
+              amount: saleAmount,
+              reason: 'telegram-close-reply',
+            });
+          } catch {}
         } catch (e: any) {
           await sendTelegramMessage(chatId, `⚠️ Close-reply handler failed: ${e?.message || 'unknown'}`);
         }
