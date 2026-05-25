@@ -27,7 +27,7 @@ import MerchCTA from './MerchCTA';
 export const dynamic = 'force-dynamic'; // query params change per visit
 
 export const metadata: Metadata = {
-  title: 'You\'re matched — BuyHalfCow',
+  title: "You're matched",
   description: 'Your rancher introduction has been sent. Expect direct contact within 24-48 hours.',
   // noindex — this is a per-visit ceremonial confirmation page, not a
   // marketing surface. Indexing the placeholder copy would muddy SEO.

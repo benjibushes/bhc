@@ -22,7 +22,7 @@ import ExitIntentModal from '@/app/components/ExitIntentModal';
 //      (create Airtable BrandPartners row + send welcome email + Telegram alert)
 
 export const metadata: Metadata = {
-  title: 'Brand Partners — Get in front of the BuyHalfCow network',
+  title: 'Brand Partners — get your brand in front of d2c ranchers',
   description:
     'Three tiers, real distribution. Get your brand in front of D2C ranchers + the families who buy their beef. Logo placement, posts, pinned features.',
 };

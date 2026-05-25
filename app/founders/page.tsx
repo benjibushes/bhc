@@ -41,7 +41,7 @@ import FounderCheckoutButton from './components/FounderCheckoutButton';
 import ExitIntentModal from '@/app/components/ExitIntentModal';
 
 export const metadata: Metadata = {
-  title: 'The Founding Herd — back BuyHalfCow',
+  title: 'The Founding Herd',
   description:
     'Five tiers, real backing. The Founding Herd is the people who paid in before BuyHalfCow was easy to bet on. 100 numbered spots at $1,000.',
 };

@@ -3,7 +3,7 @@ import Divider from '../components/Divider';
 import Link from 'next/link';
 
 export const metadata = {
-  title: 'Privacy Policy — BuyHalfCow',
+  title: 'Privacy Policy',
   description: 'Privacy Policy for BuyHalfCow private membership network',
 };
 

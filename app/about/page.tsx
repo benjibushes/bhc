@@ -3,7 +3,7 @@ import Divider from '../components/Divider';
 import Button from '../components/Button';
 
 export const metadata = {
-  title: 'About — BuyHalfCow',
+  title: 'About',
   description: 'Learn about BuyHalfCow\'s mission to connect serious buyers with verified ranchers',
 };
 

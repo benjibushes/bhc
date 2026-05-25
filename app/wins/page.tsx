@@ -20,7 +20,7 @@ import { normalizeImageUrl } from '@/lib/imageUrl';
 export const revalidate = 1800;
 
 export const metadata: Metadata = {
-  title: 'Wins — Real deals closed on BuyHalfCow',
+  title: 'Wins — Real deals closed',
   description:
     'Every closed deal on the BuyHalfCow network. Real ranchers, real families, real beef in freezers. The proof.',
   openGraph: {

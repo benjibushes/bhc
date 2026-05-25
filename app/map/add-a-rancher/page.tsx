@@ -18,7 +18,7 @@ import AddRancherForm from './AddRancherForm';
 // the call.
 
 export const metadata: Metadata = {
-  title: 'Add a Rancher to the Map — BuyHalfCow',
+  title: 'Add a Rancher to the Map',
   description:
     'Direct-to-consumer rancher? Add yourself to the public map. Know one? Add them. We’re building the public hit list of every direct-to-consumer rancher in America.',
   openGraph: {

@@ -46,6 +46,11 @@ export async function generateAffiliateCode(name: string): Promise<string> {
  * record OR null. Status check is NOT applied here — callers decide whether
  * Inactive affiliates are acceptable for their use case (e.g. dashboard
  * login should reject, but historical attribution lookups should succeed).
+ *
+ * Case-insensitivity matters because self-serve signup mints UPPERCASE codes
+ * (e.g. `9NQBDE`) while admin codes from generateAffiliateCode are lowercase
+ * (e.g. `benji4f2k`). Without LOWER() the lookup matches one style or the
+ * other but not both, and tracking silently no-ops for the missing style.
  */
 export async function findAffiliateByCode(rawCode: string): Promise<any | null> {
   const code = normalizeAffiliateCode(rawCode);
@@ -53,7 +58,7 @@ export async function findAffiliateByCode(rawCode: string): Promise<any | null> 
   try {
     const rows = (await getAllRecords(
       TABLES.AFFILIATES,
-      `{Code} = "${escapeAirtableValue(code)}"`,
+      `LOWER({Code}) = "${escapeAirtableValue(code)}"`,
     )) as any[];
     return rows[0] || null;
   } catch {

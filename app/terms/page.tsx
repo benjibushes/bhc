@@ -3,7 +3,7 @@ import Divider from '../components/Divider';
 import Link from 'next/link';
 
 export const metadata = {
-  title: 'Terms of Service — BuyHalfCow',
+  title: 'Terms of Service',
   description: 'Terms of Service for BuyHalfCow private membership network',
 };
 

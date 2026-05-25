@@ -13,7 +13,7 @@ import RancherSetupWizard from './RancherSetupWizard';
 // escape hatch on every step. But the default is self-serve.
 
 export const metadata: Metadata = {
-  title: 'Set up your ranch — BuyHalfCow',
+  title: 'Set up your ranch',
   description:
     'Confirm your details, set your prices, sign the agreement. Self-serve in under 10 minutes.',
 };
