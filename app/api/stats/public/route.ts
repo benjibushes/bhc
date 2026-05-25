@@ -131,7 +131,16 @@ export async function GET() {
       }
     }
 
-    const stats: PublicStats = {
+    // Distinct US states with at least one operational rancher.
+    // Used by homepage LiveCounter `stateCount` field.
+    const stateCount = new Set(
+      ranchers
+        .filter((r: any) => isRancherOperationalForBuyers(r))
+        .map((r: any) => (r['State'] || '').toString().trim().toUpperCase())
+        .filter(Boolean),
+    ).size;
+
+    const stats = {
       ranchersActive,
       familiesMatched,
       foundersBacked,
@@ -140,6 +149,20 @@ export async function GET() {
       thisMonthClosedWon,
       latestClose,
       activity24h: { closes: closes24h, matched: matched24h, signups: signups24h },
+      // ── Legacy key aliases ──────────────────────────────────────────
+      // The homepage FullHomepage + LiveCounter were built against an
+      // older API shape (rancherCount / buyerCount / stateCount). Adding
+      // aliases here keeps them rendering without forcing a client-side
+      // refactor. New consumers (/start, /access) use the canonical keys.
+      rancherCount: ranchersActive,
+      buyerCount: familiesMatched,
+      stateCount,
+      ranchers: ranchersActive,
+      buyers: familiesMatched,
+      states: stateCount,
+      verifiedRancherCount: ranchersActive,
+      beefBuyerCount: familiesMatched,
+      verifiedStateCount: stateCount,
     };
 
     return NextResponse.json(stats, {
@@ -149,7 +172,7 @@ export async function GET() {
     });
   } catch (error: any) {
     console.error('/api/stats/public error:', error?.message);
-    const fallback: PublicStats = {
+    const fallback = {
       ranchersActive: 17,
       familiesMatched: 1533,
       foundersBacked: 0,
@@ -158,6 +181,16 @@ export async function GET() {
       thisMonthClosedWon: 0,
       latestClose: null,
       activity24h: { closes: 0, matched: 0, signups: 0 },
+      // Legacy aliases for FullHomepage + LiveCounter compatibility.
+      rancherCount: 17,
+      buyerCount: 1533,
+      stateCount: 5,
+      ranchers: 17,
+      buyers: 1533,
+      states: 5,
+      verifiedRancherCount: 17,
+      beefBuyerCount: 1533,
+      verifiedStateCount: 5,
     };
     return NextResponse.json(fallback, {
       status: 200,
