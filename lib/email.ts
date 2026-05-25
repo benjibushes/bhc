@@ -3691,3 +3691,51 @@ export async function sendStateWaitlistLetter(data: {
     }),
   });
 }
+
+// ── Stage-3 Task 9: rancher confirmed fulfillment → buyer receives "your beef is here" ──
+// Sent to the buyer when the rancher hits "Confirm Fulfillment" on the
+// dashboard. Closes the loop — the buyer knows BHC + the rancher have
+// reconciled the deal. For tier_v2 deposits the funds already settled at
+// charge time via Connect direct charge, so this email is purely a status
+// confirmation (no payment action needed from the buyer).
+export async function sendBuyerFulfillmentConfirmation(data: {
+  email: string;
+  firstName: string;
+  rancherName: string;
+  ranchName: string;
+  orderType: string;
+  rancherNote?: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = data.firstName || 'there';
+  const subject = `${data.ranchName} confirmed your beef is in your hands`;
+  const noteBlock = data.rancherNote && data.rancherNote.trim()
+    ? `<div class="box"><p style="margin:0;"><strong>Note from ${esc(data.rancherName)}:</strong></p><p style="margin:8px 0 0;color:#2A2A2A;">${esc(data.rancherNote)}</p></div>`
+    : '';
+  return guardedSend({
+    templateName: 'sendBuyerFulfillmentConfirmation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>Beef received — you're set, ${esc(first)}.</h1>
+  <p>${esc(data.rancherName)} from ${esc(data.ranchName)} just confirmed your ${esc(data.orderType || 'share')} is in your hands. The deal is officially closed.</p>
+  ${noteBlock}
+  <p><strong>What now:</strong></p>
+  <ul style="color:#2A2A2A;line-height:2;">
+    <li>Stack the vacuum-sealed packs flat in your freezer — easier to find cuts later.</li>
+    <li>In ~2 weeks I'll send you a cuts education email — what to do with the oxtail, the shanks, the trim that becomes burger.</li>
+    <li>Around the 5-month mark I'll ping you about reserving the next share — from ${esc(data.rancherName)} again or another rancher in your area if their next harvest fits your timing better.</li>
+  </ul>
+  <p>If anything was off about pickup/delivery, reply to this email. I read every reply.</p>
+  <p style="margin-top:32px;">— Benjamin</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    }),
+  });
+}
