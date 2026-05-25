@@ -46,7 +46,9 @@ export type AnalyticsEventName =
   | 'affiliate_signup_click'
   | 'affiliate_signup_success'
   | 'affiliate_link_copied'
-  | 'affiliate_link_shared';
+  | 'affiliate_link_shared'
+  | 'wholesale_view'
+  | 'wholesale_submit_success';
 
 export function trackEvent(
   event: AnalyticsEventName,

@@ -415,6 +415,11 @@ export default async function StartPage({
             />
           )}
 
+          {/* TODO(wholesale): add a "wholesale" AudienceCard here once
+              StartButtons.tsx accepts a 5th `route` variant ('wholesale')
+              + the matching trackEvent('start_button_click', { route }).
+              Skipped for now to keep this PR scoped to the form itself. */}
+
           {/* BRANDS */}
           <AudienceCard
             href="/brand-partners"
