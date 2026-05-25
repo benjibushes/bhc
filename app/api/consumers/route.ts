@@ -10,6 +10,8 @@ import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy } fr
 import { normalizeState } from '@/lib/states';
 import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
+import { transitionBuyerStage } from '@/lib/contracts';
+import { funnelRecord } from '@/lib/funnelMetrics';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -320,6 +322,21 @@ export async function POST(request: Request) {
       record = await createRecord(TABLES.CONSUMERS, consumerFields);
     }
 
+    // Funnel telemetry — every signup gets a 'signup' event in the Funnel Events
+    // table so the admin dashboard can compute conversion rates. Non-fatal; a
+    // write failure logs a warning but doesn't break the signup flow.
+    await funnelRecord({
+      stage: 'signup',
+      buyerId: record.id,
+      intentScore: serverIntentScore,
+      metadata: {
+        source: source || 'organic',
+        state,
+        isRancherPageLead,
+        readyToBuy: !!consumerFields['Ready to Buy'],
+      },
+    });
+
     // ── REBUILT POST-APPROVAL FLOW (state-machine driven) ────────────────────
     // Old flow sent 2 emails on approval (sendConsumerApproval + then RTB or
     // Waitlist) — collapsed into ONE founder-voice email (sendWelcomeAndReadyToBuy)
@@ -464,11 +481,11 @@ export async function POST(request: Request) {
           buyerStage = 'WAITING';
         }
 
-        // Set Buyer Stage + Updated At — ONE write
-        await updateRecord(TABLES.CONSUMERS, record.id, {
-          'Buyer Stage': buyerStage,
-          'Buyer Stage Updated At': new Date().toISOString(),
-        });
+        // Set Buyer Stage + Updated At via contract — emits funnel event.
+        // Replaces a direct updateRecord that bypassed the funnel telemetry +
+        // duplicated the stage-write logic seen in /api/warmup/engage,
+        // /api/matching/suggest, and the rancher PATCH handler.
+        await transitionBuyerStage(record.id, buyerStage, `signup:${autoRouted ? 'auto-routed' : isRancherPageLead ? 'rancher-page' : hasInStateRancher ? 'in-state' : 'no-rancher'}`);
       } catch (e) {
         console.error('Post-approval flow error:', e);
       }
