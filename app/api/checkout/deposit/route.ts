@@ -144,6 +144,8 @@ export async function POST(req: Request) {
       amountCents,
       buyerEmail,
       referralId,
+      buyerId: decoded.consumerId,
+      rancherId,
       productLabel,
       successUrl: `${SITE_URL}/checkout/${referralId}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${SITE_URL}/checkout/${referralId}/deposit?canceled=1`,

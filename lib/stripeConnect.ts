@@ -117,6 +117,8 @@ export interface CreateDepositCheckoutInput {
   amountCents: number;
   buyerEmail: string;
   referralId: string;
+  buyerId: string;   // Consumers record id — fans out to webhook routing
+  rancherId: string; // Ranchers record id — fans out to webhook routing
   productLabel: string;  // e.g. "Half Cow — Ashcraft Beef"
   successUrl: string;
   cancelUrl: string;
@@ -146,9 +148,22 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       customer_email: input.buyerEmail,
       payment_intent_data: {
         application_fee_amount: platformFeeCents,
-        metadata: { referralId: input.referralId, tier: input.tier },
+        metadata: {
+          type: 'buyer_deposit',
+          referralId: input.referralId,
+          buyerId: input.buyerId,
+          rancherId: input.rancherId,
+          tier: input.tier,
+        },
       },
-      metadata: { referralId: input.referralId, tier: input.tier, platformFeeCents: String(platformFeeCents) },
+      metadata: {
+        type: 'buyer_deposit',
+        referralId: input.referralId,
+        buyerId: input.buyerId,
+        rancherId: input.rancherId,
+        tier: input.tier,
+        platformFeeCents: String(platformFeeCents),
+      },
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
     },
