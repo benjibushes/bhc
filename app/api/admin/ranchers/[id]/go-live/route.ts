@@ -36,7 +36,20 @@ export async function POST(
 
     const { id } = await context.params;
 
-    await updateRecord(TABLES.RANCHERS, id, { 'Page Live': true });
+    // BUG FIX (RW-6 audit): prior version only flipped Page Live. matching/
+    // suggest filters by Active Status='Active' — so newly-live rancher
+    // would NOT receive routed buyers because Active Status stayed at
+    // its prior value (Pending Onboarding / blank). The waitlist blast
+    // below would then call matching/suggest which silently excluded
+    // this same rancher. Self-defeating.
+    //
+    // Fix mirrors /api/rancher/activate which sets all 4 fields correctly.
+    await updateRecord(TABLES.RANCHERS, id, {
+      'Page Live': true,
+      'Active Status': 'Active',
+      'Onboarding Status': 'Live',
+      'Status': 'Active',
+    });
 
     // Fire launch-warmup IMMEDIATELY for this rancher's state. Without this,
     // newly-Live ranchers' Waitlisted buyer queue waits up to 24h for the

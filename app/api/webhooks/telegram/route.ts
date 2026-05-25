@@ -477,6 +477,28 @@ async function processUpdate(update: any) {
             getRecordById(TABLES.CONSUMERS, buyerRecId) as Promise<any>,
             getRecordById(TABLES.RANCHERS, rancherRecId) as Promise<any>,
           ]);
+
+          // IDEMPOTENCY GUARD (RW-9 audit): without this, double-click
+          // on the manual /match Telegram button created DUPLICATE
+          // Referral rows + sent the intro email twice to both buyer
+          // and rancher. Check for any active referral for this
+          // buyer-rancher pair before creating a new one.
+          try {
+            const { getAllRecords, escapeAirtableValue } = await import('@/lib/airtable');
+            const existing = (await getAllRecords(
+              TABLES.REFERRALS,
+              `AND(LOWER({Buyer Email}) = "${escapeAirtableValue((buyer['Email'] || '').toString().toLowerCase())}", NOT({Status} = "Closed Won"), NOT({Status} = "Closed Lost"))`,
+            )) as any[];
+            const sameRancher = existing.find((r) => {
+              const refRanchers = (r['Rancher'] || r['Suggested Rancher'] || []) as string[];
+              return refRanchers.includes(rancher.id);
+            });
+            if (sameRancher) {
+              await answerCallbackQuery(queryId, '⚠️ Already matched');
+              return new Response('OK');
+            }
+          } catch { /* fall through on Airtable read failure */ }
+
           const now = new Date().toISOString();
           const refRecord: any = await createRecord(TABLES.REFERRALS, {
             'Buyer': [buyer.id],
@@ -1021,6 +1043,14 @@ Source: ${c['Source'] || 'organic'}`;
         try {
           const refId = fullReferralId;
           const ref: any = await getRecordById(TABLES.REFERRALS, refId);
+          // IDEMPOTENCY GUARD (RW-9 audit): without this, double-click
+          // appended a fresh '[Commission marked paid via Telegram X]'
+          // note to Referral.Notes every click AND re-sent the paid-
+          // receipt email to the rancher every click.
+          if (ref['Commission Paid'] === true) {
+            await answerCallbackQuery(queryId, '✓ Already marked paid');
+            return new Response('OK');
+          }
           await updateRecord(TABLES.REFERRALS, refId, {
             'Commission Paid': true,
             'Commission Paid At': new Date().toISOString(),
@@ -1165,6 +1195,14 @@ Source: ${c['Source'] || 'organic'}`;
           const ref: any = await getRecordById(TABLES.REFERRALS, refId);
           const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
           const previousStatus = ref['Status'] || null;
+          // IDEMPOTENCY GUARD (RW-9 audit): without this, double-click on
+          // the closelost Telegram button decremented Current Active
+          // Referrals TWICE per click → rancher capacity underflow.
+          // Short-circuit if already terminal.
+          if (previousStatus === 'Closed Lost' || previousStatus === 'Closed Won') {
+            await answerCallbackQuery(queryId, `Already ${previousStatus}`);
+            return new Response('OK');
+          }
           const previousClosedAt = ref['Closed At'] || null;
           const previousNotes = ref['Notes'] || null;
           const reverse = buildAirtableUpdateReverse(TABLES.REFERRALS, refId, {

@@ -773,7 +773,7 @@ export async function sendCutsEducation(data: {
   <p style="margin-top:32px;">— Ben</p>
   <div style="border-top: 1px solid #A7A29A; margin-top: 30px; padding-top: 24px;">
     <p style="color: #6B4F3F; font-size: 14px;">
-      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="https://buyhalfcow.com/shop" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
+      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="${SITE_URL}/shop" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
     </p>
   </div>
   <div class="footer">
@@ -1570,7 +1570,7 @@ a{color:#0E0E0E;}
   <p style="margin-top:28px;">— Ben</p>
   <div style="border-top: 1px solid #A7A29A; margin-top: 30px; padding-top: 24px;">
     <p style="color: #6B4F3F; font-size: 14px;">
-      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="https://buyhalfcow.com/shop" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
+      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="${SITE_URL}/shop" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
     </p>
   </div>
   <div class="footer">
@@ -1729,7 +1729,7 @@ export async function sendAdminAlert(data: {
             ${Object.entries(data.details).map(([key, value]) => 
               `<div class="field"><span class="label">${esc(key)}:</span> ${esc(String(value))}</div>`
             ).join('')}
-            <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/admin" class="button">Review in Admin</a>
+            <a href="${SITE_URL}/admin" class="button">Review in Admin</a>
           </div>
         </body>
         </html>
@@ -1814,7 +1814,7 @@ export async function sendInquiryToRancher(data: {
             
             <div class="divider"></div>
             
-            <p><strong>Reply directly to this email</strong> to connect with ${data.consumerName}.</p>
+            <p><strong>Reply directly to this email</strong> to connect with ${esc(data.consumerName)}.</p>
             
             <div class="footer">
               <p>This inquiry was facilitated by BuyHalfCow.<br>
@@ -1886,7 +1886,7 @@ export async function sendInquiryAlertToAdmin(data: {
               Review and approve/reject in your admin dashboard.
             </p>
             
-            <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/admin/inquiries" class="button">Review & Approve in Admin →</a>
+            <a href="${SITE_URL}/admin/inquiries" class="button">Review & Approve in Admin →</a>
             
             <p style="margin-top: 30px; font-size: 12px; color: #6B4F3F;">
               The rancher will only receive contact info AFTER you approve this inquiry.

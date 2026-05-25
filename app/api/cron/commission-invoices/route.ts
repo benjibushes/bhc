@@ -108,6 +108,28 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         });
       }
 
+      // IDEMPOTENCY GUARD (RW-7 audit): if Vercel cron retries on the
+      // 1st of the month after a partial run, sendMonthlyCommissionInvoice
+      // could fire to the same rancher twice — money-facing duplicate
+      // invoice. Check Email Sends for this template + recipient within
+      // the current calendar month. Skip if already sent.
+      try {
+        const { getAllRecords, escapeAirtableValue } = await import('@/lib/airtable');
+        const firstOfMonthIso = new Date(today.getUTCFullYear(), today.getUTCMonth(), 1).toISOString();
+        const dupRows = (await getAllRecords(
+          TABLES.EMAIL_SENDS,
+          `AND({Template Name} = "sendMonthlyCommissionInvoice", LOWER({Recipient Email}) = "${escapeAirtableValue(rancherEmail.toLowerCase())}", {Sent At} > "${firstOfMonthIso}", {Status} = "sent")`,
+        )) as any[];
+        if (dupRows.length > 0) {
+          summaryLines.push(`🤠 ${ranchName}: skipped (invoice already sent this month)`);
+          continue;
+        }
+      } catch (e: any) {
+        // Fail-open: if Email Sends read fails, proceed to send. Better
+        // to risk a rare duplicate than skip a real invoice.
+        console.warn(`[commission-invoices] dedup check failed for ${rancherEmail}:`, e?.message);
+      }
+
       await sendMonthlyCommissionInvoice({
         operatorName,
         ranchName,
