@@ -191,8 +191,12 @@ export default async function StartPage({
     fetchRancherPreview(),
     detectState(params),
   ]);
-  const latestClose = stats.latestClose;
-  const activity = stats.activity24h;
+  // Defensive defaults — during deploy cutover, the cached
+  // /api/stats/public response may briefly serve an older shape
+  // without these fields. Falling through with sane defaults keeps
+  // the page from 500-ing on stale cache hits.
+  const latestClose = stats.latestClose ?? null;
+  const activity = stats.activity24h ?? { closes: 0, matched: 0, signups: 0 };
   const featured: Testimonial | null = testimonials[0] || null;
   const foundersLeft = Math.max(0, stats.foundersCap - stats.foundersBacked);
   const backerCardClaimed = stats.foundersBacked >= stats.foundersCap;
