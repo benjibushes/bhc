@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getRancherBySlug } from '@/lib/airtable';
+import { normalizeImageUrl } from '@/lib/imageUrl';
 
 // Public endpoint — returns full landing page data for a single rancher by slug
 export async function GET(
@@ -24,7 +25,7 @@ export async function GET(
         ranch_name: r['Ranch Name'] || '',
         operator_name: r['Operator Name'] || '',
         tagline: r['Tagline'] || '',
-        logo_url: r['Logo URL'] || '',
+        logo_url: normalizeImageUrl((r['Logo URL'] || '').toString()),
         about_text: r['About Text'] || '',
         video_url: r['Video URL'] || '',
         state: r['State'] || '',

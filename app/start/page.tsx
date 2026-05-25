@@ -26,6 +26,7 @@ import {
 import ExitIntentModal from '@/app/components/ExitIntentModal';
 import { getRecentTestimonials, type Testimonial } from '@/lib/testimonials';
 import { getActiveRancherPages } from '@/lib/airtable';
+import { normalizeImageUrl } from '@/lib/imageUrl';
 
 export const metadata: Metadata = {
   title: 'buyhalfcow — real beef. real ranchers. direct.',
@@ -122,7 +123,9 @@ async function fetchRancherPreview(): Promise<RancherPreview[]> {
       slug: (r['Slug'] || '').toString(),
       ranchName: (r['Ranch Name'] || '').toString(),
       state: (r['State'] || '').toString(),
-      logoUrl: (r['Logo URL'] || '').toString(),
+      // Normalize sharing URLs (Dropbox, Drive) to raw image bytes —
+      // otherwise <img src> renders broken preview HTML
+      logoUrl: normalizeImageUrl((r['Logo URL'] || '').toString()),
     }));
   } catch {
     return [];

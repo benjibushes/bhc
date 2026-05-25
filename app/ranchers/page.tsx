@@ -4,6 +4,7 @@ import Image from 'next/image';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
 import { getActiveRancherPages } from '@/lib/airtable';
+import { normalizeImageUrl } from '@/lib/imageUrl';
 
 export const metadata: Metadata = {
   title: 'Our Ranchers',
@@ -55,7 +56,7 @@ export default async function RanchersPage() {
                 const slug = r['Slug'] || '';
                 const name = r['Ranch Name'] || r['Operator Name'] || 'Unknown Ranch';
                 const tagline = r['Tagline'] || '';
-                const logoUrl = r['Logo URL'] || '';
+                const logoUrl = normalizeImageUrl((r['Logo URL'] || '').toString());
                 const state = r['State'] || '';
                 const beefTypes = r['Beef Types'] || '';
                 const halfPrice = r['Half Price'] || null;

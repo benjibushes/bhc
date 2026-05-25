@@ -7,6 +7,7 @@ import MemberAuthGuard from '../components/MemberAuthGuard';
 import ContactRancherButton from '../components/ContactRancherButton';
 import Link from 'next/link';
 import { trackEvent } from '@/lib/analytics';
+import { normalizeImageUrl } from '@/lib/imageUrl';
 
 interface Rancher {
   id: string;
@@ -664,7 +665,7 @@ function PastOrdersSection({
                 <div className="flex items-center gap-3 min-w-0">
                   {rancher?.['Logo URL'] && (
                     <img
-                      src={rancher['Logo URL']}
+                      src={normalizeImageUrl(rancher['Logo URL'] || '')}
                       alt={rancher['Ranch Name']}
                       className="w-12 h-12 object-cover border border-dust flex-shrink-0"
                     />
@@ -814,7 +815,7 @@ function YourMatchHero({ rancher, status }: { rancher: Rancher; status: string }
       <div className="flex flex-col sm:flex-row gap-5 items-start">
         {rancher['Logo URL'] && (
           <img
-            src={rancher['Logo URL']}
+            src={normalizeImageUrl(rancher['Logo URL'] || '')}
             alt={rancher['Ranch Name']}
             className="w-20 h-20 object-cover border border-dust flex-shrink-0"
           />
@@ -898,7 +899,7 @@ function RancherCard({ rancher }: { rancher: Rancher }) {
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3 min-w-0">
           {rancher['Logo URL'] && (
-            <img src={rancher['Logo URL']} alt={rancher['Ranch Name']} className="w-12 h-12 object-cover border border-dust flex-shrink-0" />
+            <img src={normalizeImageUrl(rancher['Logo URL'] || '')} alt={rancher['Ranch Name']} className="w-12 h-12 object-cover border border-dust flex-shrink-0" />
           )}
           <div className="min-w-0">
             <h3 className="font-serif text-xl">{rancher['Ranch Name']}</h3>

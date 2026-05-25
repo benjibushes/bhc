@@ -4,6 +4,7 @@ import Pill from '../components/Pill';
 import Card from '../components/Card';
 import StickyMobileCTA from '../components/StickyMobileCTA';
 import { getAllRecords, TABLES } from '@/lib/airtable';
+import { normalizeImageUrl } from '@/lib/imageUrl';
 
 // Public case-study wall. Pulls every Closed Won referral from Airtable,
 // renders each as a card. Aggregate stats at top. Updates automatically as
@@ -85,7 +86,7 @@ async function fetchWins(): Promise<{
         saleAmount: Number(ref['Sale Amount']) || 0,
         orderType: (ref['Order Type'] || 'Beef').toString(),
         closedAt: (ref['Closed At'] || '').toString(),
-        rancherLogo: (rancher['Logo URL'] || '').toString(),
+        rancherLogo: normalizeImageUrl((rancher['Logo URL'] || '').toString()),
       } as Win;
     })
     .filter((w): w is Win => w !== null && w.saleAmount > 0)

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getActiveRancherPages } from '@/lib/airtable';
+import { normalizeImageUrl } from '@/lib/imageUrl';
 
 // Public endpoint — returns all ranchers with Page Live = true
 // Only exposes fields needed for the directory listing (no PII)
@@ -13,7 +14,11 @@ export async function GET() {
       ranch_name: r['Ranch Name'] || '',
       operator_name: r['Operator Name'] || '',
       tagline: r['Tagline'] || '',
-      logo_url: r['Logo URL'] || '',
+      // Normalize sharing URLs (Dropbox, Google Drive) to raw image
+      // URLs so <img src> renders the actual logo. Audited 2026-05-25:
+      // 2 ranchers had pasted sharing URLs that returned HTML preview
+      // pages instead of bytes.
+      logo_url: normalizeImageUrl((r['Logo URL'] || '').toString()),
       state: r['State'] || '',
       beef_types: r['Beef Types'] || '',
       states_served: r['States Served'] || '',
