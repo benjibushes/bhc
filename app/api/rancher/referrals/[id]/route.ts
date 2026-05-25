@@ -373,6 +373,29 @@ export async function PATCH(
           }
         }
 
+        // ── Closed Lost → Buyer Stage CLOSED ────────────────────────────
+        // Audit finding: dashboard PATCH flipped Buyer Stage to CLOSED on
+        // Closed Won (line ~346) but NOT on Closed Lost. Per Airtable Buyer
+        // Stage field spec, CLOSED is terminal for BOTH purchased AND
+        // ghosted/non-responsive. Without this flip:
+        //   - Buyer stays MATCHED forever after a lost deal
+        //   - Stats counter mislabels them as "in pipeline"
+        //   - Email-sequences cron may keep nurturing a terminal buyer
+        if (status === 'Closed Lost') {
+          const buyerIds = referral['Buyer'] || [];
+          const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+          if (buyerId) {
+            try {
+              await updateRecord(TABLES.CONSUMERS, buyerId, {
+                'Buyer Stage': 'CLOSED',
+                'Buyer Stage Updated At': new Date().toISOString(),
+              });
+            } catch (stageErr: any) {
+              console.error('Closed Lost Buyer Stage flip error:', stageErr?.message);
+            }
+          }
+        }
+
         // ── BUYER HEALTH on Closed Lost with no_response reason ────────
         // When a rancher closes a deal Lost AND tells us the buyer never replied,
         // we count it against the buyer's health. After NON_RESPONSIVE_THRESHOLD

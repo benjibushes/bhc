@@ -202,6 +202,32 @@ async function applyAction(
     } catch (e: any) {
       console.warn('[quick-action] counter decrement failed:', e?.message);
     }
+
+    // ── Flip Consumer.Buyer Stage to CLOSED ──────────────────────────
+    // Audit finding: prior to this commit, Closed Won/Lost only flipped
+    // the Referral row. The buyer stayed in MATCHED stage indefinitely,
+    // which:
+    //   - Skewed /api/stats/public.familiesMatched (counts MATCHED as
+    //     "in pipeline" when buyer actually purchased/closed)
+    //   - Broke 90-day repeat cron's eligibility check (expects CLOSED)
+    //   - Confused operator views ("why is Eric still MATCHED if he
+    //     closed last week?")
+    //
+    // Look up the buyer linked to the referral + flip stage to CLOSED.
+    // CLOSED is terminal for both purchased + ghosted/non-responsive
+    // (per Airtable Buyer Stage field doc).
+    try {
+      const refRow: any = await getRecordById(TABLES.REFERRALS, decoded.referralId);
+      const buyerIds: string[] = (refRow?.['Buyer'] || []) as string[];
+      if (buyerIds[0]) {
+        await updateRecord(TABLES.CONSUMERS, buyerIds[0], {
+          'Buyer Stage': 'CLOSED',
+          'Buyer Stage Updated At': new Date().toISOString(),
+        });
+      }
+    } catch (e: any) {
+      console.warn('[quick-action] Consumer Buyer Stage flip failed:', e?.message);
+    }
   }
 
   // Closed Won: fire Stripe commission invoice + Telegram celebration
