@@ -47,37 +47,423 @@
 
 ---
 
-## Operator setup (Task 0 — one-time, ~30 min)
+## Business Model — Scope Discipline (locked)
 
-**Stripe Dashboard (test-mode first, then live):**
+The scariest mistake at this phase is scope creep into shipping / fulfillment / customer-service infrastructure. Lock the boundary here before any code lands.
 
-1. Create 3 Products:
-   - Pasture Membership — recurring price $150/mo
-   - Ranch Membership — recurring price $350/mo
-   - Operator Membership — recurring price $500/mo
+### What BuyHalfCow IS
 
-2. Create 3 Add-On Products (one-off prices, charged via Invoice):
-   - Custom Video Shoot — $2,500
-   - Brand Photo Refresh — $1,500
-   - Founder-Letter Campaign — $750
-   - (Brand partner intro + PPC management are deal-percentage; tracked manually until volume justifies automation)
+1. **Marketing engine** — verified-listing on map, custom landing page per rancher, automated buyer matching, founder-letter newsletter, social proof distribution.
+2. **Lead capture** — `/access` quiz, intent scoring, state-based routing, capacity gating per rancher.
+3. **Deposit holder** — Stripe Connect direct charge. Buyer pays through BHC; funds split between rancher's Connect account (93% / 97% / 100% by tier) and platform commission pool (7% / 3% / 0%). Buyer sees one branded checkout; rancher sees one payout statement.
+4. **Trust intermediary** — buyer trusts BHC because BHC handles the money + has the public proof wall (`/wins`). Rancher trusts BHC because Stripe (not BHC) holds the funds + sends to their bank.
+5. **Communication routing** — buyer ↔ rancher Threads (already shipped Tasks 7-10) with email mirror + inbound routing + Telegram visibility for operator.
 
-3. Activate Stripe Connect Express on the platform account. User confirmed already done.
+### What BuyHalfCow is NOT (for this build)
 
-4. Create webhook endpoints on Stripe Dashboard:
-   - Platform endpoint: `https://buyhalfcow.com/api/webhooks/stripe` (existing — extend for subscription + invoice events)
-   - Connect endpoint: `https://buyhalfcow.com/api/webhooks/stripe-connect` (new — handles `account.updated` for onboarding state)
+| Out of scope | Why | Who handles it |
+|--------------|-----|----------------|
+| Shipping logistics | No carrier integration, no cold-chain infrastructure, no label generation | Rancher arranges directly with buyer via Threads |
+| Processing scheduling | Each rancher uses different USDA processor on different windows | Rancher posts processing date on their landing page; buyer sees it before deposit |
+| Pickup coordination | Local pickup, local delivery, drop-off points — too varied to systematize yet | Rancher arranges via Threads / phone after deposit |
+| Refunds | Complex per-rancher policy; legal + tax implications | Manual via Stripe Dashboard for v1; rancher's policy text shown to buyer before deposit |
+| Customer service post-deposit | Buyer's question about cut sheet, hanging weight, freezer space | Rancher's responsibility; BHC Threads is the channel |
+| Tax forms for rancher | 1099-K, sales tax, ag exemption | Stripe Connect handles 1099-K automatically; rancher handles state-level sales tax / ag exemption per their state |
+| Insurance / spoilage / loss in transit | No carrier liability product | Out of scope — rancher's policy |
 
-5. Copy webhook signing secrets to Vercel Project Settings → Environment Variables (Preview only first):
-   - `STRIPE_CONNECT_WEBHOOK_SECRET` (Connect endpoint secret)
-   - `STRIPE_PASTURE_PRICE_ID` (Pasture monthly recurring price)
-   - `STRIPE_RANCH_PRICE_ID`
-   - `STRIPE_OPERATOR_PRICE_ID`
-   - `STRIPE_ADDON_VIDEO_PRICE_ID`
-   - `STRIPE_ADDON_PHOTO_PRICE_ID`
-   - `STRIPE_ADDON_FOUNDER_LETTER_PRICE_ID`
+**The product = "deposit holder + marketing engine."** Anything past that is the rancher's deal. This discipline keeps platform liability narrow + operationally tractable.
 
-6. Resend Inbound dashboard — confirm catch-all on `replies.buyhalfcow.com` forwards `thread-<id>@…` to `/api/webhooks/resend-inbound`. Re-test if any routing rules were tier-specific.
+### Rancher-side fulfillment data shown to buyer BEFORE deposit
+
+So the buyer makes an informed payment decision without BHC owning logistics, we surface the rancher's setup on the deposit page:
+
+- **Fulfillment Type** (multiselect) — `Local Pickup` / `Local Delivery` / `Cold-Chain Shipping` (rancher picks one or more)
+- **Pickup City** + **Delivery Radius Miles** (if local)
+- **Next Processing Date** + **Shipping Lead Time Days** (if shipping)
+- **Refund Policy** (rancher writes their own, ≤500 chars; shown verbatim under "Before you pay")
+- **Pickup / Delivery / Shipping Cost Notes** — optional rancher-written line for extras (e.g. "Cooler shipping $45")
+
+The deposit page shows: rancher's price + rancher's fulfillment info + rancher's refund policy → buyer pays the deposit. After payment, buyer + rancher continue in the Thread to arrange delivery details.
+
+### Legacy rancher path — grandfather + opt-in upgrade
+
+Existing performers (Sackett, High Lonesome, Ashcraft, Hewitson, ZK Ranches, etc.) keep their current model unless they opt in to a tier. This protects revenue continuity.
+
+**Implementation:**
+- New Ranchers field `Pricing Model` (singleSelect): `legacy` / `tier_v2`
+- All existing ranchers default to `legacy` via a one-time backfill (Task 1 Step 6)
+- Legacy ranchers:
+  - Keep using their existing Payment Links on landing pages
+  - Continue 10% commission via post-close `commission-invoices` cron (unchanged)
+  - Don't see tier-pick step in setup wizard
+  - DO see a one-time opt-in banner on their dashboard: "Upgrade to a tier with marketing perks · See /partner"
+- New ranchers:
+  - `Pricing Model = tier_v2` set at signup
+  - Tier-pick is required before going live
+  - Stripe Connect onboarding flow runs after tier-pick
+  - Buyer deposit flow only opens when both `Tier != None` AND `Stripe Connect Status = active`
+
+**Migration policy:** legacy rancher who opts in:
+1. Picks tier on `/partner`
+2. Stripe Connect onboard runs (V2 API)
+3. `Pricing Model` flips to `tier_v2`
+4. Old Payment Links on landing page get auto-replaced with BHC checkout buttons
+5. Existing referral history stays — historic Sale Amount / Commission Due / Closed At rows untouched
+
+**Reverse migration NOT supported.** Once on `tier_v2`, can't downgrade back to `legacy`. Document in operator playbook.
+
+### Money flow summary
+
+```
+Buyer pays $400 deposit (Quarter Cow from a Ranch-tier rancher)
+   │
+   ▼
+Stripe Checkout Session (mode: 'payment')
+   • destination_charge with stripeAccount header = rancher's acct_*
+   • application_fee_amount = 12_00 cents (3% of $400)
+   │
+   ▼
+Stripe splits:
+   • $388 → rancher's Connect account balance (97%)
+   • $12  → BHC platform commission balance (3%)
+   │
+   ▼
+On rancher's "Confirm Fulfillment" click:
+   • Stripe payout from rancher's Connect balance → rancher's bank (Stripe handles transfer schedule)
+   • Platform's $12 stays in BHC's main Stripe balance (paid out to BHC's bank on Stripe's standard schedule)
+   │
+   ▼
+Monthly subscription (separate flow, runs in parallel):
+   • Rancher's Tier subscription ($150/$350/$500) charges rancher's saved payment method
+   • Subscription customer_account = same acct_* (V2 unifies)
+   • Funds flow rancher's account → BHC platform main account on the 1st of each month
+```
+
+**Two payment streams:** transactional commission per close (real-time, per-tier) + monthly subscription (recurring, flat). Both billed via Stripe; both visible in admin payments dashboard.
+
+---
+
+## Stripe V2 API Reference (locked — supersedes earlier plan drafts)
+
+Stripe's official integration prompt (2026-05) directs us to use the **V2 Accounts API** for Connect onboarding. V2 unifies Express / Standard / Custom into a single `account` object with `configuration.merchant` + `configuration.customer` capability blocks. This is the API we build against. Older `type: 'express'` / `type: 'standard'` patterns from V1 are obsolete.
+
+### Account creation (V2)
+
+```ts
+const account = await stripeClient.v2.core.accounts.create({
+  display_name: rancher.operatorName,
+  contact_email: rancher.email,
+  identity: { country: 'us' },
+  dashboard: 'full',                          // V2 full-dashboard equivalent of Express
+  defaults: {
+    responsibilities: {
+      fees_collector: 'stripe',                // Stripe handles platform fees
+      losses_collector: 'stripe',              // Stripe handles dispute losses
+    },
+  },
+  configuration: {
+    customer: {},                              // Enable as customer (subscription billing recipient)
+    merchant: {
+      capabilities: {
+        card_payments: { requested: true },    // Enable as merchant (accept buyer deposits)
+      },
+    },
+  },
+});
+// returns { id: 'acct_XXX', ... } — store on Ranchers.Stripe Connect Account Id
+```
+
+**Never pass `type:` at top level. V2 rejects it.**
+
+### Account Links (V2 onboarding)
+
+```ts
+const accountLink = await stripeClient.v2.core.accountLinks.create({
+  account: rancher.stripeConnectAccountId,
+  use_case: {
+    type: 'account_onboarding',
+    account_onboarding: {
+      configurations: ['merchant', 'customer'],
+      refresh_url: `${SITE_URL}/rancher/billing`,
+      return_url: `${SITE_URL}/rancher/billing?onboarding=done`,
+    },
+  },
+});
+// returns { url: 'https://connect.stripe.com/...' } — redirect rancher
+```
+
+### Account status read (V2)
+
+```ts
+const account = await stripeClient.v2.core.accounts.retrieve(
+  rancher.stripeConnectAccountId,
+  { include: ['configuration.merchant', 'requirements'] },
+);
+const cardPaymentsActive =
+  account?.configuration?.merchant?.capabilities?.card_payments?.status === 'active';
+const reqStatus = account.requirements?.summary?.minimum_deadline?.status;
+const onboardingComplete = reqStatus !== 'currently_due' && reqStatus !== 'past_due';
+```
+
+**For this integration we always read account state from the API — never trust a cached field.** Airtable's `Stripe Connect Status` is a UI hint that gets refreshed by the webhook, not a source of truth.
+
+### Thin event webhooks (V2)
+
+V2 emits `thin` events — payload is just `{ id, type }`. To get full event data, retrieve via `stripeClient.v2.core.events.retrieve(thinEvent.id)`.
+
+```ts
+const thinEvent = client.parseThinEvent(req.body, sig, webhookSecret);
+const event = await client.v2.core.events.retrieve(thinEvent.id);
+// event.type drives handler:
+//   v2.core.account[requirements].updated
+//   v2.core.account[configuration.merchant].capability_status_updated
+//   v2.core.account[configuration.customer].capability_status_updated
+//   v2.core.account[.recipient].capability_status_updated
+```
+
+Local dev listener:
+```bash
+stripe listen \
+  --thin-events 'v2.core.account[requirements].updated,v2.core.account[configuration.merchant].capability_status_updated,v2.core.account[configuration.customer].capability_status_updated' \
+  --forward-thin-to http://localhost:3000/api/webhooks/stripe-connect
+```
+
+### V2 subscription on connected account
+
+V2 unifies customer + connected account ID. **The connected account IS the customer.**
+
+```ts
+const session = await stripeClient.checkout.sessions.create({
+  customer_account: rancher.stripeConnectAccountId,  // acct_XXX (NOT cus_XXX)
+  mode: 'subscription',
+  line_items: [{ price: process.env.STRIPE_PASTURE_PRICE_ID, quantity: 1 }],
+  success_url: `${SITE_URL}/rancher/billing?session_id={CHECKOUT_SESSION_ID}`,
+  cancel_url: `${SITE_URL}/partner/checkout/pasture?canceled=1`,
+});
+```
+
+On subscription webhook: `subscription.customer_account` returns `acct_*` (not `subscription.customer`). All V2-account-keyed reads use `customer_account`.
+
+Billing Portal:
+```ts
+const portal = await stripeClient.billingPortal.sessions.create({
+  customer_account: rancher.stripeConnectAccountId,
+  return_url: `${SITE_URL}/rancher/billing`,
+});
+```
+
+### Direct charges with application fee (buyer deposits → connected rancher)
+
+```ts
+const session = await stripeClient.checkout.sessions.create(
+  {
+    mode: 'payment',
+    line_items: [{ price_data: depositPriceData, quantity: 1 }],
+    payment_intent_data: {
+      application_fee_amount: platformFeeCents,  // 7% / 3% / 0 based on rancher tier
+    },
+    success_url: `${SITE_URL}/checkout/${referralId}/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${SITE_URL}/checkout/${referralId}/deposit`,
+  },
+  {
+    stripeAccount: rancher.stripeConnectAccountId,  // Stripe-Account header for direct charge
+  },
+);
+```
+
+Same pattern applies to product create / list on rancher's connected account: pass `{ stripeAccount: acct_XXX }` as the second arg.
+
+### General tips locked from Stripe prompt
+
+- Always create a `stripeClient` instance (don't use bare `stripe.*` calls).
+- The SDK auto-sets API version `2026-04-22.dahlia`. Don't override unless pinning intentionally.
+- For V2 accounts, `subscription.customer_account` returns `acct_*` IDs. Don't try `subscription.customer.id` on V2 — it doesn't exist.
+- Application fee on direct charges goes in `payment_intent_data.application_fee_amount` (cents).
+- Test mode webhook events fire from Stripe Dashboard "Send test webhook" button.
+
+---
+
+## Operator setup (Task 0 — one-time, run via Stripe MCP from inside Claude Code)
+
+**Why MCP-driven:** plan executor (me or subagent) has Stripe MCP access. Don't ask user to click through dashboard — create products + prices programmatically, copy IDs into Vercel env in one pass.
+
+- [ ] **Step 1: Audit existing products via Stripe MCP**
+
+```
+mcp__...__list_products(limit=50)
+```
+
+As of 2026-05-25 the BUYHALFCOW account (`acct_1TSn5PGTWWNqassH`) has 13 products:
+- 3 Brand partner tier products (`prod_URoKVpIoMzWGUM`, `prod_URoK3HPW9xWTMu`, `prod_URoKANkkJN19bC`)
+- 7 Founding Herd backer products (`prod_URhN*`)
+- 3 perm-test cruft products (`prod_URhMlTT4gOV6IO`, `prod_URh8Ib9Edjglxf`, `prod_URh61K4OzhZJGD`) — delete after verification
+
+NO rancher subscription products yet. Confirmed gap.
+
+- [ ] **Step 2: Create 3 tier subscription products via Stripe MCP**
+
+```
+mcp__...__create_product(name="Rancher · Pasture", description="Pasture tier — verified listing + auto buyer matching. $150/mo + 7% commission.")
+mcp__...__create_price(product=<id from above>, unit_amount=15000, currency="usd", recurring={interval: "month"})
+```
+
+Repeat for Ranch ($350) and Operator ($500). Capture all 3 product IDs + 3 price IDs in this doc as a `<!-- STRIPE-IDS -->` HTML comment block before proceeding.
+
+- [ ] **Step 3: Create 3 add-on one-off products via Stripe MCP**
+
+```
+mcp__...__create_product(name="Rancher Add-On · Custom Video Shoot")
+mcp__...__create_price(product=<id>, unit_amount=250000, currency="usd")  # one-off
+```
+
+Repeat for Photo Refresh ($1,500) and Founder Letter ($750). Note: Brand Intro (15% of deal) + PPC Mgmt (15% + $500 min) are NOT created here — they're manual billing for v1.
+
+- [ ] **Step 4: Activate Connect Express on platform**
+
+User confirmed Connect profile created. Verify capabilities are activated by retrieving the platform account:
+```
+mcp__...__get_stripe_account_info()
+```
+Returns `acct_1TSn5PGTWWNqassH`. Confirm Connect enabled at https://dashboard.stripe.com/connect/accounts/overview.
+
+- [ ] **Step 5: Create webhook endpoints in Stripe Dashboard**
+
+Two endpoints, both pointing at preview deploy first (`bhc-git-stage-3-verticals-...vercel.app`):
+- Platform: `/api/webhooks/stripe` (existing — extend in Task 6)
+  - Events: `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`, `payment_intent.succeeded`, `application_fee.created`
+- Connect (THIN events): `/api/webhooks/stripe-connect` (new — Task 6)
+  - Payload style: `Thin`
+  - Events: `v2.core.account[requirements].updated`, `v2.core.account[configuration.merchant].capability_status_updated`, `v2.core.account[configuration.customer].capability_status_updated`, `v2.core.account[.recipient].capability_status_updated`
+
+Copy each endpoint's signing secret. Set on Vercel **Preview env only** initially:
+- `STRIPE_WEBHOOK_SECRET` (already exists for platform — verify still valid)
+- `STRIPE_CONNECT_WEBHOOK_SECRET` (new — Connect endpoint thin-events secret)
+
+- [ ] **Step 6: Set price IDs on Vercel Preview env**
+
+7 vars total (use Vercel CLI or dashboard):
+- `STRIPE_PASTURE_PRICE_ID`
+- `STRIPE_RANCH_PRICE_ID`
+- `STRIPE_OPERATOR_PRICE_ID`
+- `STRIPE_ADDON_VIDEO_PRICE_ID`
+- `STRIPE_ADDON_PHOTO_PRICE_ID`
+- `STRIPE_ADDON_FOUNDER_LETTER_PRICE_ID`
+- `STRIPE_CONNECT_ENABLED=true` (preview only — keep prod at `false`)
+
+Production env stays `STRIPE_CONNECT_ENABLED=false` until Task 16 canary.
+
+- [ ] **Step 7: Resend Inbound — verify `thread-` prefix routes**
+
+Send synthetic email to `thread-recXXXXXXXXXXXXXX@replies.buyhalfcow.com` from a personal address. Verify `/api/webhooks/resend-inbound` receives it and posts into the corresponding Thread Messages row (Task 10 already deployed on baseline).
+
+---
+
+## Research-backed Onboarding Flow Spec
+
+**Audience profile (locked from BHC.md + ops experience):**
+- D2C beef ranchers running ~5-50 head pasture operation
+- 80% over age 45, rural broadband, mobile-first
+- Skeptical of "platforms" — many burned by Etsy/Amazon/marketplace fees
+- Decision pattern: **"show me a real rancher who got paid recently"** beats every other persuasion lever
+- Often onboarding from a tractor cab or kitchen table on phone
+- Tax-conscious (Form 1099-K threshold + ag-specific deductions)
+- Prefer text/email over phone calls (Telegram/SMS opens 80%+; calls open 20%)
+
+**Research backing for each design choice:**
+
+| Stage | Friction | Research basis | Design response |
+|-------|---------|----------------|-----------------|
+| Public /partner | "Is this real?" | Social proof + recency (Cialdini, peak-end rule) | Live counter "X ranchers paid this month · $Y total". Pin most recent close at top. |
+| Tier pick | Choice paralysis (Schwartz) | Default-bias + anchoring | Pre-highlight "Most ranchers start with Pasture · upgrade anytime." Anchor Operator at top so $150 looks cheap. |
+| Subscription Checkout | $150 entry friction | Hyperbolic discounting + loss aversion | Frame as "Your first lead lands in <state> within 48 hours · cancel anytime if it's not a fit." |
+| Stripe Connect KYC | "Why do they need my SSN?" | Trust transfer + authority bias (Cialdini) | Pre-step explainer card: "Same identity check PayPal + Square use. Federal law (KYC) — every payments platform requires this. Stripe holds your data, not BHC. Takes ~5 min." |
+| Bank account verify | Drop-off (industry avg 30% at this step) | Goal gradient + sunk cost | Progress bar showing "4 of 5 steps complete · 90 seconds to first payout-ready." |
+| Activation moment | Long wait until first sale | Endowment + peak-end | Auto-celebrate: "🐂 Live on the map" Telegram alert + email + ranch slug pinned at top of dashboard within 30s of webhook flip. |
+| First lead | "Will they actually pay me?" | Loss aversion frame | "Buyer reserved at $X deposit. Stripe holds it until you confirm delivery. You see the money in your bank in 48h." |
+| First payout | Skepticism of platform | Trust by proof (Lindy effect) | After first payout lands: email + Telegram with screenshot of Stripe payout statement + "Here's what just hit your bank: $X." |
+
+**Onboarding sequence (locked):**
+
+### Stage 1 — Discovery (public, no account)
+- `/partner` page loads with: 3 tier cards · live counter row · most-recent-close case study card · Operator SLA · add-on menu (collapsed)
+- CTA: each tier card has "Get Started — $X/mo" button
+- Click → check session cookie → if not logged in, redirect to `/rancher/login?return=/partner/checkout/<tier>`
+
+### Stage 2 — Account creation (existing flow, slightly extended)
+- Existing `/rancher/setup` wizard runs. Captures: Operator Name, Ranch Name, Email, Phone, State, Beef Type, Capacity, Slug.
+- NEW step inserted AFTER slug: **"Pick your plan"** with 3 cards. Already-chosen tier from /partner is pre-selected. Continue button = "Start <Tier> · $X/mo"
+- Click → POST `/api/rancher/tier/select` → Stripe Checkout (subscription mode, `customer_account` = rancher's connected account ID — see Stage 3 caveat)
+
+**CAVEAT:** Subscription on connected account requires the connected account to exist FIRST. So we actually create the V2 connected account here BEFORE Checkout, then pass its `acct_*` ID as `customer_account` to Checkout. Subscription billing target = the rancher's own connected account (V2 unifies these). Order:
+
+  1. POST `/api/rancher/tier/select` body: `{ tier }`
+  2. Server: `stripeClient.v2.core.accounts.create({...})` → get `acct_XXX`
+  3. Server: write `Stripe Connect Account Id = acct_XXX` to Ranchers row immediately
+  4. Server: `stripeClient.checkout.sessions.create({ customer_account: acct_XXX, mode: 'subscription', ... })`
+  5. Return checkout URL → rancher pays for tier
+
+### Stage 3 — Stripe Connect KYC (HIGHEST DROP-OFF — most attention here)
+- On Stripe Checkout success (return_url hits `/partner/checkout/<tier>?session_id=cs_xxx`):
+  - Show interstitial: **"One more step · Connect your bank to receive payouts."**
+  - **CRITICAL** explainer card BEFORE the Stripe Account Link:
+    > **Why this step?**
+    > By federal law (KYC), any platform that handles payments must verify the operator's identity before sending money. Stripe (not BHC) holds your data.
+    > **What you'll need (~5 min):**
+    > • Your legal name + SSN or EIN
+    > • Bank account routing + account number
+    > • Photo ID (driver's license)
+    > • Date of birth + address
+    > Same flow PayPal, Square, and DoorDash use. You can pause and resume anytime.
+  - Single button: **"Continue with Stripe →"**
+  - Click → POST `/api/rancher/connect/start` → `stripeClient.v2.core.accountLinks.create({...})` → redirect to Stripe-hosted onboarding
+- On return from Stripe (`?onboarding=done`): redirect to `/rancher/billing` with status check
+
+### Stage 4 — Live activation moment
+- Webhook `v2.core.account[configuration.merchant].capability_status_updated` fires with `card_payments.status === 'active'`
+- Server reads requirements: `currently_due` empty? `past_due` empty?
+- If yes:
+  - Flip `Active Status` → `Active`, `Page Live` → `true`
+  - Trigger launch warmup cron (existing `triggerLaunchWarmup` lib helper) — fires intro emails to waitlisted buyers in their state
+  - Fire celebration email to rancher: "🐂 You're live · Your page: buyhalfcow.com/ranchers/<slug>"
+  - Fire Telegram alert: "🐂 NEW RANCHER LIVE · <name> in <state> · tier <X>"
+
+### Stage 5 — First lead (24-72h)
+- Existing matching engine routes a buyer to them
+- Email arrives w/ quick-action buttons + link to `/rancher` dashboard
+- Dashboard banner pinned: "🎉 Your first lead from BHC · Reply within 24h gets 3× close rate"
+
+### Stage 6 — First deposit (when buyer pays)
+- Buyer hits `/checkout/<refId>/deposit` → Stripe Checkout w/ tier-based application fee
+- `payment_intent.succeeded` webhook fires
+- Funnel Event `deposit_paid` written
+- Rancher gets email + Telegram: "💵 Deposit confirmed · <buyer> paid $X · Confirm fulfillment within 14 days to receive payout."
+
+### Stage 7 — First payout (after fulfillment confirm)
+- Rancher hits "Confirm fulfillment" button on `/rancher` dashboard
+- Server fires payout via V2 (transfer on connected account)
+- Webhook `payout.paid` confirms
+- Email + Telegram to rancher with screenshot of Stripe statement: "💰 $X just hit your bank account · This was BuyHalfCow buyer #N · Your lifetime BHC payout: $Y."
+- THIS is the magic moment — trust unlocked. Subsequent payouts have higher LTV because the rancher saw the first one land.
+
+### Stage 8 — Habit loop (recurring)
+- After 3 closed deals: email triggers "Want to upgrade tier? Here's what Ranch unlocks at your volume."
+- After 5 closed deals: nudge for testimonial → goes on `/wins` + social
+- Monthly cron sends "Your X-month BHC summary: $Y total payout, $Z saved in commission vs Etsy" — recurring loss-aversion lever to keep them subscribed
+
+**Anti-patterns blocked:**
+
+- ❌ No "demo" or "preview" before paying — kills trust ("show me real ranchers, not vapor demos")
+- ❌ No "we'll review your application" — autonomous routing in <30s after Connect activate
+- ❌ No phone calls in onboarding — rancher should never have to call us; if they want to, give them a 5-min Calendly link in dashboard ("Stuck? Book a 5-min call.")
+- ❌ No Long Forms™ — every step has ≤5 fields. Defer profile completion to AFTER they're earning.
+- ❌ No "verify by uploading W9" before earning — Stripe Connect handles tax forms post-payout (1099-K issued at threshold).
+
+**Operator monitoring (Telegram cockpit):**
+- New rancher signup → Telegram alert (existing)
+- Tier picked → NEW: "🎯 <name> picked <tier> ($X/mo)"
+- KYC started → NEW: "🔐 <name> started Stripe onboarding"
+- KYC complete → "🐂 NEW RANCHER LIVE" (existing pattern, extend)
+- 7-day Telegram digest: # ranchers in each pipeline stage (signups / tier-picked / KYC-started / KYC-complete / live)
 
 ---
 
@@ -114,7 +500,8 @@
 
 **Airtable schema additions (Task 1 below adds via MCP):**
 - Ranchers fields:
-  - `Tier` (singleSelect: Pasture / Ranch / Operator / None)
+  - `Pricing Model` (singleSelect: `legacy` / `tier_v2`) — backfill all existing ranchers to `legacy`
+  - `Tier` (singleSelect: Pasture / Ranch / Operator / None) — `tier_v2` ranchers only
   - `Stripe Subscription Id` (text)
   - `Subscription Status` (singleSelect: trialing / active / past_due / canceled / unpaid / none)
   - `Subscription Started At` (datetime)
@@ -122,6 +509,13 @@
   - `Stripe Connect Account Id` (text)
   - `Stripe Connect Status` (singleSelect: not_connected / onboarding / active / restricted)
   - `Stripe Connect Connected At` (datetime)
+  - **NEW fulfillment fields shown to buyer pre-deposit:**
+  - `Fulfillment Types` (multipleSelects: `Local Pickup` / `Local Delivery` / `Cold-Chain Shipping`)
+  - `Pickup City` (text)
+  - `Delivery Radius Miles` (number)
+  - `Shipping Lead Time Days` (number) — typical processing → ship window
+  - `Refund Policy` (multilineText, ≤500 chars) — rancher writes their own; shown verbatim on deposit page
+  - `Fulfillment Cost Notes` (multilineText) — optional extras line (e.g., "Cooler shipping $45")
 - `Payments` table (already specced in earlier plan — Task 1 creates)
 - `Payouts` table (already specced — Task 1 creates)
 - `Add-On Purchases` table:
@@ -156,11 +550,17 @@ State verified: type-check clean, boundary check 0 violations, 10 commits live o
 **Files:**
 - (Schema only — no code)
 
-- [ ] **Step 1: Add tier-related fields to Ranchers**
+- [ ] **Step 1: Add tier + Stripe + fulfillment fields to Ranchers**
 
 Using Airtable MCP create_field on `tbl08y9Be45zNG0OG`:
 
 ```
+// Business-model gate: legacy vs tier_v2
+field: { name: "Pricing Model", type: "singleSelect", options: { choices: [
+  { name: "legacy" }, { name: "tier_v2" }
+]}}
+
+// Tier subscription
 field: { name: "Tier", type: "singleSelect", options: { choices: [
   { name: "None" }, { name: "Pasture" }, { name: "Ranch" }, { name: "Operator" }
 ]}}
@@ -180,6 +580,7 @@ field: { name: "Subscription Next Invoice At", type: "dateTime", options: {
   dateFormat: { name: "iso" }, timeFormat: { name: "24hour" }, timeZone: "utc"
 }}
 
+// Stripe Connect (V2 account)
 field: { name: "Stripe Connect Account Id", type: "singleLineText" }
 
 field: { name: "Stripe Connect Status", type: "singleSelect", options: { choices: [
@@ -190,6 +591,22 @@ field: { name: "Stripe Connect Status", type: "singleSelect", options: { choices
 field: { name: "Stripe Connect Connected At", type: "dateTime", options: {
   dateFormat: { name: "iso" }, timeFormat: { name: "24hour" }, timeZone: "utc"
 }}
+
+// Fulfillment info — shown to buyer on deposit page BEFORE payment.
+// Rancher self-reports; BHC never owns logistics.
+field: { name: "Fulfillment Types", type: "multipleSelects", options: { choices: [
+  { name: "Local Pickup" }, { name: "Local Delivery" }, { name: "Cold-Chain Shipping" }
+]}}
+
+field: { name: "Pickup City", type: "singleLineText" }
+
+field: { name: "Delivery Radius Miles", type: "number", options: { precision: 0 }}
+
+field: { name: "Shipping Lead Time Days", type: "number", options: { precision: 0 }}
+
+field: { name: "Refund Policy", type: "multilineText" }
+
+field: { name: "Fulfillment Cost Notes", type: "multilineText" }
 ```
 
 - [ ] **Step 2: Create Payments table via MCP**
@@ -260,6 +677,23 @@ create_table:
 - [ ] **Step 5: Verify via MCP list_tables_for_base + commit zero code**
 
 Schema-only task. Log table IDs in a comment block at top of `lib/tiers.ts` (Task 2).
+
+- [ ] **Step 6: Backfill `Pricing Model = legacy` on every existing rancher**
+
+Via Airtable MCP `list_records_for_table` (paginated) + `update_records_for_table`:
+
+```
+all existing Ranchers (Pricing Model is empty) → set Pricing Model = "legacy"
+```
+
+This is the grandfather flip. Locks existing performers into the old 10%-commission post-close invoice flow. New ranchers signing up after the setup-wizard tier-pick step (Task 11) get `tier_v2` written at signup.
+
+Verify count via MCP:
+- Total Ranchers: should match pre-backfill count
+- `Pricing Model = legacy`: should equal total Ranchers (all of them)
+- `Pricing Model = tier_v2`: should be 0 immediately after backfill
+
+Document the backfill count in the Task 1 commit message + the soak log (Task 14).
 
 ---
 
@@ -469,69 +903,76 @@ git push
 - Create: `app/api/rancher/tier/change/route.ts`
 - Create: `app/api/rancher/tier/portal/route.ts`
 
-- [ ] **Step 1: stripeSubscription helpers**
+- [ ] **Step 1: stripeSubscription helpers (V2 API)**
 
 ```ts
-// lib/stripeSubscription.ts — Stripe Subscription helpers for the 3-tier model.
-// Each rancher gets ONE subscription. Tier changes proration via subscription.update.
+// lib/stripeSubscription.ts — V2 Stripe Subscription helpers for the 3-tier model.
+//
+// V2 unifies Customer + Connected Account. The rancher's `acct_*` ID is used
+// as both:
+//   - the Connected Account (receives buyer deposits via direct charge)
+//   - the Customer (billed for monthly tier subscription)
+// Pass `customer_account: 'acct_*'` to checkout.sessions.create + billingPortal.
+// Do NOT create a separate cus_* customer.
+//
+// Each rancher gets ONE subscription. Tier changes proration via subscriptions.update.
 
 import Stripe from 'stripe';
 import { TIERS, TierSlug } from '@/lib/tiers';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2024-06-20' as any,
-});
+// Stripe Client — single instance per process. SDK auto-sets API version
+// 2026-04-22.dahlia (or whatever is current at SDK install time).
+const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY || '');
 
-export async function getOrCreateCustomer(rancherId: string, email: string, name: string): Promise<string> {
-  const existing = await stripe.customers.list({ email, limit: 1 });
-  if (existing.data[0]) return existing.data[0].id;
-  const cust = await stripe.customers.create({
-    email,
-    name,
-    metadata: { rancherId },
-  });
-  return cust.id;
-}
-
-export async function createTierCheckoutSession(input: {
+export interface TierCheckoutInput {
   rancherId: string;
-  customerId: string;
+  connectedAccountId: string;  // acct_XXX — created via stripeConnect.createConnectAccount BEFORE this call
   tier: TierSlug;
   successUrl: string;
   cancelUrl: string;
-}): Promise<{ url: string }> {
+}
+
+export async function createTierCheckoutSession(input: TierCheckoutInput): Promise<{ url: string }> {
   const priceId = process.env[TIERS[input.tier].stripePriceIdEnv];
-  if (!priceId) throw new Error(`Missing ${TIERS[input.tier].stripePriceIdEnv}`);
-  const session = await stripe.checkout.sessions.create({
+  if (!priceId) throw new Error(`Missing ${TIERS[input.tier].stripePriceIdEnv} env var`);
+  const session = await stripeClient.checkout.sessions.create({
     mode: 'subscription',
-    customer: input.customerId,
+    // V2: the connected account IS the customer. Use customer_account, NOT customer.
+    customer_account: input.connectedAccountId,
     line_items: [{ price: priceId, quantity: 1 }],
     success_url: input.successUrl,
     cancel_url: input.cancelUrl,
     metadata: { rancherId: input.rancherId, tier: input.tier },
-    subscription_data: { metadata: { rancherId: input.rancherId, tier: input.tier }},
+    subscription_data: { metadata: { rancherId: input.rancherId, tier: input.tier } },
   });
   return { url: session.url || '' };
 }
 
 export async function changeSubscriptionTier(subscriptionId: string, newTier: TierSlug): Promise<void> {
   const newPriceId = process.env[TIERS[newTier].stripePriceIdEnv];
-  if (!newPriceId) throw new Error(`Missing ${TIERS[newTier].stripePriceIdEnv}`);
-  const sub = await stripe.subscriptions.retrieve(subscriptionId);
+  if (!newPriceId) throw new Error(`Missing ${TIERS[newTier].stripePriceIdEnv} env var`);
+  const sub = await stripeClient.subscriptions.retrieve(subscriptionId);
   const itemId = sub.items.data[0].id;
-  await stripe.subscriptions.update(subscriptionId, {
+  await stripeClient.subscriptions.update(subscriptionId, {
     items: [{ id: itemId, price: newPriceId }],
     proration_behavior: 'always_invoice',
     metadata: { ...sub.metadata, tier: newTier },
   });
 }
 
-export async function createCustomerPortalSession(customerId: string, returnUrl: string): Promise<{ url: string }> {
-  const session = await stripe.billingPortal.sessions.create({
-    customer: customerId,
+export async function createBillingPortalSession(connectedAccountId: string, returnUrl: string): Promise<{ url: string }> {
+  // V2: use customer_account, not customer
+  const session = await stripeClient.billingPortal.sessions.create({
+    customer_account: connectedAccountId,
     return_url: returnUrl,
   });
   return { url: session.url };
+}
+
+// Helper to extract V2 connected account id from a subscription webhook payload.
+// V2: subscription.customer_account is the acct_* id. subscription.customer DOES NOT EXIST on V2.
+export function rancherIdFromSubscription(subscription: any): { connectedAccountId: string } {
+  return { connectedAccountId: subscription.customer_account as string };
 }
 ```
 
@@ -539,8 +980,8 @@ export async function createCustomerPortalSession(customerId: string, returnUrl:
 
 Auth: rancher-session JWT. Body: `{ tier: TierSlug }`. Flow:
 1. Read rancher row, check no existing active subscription
-2. getOrCreateCustomer
-3. createTierCheckoutSession
+2. If no `Stripe Connect Account Id`: call `stripeConnect.createConnectAccount()` (Task 7 — V2 accounts.create), persist `acct_*` to Ranchers row IMMEDIATELY (so refresh-mid-flow doesn't duplicate)
+3. createTierCheckoutSession with `connectedAccountId = acct_*`
 4. Return `{ url }` → page redirects to Stripe Checkout
 
 - [ ] **Step 3: /api/rancher/tier/change POST**
@@ -668,15 +1109,22 @@ case 'payment_intent.succeeded': {
 }
 ```
 
-- [ ] **Step 2: Build Connect webhook**
+- [ ] **Step 2: Build Connect webhook (V2 THIN events)**
 
 ```ts
 // app/api/webhooks/stripe-connect/route.ts
+//
+// V2 Connect events are THIN — payload is just { id, type }. We must:
+//   1. Parse via stripeClient.parseThinEvent()
+//   2. Retrieve full event data via stripeClient.v2.core.events.retrieve()
+//   3. For account events, retrieve the account via v2.core.accounts.retrieve()
+//      with the include[] for the fields we need.
+
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '2024-06-20' as any });
+const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY || '');
 const WEBHOOK_SECRET = process.env.STRIPE_CONNECT_WEBHOOK_SECRET || '';
 
 export const dynamic = 'force-dynamic';
@@ -685,28 +1133,76 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   const rawBody = await req.text();
   const sig = req.headers.get('stripe-signature') || '';
-  let event: Stripe.Event;
+
+  let thinEvent;
   try {
-    event = stripe.webhooks.constructEvent(rawBody, sig, WEBHOOK_SECRET);
-  } catch {
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
+    thinEvent = stripeClient.parseThinEvent(rawBody, sig, WEBHOOK_SECRET);
+  } catch (e: any) {
+    return NextResponse.json({ error: `Invalid signature: ${e?.message}` }, { status: 400 });
   }
-  if (event.type === 'account.updated') {
-    const account = event.data.object as Stripe.Account;
-    const safeId = account.id.replace(/"/g, '\\"');
-    const matches: any[] = await getAllRecords(TABLES.RANCHERS, `{Stripe Connect Account Id} = "${safeId}"`);
-    if (matches[0]) {
-      const status: 'active' | 'restricted' | 'onboarding' =
-        account.charges_enabled && account.payouts_enabled ? 'active' :
-        account.requirements?.disabled_reason ? 'restricted' :
-        'onboarding';
-      await updateRecord(TABLES.RANCHERS, matches[0].id, {
-        'Stripe Connect Status': status,
-        ...(status === 'active' && !matches[0]['Stripe Connect Connected At'] ? { 'Stripe Connect Connected At': new Date().toISOString() } : {}),
-      });
-    }
+
+  // Capability change OR requirements change — both indicate onboarding state shift.
+  const isCapabilityEvent =
+    thinEvent.type === 'v2.core.account[configuration.merchant].capability_status_updated' ||
+    thinEvent.type === 'v2.core.account[configuration.customer].capability_status_updated' ||
+    thinEvent.type === 'v2.core.account[.recipient].capability_status_updated';
+  const isRequirementsEvent = thinEvent.type === 'v2.core.account[requirements].updated';
+
+  if (!isCapabilityEvent && !isRequirementsEvent) {
+    return NextResponse.json({ ok: true, skipped: thinEvent.type });
   }
-  return NextResponse.json({ ok: true });
+
+  // Fetch full event data to get account context
+  const event = await stripeClient.v2.core.events.retrieve(thinEvent.id);
+  // The thin event carries account_id in event.related_object.id (per Stripe V2 docs)
+  const accountId = (event as any).related_object?.id;
+  if (!accountId) return NextResponse.json({ ok: true, skipped: 'no account_id' });
+
+  // Retrieve account with merchant + requirements included
+  const account = await stripeClient.v2.core.accounts.retrieve(accountId, {
+    include: ['configuration.merchant', 'requirements'],
+  });
+
+  // Look up rancher by stored Connect account id
+  const safeId = accountId.replace(/"/g, '\\"');
+  const matches: any[] = await getAllRecords(TABLES.RANCHERS, `{Stripe Connect Account Id} = "${safeId}"`);
+  if (!matches[0]) return NextResponse.json({ ok: true, skipped: 'rancher not found' });
+  const rancher = matches[0];
+
+  // V2 status check
+  const cardPaymentsActive =
+    (account as any)?.configuration?.merchant?.capabilities?.card_payments?.status === 'active';
+  const reqStatus = (account as any)?.requirements?.summary?.minimum_deadline?.status;
+  const onboardingComplete = reqStatus !== 'currently_due' && reqStatus !== 'past_due';
+
+  const status: 'active' | 'restricted' | 'onboarding' | 'not_connected' =
+    cardPaymentsActive && onboardingComplete ? 'active' :
+    reqStatus === 'past_due' ? 'restricted' :
+    'onboarding';
+
+  const updates: Record<string, any> = { 'Stripe Connect Status': status };
+  if (status === 'active' && !rancher['Stripe Connect Connected At']) {
+    updates['Stripe Connect Connected At'] = new Date().toISOString();
+    // Activation moment — trigger downstream effects.
+    // 1. Flip rancher Live so matching/suggest can route them
+    updates['Active Status'] = 'Active';
+    updates['Page Live'] = true;
+    // 2. Telegram celebration
+    try {
+      const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `🐂 <b>NEW RANCHER LIVE</b>\n\n${rancher['Operator Name'] || rancher['Ranch Name']} (${rancher['State']})\nTier: ${rancher['Tier']}\nStripe acct: <code>${accountId}</code>`,
+      );
+    } catch {}
+    // 3. Launch warmup — fires intro emails to waitlisted buyers in their state
+    try {
+      const { triggerLaunchWarmup } = await import('@/lib/triggerLaunchWarmup');
+      await triggerLaunchWarmup(rancher.id);
+    } catch {}
+  }
+  await updateRecord(TABLES.RANCHERS, rancher.id, updates);
+  return NextResponse.json({ ok: true, status });
 }
 ```
 
@@ -714,62 +1210,115 @@ export async function POST(req: Request) {
 
 ---
 
-## Task 7: Connect Express onboarding
+## Task 7: Connect onboarding (V2 API)
 
 **Files:**
 - Create: `lib/stripeConnect.ts`
 - Create: `app/api/rancher/connect/start/route.ts`
 
-- [ ] **Step 1: stripeConnect helpers**
+- [ ] **Step 1: stripeConnect helpers (V2)**
 
 ```ts
 // lib/stripeConnect.ts
+//
+// V2 Connect helpers. NO `type: 'express'` — V2 unifies account types into a
+// single object with configuration.{merchant,customer} capability blocks.
+// See https://docs.stripe.com/api/v2/core/accounts/object for the full schema.
+
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '2024-06-20' as any });
+const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY || '');
 
-export async function createConnectAccount(input: { email: string; businessName: string }): Promise<{ accountId: string }> {
-  const account = await stripe.accounts.create({
-    type: 'express',
-    email: input.email,
-    business_type: 'individual',
-    business_profile: {
-      name: input.businessName,
-      product_description: 'Direct-from-rancher beef sales via BuyHalfCow',
-      mcc: '0763',
+export interface CreateConnectAccountInput {
+  email: string;
+  displayName: string;       // shown in Stripe dashboard, on payout statements
+  rancherId: string;          // metadata for our own lookups
+}
+
+export async function createConnectAccount(input: CreateConnectAccountInput): Promise<{ accountId: string }> {
+  const account = await stripeClient.v2.core.accounts.create({
+    display_name: input.displayName,
+    contact_email: input.email,
+    identity: { country: 'us' },
+    dashboard: 'full',                          // V2 equivalent of legacy Express
+    defaults: {
+      responsibilities: {
+        fees_collector: 'stripe',
+        losses_collector: 'stripe',
+      },
     },
-    capabilities: {
-      transfers: { requested: true },
-      card_payments: { requested: true },
+    configuration: {
+      customer: {},                              // Subscription billing recipient
+      merchant: {
+        capabilities: {
+          card_payments: { requested: true },    // Accept buyer deposits
+        },
+      },
     },
-    settings: {
-      payouts: { schedule: { interval: 'manual' }},
-    },
+    metadata: { rancherId: input.rancherId },
   });
   return { accountId: account.id };
 }
 
-export async function createOnboardingLink(accountId: string, returnUrl: string, refreshUrl: string): Promise<{ url: string }> {
-  const link = await stripe.accountLinks.create({
-    account: accountId,
-    return_url: returnUrl,
-    refresh_url: refreshUrl,
-    type: 'account_onboarding',
+export async function createOnboardingLink(input: {
+  accountId: string;
+  returnUrl: string;
+  refreshUrl: string;
+}): Promise<{ url: string }> {
+  const link = await stripeClient.v2.core.accountLinks.create({
+    account: input.accountId,
+    use_case: {
+      type: 'account_onboarding',
+      account_onboarding: {
+        configurations: ['merchant', 'customer'],
+        refresh_url: input.refreshUrl,
+        return_url: input.returnUrl,
+      },
+    },
   });
   return { url: link.url };
+}
+
+export async function getConnectAccountStatus(accountId: string): Promise<{
+  cardPaymentsActive: boolean;
+  onboardingComplete: boolean;
+  requirementsStatus: string | null;
+  status: 'not_connected' | 'onboarding' | 'active' | 'restricted';
+}> {
+  const account = await stripeClient.v2.core.accounts.retrieve(accountId, {
+    include: ['configuration.merchant', 'requirements'],
+  });
+  const cardPaymentsActive =
+    (account as any)?.configuration?.merchant?.capabilities?.card_payments?.status === 'active';
+  const reqStatus = (account as any)?.requirements?.summary?.minimum_deadline?.status ?? null;
+  const onboardingComplete = reqStatus !== 'currently_due' && reqStatus !== 'past_due';
+  const status: 'not_connected' | 'onboarding' | 'active' | 'restricted' =
+    cardPaymentsActive && onboardingComplete ? 'active' :
+    reqStatus === 'past_due' ? 'restricted' :
+    'onboarding';
+  return { cardPaymentsActive, onboardingComplete, requirementsStatus: reqStatus, status };
 }
 ```
 
 - [ ] **Step 2: /api/rancher/connect/start POST**
 
-Auth: rancher-session JWT. Refuses if subscription is not active (rancher must pick a tier first). Refuses if `STRIPE_CONNECT_ENABLED !== 'true'`.
+Auth: rancher-session JWT. Refuses if `STRIPE_CONNECT_ENABLED !== 'true'`.
 
 Flow:
-1. Read rancher row. If no `Stripe Connect Account Id`, call createConnectAccount; persist.
-2. Call createOnboardingLink with returnUrl=`/rancher/billing?connect=done`, refreshUrl=`/api/rancher/connect/start`.
-3. Return `{ url }`.
+1. Read rancher row.
+2. If no `Stripe Connect Account Id`: call `createConnectAccount({ email, displayName: operatorName || ranchName, rancherId })` — persist `acct_*` to Airtable IMMEDIATELY (so refresh-mid-flow doesn't duplicate). Mark `Stripe Connect Status='onboarding'`.
+3. Call `createOnboardingLink` with:
+   - `returnUrl=${SITE_URL}/rancher/billing?onboarding=done`
+   - `refreshUrl=${SITE_URL}/api/rancher/connect/start` (Stripe redirects here if rancher abandons mid-flow; same endpoint re-issues a fresh link)
+4. Return `{ url }`.
 
-- [ ] **Step 3: Type-check + commit + push**
+Note: this endpoint is ALSO called from Task 4 Step 2 (tier-select) BEFORE the subscription Checkout, so the connected account exists when we pass `customer_account: acct_*` to the subscription Checkout.
+
+- [ ] **Step 3: Status read endpoint (`/api/rancher/connect/status` GET)**
+
+Auth: rancher-session JWT. Reads rancher's `Stripe Connect Account Id`. If empty: return `{ status: 'not_connected' }`. Else: calls `getConnectAccountStatus(accountId)` LIVE — never trusts the cached Airtable field — and returns the result. Dashboard polls this on `/rancher/billing` mount.
+
+- [ ] **Step 4: Type-check + commit + push**
 
 ---
 
@@ -842,19 +1391,87 @@ export interface CreateDepositInput {
 
 - [ ] **Step 3: /api/checkout/deposit POST**
 
-Auth: member-session (buyer). Body: `{ referralId, tier }` — `tier` is the rancher's current tier (server reads from rancher row, doesn't trust client). Validates buyer owns the referral. Reads rancher's `Stripe Connect Status` (must be `active`) and `Tier`. Computes `amountCents` from rancher's tier price + buyer's selected cut size. Calls `createDepositCheckout`. Records pending payment via `recordDeposit`. Returns `{ url }`.
+Auth: member-session (buyer). Body: `{ referralId, tier, cutSize }` — `tier` is the rancher's current tier (server reads from rancher row, doesn't trust client; if rancher is `Pricing Model = legacy`, server returns 409 "rancher uses legacy payment links" and the deposit page falls back to existing landing-page links).
 
-- [ ] **Step 4: Buyer deposit page**
+Server flow:
+1. Verify buyer owns the referral
+2. Reads rancher row. If `Pricing Model = legacy` → 409 with redirect URL to rancher's legacy Payment Link
+3. Reads rancher's `Stripe Connect Status` — must be `active` else 409
+4. Reads rancher's `Tier` — must be Pasture/Ranch/Operator else 409
+5. Computes `amountCents` from rancher's per-tier price (Quarter/Half/Whole field on Ranchers) + cutSize selector
+6. Calls `createDepositCheckout`
+7. Records pending payment via `recordDeposit` (Tier + Platform Fee Cents stamped)
+8. Returns `{ url }`
 
-`/checkout/[refId]/deposit` — minimal: shows rancher name + ranch name + cut size selector + "Continue to Payment" button. On click, POST `/api/checkout/deposit` → redirect to Stripe Checkout. Test card 4242 in test mode.
+- [ ] **Step 4: Buyer deposit page — fulfillment-aware layout**
+
+`/checkout/[refId]/deposit` — shows ALL the info the buyer needs to make an informed payment decision BEFORE clicking pay:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Reserve your beef                                            │
+│ ─────────────────────────────────────────────────────────── │
+│                                                              │
+│ Rancher · <Ranch Name>                                       │
+│ <City>, <State> · <Ships nationwide? Local pickup? Both?>    │
+│                                                              │
+│ Pick your cut:                                               │
+│  ○ Quarter Cow — $X (≈ <lbs> lbs)                            │
+│  ○ Half Cow — $Y    (≈ <lbs> lbs)                            │
+│  ○ Whole Cow — $Z   (≈ <lbs> lbs)                            │
+│                                                              │
+│ ─── Before you pay ────────────────────────────────────────  │
+│ HOW YOU GET IT:                                              │
+│ <Fulfillment Types verbatim, comma-joined>                   │
+│ <if Local Pickup: "Pickup at <Pickup City>, <State>">        │
+│ <if Local Delivery: "Delivery within <Radius> mi">           │
+│ <if Cold-Chain Shipping: "Ships in ~<Lead Time Days> days    │
+│   after processing on <Next Processing Date>">               │
+│                                                              │
+│ <if Fulfillment Cost Notes: "Extras: <notes>">               │
+│                                                              │
+│ REFUND POLICY:                                               │
+│ <Refund Policy verbatim>                                     │
+│                                                              │
+│ HOW THE PAYMENT WORKS:                                       │
+│ Your deposit goes to <Ranch Name> through Stripe. We hold    │
+│ no funds at BuyHalfCow. <Ranch Name> ships/delivers/has you  │
+│ pick up. You + <Ranch Name> coordinate details by message    │
+│ (we already have a thread open for you).                     │
+│                                                              │
+│   [   Continue to Secure Payment   →   ]                     │
+│                                                              │
+│ Powered by Stripe · BuyHalfCow doesn't store card data       │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Token discipline: bone bg / charcoal text / saddle accents / dust borders. Use the existing site shell + footer.
+
+If `Pricing Model = legacy` on the rancher: don't render this page. Redirect to the rancher's legacy landing page deposit button (`/ranchers/<slug>`) with a one-line banner: "<Ranch Name> uses their own checkout — same beef, same rancher, just a different payment page."
 
 - [ ] **Step 5: Success page**
 
-`/checkout/[refId]/success` — shows "Deposit received" + next steps + "Ask another question" link to `/checkout/[refId]/ask`.
+`/checkout/[refId]/success?session_id=cs_xxx` — fetches the Checkout Session, shows:
+
+```
+🎉 Deposit confirmed — $<amount> to <Ranch Name>
+
+What happens next:
+1. <Ranch Name> got an email + text. They'll reply within 24h.
+2. You + <Ranch Name> arrange <pickup/delivery/shipping> in the message thread.
+3. Once you receive your beef, <Ranch Name> confirms fulfillment and gets paid.
+
+[   Open thread with <Ranch Name>   ]   [   Your dashboard   ]
+```
 
 - [ ] **Step 6: Type-check + commit + smoke**
 
-Smoke with Stripe test card 4242 4242 4242 4242 on preview alias once `STRIPE_CONNECT_ENABLED=true` set on preview env.
+Smoke with Stripe test card 4242 4242 4242 4242 on preview alias once `STRIPE_CONNECT_ENABLED=true` set on preview env. Verify:
+- Payment Intent succeeds in Stripe Dashboard
+- Payment row appears in Airtable w/ correct Tier + Platform Fee Cents
+- Funnel Event `deposit_paid` written
+- Rancher receives Telegram + email confirming deposit
+- Thread auto-opens between buyer + rancher
 
 ---
 
@@ -899,24 +1516,146 @@ Auth: rancher-session JWT. Body: `{ slug }` (one of `video|photo|founder_letter`
 
 ---
 
-## Task 11: Setup wizard tier-select step + dashboard banner
+## Task 11: Setup wizard — tier-pick + fulfillment + dashboard banners
 
 **Files:**
-- Modify: `app/api/rancher/setup/route.ts` — add Tier-select step between profile and Connect bank
-- Modify: `app/rancher/setup/page.tsx` — add wizard step UI
-- Modify: `app/rancher/page.tsx` — pending-action banner
+- Modify: `app/api/rancher/setup/route.ts` — sign new ranchers `Pricing Model='tier_v2'` at first POST
+- Modify: `app/rancher/setup/page.tsx` — add tier-pick step + fulfillment step UI
+- Modify: `app/rancher/page.tsx` — pending-action banners (one per gate)
 
-- [ ] **Step 1: Setup wizard adds tier step**
+- [ ] **Step 1: Sign new ranchers as `tier_v2` at signup**
 
-New step labeled "Pick your plan". Three cards. On select, fire POST `/api/rancher/tier/select` → redirect to Checkout → on return, resume wizard at the Connect bank step.
+In `app/api/rancher/setup/route.ts` initial-create handler, write `'Pricing Model': 'tier_v2'` alongside the existing Operator Name / Email / etc. Legacy ranchers backfilled in Task 1 Step 6 keep `'legacy'`; they never hit this code path (they were already created).
 
-- [ ] **Step 2: Dashboard banner**
+- [ ] **Step 2: Setup wizard — Pick Your Plan step**
 
-If `Tier=None` OR `Subscription Status != active`: show top banner "Pick your plan to unlock buyer matching →" linking to `/partner`.
+Insert after Profile step + before Fulfillment step:
 
-If `Stripe Connect Status != active` (but subscription active): banner "Connect your bank to start receiving deposits →" linking to `/api/rancher/connect/start` (will redirect to Stripe onboarding).
+```
+Step 4 of 6: Pick Your Plan
 
-- [ ] **Step 3: Type-check + commit + push**
+  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+  │  PASTURE    │  │   RANCH     │  │  OPERATOR   │
+  │  $150/mo    │  │  $350/mo    │  │  $500/mo    │
+  │  + 7%       │  │  + 3%       │  │  + 0%       │
+  │             │  │             │  │             │
+  │  We send    │  │  + priority │  │  + we run   │
+  │  you buyers │  │  routing +  │  │  your       │
+  │             │  │  social     │  │  marketing  │
+  │             │  │             │  │             │
+  │  [ Choose ] │  │  [ Choose ] │  │  [ Choose ] │
+  └─────────────┘  └─────────────┘  └─────────────┘
+
+  Cancel anytime · Upgrade or downgrade in 1 click later.
+  See full perks at /partner
+```
+
+Pre-select Pasture by default (lowest-friction default-bias). Continue button fires POST `/api/rancher/tier/select` with chosen tier → Stripe Checkout → on return, wizard resumes at Step 5.
+
+- [ ] **Step 3: Setup wizard — Fulfillment step**
+
+New step after Pricing, before Connect bank. Captures how the rancher delivers to buyers — shown verbatim on the buyer's deposit page (Task 8 Step 4).
+
+```
+Step 5 of 6: How do you get the beef to buyers?
+
+  [✓] Local pickup at my ranch
+  [ ] Local delivery (within driving distance)
+  [ ] Cold-chain shipping (FedEx/UPS)
+
+  If LOCAL PICKUP / DELIVERY:
+  Pickup city + state: [_______________________]
+  Delivery radius (miles, optional): [_____]
+
+  If COLD-CHAIN SHIPPING:
+  Typical lead time after processing (days): [__]
+
+  Extras (optional): [______________________________]
+  e.g., "Cooler shipping $45" — shown to buyer before they pay.
+
+  REFUND POLICY (required, ≤500 chars):
+  [_____________________________________________]
+  [_____________________________________________]
+  Tip: "Full refund within 7 days if cattle isn't processed yet.
+  After processing, store credit only."
+
+  Why we ask: buyers see this verbatim on your deposit page so they
+  can decide before paying. Less back-and-forth for you.
+
+  [   Save + continue   ]
+```
+
+PATCH `/api/rancher/setup` with: `Fulfillment Types`, `Pickup City`, `Delivery Radius Miles`, `Shipping Lead Time Days`, `Fulfillment Cost Notes`, `Refund Policy`.
+
+Validation: at least 1 Fulfillment Type required. Refund Policy required, min 20 chars (force the rancher to actually write something, not just "Standard"). If `Cold-Chain Shipping` selected, `Shipping Lead Time Days` required. If `Local Pickup` or `Local Delivery`, `Pickup City` required.
+
+- [ ] **Step 4: Dashboard pending-action banners**
+
+Banner cascade — show the most-blocking one first:
+
+1. If `Pricing Model='legacy'` → optional opt-in banner (gold accent):
+   > 🎁 Upgrade to a tier with marketing perks · See the new pricing →
+   > [Dismiss for 30 days]
+
+2. If `Pricing Model='tier_v2'` AND `Tier='None' OR Subscription Status != 'active'` → critical (red accent):
+   > ⛔ Pick your plan to start receiving leads · /partner
+
+3. If `Tier != 'None'` AND `Stripe Connect Status != 'active'` → critical:
+   > 💳 Connect your bank — 5 minutes to start receiving payouts. POST → `/api/rancher/connect/start`
+
+4. If `Stripe Connect Status='active'` AND `Fulfillment Types` empty → warn (yellow):
+   > 📦 Tell us how you deliver — buyers see this before they pay.
+
+5. If all above pass AND no `Active Status='Active'` → resolving (gray):
+   > ⏳ You're 60s away from live · matching engine starting…
+
+When all 5 gates pass: no banner — full dashboard renders.
+
+- [ ] **Step 5: Type-check + commit + push**
+
+---
+
+## Task 11.5: Legacy rancher opt-in upgrade flow
+
+**Files:**
+- Create: `app/api/rancher/upgrade-to-tier/route.ts`
+- Modify: `app/partner/page.tsx` — legacy-rancher path
+
+Legacy ranchers see `/partner` and can click "Upgrade my account." This flow lets them migrate from `legacy` to `tier_v2` without losing their referral history.
+
+- [ ] **Step 1: Upgrade endpoint**
+
+POST `/api/rancher/upgrade-to-tier` — auth: rancher-session JWT. Body: `{ tier, fulfillment: {...} }`.
+
+Flow:
+1. Read rancher. If already `tier_v2` → 409 "already upgraded".
+2. Validate fulfillment fields (mirror Task 11 Step 3 validation).
+3. Stamp `Pricing Model = tier_v2` + fulfillment fields immediately.
+4. Create V2 Connect account, persist `Stripe Connect Account Id`.
+5. Create tier Checkout Session w/ `customer_account = acct_*`.
+6. Return `{ checkoutUrl, onboardingUrl }`. Front-end redirects to checkout; on return, redirects to Connect onboarding.
+
+- [ ] **Step 2: Legacy banner deep-link**
+
+The "Upgrade" banner from Task 11 Step 4 Item 1 links to `/partner?from=upgrade`. The /partner page detects the param + the legacy session, surfaces a single CTA card:
+
+```
+You're already a BHC rancher. Upgrade to a tier to unlock marketing perks.
+Your existing referrals + payment links stay — this just adds:
+ • Per-tier commission (7% / 3% / 0% vs legacy 10%)
+ • New marketing perks (priority routing, social posts, etc.)
+ • On-platform deposits (we hold the buyer's payment in escrow-feel)
+
+Pick a tier:    [ Pasture ]   [ Ranch ]   [ Operator ]
+```
+
+After tier pick: walks through fulfillment fields modal (same UI as Task 11 Step 3) → POST `/api/rancher/upgrade-to-tier` → Stripe Checkout → return → Connect onboarding.
+
+- [ ] **Step 3: Auto-replace legacy landing-page Payment Links on upgrade**
+
+When `Pricing Model` flips to `tier_v2`, the rancher's `/ranchers/<slug>` landing page logic switches from rendering the legacy Quarter/Half/Whole Payment Link URLs → rendering BHC Checkout buttons that route to `/checkout/<refId>/deposit`. This is a render-time check in `app/ranchers/[slug]/page.tsx`; no migration of historical referrals needed.
+
+- [ ] **Step 4: Type-check + commit + push**
 
 ---
 
@@ -1043,13 +1782,23 @@ Document in `docs/AUDIT-CX-2026-05-25-stripe.md`.
 
 - [ ] **Step 1: Write ship plan**
 
-Phase 1: merge `stage-3-verticals` → `main` with `STRIPE_CONNECT_ENABLED=false` on prod. Architecture + tier source-of-truth + admin dashboards land but no buyer-facing change.
+Phase 1 — Architecture (Day 0): merge `stage-3-verticals` → `main` with `STRIPE_CONNECT_ENABLED=false` on prod. Architecture + tier source-of-truth + admin dashboards land. Schema additions visible in Airtable. **All existing ranchers backfilled `Pricing Model='legacy'` — no behavior change for them.** No buyer-facing change.
 
-Phase 2: announce `/partner` page publicly. Flip `STRIPE_CONNECT_ENABLED=true` on prod ONLY for the 2 pilot ranchers via a whitelist env (`STRIPE_CONNECT_PILOT_RANCHER_IDS=rec123,rec456`). Endpoints check whitelist before allowing tier-select OR deposit. (Add this gate in Task 4 + Task 8.)
+Phase 2 — /partner discovery (Day 1): announce `/partner` page publicly. Page renders the 3 tiers + add-on menu + live counters. Tier-pick CTAs are LIVE but the actual subscription Checkout returns 503 unless `STRIPE_CONNECT_ENABLED=true` + caller is whitelisted.
 
-Phase 3: 7-day pilot in prod with real $50 deposits to pilot ranchers. Verify payouts hit bank. Refund test purchases after verification.
+Phase 3 — Canary pilot (Days 2-9): flip `STRIPE_CONNECT_ENABLED=true` on prod for ONLY the 2 pilot ranchers via whitelist env `STRIPE_CONNECT_PILOT_RANCHER_IDS=rec123,rec456`. Pilot ranchers:
+- Opt-in via the legacy banner (Task 11.5)
+- Their `Pricing Model` flips `legacy → tier_v2`
+- They pick a tier, get charged the first monthly, complete Connect onboarding
+- We send 1 real test buyer through `/checkout/<refId>/deposit` w/ a $50 deposit (real money to test the full flow incl. Connect payout to bank)
+- Confirm payout lands in pilot rancher's bank within 48h
+- After verification, refund the $50 via Stripe Dashboard (manual; documents the refund flow for v2)
 
-Phase 4: remove whitelist gate; open to all. Email existing ranchers with "your platform now handles deposits" announcement + Customer Portal link.
+Phase 4 — Open to new ranchers (Days 10-13): remove whitelist gate. NEW rancher signups (Pricing Model=tier_v2 by default per Task 11 Step 1) flow through the full tier-pick + Connect path. Existing ranchers stay legacy — NO forced migration.
+
+Phase 5 — Legacy upgrade campaign (Days 14-30, ongoing): send opt-in email to existing legacy ranchers: "Want to try the new pricing? Pasture's $150/mo + 7% beats your current 10% if you close more than 1 deal a month. Upgrade here." Voluntary. Track upgrade conversion in admin dashboard.
+
+**Legacy ranchers can stay legacy forever.** Migration is opt-in only. Reverse migration (tier_v2 → legacy) is NOT supported — document this in the opt-in copy so ranchers understand the move is one-way.
 
 - [ ] **Step 2: Cherry-pick architecture commits to main first**
 
