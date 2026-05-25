@@ -229,17 +229,14 @@ async function handleFounderCheckoutCompleted(session: any, metaType: string) {
     .split(' ')[0] || 'there';
 
   // ── 2. Founder Number (Founding 100 / Title Founder only) ──
+  // Atomic counter via Upstash Redis INCR. Race-safe under concurrent
+  // webhook bursts (e.g. viral founders push). Falls back to legacy
+  // Airtable count-then-add if Redis unset.
   let founderNumber: number | undefined;
   if (mapped.numbered) {
-    try {
-      const sameTier = await getAllRecords(
-        TABLES.CONSUMERS,
-        `{Founder Tier} = "${escapeAirtableValue(mapped.tier)}"`
-      );
-      founderNumber = sameTier.length + 1;
-    } catch (e) {
-      console.error('Founder Number count failed:', e);
-    }
+    const { assignFounderNumber } = await import('@/lib/founderNumber');
+    const assigned = await assignFounderNumber(mapped.tier);
+    if (assigned > 0) founderNumber = assigned;
   }
 
   // ── 3. Upsert Consumer row ──
