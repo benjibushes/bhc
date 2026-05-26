@@ -887,7 +887,11 @@ export async function POST(request: Request) {
           // to its tap-any-tier copy).
           const rancherPricingModel = String(topMatch['Pricing Model'] || 'legacy');
           let depositMagicLinkUrl: string | undefined;
-          if (rancherPricingModel === 'tier_v2') {
+          // Guard empty buyerId/email — signing a token with `''` produces a
+          // valid JWT that fails at getRecordById time on the verify handler,
+          // surfacing as "expired link" in the buyer's UI. Better to skip the
+          // CTA than ship a guaranteed-broken link.
+          if (rancherPricingModel === 'tier_v2' && buyerId && buyerEmail) {
             const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
             const nextPath = `/checkout/${referral.id}/deposit`;
             depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;

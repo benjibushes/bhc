@@ -120,35 +120,51 @@ export async function GET(request: Request) {
   const next = url.searchParams.get('next');
   const safeNext = safeNextPath(next);
 
+  // Resolve redirect base — prefer the request origin (Vercel preview deploys
+  // each have a unique alias; SITE_URL is the prod one). Falls back to
+  // SITE_URL when the request origin can't be parsed.
+  let redirectBase: string;
+  try {
+    redirectBase = new URL(request.url).origin;
+  } catch {
+    redirectBase = SITE_URL;
+  }
+
   if (!token) {
-    return NextResponse.redirect(`${SITE_URL}/member/login?reason=expired-link`, 302);
+    return NextResponse.redirect(`${redirectBase}/member/login?reason=expired-link`, 302);
+  }
+  // Bound the token length. jwt.verify on a multi-kilobyte payload still
+  // costs CPU; capping pre-verify prevents trivial DoS via a malicious URL.
+  // Standard JWTs are <1KB; 4KB is generous.
+  if (token.length > 4096) {
+    return NextResponse.redirect(`${redirectBase}/member/login?reason=expired-link`, 302);
   }
 
   let decoded: any;
   try {
     decoded = jwt.verify(token, JWT_SECRET);
   } catch {
-    return NextResponse.redirect(`${SITE_URL}/member/login?reason=expired-link`, 302);
+    return NextResponse.redirect(`${redirectBase}/member/login?reason=expired-link`, 302);
   }
 
   if (decoded.type !== 'member-login') {
-    return NextResponse.redirect(`${SITE_URL}/member/login?reason=expired-link`, 302);
+    return NextResponse.redirect(`${redirectBase}/member/login?reason=expired-link`, 302);
   }
 
   let consumer: any;
   try {
     consumer = await getRecordById(TABLES.CONSUMERS, decoded.consumerId);
   } catch {
-    return NextResponse.redirect(`${SITE_URL}/member/login?reason=expired-link`, 302);
+    return NextResponse.redirect(`${redirectBase}/member/login?reason=expired-link`, 302);
   }
   if (!consumer) {
-    return NextResponse.redirect(`${SITE_URL}/member/login?reason=expired-link`, 302);
+    return NextResponse.redirect(`${redirectBase}/member/login?reason=expired-link`, 302);
   }
 
   const status = (consumer['Status'] || '').toLowerCase();
   const LOGIN_ALLOWED = ['approved', 'active', 'waitlisted'];
   if (!LOGIN_ALLOWED.includes(status)) {
-    return NextResponse.redirect(`${SITE_URL}/access?reason=not-approved`, 302);
+    return NextResponse.redirect(`${redirectBase}/access?reason=not-approved`, 302);
   }
 
   // Mirror POST handler's session token shape EXACTLY — same payload fields,
@@ -175,5 +191,5 @@ export async function GET(request: Request) {
     path: '/',
   });
 
-  return NextResponse.redirect(`${SITE_URL}${safeNext}`, 302);
+  return NextResponse.redirect(`${redirectBase}${safeNext}`, 302);
 }
