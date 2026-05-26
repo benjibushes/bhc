@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { put } from '@vercel/blob';
-import jwt from 'jsonwebtoken';
-import { JWT_SECRET } from '@/lib/secrets';
+import { requireRancher } from '@/lib/rancherAuth';
 
 // POST /api/rancher/upload
 //
@@ -24,7 +22,6 @@ import { JWT_SECRET } from '@/lib/secrets';
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
-const RANCHER_AUTH_COOKIE = 'bhc-rancher-auth';
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 const ALLOWED_MIME = new Set([
   'image/jpeg',
@@ -34,21 +31,10 @@ const ALLOWED_MIME = new Set([
 ]);
 
 export async function POST(request: NextRequest) {
-  // Auth: rancher session cookie required.
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get(RANCHER_AUTH_COOKIE);
-  if (!sessionCookie?.value) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-  let decoded: any;
-  try {
-    decoded = jwt.verify(sessionCookie.value, JWT_SECRET);
-  } catch {
-    return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-  }
-  if (decoded.type !== 'rancher-session') {
-    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-  }
+  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+  const r = await requireRancher(request);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json({
@@ -88,7 +74,7 @@ export async function POST(request: NextRequest) {
   const rawName = (file as any).name || 'upload';
   const safeName = String(rawName).replace(/[^\w.-]/g, '_').slice(0, 80);
   const rand = Math.random().toString(36).slice(2, 8);
-  const key = `ranchers/${decoded.rancherId}/${rand}-${safeName}`;
+  const key = `ranchers/${session.rancherId}/${rand}-${safeName}`;
 
   try {
     const result = await put(key, file, {

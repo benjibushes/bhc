@@ -1,36 +1,21 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getRecordById, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { requireRancher } from '@/lib/rancherAuth';
 
 export const maxDuration = 60;
 
-import { JWT_SECRET } from '@/lib/secrets';
 import { getRancherCommissionRate } from '@/lib/commission';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('bhc-rancher-auth');
+    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+    const r = await requireRancher(request);
+    if (r instanceof NextResponse) return r;
+    const { session } = r;
 
-    if (!sessionCookie?.value) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-
-    let decoded: any;
-    try {
-      decoded = jwt.verify(sessionCookie.value, JWT_SECRET);
-    } catch {
-      return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-    }
-
-    if (decoded.type !== 'rancher-session') {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
-
-    const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+    const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
     if (!rancher) {
       return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
     }
@@ -45,7 +30,7 @@ export async function GET() {
     let myReferrals: any[] = [];
     try {
       const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
-      const myId = decoded.rancherId;
+      const myId = session.rancherId;
       myReferrals = allRefs.filter((r: any) => {
         const rancher = Array.isArray(r['Rancher']) ? r['Rancher'] : [];
         const suggested = Array.isArray(r['Suggested Rancher']) ? r['Suggested Rancher'] : [];

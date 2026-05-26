@@ -17,12 +17,10 @@
 //   6. Fire Telegram alert to admin (celebration + audit trail)
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { getRecordById, getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
-import { JWT_SECRET } from '@/lib/secrets';
 import { sendBuyerFulfillmentConfirmation } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { requireRancher } from '@/lib/rancherAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -30,19 +28,11 @@ export const maxDuration = 30;
 const PAYMENTS_TABLE = 'Payments';
 
 export async function POST(req: Request) {
-  // ── Auth ──
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get('bhc-rancher-auth');
-  if (!sessionCookie?.value) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  }
-  let decoded: any;
-  try { decoded = jwt.verify(sessionCookie.value, JWT_SECRET); }
-  catch { return NextResponse.json({ error: 'Session expired' }, { status: 401 }); }
-  if (decoded.type !== 'rancher-session') {
-    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-  }
-  const rancherId = String(decoded.rancherId || '');
+  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+  const r = await requireRancher(req);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
+  const rancherId = String(session.rancherId || '');
   if (!rancherId) {
     return NextResponse.json({ error: 'Session missing rancher id' }, { status: 401 });
   }

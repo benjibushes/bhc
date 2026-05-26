@@ -3,12 +3,10 @@
 // + add-on purchase history for /rancher/billing UI.
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { getRecordById, getAllRecords, TABLES } from '@/lib/airtable';
 import { TIERS, tierFor } from '@/lib/tiers';
 import { getConnectAccountStatus } from '@/lib/stripeConnect';
-import { JWT_SECRET } from '@/lib/secrets';
+import { requireRancher } from '@/lib/rancherAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -17,18 +15,13 @@ const PAYMENTS_TABLE = 'Payments';
 const PAYOUTS_TABLE = 'Payouts';
 const ADDONS_TABLE = 'Add-On Purchases';
 
-export async function GET(_req: Request) {
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get('bhc-rancher-auth');
-  if (!sessionCookie?.value) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  let decoded: any;
-  try { decoded = jwt.verify(sessionCookie.value, JWT_SECRET); }
-  catch { return NextResponse.json({ error: 'Session expired' }, { status: 401 }); }
-  if (decoded.type !== 'rancher-session') {
-    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-  }
+export async function GET(req: Request) {
+  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+  const r = await requireRancher(req);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
 
-  const rancher: any = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
+  const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
   if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
 
   const tier = tierFor(rancher);
@@ -53,7 +46,7 @@ export async function GET(_req: Request) {
   }
 
   // Recent payouts (last 30)
-  const safeRancherId = decoded.rancherId.replace(/"/g, '\\"');
+  const safeRancherId = session.rancherId.replace(/"/g, '\\"');
   let payouts: any[] = [];
   try {
     const allPayouts: any[] = await getAllRecords(

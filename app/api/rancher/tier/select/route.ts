@@ -15,13 +15,11 @@
 // already active (use /tier/change instead).
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createConnectAccount } from '@/lib/stripeConnect';
 import { createTierCheckoutSession } from '@/lib/stripeSubscription';
 import { TierSlug, TIERS } from '@/lib/tiers';
-import { JWT_SECRET } from '@/lib/secrets';
+import { requireRancher } from '@/lib/rancherAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -33,15 +31,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Stripe Connect not enabled' }, { status: 503 });
   }
 
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get('bhc-rancher-auth');
-  if (!sessionCookie?.value) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  let decoded: any;
-  try { decoded = jwt.verify(sessionCookie.value, JWT_SECRET); }
-  catch { return NextResponse.json({ error: 'Session expired' }, { status: 401 }); }
-  if (decoded.type !== 'rancher-session') {
-    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-  }
+  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+  const r = await requireRancher(req);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
 
   let body: any = {};
   try { body = await req.json(); }
@@ -51,7 +44,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid tier — must be pasture, ranch, or operator' }, { status: 400 });
   }
 
-  const rancher: any = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
+  const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
   if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
 
   // Refuse if subscription already active
@@ -71,14 +64,14 @@ export async function POST(req: Request) {
     }
     const displayName = String(rancher['Operator Name'] || rancher['Ranch Name'] || 'BHC Rancher').trim();
     try {
-      const result = await createConnectAccount({ email, displayName, rancherId: decoded.rancherId });
+      const result = await createConnectAccount({ email, displayName, rancherId: session.rancherId });
       accountId = result.accountId;
     } catch (e: any) {
       console.error('[tier/select] V2 account create failed:', e?.message);
       return NextResponse.json({ error: `Stripe account create failed: ${e?.message || 'unknown'}` }, { status: 500 });
     }
     try {
-      await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
+      await updateRecord(TABLES.RANCHERS, session.rancherId, {
         'Stripe Connect Account Id': accountId,
         'Stripe Connect Status': 'onboarding',
         'Pricing Model': 'tier_v2',
@@ -92,7 +85,7 @@ export async function POST(req: Request) {
   // Now create Checkout Session for the tier subscription
   try {
     const { url } = await createTierCheckoutSession({
-      rancherId: decoded.rancherId,
+      rancherId: session.rancherId,
       connectedAccountId: accountId,
       tier,
       successUrl: `${SITE_URL}/partner/checkout/${tier}/success?session_id={CHECKOUT_SESSION_ID}`,

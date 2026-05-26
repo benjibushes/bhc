@@ -11,14 +11,12 @@
 // `thread-` reply tag (Task 10).
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { postMessage, listThreadMessages, THREADS_TABLE } from '@/lib/contracts/threads';
 import { getRecordById, TABLES } from '@/lib/airtable';
-import { JWT_SECRET } from '@/lib/secrets';
 import { sendEmail } from '@/lib/email';
 import { rateLimit } from '@/lib/rateLimit';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { resolveRancherSession } from '@/lib/rancherAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -38,21 +36,16 @@ async function authBuyerOrRancher(req: Request): Promise<AuthInfo | null> {
       email: buyer.email,
     };
   }
-  // Rancher side — unchanged (Phase 1 doesn't touch rancher auth)
-  const ck = await cookies();
-  const rancherCk = ck.get('bhc-rancher-auth');
-  if (rancherCk?.value) {
-    try {
-      const d: any = jwt.verify(rancherCk.value, JWT_SECRET);
-      if (d.type === 'rancher-session') {
-        return {
-          kind: 'rancher',
-          id: d.rancherId,
-          name: d.name || '',
-          email: d.email || '',
-        };
-      }
-    } catch {}
+  // Rancher side — Auth Phase 2 helper picks Clerk or legacy JWT
+  // transparently. Mirrors the buyer path above.
+  const rancher = await resolveRancherSession(req);
+  if (rancher) {
+    return {
+      kind: 'rancher',
+      id: rancher.rancherId,
+      name: rancher.name,
+      email: rancher.email,
+    };
   }
   return null;
 }

@@ -15,37 +15,26 @@
 // prod to ship this code with the flag off until canary (Task 16).
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createConnectAccount, createOnboardingLink } from '@/lib/stripeConnect';
-import { JWT_SECRET } from '@/lib/secrets';
+import { requireRancher } from '@/lib/rancherAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
-export async function POST(_req: Request) {
+export async function POST(req: Request) {
   if (process.env.STRIPE_CONNECT_ENABLED !== 'true') {
     return NextResponse.json({ error: 'Stripe Connect not enabled in this env' }, { status: 503 });
   }
 
-  const cookieStore = await cookies();
-  const sessionCookie = cookieStore.get('bhc-rancher-auth');
-  if (!sessionCookie?.value) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+  const r = await requireRancher(req);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
 
-  let decoded: any;
-  try {
-    decoded = jwt.verify(sessionCookie.value, JWT_SECRET);
-  } catch {
-    return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-  }
-  if (decoded.type !== 'rancher-session') {
-    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-  }
-
-  const rancher: any = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
+  const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
   if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
 
   let accountId: string = String(rancher['Stripe Connect Account Id'] || '');
@@ -63,7 +52,7 @@ export async function POST(_req: Request) {
       const result = await createConnectAccount({
         email,
         displayName,
-        rancherId: decoded.rancherId,
+        rancherId: session.rancherId,
       });
       accountId = result.accountId;
     } catch (e: any) {
@@ -73,7 +62,7 @@ export async function POST(_req: Request) {
 
     // Persist BEFORE link creation so a refresh mid-flow doesn't create duplicates
     try {
-      await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
+      await updateRecord(TABLES.RANCHERS, session.rancherId, {
         'Stripe Connect Account Id': accountId,
         'Stripe Connect Status': 'onboarding',
       });

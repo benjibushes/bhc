@@ -2,28 +2,20 @@
 // Last Message At desc, with the latest message body + sender type preview.
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
-import { JWT_SECRET } from '@/lib/secrets';
 import { THREADS_TABLE, MESSAGES_TABLE } from '@/lib/contracts/threads';
+import { requireRancher } from '@/lib/rancherAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-export async function GET(_req: Request) {
-  const ck = await cookies();
-  const rancherCk = ck.get('bhc-rancher-auth');
-  if (!rancherCk?.value) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  let decoded: any;
-  try {
-    decoded = jwt.verify(rancherCk.value, JWT_SECRET);
-  } catch {
-    return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-  }
-  if (decoded.type !== 'rancher-session') return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+export async function GET(req: Request) {
+  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+  const r = await requireRancher(req);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
 
-  const safeId = decoded.rancherId.replace(/"/g, '\\"');
+  const safeId = session.rancherId.replace(/"/g, '\\"');
   const threads: any[] = await getAllRecords(THREADS_TABLE, `SEARCH("${safeId}", ARRAYJOIN({Rancher}))`);
   threads.sort((a: any, b: any) => new Date(b['Last Message At'] || 0).getTime() - new Date(a['Last Message At'] || 0).getTime());
 

@@ -1,34 +1,18 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { updateRecord, getRecordById, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { normalizeStates, stringifyStates } from '@/lib/states';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { MAX_ACTIVE_REFERRALS_FIELD } from '@/lib/rancherCapacity';
-import jwt from 'jsonwebtoken';
-
-import { JWT_SECRET } from '@/lib/secrets';
+import { requireRancher } from '@/lib/rancherAuth';
 
 // PATCH /api/rancher/landing-page — rancher updates their own landing page fields
 export async function PATCH(request: Request) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('bhc-rancher-auth');
-
-    if (!sessionCookie?.value) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-
-    let decoded: any;
-    try {
-      decoded = jwt.verify(sessionCookie.value, JWT_SECRET);
-    } catch {
-      return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-    }
-
-    if (decoded.type !== 'rancher-session') {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
+    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+    const r = await requireRancher(request);
+    if (r instanceof NextResponse) return r;
+    const { session } = r;
 
     const body = await request.json();
 
@@ -77,21 +61,21 @@ export async function PATCH(request: Request) {
       if (isNaN(maxReferrals) || maxReferrals < 1 || maxReferrals > 50) {
         return NextResponse.json({ error: 'Capacity must be between 1 and 50' }, { status: 400 });
       }
-      await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
+      await updateRecord(TABLES.RANCHERS, session.rancherId, {
         [MAX_ACTIVE_REFERRALS_FIELD]: maxReferrals,
       });
       // If they were at capacity but increased the limit, set back to Active
-      const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+      const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
       const current = rancher['Current Active Referrals'] || 0;
       if (rancher['Active Status'] === 'At Capacity' && current < maxReferrals) {
-        await updateRecord(TABLES.RANCHERS, decoded.rancherId, { 'Active Status': 'Active' });
-        triggerLaunchWarmup(`landing-page-capacity-raise:${decoded.rancherId}`);
+        await updateRecord(TABLES.RANCHERS, session.rancherId, { 'Active Status': 'Active' });
+        triggerLaunchWarmup(`landing-page-capacity-raise:${session.rancherId}`);
       }
       return NextResponse.json({ success: true });
     }
 
     if (body._action === 'request-verification') {
-      const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+      const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
       const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown';
       const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
       const slug = rancher['Slug'] || '';
@@ -156,7 +140,7 @@ export async function PATCH(request: Request) {
         updates['Onboarding Status'] = 'Verification Pending';
       }
 
-      await updateRecord(TABLES.RANCHERS, decoded.rancherId, updates);
+      await updateRecord(TABLES.RANCHERS, session.rancherId, updates);
 
       try {
         if (autoApprove) {
@@ -170,7 +154,7 @@ export async function PATCH(request: Request) {
             `🔍 <b>VERIFICATION REQUEST</b> (low signal — ${signalCount}/6)\n\n🤠 ${name}\n📋 Proof: ${methods.join(', ') || 'Submitted'}\nEmail: ${rancher['Email'] || 'N/A'}\nPhone: ${rancher['Phone'] || 'N/A'}\n${slug ? `Preview: ${siteUrl}/ranchers/${slug}` : ''}\n\nReview their materials and approve.`,
             {
               inline_keyboard: [
-                [{ text: '✅ Approve Verification', callback_data: `rverify_${decoded.rancherId}` }],
+                [{ text: '✅ Approve Verification', callback_data: `rverify_${session.rancherId}` }],
               ],
             }
           );
@@ -189,7 +173,7 @@ export async function PATCH(request: Request) {
     }
 
     if (body._action === 'request-go-live') {
-      const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+      const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
       const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown';
       const slug = rancher['Slug'] || '(no slug set)';
       const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -199,7 +183,7 @@ export async function PATCH(request: Request) {
           `🟢 <b>GO LIVE REQUEST</b>\n\n🤠 ${name} wants their page published\nSlug: ${slug}\nPreview: ${siteUrl}/ranchers/${slug}`,
           {
             inline_keyboard: [
-              [{ text: '🟢 Set Live', callback_data: `rgolive_${decoded.rancherId}` }],
+              [{ text: '🟢 Set Live', callback_data: `rgolive_${session.rancherId}` }],
             ],
           }
         );
@@ -245,7 +229,7 @@ export async function PATCH(request: Request) {
             `LOWER({Slug}) = "${safeSlug}"`
           );
           // OK if the only match is the calling rancher's own record.
-          const otherOwners = collisions.filter((r: any) => r.id !== decoded.rancherId);
+          const otherOwners = collisions.filter((r: any) => r.id !== session.rancherId);
           if (otherOwners.length > 0) {
             // Suggest the next available numbered variant.
             let suffix = 2;
@@ -324,7 +308,7 @@ export async function PATCH(request: Request) {
     let preferredChanged: { before: string; after: string } | null = null;
     if ('Preferred States' in fields) {
       try {
-        const prior = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+        const prior = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
         const before = String(prior?.['Preferred States'] || '').trim();
         const after = String(fields['Preferred States'] || '').trim();
         if (before !== after) {
@@ -335,12 +319,12 @@ export async function PATCH(request: Request) {
       }
     }
 
-    await updateRecord(TABLES.RANCHERS, decoded.rancherId, fields);
+    await updateRecord(TABLES.RANCHERS, session.rancherId, fields);
 
     // Fire admin alert AFTER successful write so we never alert on a failed save.
     if (preferredChanged) {
       try {
-        const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+        const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
         const name = rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'Unknown';
         const routing = String(rancher?.['Routing States'] || rancher?.['States Served'] || '').trim();
         await sendTelegramMessage(

@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTelegramSaleCelebration } from '@/lib/telegram';
@@ -9,6 +8,7 @@ import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, getRancherCommissionRate } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import jwt from 'jsonwebtoken';
+import { requireRancher } from '@/lib/rancherAuth';
 
 // Pass reasons a rancher can give when declining a lead.
 // Mutually exclusive — "Other" deliberately omitted to force a real signal.
@@ -40,23 +40,18 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('bhc-rancher-auth');
-
-    if (!sessionCookie?.value) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-
-    let decoded: any;
-    try {
-      decoded = jwt.verify(sessionCookie.value, JWT_SECRET);
-    } catch {
-      return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-    }
-
-    if (decoded.type !== 'rancher-session') {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
+    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+    const auth = await requireRancher(request);
+    if (auth instanceof NextResponse) return auth;
+    // Keep the legacy variable name `decoded` to minimize churn through the
+    // ~800-line handler below. Shape mirrors the prior JWT payload's hot
+    // fields (rancherId, name) plus everything else requireRancher exposes.
+    const decoded = {
+      rancherId: auth.session.rancherId,
+      name: auth.session.name,
+      email: auth.session.email,
+      ranchName: auth.session.ranchName,
+    };
 
     const { id } = await params;
     const body = await request.json();
