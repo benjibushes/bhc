@@ -119,8 +119,23 @@ export async function POST(request: Request) {
   // ------------------------------------------------------------------
   try {
     switch (event.type) {
+      // V2 Connect account event type strings use bracket notation for
+      // sub-resource segments. Per Stripe V2 docs:
+      //   - `v2.core.account[requirements].updated` fires when account
+      //     requirements collection summary changes (currently_due cleared,
+      //     past_due triggered, etc).
+      //   - `v2.core.account[configuration.merchant].capability_status_updated`
+      //     fires when card_payments capability status flips (e.g. inactive
+      //     → active when Express onboarding finishes). The
+      //     `configuration.merchant` namespace is required — bare
+      //     `[capability_status_updated]` is not a real Stripe event.
+      //   - `v2.core.account.updated` is the catch-all for general account
+      //     mutations and fires alongside the specific ones; subscribe to
+      //     it as a belt-and-suspenders if a specific event lands somewhere
+      //     unexpected.
       case 'v2.core.account[requirements].updated':
-      case 'v2.core.account[capability_status_updated]': {
+      case 'v2.core.account[configuration.merchant].capability_status_updated':
+      case 'v2.core.account.updated': {
         if (!accountId) {
           console.warn('[stripe-connect webhook] no accountId on event', event.id, event.type);
           break;
@@ -187,6 +202,14 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   const wasActive = currentStatus === 'active';
   const isNowActive = status === 'active';
 
+  // Persistent dedupe key: the `Stripe Connect Connected At` stamp.
+  // Two webhook events firing back-to-back (e.g. requirements.updated +
+  // configuration.merchant.capability_status_updated) for the same
+  // activation moment would both read `wasActive === false` in memory and
+  // both fire the celebration. Stamping the timestamp once + gating
+  // Telegram on `!alreadyCelebrated` makes the DB the dedupe authority.
+  const alreadyCelebrated = !!rancher['Stripe Connect Connected At'];
+
   // Skip no-op writes to reduce Airtable noise. If the field already
   // matches, only fire the celebration logic if active-flip needs
   // stamping (which by definition means status changed).
@@ -195,14 +218,16 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   }
 
   const writeFields: any = { 'Stripe Connect Status': status };
-  if (!wasActive && isNowActive) {
+  if (isNowActive && !alreadyCelebrated) {
     writeFields['Stripe Connect Connected At'] = new Date().toISOString();
   }
   await updateRecord(TABLES.RANCHERS, rancher.id, writeFields);
 
-  // Telegram celebration when Connect goes active for the first time.
-  // Best-effort — Telegram failure does NOT roll back the status flip.
-  if (!wasActive && isNowActive) {
+  // Telegram celebration when Connect goes active for the first time
+  // EVER (gated on the persisted Connected At stamp, not the in-memory
+  // wasActive read). Best-effort — Telegram failure does NOT roll back
+  // the status flip.
+  if (isNowActive && !alreadyCelebrated) {
     try {
       const label = rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId;
       await sendTelegramMessage(
