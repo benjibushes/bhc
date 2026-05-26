@@ -33,6 +33,18 @@ const STRIPE_EVENTS_TABLE = 'Stripe Events';
 
 const CONNECT_WEBHOOK_SECRET = process.env.STRIPE_CONNECT_WEBHOOK_SECRET || '';
 
+// Loud startup warning when the Connect webhook secret is missing in prod.
+// Without it, every Connect event 400s + ranchers stay stuck on "Connect bank →"
+// even after finishing Stripe Express onboarding (the bug this endpoint exists
+// to fix). Operators must register the Connect endpoint in Stripe Dashboard
+// + set the secret on Vercel. See docs/STAGE-3-MERGE-PLAYBOOK.md.
+if (!CONNECT_WEBHOOK_SECRET && process.env.NODE_ENV === 'production') {
+  console.warn(
+    '[stripe-connect webhook] STRIPE_CONNECT_WEBHOOK_SECRET is not set — Connect events will fail signature verification. ' +
+    'Set this in Vercel + register the endpoint in Stripe Dashboard before flipping STRIPE_CONNECT_ENABLED=true.',
+  );
+}
+
 export async function POST(request: Request) {
   // Raw body is required for Stripe signature verification — do NOT call
   // request.json() first.

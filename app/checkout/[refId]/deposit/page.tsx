@@ -219,7 +219,7 @@ function DepositPageContent() {
               </li>
               <li className="flex gap-2">
                 <span className="text-sage-dark" aria-hidden="true">•</span>
-                <span><strong>We mediate:</strong> any dispute, reply to your match thread and we step in.</span>
+                <span><strong>We mediate:</strong> any dispute, reply to your match thread or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a> and we step in.</span>
               </li>
             </ul>
           </div>
