@@ -93,6 +93,10 @@ interface Referral {
   last_buyer_activity_at?: string;
   rancher_engaged_flag?: boolean;
   stripe_invoice_url?: string;
+  // Stage-3 Audit B4 — present (ISO timestamp) when rancher has confirmed
+  // the buyer received their beef. Drives the Closed Deals card green pill
+  // and gates the "Mark beef delivered" CTA visibility.
+  fulfillment_confirmed_at?: string;
 }
 
 interface NetworkBenefit {
@@ -1132,32 +1136,50 @@ export default function RancherDashboardPage() {
                   <h2 className="font-serif text-2xl">Closed Deals</h2>
                   <div className="space-y-4">
                     {closedRefs.map((ref) => (
-                      <div key={ref.id} className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                        <div>
-                          <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-gray-100 text-gray-600'}`}>
-                            {ref.status}
-                          </span>
-                          <p className="font-medium mt-1">{ref.buyer_name}</p>
-                          <p className="text-xs text-dust">{ref.closed_at ? new Date(ref.closed_at).toLocaleDateString() : ''}</p>
+                      <div key={ref.id} className="border border-dust bg-white">
+                        <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                          <div>
+                            <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-gray-100 text-gray-600'}`}>
+                              {ref.status}
+                            </span>
+                            <p className="font-medium mt-1">{ref.buyer_name}</p>
+                            <p className="text-xs text-dust">{ref.closed_at ? new Date(ref.closed_at).toLocaleDateString() : ''}</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {ref.status === 'Closed Won' && (
+                              <div className="text-right">
+                                <p className="font-serif text-lg">${ref.sale_amount.toLocaleString()}</p>
+                                <p className="text-xs text-dust">Commission: ${ref.commission_due.toLocaleString()}</p>
+                              </div>
+                            )}
+                            {isAdminImpersonating && ref.status === 'Closed Lost' && (
+                              <button
+                                onClick={() => handleReviveLead(ref)}
+                                disabled={updating === ref.id}
+                                className="px-3 py-1.5 text-xs border border-charcoal bg-charcoal text-bone hover:bg-saddle disabled:opacity-50"
+                                title="Admin only: flip this Closed Lost back to an actionable status. Audit fires to Telegram."
+                              >
+                                ♻️ Revive Lead
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          {ref.status === 'Closed Won' && (
-                            <div className="text-right">
-                              <p className="font-serif text-lg">${ref.sale_amount.toLocaleString()}</p>
-                              <p className="text-xs text-dust">Commission: ${ref.commission_due.toLocaleString()}</p>
-                            </div>
-                          )}
-                          {isAdminImpersonating && ref.status === 'Closed Lost' && (
-                            <button
-                              onClick={() => handleReviveLead(ref)}
-                              disabled={updating === ref.id}
-                              className="px-3 py-1.5 text-xs border border-charcoal bg-charcoal text-bone hover:bg-saddle disabled:opacity-50"
-                              title="Admin only: flip this Closed Lost back to an actionable status. Audit fires to Telegram."
-                            >
-                              ♻️ Revive Lead
-                            </button>
-                          )}
-                        </div>
+                        {/* Stage-3 Audit B4 — fulfillment confirm row. Gated on tier_v2 + Closed Won.
+                            Legacy ranchers use the post-close commission invoice flow, not fulfillment confirm. */}
+                        {ref.status === 'Closed Won' && rancherInfo.pricingModel === 'tier_v2' && (
+                          <FulfillmentConfirmRow
+                            referral={ref}
+                            onConfirmed={(when) => {
+                              // Optimistic update — flip just this referral's fulfillment_confirmed_at
+                              // so the pill renders without a full dashboard refetch latency hit.
+                              setReferrals((prev) =>
+                                prev.map((r) =>
+                                  r.id === ref.id ? { ...r, fulfillment_confirmed_at: when } : r,
+                                ),
+                              );
+                            }}
+                          />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -2185,6 +2207,105 @@ function ReferralCard({
           Pass on Lead
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Stage-3 Audit B4 — Fulfillment confirm row ───────────────────────────
+// Renders under each Closed Won card for tier_v2 ranchers. Two-step disclosure:
+//   click 1 → expand textarea + reveal "Send confirmation"
+//   click 2 → POST /api/rancher/fulfillment/confirm { referralId, note }
+// On 200: parent flips the local referral row to show the green pill.
+// On error: inline red error text; the button stays clickable for retry.
+function FulfillmentConfirmRow({
+  referral,
+  onConfirmed,
+}: {
+  referral: Referral;
+  onConfirmed: (when: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [note, setNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  // Already-confirmed → render the green pill, no button.
+  if (referral.fulfillment_confirmed_at) {
+    const when = new Date(referral.fulfillment_confirmed_at).toLocaleDateString();
+    return (
+      <div className="px-4 py-3 border-t border-dust bg-bone">
+        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-100 text-green-800">
+          ✓ Beef delivered {when}
+        </span>
+      </div>
+    );
+  }
+
+  async function submit() {
+    setSubmitting(true);
+    setError('');
+    try {
+      const res = await fetch('/api/rancher/fulfillment/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ referralId: referral.id, note: note.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.error || 'Could not confirm fulfillment. Please try again.');
+        return;
+      }
+      onConfirmed(String(data?.fulfillmentConfirmedAt || new Date().toISOString()));
+    } catch {
+      setError('Network error — try again in a moment.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="px-4 py-3 border-t border-dust bg-bone space-y-2">
+      {!expanded ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="bg-charcoal text-white px-4 py-2 text-xs font-semibold uppercase tracking-widest hover:bg-saddle transition-colors"
+        >
+          Mark beef delivered →
+        </button>
+      ) : (
+        <>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value.slice(0, 500))}
+            placeholder="Optional — any handoff details to share with the buyer"
+            rows={2}
+            maxLength={500}
+            className="w-full px-3 py-2 text-sm border border-dust bg-white text-charcoal focus:outline-none focus:border-charcoal"
+          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={submit}
+              disabled={submitting}
+              className="bg-charcoal text-white px-4 py-2 text-xs font-semibold uppercase tracking-widest hover:bg-saddle transition-colors disabled:opacity-50"
+            >
+              {submitting ? 'Sending…' : 'Send confirmation'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setExpanded(false); setNote(''); setError(''); }}
+              disabled={submitting}
+              className="px-4 py-2 text-xs font-semibold uppercase tracking-widest border border-dust text-saddle hover:bg-dust hover:text-bone transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <span className="text-xs text-dust ml-auto">{note.length}/500</span>
+          </div>
+        </>
+      )}
+      {error && <p className="text-xs text-red-700">{error}</p>}
     </div>
   );
 }

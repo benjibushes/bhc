@@ -88,6 +88,10 @@ export async function GET() {
       last_buyer_activity_at: r['Last Buyer Activity At'] || '',
       rancher_engaged_flag: !!r['Rancher Engaged Flag'],
       stripe_invoice_url: r['Stripe Invoice URL'] || '',
+      // Stage-3 Audit B4 — surface fulfillment status so the dashboard
+      // can render the green pill on already-confirmed Closed Won deals
+      // and gate the "Mark beef delivered" CTA on the missing field.
+      fulfillment_confirmed_at: r['Fulfillment Confirmed At'] || '',
     }));
 
     // Sort: active first, then by date
