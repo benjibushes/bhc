@@ -198,11 +198,40 @@ function DepositPageContent() {
             </div>
           </div>
 
-          {/* Refund policy */}
+          {/* BHC Promise — platform-level trust floor (cold-chain + 7-day satisfaction + mediation).
+              Lives ABOVE the rancher's self-written policy so a "NO REFUNDS EVER" line doesn't tank
+              buyer trust right before the Continue-to-Stripe button. See docs/BHC-PROMISE.md. */}
+          <div className="border-l-4 border-sage-dark bg-white p-6 mb-3">
+            <div className="font-serif text-lg uppercase tracking-widest text-sage-dark mb-3">
+              <span aria-hidden="true">🛡️</span> BHC Promise
+            </div>
+            <p className="text-sm text-charcoal leading-relaxed mb-4">
+              Beef arrives frozen and on time, or BHC refunds your deposit within 7 days — no questions asked, paid by BuyHalfCow.
+            </p>
+            <ul className="text-sm text-charcoal leading-relaxed space-y-2">
+              <li className="flex gap-2">
+                <span className="text-sage-dark" aria-hidden="true">•</span>
+                <span><strong>Cold-chain guarantee:</strong> if your beef arrives thawed, it&apos;s free.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-sage-dark" aria-hidden="true">•</span>
+                <span><strong>7-day satisfaction:</strong> not what you expected? Full deposit refund.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-sage-dark" aria-hidden="true">•</span>
+                <span><strong>We mediate:</strong> any dispute, reply to your match thread and we step in.</span>
+              </li>
+            </ul>
+          </div>
+
+          {/* Refund policy — rancher's own (applies above and beyond the BHC Promise floor above) */}
           {info.refundPolicy && (
             <div className="bg-white border border-dust p-4 mb-3">
-              <div className="text-xs uppercase tracking-wider text-saddle mb-2">Refund policy</div>
+              <div className="text-xs uppercase tracking-wider text-saddle mb-2">Rancher&apos;s refund policy</div>
               <p className="text-sm whitespace-pre-wrap">{info.refundPolicy}</p>
+              <p className="text-xs text-saddle italic mt-3">
+                Above and beyond BHC&apos;s Promise, {info.rancher.name}&apos;s own policy applies. For disputes, reply to your match thread — BuyHalfCow can mediate.
+              </p>
             </div>
           )}
 
