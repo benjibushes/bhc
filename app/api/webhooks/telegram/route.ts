@@ -2943,11 +2943,20 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           // Fire Stripe invoice. createCommissionInvoice has its own floor +
           // ratio guards (lib/stripe-commission.ts) — they'll throw before we
           // generate a bogus invoice.
+          //
+          // Tier_v2 ranchers SKIP — commission already taken at deposit time
+          // via Stripe Connect application_fee_amount. Legacy invoice here
+          // would double-bill.
+          const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
+          const skipLegacyInvoice = pricingModel === 'tier_v2';
+          if (skipLegacyInvoice) {
+            console.log(`[telegram close-reply won] rancher ${rancher.id} is tier_v2 — skipping legacy commission invoice`);
+          }
           const { createCommissionInvoice } = await import('@/lib/stripe-commission');
           let stripeInvoiceUrl = '';
           let invoiceFailed = false;
           let invoiceErrMsg = '';
-          try {
+          if (!skipLegacyInvoice) try {
             const result = await createCommissionInvoice({
               rancher: {
                 id: rancher.id,

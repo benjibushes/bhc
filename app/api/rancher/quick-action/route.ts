@@ -234,12 +234,20 @@ async function applyAction(
     }
   }
 
-  // Closed Won: fire Stripe commission invoice + Telegram celebration
+  // Closed Won: fire Stripe commission invoice + Telegram celebration.
+  // Tier_v2 ranchers SKIP — their commission was already taken at deposit
+  // time via Stripe Connect application_fee_amount (lib/stripeConnect.ts).
+  // Firing a legacy invoice here would double-bill them.
   if (action === 'won' && saleAmount) {
     let stripeInvoiceUrl = '';
     try {
       const rancher: any = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
-      if (rancher && rancher['Email']) {
+      const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
+      const skipLegacyInvoice = pricingModel === 'tier_v2';
+      if (skipLegacyInvoice) {
+        console.log(`[quick-action won] rancher ${decoded.rancherId} is tier_v2 — skipping legacy commission invoice (already taken via application_fee_amount)`);
+      }
+      if (rancher && rancher['Email'] && !skipLegacyInvoice) {
         try {
           const stripeResult = await createCommissionInvoice({
             rancher: {

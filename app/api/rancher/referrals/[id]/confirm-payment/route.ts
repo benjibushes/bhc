@@ -116,10 +116,18 @@ export async function POST(
     // — if it throws, we surface the error to the dashboard so the rancher
     // can correct + retry. Status stays Closed Won regardless (sale is
     // confirmed; invoice can be re-fired manually).
+    //
+    // Tier_v2 ranchers SKIP — commission already taken at deposit time via
+    // Stripe Connect application_fee_amount. Legacy invoice here = double-bill.
+    const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
+    const skipLegacyInvoice = pricingModel === 'tier_v2';
+    if (skipLegacyInvoice) {
+      console.log(`[confirm-payment] rancher ${rancher.id} is tier_v2 — skipping legacy commission invoice`);
+    }
     let invoiceUrl = '';
     let invoiceId = '';
     let invoiceError = '';
-    try {
+    if (!skipLegacyInvoice) try {
       const result = await createCommissionInvoice({
         rancher: {
           id: rancher.id,

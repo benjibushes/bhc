@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
@@ -72,12 +72,34 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   let errors = 0;
   const summaryLines: string[] = [];
 
+  let tierV2Skipped = 0;
   for (const [rancherId, group] of Object.entries(byRancher)) {
     try {
       const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
       const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
       const ranchName = rancher['Ranch Name'] || operatorName;
       const rancherEmail = rancher['Email'] || '';
+
+      // Tier_v2 ranchers SKIP. Their commission was already taken at deposit
+      // time via Stripe Connect application_fee_amount. Firing a legacy
+      // monthly commission invoice would double-bill them. Also patch
+      // referral rows to Commission Paid=true so they drop out of future runs.
+      const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
+      if (pricingModel === 'tier_v2') {
+        for (const r of group.allUnpaid) {
+          try {
+            await updateRecord(TABLES.REFERRALS, r.id, {
+              'Commission Paid': true,
+              'Commission Paid At': new Date().toISOString(),
+            });
+          } catch (e: any) {
+            console.warn(`[commission-invoices] tier_v2 Commission Paid stamp failed for ${r.id}:`, e?.message);
+          }
+        }
+        tierV2Skipped += group.allUnpaid.length;
+        console.log(`[commission-invoices] tier_v2 rancher ${rancherId} — skipped + marked ${group.allUnpaid.length} referrals Commission Paid`);
+        continue;
+      }
 
       if (!rancherEmail) {
         console.warn(`No email for rancher ${rancherId}, skipping invoice`);

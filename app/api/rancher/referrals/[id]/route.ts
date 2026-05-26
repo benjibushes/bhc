@@ -688,7 +688,14 @@ export async function PATCH(
           try {
             const rancherForInvoice = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
             const invoiceEmail = rancherForInvoice?.['Email'] || '';
-            if (invoiceEmail) {
+            // Tier_v2 ranchers SKIP — commission already taken at deposit via
+            // application_fee_amount. Legacy invoice here would double-bill.
+            const pricingModel = String(rancherForInvoice?.['Pricing Model'] || 'legacy');
+            const skipLegacyInvoice = pricingModel === 'tier_v2';
+            if (skipLegacyInvoice) {
+              console.log(`[referrals/close] rancher ${decoded.rancherId} is tier_v2 — skipping legacy commission invoice`);
+            }
+            if (invoiceEmail && !skipLegacyInvoice) {
               try {
                 const stripeResult = await createCommissionInvoice({
                   rancher: {
