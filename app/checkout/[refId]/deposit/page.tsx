@@ -202,9 +202,9 @@ function DepositPageContent() {
               Lives ABOVE the rancher's self-written policy so a "NO REFUNDS EVER" line doesn't tank
               buyer trust right before the Continue-to-Stripe button. See docs/BHC-PROMISE.md. */}
           <div className="border-l-4 border-sage-dark bg-white p-6 mb-3">
-            <div className="font-serif text-lg uppercase tracking-widest text-sage-dark mb-3">
+            <h2 className="font-serif text-lg uppercase tracking-widest text-sage-dark mb-3">
               <span aria-hidden="true">🛡️</span> BHC Promise
-            </div>
+            </h2>
             <p className="text-sm text-charcoal leading-relaxed mb-4">
               Beef arrives frozen and on time, or BHC refunds your deposit within 7 days — no questions asked, paid by BuyHalfCow.
             </p>
