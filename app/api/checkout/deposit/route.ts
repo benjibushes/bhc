@@ -71,6 +71,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  // Terminal-status gate. A closed referral must not be re-paid — without
+  // this, a buyer who hits the deposit page after closure can pay a second
+  // PaymentIntent, create a duplicate Payments row, re-fire recordClose,
+  // and trigger a second Telegram celebration. Block both POST + GET so
+  // the deposit page surfaces "already paid" state via the 409.
+  const refStatus = String(referral['Status'] || '');
+  if (refStatus === 'Closed Won' || refStatus === 'Closed Lost') {
+    return NextResponse.json(
+      {
+        error: 'referral_closed',
+        status: refStatus,
+        message: refStatus === 'Closed Won'
+          ? 'This referral is already paid. Check your email for the confirmation.'
+          : 'This referral is closed and can\'t be reopened — contact us to re-route.',
+      },
+      { status: 409 },
+    );
+  }
+
   const rancherLinks: string[] = referral['Rancher'] || referral['Suggested Rancher'] || [];
   const rancherId = rancherLinks[0];
   if (!rancherId) return NextResponse.json({ error: 'No rancher on referral' }, { status: 409 });
@@ -205,6 +224,25 @@ export async function GET(req: Request) {
   const buyerLinks: string[] = referral['Buyer'] || [];
   if (!buyerLinks.includes(decoded.consumerId)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  // Terminal-status gate. A closed referral must not be re-paid — without
+  // this, a buyer who hits the deposit page after closure can pay a second
+  // PaymentIntent, create a duplicate Payments row, re-fire recordClose,
+  // and trigger a second Telegram celebration. Block both POST + GET so
+  // the deposit page surfaces "already paid" state via the 409.
+  const refStatus = String(referral['Status'] || '');
+  if (refStatus === 'Closed Won' || refStatus === 'Closed Lost') {
+    return NextResponse.json(
+      {
+        error: 'referral_closed',
+        status: refStatus,
+        message: refStatus === 'Closed Won'
+          ? 'This referral is already paid. Check your email for the confirmation.'
+          : 'This referral is closed and can\'t be reopened — contact us to re-route.',
+      },
+      { status: 409 },
+    );
   }
 
   const rancherLinks: string[] = referral['Rancher'] || referral['Suggested Rancher'] || [];

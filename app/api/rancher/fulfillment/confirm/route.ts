@@ -97,7 +97,24 @@ export async function POST(req: Request) {
   } catch (e: any) {
     console.warn('[fulfillment/confirm] Payments lookup failed:', e?.message);
   }
-  if (!paymentVerified && !referral['Payment Confirmed At']) {
+  // Payment verification gate. Logic differs by rancher Pricing Model:
+  //   - tier_v2 MUST have a Payments row at Status='succeeded'. Legacy
+  //     Payment Confirmed At is rancher-self-attested and would let a
+  //     tier_v2 rancher bypass Stripe entirely (free fulfillment confirm
+  //     = audit security gap surfaced in 2026-05-25 Audit A).
+  //   - legacy ranchers can use either Payments row OR Payment Confirmed
+  //     At as before.
+  const rancherForGate: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
+  const rancherPricingModel = String(rancherForGate?.['Pricing Model'] || 'legacy');
+  const isTierV2 = rancherPricingModel === 'tier_v2';
+  if (isTierV2) {
+    if (!paymentVerified) {
+      return NextResponse.json({
+        error: 'No settled Stripe deposit on this referral. Buyer must pay via the deposit link first.',
+        pricingModel: 'tier_v2',
+      }, { status: 409 });
+    }
+  } else if (!paymentVerified && !referral['Payment Confirmed At']) {
     return NextResponse.json({
       error: 'No settled payment on this referral. Confirm payment first.',
     }, { status: 409 });

@@ -8,7 +8,7 @@ import {
   escapeAirtableValue,
   TABLES,
 } from '@/lib/airtable';
-import { sendBrandListingConfirmation, sendFoundingHerdWelcome } from '@/lib/email';
+import { sendBrandListingConfirmation, sendFoundingHerdWelcome, sendPostPurchaseWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { commissionRateForTier, TierSlug } from '@/lib/tiers';
 import { rancherIdFromSubscription } from '@/lib/stripeSubscription';
@@ -218,6 +218,34 @@ export async function POST(request: Request) {
           outcome: 'won',
           saleAmount: amountCents / 100,
         });
+
+        // Buyer post-purchase welcome — closes the "you bought" loop with
+        // a warm BHC-branded email (cuts education preview, freezer prep,
+        // pickup/delivery timeline). Mirrors the legacy quick-action(won)
+        // path which fires this email on close; without this, tier_v2 buyers
+        // would only get Stripe's generic receipt + the Day-14 cuts email
+        // weeks later — missing the immediate confirmation moment.
+        // Best-effort: failure does NOT roll back the close.
+        try {
+          const referralRow: any = await getRecordById(TABLES.REFERRALS, referralId).catch(() => null);
+          const buyerLinksForEmail: string[] = (referralRow?.['Buyer'] || []) as string[];
+          const buyerIdForEmail = buyerLinksForEmail[0] || '';
+          const buyer: any = buyerIdForEmail
+            ? await getRecordById(TABLES.CONSUMERS, buyerIdForEmail).catch(() => null)
+            : null;
+          const rancherForEmail: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
+          if (buyer?.['Email'] && rancherForEmail) {
+            const firstName = String(buyer['Full Name'] || '').split(' ')[0] || '';
+            await sendPostPurchaseWelcome({
+              firstName,
+              email: String(buyer['Email']),
+              rancherName: String(rancherForEmail['Operator Name'] || rancherForEmail['Ranch Name'] || 'your rancher'),
+              orderType: String(referralRow?.['Order Type'] || ''),
+            });
+          }
+        } catch (e: any) {
+          console.warn('[stripe webhook] sendPostPurchaseWelcome failed:', e?.message);
+        }
 
         // Telegram celebration to admin chat.
         try {
