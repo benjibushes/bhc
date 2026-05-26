@@ -27,6 +27,22 @@ import { JWT_SECRET } from '@/lib/secrets';
 
 const BHC_MEMBER_COOKIE = 'bhc-member-auth';
 
+/**
+ * Tagged error for Clerk infrastructure failures (API outage, rate limit,
+ * etc). Distinguished from "Clerk session has no matching Consumers row"
+ * — that case returns null and refuses legacy fallback as impersonation
+ * defense. A ClerkApiError, by contrast, is operational: the request
+ * should 503 + retry, not 401.
+ */
+export class ClerkApiError extends Error {
+  cause: unknown;
+  constructor(message: string, cause: unknown) {
+    super(message);
+    this.name = 'ClerkApiError';
+    this.cause = cause;
+  }
+}
+
 export interface BuyerSession {
   consumerId: string;
   email: string;
@@ -65,19 +81,23 @@ export async function resolveBuyerSession(
 ): Promise<BuyerSession | null> {
   // Clerk path — only when the flag is flipped on
   if (CLERK_BUYER_ENABLED) {
+    let userId: string | null = null;
     try {
-      const { userId } = await clerkAuth();
-      if (userId) {
-        const session = await resolveClerkBuyer(userId);
-        if (session) return session;
-        // Clerk session present but no buyer row found — refuse rather
-        // than fall through to the legacy cookie (see security note above).
-        return null;
-      }
+      const session = await clerkAuth();
+      userId = session.userId;
     } catch {
       // No Clerk request context (cron, internal call, etc.) — fall
       // through to legacy. clerkAuth() throws outside the middleware-aware
       // request scope.
+    }
+    if (userId) {
+      // ClerkApiError bubbles up. resolveClerkBuyer null = no buyer row
+      // matched (refuse legacy fallback). Session = success.
+      const session = await resolveClerkBuyer(userId);
+      if (session) return session;
+      // Clerk session present but no buyer row found — refuse rather
+      // than fall through to the legacy cookie (see security note above).
+      return null;
     }
   }
 
@@ -120,8 +140,13 @@ async function resolveClerkBuyer(
       user.primaryEmailAddress?.emailAddress || '',
     ).toLowerCase();
   } catch (e) {
+    // Clerk API failure (transient outage, rate limit, etc) is OPERATIONAL,
+    // not a security event. Throwing a tagged ClerkApiError lets the caller
+    // distinguish "Clerk is down" (→ 503, client retries) from "Clerk session
+    // points at a user that doesn't match any Consumers row" (→ 401, refuse
+    // legacy fallback as impersonation defense).
     console.warn('[buyerAuth] clerkClient.getUser failed:', e);
-    return null;
+    throw new ClerkApiError('clerk_get_user_failed', e);
   }
   if (!clerkEmail) return null;
 
@@ -187,8 +212,16 @@ async function resolveLegacyJwt(
 }
 
 /**
- * Wrapper for route handlers that need a buyer session. Returns a 401
- * NextResponse if no session resolves; otherwise returns `{ session }`.
+ * Wrapper for route handlers that need a buyer session.
+ *
+ * Returns:
+ *   - `{ session }` on success
+ *   - 401 NextResponse when no session resolves (no Clerk + no JWT, OR
+ *     Clerk session exists w/ no matching Consumers row)
+ *   - 503 NextResponse when Clerk's upstream API is failing (transient
+ *     outage / rate limit). Operational, not security — client should
+ *     retry. Distinguishing this from 401 prevents Clerk-outage
+ *     cascades that mass-401 every buyer-gated request.
  *
  * Usage:
  *   const r = await requireBuyer(request);
@@ -198,9 +231,21 @@ async function resolveLegacyJwt(
 export async function requireBuyer(
   request: Request,
 ): Promise<{ session: BuyerSession } | NextResponse> {
-  const session = await resolveBuyerSession(request);
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  try {
+    const session = await resolveBuyerSession(request);
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    return { session };
+  } catch (e) {
+    if (e instanceof ClerkApiError) {
+      // Clerk upstream failure — let the client retry. Don't 401 a buyer
+      // just because Clerk is degraded.
+      return NextResponse.json(
+        { error: 'Auth service temporarily unavailable. Please retry.' },
+        { status: 503 },
+      );
+    }
+    throw e;
   }
-  return { session };
 }
