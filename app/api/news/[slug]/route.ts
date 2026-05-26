@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { getAllRecords, updateRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { cookies } from 'next/headers';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
@@ -31,12 +31,9 @@ export async function PATCH(
   context: { params: Promise<{ slug: string }> }
 ) {
   try {
-    // Admin-only: verify auth cookie
-    const cookieStore = await cookies();
-    const authCookie = cookieStore.get('bhc-admin-auth');
-    if (authCookie?.value !== 'authenticated') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    // Auth Phase 0: requireAdmin() — Clerk session OR x-admin-password.
+    const unauthorized = await requireAdmin(request);
+    if (unauthorized) return unauthorized;
 
     const { slug } = await context.params;
     const body = await request.json();

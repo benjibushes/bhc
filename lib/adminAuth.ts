@@ -1,51 +1,67 @@
-import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 
 /**
- * Centralized admin auth check.
+ * Centralized admin auth check — Auth Phase 0 (Clerk for browser admins).
  *
  * Accepts EITHER:
- *   - The `bhc-admin-auth` cookie set by /api/admin/auth (browser sessions)
- *   - `?password=...` query param matching ADMIN_PASSWORD (CLI / curl / scripted ops)
- *   - `x-admin-password` header matching ADMIN_PASSWORD (programmatic clients)
+ *   1. `x-admin-password` header matching ADMIN_PASSWORD env (server-to-server:
+ *      Telegram bot, cron jobs, ops curl). Their threat profile is different
+ *      from a phishable human — secret lives in env, not in their head.
+ *   2. A Clerk session whose primary email appears in the ADMIN_EMAILS
+ *      allowlist (browser admin path with TOTP 2FA enforced by Clerk).
  *
- * Returns `null` if authorized. Returns a `NextResponse` 401 if not — callers
- * should `if (response) return response;` at the top of their handler.
+ * The legacy `bhc-admin-auth` cookie path is REMOVED — Clerk's `__session`
+ * cookie takes over. The DEV-only `?password=` query param is REMOVED
+ * (audit finding #42, was already prod-disabled).
  *
- * Why a helper instead of middleware: Next.js middleware can't read cookies the
- * same way during streaming responses, and several admin endpoints accept the
- * password in URL/header form for the Telegram bot + cron-style scripts.
+ * Returns `null` if authorized. Returns a `NextResponse` 401/403 if not.
+ * Callers should `if (response) return response;` at the top of their handler.
+ *
+ * Defense in depth: middleware.ts gates the same routes. This helper covers
+ * route handlers that may be hit directly (server actions, internal calls).
  */
-export async function requireAdmin(request: Request): Promise<NextResponse | null> {
-  // 1. Cookie auth (set by POST /api/admin/auth)
-  try {
-    const cookieStore = await cookies();
-    const cookie = cookieStore.get('bhc-admin-auth');
-    if (cookie?.value === 'authenticated') return null;
-  } catch {
-    // Cookies may not be available in some contexts — fall through to header/query
-  }
-
-  // 2. Header auth: x-admin-password
+export async function requireAdmin(
+  request: Request
+): Promise<NextResponse | null> {
+  // 1. Server-to-server: x-admin-password header
   const adminPassword = process.env.ADMIN_PASSWORD;
   if (adminPassword) {
     const headerPw = request.headers.get('x-admin-password');
     if (headerPw && headerPw === adminPassword) return null;
-
-    // 3. Query param auth: ?password=... — DEPRECATED 2026-05-20
-    // Audit finding #42: password in URL → Vercel access logs, browser
-    // history, Referer headers to any external resource. Kept for
-    // backwards compat in non-prod (scripts, curl); rejected in prod.
-    if (process.env.NODE_ENV !== 'production') {
-      try {
-        const url = new URL(request.url);
-        const queryPw = url.searchParams.get('password');
-        if (queryPw && queryPw === adminPassword) return null;
-      } catch {
-        // Invalid URL — treat as unauthorized
-      }
-    }
   }
 
-  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // 2. Browser session: Clerk auth + email allowlist
+  let userId: string | null = null;
+  let sessionClaims: Record<string, unknown> | null = null;
+  try {
+    const session = await auth();
+    userId = session.userId;
+    sessionClaims = (session.sessionClaims ?? null) as
+      | Record<string, unknown>
+      | null;
+  } catch {
+    // No Clerk session context (e.g. in non-request scope) — treat as unauth.
+  }
+
+  if (!userId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // 3. Email allowlist (defense in depth)
+  const userEmail = String(
+    (sessionClaims as Record<string, unknown> | null)?.email ?? ''
+  ).toLowerCase();
+  const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (ADMIN_EMAILS.length > 0 && !ADMIN_EMAILS.includes(userEmail)) {
+    return NextResponse.json(
+      { error: 'Not authorized as admin' },
+      { status: 403 }
+    );
+  }
+
+  return null;
 }

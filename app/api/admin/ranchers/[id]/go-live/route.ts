@@ -1,10 +1,10 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { cookies } from 'next/headers';
 import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { isMaintenanceMode } from '@/lib/maintenance';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
@@ -16,13 +16,9 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Check admin auth cookie
-    const cookieStore = await cookies();
-    const authCookie = cookieStore.get('bhc-admin-auth');
-
-    if (authCookie?.value !== 'authenticated') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    // Auth Phase 0: requireAdmin() — Clerk session OR x-admin-password.
+    const unauthorized = await requireAdmin(request);
+    if (unauthorized) return unauthorized;
 
     // Honor global maintenance mode. Audit finding 2026-05-20 #39: go-live
     // bypassed MAINTENANCE_MODE → could trigger 50-buyer warmup blast +

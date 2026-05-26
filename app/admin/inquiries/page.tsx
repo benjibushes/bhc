@@ -5,6 +5,7 @@ import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import Link from 'next/link';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
+import { useClerk } from '@clerk/nextjs';
 
 interface Inquiry {
   id: string;
@@ -28,6 +29,7 @@ interface Inquiry {
 }
 
 export default function AdminInquiriesPage() {
+  const clerk = useClerk();
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -212,7 +214,8 @@ export default function AdminInquiriesPage() {
               </Link>
               <button
                 onClick={async () => {
-                  await fetch('/api/admin/auth', { method: 'DELETE' });
+                  // Auth Phase 0 — Clerk sign-out.
+                  await clerk.signOut({ redirectUrl: '/admin/login' });
                   window.location.href = '/admin/login';
                 }}
                 className="px-4 py-2 text-sm border border-[#8C2F2F] text-[#8C2F2F] hover:bg-[#8C2F2F] hover:text-white transition-colors"

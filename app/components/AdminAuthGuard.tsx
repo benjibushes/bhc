@@ -1,53 +1,30 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Container from './Container';
+// Auth Phase 0 — Clerk's <Show> control component gates browser admin
+// renders.
+//
+// Old flow: poll /api/admin/auth, redirect to /admin/login on failure.
+// New flow: <Show when="signed-in"> wraps children; <Show when="signed-out">
+// hosts <RedirectToSignIn /> to push the unauth user to /admin/login.
+//
+// Clerk v7 replaced <SignedIn>/<SignedOut> with the <Show> primitive.
+//
+// Note: middleware.ts and lib/adminAuth.ts already enforce the ADMIN_EMAILS
+// allowlist on the network layer. This guard is the client-side render gate.
 
-export default function AdminAuthGuard({ children }: { children: React.ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const router = useRouter();
+import { RedirectToSignIn, Show } from '@clerk/nextjs';
 
-  useEffect(() => {
-    checkAuth();
-  }, []);
-
-  const checkAuth = async () => {
-    try {
-      const response = await fetch('/api/admin/auth');
-      if (response.ok) {
-        setIsAuthenticated(true);
-      } else {
-        router.push('/admin/login');
-      }
-    } catch (error) {
-      console.error('Auth check failed:', error);
-      router.push('/admin/login');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E] flex items-center justify-center">
-        <Container>
-          <div className="text-center">
-            <div className="inline-block w-8 h-8 border-4 border-[#0E0E0E] border-t-transparent rounded-full animate-spin"></div>
-            <p className="mt-4 text-[#6B4F3F]">Checking authentication...</p>
-          </div>
-        </Container>
-      </main>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return null; // Router will redirect
-  }
-
-  return <>{children}</>;
+export default function AdminAuthGuard({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <Show when="signed-in">{children}</Show>
+      <Show when="signed-out">
+        <RedirectToSignIn redirectUrl="/admin" />
+      </Show>
+    </>
+  );
 }
-
-
-

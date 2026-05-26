@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // POST /api/admin/referrals/[id]/revive
 //
@@ -16,7 +16,9 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 //   - "Intro Sent" / "Rancher Contacted" / "Negotiation": admin wants
 //     to drop the lead back into a specific stage instead of re-routing.
 //
-// Auth: admin cookie OR x-internal-secret.
+// Auth (Phase 0): requireAdmin() — Clerk session for browser admins OR
+// x-admin-password header for server-to-server. x-internal-secret kept as
+// a separate backdoor for cron-style internal callers.
 
 export const maxDuration = 30;
 
@@ -33,13 +35,11 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const cookieStore = await cookies();
-    const authCookie = cookieStore.get('bhc-admin-auth');
     const internalHeader = request.headers.get('x-internal-secret') || '';
-    const isAdmin = authCookie?.value === 'authenticated';
     const isInternal = INTERNAL_API_SECRET && internalHeader === INTERNAL_API_SECRET;
-    if (!isAdmin && !isInternal) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!isInternal) {
+      const unauthorized = await requireAdmin(request);
+      if (unauthorized) return unauthorized;
     }
 
     const { id } = await context.params;

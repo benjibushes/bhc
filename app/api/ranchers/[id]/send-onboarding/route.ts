@@ -3,7 +3,7 @@ import { updateRecord, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
-import { cookies } from 'next/headers';
+import { requireAdmin } from '@/lib/adminAuth';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -20,24 +20,18 @@ export async function POST(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { callSummary, confirmedCapacity, specialNotes, includeVerification, password } = body;
+    const { callSummary, confirmedCapacity, specialNotes, includeVerification } = body;
 
-    const adminPassword = process.env.ADMIN_PASSWORD;
+    // Auth Phase 0: x-internal-secret kept for cron-style callers, plus
+    // requireAdmin() covers Clerk session + x-admin-password header.
+    // The legacy `password` body field is removed — it leaked the password
+    // into request body logs.
     const internalSecret = process.env.INTERNAL_API_SECRET;
     const authHeader = request.headers.get('x-internal-secret');
-
-    // Check admin cookie (from admin dashboard)
-    const cookieStore = await cookies();
-    const adminCookie = cookieStore.get('bhc-admin-auth');
-    const hasAdminCookie = adminCookie?.value === 'authenticated';
-
-    const isAuthed =
-      hasAdminCookie ||
-      (adminPassword && password === adminPassword) ||
-      (internalSecret && authHeader === internalSecret);
-
-    if (!isAuthed) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const isInternal = internalSecret && authHeader === internalSecret;
+    if (!isInternal) {
+      const unauthorized = await requireAdmin(request);
+      if (unauthorized) return unauthorized;
     }
 
     const rancher: any = await getRecordById(TABLES.RANCHERS, id);

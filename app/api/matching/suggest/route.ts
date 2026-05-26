@@ -6,10 +6,10 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
 import { normalizeState, normalizeStates } from '@/lib/states';
-import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 90;
 
@@ -29,23 +29,14 @@ export async function POST(request: Request) {
       }, { status: 503 });
     }
 
-    // Auth: admin cookie, internal-secret header, or admin password header.
-    // Adding x-admin-password matches the convention in lib/adminAuth.ts so
-    // operational scripts can run against prod with the same credential they
-    // use for every other admin endpoint (no separate INTERNAL_API_SECRET
-    // setup required).
+    // Auth Phase 0: x-internal-secret header (cron/internal callers) OR
+    // requireAdmin() which handles Clerk session + x-admin-password.
     const internalSecret = process.env.INTERNAL_API_SECRET || '';
-    const adminPassword = process.env.ADMIN_PASSWORD || '';
     const authHeader = request.headers.get('x-internal-secret') || '';
-    const adminPwHeader = request.headers.get('x-admin-password') || '';
-    const cookieStore = await cookies();
-    const adminCookie = cookieStore.get('bhc-admin-auth');
-    const isAdmin = adminCookie?.value === 'authenticated';
     const isInternal = internalSecret && authHeader === internalSecret;
-    const isAdminPw = adminPassword && adminPwHeader === adminPassword;
-
-    if (!isAdmin && !isInternal && !isAdminPw) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!isInternal) {
+      const unauthorized = await requireAdmin(request);
+      if (unauthorized) return unauthorized;
     }
 
     const body = await request.json();

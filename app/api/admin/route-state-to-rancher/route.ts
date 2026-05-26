@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
@@ -9,20 +9,16 @@ export const maxDuration = 60;
 //   - Cancels duplicate Pending Approval referrals (keeps latest per consumer)
 //   - Updates the latest stuck referral to Intro Sent, points at target rancher, sends intro emails
 //   - Creates fresh Intro Sent referrals for Unmatched/Waitlisted consumers, sends intro emails
-// Call: GET /api/admin/route-state-to-rancher?password=ADMIN_PASSWORD&state=CO&slug=the-high-lonesome-ranch
-// OR: visit in a browser tab where you're already logged into /admin (cookie auth)
+// Auth Phase 0: requireAdmin() handles both Clerk session (browser) AND
+// x-admin-password header (Telegram bot / cron). The ?password= query path
+// and bhc-admin-auth cookie path are gone.
 // Optional: &send_at=2026-04-10T14:00:00Z   (ISO date — Resend holds + delivers at this time)
 // Optional: &dry_run=true                    (preview only, no Airtable writes, no emails)
 export async function GET(request: Request) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
+
   const { searchParams } = new URL(request.url);
-  const pw = searchParams.get('password');
-  const cookieStore = await cookies();
-  const adminCookie = cookieStore.get('bhc-admin-auth');
-  const isAdminCookie = adminCookie?.value === 'authenticated';
-  const isPasswordOk = !!pw && pw === process.env.ADMIN_PASSWORD;
-  if (!isAdminCookie && !isPasswordOk) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
   // CRITICAL: require explicit state + slug. Previously defaulted to
   // 'CO' + 'the-high-lonesome-ranch' — meaning any accidental hit on this

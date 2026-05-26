@@ -1,10 +1,10 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // POST /api/admin/ranchers/[id]/resend-setup
 //
@@ -16,9 +16,9 @@ import { JWT_SECRET } from '@/lib/secrets';
 //   prod will accept. Any operator-side "send setup link" action must run
 //   on the server. This endpoint is the canonical path.
 //
-// Auth: admin cookie (`bhc-admin-auth=authenticated`) OR
-//   `x-internal-secret` header matching INTERNAL_API_SECRET — so admin UI
-//   AND local CLI scripts can both invoke it.
+// Auth (Phase 0): requireAdmin() handles browser admins (Clerk session)
+//   AND ops scripts (x-admin-password header). x-internal-secret kept as
+//   a separate cron-style backdoor.
 
 export const maxDuration = 30;
 
@@ -30,14 +30,12 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    // ── Auth: cookie OR internal-secret header ────────────────────────────
-    const cookieStore = await cookies();
-    const authCookie = cookieStore.get('bhc-admin-auth');
+    // ── Auth: requireAdmin OR internal-secret header ──────────────────────
     const internalHeader = request.headers.get('x-internal-secret') || '';
-    const isAdmin = authCookie?.value === 'authenticated';
     const isInternal = INTERNAL_API_SECRET && internalHeader === INTERNAL_API_SECRET;
-    if (!isAdmin && !isInternal) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!isInternal) {
+      const unauthorized = await requireAdmin(request);
+      if (unauthorized) return unauthorized;
     }
 
     const { id } = await context.params;

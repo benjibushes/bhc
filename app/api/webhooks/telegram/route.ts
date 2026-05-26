@@ -4068,11 +4068,15 @@ Confirm send?`;
           const name = consumer ? (consumer['Full Name'] || emailArg) : emailArg;
 
           const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+          // Auth Phase 0 — Telegram bot uses the x-admin-password header
+          // (server-to-server path). The legacy bhc-admin-auth cookie no
+          // longer authenticates after Clerk migration.
+          const adminPw = process.env.ADMIN_PASSWORD || '';
           const res = await fetch(`${siteUrl}/api/admin/affiliates`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Cookie': `bhc-admin-auth=authenticated`,
+              ...(adminPw ? { 'x-admin-password': adminPw } : {}),
             },
             body: JSON.stringify({ name, email: emailArg }),
           });

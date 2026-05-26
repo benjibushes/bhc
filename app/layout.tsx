@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Inter } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 import Header from "./components/Header";
 import PromoBar from "./components/PromoBar";
@@ -89,22 +90,24 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <head>
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-        />
-      </head>
-      <body
-        className={`${playfair.variable} ${inter.variable} antialiased`}
-      >
-        <PixelTracker />
-        <Analytics />
-        <PromoBar />
-        <Header />
-        {children}
-      </body>
-    </html>
+    <ClerkProvider>
+      <html lang="en">
+        <head>
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          />
+        </head>
+        <body
+          className={`${playfair.variable} ${inter.variable} antialiased`}
+        >
+          <PixelTracker />
+          <Analytics />
+          <PromoBar />
+          <Header />
+          {children}
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }

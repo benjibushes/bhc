@@ -1,84 +1,60 @@
-'use client';
+// Auth Phase 0 — Clerk-hosted admin sign-in.
+//
+// Replaces the legacy password form. Browser admin access now requires:
+//   1. A Clerk session (magic-link or password + TOTP 2FA)
+//   2. Email present in ADMIN_EMAILS env allowlist
+//
+// Server-to-server callers (Telegram bot, cron, ops) still authenticate
+// with the x-admin-password HTTP header — see lib/adminAuth.ts.
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Container from '../../components/Container';
-import Input from '../../components/Input';
-import Button from '../../components/Button';
+import { SignIn } from '@clerk/nextjs';
 
 export default function AdminLoginPage() {
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const router = useRouter();
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setIsLoading(true);
-
-    try {
-      const response = await fetch('/api/admin/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-
-      if (response.ok) {
-        router.push('/admin');
-      } else {
-        setError('Invalid password. Try again.');
-        setIsLoading(false);
-      }
-    } catch (err) {
-      setError('Something went wrong. Please try again.');
-      setIsLoading(false);
-    }
-  };
-
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E] flex items-center justify-center">
-      <Container>
-        <div className="max-w-md mx-auto">
-          <div className="text-center space-y-6 mb-12">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl">
-              Admin Login
-            </h1>
-            <p className="text-[#6B4F3F]">
-              Enter your password to access the admin dashboard
-            </p>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <Input
-              label="Password"
-              name="password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-
-            {error && (
-              <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F] text-sm">
-                {error}
-              </div>
-            )}
-
-            <Button type="submit" disabled={isLoading}>
-              {isLoading ? 'Checking...' : 'Login'}
-            </Button>
-          </form>
-
-          <div className="mt-12 text-center">
-            <a href="/" className="text-[#6B4F3F] hover:text-[#0E0E0E] transition-colors text-sm">
-              ← Back to home
-            </a>
-          </div>
+    <main className="min-h-screen bg-[#F4F1EC] flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <h1 className="font-[family-name:var(--font-serif)] text-3xl text-[#0E0E0E]">
+            BuyHalfCow · Admin
+          </h1>
+          <p className="text-sm text-[#6B4F3F] mt-2">
+            Sign in with your authorized admin email.
+          </p>
         </div>
-      </Container>
+        <SignIn
+          path="/admin/login"
+          routing="path"
+          signUpUrl="/admin/login"
+          forceRedirectUrl="/admin"
+          fallbackRedirectUrl="/admin"
+          appearance={{
+            variables: {
+              colorPrimary: '#2A4A20', // sage-dark
+              colorBackground: '#F4F1EC', // bone
+              colorText: '#0E0E0E',
+              colorTextSecondary: '#6B4F3F',
+              colorInputBackground: '#ffffff',
+              colorInputText: '#0E0E0E',
+              borderRadius: '4px',
+              fontFamily: 'var(--font-inter), system-ui, sans-serif',
+            },
+            elements: {
+              card: 'shadow-sm border border-[#A7A29A]',
+              formButtonPrimary:
+                'bg-[#2A4A20] hover:bg-[#1f3818] text-[#F4F1EC]',
+              footerActionLink: 'text-[#2A4A20]',
+            },
+          }}
+        />
+        <div className="mt-6 text-center">
+          <a
+            href="/"
+            className="text-xs text-[#6B4F3F] hover:text-[#0E0E0E] transition-colors"
+          >
+            ← Back to home
+          </a>
+        </div>
+      </div>
     </main>
   );
 }
-
-
