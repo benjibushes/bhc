@@ -900,6 +900,11 @@ export async function sendBuyerIntroNotification(data: {
   // the buyer sends gets captured + classified by /api/webhooks/resend-inbound.
   // Without this, replies go to ben@buyhalfcow.com and miss the data layer.
   referralId?: string;
+  // tier_v2 ranchers only. Full magic-link URL to /api/auth/member/verify with
+  // `next=/checkout/<refId>/deposit` so the buyer arrives at the deposit page
+  // already authed. When unset (legacy ranchers), the email falls back to the
+  // tap-any-tier copy that points at the rancher landing page payment links.
+  depositMagicLinkUrl?: string;
 }) {
   // Build pricing block when any tier is configured.
   const pricingRows: string[] = [];
@@ -932,20 +937,44 @@ export async function sendBuyerIntroNotification(data: {
   </div>`
     : '';
 
-  // Reserve-your-share callout — appears whenever any tier has a payment link
-  // configured. Open-ended on timing because ranchers process on a rolling
-  // cycle, not a single fixed date. Drives the buyer to convert NOW with a
-  // deposit instead of "I'll think about it" → drift to inactive.
+  // Reserve-your-share callout. Two flavors:
+  //
+  //   - tier_v2 (depositMagicLinkUrl present): prominent button-CTA that
+  //     deep-links into /checkout/<refId>/deposit via the magic-link verify
+  //     endpoint. Buyer is one tap away from a Stripe-Connect direct charge.
+  //
+  //   - legacy (depositMagicLinkUrl absent): keep the existing tap-any-tier
+  //     copy that points at the rancher landing page's per-tier Payment Links.
+  //     Renders only when at least one tier price + slug is configured.
+  //
+  // Open-ended on timing because ranchers process on a rolling cycle, not a
+  // single fixed date. Drives the buyer to convert NOW with a deposit instead
+  // of "I'll think about it" → drift to inactive.
+  const hasMagicLink = !!data.depositMagicLinkUrl;
   const hasAnyPayLink = !!(
     pricingRows.length > 0 && data.rancherSlug
   );
-  const reserveBlock = hasAnyPayLink
-    ? `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
+  let reserveBlock = '';
+  if (hasMagicLink) {
+    // Inline-styled button matches BHC design tokens (bg-#0E0E0E text-white).
+    // The href is the verify endpoint, NOT the deposit page directly — verify
+    // sets the cookie then 302s to /checkout/<refId>/deposit so the buyer
+    // arrives authed. Without the cookie hop, the deposit page 401s.
+    reserveBlock = `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
+    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Reserve Your Share Now</p>
+    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — your deposit puts you on the books for the next available slot. Spots fill first-come, first-served.</p>
+    <p style="margin:16px 0 4px 0;text-align:center;">
+      <a href="${data.depositMagicLinkUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Reserve your share — secure deposit &rarr;</a>
+    </p>
+    <p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;"><strong>No deposit, no slot held.</strong></p>
+  </div>`;
+  } else if (hasAnyPayLink) {
+    reserveBlock = `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
     <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Reserve Your Share Now</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — your deposit puts you on the books for the next available slot. Spots fill first-come, first-served.</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Tap any tier above to lock in your share. <strong>No deposit, no slot held.</strong></p>
-  </div>`
-    : '';
+  </div>`;
+  }
 
   const contactBlock = data.rancherSlug
     ? `<div class="contact-box">

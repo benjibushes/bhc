@@ -13,7 +13,7 @@ import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
 export const maxDuration = 90;
 
-import { JWT_SECRET } from '@/lib/secrets';
+import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function POST(request: Request) {
@@ -877,6 +877,21 @@ export async function POST(request: Request) {
           );
           const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
           const buyerFirstName = (buyerName || '').split(' ')[0] || 'there';
+
+          // tier_v2 ranchers run buyer deposits through Stripe Connect direct
+          // charge at /checkout/<refId>/deposit. The deposit page requires
+          // bhc-member-auth cookie, so we wrap the deep-link in a magic-link
+          // verify URL — verify sets the cookie then 302s to the deposit page.
+          // Legacy ranchers stay on the old per-tier Payment Link flow (the
+          // depositMagicLinkUrl stays undefined so the email helper falls back
+          // to its tap-any-tier copy).
+          const rancherPricingModel = String(topMatch['Pricing Model'] || 'legacy');
+          let depositMagicLinkUrl: string | undefined;
+          if (rancherPricingModel === 'tier_v2') {
+            const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
+            const nextPath = `/checkout/${referral.id}/deposit`;
+            depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+          }
           // Same try/catch + Telegram alert pattern as the rancher email.
           // The buyer-side intro is what actually shows them rancher contact
           // info in the dashboard email — a silent send failure here makes
@@ -903,6 +918,9 @@ export async function POST(request: Request) {
               readyToBuy: buyerReadyToBuy,
               // Tag Reply-To so any buyer reply lands in /api/webhooks/resend-inbound
               referralId: referral.id,
+              // tier_v2 only — undefined for legacy ranchers (preserves the
+              // tap-any-tier Payment Link copy in the email template).
+              depositMagicLinkUrl,
             });
           } catch (e: any) {
             console.error('Buyer intro email failed:', e?.message);

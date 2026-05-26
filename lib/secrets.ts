@@ -141,3 +141,25 @@ export function getFounding100PriceLabel(): string {
   const dollars = Math.round(getFounding100PriceCents() / 100);
   return `$${dollars.toLocaleString('en-US')}`;
 }
+
+// =============================================================================
+// MEMBER MAGIC-LINK TOKEN HELPER
+// =============================================================================
+//
+// Signs a 7-day member-login JWT — used in any email that needs to deep-link
+// the buyer into an authed page (deposit checkout, member dashboard, etc).
+// The verify endpoint at /api/auth/member/verify accepts this token via GET
+// (302 redirect flow) or POST (JSON flow) and sets the bhc-member-auth cookie.
+//
+// Centralized here to keep the JWT payload shape consistent across every
+// caller (matching/suggest, resend-intro, batch-approve, cron sequences,
+// telegram handlers). Previously each site inlined the jwt.sign() call and
+// any payload drift silently broke verification — same field names every time.
+import jwt from 'jsonwebtoken';
+export function generateMemberLoginToken(consumerId: string, email: string): string {
+  return jwt.sign(
+    { type: 'member-login', consumerId, email: email.trim().toLowerCase() },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+}
