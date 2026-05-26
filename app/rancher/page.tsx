@@ -2234,8 +2234,12 @@ function FulfillmentConfirmRow({
     const when = new Date(referral.fulfillment_confirmed_at).toLocaleDateString();
     return (
       <div className="px-4 py-3 border-t border-dust bg-bone">
-        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-100 text-green-800">
-          ✓ Beef delivered {when}
+        <span
+          role="status"
+          aria-label={`Beef delivered ${when}`}
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-100 text-green-800"
+        >
+          <span aria-hidden="true">✓</span> Beef delivered {when}
         </span>
       </div>
     );
@@ -2253,7 +2257,8 @@ function FulfillmentConfirmRow({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data?.error || 'Could not confirm fulfillment. Please try again.');
+        const errMsg = typeof data?.error === 'string' ? data.error : 'Could not confirm fulfillment. Please try again.';
+        setError(errMsg);
         return;
       }
       onConfirmed(String(data?.fulfillmentConfirmedAt || new Date().toISOString()));
@@ -2280,6 +2285,7 @@ function FulfillmentConfirmRow({
             value={note}
             onChange={(e) => setNote(e.target.value.slice(0, 500))}
             placeholder="Optional — any handoff details to share with the buyer"
+            aria-label="Handoff note for buyer (optional)"
             rows={2}
             maxLength={500}
             className="w-full px-3 py-2 text-sm border border-dust bg-white text-charcoal focus:outline-none focus:border-charcoal"
