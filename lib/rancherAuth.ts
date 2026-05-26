@@ -182,6 +182,12 @@ async function resolveClerkRancher(
   // link login uses tokenized delimiter splitting in memory so it's
   // tighter — we re-verify in memory below to be safe.
   const safeEmail = clerkEmail.replace(/"/g, '\\"');
+  // Defense-in-depth: SEARCH("", anything) returns 1 in Airtable formula
+  // language, which would yield "match every row with non-empty Team
+  // Emails." The clerkEmail !== '' guard above is the primary defense;
+  // this re-checks safeEmail in case a future refactor strips the
+  // lowercase step + lets an empty string through.
+  if (!safeEmail) return null;
   let byEmail: any[] = [];
   try {
     byEmail = await getAllRecords(
@@ -215,24 +221,52 @@ async function resolveClerkRancher(
   // Multi-team-match: a consultant on multiple ranches' Team Emails
   // could legitimately have several hits. Pick the most-recently
   // active one, mirroring the heuristic the magic-link login uses.
+  //
+  // Deterministic tie-breaker: when two candidates have identical
+  // recency timestamps (or both are zero — no timestamps set on any
+  // candidate field), fall back to alphabetical record id. Without
+  // this, sort order is dictated by Airtable's response order which
+  // is non-deterministic across requests — two consecutive logins
+  // could pick different ranches.
   let row: any = null;
   if (matches.length === 1) {
     row = matches[0];
   } else if (matches.length > 1) {
     const recencyMs = (r: any): number => {
+      // Airtable returns `_rawJson.createdTime` for system fields; the
+      // helper getAllRecords doesn't surface `_createdTime` — instead
+      // pull it from the raw `createdTime` property if present.
       const candidates = [
         r['Last Assigned At'],
         r['Agreement Signed At'],
         r['Docs Sent At'],
-        r._createdTime,
-      ].map((d) => (d ? new Date(d).getTime() : 0));
-      return Math.max(...candidates, 0);
+        r['Created'],
+        (r as any).createdTime,
+        (r as any)._rawJson?.createdTime,
+      ].map((d) => (d ? new Date(d).getTime() : 0))
+       .filter((n) => Number.isFinite(n) && n > 0);
+      return candidates.length > 0 ? Math.max(...candidates) : 0;
     };
-    matches.sort((a: any, b: any) => recencyMs(b) - recencyMs(a));
+    matches.sort((a: any, b: any) => {
+      const diff = recencyMs(b) - recencyMs(a);
+      if (diff !== 0) return diff;
+      // Identical recency → lex sort on record id for determinism.
+      return String(a.id).localeCompare(String(b.id));
+    });
     row = matches[0];
-    console.log(
-      `[rancherAuth] multi-match email=${clerkEmail} → picked ${row.id} of ${matches.length} candidates`,
-    );
+    // Warn loudly when ALL candidates tie at zero — operator needs to
+    // know one of these ranches has missing timestamps + the auto-pick
+    // is fragile to Airtable response order (and we've fallen back to
+    // alphabetical record id).
+    if (recencyMs(row) === 0) {
+      console.warn(
+        `[rancherAuth] multi-match email=${clerkEmail} — ALL ${matches.length} candidates tie at zero recency; picked ${row.id} by lex id. Check Last Assigned At / Agreement Signed At fields.`,
+      );
+    } else {
+      console.log(
+        `[rancherAuth] multi-match email=${clerkEmail} → picked ${row.id} of ${matches.length} candidates`,
+      );
+    }
   }
   if (!row) return null;
 
