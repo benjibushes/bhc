@@ -16,7 +16,7 @@ import { normalizeState, normalizeStates } from '@/lib/states';
 import { buildCronStatusCard, pauseCron, resumeCron } from '@/lib/cronIntrospection';
 import jwt from 'jsonwebtoken';
 
-import { JWT_SECRET } from '@/lib/secrets';
+import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 
@@ -529,9 +529,22 @@ async function processUpdate(update: any) {
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
           const buyerName = buyer['Full Name'] || 'Buyer';
           if (rancherEmail) {
+            // tier_v2 ranchers route deposits through Stripe Connect direct
+            // charge at /checkout/<refId>/deposit, which requires the
+            // bhc-member-auth cookie. Wrap the deposit deep-link in a
+            // magic-link verify URL. Legacy ranchers stay on the tap-any-tier
+            // Payment Link copy (depositMagicLinkUrl stays undefined).
+            const buyerEmailAddr = buyer['Email'] || '';
+            const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+            let depositMagicLinkUrl: string | undefined;
+            if (pricingModel === 'tier_v2' && buyer.id && buyerEmailAddr) {
+              const magicToken = generateMemberLoginToken(buyer.id, buyerEmailAddr);
+              const nextPath = `/checkout/${refRecord.id}/deposit`;
+              depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+            }
             await sendBuyerIntroNotification({
               firstName: (buyerName.split(' ')[0]) || 'there',
-              email: buyer['Email'] || '',
+              email: buyerEmailAddr,
               rancherName,
               rancherEmail,
               rancherPhone: rancher['Phone'] || '',
@@ -544,6 +557,7 @@ async function processUpdate(update: any) {
               wholePrice: Number(rancher['Whole Price']) || undefined,
               wholeLbs: rancher['Whole lbs'] || '',
               nextProcessingDate: rancher['Next Processing Date'] || '',
+              depositMagicLinkUrl,
             }).catch((e: any) => console.error('[match] buyer intro failed:', e?.message));
             await sendEmail({
               to: rancherEmail,
@@ -703,6 +717,20 @@ async function processUpdate(update: any) {
               );
               const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
               const buyerFirstName = (referral['Buyer Name'] || '').split(' ')[0] || 'there';
+
+              // tier_v2 ranchers route deposits through Stripe Connect direct
+              // charge at /checkout/<refId>/deposit, which requires the
+              // bhc-member-auth cookie. Wrap the deposit deep-link in a
+              // magic-link verify URL. Legacy ranchers stay on the tap-any-
+              // tier Payment Link copy (depositMagicLinkUrl stays undefined).
+              const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+              let depositMagicLinkUrl: string | undefined;
+              if (pricingModel === 'tier_v2') {
+                const magicToken = generateMemberLoginToken(consumerId, buyerEmail);
+                const nextPath = `/checkout/${fullReferralId}/deposit`;
+                depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+              }
+
               await sendBuyerIntroNotification({
                 firstName: buyerFirstName,
                 email: buyerEmail,
@@ -711,6 +739,7 @@ async function processUpdate(update: any) {
                 rancherPhone,
                 rancherSlug: rancher['Slug'] || '',
                 loginUrl: buyerLoginUrl,
+                depositMagicLinkUrl,
               });
             } catch (e) {
               console.error('Error sending buyer intro notification:', e);
@@ -918,6 +947,20 @@ async function processUpdate(update: any) {
               );
               const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
               const buyerFirstName = (referral['Buyer Name'] || '').split(' ')[0] || 'there';
+
+              // tier_v2 ranchers route deposits through Stripe Connect direct
+              // charge at /checkout/<refId>/deposit, which requires the
+              // bhc-member-auth cookie. Wrap the deposit deep-link in a
+              // magic-link verify URL. Legacy ranchers stay on the tap-any-
+              // tier Payment Link copy (depositMagicLinkUrl stays undefined).
+              const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+              let depositMagicLinkUrl: string | undefined;
+              if (pricingModel === 'tier_v2') {
+                const magicToken = generateMemberLoginToken(buyerConsumerId, buyerEmail);
+                const nextPath = `/checkout/${refId}/deposit`;
+                depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+              }
+
               await sendBuyerIntroNotification({
                 firstName: buyerFirstName,
                 email: buyerEmail,
@@ -926,6 +969,7 @@ async function processUpdate(update: any) {
                 rancherPhone: rancher['Phone'] || '',
                 rancherSlug: rancher['Slug'] || '',
                 loginUrl: buyerLoginUrl,
+                depositMagicLinkUrl,
               });
             } catch (e) {
               console.error('Error sending buyer intro on reassignment:', e);
@@ -4558,6 +4602,20 @@ Confirm send?`;
                 const notes = ref['Notes'] || '';
 
                 if (rancherEmail) {
+                  // tier_v2 ranchers route deposits through Stripe Connect
+                  // direct charge at /checkout/<refId>/deposit, which requires
+                  // the bhc-member-auth cookie. Wrap the deposit deep-link in
+                  // a magic-link verify URL. Legacy ranchers stay on the tap-
+                  // any-tier Payment Link copy (depositMagicLinkUrl stays
+                  // undefined).
+                  const bulkPricingModel = String(rancher['Pricing Model'] || 'legacy');
+                  const bulkBuyerId = ref['Buyer']?.[0] || '';
+                  let bulkDepositMagicLinkUrl: string | undefined;
+                  if (bulkPricingModel === 'tier_v2' && bulkBuyerId && buyerEmail) {
+                    const magicToken = generateMemberLoginToken(bulkBuyerId, buyerEmail);
+                    const nextPath = `/checkout/${ref.id}/deposit`;
+                    bulkDepositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+                  }
                   await sendBuyerIntroNotification({
                     firstName: buyerName.split(' ')[0] || 'there',
                     email: buyerEmail,
@@ -4573,6 +4631,7 @@ Confirm send?`;
                     wholePrice: Number(rancher['Whole Price']) || undefined,
                     wholeLbs: rancher['Whole lbs'] || '',
                     nextProcessingDate: rancher['Next Processing Date'] || '',
+                    depositMagicLinkUrl: bulkDepositMagicLinkUrl,
                   }).catch((e: any) => console.error('[bulkfire] buyer intro failed:', e?.message));
 
                   await sendEmail({

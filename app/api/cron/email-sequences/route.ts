@@ -31,7 +31,7 @@ import jwt from 'jsonwebtoken';
 // 180s leaves headroom for ~75 emails + Airtable updates per run.
 export const maxDuration = 180;
 
-import { JWT_SECRET } from '@/lib/secrets';
+import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -283,6 +283,19 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 const rancherEmail = rancher['Email'];
                 const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
                 if (rancherEmail && consumer['Email']) {
+                  // tier_v2 ranchers route deposits through Stripe Connect
+                  // direct charge at /checkout/<refId>/deposit, which requires
+                  // the bhc-member-auth cookie. Wrap the deposit deep-link in
+                  // a magic-link verify URL. Legacy ranchers stay on the tap-
+                  // any-tier Payment Link copy (depositMagicLinkUrl stays
+                  // undefined).
+                  const promotePricingModel = String(rancher['Pricing Model'] || 'legacy');
+                  let promoteDepositMagicLinkUrl: string | undefined;
+                  if (promotePricingModel === 'tier_v2') {
+                    const magicToken = generateMemberLoginToken(consumerId, consumer['Email']);
+                    const nextPath = `/checkout/${stuckRef.id}/deposit`;
+                    promoteDepositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+                  }
                   // Buyer-side intro (w/ rancher pricing + contact)
                   await sendBuyerIntroNotification({
                     firstName,
@@ -299,6 +312,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                     wholePrice: Number(rancher['Whole Price']) || undefined,
                     wholeLbs: rancher['Whole lbs'] || '',
                     nextProcessingDate: rancher['Next Processing Date'] || '',
+                    depositMagicLinkUrl: promoteDepositMagicLinkUrl,
                   }).catch((e: any) => console.warn('[promote-pa] buyer intro failed:', e?.message));
                   // Rancher-side intro
                   await sendEmail({
