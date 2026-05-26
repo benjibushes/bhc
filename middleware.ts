@@ -1,6 +1,24 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 
+/**
+ * Constant-time string compare. Edge-runtime safe (no node:crypto). Stops a
+ * timing-attack window on the ADMIN_PASSWORD secret — Stage-3 lives behind
+ * this gate w/ real Stripe refund power, so the difference between
+ * `===` (linear-time) and this loop matters even at Vercel network jitter.
+ */
+function safeEqual(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const aLen = a.length;
+  const bLen = b.length;
+  const len = Math.max(aLen, bLen);
+  let diff = aLen ^ bLen;
+  for (let i = 0; i < len; i++) {
+    diff |= (a.charCodeAt(i % aLen || 1) ^ b.charCodeAt(i % bLen || 1));
+  }
+  return diff === 0 && aLen === bLen;
+}
+
 // Auth Phase 0 — Clerk for admin surface only.
 //
 // Browser admin access: requires a Clerk session AND email in ADMIN_EMAILS
@@ -56,7 +74,7 @@ export default clerkMiddleware(async (auth, req) => {
     // Their threat profile differs from a phishable human — secret in env var.
     const adminPw = process.env.ADMIN_PASSWORD;
     const headerPw = req.headers.get('x-admin-password');
-    const isServerAuth = !!(adminPw && headerPw && headerPw === adminPw);
+    const isServerAuth = !!(adminPw && headerPw && safeEqual(headerPw, adminPw));
 
     if (!isServerAuth) {
       const { userId, sessionClaims } = await auth();
@@ -70,7 +88,13 @@ export default clerkMiddleware(async (auth, req) => {
       }
 
       // Email allowlist — only emails in ADMIN_EMAILS env can pass.
-      // Empty allowlist = any signed-in Clerk user (DEV ONLY — set in prod).
+      //
+      // FAIL-CLOSED in production when empty: previously empty = any signed-in
+      // Clerk user could reach /admin. Clerk allows public sign-ups unless the
+      // Dashboard restricts them, so empty allowlist was an unbounded prod
+      // exposure. Now an empty list in production rejects every browser request.
+      // In dev (NODE_ENV !== 'production') empty list is still permissive so
+      // local testing works without Clerk Dashboard config.
       const userEmail = String(
         (sessionClaims as Record<string, unknown>)?.email ?? ''
       ).toLowerCase();
@@ -78,6 +102,16 @@ export default clerkMiddleware(async (auth, req) => {
         .split(',')
         .map((e) => e.trim().toLowerCase())
         .filter(Boolean);
+      const isProd = process.env.NODE_ENV === 'production';
+      if (ADMIN_EMAILS.length === 0 && isProd) {
+        if (pathname.startsWith('/api/')) {
+          return NextResponse.json(
+            { error: 'Admin allowlist not configured' },
+            { status: 403 }
+          );
+        }
+        return NextResponse.redirect(new URL('/?reason=admin-misconfig', req.url));
+      }
       if (ADMIN_EMAILS.length > 0 && !ADMIN_EMAILS.includes(userEmail)) {
         if (pathname.startsWith('/api/')) {
           return NextResponse.json(
