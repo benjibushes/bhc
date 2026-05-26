@@ -10,13 +10,11 @@
 // GET ?refId=X — returns rancher info + fulfillment details for the deposit page.
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { getRecordById, TABLES } from '@/lib/airtable';
 import { createDepositCheckout } from '@/lib/stripeConnect';
 import { recordDeposit } from '@/lib/contracts/payments';
 import { tierFor, TIERS } from '@/lib/tiers';
-import { JWT_SECRET } from '@/lib/secrets';
+import { resolveBuyerSession } from '@/lib/buyerAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -38,15 +36,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Stripe Connect not enabled' }, { status: 503 });
   }
 
-  const cookieStore = await cookies();
-  const memberCookie = cookieStore.get('bhc-member-auth');
-  if (!memberCookie?.value) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  let decoded: any;
-  try { decoded = jwt.verify(memberCookie.value, JWT_SECRET); }
-  catch { return NextResponse.json({ error: 'Session expired' }, { status: 401 }); }
-  if (decoded.type !== 'member-session') {
-    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-  }
+  // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
+  // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
+  const session = await resolveBuyerSession(req);
+  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   let body: any = {};
   try { body = await req.json(); }
@@ -67,7 +60,7 @@ export async function POST(req: Request) {
   if (!referral) return NextResponse.json({ error: 'Referral not found' }, { status: 404 });
 
   const buyerLinks: string[] = referral['Buyer'] || [];
-  if (!buyerLinks.includes(decoded.consumerId)) {
+  if (!buyerLinks.includes(session.consumerId)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -163,7 +156,7 @@ export async function POST(req: Request) {
       amountCents,
       buyerEmail,
       referralId,
-      buyerId: decoded.consumerId,
+      buyerId: session.consumerId,
       rancherId,
       productLabel,
       successUrl: `${SITE_URL}/checkout/${referralId}/success?session_id={CHECKOUT_SESSION_ID}`,
@@ -182,7 +175,7 @@ export async function POST(req: Request) {
   try {
     await recordDeposit({
       referralId,
-      buyerId: decoded.consumerId,
+      buyerId: session.consumerId,
       rancherId,
       tier: tierCapitalized,
       amountCents,
@@ -206,15 +199,10 @@ export async function GET(req: Request) {
   const referralId = url.searchParams.get('refId') || '';
   if (!referralId) return NextResponse.json({ error: 'refId required' }, { status: 400 });
 
-  const cookieStore = await cookies();
-  const memberCookie = cookieStore.get('bhc-member-auth');
-  if (!memberCookie?.value) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-  let decoded: any;
-  try { decoded = jwt.verify(memberCookie.value, JWT_SECRET); }
-  catch { return NextResponse.json({ error: 'Session expired' }, { status: 401 }); }
-  if (decoded.type !== 'member-session') {
-    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-  }
+  // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
+  // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
+  const session = await resolveBuyerSession(req);
+  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   let referral: any;
   try { referral = await getRecordById(TABLES.REFERRALS, referralId); }
@@ -222,7 +210,7 @@ export async function GET(req: Request) {
   if (!referral) return NextResponse.json({ error: 'Referral not found' }, { status: 404 });
 
   const buyerLinks: string[] = referral['Buyer'] || [];
-  if (!buyerLinks.includes(decoded.consumerId)) {
+  if (!buyerLinks.includes(session.consumerId)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

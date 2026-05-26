@@ -18,6 +18,7 @@ import { getRecordById, TABLES } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { sendEmail } from '@/lib/email';
 import { rateLimit } from '@/lib/rateLimit';
+import { resolveBuyerSession } from '@/lib/buyerAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -26,22 +27,19 @@ type AuthInfo =
   | { kind: 'buyer'; id: string; name: string; email: string }
   | { kind: 'rancher'; id: string; name: string; email: string };
 
-async function authBuyerOrRancher(): Promise<AuthInfo | null> {
-  const ck = await cookies();
-  const buyerCk = ck.get('bhc-member-auth');
-  if (buyerCk?.value) {
-    try {
-      const d: any = jwt.verify(buyerCk.value, JWT_SECRET);
-      if (d.type === 'member-session') {
-        return {
-          kind: 'buyer',
-          id: d.consumerId,
-          name: d.name || '',
-          email: d.email || '',
-        };
-      }
-    } catch {}
+async function authBuyerOrRancher(req: Request): Promise<AuthInfo | null> {
+  // Buyer side — Auth Phase 1 helper picks Clerk or legacy JWT transparently.
+  const buyer = await resolveBuyerSession(req);
+  if (buyer) {
+    return {
+      kind: 'buyer',
+      id: buyer.consumerId,
+      name: buyer.name,
+      email: buyer.email,
+    };
   }
+  // Rancher side — unchanged (Phase 1 doesn't touch rancher auth)
+  const ck = await cookies();
   const rancherCk = ck.get('bhc-rancher-auth');
   if (rancherCk?.value) {
     try {
@@ -75,8 +73,8 @@ async function assertThreadOwnership(threadId: string, auth: AuthInfo): Promise<
   return { ok: true, thread };
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await authBuyerOrRancher();
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await authBuyerOrRancher(req);
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { id } = await params;
   const own = await assertThreadOwnership(id, auth);
@@ -86,7 +84,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await authBuyerOrRancher();
+  const auth = await authBuyerOrRancher(req);
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   // Rate limit: 10 messages per 60s per sender. Anti-spam guard so a runaway

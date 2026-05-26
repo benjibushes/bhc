@@ -2,37 +2,22 @@ import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { normalizeState, normalizeStates } from '@/lib/states';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
+import { resolveBuyerSession } from '@/lib/buyerAuth';
 
 export const maxDuration = 60;
 
-import { JWT_SECRET } from '@/lib/secrets';
-
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    // Verify member session
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('bhc-member-auth');
-
-    let memberState = '';
-    let memberId = '';
-    let memberSegment = '';
-    let memberOrderType = '';
-
-    if (sessionCookie?.value) {
-      try {
-        const decoded: any = jwt.verify(sessionCookie.value, JWT_SECRET);
-        if (decoded.type === 'member-session') {
-          memberState = decoded.state || '';
-          memberId = decoded.consumerId || '';
-        }
-      } catch {
-        return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-      }
-    } else {
+    // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
+    // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
+    const session = await resolveBuyerSession(request);
+    if (!session) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
+    let memberState = session.state || '';
+    const memberId = session.consumerId;
+    let memberSegment = '';
+    let memberOrderType = '';
 
     // Fetch member's segment from their consumer record. Also rehydrate
     // memberState if JWT didn't carry it — older session tokens minted by

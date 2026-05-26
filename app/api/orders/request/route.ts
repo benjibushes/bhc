@@ -1,6 +1,4 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import {
   TABLES,
   createRecord,
@@ -11,8 +9,8 @@ import {
 } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { JWT_SECRET } from '@/lib/secrets';
 import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { resolveBuyerSession } from '@/lib/buyerAuth';
 
 // Order request endpoint — buyer fills inline form on rancher landing page.
 // No external redirect to rancher's website. We capture the request, link
@@ -47,8 +45,6 @@ import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const MEMBER_AUTH_COOKIE = 'bhc-member-auth';
-
 const TIER_LABELS: Record<string, string> = {
   quarter: 'Quarter Cow',
   half: 'Half Cow',
@@ -62,22 +58,19 @@ interface MemberSession {
   state?: string;
 }
 
-async function getMemberSession(): Promise<MemberSession | null> {
-  try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get(MEMBER_AUTH_COOKIE);
-    if (!sessionCookie?.value) return null;
-    const decoded: any = jwt.verify(sessionCookie.value, JWT_SECRET);
-    if (decoded.type !== 'member-session') return null;
-    return {
-      consumerId: decoded.consumerId,
-      name: decoded.name,
-      email: decoded.email,
-      state: decoded.state,
-    };
-  } catch {
-    return null;
-  }
+// Auth Phase 1: resolveBuyerSession transparently picks Clerk or
+// legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
+// Optional auth — endpoint accepts anonymous requests too (form fills
+// name/email manually for non-logged-in buyers).
+async function getMemberSession(req: Request): Promise<MemberSession | null> {
+  const session = await resolveBuyerSession(req);
+  if (!session) return null;
+  return {
+    consumerId: session.consumerId,
+    name: session.name,
+    email: session.email,
+    state: session.state,
+  };
 }
 
 function isValidEmail(s: string): boolean {
@@ -105,7 +98,7 @@ export async function POST(req: Request) {
   if (!TIER_LABELS[tier]) return NextResponse.json({ error: 'Invalid tier' }, { status: 400 });
 
   // Member session = skip name/email collection. Otherwise enforce.
-  const session = await getMemberSession();
+  const session = await getMemberSession(req);
   let buyerName = '';
   let buyerEmail = '';
   let buyerState = '';

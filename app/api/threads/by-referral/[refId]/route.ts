@@ -4,28 +4,18 @@
 // buyer doesn't need a separate "open conversation" step.
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { getOrCreateThreadForReferral, listThreadMessages } from '@/lib/contracts/threads';
 import { getRecordById, TABLES } from '@/lib/airtable';
-import { JWT_SECRET } from '@/lib/secrets';
+import { resolveBuyerSession } from '@/lib/buyerAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-export async function GET(_req: Request, { params }: { params: Promise<{ refId: string }> }) {
-  const ck = await cookies();
-  const buyerCk = ck.get('bhc-member-auth');
-  if (!buyerCk?.value) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  let decoded: any;
-  try {
-    decoded = jwt.verify(buyerCk.value, JWT_SECRET);
-  } catch {
-    return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-  }
-  if (decoded.type !== 'member-session') {
-    return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-  }
+export async function GET(req: Request, { params }: { params: Promise<{ refId: string }> }) {
+  // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
+  // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
+  const session = await resolveBuyerSession(req);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { refId } = await params;
   let ref: any;
@@ -37,7 +27,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ refId: 
   if (!ref) return NextResponse.json({ error: 'Referral not found' }, { status: 404 });
 
   const buyerIds: string[] = ref['Buyer'] || [];
-  if (!buyerIds.includes(decoded.consumerId)) {
+  if (!buyerIds.includes(session.consumerId)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   const rancherIds: string[] = ref['Rancher'] || ref['Suggested Rancher'] || [];
@@ -46,7 +36,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ refId: 
     return NextResponse.json({ error: 'No rancher assigned to this referral yet' }, { status: 409 });
   }
 
-  const { id, isNew } = await getOrCreateThreadForReferral(refId, decoded.consumerId, rancherId);
+  const { id, isNew } = await getOrCreateThreadForReferral(refId, session.consumerId, rancherId);
   const messages = await listThreadMessages(id);
   // Fetch rancher name for the UI header.
   let rancherName = '';

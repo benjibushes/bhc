@@ -1,37 +1,25 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
+import { resolveBuyerSession } from '@/lib/buyerAuth';
 
-import { JWT_SECRET } from '@/lib/secrets';
 const MEMBER_AUTH_COOKIE = 'bhc-member-auth';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get(MEMBER_AUTH_COOKIE);
-
-    if (!sessionCookie?.value) {
-      return NextResponse.json({ authenticated: false }, { status: 401 });
-    }
-
-    let decoded: any;
-    try {
-      decoded = jwt.verify(sessionCookie.value, JWT_SECRET);
-    } catch {
-      return NextResponse.json({ authenticated: false }, { status: 401 });
-    }
-
-    if (decoded.type !== 'member-session') {
+    // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
+    // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
+    const session = await resolveBuyerSession(request);
+    if (!session) {
       return NextResponse.json({ authenticated: false }, { status: 401 });
     }
 
     return NextResponse.json({
       authenticated: true,
       member: {
-        id: decoded.consumerId,
-        name: decoded.name,
-        email: decoded.email,
-        state: decoded.state,
+        id: session.consumerId,
+        name: session.name,
+        email: session.email,
+        state: session.state,
       },
     });
   } catch (error: any) {
@@ -40,6 +28,10 @@ export async function GET() {
   }
 }
 
+// DELETE — buyer-side logout. Clears the legacy bhc-member-auth cookie.
+// Note: under Clerk path, the Clerk session is cleared via the Clerk
+// client-side sign-out flow (the SignOutButton component) — this endpoint
+// is a no-op in that case but still safe to call (idempotent delete).
 export async function DELETE() {
   try {
     const cookieStore = await cookies();
