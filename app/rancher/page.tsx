@@ -588,6 +588,14 @@ export default function RancherDashboardPage() {
             <DashboardBannerCascade rancher={rancherInfo} />
           )}
 
+          {/* Legacy → tier_v2 upgrade banner.
+              Two states:
+                - Discovery: legacy w/ no tier yet → CTA to /partner
+                - Ready: legacy + tier subscription paying + Connect active → one-click POST /api/rancher/legacy-upgrade flips Pricing Model */}
+          {rancherInfo.pricingModel === 'legacy' && (
+            <LegacyUpgradeBanner rancher={rancherInfo} />
+          )}
+
           {/* Onboarding Banner */}
           {rancherInfo.onboardingStatus && rancherInfo.onboardingStatus !== 'Live' && (() => {
             const status = rancherInfo.onboardingStatus;
@@ -2336,6 +2344,85 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// Legacy → tier_v2 opt-in banner. Renders only when Pricing Model === 'legacy'.
+// Two states:
+//   1. Discovery — no tier yet. Pitches the upgrade + sends to /partner.
+//   2. Ready — tier subscription paying + Connect active. One-click button
+//      hits /api/rancher/legacy-upgrade to atomically flip Pricing Model.
+function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
+  const status = rancher.subscriptionStatus || '';
+  const subPaying = status === 'active' || status === 'trialing';
+  const connect = rancher.connectStatus || 'not_connected';
+  const ready = subPaying && connect === 'active';
+
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function confirmUpgrade() {
+    const ok = window.confirm(
+      'Switch to tier_v2 pricing? This is one-way — your closed deals will run through Stripe Connect direct charges instead of post-close commission invoices.',
+    );
+    if (!ok) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      const res = await fetch('/api/rancher/legacy-upgrade', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // Reload the page so the cascade re-renders against the new Pricing Model.
+        window.location.reload();
+      } else {
+        setError(data?.message || data?.error || 'Upgrade failed.');
+      }
+    } catch {
+      setError('Network error — try again in a moment.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (ready) {
+    return (
+      <div className="p-4 border-l-4 border-green-600 bg-green-50 flex items-center justify-between gap-4 flex-wrap">
+        <div className="text-sm text-green-900">
+          <p>
+            <strong>You&rsquo;re set up to switch to tier_v2.</strong>{' '}
+            Subscription is paying, Stripe Connect is active. One click finishes the upgrade.
+          </p>
+          {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
+        </div>
+        <button
+          type="button"
+          onClick={confirmUpgrade}
+          disabled={submitting}
+          className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+        >
+          {submitting ? 'Switching…' : 'Switch to tier_v2 →'}
+        </button>
+      </div>
+    );
+  }
+
+  // Discovery state — pitch the upgrade.
+  return (
+    <div className="p-4 border-l-4 border-blue-500 bg-blue-50 flex items-center justify-between gap-4 flex-wrap">
+      <p className="text-sm text-blue-900">
+        <strong>Skip the commission invoice. Get paid by Stripe direct.</strong>{' '}
+        Pick a paid tier ($150/$350/$500/mo) → Stripe collects buyer deposits → BHC&rsquo;s cut comes off the top → the rest hits your bank automatically.
+      </p>
+      <a
+        href="/partner"
+        className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-blue-700 text-white hover:bg-blue-800 transition-colors"
+      >
+        See plans →
+      </a>
     </div>
   );
 }
