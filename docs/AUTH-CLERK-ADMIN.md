@@ -74,7 +74,7 @@ the Clerk session. If empty, **any** signed-in Clerk user can hit `/admin`
 
 The allowlist is enforced at two layers:
 
-- `middleware.ts` — network-layer gate on every `/admin/*` and
+- `proxy.ts` — network-layer gate on every `/admin/*` and
   `/api/admin/*` request.
 - `lib/adminAuth.ts` `requireAdmin()` — defense in depth in route handlers.
 
@@ -102,7 +102,7 @@ This path:
 
 - Does **NOT** require Clerk session.
 - Skips the `ADMIN_EMAILS` allowlist.
-- Is enforced in both `middleware.ts` and `lib/adminAuth.ts`.
+- Is enforced in both `proxy.ts` and `lib/adminAuth.ts`.
 
 If you rotate `ADMIN_PASSWORD`, update Telegram bot config + cron secrets at
 the same time. Rotation cadence: quarterly minimum, immediately after any

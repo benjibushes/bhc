@@ -9,7 +9,7 @@
 //
 // Clerk v7 replaced <SignedIn>/<SignedOut> with the <Show> primitive.
 //
-// Note: middleware.ts and lib/adminAuth.ts already enforce the ADMIN_EMAILS
+// Note: proxy.ts and lib/adminAuth.ts already enforce the ADMIN_EMAILS
 // allowlist on the network layer. This guard is the client-side render gate.
 
 import { RedirectToSignIn, Show } from '@clerk/nextjs';

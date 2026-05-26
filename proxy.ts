@@ -156,9 +156,14 @@ export default clerkMiddleware(async (auth, req) => {
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files unless found in search params
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|css|js|woff|woff2|ttf|otf|eot|map)$).*)',
-    // Always run for API routes
+    // Skip Next.js internals + static asset extensions (Clerk canonical pattern).
+    // Lookahead excludes the file types we never want clerkMiddleware running on
+    // so request-handling cost stays at zero for images/fonts/manifest/etc.
+    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
+    // Clerk's auto-proxy path for OAuth callbacks + session sync. REQUIRED —
+    // without this, Clerk SSO + magic-link redirects 404 in production.
+    '/__clerk/(.*)',
+    // Always run for API + tRPC routes
     '/(api|trpc)(.*)',
   ],
 };

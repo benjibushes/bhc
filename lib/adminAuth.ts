@@ -58,7 +58,7 @@ if (process.env.NODE_ENV === 'production' && !process.env.ADMIN_EMAILS) {
  * Returns `null` if authorized. Returns a `NextResponse` 401/403 if not.
  * Callers should `if (response) return response;` at the top of their handler.
  *
- * Defense in depth: middleware.ts gates the same routes. This helper covers
+ * Defense in depth: proxy.ts gates the same routes. This helper covers
  * route handlers that may be hit directly (server actions, internal calls).
  */
 export async function requireAdmin(
