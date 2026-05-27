@@ -56,11 +56,16 @@ export default async function RanchersPage() {
 
           {/* Rancher Grid */}
           {ranchers.length === 0 ? (
-            <div className="text-center py-24 text-[#A7A29A]">
-              <p className="text-xl">Rancher pages coming soon.</p>
-              <p className="mt-2 text-base">
-                <Link href="/access" className="underline hover:text-[#0E0E0E]">Apply for access</Link> to get matched with a rancher in your area.
+            <div className="text-center py-24 space-y-4">
+              <p className="text-lg text-[#6B4F3F]">
+                Rancher pages are coming online weekly. See live partners on the map.
               </p>
+              <a
+                href="/map"
+                className="inline-block px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] uppercase tracking-wide text-sm hover:bg-[#6B4F3F] transition-colors"
+              >
+                See the map →
+              </a>
             </div>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">

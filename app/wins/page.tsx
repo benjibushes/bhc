@@ -155,16 +155,18 @@ export default async function WinsPage() {
         <Container>
           {wins.length === 0 ? (
             <div className="max-w-3xl mx-auto space-y-8">
-              <div className="text-center space-y-3">
-                <Pill tone="amber" className="mx-auto">Coming soon</Pill>
-                <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
-                  First deal posts here the moment it closes.
-                </h2>
-                <p className="text-saddle max-w-xl mx-auto leading-relaxed">
-                  No vanity placeholders. When a real rancher closes a real deal
-                  with a real family, it goes here automatically. Until then,
-                  here&rsquo;s what these will look like.
+              <div className="text-center space-y-4">
+                <Pill tone="amber" className="mx-auto">First closes loading</Pill>
+                <p className="text-saddle max-w-md mx-auto leading-relaxed">
+                  We&apos;re closing the first deals this week. Take the quiz to be among the
+                  first buyers matched as ranchers come online.
                 </p>
+                <a
+                  href="/access"
+                  className="inline-block px-6 py-3 bg-charcoal text-bone uppercase tracking-wide text-sm hover:bg-saddle transition-colors"
+                >
+                  Take the quiz
+                </a>
               </div>
 
               {/* Preview cards — show ranchers already on the network so the page
