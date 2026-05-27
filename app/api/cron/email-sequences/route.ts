@@ -466,13 +466,29 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           await sendStateWaitlistLetter({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           segmentCounters.state_waitlist++; totalSent++; fired = true;
         }
-        else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 1) {
+        // i-6 audit P0: incomplete_profile cap 1→3 w/ 14d cadence.
+        // ~69% of buyers (1088/1579 as of 2026-05-27) sat in this segment
+        // w/ a 1-email-lifetime cap → funnel hemorrhage. Now 3 progressive
+        // letters over 28d (d0, d14, d28). Subject escalates: gentle → check
+        // → close-the-loop. After 3 sends, drops to drip-only nurture.
+        else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 3 && daysSinceSegmentSend >= 14) {
+          const subjectVariants = [
+            'two questions on your beef — 30 seconds',
+            'still want beef from your area? — quick check',
+            "last note from me — close your loop or i'll stop",
+          ];
+          const subject = subjectVariants[Math.min(segmentCount, 2)];
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
             'Sequence Sent At': new Date().toISOString(),
           });
-          await sendIncompleteProfileAsk({ email, firstName, buyerState: buyerStateNorm || stateLabel });
+          await sendIncompleteProfileAsk({
+            email,
+            firstName,
+            buyerState: buyerStateNorm || stateLabel,
+            subject,
+          });
           segmentCounters.incomplete_profile++; totalSent++; fired = true;
         }
 

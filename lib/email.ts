@@ -3773,10 +3773,13 @@ export async function sendIncompleteProfileAsk(data: {
   email: string;
   firstName: string;
   buyerState: string;
+  // i-6 audit: cron now sends up to 3 letters over 28d. Optional subject
+  // override lets the cron escalate tone per attempt (D0, D14, D28).
+  subject?: string;
 }) {
   const first = data.firstName || 'there';
   const accessUrl = `${SITE_URL}/access`;
-  const subject = `two questions on your beef — 30 seconds`;
+  const subject = data.subject || `two questions on your beef — 30 seconds`;
   return guardedSend({
     templateName: 'sendIncompleteProfileAsk',
     recipientEmail: data.email,
