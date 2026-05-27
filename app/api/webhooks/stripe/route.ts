@@ -236,6 +236,28 @@ export async function POST(request: Request) {
           saleAmount: amountCents / 100,
         });
 
+        // ── Funnel event — deposit_paid (largest LTV event on platform) ──
+        // P0 audit fix: brand-partner + founder flows BOTH fire funnel +
+        // CAPI Purchase; buyer deposit (highest-value conversion) didn't.
+        // Without this row the admin conversion dashboard can't see deposit
+        // closes — and CAPI Purchase below is invisible to Meta = no paid-ad
+        // optimization on the most valuable event.
+        const amountDollars = amountCents / 100;
+        try {
+          await funnelRecord({
+            stage: 'deposit_paid',
+            referralId,
+            rancherId,
+            amount: amountDollars,
+            metadata: {
+              tier,
+              paymentIntentId: pi.id,
+            },
+          });
+        } catch (e: any) {
+          console.warn('[stripe webhook] funnel deposit_paid record failed:', e?.message);
+        }
+
         // Buyer post-purchase welcome — closes the "you bought" loop with
         // a warm BHC-branded email (cuts education preview, freezer prep,
         // pickup/delivery timeline). Mirrors the legacy quick-action(won)
@@ -243,6 +265,8 @@ export async function POST(request: Request) {
         // would only get Stripe's generic receipt + the Day-14 cuts email
         // weeks later — missing the immediate confirmation moment.
         // Best-effort: failure does NOT roll back the close.
+        // Also: reuse the fetched buyer below for Meta CAPI Purchase user_data.
+        let buyerForCapi: { email?: string; firstName?: string; lastName?: string } = {};
         try {
           const referralRow: any = await getRecordById(TABLES.REFERRALS, referralId).catch(() => null);
           const buyerLinksForEmail: string[] = (referralRow?.['Buyer'] || []) as string[];
@@ -251,18 +275,45 @@ export async function POST(request: Request) {
             ? await getRecordById(TABLES.CONSUMERS, buyerIdForEmail).catch(() => null)
             : null;
           const rancherForEmail: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
-          if (buyer?.['Email'] && rancherForEmail) {
-            const firstName = String(buyer['Full Name'] || '').split(' ')[0] || '';
-            await sendPostPurchaseWelcome({
-              firstName,
-              email: String(buyer['Email']),
-              rancherName: String(rancherForEmail['Operator Name'] || rancherForEmail['Ranch Name'] || 'your rancher'),
-              orderType: String(referralRow?.['Order Type'] || ''),
-            });
+          if (buyer?.['Email']) {
+            const fullName = String(buyer['Full Name'] || '').trim();
+            const nameParts = fullName.split(/\s+/);
+            buyerForCapi = {
+              email: String(buyer['Email']).toLowerCase(),
+              firstName: nameParts[0] || undefined,
+              lastName: nameParts.slice(1).join(' ') || undefined,
+            };
+            if (rancherForEmail) {
+              await sendPostPurchaseWelcome({
+                firstName: nameParts[0] || '',
+                email: String(buyer['Email']),
+                rancherName: String(rancherForEmail['Operator Name'] || rancherForEmail['Ranch Name'] || 'your rancher'),
+                orderType: String(referralRow?.['Order Type'] || ''),
+              });
+            }
           }
         } catch (e: any) {
           console.warn('[stripe webhook] sendPostPurchaseWelcome failed:', e?.message);
         }
+
+        // ── Meta Conversions API: server-side `Purchase` event ──────────
+        // Largest paid-ad attribution event on the platform — buyer deposit
+        // is the highest-LTV conversion. Pairs with client deposit_completed
+        // Pixel fire via event_id=pi.id (lib/analytics.ts E-1 + E-3 fixes
+        // ensure dedup actually works). Fire-and-forget — never block.
+        fireCapi([{
+          event_name: 'Purchase',
+          event_time: Math.floor(Date.now() / 1000),
+          event_id: pi.id,
+          action_source: 'system_generated',
+          user_data: buildUserData(buyerForCapi),
+          custom_data: {
+            value: amountDollars,
+            currency: 'usd',
+            content_name: `Beef deposit — ${tier || 'unknown'} tier`,
+            content_category: 'buyer-deposit',
+          },
+        }]).catch((e) => console.error('[meta-capi] buyer_deposit Purchase fire failed:', e));
 
         // Telegram celebration to admin chat.
         try {
