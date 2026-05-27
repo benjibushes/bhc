@@ -50,9 +50,32 @@ const featuredLink = '/api/checkout/brand?tier=featured';
 const foundingCalendly =
   process.env.NEXT_PUBLIC_BRAND_FOUNDING_CALENDLY || '/api/checkout/brand?tier=founding';
 
-// TODO: wire real Airtable count via /api/stats/public once endpoint exposes
-// founding_brand_partners_remaining. For now hardcode 5.
-const FOUNDING_SPOTS_REMAINING: number = 5;
+// Live count pulled from /api/stats/public (computed from Airtable Brands
+// where Payment Status = 'Paid', subtracted from FOUNDING_BRAND_PARTNER_CAP).
+// Fallback value matches the API's catch-path fallback so the scarcity
+// counter degrades gracefully if Airtable is unreachable.
+const FOUNDING_SPOTS_REMAINING_FALLBACK = 5;
+
+async function getFoundingSpotsRemaining(): Promise<number> {
+  try {
+    // Server-side fetch hits the route handler directly — uses the same
+    // 5-min revalidate as /api/stats/public itself, so we don't hammer
+    // Airtable on every brand-partners page hit.
+    const siteUrl =
+      process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+    const res = await fetch(`${siteUrl}/api/stats/public`, {
+      next: { revalidate: 300 },
+    });
+    if (!res.ok) return FOUNDING_SPOTS_REMAINING_FALLBACK;
+    const json = await res.json();
+    const remaining = Number(json?.brandPartnersRemaining);
+    return Number.isFinite(remaining) && remaining >= 0
+      ? remaining
+      : FOUNDING_SPOTS_REMAINING_FALLBACK;
+  } catch {
+    return FOUNDING_SPOTS_REMAINING_FALLBACK;
+  }
+}
 
 // JSON-LD Schema.org Service markup — Google rich-result eligibility for
 // brand partner placements. Three tiers mirror the page below. Renders via
@@ -93,7 +116,8 @@ const brandPartnersJsonLd = {
   ],
 };
 
-export default function BrandPartnersPage() {
+export default async function BrandPartnersPage() {
+  const foundingSpotsRemaining = await getFoundingSpotsRemaining();
   return (
     <main className="min-h-screen bg-bone text-charcoal">
       <script
@@ -240,10 +264,10 @@ export default function BrandPartnersPage() {
                 <p className="text-base text-charcoal font-medium">
                   $1,500 <span className="text-saddle font-normal">per quarter</span>
                 </p>
-                {/* Scarcity counter — TODO: wire real count from /api/stats/public
-                    once endpoint exposes founding_brand_partners_remaining */}
+                {/* Scarcity counter — live from /api/stats/public, computed
+                    from active paid Brand Partners in Airtable. */}
                 <p className="text-xs font-semibold text-saddle uppercase tracking-wide pt-0.5">
-                  {FOUNDING_SPOTS_REMAINING} spot{FOUNDING_SPOTS_REMAINING !== 1 ? 's' : ''} remaining
+                  {foundingSpotsRemaining} spot{foundingSpotsRemaining !== 1 ? 's' : ''} remaining
                 </p>
               </header>
               <ul className="text-sm text-charcoal/85 space-y-2.5 leading-relaxed flex-1">
@@ -253,7 +277,7 @@ export default function BrandPartnersPage() {
                   '1-on-1 call with Ben quarterly to strategize',
                   'First access to new rancher cohorts in your category',
                   'Featured slot in monthly investor update letter',
-                  '5 spots total — first-come, first-served',
+                  `${foundingSpotsRemaining} of 100 founding spots remaining — first-come, first-served`,
                 ].map((b, i) => (
                   <li key={i} className="flex gap-2.5">
                     <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>

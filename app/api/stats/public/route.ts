@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { FOUNDING_BRAND_PARTNER_CAP } from '@/lib/tiers';
 
 export const runtime = 'nodejs';
 // Cache 5 minutes — public stats don't need to be real-time. ISR
@@ -37,14 +38,20 @@ interface PublicStats {
   // cached endpoint feeds the landing page.
   latestClose: LatestClose | null;
   activity24h: Activity24h;
+  // Brand Partner Founding 100 — slots remaining (cap minus active
+  // paid brand partners). Powers /brand-partners scarcity counter.
+  brandPartnersRemaining: number;
 }
 
 export async function GET() {
   try {
-    const [ranchers, consumers, referrals] = await Promise.all([
+    const [ranchers, consumers, referrals, brands] = await Promise.all([
       getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
       getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
       getAllRecords(TABLES.REFERRALS) as Promise<any[]>,
+      // Brands table may be empty / missing in fresh envs — soft-fail to []
+      // so brandPartnersRemaining falls back to the cap (100 spots open).
+      (getAllRecords(TABLES.BRANDS) as Promise<any[]>).catch(() => [] as any[]),
     ]);
 
     const ranchersActive = ranchers.filter((r: any) => isRancherOperationalForBuyers(r)).length;
@@ -131,6 +138,22 @@ export async function GET() {
       }
     }
 
+    // ── Brand Partners — Founding 100 slots remaining ────────────────
+    // A "claimed" Founding 100 slot = a brand that has actually paid.
+    // We use Payment Status = 'Paid' as the canonical signal (set by
+    // the Stripe webhook in handleBrandListingCompleted). Featured=true
+    // alone isn't enough — that's a manual editorial flag and can be
+    // true on unpaid records. Anything else (Pending / Approved-but-
+    // unpaid) doesn't burn a slot.
+    const activeBrandPartners = brands.filter((b: any) => {
+      const paymentStatus = (b['Payment Status'] || '').toString();
+      return paymentStatus === 'Paid';
+    }).length;
+    const brandPartnersRemaining = Math.max(
+      0,
+      FOUNDING_BRAND_PARTNER_CAP - activeBrandPartners,
+    );
+
     // Distinct US states with at least one operational rancher.
     // Used by homepage LiveCounter `stateCount` field.
     const stateCount = new Set(
@@ -149,6 +172,7 @@ export async function GET() {
       thisMonthClosedWon,
       latestClose,
       activity24h: { closes: closes24h, matched: matched24h, signups: signups24h },
+      brandPartnersRemaining,
       // ── Legacy key aliases ──────────────────────────────────────────
       // The homepage FullHomepage + LiveCounter were built against an
       // older API shape (rancherCount / buyerCount / stateCount). Adding
@@ -181,6 +205,9 @@ export async function GET() {
       thisMonthClosedWon: 0,
       latestClose: null,
       activity24h: { closes: 0, matched: 0, signups: 0 },
+      // Conservative fallback — show 5 spots remaining (matches the
+      // pre-wired hardcode on /brand-partners) when Airtable is down.
+      brandPartnersRemaining: 5,
       // Legacy aliases for FullHomepage + LiveCounter compatibility.
       rancherCount: 17,
       buyerCount: 1533,
