@@ -1,6 +1,6 @@
 # BHC System Map
 
-**Last updated:** 2026-05-24
+**Last updated:** 2026-05-26
 **Purpose:** Single-page reference for every page, endpoint, cron, email template, Airtable table, Telegram command, and routing path. New-contractor-onboarding-grade.
 
 ---
@@ -462,16 +462,25 @@ All commands handled in `app/api/webhooks/telegram/route.ts`. Sent to the admin 
 
 ---
 
-## 8. Revenue Streams
+## 8. Revenue Engines + Streams
 
-| Stream | Mechanics | Surfaces that drive it | Tier |
-|---|---|---|---|
-| **Marketplace Commission** | 10% of every closed deal. Rancher pays. ~$120 avg per close. Invoice sent by `sendInstantCommissionInvoice` at close; monthly batch via `commission-invoices` cron. | `/access` → matching → referral pipeline → close-detector | high |
-| **Founding Herd** | 5-tier backer program: Herd $9/mo, Outlaw $25/mo, Steward $75/mo, Founding 100 $1k lifetime (cap 100), Title Founder $15k lifetime (cap 10). Stripe payment links + Stripe Connect webhook. | `/founders` page, email list, broadcast | high |
-| **Brand Partners** | Brands pay for logo placement + posts + marketing bundle. Pricing tiers on `/brand-partners`. Manual fulfillment after Stripe payment. | `/brand-partners` page, `sendBrandListingConfirmation` | medium |
-| **Rancher Retainer** | Optional marketing retainer for ranchers post-onboarding. $500-$2,500/mo or $5k-$15k content sprints. Sold via onboarding call. `sendPilotUpsellEmail` is the trigger. | Rancher onboarding call, `sendPilotUpsellEmail` | medium |
-| **Content Sponsorships** | Sponsored content placements in the newsletter + platform (future). Currently bundled with Brand Partner tiers. | Brand partner tiers, email list | low |
-| **Course / Info Product** | Educational beef-buying content (planned). No live surface yet. Buyer list is the asset. | `/member` (future module) | low |
+### Active Engines (Stage 3+)
+
+| Engine | Status | Implementation | Notes | Tier |
+|---|---|---|---|---|
+| **Engine 1: Marketplace Commission** | LIVE | `lib/stripe-commission.ts`, `sendInstantCommissionInvoice` | 10% of closed deal. Rancher pays. ~$120 avg per close. Legacy model for pre-Stage-3 ranchers. | high |
+| **Engine 2: Subscription Tiers** | LIVE | `lib/tiers.ts`, `app/api/rancher/tier/*` | Pasture/Ranch/Operator tiers. High-monthly / low-commission model incentivizes rancher commitment. Stage 3 new ranchers. | high |
+| **Engine 3: Founding Herd** | LIVE | `app/api/founders/checkout`, Stripe Payment Links | 5-tier backer program ($9-$15k). Cap: 100 × $1k + 10 × $15k = $250k. | high |
+| **Engine 4: Payments Platform** | LIVE (gated) | `lib/stripeConnect.ts`, `STRIPE_CONNECT_ENABLED` | Stripe Connect auto-split: rancher 90%, BHC 10%. Disabled on prod until first tier_v2 rancher onboards. | high |
+| **Marketing Services** | **DEFERRED** | None | Documented in BUSINESS-MODEL.md (Engine 4 there, before renumbering). No API endpoint, no Stripe product, no Airtable contract table. Decision: launch first 100 paying ranchers on Engines 1-4 only. Reassess Q3 2026 once tier_v2 stable. | medium |
+
+### Secondary Streams (Bundled / Lower Priority)
+
+| Stream | Status | Mechanics | Surfaces | Tier |
+|---|---|---|---|---|
+| **Brand Partners** | LIVE | Brands pay for logo placement + marketing bundle. Manual fulfillment. | `/brand-partners` page, Stripe checkout, `sendBrandListingConfirmation` | medium |
+| **Content Sponsorships** | Future | Sponsored placements in newsletter + platform. Currently bundled with Brand Partner tiers. | Brand partner tiers, email list | low |
+| **Course / Info Product** | Future | Educational beef-buying content. No live surface. Buyer list is the asset. | `/member` (future module) | low |
 
 ---
 
