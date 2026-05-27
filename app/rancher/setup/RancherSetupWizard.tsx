@@ -1845,43 +1845,12 @@ function SignStep({
         )}
       </div>
 
-      {/* First-buyer simulation — shows what the rancher's first inbound
-          intro will look like. Builds anticipation + makes the "leads will
-          actually come" promise concrete. Fully hard-coded mock; no fetch. */}
-      <div className="border border-charcoal bg-charcoal text-bone p-5 space-y-3">
-        <p className="text-[11px] uppercase tracking-widest text-bone/70 font-semibold">
-          Sneak peek — your first buyer intro
-        </p>
-        <p className="text-sm text-bone/85 leading-relaxed">
-          When a buyer in {rancher['State'] as any || form.State || 'your state'} qualifies for {rancher.ranchName}, this lands in your inbox:
-        </p>
-        <div className="bg-bone text-charcoal p-4 space-y-2">
-          <p className="text-[11px] text-saddle font-mono">
-            From: BuyHalfCow &lt;ben@buyhalfcow.com&gt;
-          </p>
-          <p className="text-[11px] text-saddle font-mono">
-            To: {form.Email || 'you@yourranch.com'}
-          </p>
-          <p className="text-sm font-bold text-charcoal">
-            🟢 New buyer for {rancher.ranchName} — Sarah K., {form.State || 'MT'}
-          </p>
-          <p className="text-sm text-charcoal/85 leading-relaxed">
-            Sarah just signed up looking for a Half cow, budget $1,200-$1,500,
-            ready to buy in the next 1-2 months. She picked you. Reach out
-            within 24h — buyers go cold fast.
-          </p>
-          <p className="text-sm text-charcoal/85">
-            <strong>Phone:</strong> (406) 555-0142<br />
-            <strong>Email:</strong> sarah.k@example.com<br />
-            <strong>Notes:</strong> &ldquo;Family of 5, freezer space, prefers
-            grass-fed.&rdquo;
-          </p>
-        </div>
-        <p className="text-xs text-bone/70 italic leading-relaxed">
-          That&rsquo;s the whole product. Pre-screened, in-state, ready-to-buy.
-          You sign below and we start routing real ones to {rancher.ranchName}.
-        </p>
-      </div>
+      {/* P1-3: removed the fabricated "Sarah K." sneak-peek intro mock that
+          previously lived here. It set unrealistic expectations about intro
+          detail level and violated BHC.md integrity rules against invented
+          buyer initials / quotes / phone numbers. If we want a real preview
+          later, it should be a real anonymized closed-won example, not
+          fabricated copy. The agreement step now focuses on the agreement. */}
 
       {/* Plain-language agreement summary. Full legal text linked. */}
       <div className="border border-dust p-5 space-y-3 text-sm text-charcoal/85 leading-relaxed">
