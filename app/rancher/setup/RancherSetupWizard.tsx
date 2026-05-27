@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Container from '../../components/Container';
@@ -155,6 +155,12 @@ export default function RancherSetupWizard() {
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>(0);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  // P1-1 auto-save: track per-field status so we can show "saving…" → "saved"
+  // micro-indicators next to long-form fields. Map key: field name (e.g.
+  // 'About Text'), value: 'idle' | 'saving' | 'saved'. 'saved' fades after 3s.
+  const [autoSaveStatus, setAutoSaveStatus] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
+  const autoSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const autoSavedFadeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [previewOpen, setPreviewOpen] = useState(false); // mobile accordion state
   const [signing, setSigning] = useState(false);
   const [signatureName, setSignatureName] = useState('');
@@ -392,6 +398,88 @@ export default function RancherSetupWizard() {
       setSaving(false);
     }
   }
+
+  // P1-1 — debounced auto-save for long-form text fields. 800ms after the last
+  // keystroke, PATCH the single field. Prevents the "I typed 4 paragraphs and
+  // then closed the tab" disaster. Validation-failing values (e.g. Refund
+  // Policy below 20 chars) are skipped — autoSave waits until valid.
+  //
+  // Per-field timers live in autoSaveTimers ref so a rapid second keystroke
+  // cancels the pending PATCH and starts a fresh 800ms window. Indicator state
+  // flips to 'saving' on fire, 'saved' on success, then fades to 'idle' after
+  // 3s. No flicker because the fade timer is also debounced.
+  //
+  // Does NOT call setSaving / setLastSavedAt — those are reserved for the
+  // explicit "Save & continue" button so the user still sees a clear primary
+  // save action at step boundaries.
+  const queueAutoSave = useCallback(
+    (key: string, value: any, opts: { isValid?: (v: any) => boolean } = {}) => {
+      const { isValid } = opts;
+      // Cancel pending PATCH for this field.
+      if (autoSaveTimers.current[key]) {
+        clearTimeout(autoSaveTimers.current[key]);
+      }
+      // Don't fire when validation says wait (e.g. Refund Policy < 20 chars).
+      if (isValid && !isValid(value)) {
+        return;
+      }
+      autoSaveTimers.current[key] = setTimeout(async () => {
+        setAutoSaveStatus((s) => ({ ...s, [key]: 'saving' }));
+        try {
+          const payload: Record<string, any> = {};
+          if (key.endsWith(' Price') && value !== '' && value != null) {
+            const n = Number(value);
+            payload[key] = isFinite(n) ? n : '';
+          } else {
+            payload[key] = value;
+          }
+          const res = await fetch(
+            `/api/rancher/setup?token=${encodeURIComponent(token)}`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            }
+          );
+          if (!res.ok) {
+            setAutoSaveStatus((s) => ({ ...s, [key]: 'idle' }));
+            return;
+          }
+          setAutoSaveStatus((s) => ({ ...s, [key]: 'saved' }));
+          // Fade 'saved' → 'idle' after 3s.
+          if (autoSavedFadeTimers.current[key]) {
+            clearTimeout(autoSavedFadeTimers.current[key]);
+          }
+          autoSavedFadeTimers.current[key] = setTimeout(() => {
+            setAutoSaveStatus((s) => ({ ...s, [key]: 'idle' }));
+          }, 3000);
+        } catch {
+          setAutoSaveStatus((s) => ({ ...s, [key]: 'idle' }));
+        }
+      }, 800);
+    },
+    [token]
+  );
+
+  // Cleanup all pending timers on unmount so we don't leak / fire stale PATCH.
+  useEffect(() => {
+    return () => {
+      Object.values(autoSaveTimers.current).forEach((t) => clearTimeout(t));
+      Object.values(autoSavedFadeTimers.current).forEach((t) => clearTimeout(t));
+    };
+  }, []);
+
+  // Convenience setter that updates form state AND queues auto-save. Used for
+  // the 5 highest-risk long-form fields (About Text, Refund Policy, Tagline,
+  // Video URL, Custom Notes). Other fields stick with plain setField + the
+  // explicit Save & continue button.
+  const setFieldAndAutoSave = useCallback(
+    (key: string, value: any, opts: { isValid?: (v: any) => boolean } = {}) => {
+      setField(key, value);
+      queueAutoSave(key, value, opts);
+    },
+    [queueAutoSave]
+  );
 
   // Request a signing JWT (mints a fresh one + stamps Onboarding Status=Docs Sent).
   // Doesn't email — we sign inline. Returns nothing visible, just primes the
@@ -928,7 +1016,7 @@ export default function RancherSetupWizard() {
                 <Field
                   label="Tagline (one sentence)"
                   value={form.Tagline}
-                  onChange={(v) => setField('Tagline', v)}
+                  onChange={(v) => setFieldAndAutoSave('Tagline', v)}
                   placeholder="Family-raised Angus from the Bitterroot Valley since 1962."
                 />
                 <div className="flex items-start gap-2 flex-wrap">
@@ -944,6 +1032,7 @@ export default function RancherSetupWizard() {
                       {form.Tagline.length}/120 chars
                     </span>
                   )}
+                  <AutoSaveIndicator status={autoSaveStatus['Tagline']} />
                 </div>
                 {showTaglineTemplates && (
                   <div className="border border-dust bg-bone-warm p-3 space-y-1.5">
@@ -998,21 +1087,27 @@ export default function RancherSetupWizard() {
                 )}
               </div>
 
-              <TextareaField
-                label="About your ranch"
-                value={form['About Text']}
-                onChange={(v) => setField('About Text', v)}
-                rows={7}
-                placeholder="A few paragraphs. How you got started, what makes your operation different, what families are buying when they buy from you."
-              />
+              <div className="space-y-1">
+                <TextareaField
+                  label="About your ranch"
+                  value={form['About Text']}
+                  onChange={(v) => setFieldAndAutoSave('About Text', v)}
+                  rows={7}
+                  placeholder="A few paragraphs. How you got started, what makes your operation different, what families are buying when they buy from you."
+                />
+                <AutoSaveIndicator status={autoSaveStatus['About Text']} />
+              </div>
 
-              <Field
-                label="Video URL (YouTube or Vimeo, optional)"
-                value={form['Video URL']}
-                onChange={(v) => setField('Video URL', v)}
-                placeholder="https://youtube.com/watch?v=..."
-                type="url"
-              />
+              <div className="space-y-1">
+                <Field
+                  label="Video URL (YouTube or Vimeo, optional)"
+                  value={form['Video URL']}
+                  onChange={(v) => setFieldAndAutoSave('Video URL', v)}
+                  placeholder="https://youtube.com/watch?v=..."
+                  type="url"
+                />
+                <AutoSaveIndicator status={autoSaveStatus['Video URL']} />
+              </div>
             </div>
             <StepFooter
               saving={saving}
@@ -1253,6 +1348,8 @@ export default function RancherSetupWizard() {
             token={token}
             form={form}
             setField={setField}
+            setFieldAndAutoSave={setFieldAndAutoSave}
+            autoSaveStatus={autoSaveStatus}
             saving={saving}
             saveStep={saveStep}
             onBack={() => setStep(9)}
@@ -1363,6 +1460,25 @@ export default function RancherSetupWizard() {
 }
 
 // ── Form helpers ──────────────────────────────────────────────────────────
+
+// P1-1 — auto-save status pill. Three states: saving (dust), saved (sage),
+// idle (renders nothing). Small + lowercase so it doesn't fight the existing
+// micro-copy under fields. Inline so it can sit next to char counters.
+function AutoSaveIndicator({ status }: { status?: 'idle' | 'saving' | 'saved' }) {
+  if (!status || status === 'idle') return null;
+  if (status === 'saving') {
+    return (
+      <span className="text-xs text-dust italic ml-2" aria-live="polite">
+        saving…
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs text-sage italic ml-2" aria-live="polite">
+      saved
+    </span>
+  );
+}
 
 function Field({
   label,
@@ -2182,6 +2298,8 @@ function FulfillmentStep({
   token,
   form,
   setField,
+  setFieldAndAutoSave,
+  autoSaveStatus,
   saving,
   saveStep,
   onBack,
@@ -2190,6 +2308,12 @@ function FulfillmentStep({
   token: string;
   form: Record<string, any>;
   setField: (key: string, value: any) => void;
+  setFieldAndAutoSave: (
+    key: string,
+    value: any,
+    opts?: { isValid?: (v: any) => boolean }
+  ) => void;
+  autoSaveStatus: Record<string, 'idle' | 'saving' | 'saved'>;
   saving: boolean;
   saveStep: (slice: Record<string, any>) => Promise<boolean>;
   onBack: () => void;
@@ -2346,7 +2470,16 @@ function FulfillmentStep({
         <TextareaField
           label="Refund policy (required, 20–500 chars)"
           value={form['Refund Policy']}
-          onChange={(v) => setField('Refund Policy', v)}
+          onChange={(v) =>
+            setFieldAndAutoSave('Refund Policy', v, {
+              // Auto-save only when within valid range so we don't churn
+              // PATCHes while the rancher is mid-sentence.
+              isValid: (val: any) => {
+                const s = String(val || '');
+                return s.length >= 20 && s.length <= 500;
+              },
+            })
+          }
           rows={4}
           placeholder={`Tip: "Full refund within 7 days if cattle isn't processed yet. After processing, store credit only."`}
         />
@@ -2354,6 +2487,7 @@ function FulfillmentStep({
           Shown verbatim to buyers on the pre-payment page. {refundLen}/500
           {refundLen < 20 && ' — need at least 20'}
           {refundLen > 500 && ' — too long, trim it down'}
+          <AutoSaveIndicator status={autoSaveStatus['Refund Policy']} />
         </p>
       </div>
 
