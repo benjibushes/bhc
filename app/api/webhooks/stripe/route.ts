@@ -755,7 +755,7 @@ async function handleFounderCheckoutCompleted(session: any, metaType: string) {
   };
   if (customerId) founderFields['Stripe Customer ID'] = customerId;
   if (subscriptionId) {
-    founderFields['Stripe Subscription ID'] = subscriptionId;
+    founderFields['Stripe Subscription Id'] = subscriptionId;
     founderFields['Subscription Status'] = 'active';
   }
   if (typeof founderNumber === 'number') founderFields['Founder Number'] = founderNumber;
