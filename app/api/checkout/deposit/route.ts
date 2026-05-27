@@ -122,6 +122,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Rancher Stripe Connect Account missing' }, { status: 409 });
   }
 
+  // Subscription status gate. past_due/unpaid/canceled ranchers cannot accept
+  // deposits — prevents payments to ranchers in Stripe collections.
+  const subscriptionStatus = String(rancher['Subscription Status'] || '');
+  if (subscriptionStatus === 'past_due' || subscriptionStatus === 'unpaid' || subscriptionStatus === 'canceled') {
+    return NextResponse.json(
+      {
+        error: `Rancher subscription is ${subscriptionStatus} — checkout temporarily unavailable. Please contact support@buyhalfcow.com.`,
+      },
+      { status: 409 }
+    );
+  }
+
   // Compute per-cut price (Airtable fields hold dollars)
   const priceFieldMap: Record<string, string> = {
     quarter: 'Quarter Price',
