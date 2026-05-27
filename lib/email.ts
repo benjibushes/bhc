@@ -1419,6 +1419,59 @@ export async function sendPartnerConfirmation(data: {
   });
 }
 
+// Wholesale buyer-side confirmation. Fires immediately at /wholesale signup.
+//
+// Audit P0 I-5: prior to this, /wholesale fired sendAdminAlert only.
+// Wholesale applicants (restaurants/butchers, $5-15k AOV) received no
+// email → believed form broken → abandoned. Founder voice, 48h response
+// promise + calendly link to take initiative.
+export async function sendWholesaleConfirmation(data: {
+  contactName: string;
+  businessName: string;
+  email: string;
+}) {
+  const first = esc(data.contactName.split(/\s+/)[0] || 'there');
+  const biz = esc(data.businessName);
+  const subject = `bhc wholesale — got your application, ${biz}`;
+
+  return guardedSend({
+    templateName: 'sendWholesaleConfirmation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:24px;margin:0 0 14px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;}
+a{color:#0E0E0E;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+  <p>hey ${first} —</p>
+  <p>got your wholesale application for <strong>${biz}</strong>. real human on the other end, not a queue.</p>
+  <p>i'll personally review it and reach out within <strong>48 hours</strong> with next steps — which ranchers in your region can supply your volume, pricing, and how the supply relationship works.</p>
+  <p>if you want to move faster, grab a time on my calendar below and we'll jump straight into the conversation.</p>
+  <p style="text-align:center;margin:28px 0;">
+    <a href="${CALENDLY_LINK}" class="cta">book a call</a>
+  </p>
+  <p style="font-size:14px;color:#6B4F3F;">questions in the meantime? reply to this email — it lands directly with me.</p>
+  <p style="margin-top:28px;">— ben<br>buyhalfcow</p>
+  <div class="footer">
+    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+    <p style="margin:6px 0 0;">
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
+    </p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
 // =====================================================
 // BRAND PAYMENT EMAILS
 // =====================================================

@@ -15,7 +15,7 @@ import {
   TABLES,
 } from '@/lib/airtable';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
-import { sendAdminAlert } from '@/lib/email';
+import { sendAdminAlert, sendWholesaleConfirmation } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { normalizeState } from '@/lib/states';
 import { funnelRecord } from '@/lib/funnelMetrics';
@@ -165,6 +165,19 @@ export async function POST(request: Request) {
         { error: 'Could not save your application. Please try again or email ben@buyhalfcow.com.' },
         { status: 500 },
       );
+    }
+
+    // P0 audit I-5: send wholesale applicant confirmation immediately.
+    // before this, /wholesale fired admin alert only — applicants got
+    // zero email → believed form broken → abandoned.
+    try {
+      await sendWholesaleConfirmation({
+        contactName,
+        businessName,
+        email,
+      });
+    } catch (e: any) {
+      console.warn('[wholesale/signup] applicant confirmation failed (non-fatal):', e?.message);
     }
 
     // Fire admin alert email — type='consumer' is the closest existing
