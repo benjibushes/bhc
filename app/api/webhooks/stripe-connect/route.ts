@@ -27,6 +27,7 @@ import {
   TABLES,
 } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendEmail } from '@/lib/email';
 import { PAYMENTS_TABLE } from '@/lib/contracts/payments';
 
 // Mirror the platform webhook's Stripe Events table for idempotency.
@@ -204,6 +205,14 @@ export async function POST(request: Request) {
         await handleDispute(event);
         break;
 
+      // ── Audit F7 — payout.failed handler ──
+      // Rancher's bank rejects the BHC payout (typo'd routing, closed acct,
+      // etc) → rancher unaware until they notice missing money. Now: LOUD
+      // Telegram to ops + auto-email rancher with failure reason + fix link.
+      case 'payout.failed':
+        await handlePayoutFailed(event);
+        break;
+
       default:
         // V2 ships many account-related event types we don't care about
         // (settings updates, person updates, etc). Skip + log.
@@ -363,6 +372,79 @@ async function handleDispute(event: any): Promise<void> {
     );
   } catch (e: any) {
     console.warn('[stripe-connect dispute] telegram alert failed:', e?.message);
+  }
+}
+
+// ============================================================================
+// STRIPE PAYOUT FAILED — bank rejection handler (Audit F7).
+// Fires on payout.failed on the CONNECTED account (payouts fire on the
+// rancher's connected acct, not platform). Rancher's bank rejected the
+// payout — typo in routing/account #, account closed, frozen, etc.
+//
+// We alert ops via Telegram + auto-email the rancher with the failure
+// reason + link to their billing dashboard so they can correct it. Without
+// this they'd discover the problem only by noticing missing money.
+// ============================================================================
+async function handlePayoutFailed(event: any): Promise<void> {
+  const payout = event?.data?.object as any;
+  const accountId: string = event?.account || ''; // Connect account that owns this payout
+  const amount = (payout?.amount || 0) / 100;
+  const failureMessage = payout?.failure_message || 'no reason given';
+  const failureCode = payout?.failure_code || 'unknown';
+
+  if (!accountId) {
+    console.warn('[stripe-connect payout.failed] missing account ID on event');
+    return;
+  }
+
+  // Look up the rancher by Connect Account ID.
+  let rancherEmail: string | null = null;
+  let rancherName: string | null = null;
+  try {
+    const safeAcct = accountId.replace(/"/g, '\\"');
+    const rows: any[] = await getAllRecords(
+      TABLES.RANCHERS,
+      `{Stripe Connect Account Id} = "${safeAcct}"`,
+    );
+    if (rows.length > 0) {
+      const r: any = rows[0];
+      rancherEmail = (r['Email'] as string) || null;
+      rancherName = (r['Operator Name'] as string) || (r['Ranch Name'] as string) || null;
+    }
+  } catch (e: any) {
+    console.error('[stripe-connect payout.failed] rancher lookup failed:', e?.message);
+  }
+
+  // LOUD Telegram alert to ops.
+  try {
+    await sendTelegramMessage(
+      TELEGRAM_ADMIN_CHAT_ID,
+      `🚨 STRIPE PAYOUT FAILED\n` +
+        `Rancher: ${rancherName || accountId}\n` +
+        `Amount: $${amount}\n` +
+        `Reason: ${failureMessage} (${failureCode})\n` +
+        `Stripe: https://dashboard.stripe.com/connect/accounts/${accountId}`,
+    );
+  } catch (e: any) {
+    console.warn('[stripe-connect payout.failed] telegram alert failed:', e?.message);
+  }
+
+  // Email the rancher with the fix path.
+  if (rancherEmail) {
+    try {
+      const firstName = (rancherName || '').split(' ')[0] || 'there';
+      await sendEmail({
+        to: rancherEmail,
+        subject: 'your stripe payout failed — quick fix needed',
+        html:
+          `<p>hey ${firstName} — heads up, your bank rejected your latest BuyHalfCow payout ($${amount}).</p>` +
+          `<p>reason: ${failureMessage}</p>` +
+          `<p>usually means a typo in your routing/account # or the account was closed. fix it in your <a href="https://buyhalfcow.com/rancher/billing">billing dashboard</a> or just reply to this email + i'll help.</p>` +
+          `<p>— Ben @ BuyHalfCow</p>`,
+      });
+    } catch (e: any) {
+      console.error('[stripe-connect payout.failed] email send failed:', e?.message);
+    }
   }
 }
 
