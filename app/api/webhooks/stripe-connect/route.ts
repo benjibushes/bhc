@@ -29,6 +29,7 @@ import {
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import { markDepositRefunded, PAYMENTS_TABLE } from '@/lib/contracts/payments';
+import { logAuditEntry } from '@/lib/auditLog';
 
 // Mirror the platform webhook's Stripe Events table for idempotency.
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -233,6 +234,18 @@ export async function POST(request: Request) {
               `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
             );
           }
+          // H-3 audit fix: Connect-side refund mirror was silent in audit
+          // log. Stripe-dashboard refunds on tier_v2 direct charges fire
+          // here, not on the platform webhook.
+          await logAuditEntry({
+            actor: 'cron',
+            tool: 'stripe-connect-charge-refunded',
+            targetType: 'Other',
+            targetId: piId,
+            args: { paymentIntentId: piId, chargeId: charge?.id, amount: (charge?.amount_refunded || 0) / 100 },
+            result: { paymentsRowFlipped: flipped },
+            reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },
+          }).catch(e => console.error('[audit] connect charge-refunded log failed:', e));
         } catch (e: any) {
           console.warn('[stripe-connect charge.refunded] handler:', e?.message);
         }
@@ -399,6 +412,18 @@ async function handleDispute(event: any): Promise<void> {
   } catch (e: any) {
     console.warn('[stripe-connect dispute] telegram alert failed:', e?.message);
   }
+
+  // H-3 audit fix: mirror dispute audit log on Connect path. tier_v2
+  // disputes fire on the connected account webhook, not the platform.
+  await logAuditEntry({
+    actor: 'cron',
+    tool: `stripe-connect-${eventType}`,
+    targetType: 'Other',
+    targetId: piId || chargeId || 'unknown',
+    args: { paymentIntentId: piId, chargeId, eventType },
+    result: { status, amount, reason, paymentRecordId },
+    reverseAction: { type: 'noop', reason: 'Stripe-driven dispute — cannot un-dispute via Airtable' },
+  }).catch(e => console.error('[audit] connect dispute log failed:', e));
 }
 
 // ============================================================================
@@ -472,6 +497,18 @@ async function handlePayoutFailed(event: any): Promise<void> {
       console.error('[stripe-connect payout.failed] email send failed:', e?.message);
     }
   }
+
+  // H-3 audit fix: payout.failed was previously invisible. Log so ops can
+  // reconcile failed payouts against the operator-side resolution.
+  await logAuditEntry({
+    actor: 'cron',
+    tool: 'stripe-connect-payout-failed',
+    targetType: 'Rancher',
+    targetId: accountId,
+    args: { accountId, amount, failureMessage, failureCode },
+    result: { rancherEmail, rancherName, alerted: !!rancherEmail },
+    reverseAction: { type: 'noop', reason: 'Stripe payout failure — fix is rancher-side bank update, not Airtable' },
+  }).catch(e => console.error('[audit] payout-failed log failed:', e));
 }
 
 // ============================================================================

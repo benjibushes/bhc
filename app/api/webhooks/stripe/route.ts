@@ -16,6 +16,7 @@ import { markDepositSucceeded, markDepositRefunded, PAYMENTS_TABLE } from '@/lib
 import { recordClose } from '@/lib/contracts/rancher';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData } from '@/lib/metaCapi';
+import { logAuditEntry } from '@/lib/auditLog';
 
 // Airtable table name for Stripe Events (Task 24 idempotency log)
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -326,6 +327,21 @@ export async function POST(request: Request) {
         } catch (e: any) {
           console.warn('[stripe webhook] telegram deposit alert failed:', e?.message);
         }
+
+        // H-3 audit fix: audit row on the deposit-paid webhook mutation.
+        // Pre-fix the AI Audit Log only captured admin-triggered refunds —
+        // buyer deposit success (highest-$$$ webhook write) was invisible.
+        // Non-reversible: webhook-driven state can't be cleanly undone via
+        // Airtable replay (would require Stripe-side refund).
+        await logAuditEntry({
+          actor: 'cron',
+          tool: 'stripe-webhook-deposit-paid',
+          targetType: 'Referral',
+          targetId: referralId,
+          args: { paymentIntentId: pi.id, tier, amountCents },
+          result: { status: 'succeeded', amountDollars: amountCents / 100 },
+          reverseAction: { type: 'noop', reason: 'Stripe-driven deposit settlement — cannot un-charge via Airtable' },
+        }).catch(e => console.error('[audit] deposit-paid log failed:', e));
       } catch (e: any) {
         console.error('[stripe webhook] payment_intent.succeeded (buyer_deposit) failed:', e);
         await flipStripeEventFailed(event.id, e?.message || 'unknown');
@@ -372,6 +388,18 @@ export async function POST(request: Request) {
             `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
           );
         }
+        // H-3 audit fix: refund mutations were invisible to the audit log
+        // unless triggered via /api/admin/payments/refund. Stripe-dashboard
+        // refunds, partial refunds, automatic dispute refunds — all silent.
+        await logAuditEntry({
+          actor: 'cron',
+          tool: 'stripe-webhook-charge-refunded',
+          targetType: 'Other',
+          targetId: piId,
+          args: { paymentIntentId: piId, chargeId: charge?.id, amount: (charge?.amount_refunded || 0) / 100 },
+          result: { paymentsRowFlipped: flipped },
+          reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },
+        }).catch(e => console.error('[audit] charge-refunded log failed:', e));
       } catch (e: any) {
         console.warn('[stripe webhook] charge.refunded handler:', e?.message);
       }
@@ -667,6 +695,18 @@ async function handleBrandPartnerTierCompleted(session: any) {
     },
   }]).catch((e) => console.error('[meta-capi] brand partner purchase fire failed:', e));
 
+  // H-3 audit fix: log brand partner tier purchase — Stripe-driven write,
+  // was previously invisible to the audit trail.
+  await logAuditEntry({
+    actor: 'cron',
+    tool: 'stripe-webhook-brand-partner-tier',
+    targetType: 'Other',
+    targetId: brandRecordId,
+    args: { sessionId, tier, tierName, email },
+    result: { amountPaid, partnerStatus },
+    reverseAction: { type: 'noop', reason: 'Stripe-driven brand partner purchase — cannot un-charge via Airtable' },
+  }).catch(e => console.error('[audit] brand-partner-tier log failed:', e));
+
   console.log(`[brand-partner-tier] ${tierName} ($${amountPaid}) booked for ${email} → brand ${brandRecordId}`);
 }
 
@@ -863,6 +903,17 @@ async function handleFounderCheckoutCompleted(session: any, metaType: string) {
       content_category: metaType === 'founder-lifetime' ? 'lifetime' : 'subscription',
     },
   }]).catch((e) => console.error('[meta-capi] founder purchase fire failed:', e));
+
+  // H-3 audit fix: log founder checkout — was previously invisible.
+  await logAuditEntry({
+    actor: 'cron',
+    tool: 'stripe-webhook-founder-checkout',
+    targetType: 'Consumer',
+    targetId: consumerId,
+    args: { sessionId, tier: mapped.tier, metaType, email },
+    result: { amountPaid, founderNumber, subscriptionId },
+    reverseAction: { type: 'noop', reason: 'Stripe-driven founder purchase — cannot un-charge via Airtable' },
+  }).catch(e => console.error('[audit] founder-checkout log failed:', e));
 
   return NextResponse.json({ received: true, founderNumber });
 }
@@ -1180,6 +1231,19 @@ async function handleDispute(event: any): Promise<void> {
   } catch (e: any) {
     console.warn('[dispute] telegram alert failed:', e?.message);
   }
+
+  // H-3 audit fix: dispute writes were invisible. Log the chargeback so
+  // ops can reconstruct the timeline post-mortem (created → withdrew →
+  // closed). Non-reversible: dispute state lives in Stripe.
+  await logAuditEntry({
+    actor: 'cron',
+    tool: `stripe-webhook-${eventType}`,
+    targetType: 'Other',
+    targetId: piId || chargeId || 'unknown',
+    args: { paymentIntentId: piId, chargeId, eventType },
+    result: { status, amount, reason, paymentRecordId },
+    reverseAction: { type: 'noop', reason: 'Stripe-driven dispute — cannot un-dispute via Airtable' },
+  }).catch(e => console.error('[audit] dispute log failed:', e));
 }
 
 // ============================================================================
