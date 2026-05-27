@@ -5,6 +5,7 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
+import { sendSMS } from '@/lib/twilio';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
@@ -929,6 +930,18 @@ export async function POST(request: Request) {
                 `<i>Buyer is in Airtable as Intro Sent but their inbox stayed empty. Their dashboard /member will still show the rancher contact info if they log in.</i>`
               );
             } catch {}
+          }
+
+          // G14: SMS touchpoint right after buyer intro email. Industry +20-40%
+          // conversion lift from SMS reminders post-intro. Fire-and-forget so a
+          // Twilio outage can't block the matching pipeline.
+          // TODO: gate on explicit SMS opt-in field once captured at signup
+          // form. Today we assume opt-in from phone-field presence + ToS.
+          if (buyerPhone) {
+            sendSMS({
+              to: buyerPhone,
+              body: `hey ${buyerFirstName} — we just connected you w/ ${rancherName} for half-cow. they'll email you in the next 24h. — Ben @ BuyHalfCow`,
+            }).catch(() => {});
           }
         }
 
