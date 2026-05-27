@@ -11,6 +11,10 @@ import {
 } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { geocodeRancher } from '@/lib/geocode';
+import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData } from '@/lib/metaCapi';
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 // Public endpoint — no auth. Two paths converge here:
 //
@@ -218,6 +222,60 @@ export async function POST(req: Request) {
     );
   }
 
+  // ── P1-5: funnel telemetry + Meta CAPI Lead ────────────────────────────
+  // /partner POST fires both (T1 commit 608535b) but /api/prospects/self-submit
+  // was attribution-blind: paid traffic to /map/add-a-rancher fired ZERO
+  // funnel events + ZERO CAPI Lead. Same shape as /api/partners so the
+  // funnel dashboard + Meta Ads optimizer get the leads.
+  try {
+    await funnelRecord({
+      stage: 'partner_signup',
+      rancherId: created.id,
+      metadata: {
+        source: 'self-submit',
+        submitterType,
+        partnerType: 'rancher',
+        state,
+        recordId: created.id,
+      },
+    });
+  } catch (e) {
+    console.error('[funnel] self-submit fire failed:', e);
+  }
+
+  // CAPI Lead — fire-and-forget. Client Pixel loses ~30-50% to ATT/adblock;
+  // server fire restores attribution. event_id=created.id dedupes against
+  // any client fire on the success page.
+  const capiIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  const capiUserAgent = req.headers.get('user-agent') || undefined;
+  const capiEmail = rancherEmail || submitterEmail || undefined;
+  const capiNameParts = (operatorName || submitterName || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  fireCapi([
+    {
+      event_name: 'Lead',
+      event_time: Math.floor(Date.now() / 1000),
+      event_source_url: `${SITE_URL}/map/add-a-rancher`,
+      event_id: created.id,
+      action_source: 'website',
+      user_data: buildUserData({
+        email: capiEmail,
+        phone: rancherPhone || undefined,
+        firstName: capiNameParts[0],
+        lastName: capiNameParts.slice(1).join(' ') || undefined,
+        state: state || undefined,
+        ip: capiIp,
+        userAgent: capiUserAgent,
+      }),
+      custom_data: {
+        content_name: 'BHC Rancher Self-Submit',
+        content_category: 'rancher-self-submit',
+      },
+    },
+  ]).catch((e) => console.error('[capi] self-submit fire failed:', e));
+
   // ── Fire welcome / intro email (best effort) ──
   try {
     if (submitterType === 'self') {
@@ -310,7 +368,6 @@ export async function POST(req: Request) {
         JWT_SECRET,
         { expiresIn: '60d' }
       );
-      const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
       setupUrl = `${SITE_URL}/rancher/setup?token=${token}`;
     } catch (e) {
       console.error('[self-submit] setup token mint failed:', e);

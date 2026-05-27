@@ -8,6 +8,8 @@ import {
 } from '@/lib/airtable';
 import { sendProspectClaimMagicLink } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData } from '@/lib/metaCapi';
 
 // Project 1 — Discover Map · prospect claim flow.
 //
@@ -97,6 +99,53 @@ export async function POST(req: Request) {
     console.error('[claim] Airtable update failed:', e);
     return NextResponse.json({ error: 'Could not save claim — try again' }, { status: 500 });
   }
+
+  // ── P1-5: funnel telemetry + Meta CAPI Lead ────────────────────────────
+  // /partner POST fires both (T1 commit 608535b) but the prospect claim flow
+  // was attribution-blind: paid traffic to /ranchers/[slug]/claim fired ZERO
+  // funnel events + ZERO CAPI Lead. Same shape as /api/partners + self-submit.
+  const prospectState = (prospect['State'] || '').toString();
+  try {
+    await funnelRecord({
+      stage: 'partner_signup',
+      rancherId: prospect.id,
+      metadata: {
+        source: 'claim',
+        partnerType: 'rancher',
+        state: prospectState,
+        recordId: prospect.id,
+        claimToken: 'redacted',
+      },
+    });
+  } catch (e) {
+    console.error('[funnel] claim fire failed:', e);
+  }
+
+  const capiIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  const capiUserAgent = req.headers.get('user-agent') || undefined;
+  const capiNameParts = (operatorName || '').trim().split(/\s+/).filter(Boolean);
+  fireCapi([
+    {
+      event_name: 'Lead',
+      event_time: Math.floor(Date.now() / 1000),
+      event_source_url: `${siteUrl()}/ranchers/${slug}/claim`,
+      event_id: prospect.id,
+      action_source: 'website',
+      user_data: buildUserData({
+        email: submittedEmail || undefined,
+        phone: phone || undefined,
+        firstName: capiNameParts[0],
+        lastName: capiNameParts.slice(1).join(' ') || undefined,
+        state: prospectState || undefined,
+        ip: capiIp,
+        userAgent: capiUserAgent,
+      }),
+      custom_data: {
+        content_name: 'BHC Rancher Claim',
+        content_category: 'rancher-claim',
+      },
+    },
+  ]).catch((e) => console.error('[capi] claim fire failed:', e));
 
   // Decide where the magic link goes.
   //   - If the prospect record already has an Email on file (often scraped
