@@ -42,6 +42,10 @@ type Win = {
   orderType: string;
   closedAt: string;
   rancherLogo?: string;
+  // I-8 audit: surface H12-collected reviews on /wins cards.
+  // Buyer Review + Buyer Rating fields populated by /api/reviews/submit.
+  buyerReview?: string;
+  buyerRating?: number;
 };
 
 async function fetchWins(): Promise<{
@@ -75,6 +79,17 @@ async function fetchWins(): Promise<{
       // Buyer privacy — first initial of name only.
       const buyerName = (ref['Buyer Name'] || '').toString().trim();
       const initial = buyerName ? `${buyerName[0]}.${buyerName.split(' ')[1]?.[0] || ''}` : '?';
+      const reviewText = String(ref['Buyer Review'] || '').trim();
+      const reviewRatingRaw = ref['Buyer Rating'];
+      const reviewRating =
+        typeof reviewRatingRaw === 'number' && reviewRatingRaw > 0
+          ? reviewRatingRaw
+          : undefined;
+      // Filter ≤3-star reviews from public surface (collected, not amplified).
+      const surfaceReview =
+        reviewText && (reviewRating === undefined || reviewRating >= 4)
+          ? reviewText
+          : undefined;
       return {
         id: ref.id,
         rancherName: rancher['Ranch Name'] || rancher['Operator Name'] || 'Ranch',
@@ -87,6 +102,8 @@ async function fetchWins(): Promise<{
         orderType: (ref['Order Type'] || 'Beef').toString(),
         closedAt: (ref['Closed At'] || '').toString(),
         rancherLogo: normalizeImageUrl((rancher['Logo URL'] || '').toString()),
+        buyerReview: surfaceReview,
+        buyerRating: surfaceReview ? reviewRating : undefined,
       } as Win;
     })
     .filter((w): w is Win => w !== null && w.saleAmount > 0)
@@ -215,6 +232,22 @@ export default async function WinsPage() {
                       {w.buyerState ? `, ${w.buyerState}` : ''}
                     </p>
                   </div>
+                  {w.buyerReview && (
+                    <div className="border-t border-dust/60 pt-3 space-y-2">
+                      {w.buyerRating !== undefined && (
+                        <div className="flex items-center gap-0.5 text-saddle text-sm" aria-label={`${w.buyerRating} of 5 stars`}>
+                          {Array.from({ length: 5 }).map((_, idx) => (
+                            <span key={idx} className={idx < (w.buyerRating || 0) ? '' : 'opacity-30'} aria-hidden>
+                              ★
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-sm italic text-charcoal/85 leading-relaxed">
+                        &ldquo;{w.buyerReview}&rdquo;
+                      </p>
+                    </div>
+                  )}
                   {w.rancherSlug && (
                     <a
                       href={`/ranchers/${w.rancherSlug}`}

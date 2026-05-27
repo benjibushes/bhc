@@ -8,7 +8,7 @@ import Pill from '../../components/Pill';
 import Card from '../../components/Card';
 import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import BHCPromiseBadge from '../../components/BHCPromiseBadge';
-import { getRancherOrProspectBySlug, getActiveRancherPages } from '@/lib/airtable';
+import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import RancherOrderForm from './RancherOrderForm';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
 
@@ -122,6 +122,55 @@ export default async function RancherPage(
   try {
     if (r['Testimonials']) testimonials = JSON.parse(r['Testimonials']);
   } catch (e) { logBadJson('Testimonials', e); }
+
+  // I-8 audit: H12 wired Buyer Review + Buyer Rating + Review Submitted At
+  // fields on Referrals. Reviews were collected but never displayed.
+  // Now: pull this rancher's Closed Won referrals where the buyer submitted
+  // a review w/ rating >= 4. First-name-only privacy. Surfaces below.
+  let buyerReviews: {
+    buyerName: string;
+    buyerState: string;
+    review: string;
+    rating: number;
+    orderType: string;
+    daysAgo: number;
+  }[] = [];
+  try {
+    const rancherRefs = (await getAllRecords(
+      TABLES.REFERRALS,
+      `AND({Status} = "Closed Won", {Review Submitted At} != BLANK(), {Buyer Rating} >= 4)`,
+    )) as any[];
+    // Filter to refs that link to THIS rancher.
+    const matching = rancherRefs.filter((ref) => {
+      const ids: string[] = ref['Rancher'] || ref['Suggested Rancher'] || [];
+      return ids.includes(r.id);
+    });
+    buyerReviews = matching
+      .sort((a, b) => {
+        const aDate = (a['Review Submitted At'] || '').toString();
+        const bDate = (b['Review Submitted At'] || '').toString();
+        return bDate > aDate ? 1 : bDate < aDate ? -1 : 0;
+      })
+      .slice(0, 6)
+      .map((ref) => {
+        const firstName = String(ref['Buyer Name'] || 'a buyer').trim().split(/\s+/)[0];
+        const submittedAt = String(ref['Review Submitted At'] || '');
+        const days = submittedAt
+          ? Math.max(0, Math.floor((Date.now() - new Date(submittedAt).getTime()) / 86_400_000))
+          : 0;
+        return {
+          buyerName: firstName,
+          buyerState: String(ref['Buyer State'] || '').toString(),
+          review: String(ref['Buyer Review'] || '').trim(),
+          rating: Number(ref['Buyer Rating']) || 5,
+          orderType: String(ref['Order Type'] || 'Beef'),
+          daysAgo: days,
+        };
+      })
+      .filter((rev) => rev.review.length > 0);
+  } catch (e) {
+    console.error(`[rancher-page] buyer reviews fetch failed for ${slug}:`, e);
+  }
 
   let galleryPhotos: string[] = [];
   try {
@@ -569,6 +618,53 @@ export default async function RancherPage(
                       sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 50vw"
                     />
                   </div>
+                ))}
+              </div>
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── BUYER REVIEWS (H12 collected via /api/reviews/submit) ────────────
+          P0 audit I-8: H12 wired review collection → JWT magic link →
+          /api/reviews/submit writes Buyer Rating + Buyer Review + Review
+          Submitted At. But testimonials display only read legacy
+          Testimonial/Quote fields. Now real reviews surface here.
+          ───────────────────────────────────────────────────────────────────── */}
+      {buyerReviews.length > 0 && (
+        <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
+          <Container>
+            <div className="max-w-5xl mx-auto space-y-10">
+              <div className="text-center space-y-2">
+                <Pill tone="neutral" className="mx-auto">Verified buyers</Pill>
+                <h2 className="font-serif text-3xl md:text-4xl">What buyers say</h2>
+              </div>
+              <div className="grid md:grid-cols-2 gap-5 md:gap-6">
+                {buyerReviews.map((rev, i) => (
+                  <Card key={i} variant="default" padding="lg" className="space-y-4">
+                    <div className="flex items-center gap-1 text-saddle" aria-label={`${rev.rating} of 5 stars`}>
+                      {Array.from({ length: 5 }).map((_, idx) => (
+                        <span key={idx} className={idx < rev.rating ? '' : 'opacity-30'} aria-hidden>
+                          ★
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-charcoal/90 leading-relaxed text-base md:text-lg italic">
+                      {rev.review}
+                    </p>
+                    <div className="flex items-center gap-3 pt-3 border-t border-dust/60 text-sm">
+                      <div className="w-10 h-10 border border-dust flex items-center justify-center rounded-full bg-bone-deep">
+                        <span className="text-saddle font-medium">{rev.buyerName.charAt(0)}</span>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-charcoal">{rev.buyerName}</p>
+                        <p className="text-xs text-dust">
+                          {rev.orderType}{rev.buyerState ? ` · ${rev.buyerState}` : ''}
+                          {rev.daysAgo > 0 ? ` · ${rev.daysAgo === 1 ? '1 day ago' : rev.daysAgo < 30 ? `${rev.daysAgo} days ago` : `${Math.floor(rev.daysAgo / 30)} mo ago`}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                  </Card>
                 ))}
               </div>
             </div>
