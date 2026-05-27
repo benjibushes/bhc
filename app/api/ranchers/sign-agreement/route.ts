@@ -108,14 +108,57 @@ export async function POST(request: Request) {
       Number.isFinite(existingRate) && existingRate > 0
         ? existingRate
         : getCommissionRate();
-    await updateRecord(TABLES.RANCHERS, decoded.rancherId, {
+
+    // Auto-flip live if the rancher's page already has the minimum content
+    // required to serve buyers (slug + at least one price + at least one
+    // payment link). The wizard UI explicitly tells the rancher "your page
+    // goes live the moment you do" — so signed-but-invisible ranchers
+    // violate that promise. Routing requires Active='Active' AND
+    // Onboarding ∈ ('', 'Live'); without this flip, signed ranchers sit
+    // dark waiting on manual verification even when their page is ready.
+    const hasSlug = !!rancher['Slug'];
+    const hasPrice = !!(
+      rancher['Quarter Price'] ||
+      rancher['Half Price'] ||
+      rancher['Whole Price']
+    );
+    const hasPaymentLink = !!(
+      rancher['Quarter Payment Link'] ||
+      rancher['Half Payment Link'] ||
+      rancher['Whole Payment Link']
+    );
+    const readyToGoLive = hasSlug && hasPrice && hasPaymentLink;
+
+    const updateFields: Record<string, unknown> = {
       'Agreement Signed': true,
       'Agreement Signed At': now,
       'Signature Name': signatureName.trim(),
       'Onboarding Status': 'Agreement Signed',
       'Commission Rate': rateToLock,
       'Commission Rate Locked At': now,
-    });
+    };
+
+    if (readyToGoLive) {
+      updateFields['Onboarding Status'] = 'Live';
+      updateFields['Active Status'] = 'Active';
+      updateFields['Page Live'] = true;
+    }
+
+    await updateRecord(TABLES.RANCHERS, decoded.rancherId, updateFields);
+
+    // Fire launch warmup immediately so this state's waitlisted buyers
+    // get warmed up within seconds instead of waiting up to 24h for the
+    // scheduled cron. The cron is idempotent (per-buyer Warmup Sent At
+    // filter + per-rancher 24h cooldown), so back-to-back triggers are
+    // safe.
+    if (readyToGoLive) {
+      try {
+        const { triggerLaunchWarmup } = await import('@/lib/triggerLaunchWarmup');
+        triggerLaunchWarmup(`sign-agreement:${decoded.rancherId}`);
+      } catch (e: any) {
+        console.warn('[sign-agreement] could not trigger launch warmup:', e?.message);
+      }
+    }
 
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
     const ranchName = rancher['Ranch Name'] || rancherName;
@@ -215,26 +258,40 @@ export async function POST(request: Request) {
     }
 
     try {
-      // Inline 1-tap-verify button. Without this, freshly-signed self-serve
-      // ranchers sit indefinitely — sign-agreement only sets Onboarding
-      // Status='Agreement Signed', but batch-approve requires
-      // 'Verification Complete' to flip them Active. Telegram callback
-      // 'rverify_' handler flips both Onboarding Status AND Verification
-      // Status in one tap (see app/api/webhooks/telegram/route.ts:1788).
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `✍️ <b>Agreement signed!</b>\n\n` +
-        `<b>${rancherName}</b> (${rancher['State'] || 'Unknown'})\n` +
-        `Signed as: ${signatureName.trim()}\n` +
-        `Time: ${new Date(now).toLocaleString('en-US', { timeZone: 'America/Denver' })}\n\n` +
-        `📧 Dashboard setup email sent automatically.\n` +
-        `Tap below to 1-click verify and unlock routing — otherwise they sit until they self-verify on dashboard.`,
-        {
-          inline_keyboard: [
-            [{ text: '✅ Verify Now & Unlock Routing', callback_data: `rverify_${decoded.rancherId}` }],
-          ],
-        }
-      );
+      if (readyToGoLive) {
+        // Ranch page was already content-complete at signing time — they're
+        // already live and routing. No 1-tap-verify button needed.
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🚀 <b>Rancher SIGNED + WENT LIVE</b>\n\n` +
+          `<b>${rancherName}</b> (${rancher['State'] || 'Unknown'})\n` +
+          `Signed as: ${signatureName.trim()}\n` +
+          `Time: ${new Date(now).toLocaleString('en-US', { timeZone: 'America/Denver' })}\n\n` +
+          `📧 Dashboard setup email sent automatically.\n` +
+          `Page is content-complete (slug + price + payment link) — flipped Active + Page Live. Launch warmup fired for ${rancher['State'] || 'their state'}.`
+        );
+      } else {
+        // Inline 1-tap-verify button. Without this, freshly-signed self-serve
+        // ranchers sit indefinitely — sign-agreement only sets Onboarding
+        // Status='Agreement Signed', but batch-approve requires
+        // 'Verification Complete' to flip them Active. Telegram callback
+        // 'rverify_' handler flips both Onboarding Status AND Verification
+        // Status in one tap (see app/api/webhooks/telegram/route.ts:1788).
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `✍️ <b>Rancher SIGNED — needs verification</b>\n\n` +
+          `<b>${rancherName}</b> (${rancher['State'] || 'Unknown'})\n` +
+          `Signed as: ${signatureName.trim()}\n` +
+          `Time: ${new Date(now).toLocaleString('en-US', { timeZone: 'America/Denver' })}\n\n` +
+          `📧 Dashboard setup email sent automatically.\n` +
+          `Tap below to 1-click verify and unlock routing — otherwise they sit until they self-verify on dashboard.`,
+          {
+            inline_keyboard: [
+              [{ text: '✅ Verify Now & Unlock Routing', callback_data: `rverify_${decoded.rancherId}` }],
+            ],
+          }
+        );
+      }
     } catch {
       // Non-fatal
     }
