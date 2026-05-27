@@ -935,13 +935,21 @@ export async function POST(request: Request) {
           // G14: SMS touchpoint right after buyer intro email. Industry +20-40%
           // conversion lift from SMS reminders post-intro. Fire-and-forget so a
           // Twilio outage can't block the matching pipeline.
-          // TODO: gate on explicit SMS opt-in field once captured at signup
-          // form. Today we assume opt-in from phone-field presence + ToS.
+          // F-3 audit fix: gated on explicit SMS Opt-In field captured at /access
+          // quiz. Pre-fix, every buyer w/ a phone got SMS — TCPA exposure when
+          // TWILIO_* env vars flip on. Now: no opt-in, no SMS, no exposure.
           if (buyerPhone) {
-            sendSMS({
-              to: buyerPhone,
-              body: `hey ${buyerFirstName} — we just connected you w/ ${rancherName} for half-cow. they'll email you in the next 24h. — Ben @ BuyHalfCow`,
-            }).catch(() => {});
+            try {
+              const consumerForSms: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+              if (consumerForSms?.['SMS Opt-In'] === true) {
+                sendSMS({
+                  to: buyerPhone,
+                  body: `hey ${buyerFirstName} — we just connected you w/ ${rancherName} for half-cow. they'll email you in the next 24h. reply STOP to opt out. — Ben @ BuyHalfCow`,
+                }).catch(() => {});
+              }
+            } catch (e) {
+              console.warn('[matching/suggest] SMS opt-in check failed:', e);
+            }
           }
         }
 

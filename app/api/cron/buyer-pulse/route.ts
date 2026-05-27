@@ -146,12 +146,15 @@ p{margin:14px 0;color:#2A2A2A;font-size:15px}
         // than email; lifts pulse-response rate which feeds ghosting signal.
         // Fire-and-forget — never block the per-referral loop on a Twilio
         // hiccup, and never re-pulse (gated above by Buyer Pulse Sent At).
-        // TODO: gate on explicit SMS opt-in field once captured at signup.
+        // F-3 audit fix: gated on SMS Opt-In field captured at /access quiz.
+        // Pre-fix, every buyer w/ phone got SMS — TCPA exposure waiting on
+        // env vars. Now: no opt-in, no SMS.
         const buyerPhone = (buyer['Phone'] || '').toString().trim();
-        if (buyerPhone) {
+        const buyerSmsOptIn = buyer['SMS Opt-In'] === true;
+        if (buyerPhone && buyerSmsOptIn) {
           sendSMS({
             to: buyerPhone,
-            body: `hey ${firstName} — quick check in. did ${rancherName} text you yet? reply 1=yes 2=no 3=need help — Ben`,
+            body: `hey ${firstName} — quick check in. did ${rancherName} text you yet? reply 1=yes 2=no 3=need help. reply STOP to opt out. — Ben`,
           }).catch(() => {});
         }
 

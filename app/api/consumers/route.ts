@@ -86,7 +86,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
     const {
-      fullName, email, phone, state,
+      fullName, email, phone, smsOptIn, state,
       orderType: orderTypeRaw, budgetRange: budgetRangeRaw, timing, notes,
       interestBeef: interestBeefRaw, interestLand, interestMerch, interestAll,
       intentScore, intentClassification, segment,
@@ -281,6 +281,9 @@ export async function POST(request: Request) {
       'Full Name': fullName.trim(),
       'Email': email.trim().toLowerCase(),
       'Phone': phone || '',
+      // F-3 audit: TCPA explicit SMS opt-in. False unless buyer ticked the
+      // checkbox AND supplied a phone. All Twilio sends gate on this field.
+      'SMS Opt-In': !!smsOptIn && !!(phone && phone.trim().length > 0),
       'Created': todayDate,
       'Approved At': nowIso,
       'Buyer Stage': 'NEW',

@@ -145,6 +145,8 @@ function AccessPageContent() {
   const [state, setState] = useState('');
   const [householdSize, setHouseholdSize] = useState('');
   const [timing, setTiming] = useState('');
+  const [phone, setPhone] = useState('');
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [website, setWebsite] = useState(''); // honeypot
 
   // ── UI state ──────────────────────────────────────────────────────────────
@@ -439,8 +441,11 @@ function AccessPageContent() {
           state,
           timing,
           householdSize,
-          // Preserved API contract fields — empty defaults for follow-up sequence
-          phone: '',
+          // Preserved API contract fields — empty defaults for follow-up sequence.
+          // Phone optional; SMS opt-in only meaningful when phone supplied
+          // (TCPA — Twilio sends gated on both).
+          phone: phone.trim(),
+          smsOptIn: smsOptIn && phone.trim().length > 0,
           orderType: '',
           budgetRange: '',
           notes: '',
@@ -1058,6 +1063,41 @@ function AccessPageContent() {
                     </p>
                   )}
                 </div>
+
+                {/* 6. Phone (optional) + SMS opt-in. F-3 audit: TCPA explicit
+                    opt-in required before any Twilio send. Without checkbox
+                    checked, no SMS will ever fire regardless of phone presence. */}
+                <div>
+                  <label
+                    htmlFor="phone"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    phone <span className="text-saddle">(optional — faster rancher intro)</span>
+                  </label>
+                  <input
+                    id="phone"
+                    type="tel"
+                    autoComplete="tel"
+                    placeholder="555-555-5555"
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+
+                {phone.trim().length > 0 && (
+                  <label className="flex items-start gap-2 text-sm text-saddle cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={smsOptIn}
+                      onChange={(e) => setSmsOptIn(e.target.checked)}
+                      className="mt-1"
+                    />
+                    <span>
+                      SMS updates ok &mdash; we&apos;ll text you when your rancher reaches out. Reply STOP to opt out anytime. Standard rates apply.
+                    </span>
+                  </label>
+                )}
 
                 {error && (
                   <div className="p-4 border border-weathered bg-transparent text-weathered text-sm">
