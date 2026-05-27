@@ -8,6 +8,7 @@ import Divider from '../../components/Divider';
 import base, { TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { US_STATES, stateName, normalizeState } from '@/lib/states';
 import { normalizeImageUrl } from '@/lib/imageUrl';
+import StateLandingAnalytics from './StateLandingAnalytics';
 
 // Revalidate hourly — rancher counts + new ranchers come online weekly,
 // but SSG keeps these pages fast under paid-ad load.
@@ -171,6 +172,16 @@ export default async function AccessStatePage({ params }: Props) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
+
+      {/* Audit 6 P1 — paid-scale tracking: state-targeted Meta ads need
+          per-state ViewContent signal for optimization. Fires on client
+          mount; static page stays SSG. */}
+      <StateLandingAnalytics
+        state={stateCode}
+        stateName={stateNameFull}
+        rancherCount={ranchers.length}
+      />
+
       <Container>
         {/* Hero */}
         <div className="max-w-3xl mx-auto text-center space-y-6 mb-16">
