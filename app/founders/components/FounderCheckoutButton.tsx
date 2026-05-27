@@ -7,6 +7,7 @@
 // Links rendered as <a> tags from the server page — no JS needed.
 
 import { useState } from 'react';
+import { trackEvent } from '@/lib/analytics';
 
 export default function FounderCheckoutButton({
   tier,
@@ -22,6 +23,11 @@ export default function FounderCheckoutButton({
 
   const onClick = async () => {
     if (loading || disabled) return;
+    // Attribution events — fire BEFORE the Stripe redirect so Meta+GA
+    // see the funnel step even if the network call hangs or the user
+    // bounces mid-checkout. Wired 2026-05-26 (audit F4).
+    trackEvent('founders_tier_click', { tier });
+    trackEvent('founders_checkout_start', { tier });
     setLoading(true);
     setError(null);
     try {

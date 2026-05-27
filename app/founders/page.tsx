@@ -38,6 +38,10 @@ import {
 } from '@/lib/secrets';
 import FoundersWall from './components/FoundersWall';
 import FounderCheckoutButton from './components/FounderCheckoutButton';
+import {
+  FoundersViewTracker,
+  TierLinkButton,
+} from './components/FoundersAnalytics';
 import ExitIntentModal from '@/app/components/ExitIntentModal';
 
 export const metadata: Metadata = {
@@ -106,7 +110,7 @@ type TierCardProps = {
   priceLine: string;
   bullets: string[];
   buttons: Array<
-    | { kind: 'link'; href: string; label: string }
+    | { kind: 'link'; href: string; label: string; tier: string }
     | { kind: 'checkout'; tier: 'founding-100' | 'title-founder' | 'test-1'; label: string; disabled?: boolean }
   >;
   remaining?: string;
@@ -146,13 +150,12 @@ function TierCard(props: TierCardProps) {
         {props.buttons.map((btn, i) =>
           btn.kind === 'link' ? (
             btn.href ? (
-              <a
+              <TierLinkButton
                 key={i}
+                tier={btn.tier}
                 href={btn.href}
-                className="block text-center px-6 py-3.5 text-sm font-medium tracking-wide uppercase bg-charcoal text-bone transition-base hover:bg-divider"
-              >
-                {btn.label}
-              </a>
+                label={btn.label}
+              />
             ) : (
               // Dead-button state when Stripe link env var unset. Surface
               // a working fallback (email Ben) instead of silent "coming soon".
@@ -287,6 +290,10 @@ export default async function FoundersPage({
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
+      {/* Client-island that fires founders_view on mount + founders_backed
+          when ?success=1 / ?paid=<tier> redirect-back from Stripe.
+          Wired 2026-05-26 (audit F4 — events were declared but never fired). */}
+      <FoundersViewTracker />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(foundersJsonLd) }}
@@ -499,11 +506,13 @@ export default async function FoundersPage({
                   STRIPE_PAYMENT_LINK_TITLE_FOUNDER && !titleFounderSoldOut
                     ? {
                         kind: 'link',
+                        tier: 'title-founder',
                         href: STRIPE_PAYMENT_LINK_TITLE_FOUNDER,
                         label: 'Claim a Title Founder spot',
                       }
                     : {
                         kind: 'link',
+                        tier: 'title-founder',
                         href: '',
                         label: titleFounderSoldOut ? 'Sold out' : 'Claim a Title Founder spot',
                       },
@@ -549,11 +558,13 @@ export default async function FoundersPage({
                 buttons={[
                   {
                     kind: 'link',
+                    tier: 'steward-monthly',
                     href: STRIPE_PAYMENT_LINK_STEWARD_MONTHLY,
                     label: 'Steward · $75 / month',
                   },
                   {
                     kind: 'link',
+                    tier: 'steward-annual',
                     href: STRIPE_PAYMENT_LINK_STEWARD_ANNUAL,
                     label: 'Steward · $750 / year',
                   },
@@ -574,11 +585,13 @@ export default async function FoundersPage({
                 buttons={[
                   {
                     kind: 'link',
+                    tier: 'outlaw-monthly',
                     href: STRIPE_PAYMENT_LINK_OUTLAW_MONTHLY,
                     label: 'Outlaw · $25 / month',
                   },
                   {
                     kind: 'link',
+                    tier: 'outlaw-annual',
                     href: STRIPE_PAYMENT_LINK_OUTLAW_ANNUAL,
                     label: 'Outlaw · $250 / year',
                   },
@@ -599,11 +612,13 @@ export default async function FoundersPage({
                 buttons={[
                   {
                     kind: 'link',
+                    tier: 'herd-monthly',
                     href: STRIPE_PAYMENT_LINK_HERD_MONTHLY,
                     label: 'Herd · $9 / month',
                   },
                   {
                     kind: 'link',
+                    tier: 'herd-annual',
                     href: STRIPE_PAYMENT_LINK_HERD_ANNUAL,
                     label: 'Herd · $90 / year',
                   },
