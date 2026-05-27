@@ -21,6 +21,7 @@ import { getRecordById, getAllRecords, updateRecord, TABLES } from '@/lib/airtab
 import { sendBuyerFulfillmentConfirmation } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { requireRancher } from '@/lib/rancherAuth';
+import { funnelRecord } from '@/lib/funnelMetrics';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -120,6 +121,26 @@ export async function POST(req: Request) {
     console.error('[fulfillment/confirm] Airtable update failed:', e);
     return NextResponse.json({ error: 'Could not record fulfillment. Please try again.' }, { status: 500 });
   }
+
+  // H-2 audit fix: funnel event for the fulfillment moment. Pre-fix the
+  // funnel dashboard could see close:won but not the actual delivered-to-buyer
+  // milestone — couldn't measure close→fulfillment lag or re-order conversion.
+  try {
+    const buyerLinksForFunnel: string[] = (referral['Buyer'] || []) as string[];
+    const buyerIdForFunnel = Array.isArray(buyerLinksForFunnel) ? buyerLinksForFunnel[0] : undefined;
+    await funnelRecord({
+      stage: 'fulfillment_confirmed',
+      referralId,
+      rancherId,
+      buyerId: buyerIdForFunnel,
+      amount: paymentAmountCents ? paymentAmountCents / 100 : undefined,
+      metadata: {
+        tier: paymentTier,
+        pricingModel: rancherPricingModel,
+        hasNote: !!rancherNote,
+      },
+    });
+  } catch (e) { console.error('[funnel] fulfillment_confirmed failed:', e); }
 
   // ── Buyer email (best-effort — don't block the response on email infra) ──
   try {

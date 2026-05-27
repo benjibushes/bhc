@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getRecordById, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { funnelRecord } from '@/lib/funnelMetrics';
 
 export const maxDuration = 30;
 
@@ -135,6 +136,25 @@ export async function POST(request: Request) {
       referralId = data.referralId || null;
       matchOk = !!data.matchFound;
     }
+
+    // H-2 audit fix: funnel event for the reorder moment. Pre-fix, repeat
+    // purchases were the largest unmeasured revenue stream — buyers came
+    // back, hit reorder, no telemetry. Now: /admin/funnel sees the actual
+    // lifetime value signal.
+    try {
+      await funnelRecord({
+        stage: 'repeat_purchase_requested',
+        buyerId: memberId,
+        rancherId,
+        referralId: referralId || undefined,
+        metadata: {
+          state: buyerState,
+          rancherSlug,
+          rematchOk: matchOk,
+          previousReferralId: previousReferralId || null,
+        },
+      });
+    } catch (e) { console.error('[funnel] repeat_purchase_requested failed:', e); }
 
     // Telegram so Ben knows a reorder is in flight
     try {

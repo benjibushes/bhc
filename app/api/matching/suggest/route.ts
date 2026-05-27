@@ -15,6 +15,7 @@ import { requireAdmin } from '@/lib/adminAuth';
 export const maxDuration = 90;
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
+import { funnelRecord } from '@/lib/funnelMetrics';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function POST(request: Request) {
@@ -952,6 +953,26 @@ export async function POST(request: Request) {
             }
           }
         }
+
+        // H-2 audit fix: funnel event for the intro-fire moment. Pre-fix
+        // /admin/funnel could see signup/engaged/transition but not the actual
+        // "match emailed both sides" milestone — couldn't measure intro→close
+        // rate. Now: every successful matching/suggest run records match_sent
+        // tied to the new referral + rancher + buyer.
+        try {
+          await funnelRecord({
+            stage: 'match_sent',
+            referralId: referral.id,
+            rancherId: topMatch.id,
+            buyerId,
+            metadata: {
+              state: buyerState,
+              matchType,
+              rancherSlug: topMatch['Slug'] || '',
+              readyToBuy: buyerReadyToBuy,
+            },
+          });
+        } catch (e) { console.error('[funnel] match_sent failed:', e); }
 
         // Telegram noise reduction: per-match notifications were creating
         // dozens of pings/day with no required action. Routine matches now
