@@ -28,7 +28,7 @@ import {
 } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
-import { PAYMENTS_TABLE } from '@/lib/contracts/payments';
+import { markDepositRefunded, PAYMENTS_TABLE } from '@/lib/contracts/payments';
 
 // Mirror the platform webhook's Stripe Events table for idempotency.
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -212,6 +212,32 @@ export async function POST(request: Request) {
       case 'payout.failed':
         await handlePayoutFailed(event);
         break;
+
+      // ── Audit F8 — charge.refunded mirror ──
+      // tier_v2 direct-charge refunds fire charge.refunded on the CONNECTED
+      // account, not the platform. The existing handler only lived on the
+      // platform webhook; Stripe-dashboard-initiated refunds went silent
+      // because markDepositRefunded never ran. Now we mirror the same
+      // idempotent call here. markDepositRefunded is a no-op when no
+      // matching Payments row exists, so duplicate fires are safe.
+      case 'charge.refunded': {
+        const charge = event?.data?.object as any;
+        const piId: string =
+          typeof charge?.payment_intent === 'string' ? charge.payment_intent : '';
+        if (!piId) break;
+        try {
+          const { flipped } = await markDepositRefunded(piId);
+          if (flipped) {
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
+            );
+          }
+        } catch (e: any) {
+          console.warn('[stripe-connect charge.refunded] handler:', e?.message);
+        }
+        break;
+      }
 
       default:
         // V2 ships many account-related event types we don't care about
