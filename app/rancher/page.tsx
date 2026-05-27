@@ -60,6 +60,10 @@ interface RancherInfo {
   tier?: string | null;
   subscriptionStatus?: string;
   connectStatus?: string;
+  // P1-4 — Tier Specialty drives the no-pricing alarm card. If the
+  // specialty includes 'Half' but Half Price is missing, /api/checkout/deposit
+  // 409s the buyer; rancher never finds out unless we surface it here.
+  tierSpecialty?: string[];
 }
 
 interface Stats {
@@ -579,6 +583,50 @@ export default function RancherDashboardPage() {
           </div>
 
           <Divider />
+
+          {/* P1-4 — No-pricing alarm. If the rancher's Tier Specialty includes
+              a cut size but the corresponding price field is empty/zero, the
+              /api/checkout/deposit endpoint 409s any buyer who picks that
+              size. The rancher never learns about the bounce. This card
+              names the missing cuts + links to the My Page pricing editor. */}
+          {(() => {
+            const missingCuts: string[] = [];
+            const specialty = (rancherInfo.tierSpecialty || []) as string[];
+            const priceMissing = (v: string | number | undefined): boolean => {
+              if (v === undefined || v === null || v === '') return true;
+              const n = Number(v);
+              return !isFinite(n) || n <= 0;
+            };
+            if (specialty.includes('Quarter') && priceMissing(rancherInfo.quarterPrice)) {
+              missingCuts.push('Quarter');
+            }
+            if (specialty.includes('Half') && priceMissing(rancherInfo.halfPrice)) {
+              missingCuts.push('Half');
+            }
+            if (specialty.includes('Whole') && priceMissing(rancherInfo.wholePrice)) {
+              missingCuts.push('Whole');
+            }
+            if (missingCuts.length === 0) return null;
+            return (
+              <div className="border-l-4 border-rust bg-rust/10 px-4 py-3 mb-4">
+                <p className="font-semibold text-rust text-xs uppercase tracking-widest">
+                  pricing missing
+                </p>
+                <p className="text-saddle text-sm mt-1">
+                  Buyers picking <strong>{missingCuts.join(' or ')}</strong> can&apos;t
+                  check out today — the deposit page 409s until you set a
+                  price.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('my_page')}
+                    className="underline underline-offset-2 hover:text-charcoal"
+                  >
+                    set prices in my page →
+                  </button>
+                </p>
+              </div>
+            );
+          })()}
 
           {/* Stage-3 Task 11C — Banner cascade for tier_v2 ranchers.
               Shows ALL applicable banners stacked. Priority (top → bottom):

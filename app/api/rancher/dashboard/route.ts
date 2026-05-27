@@ -159,6 +159,14 @@ export async function GET(request: Request) {
         wholePrice: rancher['Whole Price'] || '',
         wholeLbs: rancher['Whole lbs'] || '',
         wholePaymentLink: rancher['Whole Payment Link'] || '',
+        // P1-4: surface tier specialty so the dashboard can render a
+        // no-pricing alarm card. Buyers picking a Quarter/Half/Whole that
+        // the rancher's Tier Specialty includes but has no price set get
+        // 409'd at /api/checkout/deposit — silent buyer bounce. The
+        // dashboard needs both fields to compute the missing-cut list.
+        tierSpecialty: Array.isArray(rancher['Tier Specialty'])
+          ? (rancher['Tier Specialty'] as string[])
+          : [],
         nextProcessingDate: rancher['Next Processing Date'] || '',
         reserveLink: rancher['Reserve Link'] || '',
         customNotes: rancher['Custom Notes'] || '',
