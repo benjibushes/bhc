@@ -124,4 +124,85 @@ export async function recordAffiliateClick(rawCode: string): Promise<boolean> {
   }
 }
 
+/**
+ * Auto-enroll a Closed Won buyer as an affiliate (I-9 audit).
+ *
+ * Why: every Closed Won buyer is a potential referrer, but the affiliate
+ * program was operator-provisioned only. Flywheel dormant. This auto-creates
+ * an affiliate row at Closed Won w/ a unique 6-char alphanumeric code.
+ *
+ * Idempotent — if the buyer already has an affiliate row (by email match),
+ * no-op + return the existing code. Buyer's Consumer row gets stamped
+ * `Affiliate Created At` so we have an audit trail + don't double-fire.
+ *
+ * Returns:
+ *   { code: string; existing: boolean } on success
+ *   null on any failure (caller logs but never blocks Closed Won path)
+ */
+export async function ensureBuyerAffiliate(args: {
+  consumerId: string;
+  email: string;
+  fullName?: string;
+}): Promise<{ code: string; existing: boolean } | null> {
+  const email = (args.email || '').trim().toLowerCase();
+  if (!email) return null;
+
+  try {
+    // Idempotency by email — return existing code if any.
+    const existing = (await getAllRecords(
+      TABLES.AFFILIATES,
+      `LOWER({Email}) = "${escapeAirtableValue(email)}"`,
+    )) as any[];
+    if (existing.length > 0) {
+      const code = String(existing[0]['Code'] || '').trim();
+      if (code) return { code, existing: true };
+    }
+
+    // Mint code — 6-char uppercase alphanumeric (matches /api/affiliates/signup
+    // self-serve style; tweet-friendly, brand-anonymous).
+    const ALPHANUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const randomCode = (len = 6): string => {
+      let out = '';
+      for (let i = 0; i < len; i++) {
+        out += ALPHANUM[Math.floor(Math.random() * ALPHANUM.length)];
+      }
+      return out;
+    };
+    let code = randomCode();
+    // Single collision retry — 36^6 = 2.2B keyspace.
+    try {
+      const collide = await getAllRecords(
+        TABLES.AFFILIATES,
+        `LOWER({Code}) = "${escapeAirtableValue(code.toLowerCase())}"`,
+      );
+      if (collide.length > 0) code = randomCode();
+    } catch {
+      // table missing — fall back to candidate
+    }
+
+    const fields: Record<string, any> = {
+      'Email': email,
+      'Code': code,
+      'Status': 'Active',
+      'Created At': new Date().toISOString(),
+      'Source': 'auto-closed-won',
+      'Linked Consumer': [args.consumerId],
+    };
+    if (args.fullName) {
+      fields['Full Name'] = args.fullName;
+      fields['Name'] = args.fullName;
+    }
+    try {
+      await createRecord(TABLES.AFFILIATES, fields);
+    } catch (err: any) {
+      console.error('[ensureBuyerAffiliate] createRecord failed:', err?.message);
+      return null;
+    }
+    return { code, existing: false };
+  } catch (err: any) {
+    console.error('[ensureBuyerAffiliate] lookup failed:', err?.message);
+    return null;
+  }
+}
+
 export { createRecord };

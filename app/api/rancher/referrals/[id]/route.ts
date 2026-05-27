@@ -359,6 +359,32 @@ export async function PATCH(
                     orderType,
                   });
                 }
+
+                // I-9 audit: auto-enroll Closed Won buyer as affiliate.
+                // affiliate program was operator-provisioned only — flywheel
+                // dormant. now: every closed won buyer mints an affiliate
+                // code idempotent by email. existing affiliate-welcome email
+                // + dashboard engages them on first login. fire-and-forget.
+                if (buyerEmail) {
+                  try {
+                    const { ensureBuyerAffiliate } = await import('@/lib/affiliates');
+                    const result = await ensureBuyerAffiliate({
+                      consumerId: buyerId,
+                      email: buyerEmail,
+                      fullName: buyerFullName,
+                    });
+                    if (result && !result.existing) {
+                      // Stamp Consumer row so we don't re-process on a re-edit
+                      // of Closed Won. Audit trail + dedup signal.
+                      await updateRecord(TABLES.CONSUMERS, buyerId, {
+                        'Affiliate Created At': new Date().toISOString(),
+                        'Affiliate Code': result.code,
+                      });
+                    }
+                  } catch (e: any) {
+                    console.warn('[closed-won] auto-affiliate enrollment failed (non-fatal):', e?.message);
+                  }
+                }
               } catch (e) {
                 console.error('Post-purchase welcome send error:', e);
               }
