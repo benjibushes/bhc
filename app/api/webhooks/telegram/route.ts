@@ -874,6 +874,16 @@ async function processUpdate(update: any) {
         try {
           const referral: any = await getRecordById(TABLES.REFERRALS, fullReferralId);
 
+          // Terminal-status guard (mirrors closelost L1464 + clcheck_lost L2665).
+          // Without this, double-tap on an already-closed referral re-runs the
+          // decrement path → capacity underflow (DECR clamps at 0 but the
+          // buyer-restore + audit re-fire). Short-circuit on terminal status.
+          const currentStatus = String(referral?.['Status'] || '');
+          if (currentStatus === 'Closed Lost' || currentStatus === 'Closed Won' || currentStatus === 'Rejected') {
+            await answerCallbackQuery(queryId, `Already ${currentStatus}`);
+            return NextResponse.json({ ok: true });
+          }
+
           await updateRecord(TABLES.REFERRALS, fullReferralId, {
             'Status': 'Closed Lost',
             'Closed At': new Date().toISOString(),
@@ -972,6 +982,18 @@ async function processUpdate(update: any) {
 
         try {
           const referral: any = await getRecordById(TABLES.REFERRALS, refId);
+
+          // Idempotency guard: double-tap on the SAME target rancher previously
+          // re-fired the intro emails to both sides AND double-INCRed capacity
+          // on the new rancher (old-side ACTIVE_REF guard existed, new-side
+          // INCR was unconditional). Short-circuit when already at the target.
+          const prevStatusForAssign = String(referral?.['Status'] || '');
+          const prevRancherIdForAssign =
+            referral?.['Rancher']?.[0] || referral?.['Suggested Rancher']?.[0] || null;
+          if (prevStatusForAssign === 'Intro Sent' && prevRancherIdForAssign === newRancherId) {
+            await answerCallbackQuery(queryId, 'Already assigned');
+            return NextResponse.json({ ok: true });
+          }
 
           const oldRancherId = referral['Rancher']?.[0] || referral['Suggested Rancher']?.[0];
           // Atomic decrement on the OLD rancher only if the referral was in
@@ -1599,6 +1621,16 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         try {
           // Fetch rancher to include their call notes and capacity
           const rancher: any = await getRecordById(TABLES.RANCHERS, fullReferralId);
+
+          // Idempotency guard: double-tap previously re-sent the entire
+          // onboarding packet (Commission Agreement, Media Agreement, etc.).
+          // Skip when rancher has already progressed past Docs Sent.
+          const onb = String(rancher?.['Onboarding Status'] || '');
+          if (['Docs Sent', 'Agreement Signed', 'Live'].includes(onb)) {
+            await answerCallbackQuery(queryId, `Already ${onb}`);
+            return NextResponse.json({ ok: true });
+          }
+
           const res = await fetch(`${SITE_URL}/api/ranchers/${fullReferralId}/send-onboarding`, {
             method: 'POST',
             headers: {
@@ -1808,6 +1840,24 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
       else if (callbackData === 'rcheckin_send') {
         try {
+          // Mass-send dedup: double-tap previously DOUBLED the number of
+          // check-in emails (no per-rancher idempotency inside the loop).
+          // Claim a Redis key on the callback id so the second tap is
+          // a no-op. Falls open if Redis is down — better to risk a dupe
+          // than refuse the operator's action.
+          try {
+            const redis = await getTelegramRedis();
+            if (redis) {
+              const claimed = await redis.set(`tg:cb-mass:${queryId}`, '1', { nx: true, ex: 600 });
+              if (claimed !== 'OK') {
+                await answerCallbackQuery(queryId, 'Already running');
+                return NextResponse.json({ ok: true });
+              }
+            }
+          } catch (claimErr: any) {
+            console.warn('[rcheckin_send] mass-send claim failed (open):', claimErr?.message);
+          }
+
           await answerCallbackQuery(queryId, 'Sending check-in emails...');
 
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
@@ -1870,6 +1920,22 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
       else if (callbackData === 'blitz_send') {
         try {
+          // Mass-send dedup: double-tap previously DOUBLED the pipeline
+          // update emails. Claim a Redis key on the callback id; second
+          // tap becomes a no-op. Open on Redis failure.
+          try {
+            const redis = await getTelegramRedis();
+            if (redis) {
+              const claimed = await redis.set(`tg:cb-mass:${queryId}`, '1', { nx: true, ex: 600 });
+              if (claimed !== 'OK') {
+                await answerCallbackQuery(queryId, 'Already running');
+                return NextResponse.json({ ok: true });
+              }
+            }
+          } catch (claimErr: any) {
+            console.warn('[blitz_send] mass-send claim failed (open):', claimErr?.message);
+          }
+
           await answerCallbackQuery(queryId, 'Sending pipeline update emails...');
 
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
@@ -1954,6 +2020,24 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
       else if (callbackData === 'bulkonboard_send') {
         try {
+          // Mass-send dedup: double-tap previously DOUBLED the onboarding
+          // packets (each rancher would get the Commission Agreement +
+          // Media Agreement + Info Packet twice). Claim a Redis key on
+          // the callback id; second tap becomes a no-op. Open on Redis
+          // failure.
+          try {
+            const redis = await getTelegramRedis();
+            if (redis) {
+              const claimed = await redis.set(`tg:cb-mass:${queryId}`, '1', { nx: true, ex: 600 });
+              if (claimed !== 'OK') {
+                await answerCallbackQuery(queryId, 'Already running');
+                return NextResponse.json({ ok: true });
+              }
+            }
+          } catch (claimErr: any) {
+            console.warn('[bulkonboard_send] mass-send claim failed (open):', claimErr?.message);
+          }
+
           await answerCallbackQuery(queryId, 'Sending onboarding packages...');
 
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
@@ -2286,9 +2370,16 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           const before = await getRecordById(TABLES.RANCHERS, rancherId) as any;
           const previousOnboarding = before?.['Onboarding Status'] ?? null;
           const previousVerification = before?.['Verification Status'] ?? null;
+          // Capture Active Status + Page Live too in case the rverify flip
+          // also auto-promotes the rancher to live (see readyToGoLiveVerify
+          // below). The reverse needs to restore all four fields.
+          const previousActiveStatusVerify = before?.['Active Status'] ?? null;
+          const previousPageLiveVerify = before?.['Page Live'] ?? null;
           const reverse = buildAirtableUpdateReverse(TABLES.RANCHERS, rancherId, {
             'Onboarding Status': previousOnboarding,
             'Verification Status': previousVerification,
+            'Active Status': previousActiveStatusVerify,
+            'Page Live': previousPageLiveVerify,
           });
           // Set BOTH fields. Prior version only flipped Onboarding Status,
           // leaving Verification Status='Prospect' which contradicts
@@ -2296,17 +2387,52 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           // flip together. batch-approve gates on Onboarding Status so
           // routing worked, but other reads (admin dashboards, public
           // page, audit log) saw inconsistent state.
-          await updateRecord(TABLES.RANCHERS, rancherId, {
+          //
+          // Auto-go-live: if the rancher's page is already content-complete
+          // (slug + at least one price + at least one payment link), flip
+          // Active='Active' + Page Live=true + Onboarding='Live' in the same
+          // write and fire launch warmup. Mirrors the sign-agreement
+          // readyToGoLive path so the "Verify Now & Unlock Routing" button
+          // delivers on its promise. Otherwise (page incomplete) we still
+          // need the batch-approve cron OR a manual rgolive tap.
+          const hasSlugVerify = !!(before?.['Slug']);
+          const hasPriceVerify = !!(
+            before?.['Quarter Price'] ||
+            before?.['Half Price'] ||
+            before?.['Whole Price']
+          );
+          const hasPaymentLinkVerify = !!(
+            before?.['Quarter Payment Link'] ||
+            before?.['Half Payment Link'] ||
+            before?.['Whole Payment Link']
+          );
+          const readyToGoLiveVerify = hasSlugVerify && hasPriceVerify && hasPaymentLinkVerify;
+
+          const verifyUpdate: Record<string, unknown> = {
             'Onboarding Status': 'Verification Complete',
             'Verification Status': 'Verified',
-          });
+          };
+          if (readyToGoLiveVerify) {
+            verifyUpdate['Onboarding Status'] = 'Live';
+            verifyUpdate['Active Status'] = 'Active';
+            verifyUpdate['Page Live'] = true;
+          }
+          await updateRecord(TABLES.RANCHERS, rancherId, verifyUpdate);
+
+          if (readyToGoLiveVerify) {
+            try {
+              triggerLaunchWarmup(`telegram-rverify:${rancherId}`);
+            } catch (warmErr: any) {
+              console.warn('[rverify] could not trigger launch warmup:', warmErr?.message);
+            }
+          }
           await logAuditEntry({
             actor: 'manual',
             tool: 'rverify',
             targetType: 'Rancher',
             targetId: rancherId,
             args: { callbackData },
-            result: { previousOnboarding, previousVerification, newOnboarding: 'Verification Complete', newVerification: 'Verified' },
+            result: { previousOnboarding, previousVerification, newOnboarding: readyToGoLiveVerify ? 'Live' : 'Verification Complete', newVerification: 'Verified', wentLive: readyToGoLiveVerify },
             reverseAction: reverse,
           });
           await answerCallbackQuery(queryId, '✅ Verification approved!');
@@ -4798,13 +4924,56 @@ Confirm send?`;
       // /bulkfire — promote every Pending Approval referral to Intro Sent
       // + fire intro emails to buyer + rancher. Clears the gate-staged
       // backlog in one tap. Caps at 50 per run for safety.
-      else if (text === '/bulkfire') {
+      //
+      // Two-step confirmation: a bare /bulkfire just shows the preview +
+      // caches a 60s pending state in Redis. The actual send only fires
+      // when the operator follows up with `/bulkfire confirm`. Without
+      // this, a single misclick on the prefilled command in mobile
+      // Telegram could fire up to 50 irreversible intro emails.
+      else if (text === '/bulkfire' || text === '/bulkfire confirm') {
+        const isConfirm = text === '/bulkfire confirm';
         try {
           const all = (await getAllRecords(TABLES.REFERRALS)) as any[];
           const stuck = all.filter((r: any) => r['Status'] === 'Pending Approval').slice(0, 50);
           if (stuck.length === 0) {
             await sendTelegramMessage(chatId, '✅ No Pending Approval referrals to fire.');
+          } else if (!isConfirm) {
+            // Preview-only step. Cache pending state for 60s, then bail.
+            try {
+              const redis = await getTelegramRedis();
+              if (redis) {
+                await redis.set(`tg:bulkfire-pending:${chatId}`, String(stuck.length), { ex: 60 });
+              }
+            } catch (cacheErr: any) {
+              console.warn('[/bulkfire] pending-state cache failed (continuing):', cacheErr?.message);
+            }
+            await sendTelegramMessage(
+              chatId,
+              `⚠️ <b>/bulkfire preview</b>\n\n` +
+              `This will promote <b>${stuck.length}</b> Pending Approval referrals → Intro Sent and fire intro emails to BOTH the buyer and the rancher for each (irreversible).\n\n` +
+              `Reply <code>/bulkfire confirm</code> within 60s to send.`
+            );
+            return NextResponse.json({ ok: true });
           } else {
+            // Confirm step. Require a fresh pending state in Redis. If
+            // Redis is down, fail closed — refuse the send rather than
+            // bypass the confirmation gate.
+            try {
+              const redis = await getTelegramRedis();
+              if (!redis) {
+                await sendTelegramMessage(chatId, '⚠️ /bulkfire confirm refused: Redis unavailable, cannot verify confirmation state. Run <code>/bulkfire</code> again.');
+                return NextResponse.json({ ok: true });
+              }
+              const pending = await redis.get(`tg:bulkfire-pending:${chatId}`);
+              if (!pending) {
+                await sendTelegramMessage(chatId, '⚠️ No pending /bulkfire to confirm (expired after 60s). Run <code>/bulkfire</code> first.');
+                return NextResponse.json({ ok: true });
+              }
+              await redis.del(`tg:bulkfire-pending:${chatId}`);
+            } catch (gateErr: any) {
+              await sendTelegramMessage(chatId, `⚠️ /bulkfire confirm refused: ${gateErr?.message || 'gate check failed'}. Run <code>/bulkfire</code> again.`);
+              return NextResponse.json({ ok: true });
+            }
             let fired = 0;
             let errored = 0;
             for (const ref of stuck) {
@@ -5037,7 +5206,7 @@ Confirm send?`;
 
       // /freqcap <number> | show — global rolling 7d cap per Consumer
       else if (text === '/freqcap show' || text === '/freqcap') {
-        const cap = process.env.EMAIL_FREQUENCY_CAP_PER_WEEK || '10 (default)';
+        const cap = process.env.EMAIL_FREQUENCY_CAP_PER_WEEK || '3 (default)';
         await sendTelegramMessage(
           chatId,
           `<b>Frequency cap</b>: ${cap} emails/Consumer/7d\n\n` +
