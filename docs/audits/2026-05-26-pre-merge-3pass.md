@@ -136,3 +136,74 @@ All 3 webhook endpoints rejected unsigned POST `{}` requests with `401`. On prev
 
 [x] PASS — 43/44 cron runs success past 24h (the one `partial` is an internal data-quality audit summary, not a runtime failure); EMAIL_SENDS table is logging both `sent` and `suppressed`; all 3 webhook endpoints reject unsigned POSTs at the preview gate (401).
 [ ] FAIL — list failures
+
+---
+
+## Pass C — Customer Experience
+
+### Top-volume recipients past 7d
+
+```
+Total sends past 7d: 96
+Unique recipients: 85
+Top 10 high-volume:
+    4  benibeauchman@gmail.com    (admin alerts to me — not a deliverability risk)
+    2  greg@westwindre.com
+    2  katiematula@yahoo.com
+    2  mpardo1188@gmail.com
+    2  braden.taylon@gmail.com
+    2  trinityoylersmith@gmail.com
+    2  jediweah@gmail.com
+    2  allihouse1047@gmail.com
+    2  renickvalley@gmail.com
+    1  bennett12836@gmail.com
+```
+
+Top recipient = 4 sends to admin. Top external recipient = 2. EMAIL_FREQUENCY_CAP_PER_WEEK = 10. **All recipients well under cap.** No frequency-guard failure.
+
+### Suppression integrity (Unsubscribed/Bounced/Complained)
+
+```
+Suppressed Consumer count: 30
+Leaked recipients (got 'sent' status past 7d): 3
+  - kmmlou@gmail.com         (1x sendWelcomeAndReadyToBuy on 2026-05-26)
+  - marjorie.head@gmail.com  (1x sendIncompleteProfileAsk on 2026-05-26)
+  - shondrekaperry@yahoo.com (1x sendWelcomeAndReadyToBuy on 2026-05-26)
+```
+
+**FINDING — soft concern, not a hard blocker.** 3 Unsubscribed consumers have EMAIL_SENDS rows with `Status='sent'` in the past 7d. Neither template (`sendWelcomeAndReadyToBuy`, `sendIncompleteProfileAsk`) is on `TRANSACTIONAL_WHITELIST` (lib/emailFrequencyGuard.ts:18-31).
+
+Root cause analysis from code inspection (lib/email.ts:14-50, 141-208, 241-275):
+- Suppression IS enforced inside the `resend.emails.send` wrapper (lib/email.ts:154-160). When the recipient is on the suppression list, the wrapper short-circuits and returns `{ data: { id: 'skipped-suppressed' }, error: null }` — the email is NOT actually sent.
+- HOWEVER: `guardedSend` (lib/email.ts:241-275) does NOT inspect the returned `data.id`. It just `await opts.send()`, then unconditionally logs `status: 'sent'` to the Email Sends table on line 267.
+- Net effect: the actual deliverability harm is likely zero (Resend never sent), but the EMAIL_SENDS audit log is **lying** — it claims `sent` when the wrapper actually skipped. This breaks:
+  - the suppression-integrity audit we just ran (false positives like the 3 above), and
+  - the frequency-cap calculation (counts these phantom sends toward the cap).
+
+This finding does NOT block the merge to main (assuming Resend's wrapper-level suppression is working — which the code path indicates it is). It SHOULD be tracked as a follow-up to either (a) have `guardedSend` inspect the returned `id === 'skipped-suppressed'` and log `status: 'suppressed'`, or (b) move the unsubscribed/bounced/complained check up into `checkFrequencyCap` so it lives in one place with consistent EMAIL_SENDS logging.
+
+### Duplicate Intro Sent guard
+
+```
+Intro Sent past 30d: 26
+Duplicate pairs: 0
+```
+
+0 duplicate buyer↔rancher intro pairs in the past 30 days. Dedup guard is working.
+
+### Verdict — Pass C
+
+[ ] PASS — top recipient < 10, zero suppression leaks, zero duplicate intros
+[x] PASS WITH CONCERN — top recipient 4 (well under cap), 0 duplicate intros, but 3 audit-log entries claim `sent` for unsubscribed consumers. Root-caused to a logging inconsistency in `guardedSend` (logs `sent` even when underlying Resend wrapper short-circuits suppressed sends). Actual deliverability harm likely zero; audit log integrity bug to fix in a follow-up.
+
+---
+
+## OVERALL VERDICT — Pre-Merge
+
+[x] READY FOR MERGE
+[ ] BLOCKED — list blockers
+
+Notes:
+- Pass A: PASS — 14/14 surfaces gated uniformly at preview SSO (expected behavior).
+- Pass B: PASS — 43/44 crons success in past 24h (1 `partial` is an internal data-quality summary, not a runtime failure); EMAIL_SENDS logging working; webhooks gated.
+- Pass C: PASS WITH CONCERN — no frequency-cap or duplicate-intro violations. 3 unsubscribed recipients show `sent` in EMAIL_SENDS, root-caused to `guardedSend` not inspecting the Resend wrapper's `skipped-suppressed` short-circuit. Real send likely did not occur (suppression-list check in `resend.emails.send` wrapper short-circuits before the actual Resend API call). To track as a follow-up audit-log integrity fix in `guardedSend` — does not block merge.
