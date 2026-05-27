@@ -671,11 +671,14 @@ export default function RancherSetupWizard() {
             </header>
 
             {/* Stat grid — concrete promises up front, before the prose. The
-                "boom-boom-bam" anchor so ranchers see the deal at a glance. */}
+                "boom-boom-bam" anchor so ranchers see the deal at a glance.
+                Subscription messaging is honest about tier_v2 (Step 6 picks
+                the actual monthly + commission rate) — earlier "$0 subscription"
+                wording contradicted the wizard's own pricing step. */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
               {[
-                { stat: '10%', label: 'Commission on closed deals only' },
-                { stat: '$0', label: 'Setup fee · subscription · listing' },
+                { stat: '0–7%', label: 'Commission on closed deals · tier-based' },
+                { stat: '$0', label: 'Setup fee · pick subscription at Step 6' },
                 { stat: '5 min', label: 'From here to your live page' },
                 { stat: 'Anytime', label: 'Pause routing · leave clean' },
               ].map((s) => (
