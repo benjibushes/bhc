@@ -426,6 +426,31 @@ export async function POST(request: Request) {
     }
   }
 
+  // ─── Admin chat ID gate (added 2026-05-27, P0 audit G-1) ─────────────────
+  // Defense-in-depth: webhook secret was the only barrier and degraded
+  // gracefully if unset. If the secret ever leaked or env var rotated
+  // incorrectly, ANY chat could run /comp, /casestudy close, /blast,
+  // /broadcast, /pausecron, /forcematch, /bulkfire — full ops compromise.
+  // Now: only the configured admin chat is allowed past this point.
+  // Non-admin chats get a silent no-op (don't reveal command surface).
+  // Fail-closed in production if env unset; dev still allows for testing.
+  const incomingChatId = String(
+    update?.message?.chat?.id ||
+    update?.callback_query?.message?.chat?.id ||
+    update?.edited_message?.chat?.id ||
+    ''
+  );
+  if (TELEGRAM_ADMIN_CHAT_ID) {
+    if (incomingChatId && incomingChatId !== String(TELEGRAM_ADMIN_CHAT_ID)) {
+      console.warn(`[telegram] non-admin chat ${incomingChatId} attempted command; silently ignoring`);
+      return NextResponse.json({ ok: true });
+    }
+  } else if (process.env.NODE_ENV === 'production') {
+    // Fail-closed in prod — refuse rather than accept unauthenticated commands.
+    console.error('[telegram] TELEGRAM_ADMIN_CHAT_ID unset in production — refusing all commands');
+    return NextResponse.json({ ok: true });
+  }
+
   // Process the update and respond — Vercel kills the function after response
   // so we must await the processing, not fire-and-forget
   try {
