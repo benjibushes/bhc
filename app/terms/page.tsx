@@ -102,8 +102,11 @@ export default function TermsPage() {
                 directly between members and ranchers/partners.
               </p>
               <p>
-                <strong>4.2 Commission Agreement:</strong> Ranchers agree to a 10% commission on sales facilitated 
-                through the Platform. Commission tracking and payment terms are agreed upon separately.
+                <strong>4.2 Commission Agreement:</strong> Ranchers agree to commission on sales facilitated
+                through the Platform, based on their subscription tier: Pasture ($150/mo) + 7% commission,
+                Ranch ($350/mo) + 3% commission, Operator ($500/mo) + 0% commission. Legacy ranchers (pre-Stage-3):
+                10% post-close invoice. Commission tracking and payment terms are agreed upon separately.
+                See /founders or your /rancher/billing dashboard for current rates.
               </p>
               <p>
                 <strong>4.3 Independent Relationships:</strong> BuyHalfCow acts only as a connection facilitator. 

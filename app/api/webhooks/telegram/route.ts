@@ -14,6 +14,7 @@ import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { buildCronStatusCard, pauseCron, resumeCron } from '@/lib/cronIntrospection';
+import { tierFor, commissionRateForTier, TIERS } from '@/lib/tiers';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
@@ -2033,6 +2034,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           await answerCallbackQuery(queryId, '🚀 Page is live!');
           const liveUrl = `${SITE_URL}/ranchers/${slug}`;
 
+          // Build tier-aware commission language
+          const rancherTier = tierFor(rancher);
+          const commissionLine = (() => {
+            if (rancherTier === 'pasture') return 'BuyHalfCow earns 7% commission on referred sales (per your Pasture tier).';
+            if (rancherTier === 'ranch') return 'BuyHalfCow earns 3% commission on referred sales (per your Ranch tier).';
+            if (rancherTier === 'operator') return 'No per-deal commission (per your Operator tier flat subscription).';
+            return 'Commission per your tier — see /rancher/billing for details.';
+          })();
+
           // Notify the rancher they're live
           const rancherEmail = rancher['Email'];
           if (rancherEmail) {
@@ -2052,7 +2062,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                   <li>Buyers in your area will see your page in our directory</li>
                   <li>When a buyer clicks to purchase, you'll get an email</li>
                   <li>We'll send you qualified leads directly via email</li>
-                  <li>BuyHalfCow earns 10% commission on referred sales</li>
+                  <li>${commissionLine}</li>
                 </ul>
                 <p>Share your page: <a href="${liveUrl}">${liveUrl}</a></p>
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
@@ -2251,6 +2261,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           });
           await answerCallbackQuery(queryId, '🟢 Page is live!');
 
+          // Build tier-aware commission language
+          const rancherTierRgolive = tierFor(rancher);
+          const commissionLineRgolive = (() => {
+            if (rancherTierRgolive === 'pasture') return 'BuyHalfCow earns 7% commission on referred sales (per your Pasture tier).';
+            if (rancherTierRgolive === 'ranch') return 'BuyHalfCow earns 3% commission on referred sales (per your Ranch tier).';
+            if (rancherTierRgolive === 'operator') return 'No per-deal commission (per your Operator tier flat subscription).';
+            return 'Commission per your tier — see /rancher/billing for details.';
+          })();
+
           // Notify the rancher they're live
           if (rancherEmail) {
             const liveUrl = `${SITE_URL}/ranchers/${slug}`;
@@ -2269,7 +2288,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                   <li>Buyers in your area will see your page in our rancher directory</li>
                   <li>When a buyer clicks to purchase, you'll get an email notification</li>
                   <li>We'll also send you qualified buyer leads directly via email</li>
-                  <li>BuyHalfCow earns 10% commission on referred sales — that's it</li>
+                  <li>${commissionLineRgolive}</li>
                 </ul>
                 <p>Share your page link with your own customers too: <a href="${liveUrl}">${liveUrl}</a></p>
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
