@@ -862,7 +862,12 @@ async function handleFounderCheckoutCompleted(session: any, metaType: string) {
   };
   if (customerId) founderFields['Stripe Customer ID'] = customerId;
   if (subscriptionId) {
-    founderFields['Stripe Subscription Id'] = subscriptionId;
+    // Consumers schema uses uppercase `ID` (verified 2026-05-27 against live
+    // Airtable schema). Ranchers uses lowercase `Id`. Different tables,
+    // different conventions — case-sensitive Airtable silently strips writes
+    // that don't match. G-4 fixed the Ranchers reads; this is the Consumers
+    // founder-subscription twin (PM2 audit, schema-drift finding).
+    founderFields['Stripe Subscription ID'] = subscriptionId;
     founderFields['Subscription Status'] = 'active';
   }
   if (typeof founderNumber === 'number') founderFields['Founder Number'] = founderNumber;
