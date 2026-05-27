@@ -31,7 +31,7 @@
     },
     {
       "path": "/api/cron/referral-chasup",
-      "schedule": "0 17 * * *"
+      "schedule": "5 17 * * *"
     },
     {
       "path": "/api/cron/commission-invoices",
