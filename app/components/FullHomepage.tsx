@@ -84,8 +84,8 @@ export default function FullHomepage() {
 
             <h1 className="font-serif text-4xl md:text-6xl lg:text-7xl leading-tight">
               {totalMembers
-                ? <>{totalMembers.toLocaleString()}+ Members<br />Rebuilding Real Food</>
-                : <>A Private Network<br />Rebuilding Real Food</>}
+                ? <>{totalMembers.toLocaleString()}+ members<br />rebuilding real food</>
+                : <>a private network<br />rebuilding real food</>}
             </h1>
 
             <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle">
