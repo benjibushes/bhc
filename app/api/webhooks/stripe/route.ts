@@ -12,7 +12,7 @@ import { sendBrandListingConfirmation, sendFoundingHerdWelcome, sendPostPurchase
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { commissionRateForTier, TierSlug } from '@/lib/tiers';
 import { rancherIdFromSubscription } from '@/lib/stripeSubscription';
-import { markDepositSucceeded, markDepositRefunded, PAYMENTS_TABLE } from '@/lib/contracts/payments';
+import { markDepositSucceeded, markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
 import { recordClose } from '@/lib/contracts/rancher';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData } from '@/lib/metaCapi';
@@ -1193,24 +1193,18 @@ async function handleDispute(event: any): Promise<void> {
   // Try to find the Payments row (tier_v2 deposits only). Look up by PI id
   // since that's what recordDeposit() stores. For founder lifetime / brand
   // listing charges, no row will match — that's fine, we still alert.
+  // H-4 audit fix: dispute writes go through the payments contract so the
+  // platform + Connect webhooks share a single Payments surface.
   let paymentRecordId: string | null = null;
   if (piId) {
     try {
-      const safePi = piId.replace(/"/g, '\\"');
-      const rows: any[] = await getAllRecords(
-        PAYMENTS_TABLE,
-        `{Stripe Payment Intent Id} = "${safePi}"`,
-      );
-      if (rows.length > 0) {
-        const rowId: string = rows[0].id;
-        paymentRecordId = rowId;
-        await updateRecord(PAYMENTS_TABLE, rowId, {
-          'Dispute Status': status,
-          'Dispute Amount': amount,
-          'Dispute Reason': reason,
-          'Dispute Updated At': new Date().toISOString(),
-        });
-      }
+      const { found, recordId } = await markDepositDisputed({
+        stripePaymentIntentId: piId,
+        disputeStatus: status,
+        disputeAmountCents: dispute?.amount || 0,
+        disputeReason: reason,
+      });
+      if (found && recordId) paymentRecordId = recordId;
     } catch (e: any) {
       console.error('[dispute] Airtable update failed:', e?.message);
     }

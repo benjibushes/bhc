@@ -103,6 +103,47 @@ export async function markDepositRefunded(
   return { flipped: true };
 }
 
+export interface MarkDepositDisputedInput {
+  stripePaymentIntentId: string;
+  disputeStatus: string;          // Stripe dispute.status (warning_needs_response, needs_response, under_review, lost, won, etc)
+  disputeAmountCents?: number;    // dispute.amount
+  disputeReason?: string;         // dispute.reason (fraudulent, product_not_received, etc)
+}
+
+/**
+ * Stripe dispute mutation contract. Wraps the Payments row dispute write so
+ * stripe + stripe-connect webhook handlers share a single surface. Pre-H4 the
+ * webhook handlers called updateRecord(PAYMENTS_TABLE, ...) directly — the
+ * boundary check tolerated it (it's the same table) but the inconsistency
+ * meant any future schema change (e.g. dispute-side audit field) had to be
+ * patched in two webhook files instead of one contract.
+ *
+ * Returns { found: false } when no Payments row matches the PI (founder
+ * lifetime + brand listing disputes don't write here — handler still fires
+ * its own Telegram + audit).
+ */
+export async function markDepositDisputed(
+  input: MarkDepositDisputedInput,
+): Promise<{ found: boolean; recordId?: string }> {
+  const escaped = input.stripePaymentIntentId.replace(/"/g, '\\"');
+  const rows: any[] = await getAllRecords(
+    PAYMENTS_TABLE,
+    `{Stripe Payment Intent Id} = "${escaped}"`,
+  );
+  if (rows.length === 0) {
+    console.warn(`[markDepositDisputed] dispute event for unknown PI: ${input.stripePaymentIntentId}`);
+    return { found: false };
+  }
+  const recordId: string = rows[0].id;
+  await updateRecord(PAYMENTS_TABLE, recordId, {
+    'Dispute Status': input.disputeStatus,
+    'Dispute Amount': (input.disputeAmountCents || 0) / 100,
+    'Dispute Reason': input.disputeReason || '',
+    'Dispute Updated At': new Date().toISOString(),
+  });
+  return { found: true, recordId };
+}
+
 export interface ReleasePayoutInput {
   paymentId: string;
   rancherId: string;
