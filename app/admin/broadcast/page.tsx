@@ -581,6 +581,36 @@ function BroadcastEmailInner() {
                     <div><strong>Subject:</strong> {previewData.subject}</div>
                     <div><strong>Recipients:</strong> {previewData.recipientCount}</div>
                   </div>
+                  {typeof previewData.spamScore === 'number' && (
+                    <div className={`p-3 border ${
+                      previewData.spamBlocked
+                        ? 'border-[#8C2F2F] bg-[#FAF2F2]'
+                        : previewData.spamScore >= 25
+                        ? 'border-[#C99A2E] bg-[#FAF6EC]'
+                        : 'border-[#A7A29A] bg-[#F4F1EC]'
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium">Spam Score</span>
+                        <span className={`text-lg font-[family-name:var(--font-serif)] ${
+                          previewData.spamBlocked ? 'text-[#8C2F2F]' : 'text-[#0E0E0E]'
+                        }`}>
+                          {previewData.spamScore}/100 {previewData.spamBlocked && '(BLOCKED)'}
+                        </span>
+                      </div>
+                      {previewData.spamViolations?.length > 0 && (
+                        <ul className="text-xs text-[#6B4F3F] space-y-0.5 mt-2">
+                          {previewData.spamViolations.map((v: string, i: number) => (
+                            <li key={i}>• {v}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {previewData.spamBlocked && (
+                        <p className="text-xs text-[#8C2F2F] mt-2">
+                          Score ≥ 50 — send blocked. Edit subject/body to lower score.
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {previewData.sampleRecipients?.length > 0 && (
                     <div>
                       <p className="text-sm font-medium mb-2">Sample recipients:</p>
@@ -598,11 +628,13 @@ function BroadcastEmailInner() {
                     <button
                       type="button"
                       onClick={handleSend}
-                      disabled={sending}
-                      className="flex-1 px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 uppercase font-semibold tracking-wider"
+                      disabled={sending || previewData.spamBlocked}
+                      className="flex-1 px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase font-semibold tracking-wider"
                     >
                       {sending
                         ? (sendMode === 'scheduled' ? 'Scheduling...' : 'Sending...')
+                        : previewData.spamBlocked
+                        ? 'Spam-blocked — edit copy'
                         : sendMode === 'scheduled'
                         ? `Schedule for ${scheduledDate} ${scheduledTime}`
                         : `Confirm & Send to ${previewData.recipientCount}`

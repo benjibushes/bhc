@@ -3,6 +3,7 @@ import { getAllRecords, createRecord, escapeAirtableValue } from '@/lib/airtable
 import { TABLES } from '@/lib/airtable';
 import { sendBroadcastEmail } from '@/lib/email';
 import { requireAdmin } from '@/lib/adminAuth';
+import { spamCheck } from '@/lib/spamCheck';
 
 export const maxDuration = 60;
 
@@ -63,6 +64,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No recipients found' }, { status: 400 });
     }
 
+    // Spam-word scrub. P0 audit fix (C-3): we surface the score on PREVIEW
+    // so operator sees it before confirming, and we HARD-BLOCK on send if
+    // either subject or body scores >= 50. Better one false-positive than
+    // a Resend blacklist that kills transactional refund + intro emails.
+    const subjectCheck = spamCheck(subject);
+    const bodyText = htmlBody || message || '';
+    const bodyCheck = spamCheck(bodyText);
+    const spamScore = Math.max(subjectCheck.score, bodyCheck.score);
+    const spamViolations = [
+      ...subjectCheck.violations.map((v) => `subject: ${v}`),
+      ...bodyCheck.violations.map((v) => `body: ${v}`),
+    ];
+
     if (preview) {
       return NextResponse.json({
         preview: true,
@@ -70,7 +84,18 @@ export async function POST(request: Request) {
         sampleRecipients: recipients.slice(0, 10).map(r => ({ name: r.name, email: r.email.replace(/(.{2}).*(@.*)/, '$1***$2') })),
         subject,
         campaignName,
+        spamScore,
+        spamViolations,
+        spamBlocked: spamScore >= 50,
       });
+    }
+
+    if (spamScore >= 50) {
+      return NextResponse.json({
+        error: 'Broadcast blocked by spam check',
+        spamScore,
+        spamViolations,
+      }, { status: 400 });
     }
 
     // Duplicate campaign protection. Now checks for ANY prior row with the
