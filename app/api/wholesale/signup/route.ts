@@ -18,8 +18,12 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { sendAdminAlert } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { normalizeState } from '@/lib/states';
+import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData } from '@/lib/metaCapi';
 
 export const maxDuration = 60;
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -199,6 +203,54 @@ export async function POST(request: Request) {
     } catch (e: any) {
       console.warn('[wholesale/signup] telegram failed (non-fatal):', e?.message);
     }
+
+    // ── Funnel telemetry — wholesale_submit ─────────────────────────────
+    // Audit 6 P1: wholesale buyers ($5-15k AOV) need funnel segmentation
+    // alongside retail. Non-fatal — failure here doesn't break flow.
+    await funnelRecord({
+      stage: 'wholesale_submit',
+      metadata: {
+        businessName,
+        businessType,
+        state,
+        monthlyVolume,
+        timeline,
+        recordId,
+      },
+    });
+
+    // ── Meta Conversions API: server-side `Lead` event ──────────────────
+    // Audit 6 P1: client already fires wholesale_submit_success but iOS
+    // 14.5+ ATT loses 30-50% of client events. Server CAPI mirrors with
+    // event_id=recordId so Meta dedupes client+server fires. Restores
+    // attribution for wholesale paid-ad ROAS measurement.
+    const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+    const capiUserAgent = request.headers.get('user-agent') || undefined;
+    const nameParts = contactName.trim().split(/\s+/).filter(Boolean);
+    fireCapi([
+      {
+        event_name: 'Lead',
+        event_time: Math.floor(Date.now() / 1000),
+        event_source_url: `${SITE_URL}/wholesale`,
+        event_id: recordId,
+        action_source: 'website',
+        user_data: buildUserData({
+          email,
+          phone,
+          firstName: nameParts[0],
+          lastName: nameParts.slice(1).join(' ') || undefined,
+          state,
+          ip: capiIp,
+          userAgent: capiUserAgent,
+        }),
+        custom_data: {
+          content_name: businessName,
+          content_category: 'wholesale',
+        },
+      },
+    ]).catch((e) =>
+      console.error('[meta-capi] wholesale lead fire failed:', e),
+    );
 
     return NextResponse.json({
       ok: true,
