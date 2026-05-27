@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import jwt from 'jsonwebtoken';
 import { getAllRecords, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { invalidateSuppressionCache } from '@/lib/email';
+import { JWT_SECRET } from '@/lib/secrets';
 
 // POST /api/unsubscribe — one-click unsubscribe (RFC 8058)
 // Also handles GET for email-client List-Unsubscribe header clicks
+// Accepts either:
+//   - ?token=<JWT> (preferred, protects PII in URL)
+//   - ?email=<email> (legacy, deprecated ~2026-06-26, kept for 30d inbox link compatibility)
 export async function POST(req: NextRequest) {
   return handleUnsubscribe(req);
 }
@@ -14,21 +19,53 @@ export async function GET(req: NextRequest) {
 
 async function handleUnsubscribe(req: NextRequest) {
   const url = new URL(req.url);
-  let email = url.searchParams.get('email');
+  let email: string | null = null;
 
-  // Also check form body for POST requests
+  // Prefer token-based unsubscribe (no PII in URL)
+  const token = url.searchParams.get('token');
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      if (decoded.type === 'unsubscribe' && decoded.email) {
+        email = decoded.email;
+      }
+    } catch (err) {
+      console.warn('Token verification failed:', err instanceof Error ? err.message : err);
+      return NextResponse.json({ error: 'Invalid or expired token' }, { status: 400 });
+    }
+  }
+
+  // Fallback: legacy ?email= parameter (kept for 30 days, deprecation log)
+  if (!email) {
+    email = url.searchParams.get('email');
+    if (email) {
+      console.warn(`[DEPRECATION] Legacy ?email= unsubscribe used: ${email}. Migrate to token-based links.`);
+    }
+  }
+
+  // Also check form body for POST requests (List-Unsubscribe-Post)
   if (!email && req.method === 'POST') {
     try {
       const body = await req.text();
       const params = new URLSearchParams(body);
-      email = params.get('List-Unsubscribe') || params.get('email');
+      email = params.get('List-Unsubscribe') || params.get('email') || params.get('token');
+      if (email && params.has('token')) {
+        try {
+          const decoded = jwt.verify(email, JWT_SECRET) as any;
+          if (decoded.type === 'unsubscribe' && decoded.email) {
+            email = decoded.email;
+          }
+        } catch {
+          email = null;
+        }
+      }
     } catch {
       // ignore parse errors
     }
   }
 
   if (!email) {
-    return NextResponse.json({ error: 'Email required' }, { status: 400 });
+    return NextResponse.json({ error: 'Token or email required' }, { status: 400 });
   }
 
   const normalizedEmail = email.trim().toLowerCase();

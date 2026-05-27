@@ -54,12 +54,14 @@ export const metadata: Metadata = {
       '100 spots. From $100. $15k locks lifetime founder #1-10 status. The people who paid in before this was easy to bet on.',
     type: 'website',
     url: 'https://www.buyhalfcow.com/founders',
+    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'The Founding Herd — back BuyHalfCow' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'The Founding Herd · back BuyHalfCow',
     description:
       '100 spots. From $100. $15k locks lifetime founder #1-10 status.',
+    images: ['/og-image.png'],
   },
 };
 

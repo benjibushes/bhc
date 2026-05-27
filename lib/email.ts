@@ -257,9 +257,28 @@ function getFromEmail(): string {
   return `BuyHalfCow <ben@${domain}>`;
 }
 
+/**
+ * Generate a signed JWT token for unsubscribe links.
+ * Token expires in 365 days to handle old email links from inboxes.
+ * Reduces PII exposure in URLs (browser history, referrer headers, analytics).
+ */
+function generateUnsubscribeToken(email: string): string {
+  return jwt.sign({ email, type: 'unsubscribe' }, JWT_SECRET, { expiresIn: '365d' });
+}
+
+/**
+ * Generate unsubscribe link — token-based for PII privacy.
+ * Legacy ?email= fallback kept for ~30 days to handle in-flight inbox links.
+ */
+function getUnsubscribeUrl(email: string): string {
+  const token = generateUnsubscribeToken(email);
+  return `${SITE_URL}/unsubscribe?token=${token}`;
+}
+
 function getUnsubscribeHeaders(email: string) {
+  const token = generateUnsubscribeToken(email);
   return {
-    'List-Unsubscribe': `<${SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}>`,
+    'List-Unsubscribe': `<${SITE_URL}/api/unsubscribe?token=${token}>`,
     'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
   };
 }
@@ -321,7 +340,7 @@ const BUSINESS_ADDRESS = process.env.BUSINESS_ADDRESS || 'BuyHalfCow · 1001 S. 
 // Shared email footer — CAN-SPAM compliant: physical address + visible unsubscribe.
 // Append this to every outbound email HTML body.
 function emailFooter(recipientEmail: string): string {
-  const unsubUrl = `${SITE_URL}/unsubscribe?email=${encodeURIComponent(recipientEmail)}`;
+  const unsubUrl = getUnsubscribeUrl(recipientEmail);
   return `
     <div style="margin-top:40px;padding-top:20px;border-top:1px solid #E5E2DC;font-size:12px;color:#A7A29A;line-height:1.6;">
       <p style="margin:0;">${BUSINESS_ADDRESS}</p>
@@ -395,7 +414,7 @@ export async function sendConsumerConfirmation(data: {
             <p>Questions? Reply to this email or contact <a href="mailto:${ADMIN_EMAIL}" style="color: #0E0E0E;">${ADMIN_EMAIL}</a></p>
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow</p>
-              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
+              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -487,7 +506,7 @@ export async function sendConsumerApproval(data: {
             ${isBeef ? beefBody : communityBody}
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
-              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
+              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -560,7 +579,7 @@ export async function sendWelcomeAndReadyToBuy(data: {
   <p style="font-size:12px;color:#A7A29A;">— Benjamin<br>BuyHalfCow</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -652,7 +671,7 @@ export async function sendFounderLetterWaiting(data: {
   <p style="margin-top:32px;">— Benjamin<br>Founder, BuyHalfCow</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -690,7 +709,7 @@ export async function sendMatchedDay4CheckIn(data: {
   <p style="margin-top:32px;">— Ben</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -750,7 +769,7 @@ export async function sendPostPurchaseWelcome(data: {
   <p style="margin-top:32px;">— Benjamin</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -820,7 +839,7 @@ export async function sendCutsEducation(data: {
   </div>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -863,7 +882,7 @@ export async function sendClosedMonthlyLetter(data: {
   <p style="margin-top:32px;">— Benjamin</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -901,7 +920,7 @@ export async function sendRepeatPurchaseAsk(data: {
   <p style="margin-top:32px;">— Ben</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -1085,7 +1104,7 @@ export async function sendBuyerIntroNotification(data: {
   <p style="font-size:13px;">If you don't hear back within 48 hours, reply to this email and I'll follow up on my end.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`;
       return resend.emails.send(introEmailData);
@@ -1279,7 +1298,7 @@ h2{font-family:Georgia,serif;font-size:20px;margin:26px 0 8px;color:#0E0E0E;}
 
 <div class="footer">
 <p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p>
-<p style="margin:6px 0 0;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
+<p style="margin:6px 0 0;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
 </div>
 
 </div></body></html>`,
@@ -1648,7 +1667,7 @@ a{color:#0E0E0E;}
   <div class="footer">
     <p style="margin:0;">${BUSINESS_ADDRESS}</p>
     <p style="margin:6px 0 0;">
-      <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a>
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">Unsubscribe</a>
     </p>
   </div>
 </div></body></html>`,
@@ -2090,7 +2109,7 @@ a{color:#0E0E0E;}
 <p style="margin-top:22px;">— Benjamin</p>
 <div class="footer">
 <p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p>
-<p style="margin:6px 0 0;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
+<p style="margin:6px 0 0;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
 </div>
 </div></body></html>`,
     }),
@@ -2216,7 +2235,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <p style="font-size: 13px;">Questions? Just reply to this email.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -2332,7 +2351,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <p style="font-size: 13px;">Not ready yet? No worries — you'll stay in our network and we'll check in again when the time is right.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -2479,7 +2498,7 @@ export async function sendRancherCheckIn(data: {
 
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Reply directly or email ${ADMIN_EMAIL}</p>
-              <p style="font-size: 10px; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
+              <p style="font-size: 10px; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -2630,7 +2649,7 @@ export async function sendPipelineUpdateEmail(data: {
             <p>Questions? Reply to this email or call me directly.</p>
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow</p>
-              <p style="font-size: 10px; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
+              <p style="font-size: 10px; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -2907,7 +2926,7 @@ export async function sendMonthlyCommissionInvoice(data: {
 
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),

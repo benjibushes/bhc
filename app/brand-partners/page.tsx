@@ -31,12 +31,14 @@ export const metadata: Metadata = {
       '$99 spotlight · $499 featured · $1,500 founding partner. Logo placement, pinned posts, audience access.',
     type: 'website',
     url: 'https://www.buyhalfcow.com/brand-partners',
+    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'Brand Partners — get in front of d2c ranchers' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Brand Partners · get in front of d2c ranchers',
     description:
       '$99 spotlight · $499 featured · $1,500 founding partner.',
+    images: ['/og-image.png'],
   },
 };
 
