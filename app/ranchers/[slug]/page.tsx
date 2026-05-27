@@ -108,6 +108,7 @@ export default async function RancherPage(
   const facebookUrl = r['Facebook URL'] || '';
   const instagramUrl = r['Instagram URL'] || '';
   const processingFacility = r['Processing Facility'] || '';
+  const refundPolicy = r['Refund Policy'] || '';
 
   // Parse JSON-encoded fields. All wrapped in try/catch — a bad row can't
   // break the page, just hides the section. Audit finding 2026-05-20 #32:
@@ -374,6 +375,27 @@ export default async function RancherPage(
           <Container>
             <div className="max-w-4xl mx-auto">
               <BHCPromiseBadge />
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── RANCHER REFUND POLICY ─────────────────────────────────────────────
+          H2: Surface rancher's refund policy publicly on landing page.
+          Captured in setup wizard step 8 (20-500 char validated), now shown
+          alongside BHC Promise so buyers can compare policies pre-purchase.
+          Only rendered for verified ranchers when policy is set.
+         ───────────────────────────────────────────────────────────────────── */}
+      {!isProspect && refundPolicy && (
+        <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
+          <Container>
+            <div className="max-w-4xl mx-auto">
+              <div className="border-l-2 border-dust pl-4 py-3 text-sm">
+                <p className="font-semibold text-charcoal text-xs uppercase tracking-widest">
+                  Rancher refund policy
+                </p>
+                <p className="text-saddle mt-1 whitespace-pre-wrap">{refundPolicy}</p>
+              </div>
             </div>
           </Container>
         </section>
