@@ -87,19 +87,24 @@ export async function GET(request: Request) {
     const stripe = getStripe();
     const session = await stripe.checkout.sessions.create(
       {
-        mode: 'payment',
+        // Brand partner Prices are RECURRING (monthly/quarterly subscriptions),
+        // not one-time. Spotlight $99/mo, Featured $499/mo, Co-marketed
+        // $2500/3mo. Mode must match the Price type.
+        mode: 'subscription',
         payment_method_types: ['card'],
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${SITE_URL}/brand-partners?paid=1&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${SITE_URL}/brand-partners?cancelled=1`,
-        // CRITICAL: this is the whole point of the rewrite. The webhook keys
-        // off `metadata.type === 'brand-partner-tier'` to find the handler.
+        // CRITICAL: webhook keys off metadata.type='brand-partner-tier' to
+        // find the handler. Subscription metadata propagates onto the
+        // initial checkout.session.completed event so the webhook fires
+        // correctly.
         metadata: {
           type: 'brand-partner-tier',
           tier,
           tier_name: TIER_NAMES[tier] || tier,
         },
-        payment_intent_data: {
+        subscription_data: {
           metadata: {
             type: 'brand-partner-tier',
             tier,
