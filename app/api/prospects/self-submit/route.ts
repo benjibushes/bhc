@@ -12,7 +12,7 @@ import {
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { geocodeRancher } from '@/lib/geocode';
 import { funnelRecord } from '@/lib/funnelMetrics';
-import { fireCapi, buildUserData } from '@/lib/metaCapi';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
@@ -248,6 +248,7 @@ export async function POST(req: Request) {
   // any client fire on the success page.
   const capiIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
   const capiUserAgent = req.headers.get('user-agent') || undefined;
+  const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(req);
   const capiEmail = rancherEmail || submitterEmail || undefined;
   const capiNameParts = (operatorName || submitterName || '')
     .trim()
@@ -268,6 +269,8 @@ export async function POST(req: Request) {
         state: state || undefined,
         ip: capiIp,
         userAgent: capiUserAgent,
+        fbp: capiFbp,
+        fbc: capiFbc,
       }),
       custom_data: {
         content_name: 'BHC Rancher Self-Submit',

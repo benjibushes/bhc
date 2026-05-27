@@ -15,7 +15,7 @@ import { createDepositCheckout } from '@/lib/stripeConnect';
 import { recordDeposit } from '@/lib/contracts/payments';
 import { tierFor, TIERS } from '@/lib/tiers';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
-import { fireCapi, buildUserData } from '@/lib/metaCapi';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -217,6 +217,7 @@ export async function POST(req: Request) {
     const buyerPhone = String(buyer?.['Phone'] || '') || undefined;
     const capiIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
     const capiUserAgent = req.headers.get('user-agent') || undefined;
+    const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(req);
 
     fireCapi([{
       event_name: 'InitiateCheckout',
@@ -230,6 +231,8 @@ export async function POST(req: Request) {
         state: buyerState,
         ip: capiIp,
         userAgent: capiUserAgent,
+        fbp: capiFbp,
+        fbc: capiFbc,
       }),
       custom_data: {
         value: amountCents / 100,

@@ -7,7 +7,7 @@ import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { normalizeState } from '@/lib/states';
 import { funnelRecord } from '@/lib/funnelMetrics';
-import { fireCapi, buildUserData } from '@/lib/metaCapi';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 export const maxDuration = 60;
 
@@ -372,6 +372,7 @@ export async function POST(request: Request) {
     // attribution for rancher/brand/land paid ad optimization.
     const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
     const capiUserAgent = request.headers.get('user-agent') || undefined;
+    const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(request);
     const partnerEmailNorm =
       typeof body?.email === 'string' ? body.email : undefined;
     const partnerPhone =
@@ -402,6 +403,8 @@ export async function POST(request: Request) {
           state: partnerStateNorm || undefined,
           ip: capiIp,
           userAgent: capiUserAgent,
+          fbp: capiFbp,
+          fbc: capiFbc,
         }),
         custom_data: {
           content_name: 'BHC Partner Signup',

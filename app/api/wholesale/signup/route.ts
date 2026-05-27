@@ -19,7 +19,7 @@ import { sendAdminAlert } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { normalizeState } from '@/lib/states';
 import { funnelRecord } from '@/lib/funnelMetrics';
-import { fireCapi, buildUserData } from '@/lib/metaCapi';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 export const maxDuration = 60;
 
@@ -226,6 +226,7 @@ export async function POST(request: Request) {
     // attribution for wholesale paid-ad ROAS measurement.
     const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
     const capiUserAgent = request.headers.get('user-agent') || undefined;
+    const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(request);
     const nameParts = contactName.trim().split(/\s+/).filter(Boolean);
     fireCapi([
       {
@@ -242,6 +243,8 @@ export async function POST(request: Request) {
           state,
           ip: capiIp,
           userAgent: capiUserAgent,
+          fbp: capiFbp,
+          fbc: capiFbc,
         }),
         custom_data: {
           content_name: businessName,

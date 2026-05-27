@@ -12,7 +12,7 @@ import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
 import { transitionBuyerStage } from '@/lib/contracts';
 import { funnelRecord } from '@/lib/funnelMetrics';
-import { fireCapi, buildUserData } from '@/lib/metaCapi';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -389,6 +389,7 @@ export async function POST(request: Request) {
     // paid ad optimization. Fire-and-forget — never block the response.
     const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
     const capiUserAgent = request.headers.get('user-agent') || undefined;
+    const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(request);
     const nameParts = fullName.trim().split(/\s+/);
     fireCapi([{
       event_name: 'Lead',
@@ -404,6 +405,8 @@ export async function POST(request: Request) {
         state,
         ip: capiIp,
         userAgent: capiUserAgent,
+        fbp: capiFbp,
+        fbc: capiFbc,
       }),
       custom_data: {
         content_name: 'BHC Signup',

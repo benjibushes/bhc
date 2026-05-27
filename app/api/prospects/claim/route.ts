@@ -9,7 +9,7 @@ import {
 import { sendProspectClaimMagicLink } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { funnelRecord } from '@/lib/funnelMetrics';
-import { fireCapi, buildUserData } from '@/lib/metaCapi';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 // Project 1 — Discover Map · prospect claim flow.
 //
@@ -123,6 +123,7 @@ export async function POST(req: Request) {
 
   const capiIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
   const capiUserAgent = req.headers.get('user-agent') || undefined;
+  const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(req);
   const capiNameParts = (operatorName || '').trim().split(/\s+/).filter(Boolean);
   fireCapi([
     {
@@ -139,6 +140,8 @@ export async function POST(req: Request) {
         state: prospectState || undefined,
         ip: capiIp,
         userAgent: capiUserAgent,
+        fbp: capiFbp,
+        fbc: capiFbc,
       }),
       custom_data: {
         content_name: 'BHC Rancher Claim',

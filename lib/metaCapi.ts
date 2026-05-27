@@ -76,6 +76,38 @@ export function buildUserData(input: {
   return data;
 }
 
+/**
+ * Read Meta's first-party cookies (_fbp, _fbc) from a Request.
+ *
+ * Why: Meta CAPI cannot match server events to ad clicks without these.
+ * _fbp = persistent browser id (set by Pixel on first load).
+ * _fbc = click id from fbclid param (set when user lands from ad).
+ *
+ * Missing fbp/fbc → severe match-rate loss even when event_id is correct.
+ * Always read + pass to buildUserData from any handler with request context.
+ *
+ * For system-generated events (Stripe webhooks, cron) there is no browser,
+ * so cookies remain undefined. That's correct — action_source distinguishes.
+ */
+export function getMetaCookiesFromRequest(request: Request): { fbp?: string; fbc?: string } {
+  const cookieHeader = request.headers.get('cookie') || '';
+  if (!cookieHeader) return {};
+  const cookies: Record<string, string> = {};
+  for (const part of cookieHeader.split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const k = trimmed.slice(0, eq);
+    const v = trimmed.slice(eq + 1);
+    cookies[k] = v;
+  }
+  return {
+    fbp: cookies._fbp || undefined,
+    fbc: cookies._fbc || undefined,
+  };
+}
+
 export async function fireCapi(events: CapiEvent[]): Promise<void> {
   if (!PIXEL_ID || !ACCESS_TOKEN) {
     console.warn('[meta-capi] PIXEL_ID or ACCESS_TOKEN missing — skip fire');
