@@ -34,27 +34,32 @@ export interface CreateConnectAccountInput {
 
 export async function createConnectAccount(input: CreateConnectAccountInput): Promise<{ accountId: string }> {
   const stripe = getStripeClient();
-  const account = await (stripe.v2.core.accounts as any).create({
-    display_name: input.displayName,
-    contact_email: input.email,
-    identity: { country: 'us' },
-    dashboard: 'full',  // V2 equivalent of legacy Express dashboard
-    defaults: {
-      responsibilities: {
-        fees_collector: 'stripe',
-        losses_collector: 'stripe',
-      },
-    },
-    configuration: {
-      customer: {},  // Enables as customer (for tier subscription billing)
-      merchant: {
-        capabilities: {
-          card_payments: { requested: true },  // Enables as merchant (buyer deposits)
+  const account = await (stripe.v2.core.accounts as any).create(
+    {
+      display_name: input.displayName,
+      contact_email: input.email,
+      identity: { country: 'us' },
+      dashboard: 'full',  // V2 equivalent of legacy Express dashboard
+      defaults: {
+        responsibilities: {
+          fees_collector: 'stripe',
+          losses_collector: 'stripe',
         },
       },
+      configuration: {
+        customer: {},  // Enables as customer (for tier subscription billing)
+        merchant: {
+          capabilities: {
+            card_payments: { requested: true },  // Enables as merchant (buyer deposits)
+          },
+        },
+      },
+      metadata: { rancherId: input.rancherId },
     },
-    metadata: { rancherId: input.rancherId },
-  });
+    {
+      idempotencyKey: `connect-acct-${input.rancherId}`,
+    },
+  );
   return { accountId: account.id };
 }
 
@@ -66,17 +71,22 @@ export interface OnboardingLinkInput {
 
 export async function createOnboardingLink(input: OnboardingLinkInput): Promise<{ url: string }> {
   const stripe = getStripeClient();
-  const link = await (stripe.v2.core.accountLinks as any).create({
-    account: input.accountId,
-    use_case: {
-      type: 'account_onboarding',
-      account_onboarding: {
-        configurations: ['merchant', 'customer'],
-        refresh_url: input.refreshUrl,
-        return_url: input.returnUrl,
+  const link = await (stripe.v2.core.accountLinks as any).create(
+    {
+      account: input.accountId,
+      use_case: {
+        type: 'account_onboarding',
+        account_onboarding: {
+          configurations: ['merchant', 'customer'],
+          refresh_url: input.refreshUrl,
+          return_url: input.returnUrl,
+        },
       },
     },
-  });
+    {
+      idempotencyKey: `connect-link-${input.accountId}-${Date.now()}`,
+    },
+  );
   return { url: link.url };
 }
 
@@ -169,6 +179,7 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
     },
     {
       stripeAccount: input.rancherConnectAccountId,
+      idempotencyKey: `deposit-${input.referralId}`,
     },
   );
   const url = session.url;

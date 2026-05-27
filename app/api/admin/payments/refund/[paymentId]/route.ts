@@ -98,7 +98,10 @@ export async function POST(
         refund_application_fee: refundAppFee,
         metadata: { source: 'admin_console', paymentRowId: paymentId },
       },
-      { stripeAccount: connectAccountId },
+      {
+        stripeAccount: connectAccountId,
+        idempotencyKey: `refund-${paymentId}`,
+      },
     );
   } catch (e: any) {
     console.error('[admin/payments/refund] Stripe refund failed:', e?.message);

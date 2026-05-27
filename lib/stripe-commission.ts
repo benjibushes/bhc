@@ -73,16 +73,21 @@ async function ensureStripeCustomer(
       // fall through
     }
   }
-  const customer = await stripe.customers.create({
-    email: rancher.email,
-    name: rancher.ranchName || rancher.operatorName,
-    description: `BuyHalfCow rancher · ${rancher.operatorName}`,
-    metadata: {
-      type: 'rancher-commission',
-      rancherId: rancher.id,
-      ranchName: rancher.ranchName,
+  const customer = await stripe.customers.create(
+    {
+      email: rancher.email,
+      name: rancher.ranchName || rancher.operatorName,
+      description: `BuyHalfCow rancher · ${rancher.operatorName}`,
+      metadata: {
+        type: 'rancher-commission',
+        rancherId: rancher.id,
+        ranchName: rancher.ranchName,
+      },
     },
-  });
+    {
+      idempotencyKey: `customer-commission-${rancher.id}`,
+    },
+  );
   // Cache for future invoices
   try {
     await updateRecord(TABLES.RANCHERS, rancher.id, {
@@ -161,39 +166,49 @@ export async function createCommissionInvoice(
   // The legacy "create pending invoiceItem → invoices.create picks it up"
   // path silently fails on this API version — the invoice gets created
   // before the pending item attaches, finalizes at $0, auto-marks paid.
-  const draft = await stripe.invoices.create({
-    customer: customerId,
-    collection_method: 'send_invoice',
-    days_until_due: 30,
-    // Disable auto-advance — we want to control finalize/send timing so
-    // line item attaches before the invoice transitions out of draft.
-    auto_advance: false,
-    description: `BuyHalfCow commission for ${args.referral.buyerName} (${args.referral.orderType})`,
-    metadata: {
-      type: 'commission-invoice',
-      referralId: args.referral.id,
-      rancherId: args.rancher.id,
-      saleAmount: String(args.referral.saleAmount),
+  const draft = await stripe.invoices.create(
+    {
+      customer: customerId,
+      collection_method: 'send_invoice',
+      days_until_due: 30,
+      // Disable auto-advance — we want to control finalize/send timing so
+      // line item attaches before the invoice transitions out of draft.
+      auto_advance: false,
+      description: `BuyHalfCow commission for ${args.referral.buyerName} (${args.referral.orderType})`,
+      metadata: {
+        type: 'commission-invoice',
+        referralId: args.referral.id,
+        rancherId: args.rancher.id,
+        saleAmount: String(args.referral.saleAmount),
+      },
+      footer:
+        'Thanks for closing the deal. Reply to this invoice if anything looks off — Ben.',
     },
-    footer:
-      'Thanks for closing the deal. Reply to this invoice if anything looks off — Ben.',
-  });
+    {
+      idempotencyKey: `invoice-${args.referral.id}`,
+    },
+  );
 
   if (!draft.id) throw new Error('Stripe invoice id missing after create');
 
   // Attach the commission line item directly to the draft.
-  await stripe.invoiceItems.create({
-    customer: customerId,
-    invoice: draft.id,
-    amount: amountCents,
-    currency: 'usd',
-    description,
-    metadata: {
-      type: 'commission',
-      referralId: args.referral.id,
-      rancherId: args.rancher.id,
+  await stripe.invoiceItems.create(
+    {
+      customer: customerId,
+      invoice: draft.id,
+      amount: amountCents,
+      currency: 'usd',
+      description,
+      metadata: {
+        type: 'commission',
+        referralId: args.referral.id,
+        rancherId: args.rancher.id,
+      },
     },
-  });
+    {
+      idempotencyKey: `invoice-item-${args.referral.id}`,
+    },
+  );
 
   // Finalize → moves draft to "open", generates hosted_invoice_url + PDF.
   const finalized = await stripe.invoices.finalizeInvoice(draft.id);

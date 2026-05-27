@@ -100,12 +100,17 @@ export async function POST(request: Request) {
   }
   if (!customerId) {
     try {
-      const customer = await stripe.customers.create({
-        email: rancherEmail,
-        name: rancher['Ranch Name'] || rancher['Operator Name'] || rancherEmail,
-        description: `BuyHalfCow rancher · ${rancher['Operator Name'] || ''}`,
-        metadata: { type: 'rancher-addons', rancherId },
-      });
+      const customer = await stripe.customers.create(
+        {
+          email: rancherEmail,
+          name: rancher['Ranch Name'] || rancher['Operator Name'] || rancherEmail,
+          description: `BuyHalfCow rancher · ${rancher['Operator Name'] || ''}`,
+          metadata: { type: 'rancher-addons', rancherId },
+        },
+        {
+          idempotencyKey: `customer-addons-${rancherId}`,
+        },
+      );
       customerId = customer.id;
       try {
         await updateRecord(TABLES.RANCHERS, rancherId, { 'Stripe Customer ID': customerId });
@@ -152,20 +157,30 @@ export async function POST(request: Request) {
     // SDK v20.4.1 types omit `price` on InvoiceItemCreateParams; cast params
     // (NOT the resource) per Stage-3 V2 SDK pattern. The runtime API accepts
     // price + customer for line-item attachment.
-    await stripe.invoiceItems.create({
-      customer: customerId,
-      price: priceId,
-      description: addOnConfig.label,
-      metadata: invoiceMetadata,
-    } as any);
-    const created = await stripe.invoices.create({
-      customer: customerId,
-      collection_method: 'send_invoice',
-      days_until_due: 7,
-      auto_advance: false, // we finalize explicitly below
-      metadata: invoiceMetadata,
-      description: `BuyHalfCow add-on — ${addOnConfig.label}`,
-    });
+    await stripe.invoiceItems.create(
+      {
+        customer: customerId,
+        price: priceId,
+        description: addOnConfig.label,
+        metadata: invoiceMetadata,
+      } as any,
+      {
+        idempotencyKey: `addon-item-${addOnRowId}`,
+      },
+    );
+    const created = await stripe.invoices.create(
+      {
+        customer: customerId,
+        collection_method: 'send_invoice',
+        days_until_due: 7,
+        auto_advance: false, // we finalize explicitly below
+        metadata: invoiceMetadata,
+        description: `BuyHalfCow add-on — ${addOnConfig.label}`,
+      },
+      {
+        idempotencyKey: `addon-invoice-${addOnRowId}`,
+      },
+    );
     // finalizeInvoice requires the invoice id string.
     invoice = await stripe.invoices.finalizeInvoice(String(created.id));
   } catch (e: any) {

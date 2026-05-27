@@ -85,33 +85,38 @@ export async function GET(request: Request) {
 
   try {
     const stripe = getStripe();
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      payment_method_types: ['card'],
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${SITE_URL}/brand-partners?paid=1&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${SITE_URL}/brand-partners?cancelled=1`,
-      // CRITICAL: this is the whole point of the rewrite. The webhook keys
-      // off `metadata.type === 'brand-partner-tier'` to find the handler.
-      metadata: {
-        type: 'brand-partner-tier',
-        tier,
-        tier_name: TIER_NAMES[tier] || tier,
-      },
-      payment_intent_data: {
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: 'payment',
+        payment_method_types: ['card'],
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: `${SITE_URL}/brand-partners?paid=1&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${SITE_URL}/brand-partners?cancelled=1`,
+        // CRITICAL: this is the whole point of the rewrite. The webhook keys
+        // off `metadata.type === 'brand-partner-tier'` to find the handler.
         metadata: {
           type: 'brand-partner-tier',
           tier,
+          tier_name: TIER_NAMES[tier] || tier,
         },
+        payment_intent_data: {
+          metadata: {
+            type: 'brand-partner-tier',
+            tier,
+          },
+        },
+        // We don't collect a customer_email up front — Stripe Checkout
+        // collects it on the hosted page, which then surfaces on
+        // session.customer_details.email in the webhook payload.
+        billing_address_collection: 'auto',
+        // Allow promo codes — discount levers stay in the Stripe dashboard
+        // without code changes.
+        allow_promotion_codes: true,
       },
-      // We don't collect a customer_email up front — Stripe Checkout
-      // collects it on the hosted page, which then surfaces on
-      // session.customer_details.email in the webhook payload.
-      billing_address_collection: 'auto',
-      // Allow promo codes — discount levers stay in the Stripe dashboard
-      // without code changes.
-      allow_promotion_codes: true,
-    });
+      {
+        idempotencyKey: `brand-tier-${tier}-${Date.now()}`,
+      },
+    );
 
     if (!session.url) {
       console.error('[checkout/brand] Stripe session has no url for tier', tier);

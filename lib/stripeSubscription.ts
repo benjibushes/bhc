@@ -43,15 +43,20 @@ export async function createTierCheckoutSession(input: TierCheckoutInput): Promi
 
   // V2: the connected account IS the customer. Use customer_account, NOT customer.
   const stripe = getStripeClient();
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer_account: input.connectedAccountId,
-    line_items: [{ price: priceId, quantity: 1 }],
-    success_url: input.successUrl,
-    cancel_url: input.cancelUrl,
-    metadata: { rancherId: input.rancherId, tier: input.tier },
-    subscription_data: { metadata: { rancherId: input.rancherId, tier: input.tier } },
-  } as any);  // customer_account is V2 — types may lag in SDK 20.4.1
+  const session = await stripe.checkout.sessions.create(
+    {
+      mode: 'subscription',
+      customer_account: input.connectedAccountId,
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      metadata: { rancherId: input.rancherId, tier: input.tier },
+      subscription_data: { metadata: { rancherId: input.rancherId, tier: input.tier } },
+    } as any,  // customer_account is V2 — types may lag in SDK 20.4.1
+    {
+      idempotencyKey: `sub-${input.rancherId}-${input.tier}`,
+    },
+  );
   return { url: session.url || '' };
 }
 
