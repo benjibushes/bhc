@@ -10,12 +10,13 @@
 
 BuyHalfCow is the private network connecting American families to verified
 direct-to-consumer ranchers, becoming the underlying platform every D2C
-beef operation runs on (payments, marketing, logistics, financing). Three
-revenue engines today, fourth and fifth coming as platform layer ships.
+beef operation runs on (payments, marketing, logistics, financing). Four
+revenue engines ship with Stage 3, fifth and beyond coming as platform layer ships.
 
-**Today:** marketplace + Founding Herd + marketing services
-**12 months out:** + payments platform + inventory mgmt
-**24 months out:** + logistics + POS + financing
+**Today (Stage 3):** marketplace commission (legacy) + subscription tiers (tier_v2) + Founding Herd + marketing services
+**Imminent (Phase 1):** + payments platform (Stripe Connect automation)
+**12 months out:** + inventory mgmt SaaS + logistics markup
+**24 months out:** + financing partnerships
 **36 months out:** + ranching cooperative
 
 **Defensibility:** the rancher relationships + the Founders Wall (publicly
@@ -24,18 +25,33 @@ who joins makes the network more useful for the next one.
 
 ---
 
-## Three Revenue Engines (today)
+## Revenue Engines (today + Stage 3)
 
-### Engine 1 — Marketplace Commission
+### Engine 1 — Marketplace Commission (legacy ranchers, pre-Stage 3)
 - **What:** match buyer to verified rancher, take 10% of closed deal
-- **Who pays:** rancher (deducted from sale price post-close)
+- **Who pays:** rancher (deducted from sale price post-close, billed monthly)
+- **Status:** legacy model (pre-Stage-3). New ranchers who onboard with tier_v2 operate on Engine 2 instead. See `lib/stripe-commission.ts` for invoice logic.
 - **Volume:** ramps with rancher count + marketing spend
 - **Margin:** ~95% gross (Stripe fees ~2.9% on commission charge)
 - **Unit economics:** ~$1,200 avg order × 10% = $120 commission per close
 - **CAC:** ~$15-25 per qualified buyer signup (Meta + organic)
 - **LTV:** repeat-purchase rate ~30% over 12 months → ~$280 per buyer
 
-### Engine 2 — Founding Herd (capital + community)
+### Engine 2 — Subscription Tiers (rancher support, Stage 3+)
+- **What:** rancher chooses monthly subscription tier (Pasture/Ranch/Operator), commits to monthly fee + per-deal commission per `lib/tiers.ts`
+- **Who pays:** rancher (monthly subscription via Stripe + post-close commission)
+- **Pricing model:** high-monthly / low-commission structure incentivizes rancher commitment + lowers BHC volatility on per-deal basis
+- **Tiers:**
+  - **Pasture:** $150/mo + 7% commission per closed deal — verified green-pin, custom landing page, automatic matching, reply tracking, capacity controls
+  - **Ranch:** $350/mo + 3% commission per closed deal — everything in Pasture + priority routing, listing optimization, case study social posts, featured rancher quarterly, monthly performance review
+  - **Operator:** $500/mo + 0% commission per closed deal (flat subscription, zero post-close commission) — everything in Ranch + 2 custom video reels/mo, founder-voice email/mo, fully managed listing, quarterly YouTube feature, brand partner intros, strategy calls
+- **Who buys:** ranchers committed to growing on platform long-term; high-volume ranchers prefer Operator to eliminate per-deal drag
+- **Volume:** projected ~20-30 ranchers on tier_v2 by end of Stage 3, mix of Pasture (40%), Ranch (35%), Operator (25%)
+- **Margin:** ~70% net (payment processing, video production for Operator, and ops labor)
+- **Defensibility:** ranchers who commit to monthly + full Stripe integration (payout automation) have real switching cost
+- **Reference:** source of truth is `lib/tiers.ts` (Stripe Price IDs, perks, commission rates)
+
+### Engine 3 — Founding Herd (capital + community)
 - **What:** 5-tier subscription/lifetime backer program
 - **Who pays:** consumers, backers, fans (NOT ranchers)
 - **Tiers:**
@@ -50,7 +66,7 @@ who joins makes the network more useful for the next one.
   Outlaw + 20% Steward at modest scale
 - **Margin:** ~70% net (patches + processing costs eat the rest)
 
-### Engine 3 — Marketing Services (the close)
+### Engine 4 — Marketing Services (the close)
 - **What:** rancher onboarding call → optional retainer for marketing services
   (story-driven email, listing optimization, content production, PPC mgmt)
 - **Who pays:** rancher who wants growth above what marketplace lead-flow
@@ -66,7 +82,7 @@ who joins makes the network more useful for the next one.
 
 ## Phase 1 Engine (next 60 days)
 
-### Engine 4 — Payments Platform (Stripe Connect)
+### Engine 5 — Payments Platform (Stripe Connect)
 - **What:** every D2C beef purchase routes through BHC's Stripe → auto-split → rancher gets 90%, BHC keeps 10%
 - **Replaces:** Engine 1 monthly invoice cycle. Same 10% rate, automated.
 - **Plus:** Stripe interchange revenue share on processing fees (~0.5% additional)
@@ -79,16 +95,16 @@ who joins makes the network more useful for the next one.
 
 ## Phase 2-5 Engines (6-36 months)
 
-### Engine 5 — Inventory + Processing SaaS ($25-$100/mo per rancher)
+### Engine 6 — Inventory + Processing SaaS ($25-$100/mo per rancher)
 Rancher subscription for inventory engine, cut-sheet builder, processor coordination tools.
 
-### Engine 6 — Logistics Markup
+### Engine 7 — Logistics Markup
 Cold-chain shipping at cost +15-20% margin. Stripe Terminal hardware sold at retail with monthly POS subscription.
 
-### Engine 7 — Financing Origination Fee
+### Engine 8 — Financing Origination Fee
 Receivables advances + working capital loans, BHC takes 1-3% origination fee + spread on partner-funded credit.
 
-### Engine 8 — Buying Cooperative
+### Engine 9 — Buying Cooperative
 Bulk purchasing power (genetics, hay, fencing) shared with platform ranchers, BHC takes 1-2% spread.
 
 ---
