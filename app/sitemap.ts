@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { getActiveRancherPages, getAllRecords, TABLES } from '@/lib/airtable';
+import { US_STATES } from '@/lib/states';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Canonical = www. (non-www 307s to www). Sitemap must use canonical
@@ -60,5 +61,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // Don't fail if news fetch fails
   }
 
-  return [...staticRoutes, ...rancherRoutes, ...newsRoutes];
+  // Programmatic state landing pages — one /access/{state} per US state + DC.
+  // SSG'd by `app/access/[state]/page.tsx` and serves state-localized organic
+  // SEO traffic ("buy half cow texas", "grass-fed beef montana", etc).
+  const stateRoutes: MetadataRoute.Sitemap = US_STATES.map((s) => ({
+    url: `${baseUrl}/access/${s.code.toLowerCase()}`,
+    lastModified: new Date(),
+    changeFrequency: 'weekly' as const,
+    priority: 0.7,
+  }));
+
+  return [...staticRoutes, ...stateRoutes, ...rancherRoutes, ...newsRoutes];
 }
