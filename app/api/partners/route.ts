@@ -6,8 +6,12 @@ import { sendTelegramPartnerAlert } from '@/lib/telegram';
 import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { normalizeState } from '@/lib/states';
+import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData } from '@/lib/metaCapi';
 
 export const maxDuration = 60;
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -340,6 +344,71 @@ export async function POST(request: Request) {
     else {
       return NextResponse.json({ error: 'Invalid partner type' }, { status: 400 });
     }
+
+    // ── Funnel telemetry — partner_signup ────────────────────────────────
+    // Audit 6 P0: B-side leads (rancher/brand/land) fired zero analytics.
+    // Captures partnerType + state for /funnel dashboard segmentation.
+    // Non-fatal — failure here doesn't break the signup flow.
+    const partnerStateRaw =
+      typeof body?.state === 'string' ? body.state : '';
+    const partnerStateNorm = partnerStateRaw
+      ? normalizeState(partnerStateRaw) || partnerStateRaw
+      : '';
+    await funnelRecord({
+      stage: 'partner_signup',
+      ...(partnerType === 'rancher' ? { rancherId: record.id } : {}),
+      metadata: {
+        partnerType,
+        state: partnerStateNorm,
+        recordId: record.id,
+        tableName,
+      },
+    });
+
+    // ── Meta Conversions API: server-side `Lead` event ──────────────────
+    // Client Pixel loses 30-50% of events to iOS 14.5+ ATT + adblockers.
+    // event_id=record.id pairs the server CAPI fire with the client
+    // partner_submit_success fire on /partner so Meta dedupes. Restores
+    // attribution for rancher/brand/land paid ad optimization.
+    const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+    const capiUserAgent = request.headers.get('user-agent') || undefined;
+    const partnerEmailNorm =
+      typeof body?.email === 'string' ? body.email : undefined;
+    const partnerPhone =
+      typeof body?.phone === 'string' ? body.phone : undefined;
+    // Best-effort first/last name split — rancher uses operatorName,
+    // brand uses contactName, land uses sellerName.
+    const rawName =
+      (partnerType === 'rancher' && typeof body?.operatorName === 'string'
+        ? body.operatorName
+        : partnerType === 'brand' && typeof body?.contactName === 'string'
+          ? body.contactName
+          : partnerType === 'land' && typeof body?.sellerName === 'string'
+            ? body.sellerName
+            : '') || '';
+    const nameParts = rawName.trim().split(/\s+/).filter(Boolean);
+    fireCapi([
+      {
+        event_name: 'Lead',
+        event_time: Math.floor(Date.now() / 1000),
+        event_source_url: `${SITE_URL}/partner`,
+        event_id: record.id,
+        action_source: 'website',
+        user_data: buildUserData({
+          email: partnerEmailNorm,
+          phone: partnerPhone,
+          firstName: nameParts[0],
+          lastName: nameParts.slice(1).join(' ') || undefined,
+          state: partnerStateNorm || undefined,
+          ip: capiIp,
+          userAgent: capiUserAgent,
+        }),
+        custom_data: {
+          content_name: 'BHC Partner Signup',
+          content_category: partnerType,
+        },
+      },
+    ]).catch((e) => console.error('[meta-capi] partner lead fire failed:', e));
 
     return NextResponse.json({ success: true, partner: record }, { status: 201 });
   } catch (error: any) {

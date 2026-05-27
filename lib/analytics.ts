@@ -55,6 +55,10 @@ export type AnalyticsEventName =
   | 'affiliate_link_shared'
   | 'wholesale_view'
   | 'wholesale_submit_success'
+  | 'partner_submit_success'
+  | 'rancher_page_view'
+  | 'rancher_pricing_click'
+  | 'state_landing_view'
   | 'deposit_initiated'
   | 'deposit_completed';
 
@@ -78,6 +82,19 @@ export function trackEvent(
         // client Pixel fire pairs via event_id passed in properties for dedup.
         deposit_initiated: 'InitiateCheckout',
         deposit_completed: 'Purchase',
+        // Audit 6 P0/P1 — paid-scale tracking gaps:
+        // /partner is the B-side acquisition funnel (rancher/brand/land).
+        // Each submit is a Lead — server CAPI pairs via record.id event_id.
+        partner_submit_success: 'Lead',
+        // /ranchers/[slug] paid traffic — per-rancher ViewContent gives
+        // retargeting + creative-attribution segments by rancher_slug/state.
+        rancher_page_view: 'ViewContent',
+        // Pricing-click is the in-page intent signal — closer to AddToCart
+        // than ViewContent. Funnel: rancher_page_view → rancher_pricing_click → Lead.
+        rancher_pricing_click: 'AddToCart',
+        // /access/[state] state-targeted ads need a state-segmented view
+        // event for Meta optimization on the geo audience.
+        state_landing_view: 'ViewContent',
       };
       const standardName = metaStandardEvents[event];
       if (standardName) {

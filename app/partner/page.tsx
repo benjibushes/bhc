@@ -10,6 +10,7 @@ import Checkbox from '../components/Checkbox';
 import Textarea from '../components/Textarea';
 import Button from '../components/Button';
 import Link from 'next/link';
+import { trackEvent } from '@/lib/analytics';
 
 type PartnerType = 'rancher' | 'brand' | 'land' | '';
 
@@ -188,6 +189,15 @@ function PartnerPageContent() {
       }
 
       setIsSubmitted(true);
+      // Audit 6 P0 — paid-scale tracking gap: /partner had ZERO client
+      // analytics. partner_submit_success → Meta Pixel Lead. Server CAPI
+      // dedupes via event_id=record.id (see /api/partners route).
+      try {
+        trackEvent('partner_submit_success', {
+          partnerType,
+          ...(data?.partner?.id ? { event_id: data.partner.id } : {}),
+        });
+      } catch {}
     } catch (err) {
       setError('Network error — please check your connection and try again.');
       setIsSubmitting(false);
