@@ -5,10 +5,26 @@ import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
+// P1 audit D-5: date filter + per-Source attribution breakdown.
+// Closest thing to per-channel CAC w/o Meta Ads spend integration.
+// Query param: ?sinceDays=7|30|90|all (default 'all' for backward compat).
+
 export async function GET(request: Request) {
   try {
     const __authResp = await requireAdmin(request);
     if (__authResp) return __authResp;
+
+    const url = new URL(request.url);
+    const sinceParam = (url.searchParams.get('sinceDays') || 'all').toLowerCase();
+    const sinceDays = sinceParam === 'all' ? null : Math.max(1, Math.min(365, Number(sinceParam) || 0));
+    const cutoff = sinceDays ? Date.now() - sinceDays * 86400000 : 0;
+    const withinRange = (iso: any): boolean => {
+      if (!sinceDays) return true;
+      if (!iso) return false;
+      const t = new Date(iso).getTime();
+      return Number.isFinite(t) && t >= cutoff;
+    };
+
     const consumers = await getAllRecords(TABLES.CONSUMERS);
     const inquiries = await getAllRecords(TABLES.INQUIRIES);
     const campaigns = await getAllRecords(TABLES.CAMPAIGNS);
@@ -20,7 +36,13 @@ export async function GET(request: Request) {
       // Referrals table may not exist yet
     }
 
-    const completedSales = inquiries.filter((i: any) => i['Status'] === 'Sale Completed');
+    // Apply date filter — fall back to including the row if it has no Created
+    // when sinceDays is 'all' (legacy rows pre-Created field).
+    const consumersInRange = consumers.filter((c: any) => withinRange(c['Created']));
+    const inquiriesInRange = inquiries.filter((i: any) => withinRange(i['Created']));
+    const referralsInRange = referrals.filter((r: any) => withinRange(r['Created At'] || r['Created']));
+
+    const completedSales = inquiriesInRange.filter((i: any) => i['Status'] === 'Sale Completed');
     const totalSales = completedSales.length;
     const totalRevenue = completedSales.reduce((sum: number, i: any) => {
       return sum + (parseFloat(i['Sale Amount'] || '0'));
@@ -28,7 +50,7 @@ export async function GET(request: Request) {
     const totalCommission = completedSales.reduce((sum: number, i: any) => {
       return sum + (parseFloat(i['Commission Amount'] || '0'));
     }, 0);
-    const conversionRate = inquiries.length > 0 ? totalSales / inquiries.length : 0;
+    const conversionRate = inquiriesInRange.length > 0 ? totalSales / inquiriesInRange.length : 0;
 
     const campaignStats: any[] = [];
     const campaignMap = new Map();
@@ -48,7 +70,7 @@ export async function GET(request: Request) {
       }
     });
 
-    consumers.forEach((c: any) => {
+    consumersInRange.forEach((c: any) => {
       const campaign = c['Campaign'];
       if (campaign && campaignMap.has(campaign)) {
         const stats = campaignMap.get(campaign);
@@ -56,12 +78,11 @@ export async function GET(request: Request) {
       }
     });
 
-    inquiries.forEach((i: any) => {
+    inquiriesInRange.forEach((i: any) => {
       const source = i['Source'];
       if (source && campaignMap.has(source)) {
         const stats = campaignMap.get(source);
         stats.inquiries++;
-        
         if (i['Status'] === 'Sale Completed') {
           stats.sales++;
           stats.totalRevenue += parseFloat(i['Sale Amount'] || '0');
@@ -72,9 +93,58 @@ export async function GET(request: Request) {
 
     campaignStats.push(...Array.from(campaignMap.values()));
 
+    // P1 audit D-5: per-Source attribution. Buckets Consumers by their Source
+    // field (organic / rancher-page / exit-intent / partner-XXX /
+    // rancher-<slug>) and traces them through to matches and closes via the
+    // Referrals + Closed Won pipeline. Sortable by closed-won $ — Ben's
+    // closest signal to per-channel CAC w/o spend data.
+    const sourceMap = new Map<string, {
+      source: string;
+      signups: number;
+      matches: number;
+      closes: number;
+      commissionDue: number;
+    }>();
+    const bucket = (key: string) => {
+      if (!sourceMap.has(key)) {
+        sourceMap.set(key, { source: key, signups: 0, matches: 0, closes: 0, commissionDue: 0 });
+      }
+      return sourceMap.get(key)!;
+    };
+
+    // Index Consumers by id to map referrals back to their Source.
+    const consumerSourceById = new Map<string, string>();
+    consumersInRange.forEach((c: any) => {
+      const source = (c['Source'] || 'organic').toString().trim() || 'organic';
+      bucket(source).signups++;
+      if (c.id) consumerSourceById.set(c.id, source);
+    });
+
+    // Walk Referrals — link to Buyer to get Source. If a referral has no
+    // linked buyer or the buyer was created outside the range, skip.
+    referralsInRange.forEach((r: any) => {
+      const buyerIds = r['Buyer'] || [];
+      const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+      if (!buyerId) return;
+      const source = consumerSourceById.get(buyerId);
+      if (!source) return;
+      const status = r['Status'] || '';
+      // Active referral counts as "matched" if it's past Pending Approval
+      if (status && status !== 'Pending Approval') {
+        bucket(source).matches++;
+      }
+      if (status === 'Closed Won') {
+        bucket(source).closes++;
+        bucket(source).commissionDue += Number(r['Commission Due'] || 0);
+      }
+    });
+
+    const sourceBreakdown = Array.from(sourceMap.values())
+      .sort((a, b) => b.commissionDue - a.commissionDue);
+
     const recentActivity: any[] = [];
 
-    consumers
+    consumersInRange
       .slice(-10)
       .reverse()
       .forEach((c: any) => {
@@ -87,7 +157,7 @@ export async function GET(request: Request) {
         });
       });
 
-    inquiries
+    inquiriesInRange
       .filter((i: any) => i['Status'] !== 'Pending')
       .slice(-5)
       .reverse()
@@ -118,12 +188,12 @@ export async function GET(request: Request) {
     // Sort activity by date
     recentActivity.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    // Referral analytics
-    const closedWon = referrals.filter((r: any) => r['Status'] === 'Closed Won');
+    // Referral analytics — date-filtered
+    const closedWon = referralsInRange.filter((r: any) => r['Status'] === 'Closed Won');
     const refRevenue = closedWon.reduce((s: number, r: any) => s + (r['Sale Amount'] || 0), 0);
     const refCommission = closedWon.reduce((s: number, r: any) => s + (r['Commission Due'] || 0), 0);
-    const pendingReferrals = referrals.filter((r: any) => r['Status'] === 'Pending Approval').length;
-    const activeReferrals = referrals.filter((r: any) =>
+    const pendingReferrals = referralsInRange.filter((r: any) => r['Status'] === 'Pending Approval').length;
+    const activeReferrals = referralsInRange.filter((r: any) =>
       !['Closed Won', 'Closed Lost', 'Dormant'].includes(r['Status'])
     ).length;
 
@@ -137,9 +207,9 @@ export async function GET(request: Request) {
 
     // Intent score correlation
     const highIntentClosed = closedWon.filter((r: any) => r['Intent Classification'] === 'High').length;
-    const highIntentTotal = referrals.filter((r: any) => r['Intent Classification'] === 'High').length;
+    const highIntentTotal = referralsInRange.filter((r: any) => r['Intent Classification'] === 'High').length;
     const medIntentClosed = closedWon.filter((r: any) => r['Intent Classification'] === 'Medium').length;
-    const medIntentTotal = referrals.filter((r: any) => r['Intent Classification'] === 'Medium').length;
+    const medIntentTotal = referralsInRange.filter((r: any) => r['Intent Classification'] === 'Medium').length;
 
     // Revenue by state
     const revenueByState: Record<string, number> = {};
@@ -152,20 +222,22 @@ export async function GET(request: Request) {
       .sort((a, b) => b.revenue - a.revenue);
 
     return NextResponse.json({
+      // Echo the filter so the UI can show "Last 7 days" etc.
+      filter: { sinceDays, label: sinceDays ? `Last ${sinceDays}d` : 'All time' },
       overview: {
-        totalConsumers: consumers.length,
-        totalInquiries: inquiries.length,
+        totalConsumers: consumersInRange.length,
+        totalInquiries: inquiriesInRange.length,
         totalSales,
         totalRevenue: totalRevenue + refRevenue,
         totalCommission: totalCommission + refCommission,
         conversionRate,
       },
       referralStats: {
-        total: referrals.length,
+        total: referralsInRange.length,
         pending: pendingReferrals,
         active: activeReferrals,
         closedWon: closedWon.length,
-        closedLost: referrals.filter((r: any) => r['Status'] === 'Closed Lost').length,
+        closedLost: referralsInRange.filter((r: any) => r['Status'] === 'Closed Lost').length,
         revenue: refRevenue,
         commission: refCommission,
         avgDaysToClose: Math.round(avgTimeToClose),
@@ -176,6 +248,7 @@ export async function GET(request: Request) {
         revenueByState: revenueByStateArr,
       },
       campaigns: campaignStats,
+      sourceBreakdown,
       recentActivity: recentActivity.slice(0, 20),
     });
   } catch (error: any) {
@@ -183,5 +256,3 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message || 'Failed to fetch analytics' }, { status: 500 });
   }
 }
-
-
