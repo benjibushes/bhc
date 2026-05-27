@@ -398,18 +398,23 @@ function _markUpdateSeen(id: number): boolean {
 export async function POST(request: Request) {
   // Signature verification. Telegram supports X-Telegram-Bot-Api-Secret-Token.
   // Audit finding 2026-05-20 #1 — without this, anyone can POST forged
-  // callback_query and trigger one-tap admin actions. Gracefully degrades
-  // when secret is unset (warn in prod) to avoid bricking the bot during
-  // rollout.
-  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (expectedSecret) {
-    const provided = request.headers.get('x-telegram-bot-api-secret-token');
-    if (provided !== expectedSecret) {
-      console.warn('[telegram-webhook] signature mismatch — rejecting');
-      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  // callback_query and trigger one-tap admin actions.
+  // 2026-05-27 P0 audit G-2: hard-require in production. Previously
+  // graceful-degraded if env var unset → accepted requests in prod with
+  // NO signature check. Now: fail-closed in production. Dev still warns
+  // + accepts for local testing.
+  const headerSecret = request.headers.get('x-telegram-bot-api-secret-token') || '';
+  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET || '';
+
+  if (!expectedSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[telegram-webhook] TELEGRAM_WEBHOOK_SECRET unset in production — refusing request');
+      return NextResponse.json({ error: 'webhook secret not configured' }, { status: 401 });
     }
-  } else if (process.env.NODE_ENV === 'production') {
-    console.warn('[telegram-webhook] TELEGRAM_WEBHOOK_SECRET unset in prod — webhook is unauthenticated');
+    console.warn('[telegram-webhook] TELEGRAM_WEBHOOK_SECRET unset (dev mode — accepting)');
+  } else if (headerSecret !== expectedSecret) {
+    console.warn('[telegram-webhook] webhook secret mismatch — refusing');
+    return NextResponse.json({ error: 'invalid webhook secret' }, { status: 401 });
   }
 
   let update: any;
