@@ -5,6 +5,7 @@ import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
 import Link from 'next/link';
+import { toast } from '@/lib/toast';
 
 interface Rancher {
   id: string;
@@ -31,7 +32,7 @@ export default function CompliancePage() {
   const sendReminder = async (id: string, email: string, name: string) => {
     try {
       const month = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
-      await fetch('/api/admin/broadcast', {
+      const res = await fetch('/api/admin/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -41,24 +42,36 @@ export default function CompliancePage() {
           campaignName: 'compliance-reminder-manual',
         }),
       });
-      alert(`Reminder sent to ${name}`);
-    } catch {
-      alert('Error sending reminder');
+      // P1 audit D-4: surface non-2xx via toast instead of "success" alert on every result
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error('Reminder failed', data?.error || `HTTP ${res.status}`);
+      } else {
+        toast.success(`Reminder sent to ${name}`);
+      }
+    } catch (e: any) {
+      toast.error('Error sending reminder', e?.message);
     }
   };
 
   const updateStatus = async (id: string, newStatus: string) => {
     try {
-      await fetch(`/api/admin/ranchers/${id}`, {
+      const res = await fetch(`/api/admin/ranchers/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active_status: newStatus }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error('Status update failed', data?.error || `HTTP ${res.status}`);
+        return;
+      }
       setRanchers(prev => prev.map(r =>
         r.id === id ? { ...r, active_status: newStatus } : r
       ));
-    } catch {
-      alert('Error updating status');
+      toast.success(`Marked ${newStatus}`);
+    } catch (e: any) {
+      toast.error('Error updating status', e?.message);
     }
   };
 
@@ -107,8 +120,11 @@ export default function CompliancePage() {
                     if (confirm('Send compliance reminders to all active ranchers?')) {
                       fetch('/api/admin/compliance/trigger-cron', { method: 'POST' })
                         .then(r => r.json())
-                        .then(d => alert(d?.error ? `Error: ${d.error}` : `Sent ${d.sentCount ?? 0} reminders`))
-                        .catch(() => alert('Error'));
+                        .then(d => {
+                          if (d?.error) toast.error('Bulk reminders failed', d.error);
+                          else toast.success(`Sent ${d.sentCount ?? 0} reminders`);
+                        })
+                        .catch((e) => toast.error('Bulk reminders error', e?.message));
                     }
                   }}
                   className="px-4 py-2 bg-[#0E0E0E] text-[#F4F1EC] text-sm hover:bg-[#2A2A2A]"
