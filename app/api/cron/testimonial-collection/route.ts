@@ -20,11 +20,16 @@ export const maxDuration = 60;
 // Cap: 5 asks per run. Plenty for current volume + leaves headroom so we
 // don't burst-send if a backlog accumulates.
 //
-// On reply, buyer email lands in the Resend Inbound webhook (tagged
-// Reply-To = ref-<referralId>@replies.buyhalfcow.com). Conversations row
-// is created automatically. Operator pastes the quote into a
-// `Testimonial` field on Referrals when adding it (or a future cron
-// auto-extracts via Claude if ANTHROPIC_API_KEY is set).
+// Two capture paths now (H12, 2026-05-27):
+//   1. Magic-link form — email CTA → /reviews/submit?token=<jwt> →
+//      POST /api/reviews/submit writes Buyer Rating + Buyer Review +
+//      Review Submitted At onto the Referrals row directly. 30s flow.
+//   2. Free-form reply — buyer hits reply, lands in Resend Inbound webhook
+//      (tagged Reply-To = ref-<referralId>@replies.buyhalfcow.com),
+//      Conversations row auto-created. Operator pastes the quote into
+//      a `Testimonial` field on Referrals when curating wins page.
+// Both paths coexist — the magic link is the express lane for buyers who
+// don't want to type a paragraph.
 //
 // Auto-pause: respects the same Cron Pauses table the email-sequences
 // cron does, via the freqGuard pause check inside sendTestimonialAsk

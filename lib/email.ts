@@ -1,6 +1,8 @@
 import { Resend } from 'resend';
+import jwt from 'jsonwebtoken';
 import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
+import { JWT_SECRET } from './secrets';
 
 const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
 
@@ -3703,6 +3705,16 @@ export async function sendTestimonialAsk(data: {
   const cut = (data.orderType || 'beef').toLowerCase();
   const cutPhrase = /half|whole|quarter/.test(cut) ? `a ${cut}` : 'beef';
   const subject = `quick favor — one sentence about your ${cut}?`;
+  // Mint review-submit JWT — 120d so late repliers still land. Verified by
+  // /api/reviews/submit which writes Buyer Rating + Buyer Review onto the
+  // Referrals row. Buyer can still hit reply for free-form (Conversations
+  // table) — the magic link is just the 30-second express lane.
+  const reviewToken = jwt.sign(
+    { type: 'review-submit', referralId: data.referralId },
+    JWT_SECRET,
+    { expiresIn: '120d' }
+  );
+  const reviewUrl = `${SITE_URL}/reviews/submit?token=${reviewToken}`;
   return guardedSend({
     templateName: 'sendTestimonialAsk',
     recipientEmail: data.email,
@@ -3714,13 +3726,14 @@ export async function sendTestimonialAsk(data: {
       headers: getUnsubscribeHeaders(data.email),
       _replyContext: { type: 'ref', recordId: data.referralId },
       html: `<!DOCTYPE html><html><head>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}</style>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{text-align:center;margin:28px 0}.cta a{display:inline-block;background:#0E0E0E;color:#F4F1EC;padding:14px 32px;font-size:13px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;text-decoration:none}</style>
 </head><body><div class="container">
   <h1>Quick favor, ${esc(first)}.</h1>
   <p>Hey ${esc(first)} — Ben here, founder of BuyHalfCow.</p>
   <p>You got ${cutPhrase} from ${esc(data.ranchName)} a couple weeks back. How is it?</p>
-  <p>If you have 30 seconds, hit reply with <strong>one sentence</strong> about your experience. Real words, your voice. I'd like to share it on the site (first name + state only — no last name, no email).</p>
-  <p>Nothing fancy. Just a sentence. Something like:</p>
+  <p>If you have 30 seconds, click below to leave a quick rating + one sentence. Real words, your voice. I'd like to share it on the site (first name + state only — no last name, no email).</p>
+  <div class="cta"><a href="${reviewUrl}">Leave a quick review</a></div>
+  <p>Or just hit reply with one sentence — like:</p>
   <p style="border-left:3px solid #A7A29A;padding-left:14px;color:#6B4F3F;font-style:italic;">"freezer's full, family's fed, talked to the rancher direct."</p>
   <p>If you'd rather not, totally fine — no follow-up.</p>
   <p>Thanks for backing real ranchers.</p>
