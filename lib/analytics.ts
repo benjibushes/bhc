@@ -69,6 +69,12 @@ export function trackEvent(
   if (typeof window === 'undefined') return;
 
   try {
+    // Extract event_id from properties — Meta Pixel expects eventID as the
+    // 4th-arg options object, NOT inside the properties payload. Passing it
+    // inside properties causes 100% client+server CAPI dedup failure — Meta
+    // can't match the two fires, every event double-counts, and the algo
+    // optimizes against inflated signal. See Meta Pixel API docs.
+    const { event_id, ...restProperties } = properties as Record<string, any>;
     // Meta Pixel — use CustomEvent for non-standard events, fbq.track for standards.
     if (window.fbq) {
       const metaStandardEvents: Record<string, string> = {
@@ -98,12 +104,20 @@ export function trackEvent(
       };
       const standardName = metaStandardEvents[event];
       if (standardName) {
-        window.fbq('track', standardName, properties);
+        if (event_id) {
+          window.fbq('track', standardName, restProperties, { eventID: event_id });
+        } else {
+          window.fbq('track', standardName, restProperties);
+        }
       } else {
-        window.fbq('trackCustom', event, properties);
+        if (event_id) {
+          window.fbq('trackCustom', event, restProperties, { eventID: event_id });
+        } else {
+          window.fbq('trackCustom', event, restProperties);
+        }
       }
     }
-    // GA4 + Google Ads
+    // GA4 + Google Ads — pass full properties (event_id is fine here).
     if (window.gtag) {
       window.gtag('event', event, properties);
     }
