@@ -1701,6 +1701,85 @@ a{color:#0E0E0E;}
   });
 }
 
+// Backer monthly letter — fulfills /founders explicit promise of "monthly
+// founder letter". Sent to every Consumer row with a non-empty Founder Tier
+// once per calendar month (cron: backer-monthly-letter).
+//
+// Voice: lowercase, plainspoken, founder-on-the-road. Honest stats only —
+// no fabricated metrics. Receives live stats payload from cron.
+export async function sendBackerMonthlyLetter(data: {
+  firstName: string;
+  email: string;
+  tier?: string;
+  founderNumber?: number;
+  // Live stats pulled from /api/stats/public at cron-run time.
+  stats: {
+    rancherCount?: number;
+    buyerCount?: number;
+    stateCount?: number;
+    monthClosedWon?: number;
+    monthNewRanchers?: number;
+    foundingHundredClaimed?: number;
+  };
+}) {
+  const first = esc(data.firstName || 'there');
+  const monthLabel = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' }).toLowerCase();
+  const subject = `bhc ${monthLabel} — founder letter`;
+
+  const ranchers = data.stats.rancherCount ?? 0;
+  const buyers = data.stats.buyerCount ?? 0;
+  const states = data.stats.stateCount ?? 0;
+  const closedThisMonth = data.stats.monthClosedWon ?? 0;
+  const newRanchers = data.stats.monthNewRanchers ?? 0;
+  const f100 = data.stats.foundingHundredClaimed ?? 0;
+
+  const numberLine = data.founderNumber ? `founder #${data.founderNumber} —` : '';
+
+  return guardedSend({
+    templateName: 'sendBackerMonthlyLetter',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:24px;margin:0 0 14px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+.stat{padding:14px 18px;background:#F4F1EC;border-left:3px solid #0E0E0E;margin:18px 0;}
+.stat strong{font-size:22px;font-family:Georgia,serif;}
+a{color:#0E0E0E;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+  <p>hey ${first} —</p>
+  <p>monthly letter from the road. ${numberLine} this is the part i committed to when you backed bhc — no skipping a month, no PR fluff. just where we are.</p>
+  <h1>this month</h1>
+  <div class="stat">
+    <strong>${closedThisMonth}</strong> deal${closedThisMonth === 1 ? '' : 's'} closed
+    ${newRanchers > 0 ? `· <strong>${newRanchers}</strong> new rancher${newRanchers === 1 ? '' : 's'} live` : ''}
+  </div>
+  <p>cumulative across the network: <strong>${ranchers}</strong> ranchers, <strong>${buyers}</strong> buyers, <strong>${states}</strong> state${states === 1 ? '' : 's'} active. every count above is a real row in airtable — i don't round up.</p>
+  ${f100 > 0 ? `<p>founding 100: <strong>${f100}/100</strong> claimed. when this fills, the wall closes and the next tier opens.</p>` : ''}
+  <h1>what's next</h1>
+  <p>the rebuild keeps going. if you have a rancher you want me to chase, a state you think we should open, or just want to talk — reply to this email and it lands directly with me.</p>
+  <p style="font-style:italic;color:#6B4F3F;font-family:Georgia,serif;font-size:16px;border-left:3px solid #0E0E0E;padding-left:14px;margin:24px 0;">
+    we're gonna take back american ranching and agriculture. one family, one rancher, one freezer at a time.
+  </p>
+  <p style="margin-top:28px;">— ben</p>
+  <div class="footer">
+    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+    <p style="margin:6px 0 0;">
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
+    </p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
 // =====================================================
 // AFFILIATE EMAILS
 // =====================================================
