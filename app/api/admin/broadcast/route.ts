@@ -189,7 +189,27 @@ export async function POST(request: Request) {
     // Batch send with rate limiting
     let sent = 0;
     let failed = 0;
+    let aborted = false;
     for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+      // Abort kill-switch. P0 audit fix (C-4): poll the reserved Campaigns
+      // row at each batch boundary. If operator hit POST /api/admin/broadcast/abort,
+      // Status flips to 'Aborting' and we bail out. Skipped if reservation
+      // failed (no row to poll).
+      if (reservedCampaignId) {
+        try {
+          const { getRecord } = await import('@/lib/airtable');
+          const row: any = await getRecord(TABLES.CAMPAIGNS, reservedCampaignId);
+          if (row && (row['Status'] || '') === 'Aborting') {
+            aborted = true;
+            break;
+          }
+        } catch (pollErr) {
+          // Non-fatal — if Airtable read fails, keep sending. The dupe gate
+          // protects against the next run if we crash anyway.
+          console.warn('[broadcast] abort poll failed (continuing):', pollErr);
+        }
+      }
+
       const batch = recipients.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map(recipient =>
@@ -218,11 +238,12 @@ export async function POST(request: Request) {
     // If reservation failed earlier, fall back to creating a fresh row so we
     // still have an audit trail (with the caveat that dupe protection won't
     // catch a crashed retry in that fallback path).
+    const finalStatus = aborted ? 'Aborted' : (failed > 0 ? 'Partial' : 'Sent');
     try {
       if (reservedCampaignId) {
         const { updateRecord } = await import('@/lib/airtable');
         await updateRecord(TABLES.CAMPAIGNS, reservedCampaignId, {
-          'Status': failed > 0 ? 'Partial' : 'Sent',
+          'Status': finalStatus,
           'Sent': sent,
           'Failed': failed,
         });
@@ -237,7 +258,7 @@ export async function POST(request: Request) {
           'Recipients': recipients.length,
           'Sent': sent,
           'Failed': failed,
-          'Status': failed > 0 ? 'Partial' : 'Sent',
+          'Status': finalStatus,
         });
       }
     } catch (campaignError) {
@@ -246,10 +267,11 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
+      aborted,
       recipientCount: recipients.length,
       sent,
       failed,
-      campaignName
+      campaignName,
     });
   } catch (error: any) {
     console.error('Error sending broadcast email:', error);
