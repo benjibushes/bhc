@@ -10,6 +10,7 @@ import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import BHCPromiseBadge from '../../components/BHCPromiseBadge';
 import { getRancherOrProspectBySlug, getActiveRancherPages } from '@/lib/airtable';
 import RancherOrderForm from './RancherOrderForm';
+import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
 
 // Public rancher landing page — the unit of conversion. Verified partners
 // get full pricing + lead capture; prospects get the same shell with pricing
@@ -227,6 +228,16 @@ export default async function RancherPage(
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
+      {/* Audit 6 P1 — paid-scale tracking: fires rancher_page_view on mount
+          with rancherId/slug/state custom_data for per-rancher Meta + GA
+          segmentation. PixelTracker's generic PageView didn't carry this
+          metadata, blinding paid creative ROAS by rancher. */}
+      <RancherPageAnalytics
+        rancherId={r.id}
+        rancherSlug={slug}
+        rancherState={state}
+      />
+
       {isProspect && <ProspectClaimBanner ranchName={name} slug={slug} state={state} />}
 
       {/* ── HERO ──────────────────────────────────────────────────────────────
@@ -305,13 +316,15 @@ export default async function RancherPage(
               {/* CTA row — verified gets pricing-jump, prospect gets claim */}
               <div className="flex flex-wrap gap-3 pt-2">
                 {hasPricing ? (
-                  <a
+                  <RancherPricingCTA
                     href="#shares"
+                    rancherSlug={slug}
+                    rancherState={state}
                     className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
                   >
                     See pricing
                     <span aria-hidden>↓</span>
-                  </a>
+                  </RancherPricingCTA>
                 ) : isProspect ? (
                   <Link
                     href={`/ranchers/${slug}/claim`}
