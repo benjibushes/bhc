@@ -4,7 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
-import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
+import { sendEmail, sendBuyerIntroNotification, sendStateWaitlistLetter } from '@/lib/email';
 import { sendSMS } from '@/lib/twilio';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import jwt from 'jsonwebtoken';
@@ -967,6 +967,43 @@ export async function POST(request: Request) {
         });
       } catch (e) {
         console.error('Error updating consumer referral status:', e);
+      }
+
+      // F-1 audit fix: fire sendStateWaitlistLetter immediately at signup.
+      // Pre-fix, buyer signed up in an uncovered state → Status=Waitlisted +
+      // Buyer Stage=WAITING → NO email until reclassify-buyers cron segmented
+      // them as STATE_WAITLIST + email-sequences fired the letter days later.
+      // For cold paid-ad traffic this 24-48h silence was the bounce/trust hit.
+      // Gate on Routing Segment Send Count == 0 so a buyer hitting the
+      // endpoint twice (re-signup, retry) doesn't get the letter twice — the
+      // email-sequences cron also honors this counter.
+      if (buyerEmail) {
+        try {
+          const consumer = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+          const segCount = Number(consumer?.['Routing Segment Send Count'] || 0);
+          if (segCount === 0) {
+            const firstName = String(buyerName || '').split(' ')[0] || 'there';
+            sendStateWaitlistLetter({
+              email: buyerEmail,
+              firstName,
+              buyerState: normalizedBuyerState,
+            })
+              .then(async () => {
+                // Stamp the counter so email-sequences cron doesn't double-fire.
+                try {
+                  await updateRecord(TABLES.CONSUMERS, buyerId, {
+                    'Routing Segment Send Count': 1,
+                    'Routing Segment Last Sent At': new Date().toISOString(),
+                  });
+                } catch (e) {
+                  console.error('[state-waitlist] segment counter stamp failed:', e);
+                }
+              })
+              .catch(e => console.error('[state-waitlist] fire failed:', e));
+          }
+        } catch (e) {
+          console.error('[state-waitlist] consumer fetch failed:', e);
+        }
       }
 
       // Telegram noise reduction: routine no-match events roll into the
