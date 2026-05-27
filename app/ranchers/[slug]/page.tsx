@@ -7,6 +7,7 @@ import Divider from '../../components/Divider';
 import Pill from '../../components/Pill';
 import Card from '../../components/Card';
 import ProspectClaimBanner from '../../components/ProspectClaimBanner';
+import BHCPromiseBadge from '../../components/BHCPromiseBadge';
 import { getRancherOrProspectBySlug, getActiveRancherPages } from '@/lib/airtable';
 import RancherOrderForm from './RancherOrderForm';
 
@@ -358,6 +359,21 @@ export default async function RancherPage(
                   <strong>{statesServed}</strong>
                 </span>
               )}
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── BHC PROMISE BADGE ─────────────────────────────────────────────────
+          Trust floor (cold-chain + 7d satisfaction + mediation) displayed on
+          verified ranchers BEFORE checkout. Audit 1 + 4 P1: move upstream from
+          /checkout/[refId]/deposit so buyers see trust commitment before the fence.
+         ───────────────────────────────────────────────────────────────────── */}
+      {!isProspect && (
+        <section className="py-16 md:py-20">
+          <Container>
+            <div className="max-w-4xl mx-auto">
+              <BHCPromiseBadge />
             </div>
           </Container>
         </section>
