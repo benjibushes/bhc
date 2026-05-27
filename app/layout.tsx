@@ -3,8 +3,8 @@ import { Playfair_Display, Inter } from "next/font/google";
 import "./globals.css";
 import Header from "./components/Header";
 import PromoBar from "./components/PromoBar";
-import Analytics from "./components/Analytics";
 import PixelTracker from "./components/PixelTracker";
+import RouteChangeTracker from "./components/RouteChangeTracker";
 import UtmCapture from "./components/UtmCapture";
 import Footer from "./components/Footer";
 
@@ -108,7 +108,7 @@ export default function RootLayout({
         className={`${playfair.variable} ${inter.variable} antialiased`}
       >
         <PixelTracker />
-        <Analytics />
+        <RouteChangeTracker />
         <UtmCapture />
         <PromoBar />
         <Header />

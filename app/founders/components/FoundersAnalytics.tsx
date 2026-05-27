@@ -35,8 +35,14 @@ export function FoundersViewTracker() {
         const props: Record<string, string> = {};
         const tier = paid || sp.get('tier') || '';
         if (tier) props.tier = tier;
+        // Server CAPI fires Purchase with event_id=<stripeSessionId> in
+        // app/api/webhooks/stripe/route.ts:893-905. Pass the session_id
+        // from the success-redirect URL as event_id so Meta can dedup the
+        // client Pixel fire against the server CAPI fire. trackEvent in
+        // lib/analytics.ts strips event_id out of properties and passes
+        // it as fbq's 4th-arg { eventID } — required dedup shape.
         const sessionId = sp.get('session_id');
-        if (sessionId) props.session_id = sessionId;
+        if (sessionId) props.event_id = sessionId;
         trackEvent('founders_backed', props);
       }
     } catch {
