@@ -2045,6 +2045,19 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
           const slug = rancher['Slug'] || '';
 
+          // Idempotency guard — refuse re-fire if already live.
+          // Without this, double-tap re-sends the launch email + re-runs the
+          // waitlist blast (could re-route waiting buyers a second time).
+          const currentStatus = String(rancher['Onboarding Status'] || '');
+          if (currentStatus === 'Live') {
+            await answerCallbackQuery(queryId, 'Already live');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ <b>${escHtml(session.rancherName)}</b> is already live. Skipping re-fire.`);
+            }
+            setupPageSessions.delete(chatId!);
+            return NextResponse.json({ ok: true });
+          }
+
           // Validate minimum content
           if (!slug) {
             await answerCallbackQuery(queryId, 'Set a URL slug first!');
@@ -2273,6 +2286,18 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
           const slug = rancher['Slug'] || '';
           const rancherEmail = rancher['Email'];
+
+          // Idempotency guard — refuse re-fire if already live.
+          // Without this, double-tap re-sends the launch email + re-runs the
+          // waitlist blast (could re-route waiting buyers a second time).
+          const currentStatus = String(rancher['Onboarding Status'] || '');
+          if (currentStatus === 'Live') {
+            await answerCallbackQuery(queryId, 'Already live');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ <b>${escHtml(name)}</b> is already live. Skipping re-fire.`);
+            }
+            return NextResponse.json({ ok: true });
+          }
 
           // Validate minimum content before going live
           if (!slug) {
@@ -2564,6 +2589,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                 `[BHC:close:${refId}]`
               );
             } else if (action === 'lost') {
+              // Idempotency guard — refuse re-fire if already terminal.
+              // Without this, double-tap double-decrements capacity + flips
+              // buyer stage twice (CLOSED is idempotent but the capacity math
+              // is not).
+              if (previousStatus === 'Closed Won' || previousStatus === 'Closed Lost') {
+                await answerCallbackQuery(queryId, `Already ${previousStatus}`);
+                await editTelegramMessage(chatId, messageId, `⚠️ <b>${buyerName}</b> already ${previousStatus}. Skipping.`);
+                return NextResponse.json({ ok: true });
+              }
               await answerCallbackQuery(queryId, '❌ Marked Closed Lost');
               await updateRecord(TABLES.REFERRALS, refId, {
                 'Status': 'Closed Lost',
@@ -2734,6 +2768,20 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             const ranchName = referral?.['Suggested Rancher Name'] || 'rancher';
 
             if (action === 'approve') {
+              // Idempotency guard — refuse re-fire if approval already
+              // decided. Without this, double-tap fires matching/suggest a
+              // second time → second intro email to rancher + second
+              // buyer-side notification.
+              const currentApproval = String(referral?.['Approval Status'] || 'pending');
+              if (currentApproval !== 'pending' && currentApproval !== '') {
+                await answerCallbackQuery(queryId, `Already ${currentApproval}`);
+                await editTelegramMessage(
+                  chatId,
+                  messageId,
+                  `⚠️ <b>${buyerName}</b> already ${currentApproval}. Skipping re-fire.`
+                );
+                return NextResponse.json({ ok: true });
+              }
               await answerCallbackQuery(queryId, '✅ Approved — firing intro');
               const suggestedRancherId = referral?.['Suggested Rancher']?.[0] || '';
 
