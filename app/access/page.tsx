@@ -92,6 +92,11 @@ interface PublicStats {
   thisMonthClosedWon: number;
 }
 
+// Consumed by hero JSX (`{stats.ranchersActive}` etc.) which renders the raw
+// number — no em-dash fallback layer for 0. So if we hardcoded zeros here,
+// /api/stats/public failure would lie with "0 verified ranchers" rather than
+// degrade to a placeholder. Real, conservative numbers are safer than fake-low
+// zeros. Verified against prod 2026-05-27 — re-verify monthly.
 const STATS_FALLBACK: PublicStats = {
   ranchersActive: 17,
   familiesMatched: 1533,

@@ -477,7 +477,7 @@ export async function sendConsumerApproval(data: {
       <li>Verified ranchers in your state</li>
       <li>Direct, personal introductions</li>
       <li>Exclusive land deals and brand promotions</li>
-      <li>A curated network — no spam, no middlemen</li>
+      <li>A real network — no spam, no middlemen</li>
     </ul>
     <a href="${loginUtm}" class="button">Go to Your Dashboard</a>
     <p style="font-size: 13px; color: #A7A29A;">Watch for the "Ready to buy?" email coming next — your one-click YES is what triggers the rancher introduction. Not ready yet? No pressure — you stay on the list and we check back when timing fits.</p>
@@ -486,7 +486,7 @@ export async function sendConsumerApproval(data: {
   const communityBody = `
     <h1>Welcome to BuyHalfCow</h1>
     <p>Hi ${esc(data.firstName)},</p>
-    <p><strong>You're in.</strong> Welcome — a curated network built around American agriculture, real ranches, and direct relationships.</p>
+    <p><strong>You're in.</strong> Welcome — a real network built around American agriculture, real ranches, and direct relationships.</p>
     <div class="divider"></div>
     <p><strong>What you have access to:</strong></p>
     <ul style="color: #6B4F3F; line-height: 2;">
