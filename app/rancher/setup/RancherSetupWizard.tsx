@@ -258,6 +258,74 @@ export default function RancherSetupWizard() {
     setStep(8);
   }, [connectComplete, rancher]);
 
+  // P1-2 — localStorage step persistence. Rancher returning next day with
+  // their token would always land at Step 0 even if they'd previously made it
+  // to Step 7. Now we save the current step keyed by a short token hash so
+  // the next visit picks up where they left off.
+  //
+  // Hash, don't store: the wizard token is a JWT (sensitive). We never put
+  // the full token in localStorage — just a non-reversible hash that's stable
+  // for the same token. Step number itself is non-PII so storing it is safe.
+  //
+  // Precedence: ?connectComplete=1 (Stripe return) overrides saved step (per
+  // P0-2 fix). The Stripe useEffect runs second-ish but its setStep(8) call
+  // wins because both useEffects depend on `rancher` and React batches state
+  // updates — the saved-step restore happens once, then Stripe overrides if
+  // ?connectComplete=1 is present.
+  function tokenHashFor(t: string): string {
+    if (!t) return '';
+    // Cheap deterministic 32-bit hash (djb2). Sufficient to scope a
+    // localStorage key per-rancher without leaking the token contents.
+    let h = 5381;
+    for (let i = 0; i < t.length; i++) {
+      h = ((h << 5) + h + t.charCodeAt(i)) | 0;
+    }
+    return `t${(h >>> 0).toString(36)}`;
+  }
+  const stepStorageKey = token ? `bhc_setup_step_${tokenHashFor(token)}` : '';
+
+  // Restore saved step on first load after rancher data is available. Skip
+  // when ?connectComplete=1 is present — the Stripe useEffect handles that.
+  // Run once per rancher load (guarded by didRestoreStep ref).
+  const didRestoreStep = useRef(false);
+  useEffect(() => {
+    if (!rancher) return;
+    if (connectComplete) return; // Stripe handler wins
+    if (didRestoreStep.current) return;
+    if (!stepStorageKey) return;
+    didRestoreStep.current = true;
+    try {
+      const saved = localStorage.getItem(stepStorageKey);
+      if (!saved) return;
+      const n = parseInt(saved, 10);
+      // Only restore valid in-range steps; 0 means "start at intro" so we
+      // skip — no point setting the same state we already have.
+      if (n > 0 && n <= 9) {
+        setStep(n as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
+      }
+    } catch {
+      /* localStorage disabled — non-fatal, fall back to Step 0. */
+    }
+  }, [rancher, connectComplete, stepStorageKey]);
+
+  // Persist step on every transition. Skip Step 10/6 — at "Done" we clear so
+  // a subsequent rancher visiting the same machine isn't stuck on the
+  // confetti screen.
+  useEffect(() => {
+    if (!stepStorageKey) return;
+    try {
+      // Step 6 = Done. Clear so a re-visit lands at Step 0 (or wherever
+      // server-state guides them).
+      if (step === 6) {
+        localStorage.removeItem(stepStorageKey);
+      } else {
+        localStorage.setItem(stepStorageKey, String(step));
+      }
+    } catch {
+      /* localStorage disabled — non-fatal. */
+    }
+  }, [step, stepStorageKey]);
+
   const setField = (key: string, value: any) => setForm((f) => ({ ...f, [key]: value }));
 
   // Phone mask — formats raw input as (555) 555-5555 progressively. Plays
