@@ -51,13 +51,17 @@ function DepositPageContent() {
   // CAPI InitiateCheckout fires from /api/checkout/deposit POST (F5);
   // this pairs via refId-scoped event_id so Meta can dedup.
   // Idempotency guard prevents re-fire if React re-mounts the effect.
+  //
+  // E-3 audit fix: event_id MUST equal what server CAPI sends (raw referralId
+  // at /api/checkout/deposit:224). Prior `deposit_initiated:${refId}` prefix
+  // broke dedup — Meta saw two distinct events instead of one.
   const depositInitiatedFired = useRef(false);
   useEffect(() => {
     if (depositInitiatedFired.current || !refId) return;
     depositInitiatedFired.current = true;
     trackEvent('deposit_initiated', {
       refId,
-      event_id: `deposit_initiated:${refId}`,
+      event_id: refId,
     });
   }, [refId]);
 

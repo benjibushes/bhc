@@ -299,12 +299,14 @@ export async function POST(request: Request) {
         // ── Meta Conversions API: server-side `Purchase` event ──────────
         // Largest paid-ad attribution event on the platform — buyer deposit
         // is the highest-LTV conversion. Pairs with client deposit_completed
-        // Pixel fire via event_id=pi.id (lib/analytics.ts E-1 + E-3 fixes
-        // ensure dedup actually works). Fire-and-forget — never block.
+        // Pixel fire via event_id=referralId (server has pi.id, client has
+        // Stripe Checkout session_id — referralId is the only stable identifier
+        // both surfaces share). E-1 + E-3 fixes ensure dedup actually works.
+        // Fire-and-forget — never block.
         fireCapi([{
           event_name: 'Purchase',
           event_time: Math.floor(Date.now() / 1000),
-          event_id: pi.id,
+          event_id: referralId,
           action_source: 'system_generated',
           user_data: buildUserData(buyerForCapi),
           custom_data: {
