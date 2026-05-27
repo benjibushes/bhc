@@ -35,10 +35,10 @@ export default function NewsPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="text-center">
-            <p className="text-lg text-[#6B4F3F]">Loading...</p>
+            <p className="text-lg text-saddle">Loading...</p>
           </div>
         </Container>
       </main>
@@ -46,16 +46,16 @@ export default function NewsPage() {
   }
 
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-3xl mx-auto space-y-12">
           {/* Header */}
           <div className="text-center space-y-6">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
+            <h1 className="font-serif text-4xl md:text-5xl">
               News & Updates
             </h1>
             <Divider />
-            <p className="text-lg leading-relaxed text-[#6B4F3F]">
+            <p className="text-lg leading-relaxed text-saddle">
               Weekly insights from the ranch, land deals, and the BuyHalfCow community.
             </p>
           </div>
@@ -63,7 +63,7 @@ export default function NewsPage() {
           {/* Posts List */}
           {posts.length === 0 ? (
             <div className="text-center py-12">
-              <p className="text-lg text-[#6B4F3F]">
+              <p className="text-lg text-saddle">
                 No posts yet. Check back soon for updates.
               </p>
             </div>
@@ -72,15 +72,15 @@ export default function NewsPage() {
               {posts.map((post) => (
                 <article key={post.id} className="space-y-4">
                   <div className="space-y-2">
-                    <h2 className="font-[family-name:var(--font-serif)] text-2xl md:text-3xl">
-                      <Link 
+                    <h2 className="font-serif text-2xl md:text-3xl">
+                      <Link
                         href={`/news/${post.slug}`}
-                        className="hover:text-[#6B4F3F] transition-colors"
+                        className="hover:text-saddle transition-colors"
                       >
                         {post.title}
                       </Link>
                     </h2>
-                    <div className="flex gap-4 text-sm text-[#6B4F3F]">
+                    <div className="flex gap-4 text-sm text-saddle">
                       <span>{new Date(post.published_date).toLocaleDateString('en-US', {
                         year: 'numeric',
                         month: 'long',
@@ -92,7 +92,7 @@ export default function NewsPage() {
                   <p className="text-lg leading-relaxed">{post.excerpt}</p>
                   <Link
                     href={`/news/${post.slug}`}
-                    className="inline-block text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors font-medium"
+                    className="inline-block text-charcoal hover:text-saddle transition-colors font-medium"
                   >
                     Read more →
                   </Link>
@@ -103,7 +103,7 @@ export default function NewsPage() {
           )}
 
           <div className="text-center pt-8">
-            <Link href="/" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/" className="text-charcoal hover:text-saddle transition-colors">
               ← Back to home
             </Link>
           </div>

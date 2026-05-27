@@ -37,18 +37,18 @@ export default async function RanchersPage() {
   }
 
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-5xl mx-auto space-y-12">
 
           {/* Header */}
           <div className="text-center space-y-4">
-            <p className="text-sm uppercase tracking-widest text-[#6B4F3F]">Verified Partners</p>
-            <h1 className="font-[family-name:var(--font-playfair)] text-4xl md:text-5xl">
+            <p className="text-sm uppercase tracking-widest text-saddle">Verified Partners</p>
+            <h1 className="font-serif text-4xl md:text-5xl">
               Our Ranchers
             </h1>
             <Divider />
-            <p className="text-lg text-[#6B4F3F] max-w-2xl mx-auto leading-relaxed">
+            <p className="text-lg text-saddle max-w-2xl mx-auto leading-relaxed">
               Every rancher on this page has been personally vetted by BuyHalfCow.
               You're not buying from an algorithm — you're buying from a real operation with a real story.
             </p>
@@ -57,12 +57,12 @@ export default async function RanchersPage() {
           {/* Rancher Grid */}
           {ranchers.length === 0 ? (
             <div className="text-center py-24 space-y-4">
-              <p className="text-lg text-[#6B4F3F]">
+              <p className="text-lg text-saddle">
                 Rancher pages are coming online weekly. See live partners on the map.
               </p>
               <a
                 href="/map"
-                className="inline-block px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] uppercase tracking-wide text-sm hover:bg-[#6B4F3F] transition-colors"
+                className="inline-block px-6 py-3 bg-charcoal text-bone uppercase tracking-wide text-sm hover:bg-saddle transition-colors"
               >
                 See the map →
               </a>
@@ -82,10 +82,10 @@ export default async function RanchersPage() {
                   <Link
                     key={r.id}
                     href={`/ranchers/${slug}`}
-                    className="group block border border-[#A7A29A] bg-white hover:border-[#6B4F3F] transition-colors"
+                    className="group block border border-dust bg-white hover:border-saddle transition-colors"
                   >
                     {/* Logo / Image area */}
-                    <div className="h-40 bg-[#F4F1EC] flex items-center justify-center overflow-hidden">
+                    <div className="h-40 bg-bone flex items-center justify-center overflow-hidden">
                       {logoUrl ? (
                         <Image
                           src={logoUrl}
@@ -96,7 +96,7 @@ export default async function RanchersPage() {
                           unoptimized
                         />
                       ) : (
-                        <span className="font-[family-name:var(--font-playfair)] text-3xl text-[#A7A29A]">
+                        <span className="font-serif text-3xl text-dust">
                           {name.charAt(0)}
                         </span>
                       )}
@@ -104,30 +104,30 @@ export default async function RanchersPage() {
 
                     {/* Card body */}
                     <div className="p-5 space-y-3">
-                      <h2 className="font-[family-name:var(--font-playfair)] text-xl group-hover:text-[#6B4F3F] transition-colors">
+                      <h2 className="font-serif text-xl group-hover:text-saddle transition-colors">
                         {name}
                       </h2>
                       {tagline && (
-                        <p className="text-sm text-[#6B4F3F] leading-snug">{tagline}</p>
+                        <p className="text-sm text-saddle leading-snug">{tagline}</p>
                       )}
                       <div className="flex flex-wrap gap-2 pt-1">
                         {state && (
-                          <span className="text-xs border border-[#A7A29A] px-2 py-0.5 text-[#6B4F3F]">
+                          <span className="text-xs border border-dust px-2 py-0.5 text-saddle">
                             {state}
                           </span>
                         )}
                         {beefTypes && (
-                          <span className="text-xs border border-[#A7A29A] px-2 py-0.5 text-[#6B4F3F]">
+                          <span className="text-xs border border-dust px-2 py-0.5 text-saddle">
                             {beefTypes}
                           </span>
                         )}
                       </div>
                       {halfPrice && (
-                        <p className="text-sm text-[#A7A29A]">
-                          Half cow from <span className="text-[#0E0E0E] font-medium">${halfPrice.toLocaleString()}</span>
+                        <p className="text-sm text-dust">
+                          Half cow from <span className="text-charcoal font-medium">${halfPrice.toLocaleString()}</span>
                         </p>
                       )}
-                      <p className="text-sm font-medium text-[#8C2F2F] group-hover:underline mt-1">
+                      <p className="text-sm font-medium text-rust group-hover:underline mt-1">
                         View Ranch →
                       </p>
                     </div>
@@ -141,10 +141,10 @@ export default async function RanchersPage() {
 
           {/* Footer CTA */}
           <div className="text-center space-y-4">
-            <p className="text-[#6B4F3F]">Are you a rancher ready to partner with us?</p>
+            <p className="text-saddle">Are you a rancher ready to partner with us?</p>
             <Link
               href="/partner"
-              className="inline-block px-8 py-3 bg-[#0E0E0E] text-[#F4F1EC] text-sm tracking-wide hover:bg-[#6B4F3F] transition-colors"
+              className="inline-block px-8 py-3 bg-charcoal text-bone text-sm tracking-wide hover:bg-saddle transition-colors"
             >
               Apply to Partner
             </Link>

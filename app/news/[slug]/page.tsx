@@ -47,10 +47,10 @@ export default function NewsPostPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="text-center">
-            <p className="text-lg text-[#6B4F3F]">Loading...</p>
+            <p className="text-lg text-saddle">Loading...</p>
           </div>
         </Container>
       </main>
@@ -59,14 +59,14 @@ export default function NewsPostPage() {
 
   if (error || !post) {
     return (
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-3xl mx-auto text-center space-y-8">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl">
+            <h1 className="font-serif text-4xl">
               Post Not Found
             </h1>
             <Divider />
-            <Link href="/news" className="inline-block text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/news" className="inline-block text-charcoal hover:text-saddle transition-colors">
               ← Back to News
             </Link>
           </div>
@@ -76,15 +76,15 @@ export default function NewsPostPage() {
   }
 
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <article className="max-w-3xl mx-auto space-y-8">
           {/* Header */}
           <div className="space-y-4">
-            <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl leading-tight">
+            <h1 className="font-serif text-4xl md:text-5xl leading-tight">
               {post.title}
             </h1>
-            <div className="flex gap-4 text-sm text-[#6B4F3F]">
+            <div className="flex gap-4 text-sm text-saddle">
               <span>{new Date(post.published_date).toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
@@ -109,10 +109,10 @@ export default function NewsPostPage() {
           <Divider />
 
           <div className="flex justify-between items-center">
-            <Link href="/news" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/news" className="text-charcoal hover:text-saddle transition-colors">
               ← Back to News
             </Link>
-            <Link href="/" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/" className="text-charcoal hover:text-saddle transition-colors">
               Home
             </Link>
           </div>
