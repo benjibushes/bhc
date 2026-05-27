@@ -206,50 +206,55 @@ function PartnerPageContent() {
 
   if (isSubmitted) {
     return (
-      <main className="min-h-screen py-24 bg-bone text-charcoal">
+      <main className="min-h-screen py-20 md:py-24 bg-bone text-charcoal">
         <Container>
-          <div className="max-w-2xl mx-auto text-center space-y-8">
-            <h1 className="font-serif text-4xl md:text-5xl">
-              Application Received ✓
+          <div className="max-w-2xl mx-auto text-center space-y-8 px-1">
+            <h1 className="font-serif text-3xl md:text-5xl lowercase">
+              application received
             </h1>
             <Divider />
-            
+
             {partnerType === 'rancher' && (
               <>
-                <div className="bg-charcoal text-bone p-8 space-y-6">
-                  <h2 className="text-2xl font-medium">
-                    📞 Next Step: Schedule Your Onboarding Call
+                <div className="bg-charcoal text-bone p-6 md:p-8 space-y-5 md:space-y-6 text-left">
+                  <h2 className="font-serif text-2xl md:text-3xl">
+                    Next step: book a 30-minute call
                   </h2>
-                  <p className="text-lg leading-relaxed">
-                    Your application is saved! Now book your required 30-minute onboarding call 
-                    to discuss your operation and get approved.
+                  <p className="text-base md:text-lg leading-relaxed text-bone/90">
+                    Your application is in. Pick a time so we can talk through
+                    your operation, walk through the agreement, and get you
+                    set up to take orders.
                   </p>
                   <a
                     href={process.env.NEXT_PUBLIC_CALENDLY_LINK || 'https://cal.com/ben-beauchman-1itnsg/30min'}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-block px-12 py-5 bg-bone text-charcoal hover:bg-[#E4E1DC] transition-colors duration-300 font-medium tracking-wider uppercase text-base"
+                    className="inline-block w-full sm:w-auto px-8 py-4 bg-bone text-charcoal hover:bg-bone-warm transition-colors duration-300 font-medium tracking-wider uppercase text-sm"
                   >
-                    📅 Schedule Your Call Now →
+                    Schedule your call →
                   </a>
-                  <p className="text-sm text-dust">
-                    Can't find a time? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
+                  <p className="text-sm text-bone/70">
+                    Can't find a time? Email{' '}
+                    <a href="mailto:support@buyhalfcow.com" className="underline underline-offset-2">
+                      support@buyhalfcow.com
+                    </a>
                   </p>
                 </div>
               </>
             )}
-            
+
             {partnerType !== 'rancher' && (
               <>
-                <p className="text-lg leading-relaxed text-saddle">
+                <p className="text-base md:text-lg leading-relaxed text-saddle">
                   Thank you for your interest in partnering with BuyHalfCow.
                 </p>
-                <p className="text-lg leading-relaxed">
-                  We manually review every application. You'll hear from us within 3-5 business days.
+                <p className="text-base md:text-lg leading-relaxed">
+                  Every application is reviewed by a human. We'll be in touch
+                  once we've had a chance to read it.
                 </p>
               </>
             )}
-            
+
             <div className="pt-8">
               <Link href="/" className="text-charcoal hover:text-saddle transition-colors">
                 ← Back to home
@@ -262,24 +267,25 @@ function PartnerPageContent() {
   }
 
   return (
-    <main className="min-h-screen py-24 bg-bone text-charcoal">
+    <main className="min-h-screen py-20 md:py-24 bg-bone text-charcoal">
       <Container>
-        <div className="max-w-2xl mx-auto space-y-12">
+        <div className="max-w-2xl mx-auto space-y-10 md:space-y-12">
           {/* Header */}
-          <div className="text-center space-y-6">
-            <h1 className="font-serif text-4xl md:text-5xl">
-              Partner With BuyHalfCow
+          <div className="text-center space-y-5 md:space-y-6">
+            <h1 className="font-serif text-3xl md:text-5xl lowercase">
+              partner with buyhalfcow
             </h1>
             <Divider />
-            <p className="text-lg leading-relaxed text-saddle">
-              All partnerships are manually reviewed to ensure quality and trust.
+            <p className="text-base md:text-lg leading-relaxed text-saddle">
+              Every application is read by a human. We pick partners we'd
+              vouch for to our own families.
             </p>
           </div>
 
           {/* Partner Type Selection */}
-          <div className="space-y-4">
-            <label htmlFor="partnerType" className="block text-sm font-medium mb-2">
-              I want to partner as a: <span className="text-weathered">*</span>
+          <div className="space-y-3">
+            <label htmlFor="partnerType" className="block text-sm font-medium">
+              I want to partner as a <span className="text-weathered" aria-label="required">*</span>
             </label>
             <select
               id="partnerType"
@@ -287,12 +293,12 @@ function PartnerPageContent() {
               value={partnerType}
               onChange={(e) => setPartnerType(e.target.value as PartnerType)}
               required
-              className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
+              className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors text-base"
             >
               <option value="">Select partnership type</option>
-              <option value="rancher">Rancher — Sell Beef to Members</option>
-              <option value="brand">Brand — Promote Products/Merch</option>
-              <option value="land">Land Seller — Submit Exclusive Deals</option>
+              <option value="rancher">Rancher — sell beef to members</option>
+              <option value="brand">Brand — promote products / merch</option>
+              <option value="land">Land seller — submit exclusive deals</option>
             </select>
           </div>
 
@@ -304,8 +310,8 @@ function PartnerPageContent() {
               {/* RANCHER FORM */}
               {partnerType === 'rancher' && (
                 <div className="space-y-6">
-                  <h2 className="font-serif text-2xl">
-                    Rancher Application
+                  <h2 className="font-serif text-2xl md:text-3xl lowercase">
+                    rancher application
                   </h2>
                   
                   <Input
@@ -401,15 +407,16 @@ function PartnerPageContent() {
 
                   <Divider />
 
-                  <div className="space-y-4 p-6 bg-white border border-dust">
-                    <h3 className="font-medium text-lg">Ranch Tour & Verification</h3>
+                  <div className="space-y-4 p-5 md:p-6 bg-white border border-dust">
+                    <h3 className="font-medium text-lg">Ranch tour & verification</h3>
                     <p className="text-sm text-saddle leading-relaxed">
-                      Part of our verification process includes in-person ranch tours. 
-                      I travel through different states certifying ranchers and documenting operations.
+                      We travel to verify ranches in person — walking the pasture,
+                      meeting the herd, documenting the operation. Optional, but
+                      it lets us tell your story honestly.
                     </p>
-                    
+
                     <Checkbox
-                      label="I'm interested in having you visit my ranch for verification"
+                      label="I'd be open to an on-site verification visit"
                       name="ranchTourInterested"
                       checked={rancherData.ranchTourInterested}
                       onChange={handleRancherChange}
@@ -417,12 +424,12 @@ function PartnerPageContent() {
 
                     {rancherData.ranchTourInterested && (
                       <Textarea
-                        label="Best times/dates for a visit (flexible)"
+                        label="Best times / dates for a visit (flexible)"
                         name="ranchTourAvailability"
                         value={rancherData.ranchTourAvailability}
                         onChange={handleRancherChange}
                         rows={3}
-                        placeholder="e.g., 'Mornings work best' or 'Weekdays in March' or 'Flexible - give me 1 week notice'"
+                        placeholder="e.g. 'Mornings work best' or 'Weekdays in March' or 'Flexible — give me 1 week notice'"
                       />
                     )}
                   </div>
@@ -442,8 +449,8 @@ function PartnerPageContent() {
               {/* BRAND FORM */}
               {partnerType === 'brand' && (
                 <div className="space-y-6">
-                  <h2 className="font-serif text-2xl">
-                    Brand Partnership Application
+                  <h2 className="font-serif text-2xl md:text-3xl lowercase">
+                    brand partnership application
                   </h2>
 
                   <Input
@@ -531,8 +538,8 @@ function PartnerPageContent() {
               {/* LAND DEAL FORM */}
               {partnerType === 'land' && (
                 <div className="space-y-6">
-                  <h2 className="font-serif text-2xl">
-                    Land Deal Submission
+                  <h2 className="font-serif text-2xl md:text-3xl lowercase">
+                    land deal submission
                   </h2>
 
                   <Input
@@ -650,13 +657,16 @@ function PartnerPageContent() {
               )}
 
               {error && (
-                <div className="p-4 border border-[#8C2F2F] bg-transparent text-weathered text-sm">
+                <div
+                  role="alert"
+                  className="p-4 border border-weathered bg-transparent text-weathered text-sm"
+                >
                   {error}
                 </div>
               )}
 
               <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? 'Submitting...' : 'Submit Application'}
+                {isSubmitting ? 'Submitting…' : 'Submit application'}
               </Button>
             </form>
           )}

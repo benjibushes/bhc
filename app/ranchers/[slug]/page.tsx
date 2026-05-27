@@ -630,15 +630,19 @@ export default async function RancherPage(
 
       {/* ── PROCESS ──────────────────────────────────────────────────────────
           Three-step explainer. Big numbers in serif, restrained borders.
+          Copy is honest about logistics — pickup OR delivery depending on
+          the rancher, not promised either way.
          ───────────────────────────────────────────────────────────────────── */}
       <section className="py-16 md:py-20">
         <Container>
           <div className="max-w-5xl mx-auto space-y-10">
             <div className="text-center space-y-2">
               <Pill tone="neutral" className="mx-auto">How it works</Pill>
-              <h2 className="font-serif text-3xl md:text-4xl">Direct from {name} to your freezer</h2>
+              <h2 className="font-serif text-3xl md:text-4xl">
+                Direct from {name} to your freezer
+              </h2>
             </div>
-            <div className="grid md:grid-cols-3 gap-5 md:gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 md:gap-6">
               {[
                 {
                   num: '01',
@@ -647,13 +651,13 @@ export default async function RancherPage(
                 },
                 {
                   num: '02',
-                  title: 'Pay & confirm',
-                  blurb: `Secure your share with a deposit. ${name} reaches out to confirm cut sheet, timing, pickup.`,
+                  title: 'Reserve & confirm',
+                  blurb: `Hold your share with a deposit. ${operatorName ? operatorName.split(' ')[0] : name} reaches out to confirm cut sheet, timing, and logistics.`,
                 },
                 {
                   num: '03',
                   title: 'Pickup or delivery',
-                  blurb: 'Custom butchered, vacuum-sealed, packed into coolers. Ready on processing day.',
+                  blurb: 'Custom butchered and vacuum-sealed on processing day. Pickup or delivery is worked out direct with the ranch.',
                 },
               ].map((step) => (
                 <Card key={step.num} variant="default" padding="lg" className="space-y-3">

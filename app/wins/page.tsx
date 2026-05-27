@@ -122,21 +122,21 @@ export default async function WinsPage() {
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      <section className="py-16 md:py-24 border-b border-divider/10">
+      <section className="py-14 md:py-24 border-b border-divider/10">
         <Container>
           <div className="max-w-3xl space-y-5">
             <Pill tone="positive">Real deals · real ranchers</Pill>
-            <h1 className="font-serif text-4xl md:text-6xl leading-tight">
-              The proof, on a wall.
+            <h1 className="font-serif text-4xl md:text-6xl leading-tight lowercase">
+              the proof, on a wall.
             </h1>
-            <p className="text-lg text-charcoal/80 leading-relaxed">
-              Every closed deal on the BuyHalfCow network &mdash; updated live as
+            <p className="text-base md:text-lg text-charcoal/80 leading-relaxed">
+              Every closed deal on the BuyHalfCow network &mdash; updated as
               ranchers mark wins. No vanity metrics. No "thousands of customers"
               fluff. Just the actual list of families who bought real beef from
               real ranchers because we connected them.
             </p>
 
-            {/* Aggregate stats */}
+            {/* Aggregate stats — real numbers from Airtable Closed Won. */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-dust/60">
               <Stat
                 value={`$${totalGmv.toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
@@ -151,35 +151,31 @@ export default async function WinsPage() {
       </section>
 
       {/* Wins grid */}
-      <section className="py-14 md:py-16">
+      <section className="py-12 md:py-16">
         <Container>
           {wins.length === 0 ? (
-            <div className="max-w-3xl mx-auto space-y-8">
-              <div className="text-center space-y-4">
-                <Pill tone="amber" className="mx-auto">First closes loading</Pill>
-                <p className="text-saddle max-w-md mx-auto leading-relaxed">
-                  We&apos;re closing the first deals this week. Take the quiz to be among the
-                  first buyers matched as ranchers come online.
-                </p>
+            <div className="max-w-2xl mx-auto space-y-6 text-center">
+              <Pill tone="amber" className="mx-auto">First closes loading</Pill>
+              <p className="text-saddle leading-relaxed">
+                We're closing the first deals on the network now. Take the
+                quiz and we'll match you to a rancher in your state as they
+                come online.
+              </p>
+              <div className="flex flex-wrap justify-center gap-3 pt-1">
                 <a
                   href="/access"
-                  className="inline-block px-6 py-3 bg-charcoal text-bone uppercase tracking-wide text-sm hover:bg-saddle transition-colors"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-charcoal text-bone uppercase tracking-wide text-sm hover:bg-saddle transition-colors"
                 >
                   Take the quiz
+                  <span aria-hidden>→</span>
+                </a>
+                <a
+                  href="/map/add-a-rancher"
+                  className="inline-flex items-center gap-2 px-6 py-3 border border-charcoal text-sm tracking-wide uppercase hover:bg-charcoal hover:text-bone transition-colors"
+                >
+                  Add a rancher
                 </a>
               </div>
-
-              <p className="text-saddle text-center max-w-md mx-auto">
-                We&apos;re closing the first deals this week. Take the quiz to be among the
-                first buyers matched as ranchers come online.
-              </p>
-
-              <p className="text-center text-sm text-saddle">
-                Want yours up here?{' '}
-                <a href="/access" className="underline underline-offset-2 hover:text-charcoal">Take the quiz</a>
-                {' · '}
-                <a href="/map/add-a-rancher" className="underline underline-offset-2 hover:text-charcoal">Or add a rancher</a>
-              </p>
             </div>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5 max-w-6xl mx-auto">
@@ -236,26 +232,26 @@ export default async function WinsPage() {
       </section>
 
       {/* Bottom CTAs */}
-      <section className="py-14 border-t border-dust/40">
+      <section className="py-12 md:py-14 border-t border-dust/40">
         <Container>
-          <div className="max-w-3xl mx-auto text-center space-y-4">
-            <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
-              Want to be on this list?
+          <div className="max-w-3xl mx-auto text-center space-y-4 px-1">
+            <h2 className="font-serif text-2xl md:text-3xl text-charcoal lowercase">
+              want to be on this list?
             </h2>
-            <p className="text-saddle leading-relaxed">
+            <p className="text-saddle leading-relaxed max-w-xl mx-auto">
               Whether you&rsquo;re a rancher with beef to sell or a family
               looking for it &mdash; we&rsquo;ll match you in your state.
             </p>
-            <div className="flex flex-wrap justify-center gap-3 pt-2">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap justify-center gap-3 pt-2">
               <a
                 href="/access"
-                className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+                className="inline-flex items-center justify-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
               >
                 I want beef →
               </a>
               <a
                 href="/map/add-a-rancher"
-                className="inline-flex items-center gap-2 px-7 py-3.5 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
+                className="inline-flex items-center justify-center gap-2 px-7 py-3.5 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
               >
                 I&rsquo;m a rancher →
               </a>
