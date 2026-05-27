@@ -124,8 +124,8 @@ function DepositPageContent() {
 
   if (!info.tierConnected) {
     return (
-      <div className="min-h-screen bg-bone text-charcoal p-8">
-        <h1 className="text-2xl mb-4" style={{ fontFamily: 'Georgia, serif' }}>
+      <div className="min-h-screen bg-bone text-charcoal p-4 md:p-8">
+        <h1 className="text-xl md:text-2xl mb-4 font-serif">
           {info.rancher.name} isn&apos;t quite ready to accept deposits here
         </h1>
         <p className="text-saddle mb-4">
@@ -143,10 +143,10 @@ function DepositPageContent() {
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      <div className="max-w-2xl mx-auto px-6 py-10">
+      <div className="max-w-2xl mx-auto px-4 md:px-6 py-6 md:py-10">
         <Link href={`/checkout/${refId}/ask`} className="text-saddle text-sm hover:underline">← Back to thread</Link>
 
-        <h1 className="text-4xl mt-4 mb-2" style={{ fontFamily: 'Georgia, serif' }}>
+        <h1 className="text-2xl md:text-4xl mt-4 mb-2 font-serif">
           Reserve your beef
         </h1>
         <p className="text-saddle mb-8">
@@ -162,17 +162,17 @@ function DepositPageContent() {
         {/* Cut selector */}
         <div className="mb-6">
           <div className="text-xs text-saddle uppercase tracking-wider mb-2">Pick your cut</div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-3">
             {info.cuts.map((c) => {
               const selected = selectedCut === c.slug;
               return (
                 <button
                   key={c.slug}
                   onClick={() => setSelectedCut(c.slug)}
-                  className={`p-4 text-left border-2 ${selected ? 'border-charcoal' : 'border-dust'} bg-white hover:border-saddle transition`}
+                  className={`p-3 md:p-4 text-left border-2 ${selected ? 'border-charcoal' : 'border-dust'} bg-white hover:border-saddle transition`}
                 >
                   <div className="text-sm">{c.label}</div>
-                  <div className="text-lg" style={{ fontFamily: 'Georgia, serif' }}>{fmtUsd(c.price)}</div>
+                  <div className="text-lg md:text-xl font-serif">{fmtUsd(c.price)}</div>
                   {c.lbs && <div className="text-xs text-saddle">~{c.lbs}</div>}
                 </button>
               );
@@ -185,7 +185,7 @@ function DepositPageContent() {
           <div className="text-xs text-saddle uppercase tracking-wider mb-3">Before you pay</div>
 
           {/* How you get it */}
-          <div className="bg-white border border-dust p-4 mb-3">
+          <div className="bg-white border border-dust p-3 md:p-4 mb-3">
             <div className="text-xs uppercase tracking-wider text-saddle mb-2">How you get it</div>
             <div className="text-sm">
               {info.fulfillment.types.length === 0 ? (
@@ -216,7 +216,7 @@ function DepositPageContent() {
           {/* BHC Promise — platform-level trust floor (cold-chain + 7-day satisfaction + mediation).
               Lives ABOVE the rancher's self-written policy so a "NO REFUNDS EVER" line doesn't tank
               buyer trust right before the Continue-to-Stripe button. See docs/BHC-PROMISE.md. */}
-          <div className="border-l-4 border-sage-dark bg-white p-6 mb-3">
+          <div className="border-l-4 border-sage-dark bg-white p-3 md:p-6 mb-3">
             <h2 className="font-serif text-lg uppercase tracking-widest text-sage-dark mb-3">
               <span aria-hidden="true">🛡️</span> BHC Promise
             </h2>
@@ -241,7 +241,7 @@ function DepositPageContent() {
 
           {/* Refund policy — rancher's own (applies above and beyond the BHC Promise floor above) */}
           {info.refundPolicy && (
-            <div className="bg-white border border-dust p-4 mb-3">
+            <div className="bg-white border border-dust p-3 md:p-4 mb-3">
               <div className="text-xs uppercase tracking-wider text-saddle mb-2">Rancher&apos;s refund policy</div>
               <p className="text-sm whitespace-pre-wrap">{info.refundPolicy}</p>
               <p className="text-xs text-saddle italic mt-3">
@@ -251,7 +251,7 @@ function DepositPageContent() {
           )}
 
           {/* How payment works */}
-          <div className="bg-white border border-dust p-4">
+          <div className="bg-white border border-dust p-3 md:p-4">
             <div className="text-xs uppercase tracking-wider text-saddle mb-2">How the payment works</div>
             <p className="text-sm">
               Your {selectedCutData ? fmtUsd(selectedCutData.price) : ''} goes to {info.rancher.name} through Stripe. We hold no funds at BuyHalfCow. {info.rancher.name} ships/delivers/has you pick up. You + {info.rancher.name} coordinate details by message — we already have a thread open for you.
@@ -262,7 +262,7 @@ function DepositPageContent() {
         <button
           onClick={continueToCheckout}
           disabled={submitting || !selectedCutData}
-          className="w-full bg-charcoal text-bone px-8 py-4 uppercase tracking-wider text-sm hover:bg-saddle transition disabled:opacity-50"
+          className="w-full bg-charcoal text-bone px-4 md:px-8 py-3 md:py-4 min-h-[48px] uppercase tracking-wider text-sm hover:bg-saddle transition disabled:opacity-50 flex items-center justify-center"
         >
           {submitting ? 'Redirecting to Stripe…' : 'Continue to Secure Payment →'}
         </button>
