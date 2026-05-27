@@ -209,14 +209,15 @@ export default async function StartPage({
   const has24hActivity = activity.closes > 0 || activity.matched > 0 || activity.signups > 0;
 
   // FAQ — top 3 objections (Baymard top-objection research)
+  // Stat-driven first answer pulls live counts so we never claim more than we have.
   const faqItems = [
     {
       q: 'is this real? who runs this?',
-      a: 'yes. built by ben (full name on /about + every email signature). 17 verified ranchers, 1,500+ families in pipeline, deals closing weekly. each rancher signs a partnership agreement before going live; we verify USDA processing facility + farm ID. no anonymous shell game.',
+      a: `yes. built by ben (full name on /about + every email signature). ${stats.ranchersActive} verified ranchers, ${stats.familiesMatched.toLocaleString()}+ families in pipeline, ${stats.totalClosedWon} deals closed. each rancher signs a partnership agreement before going live; we verify USDA processor + farm ID. no anonymous shell game.`,
     },
     {
       q: 'how does it actually work?',
-      a: '(1) take the 90-second buyer quiz — we capture your state, household size, timing. (2) we route you to a verified rancher in your state within hours. (3) they email you direct with pricing, processing date, delivery. (4) you talk one-on-one and confirm. (5) beef in your freezer in 2-4 weeks. no middleman, no markup.',
+      a: '(1) take the 90-second buyer quiz — we capture your state, household size, timing. (2) we route you to a verified rancher in your state within hours. (3) they email you direct with pricing, processing date, delivery. (4) you talk one-on-one and confirm. (5) beef in your freezer in 2-4 weeks. no middleman, no marketplace markup. BHC Promise (cold-chain + 7-day satisfaction + mediation) on every match.',
     },
     {
       q: "what if there's no rancher in my state yet?",
@@ -449,6 +450,10 @@ export default async function StartPage({
           <span className="inline-flex items-center gap-1.5">
             <span className="text-charcoal font-semibold">✓</span>
             stripe secure checkout
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="text-charcoal font-semibold">✓</span>
+            <a href="/promise" className="hover:text-charcoal underline underline-offset-2">bhc promise</a>
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="text-charcoal font-semibold">✓</span>

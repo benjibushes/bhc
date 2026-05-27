@@ -82,14 +82,14 @@ export default function FullHomepage() {
               </div>
             </div>
 
-            <h1 className="font-serif text-4xl md:text-6xl lg:text-7xl leading-tight">
+            <h1 className="font-serif text-4xl md:text-6xl lg:text-7xl leading-tight lowercase">
               {totalMembers
                 ? <>{totalMembers.toLocaleString()}+ members<br />rebuilding real food</>
                 : <>a private network<br />rebuilding real food</>}
             </h1>
 
             <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle">
-              A private membership network connecting Americans directly with verified local ranchers. No middlemen. No algorithms. Just trust.
+              Direct from verified American ranchers. Quarter, half, or whole cow — the way local families have been doing it for generations. No marketplace markup. No algorithms.
             </p>
 
             <LiveCounter />
@@ -115,19 +115,26 @@ export default function FullHomepage() {
       <section className="py-20">
         <Container>
           <div className="max-w-3xl mx-auto text-center">
-            <h2 className="font-serif text-3xl md:text-4xl mb-4">
-              Source beef directly from a real ranch
+            <h2 className="font-serif text-3xl md:text-4xl mb-4 lowercase">
+              source beef directly from a real ranch
             </h2>
             <p className="text-lg text-saddle mb-10">
-              We connect you with a verified rancher in your state — quarter, half, or whole cow,
-              processed and packaged the way local families have been doing it for generations.
+              We route you to a verified rancher in your state. You talk to them direct, set your cuts, pick your processing date. We take 10% only when the deal closes — nothing else.
               {totalMembers ? ` Join ${totalMembers.toLocaleString()}+ members already sourcing direct.` : ''}
             </p>
-            <Button href="/access" className="text-base">
-              Get Access to the Network
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <Button href="/access" className="text-base">
+                Get matched in 90 seconds
+              </Button>
+              <a
+                href="/start"
+                className="inline-block px-8 py-4 border-2 border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium tracking-wider uppercase text-sm"
+              >
+                Not sure? Start here
+              </a>
+            </div>
             <p className="text-xs text-saddle mt-8">
-              Are you a rancher, brand, or have land to list?{' '}
+              Rancher, brand, or have land to list?{' '}
               <a href="/partner" className="underline hover:text-charcoal transition-colors">
                 Partner with us instead
               </a>
@@ -240,9 +247,9 @@ export default function FullHomepage() {
 
             {/* Copy + CTA */}
             <div className="text-center md:text-left space-y-6">
-              <p className="text-xs uppercase tracking-[0.3em] text-dust">New Drop</p>
-              <h2 className="font-serif text-4xl md:text-5xl">
-                Rep The Herd
+              <p className="text-xs uppercase tracking-[0.3em] text-dust">New drop</p>
+              <h2 className="font-serif text-4xl md:text-5xl lowercase">
+                rep the herd
               </h2>
               <p className="text-lg text-dust leading-relaxed">
                 Trucker hats made for ranchers, beef lovers, and anyone who knows
@@ -276,8 +283,8 @@ export default function FullHomepage() {
         <Container>
           <div className="max-w-4xl mx-auto space-y-12">
             <div className="text-center">
-              <h2 className="font-serif text-4xl md:text-5xl mb-6">
-                How We're Different
+              <h2 className="font-serif text-4xl md:text-5xl mb-6 lowercase">
+                how we're different
               </h2>
               <p className="text-xl leading-relaxed text-saddle">
                 BuyHalfCow is the only <strong className="text-charcoal">private, approval-only</strong> network for sourcing ranch beef direct. Every rancher is verified. Every buyer is vetted. Every connection is logged.
@@ -289,21 +296,21 @@ export default function FullHomepage() {
             <div className="grid md:grid-cols-3 gap-8">
               <div className="text-center space-y-4">
                 <div className="text-4xl">01</div>
-                <h3 className="font-serif text-xl">Approval-Only Access</h3>
+                <h3 className="font-serif text-xl">Approval-only access</h3>
                 <p className="text-sm text-saddle leading-relaxed">
                   Every member is manually reviewed before joining. No bots, no spam, no tire-kickers.
                 </p>
               </div>
               <div className="text-center space-y-4">
                 <div className="text-4xl">02</div>
-                <h3 className="font-serif text-xl">Verified Ranchers</h3>
+                <h3 className="font-serif text-xl">Verified ranchers</h3>
                 <p className="text-sm text-saddle leading-relaxed">
-                  We certify ranchers through direct outreach and verification. Only real operations make the network.
+                  We verify ranchers through direct outreach + signed partnership agreements. Only real operations make the network.
                 </p>
               </div>
               <div className="text-center space-y-4">
                 <div className="text-4xl">03</div>
-                <h3 className="font-serif text-xl">Direct Relationships</h3>
+                <h3 className="font-serif text-xl">Direct relationships</h3>
                 <p className="text-sm text-saddle leading-relaxed">
                   We make the introduction, then get out of the way. You deal directly with your rancher.
                 </p>
@@ -328,35 +335,35 @@ export default function FullHomepage() {
       <section className="py-20 bg-white">
         <Container>
           <div className="text-center mb-16">
-            <h2 className="font-serif text-4xl md:text-5xl mb-4">
-              How It Works
+            <h2 className="font-serif text-4xl md:text-5xl mb-4 lowercase">
+              how it works
             </h2>
           </div>
 
           <div className="max-w-5xl mx-auto space-y-16">
             {/* For Buyers */}
             <div className="space-y-6">
-              <h3 className="font-serif text-3xl text-center mb-8">For Buyers (Consumers)</h3>
+              <h3 className="font-serif text-3xl text-center mb-8 lowercase">for buyers</h3>
               <div className="grid md:grid-cols-4 gap-6">
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">1</div>
                   <p className="font-medium">Apply</p>
-                  <p className="text-sm text-saddle">Fill out 2-min form. We review manually.</p>
+                  <p className="text-sm text-saddle">90-second quiz. We capture your state, household size, timing.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
-                  <p className="font-medium">Get Approved</p>
-                  <p className="text-sm text-saddle">Email confirmation + member access within 24 hours.</p>
+                  <p className="font-medium">Get routed</p>
+                  <p className="text-sm text-saddle">We match you with a verified rancher in your state within hours.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
-                  <p className="font-medium">Browse Ranchers</p>
-                  <p className="text-sm text-saddle">Filter by your state. See capacity, beef types.</p>
+                  <p className="font-medium">Talk direct</p>
+                  <p className="text-sm text-saddle">Rancher emails you direct with pricing, cuts, processing date.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
-                  <p className="font-medium">Contact Direct</p>
-                  <p className="text-sm text-saddle">Message rancher. Work out details. Done.</p>
+                  <p className="font-medium">Beef in your freezer</p>
+                  <p className="text-sm text-saddle">2–4 weeks. No marketplace markup. BHC Promise on every match.</p>
                 </div>
               </div>
             </div>
@@ -365,27 +372,27 @@ export default function FullHomepage() {
 
             {/* For Ranchers */}
             <div className="space-y-6">
-              <h3 className="font-serif text-3xl text-center mb-8">For Ranchers</h3>
+              <h3 className="font-serif text-3xl text-center mb-8 lowercase">for ranchers</h3>
               <div className="grid md:grid-cols-4 gap-6">
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">1</div>
                   <p className="font-medium">Apply</p>
-                  <p className="text-sm text-saddle">Submit ranch info, capacity, certifications.</p>
+                  <p className="text-sm text-saddle">5-min self-serve. Submit ranch info, capacity, processor.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
-                  <p className="font-medium">Get Certified</p>
-                  <p className="text-sm text-saddle">We verify and approve. Listed as "Certified".</p>
+                  <p className="font-medium">Sign + verify</p>
+                  <p className="text-sm text-saddle">Partnership agreement + USDA processor check. Listed as verified.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
-                  <p className="font-medium">Receive Inquiries</p>
-                  <p className="text-sm text-saddle">Qualified buyers contact you directly via email.</p>
+                  <p className="font-medium">Get routed buyers</p>
+                  <p className="text-sm text-saddle">Pre-screened, in-state buyers email you direct. You close it.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
-                  <p className="font-medium">Complete Sale</p>
-                  <p className="text-sm text-saddle">Keep 90%. We take 10% on successful sales.</p>
+                  <p className="font-medium">Keep 90%</p>
+                  <p className="text-sm text-saddle">10% commission only on closed deals. Pause or leave anytime.</p>
                 </div>
               </div>
             </div>
@@ -399,24 +406,24 @@ export default function FullHomepage() {
       <section className="py-20">
         <Container>
           <div className="max-w-3xl mx-auto text-center space-y-8">
-            <h2 className="font-serif text-4xl md:text-5xl">
-              Why People Trust Us
+            <h2 className="font-serif text-4xl md:text-5xl lowercase">
+              why people trust us
             </h2>
             <div className="grid sm:grid-cols-2 gap-6 text-left max-w-2xl mx-auto">
               <div className="space-y-2">
-                <p className="font-medium">Rancher Verification</p>
-                <p className="text-sm text-saddle">Direct outreach, documentation review, and ongoing accountability for every ranch in our network.</p>
+                <p className="font-medium">Rancher verification</p>
+                <p className="text-sm text-saddle">Direct outreach, partnership agreement signed, USDA-processor verified for every ranch in our network.</p>
               </div>
               <div className="space-y-2">
-                <p className="font-medium">Buyer Vetting</p>
+                <p className="font-medium">Buyer vetting</p>
                 <p className="text-sm text-saddle">Every application is reviewed. We match intent, location, and order type before any introduction is made.</p>
               </div>
               <div className="space-y-2">
-                <p className="font-medium">Logged Connections</p>
-                <p className="text-sm text-saddle">Every referral, introduction, and follow-up is tracked in our CRM. Nothing falls through the cracks.</p>
+                <p className="font-medium">BHC Promise</p>
+                <p className="text-sm text-saddle">Cold-chain guarantee, 7-day satisfaction, and we mediate any dispute. <a href="/promise" className="underline hover:text-charcoal">Read the promise →</a></p>
               </div>
               <div className="space-y-2">
-                <p className="font-medium">Real Support</p>
+                <p className="font-medium">Real support</p>
                 <p className="text-sm text-saddle">Run by a real person, not a faceless platform. Questions get answered. Problems get solved.</p>
               </div>
             </div>
@@ -430,12 +437,12 @@ export default function FullHomepage() {
       <section className="py-24 bg-saddle text-bone">
         <Container>
           <div className="text-center space-y-8">
-            <h2 className="font-serif text-4xl md:text-5xl">
-              Get Started
+            <h2 className="font-serif text-4xl md:text-5xl lowercase">
+              get started
             </h2>
             <p className="text-xl max-w-2xl mx-auto">
               {totalMembers
-                ? `${totalMembers.toLocaleString()}+ people are already in. Applications reviewed daily.`
+                ? `${totalMembers.toLocaleString()}+ people already routed. Applications reviewed daily.`
                 : 'Applications reviewed daily. Most members are approved within 24 hours.'}
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-6">
@@ -443,13 +450,13 @@ export default function FullHomepage() {
                 href="/access"
                 className="inline-block px-10 py-5 bg-bone text-charcoal hover:bg-white transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                Join as a Buyer
+                Join as a buyer
               </a>
               <a
                 href="/partner"
                 className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                Apply as a Rancher
+                Apply as a rancher
               </a>
               <a
                 href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=cta&utm_campaign=hat-launch"
@@ -457,7 +464,7 @@ export default function FullHomepage() {
                 rel="noopener noreferrer"
                 className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                Shop Hats
+                Shop hats
               </a>
             </div>
             <p className="text-sm pt-4 text-dust">
