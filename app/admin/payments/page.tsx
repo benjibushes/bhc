@@ -82,6 +82,16 @@ export default function AdminPaymentsPage() {
   );
 }
 
+type RefundReason = 'requested_by_customer' | 'duplicate' | 'fraudulent';
+
+interface RefundModalState {
+  payment: Payment;
+  amountDollars: string;
+  reason: RefundReason;
+  busy: boolean;
+  error: string;
+}
+
 function AdminPaymentsContent() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
@@ -89,6 +99,7 @@ function AdminPaymentsContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refundingId, setRefundingId] = useState<string>('');
+  const [modal, setModal] = useState<RefundModalState | null>(null);
 
   async function loadData() {
     setLoading(true);
@@ -114,29 +125,69 @@ function AdminPaymentsContent() {
     loadData();
   }, []);
 
-  async function refundPayment(p: Payment) {
-    const reason = window.prompt(
-      `Refund ${dollars(p.amountCents)} from ${p.rancherName} → ${p.buyerName}?\n\nThis fires a Stripe refund on the connected account + clawbacks the application fee. Cannot be undone.\n\nOptional refund reason (requested_by_customer / duplicate / fraudulent):`,
-      'requested_by_customer',
-    );
-    if (reason === null) return; // Cancelled
+  function openRefundModal(p: Payment) {
+    setModal({
+      payment: p,
+      amountDollars: (p.amountCents / 100).toFixed(2),
+      reason: 'requested_by_customer',
+      busy: false,
+      error: '',
+    });
+  }
+
+  async function submitRefund() {
+    if (!modal) return;
+    const p = modal.payment;
+
+    // Validate amount.
+    const parsed = Number(modal.amountDollars);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setModal({ ...modal, error: 'Amount must be a positive number.' });
+      return;
+    }
+    const amountCents = Math.round(parsed * 100);
+    if (amountCents > p.amountCents) {
+      setModal({
+        ...modal,
+        error: `Amount exceeds original ${dollars(p.amountCents)}.`,
+      });
+      return;
+    }
+    const isPartial = amountCents < p.amountCents;
+    const confirmMsg = isPartial
+      ? `Partial refund of ${dollars(amountCents)} from ${dollars(p.amountCents)} for ${p.rancherName} → ${p.buyerName}?\n\nRemaining after refund: ${dollars(p.amountCents - amountCents)}.\n\nThis cannot be undone.`
+      : `Full refund of ${dollars(p.amountCents)} from ${p.rancherName} → ${p.buyerName}?\n\nThis cannot be undone.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setModal({ ...modal, busy: true, error: '' });
     setRefundingId(p.id);
     try {
       const res = await fetch(`/api/admin/payments/refund/${encodeURIComponent(p.id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ reason: reason || undefined, refundApplicationFee: true }),
+        body: JSON.stringify({
+          reason: modal.reason,
+          refundApplicationFee: true,
+          // Only pass amountCents when partial — full refunds omit it so the
+          // server uses the default full-amount path.
+          ...(isPartial ? { amountCents } : {}),
+        }),
       });
       const data = await res.json();
       if (res.ok) {
         await loadData();
-        window.alert(`Refund ${data?.refundId || ''} ${data?.status || 'created'}.`);
+        setModal(null);
+        window.alert(
+          `Refund ${data?.refundId || ''} ${data?.status || 'created'} — ${dollars(data?.amount ?? amountCents)} refunded${
+            data?.partial ? `, ${dollars(data?.remainingCents ?? 0)} remaining` : ''
+          }.`,
+        );
       } else {
-        window.alert(`Refund failed: ${data?.error || 'unknown error'}`);
+        setModal({ ...modal, busy: false, error: data?.error || 'unknown error' });
       }
     } catch (e: any) {
-      window.alert(`Refund failed: ${e?.message || 'network error'}`);
+      setModal({ ...modal, busy: false, error: e?.message || 'network error' });
     } finally {
       setRefundingId('');
     }
@@ -202,7 +253,7 @@ function AdminPaymentsContent() {
                             {canRefund && (
                               <button
                                 type="button"
-                                onClick={() => refundPayment(p)}
+                                onClick={() => openRefundModal(p)}
                                 disabled={refundingId === p.id}
                                 className="px-3 py-1 text-xs font-semibold uppercase tracking-widest border border-red-600 text-red-700 hover:bg-red-50 disabled:opacity-50"
                               >
@@ -269,6 +320,90 @@ function AdminPaymentsContent() {
           </section>
         </>
       )}
+
+      {modal && (() => {
+        const p = modal.payment;
+        const parsed = Number(modal.amountDollars);
+        const amountCents = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) : 0;
+        const isPartial = amountCents > 0 && amountCents < p.amountCents;
+        const remainingCents = Math.max(0, p.amountCents - amountCents);
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/60 p-4"
+            onClick={() => !modal.busy && setModal(null)}
+          >
+            <div
+              className="w-full max-w-md bg-bone p-6 border border-divider"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-xl font-serif mb-1">Refund</h3>
+              <p className="text-sm text-saddle mb-4">
+                {p.rancherName} → {p.buyerName} · Original {dollars(p.amountCents)}
+              </p>
+
+              <label className="block text-xs uppercase tracking-widest text-saddle mb-1">
+                Amount (USD)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                max={(p.amountCents / 100).toFixed(2)}
+                value={modal.amountDollars}
+                onChange={(e) =>
+                  setModal({ ...modal, amountDollars: e.target.value, error: '' })
+                }
+                disabled={modal.busy}
+                className="w-full px-3 py-2 mb-1 border border-divider bg-bone font-mono"
+              />
+              <p className="text-xs text-saddle mb-4 tabular-nums">
+                {isPartial
+                  ? `Partial: refunding ${dollars(amountCents)}, ${dollars(remainingCents)} remaining.`
+                  : amountCents === p.amountCents
+                  ? `Full refund.`
+                  : 'Enter an amount to see split.'}
+              </p>
+
+              <label className="block text-xs uppercase tracking-widest text-saddle mb-1">
+                Reason
+              </label>
+              <select
+                value={modal.reason}
+                onChange={(e) => setModal({ ...modal, reason: e.target.value as RefundReason })}
+                disabled={modal.busy}
+                className="w-full px-3 py-2 mb-4 border border-divider bg-bone"
+              >
+                <option value="requested_by_customer">requested_by_customer</option>
+                <option value="duplicate">duplicate</option>
+                <option value="fraudulent">fraudulent</option>
+              </select>
+
+              {modal.error && (
+                <p className="text-sm text-rust mb-3">{modal.error}</p>
+              )}
+
+              <div className="flex gap-3 justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModal(null)}
+                  disabled={modal.busy}
+                  className="px-4 py-2 text-sm border border-divider hover:bg-dust/30 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={submitRefund}
+                  disabled={modal.busy}
+                  className="px-4 py-2 text-sm font-semibold uppercase tracking-widest bg-rust text-bone hover:bg-rust/90 disabled:opacity-50"
+                >
+                  {modal.busy ? 'Refunding…' : isPartial ? 'Partial refund' : 'Refund full'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </Container>
   );
 }

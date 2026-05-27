@@ -84,6 +84,29 @@ export async function POST(
   const reason: string | undefined = body?.reason;
   const refundAppFee: boolean = body?.refundApplicationFee !== false; // default true
 
+  // Partial refund support — P0 audit fix (C-6). amountCents is optional;
+  // absent → full refund (preserves prior behavior). Must be positive +
+  // <= the original payment amount.
+  const originalAmountCents = Number(payment['Amount Cents'] || 0);
+  let amountCents: number | undefined;
+  if (body?.amountCents != null) {
+    const n = Number(body.amountCents);
+    if (!Number.isFinite(n) || n <= 0) {
+      return NextResponse.json(
+        { error: 'amountCents must be a positive number' },
+        { status: 400 },
+      );
+    }
+    if (n > originalAmountCents) {
+      return NextResponse.json(
+        { error: `amountCents (${n}) exceeds original payment amount (${originalAmountCents})` },
+        { status: 400 },
+      );
+    }
+    amountCents = Math.floor(n);
+  }
+  const isPartial = typeof amountCents === 'number' && amountCents < originalAmountCents;
+
   // Stripe Refund — on the connected account. reverse_transfer=true returns
   // the application fee from the platform balance back to the connected
   // account so a partial refund correctly clawbacks BHC's commission.
@@ -94,13 +117,17 @@ export async function POST(
       {
         payment_intent: piId,
         ...(reason ? { reason: reason as any } : {}),
+        ...(typeof amountCents === 'number' ? { amount: amountCents } : {}),
         reverse_transfer: refundAppFee,
         refund_application_fee: refundAppFee,
-        metadata: { source: 'admin_console', paymentRowId: paymentId },
+        metadata: { source: 'admin_console', paymentRowId: paymentId, partial: String(isPartial) },
       },
       {
         stripeAccount: connectAccountId,
-        idempotencyKey: `refund-${paymentId}`,
+        // Idempotency key includes the amount so different partial refunds
+        // against the same payment dedupe correctly. Otherwise a second
+        // partial refund w/ same key would silently return the first refund.
+        idempotencyKey: `refund-${paymentId}-${typeof amountCents === 'number' ? amountCents : 'full'}`,
       },
     );
   } catch (e: any) {
@@ -111,11 +138,16 @@ export async function POST(
     );
   }
 
-  // Eagerly flip Payments row. The charge.refunded webhook will also fire
-  // and idempotently no-op since markDepositRefunded returns { flipped: false }
-  // when the row is already refunded.
+  // Eagerly flip Payments row + persist reason + amount. The charge.refunded
+  // webhook will also fire and idempotently no-op when the row is already
+  // marked. For partial refunds we keep Status='succeeded' so subsequent
+  // partials can still target the same row.
   try {
-    await markDepositRefunded(piId);
+    await markDepositRefunded(piId, {
+      reason,
+      refundedAmountCents: refund?.amount ?? amountCents ?? originalAmountCents,
+      partial: isPartial,
+    });
   } catch (e: any) {
     console.warn('[admin/payments/refund] markDepositRefunded post-refund failed:', e?.message);
   }
@@ -127,7 +159,7 @@ export async function POST(
       tool: 'admin-payments-refund',
       targetType: 'Other',
       targetId: paymentId,
-      args: { paymentId, piId, reason, refundAppFee, connectAccountId },
+      args: { paymentId, piId, reason, amountCents, isPartial, refundAppFee, connectAccountId },
       result: { refundId: refund?.id, status: refund?.status, amount: refund?.amount },
       reverseAction: {
         type: 'noop',
@@ -140,10 +172,13 @@ export async function POST(
 
   try {
     const ranchName = rancher['Ranch Name'] || rancher['Operator Name'] || rancherId;
-    const dollars = ((Number(payment['Amount Cents'] || 0)) / 100).toFixed(2);
+    const refundedDollars = ((Number(refund?.amount || amountCents || originalAmountCents)) / 100).toFixed(2);
+    const origDollars = (originalAmountCents / 100).toFixed(2);
+    const tag = isPartial ? `PARTIAL $${refundedDollars}/$${origDollars}` : `$${refundedDollars}`;
+    const reasonNote = reason ? ` — ${reason}` : '';
     await sendTelegramMessage(
       TELEGRAM_ADMIN_CHAT_ID,
-      `↩️ ADMIN REFUND — $${dollars} on ${ranchName} (PI ${piId.slice(-8)}, refund ${refund?.id?.slice(-8) || '?'})`,
+      `↩️ ADMIN REFUND — ${tag} on ${ranchName}${reasonNote} (PI ${piId.slice(-8)}, refund ${refund?.id?.slice(-8) || '?'})`,
     );
   } catch (e: any) {
     console.warn('[admin/payments/refund] telegram alert failed:', e?.message);
@@ -154,5 +189,8 @@ export async function POST(
     refundId: refund?.id,
     status: refund?.status,
     amount: refund?.amount,
+    partial: isPartial,
+    originalAmountCents,
+    remainingCents: Math.max(0, originalAmountCents - Number(refund?.amount || amountCents || originalAmountCents)),
   });
 }

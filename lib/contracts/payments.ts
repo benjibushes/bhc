@@ -56,7 +56,18 @@ export async function markDepositSucceeded(stripePaymentIntentId: string): Promi
   });
 }
 
-export async function markDepositRefunded(stripePaymentIntentId: string): Promise<{ flipped: boolean }> {
+export interface MarkDepositRefundedOpts {
+  reason?: string;
+  refundedAmountCents?: number; // partial refund support — P0 audit fix (C-6)
+  // Partial flag — if true, Payments row keeps Status='succeeded' so a follow-up
+  // refund can still target it. Default false (full refund flips to 'refunded').
+  partial?: boolean;
+}
+
+export async function markDepositRefunded(
+  stripePaymentIntentId: string,
+  opts: MarkDepositRefundedOpts = {},
+): Promise<{ flipped: boolean }> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
   const existing: any[] = await getAllRecords(
     PAYMENTS_TABLE,
@@ -64,11 +75,31 @@ export async function markDepositRefunded(stripePaymentIntentId: string): Promis
   );
   if (existing.length === 0) return { flipped: false };
   const payment = existing[0];
-  if (payment['Status'] === 'refunded') return { flipped: false };
-  await updateRecord(PAYMENTS_TABLE, payment.id, {
-    'Status': 'refunded',
+  // For non-partial refunds, idempotently no-op on re-call.
+  if (!opts.partial && payment['Status'] === 'refunded') return { flipped: false };
+
+  // Best-effort field writes — Refund Reason + Refunded Amount Cents may not
+  // exist in older Airtable schemas. Catch the typed-field error and retry
+  // without them.
+  const fields: Record<string, any> = {
     'Refunded At': new Date().toISOString(),
-  });
+  };
+  if (!opts.partial) fields['Status'] = 'refunded';
+  if (opts.reason) fields['Refund Reason'] = opts.reason;
+  if (typeof opts.refundedAmountCents === 'number') {
+    fields['Refunded Amount Cents'] = opts.refundedAmountCents;
+  }
+
+  try {
+    await updateRecord(PAYMENTS_TABLE, payment.id, fields);
+  } catch (e: any) {
+    // Fallback: strip the new fields and retry. Old Airtable schemas without
+    // Refund Reason / Refunded Amount Cents will reject those keys outright.
+    console.warn('[markDepositRefunded] schema fallback (retrying without new fields):', e?.message);
+    const fallback: Record<string, any> = { 'Refunded At': fields['Refunded At'] };
+    if (!opts.partial) fallback['Status'] = 'refunded';
+    await updateRecord(PAYMENTS_TABLE, payment.id, fallback);
+  }
   return { flipped: true };
 }
 
