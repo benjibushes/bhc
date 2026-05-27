@@ -2,10 +2,10 @@ import { getAllRecords, createRecord, TABLES, escapeAirtableValue } from './airt
 
 /**
  * Per-recipient rolling 7-day email cap. Configurable via env var w/
- * a safe default. First deploy ships @ 10 to allow soft transition;
- * tighten to 3 after observing real volume for 24h via the spam audit.
+ * a safe default. Audit 2 P1: reduced from 10 to 3 to protect sender
+ * reputation at paid-ad scale. Tighten further if needed via env var.
  */
-const DEFAULT_FREQUENCY_CAP = Number(process.env.EMAIL_FREQUENCY_CAP_PER_WEEK || 10);
+const DEFAULT_FREQUENCY_CAP = Number(process.env.EMAIL_FREQUENCY_CAP_PER_WEEK || 3);
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -14,6 +14,9 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
  * transactional sends that customers EXPECT and depend on (invoice,
  * approval, intro). Suppressing one of these would break revenue or
  * trust.
+ *
+ * NOTE: sendPilotUpsellEmail was removed (Audit 2 P1) — it is marketing,
+ * not transactional. Should be subject to frequency caps.
  */
 export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendInstantCommissionInvoice',
@@ -26,7 +29,6 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendFoundingHerdWelcome',
   'sendRancherGoLiveEmail',
   'sendRancherSelfSubmitWelcome',
-  'sendPilotUpsellEmail',
   'sendProspectClaimMagicLink',
 ]);
 
