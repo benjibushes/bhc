@@ -780,6 +780,20 @@ async function processUpdate(update: any) {
             'Closed At': new Date().toISOString(),
           });
 
+          // F-2 audit fix: restore buyer to READY if no other active referrals.
+          // Without this, rejecting via Telegram leaves Buyer Stage=MATCHED
+          // forever → stuck-buyer-recovery cron skips them (only retries READY).
+          try {
+            const buyerLinks = referral['Buyer'] || [];
+            const buyerLinkId = Array.isArray(buyerLinks) ? buyerLinks[0] : null;
+            if (buyerLinkId) {
+              const { restoreBuyerAfterClosedLost } = await import('@/lib/contracts/rancher');
+              await restoreBuyerAfterClosedLost(buyerLinkId, fullReferralId);
+            }
+          } catch (restoreErr: any) {
+            console.warn('[telegram reject] buyer restore failed:', restoreErr?.message);
+          }
+
           // MISMATCH FIX: use atomic Redis DECR (lib/rancherCapacity) so
           // concurrent reject/closelost clicks on the same rancher don't
           // under-decrement via read-then-write race. Prior code read
@@ -1373,6 +1387,19 @@ Source: ${c['Source'] || 'organic'}`;
             result: { previousStatus, newStatus: 'Closed Lost' },
             reverseAction: reverse,
           });
+          // F-2 audit fix: restore buyer to READY if no other active referrals.
+          // Closelost via Telegram bypassed the contract; pre-fix the buyer
+          // sat in MATCHED forever and stuck-buyer-recovery cron skipped them.
+          try {
+            const buyerLinks = ref['Buyer'] || [];
+            const buyerLinkId = Array.isArray(buyerLinks) ? buyerLinks[0] : null;
+            if (buyerLinkId) {
+              const { restoreBuyerAfterClosedLost } = await import('@/lib/contracts/rancher');
+              await restoreBuyerAfterClosedLost(buyerLinkId, refId);
+            }
+          } catch (restoreErr: any) {
+            console.warn('[telegram closelost] buyer restore failed:', restoreErr?.message);
+          }
           // MISMATCH FIX: atomic Redis DECR same as reject path above —
           // protects against concurrent closelost clicks under-decrementing.
           if (Array.isArray(rancherIds) && rancherIds[0]) {

@@ -4,7 +4,7 @@
 // copy drifted independently — capacity decrement, Buyer Stage flip, Missed
 // Responses reset, activity stamps. recordClose() is the single source of truth.
 
-import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
+import { updateRecord, getRecordById, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { transitionBuyerStage } from './buyer';
 import { funnelRecord } from '@/lib/funnelMetrics';
@@ -67,17 +67,27 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     }
   }
 
-  // Buyer Stage propagation. Closed Won + Closed Lost flip to CLOSED.
+  // Buyer Stage propagation. Closed Won + Closed Lost normally flip to CLOSED.
   // Awaiting Payment keeps the buyer in MATCHED until final close lands —
   // a partial pay-on-delivery deal should not flip the buyer to CLOSED yet.
+  //
+  // F-2 audit fix: Closed Lost is NOT terminal for the buyer when they have
+  // no other active referrals. Pre-fix, rancher passes/loses a deal →
+  // Buyer Stage=CLOSED forever → stuck-buyer-recovery cron skips them
+  // (only retries READY). Dead-end. Now: on Closed Lost, check for other
+  // active referrals; if none, restore Buyer Stage=READY + Ready to Buy=true
+  // so the buyer re-enters the routing pool.
   const buyerIds: string[] = (ref['Buyer'] || []) as string[];
   const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
-  if (buyerId && (input.outcome === 'won' || input.outcome === 'lost')) {
+  if (buyerId && input.outcome === 'won') {
     try {
       await transitionBuyerStage(buyerId, 'CLOSED', `referral:${nextStatus}`);
     } catch (e: any) {
       console.warn('[contracts.recordClose] Buyer Stage flip failed:', e?.message);
     }
+  }
+  if (buyerId && input.outcome === 'lost') {
+    await restoreBuyerAfterClosedLost(buyerId, input.referralId);
   }
 
   await funnelRecord({
@@ -113,4 +123,45 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
   }
 
   return { ok: true, capacityFreed };
+}
+
+// F-2 audit helper. Exported so non-contract close paths (Telegram reject /
+// closelost callbacks, dashboard PATCH legacy branch) can apply the same
+// "restore READY if no other active referrals" logic without re-implementing
+// the Airtable lookup + branch. Caller is responsible for stamping the
+// Referral row itself — this helper only handles the Buyer side.
+export async function restoreBuyerAfterClosedLost(buyerId: string, referralId: string): Promise<{ restored: boolean }> {
+  if (!buyerId) return { restored: false };
+  try {
+    const safeBuyerId = escapeAirtableValue(buyerId);
+    const safeRefId = escapeAirtableValue(referralId);
+    const otherActive: any[] = await getAllRecords(
+      TABLES.REFERRALS,
+      `AND(SEARCH("${safeBuyerId}", ARRAYJOIN({Buyer})), {Status} != "Closed Won", {Status} != "Closed Lost", RECORD_ID() != "${safeRefId}")`,
+    );
+    const now = new Date().toISOString();
+    if (otherActive.length === 0) {
+      const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+      const existingNotes = String(buyer?.['Notes'] || '');
+      const auditStamp = `[auto-restore READY after Closed Lost ref=${referralId} @ ${now}]`;
+      await updateRecord(TABLES.CONSUMERS, buyerId, {
+        'Buyer Stage': 'READY',
+        'Buyer Stage Updated At': now,
+        'Ready to Buy': true,
+        'Referral Status': 'Unmatched',
+        'Notes': existingNotes ? `${existingNotes}\n${auditStamp}` : auditStamp,
+      });
+      await funnelRecord({ stage: 'transition:READY', buyerId, reason: `auto-restore:after-Closed Lost` });
+      return { restored: true };
+    } else {
+      await transitionBuyerStage(buyerId, 'MATCHED', `referral:Closed Lost:other-active`);
+      return { restored: false };
+    }
+  } catch (e: any) {
+    console.warn('[contracts.restoreBuyerAfterClosedLost] failed:', e?.message);
+    try {
+      await transitionBuyerStage(buyerId, 'CLOSED', `referral:Closed Lost:restore-failed`);
+    } catch {}
+    return { restored: false };
+  }
 }

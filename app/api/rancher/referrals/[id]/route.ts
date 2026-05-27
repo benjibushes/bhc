@@ -368,25 +368,22 @@ export async function PATCH(
           }
         }
 
-        // ── Closed Lost → Buyer Stage CLOSED ────────────────────────────
-        // Audit finding: dashboard PATCH flipped Buyer Stage to CLOSED on
-        // Closed Won (line ~346) but NOT on Closed Lost. Per Airtable Buyer
-        // Stage field spec, CLOSED is terminal for BOTH purchased AND
-        // ghosted/non-responsive. Without this flip:
-        //   - Buyer stays MATCHED forever after a lost deal
-        //   - Stats counter mislabels them as "in pipeline"
-        //   - Email-sequences cron may keep nurturing a terminal buyer
+        // ── Closed Lost → restore READY if no other active referrals ────
+        // F-2 audit fix: Closed Lost is NOT terminal for the buyer when they
+        // have no other active referrals. Pre-fix this branch flipped Buyer
+        // Stage straight to CLOSED → stuck-buyer-recovery cron skipped them
+        // (only retries READY). Dead-end. Helper in lib/contracts/rancher.ts
+        // handles the lookup + branch (READY restore vs MATCHED-stay vs
+        // CLOSED fail-safe) so all close paths agree.
         if (status === 'Closed Lost') {
           const buyerIds = referral['Buyer'] || [];
           const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
           if (buyerId) {
             try {
-              await updateRecord(TABLES.CONSUMERS, buyerId, {
-                'Buyer Stage': 'CLOSED',
-                'Buyer Stage Updated At': new Date().toISOString(),
-              });
+              const { restoreBuyerAfterClosedLost } = await import('@/lib/contracts/rancher');
+              await restoreBuyerAfterClosedLost(buyerId, id);
             } catch (stageErr: any) {
-              console.error('Closed Lost Buyer Stage flip error:', stageErr?.message);
+              console.error('Closed Lost Buyer Stage restoration error:', stageErr?.message);
             }
           }
         }
