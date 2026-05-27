@@ -101,6 +101,12 @@ export function trackEvent(
         // /access/[state] state-targeted ads need a state-segmented view
         // event for Meta optimization on the geo audience.
         state_landing_view: 'ViewContent',
+        // /wholesale B2B form — server CAPI fires as 'Lead' with
+        // event_id=recordId at /api/wholesale/signup/route.ts:235. Client
+        // must fire same 'Lead' event_name + same event_id for Meta dedup
+        // (E-4 audit fix). Previously fired as trackCustom which never
+        // matched the server Lead → 100% double-count for wholesale.
+        wholesale_submit_success: 'Lead',
       };
       const standardName = metaStandardEvents[event];
       if (standardName) {

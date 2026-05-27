@@ -119,7 +119,17 @@ export default function WholesaleForm() {
           "We've received your application. Ben will personally reach out within 24-48 hours with verified ranchers in your state matching your volume + timeline.",
       );
       setIsSubmitted(true);
-      trackEvent('wholesale_submit_success', { state, businessType, monthlyVolume });
+      // E-4 audit fix: server CAPI Lead at app/api/wholesale/signup/route.ts:235
+      // uses event_id=recordId. Read recordId from response so client Pixel
+      // pairs for Meta dedup (combined with E-1 fix that passes event_id as
+      // 4th-arg eventID options object).
+      const recordId = typeof data?.recordId === 'string' ? data.recordId : undefined;
+      trackEvent('wholesale_submit_success', {
+        state,
+        businessType,
+        monthlyVolume,
+        ...(recordId ? { event_id: recordId } : {}),
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'something went wrong';
       setError(message);

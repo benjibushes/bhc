@@ -94,6 +94,18 @@ export default function RancherLeadModal({ slug, rancherName, quarter, half, who
       // 409 = already a member — still send them through
       if (res.ok || res.status === 409) {
         const tierData = selectedTier === 'quarter' ? quarter : selectedTier === 'half' ? half : whole;
+        // E-4 audit fix: read consumer.id from response so client Pixel
+        // Lead fire pairs with server CAPI Lead (event_id=record.id at
+        // app/api/consumers/route.ts:394) for Meta dedup. 409 path has
+        // no id — falls back to no event_id (dedup skipped, single fire).
+        let consumerIdForCapi: string | undefined;
+        try {
+          const data = await res.clone().json();
+          const id = data?.consumer?.id;
+          if (typeof id === 'string' && id.startsWith('rec')) {
+            consumerIdForCapi = id;
+          }
+        } catch {}
         track('Lead', {
           content_name: rancherName,
           ranchSlug: slug,
@@ -101,6 +113,7 @@ export default function RancherLeadModal({ slug, rancherName, quarter, half, who
           state: form.state,
           value: tierData?.price || 0,
           currency: 'USD',
+          ...(consumerIdForCapi ? { event_id: consumerIdForCapi } : {}),
         });
         track('InitiateCheckout', {
           content_name: rancherName,
@@ -108,6 +121,7 @@ export default function RancherLeadModal({ slug, rancherName, quarter, half, who
           orderType: ORDER_TYPE_MAP[selectedTier],
           value: tierData?.price || 0,
           currency: 'USD',
+          ...(consumerIdForCapi ? { event_id: consumerIdForCapi } : {}),
         });
         window.location.href = `/ranchers/${slug}/pay/${selectedTier}`;
         return;

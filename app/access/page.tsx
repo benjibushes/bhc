@@ -466,27 +466,41 @@ function AccessPageContent() {
         throw new Error(data.error || 'submission failed');
       }
 
+      let consumerIdForCapi: string | undefined;
       try {
         const data = await response.json();
         setSubmittedRancherAvailable(!!data?.rancherAvailable);
         const consumerId = data?.consumer?.id;
         if (typeof consumerId === 'string' && consumerId.startsWith('rec')) {
           setSubmittedConsumerId(consumerId);
+          consumerIdForCapi = consumerId;
         }
       } catch {}
 
       setIsSubmitted(true);
 
-      // Analytics — both systems
-      trackEvent('access_quiz_submit', { state, timing });
+      // Analytics — both systems.
+      // E-4 audit fix: server CAPI Lead at app/api/consumers/route.ts:394
+      // uses event_id=record.id. Pass same id here so Meta dedup pairs
+      // client Pixel + server CAPI fires for accurate Lead attribution.
+      trackEvent('access_quiz_submit', {
+        state,
+        timing,
+        ...(consumerIdForCapi ? { event_id: consumerIdForCapi } : {}),
+      });
       track('Lead', {
         segment,
         state,
         orderType: '',
         budget: '',
         source: campaignData.campaign || 'access',
+        ...(consumerIdForCapi ? { event_id: consumerIdForCapi } : {}),
       });
-      track('CompleteRegistration', { segment, state });
+      track('CompleteRegistration', {
+        segment,
+        state,
+        ...(consumerIdForCapi ? { event_id: consumerIdForCapi } : {}),
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'something went wrong. please try again.';
       setError(message);

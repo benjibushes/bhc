@@ -252,10 +252,15 @@ export async function POST(request: Request) {
       console.error('[meta-capi] wholesale lead fire failed:', e),
     );
 
+    // E-4 audit fix: return recordId so the client wholesale_submit_success
+    // Pixel fire can pass event_id=recordId, matching the server CAPI Lead
+    // fire above. Without this the client+server fires are seen by Meta
+    // as two distinct events → double-count + no dedup attribution.
     return NextResponse.json({
       ok: true,
       message:
         "We've received your application. Ben will personally reach out within 24-48 hours with verified ranchers in your state matching your volume + timeline.",
+      recordId,
     });
   } catch (error: any) {
     console.error('[wholesale/signup] unexpected error:', error);
