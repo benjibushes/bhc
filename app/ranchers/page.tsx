@@ -93,7 +93,6 @@ export default async function RanchersPage() {
                           width={160}
                           height={100}
                           className="object-contain max-h-32 p-4"
-                          unoptimized
                         />
                       ) : (
                         <span className="font-serif text-3xl text-dust">

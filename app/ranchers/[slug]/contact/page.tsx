@@ -146,7 +146,6 @@ export default function RancherContactPage() {
                     width={100}
                     height={100}
                     className="object-contain max-h-24"
-                    unoptimized
                   />
                 ) : (
                   <div className="w-20 h-20 border border-[#A7A29A] flex items-center justify-center">
@@ -192,7 +191,6 @@ export default function RancherContactPage() {
                 width={120}
                 height={120}
                 className="object-contain max-h-28"
-                unoptimized
               />
             ) : (
               <div className="w-24 h-24 border border-[#A7A29A] flex items-center justify-center">

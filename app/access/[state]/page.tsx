@@ -230,7 +230,6 @@ export default async function AccessStatePage({ params }: Props) {
                         width={160}
                         height={100}
                         className="object-contain max-h-32 p-4"
-                        unoptimized
                       />
                     ) : (
                       <span className="font-[family-name:var(--font-playfair)] text-3xl text-[#A7A29A]">

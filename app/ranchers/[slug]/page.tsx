@@ -245,7 +245,6 @@ export default async function RancherPage(
                 fill
                 className="object-cover"
                 priority
-                unoptimized
                 sizes="100vw"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-charcoal/85 via-charcoal/50 to-charcoal/30" />
@@ -289,7 +288,6 @@ export default async function RancherPage(
                       alt={`${name} logo`}
                       fill
                       className="object-contain"
-                      unoptimized
                     />
                   </div>
                 )}
@@ -555,7 +553,6 @@ export default async function RancherPage(
                       alt={`${name} ranch photo ${i + 2}`}
                       fill
                       className="object-cover transition-base group-hover:scale-105"
-                      unoptimized
                       sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 50vw"
                     />
                   </div>
@@ -597,7 +594,6 @@ export default async function RancherPage(
                           width={40}
                           height={40}
                           className="rounded-full object-cover"
-                          unoptimized
                         />
                       ) : (
                         <div className="w-10 h-10 border border-dust flex items-center justify-center rounded-full bg-bone-deep">
