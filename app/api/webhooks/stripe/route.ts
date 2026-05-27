@@ -223,6 +223,10 @@ export async function POST(request: Request) {
         const totalChargedCents = Number(pi.amount || 0);
         const depositCents = Number(pi.metadata?.depositCents || totalChargedCents);
         const platformFeeCents = Number(pi.metadata?.platformFeeCents || 0);
+        // fullSaleCents = total sale value the rancher charges (Quarter/Half/Whole Price).
+        // Used for "balance due at fulfillment" math on the rancher dashboard.
+        const fullSaleCents = Number(pi.metadata?.fullSaleCents || depositCents);
+        const fulfillmentBalanceCents = Number(pi.metadata?.fulfillmentBalanceCents || Math.max(0, fullSaleCents - depositCents));
 
         if (!referralId || !rancherId || !pi.id) {
           const metadataKeys = Object.keys(pi.metadata || {}).join(',');
@@ -327,12 +331,17 @@ export async function POST(request: Request) {
           },
         }]).catch((e) => console.error('[meta-capi] buyer_deposit Purchase fire failed:', e));
 
-        // Telegram celebration to admin chat.
+        // Telegram celebration to admin chat. Shows the full deal shape:
+        // deposit to rancher / BHC commission / fulfillment balance still
+        // owed by buyer directly to rancher.
         try {
-          const feePart = platformFeeCents > 0 ? ` (incl. $${(platformFeeCents / 100).toFixed(2)} BHC fee)` : '';
+          const feePart = platformFeeCents > 0 ? ` · BHC $${(platformFeeCents / 100).toFixed(2)}` : '';
+          const balancePart = fulfillmentBalanceCents > 0
+            ? ` · Balance at fulfillment $${(fulfillmentBalanceCents / 100).toFixed(2)}`
+            : '';
           await sendTelegramMessage(
             TELEGRAM_ADMIN_CHAT_ID,
-            `💰 DEPOSIT PAID — $${(depositCents / 100).toFixed(2)} to rancher${feePart} · ${tier} tier · ref=${referralId.slice(-6)}`,
+            `💰 DEPOSIT PAID — Rancher $${(depositCents / 100).toFixed(2)}${feePart}${balancePart} · ${tier} tier · ref=${referralId.slice(-6)}`,
           );
         } catch (e: any) {
           console.warn('[stripe webhook] telegram deposit alert failed:', e?.message);

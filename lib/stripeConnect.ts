@@ -124,7 +124,25 @@ import { TIERS, TierSlug } from '@/lib/tiers';
 export interface CreateDepositCheckoutInput {
   rancherConnectAccountId: string;  // acct_* — direct charge target
   tier: TierSlug;
+  /**
+   * Rancher's self-selected deposit amount in cents. This is the portion
+   * collected upfront and routed to the rancher's Connect acct as the
+   * sale price. The buyer pays this + the BHC service fee on top.
+   */
   amountCents: number;
+  /**
+   * Full sale price for this cut in cents (Quarter/Half/Whole Price). The
+   * BHC service fee is calculated as `fullSaleCents × commissionRate` and
+   * collected IN FULL at deposit time. This guarantees BHC commission is
+   * baked into the deal up front — the rancher collects the balance
+   * (fullSale − deposit) directly at fulfillment with no further BHC
+   * involvement.
+   *
+   * If the rancher hasn't set a separate deposit (deposit = full price),
+   * pass the same value for amountCents and fullSaleCents — the math
+   * still works (commission % of full = commission % of single payment).
+   */
+  fullSaleCents: number;
   buyerEmail: string;
   referralId: string;
   buyerId: string;   // Consumers record id — fans out to webhook routing
@@ -136,14 +154,23 @@ export interface CreateDepositCheckoutInput {
 
 export async function createDepositCheckout(input: CreateDepositCheckoutInput): Promise<{ url: string; paymentIntentId: string }> {
   const feeRate = TIERS[input.tier].commissionRate;  // 0.07 / 0.03 / 0
-  const platformFeeCents = Math.round(input.amountCents * feeRate);
-  // Buyer pays the rancher's full deposit PLUS the BHC service fee on top.
-  // This guarantees the rancher receives the deposit they self-selected in
-  // their wizard — not deposit minus commission. Stripe still routes the
-  // total to the rancher's Connect acct, then transfers `application_fee_amount`
-  // to the BHC platform acct, so the rancher nets exactly `input.amountCents`.
+  // CRITICAL: commission is calculated on the FULL sale price, not on the
+  // deposit. Rancher takes their full deposit upfront, BHC takes its full
+  // commission upfront, and the rancher collects the fulfillment balance
+  // (fullSaleCents − depositCents) directly outside BHC. Net result:
+  // BHC commission is paid in full at deposit time regardless of how the
+  // rancher splits the rest.
+  const platformFeeCents = Math.round(input.fullSaleCents * feeRate);
+  // Buyer pays the rancher's full deposit PLUS the full BHC service fee.
+  // Rancher receives exactly `input.amountCents` (Stripe routes the total
+  // to rancher's Connect acct, then transfers application_fee_amount to
+  // the BHC platform acct).
   const totalChargedCents = input.amountCents + platformFeeCents;
   const feePct = Math.round(feeRate * 100);
+  // Balance the rancher will collect later at fulfillment (outside BHC).
+  // Stamped in metadata so the rancher dashboard + buyer receipt can
+  // surface it without re-computing.
+  const fulfillmentBalanceCents = Math.max(0, input.fullSaleCents - input.amountCents);
 
   // Direct charge w/ application_fee_amount. stripeAccount header routes
   // the total charge to the rancher's Connect account; Stripe splits funds
@@ -168,7 +195,7 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
         currency: 'usd',
         product_data: {
           name: 'BuyHalfCow service fee',
-          description: `${feePct}% — covers payment processing, buyer protection, and platform support.`,
+          description: `${feePct}% of full sale price ($${(input.fullSaleCents / 100).toFixed(2)}) — covers Stripe processing and platform routing.`,
         },
         unit_amount: platformFeeCents,
       },
@@ -193,8 +220,10 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
           // Referral Sale Amount + downstream commission math. Without this,
           // the deposit+fee total would inflate the rancher's recorded sale.
           depositCents: String(input.amountCents),
+          fullSaleCents: String(input.fullSaleCents),
           platformFeeCents: String(platformFeeCents),
           totalChargedCents: String(totalChargedCents),
+          fulfillmentBalanceCents: String(fulfillmentBalanceCents),
         },
       },
       metadata: {
@@ -204,8 +233,10 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
         rancherId: input.rancherId,
         tier: input.tier,
         depositCents: String(input.amountCents),
+        fullSaleCents: String(input.fullSaleCents),
         platformFeeCents: String(platformFeeCents),
         totalChargedCents: String(totalChargedCents),
+        fulfillmentBalanceCents: String(fulfillmentBalanceCents),
       },
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,

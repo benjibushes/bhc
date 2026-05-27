@@ -134,20 +134,39 @@ export async function POST(req: Request) {
     );
   }
 
-  // Compute per-cut price (Airtable fields hold dollars)
+  // Compute per-cut price + deposit (Airtable fields hold dollars).
+  // Full Price = total sale value. Deposit = upfront payment the rancher
+  // requires before going to slaughter. Commission is calculated on FULL
+  // Price and collected upfront — rancher collects the remaining balance
+  // (Full − Deposit) directly at fulfillment.
   const priceFieldMap: Record<string, string> = {
     quarter: 'Quarter Price',
     half: 'Half Price',
     whole: 'Whole Price',
   };
-  const dollars = Number(rancher[priceFieldMap[cutSize]]);
-  if (!Number.isFinite(dollars) || dollars <= 0) {
+  const depositFieldMap: Record<string, string> = {
+    quarter: 'Quarter Deposit',
+    half: 'Half Deposit',
+    whole: 'Whole Deposit',
+  };
+  const fullSaleDollars = Number(rancher[priceFieldMap[cutSize]]);
+  if (!Number.isFinite(fullSaleDollars) || fullSaleDollars <= 0) {
     return NextResponse.json(
       { error: `Rancher hasn't set a ${CUT_LABELS[cutSize]} price yet — contact rancher` },
       { status: 409 },
     );
   }
-  const amountCents = Math.round(dollars * 100);
+  // Deposit defaults to the full sale price when rancher hasn't set a
+  // separate deposit (back-compat: existing ranchers with empty Deposit
+  // fields charge buyer full price upfront, same as before).
+  const depositDollarsRaw = Number(rancher[depositFieldMap[cutSize]]);
+  const depositDollars =
+    Number.isFinite(depositDollarsRaw) && depositDollarsRaw > 0 && depositDollarsRaw <= fullSaleDollars
+      ? depositDollarsRaw
+      : fullSaleDollars;
+
+  const fullSaleCents = Math.round(fullSaleDollars * 100);
+  const amountCents = Math.round(depositDollars * 100);
 
   const buyerEmail = String(referral['Buyer Email'] || '').trim();
   if (!buyerEmail) return NextResponse.json({ error: 'Buyer email missing on referral' }, { status: 409 });
@@ -157,10 +176,12 @@ export async function POST(req: Request) {
   // Tier capitalization for Payments table
   const tierCapitalized = (tier.charAt(0).toUpperCase() + tier.slice(1)) as 'Pasture' | 'Ranch' | 'Operator';
 
-  // Compute platform fee (mirrors lib/stripeConnect.createDepositCheckout).
-  // BHC service fee is ADDED ON TOP of the rancher's self-selected deposit —
-  // rancher receives the full `amountCents`, buyer pays `amountCents + platformFeeCents`.
-  const platformFeeCents = Math.round(amountCents * TIERS[tier].commissionRate);
+  // BHC service fee is computed against the FULL sale price — not the
+  // deposit. Rancher collects the fulfillment balance directly outside BHC,
+  // so commission is paid in full at deposit time. ADDED ON TOP of the
+  // rancher's deposit (rancher receives full deposit, buyer pays
+  // deposit + platform fee).
+  const platformFeeCents = Math.round(fullSaleCents * TIERS[tier].commissionRate);
   const totalChargedCents = amountCents + platformFeeCents;
 
   // Create Stripe Checkout Session
@@ -170,6 +191,7 @@ export async function POST(req: Request) {
       rancherConnectAccountId: connectAccountId,
       tier,
       amountCents,
+      fullSaleCents,
       buyerEmail,
       referralId,
       buyerId: session.consumerId,
