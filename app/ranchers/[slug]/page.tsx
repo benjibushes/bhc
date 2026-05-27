@@ -152,6 +152,42 @@ export default async function RancherPage(
   const lat = Number(r['Latitude']);
   const lng = Number(r['Longitude']);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+
+  // Build offers array + priceRange (verified ranchers only)
+  const offers: any[] = [];
+  if (!isProspect && quarterPrice) {
+    offers.push({
+      '@type': 'Offer',
+      name: 'Quarter Beef',
+      price: quarterPrice,
+      priceCurrency: 'USD',
+      availability: 'https://schema.org/InStock',
+    });
+  }
+  if (!isProspect && halfPrice) {
+    offers.push({
+      '@type': 'Offer',
+      name: 'Half Beef',
+      price: halfPrice,
+      priceCurrency: 'USD',
+      availability: 'https://schema.org/InStock',
+    });
+  }
+  if (!isProspect && wholePrice) {
+    offers.push({
+      '@type': 'Offer',
+      name: 'Whole Beef',
+      price: wholePrice,
+      priceCurrency: 'USD',
+      availability: 'https://schema.org/InStock',
+    });
+  }
+
+  const prices = [quarterPrice, halfPrice, wholePrice]
+    .filter((p) => typeof p === 'number' && p > 0) as number[];
+  const priceRange =
+    prices.length > 0 ? `$${Math.min(...prices)}–$${Math.max(...prices)}` : undefined;
+
   const jsonLd: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'LocalBusiness',
@@ -163,6 +199,8 @@ export default async function RancherPage(
       : {}),
     ...(logoUrl ? { image: logoUrl } : {}),
     ...(tagline ? { description: tagline } : {}),
+    ...(offers.length > 0 ? { makesOffer: offers } : {}),
+    ...(priceRange ? { priceRange } : {}),
     ...(isProspect
       ? {
           disambiguatingDescription:
