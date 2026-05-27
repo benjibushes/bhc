@@ -45,12 +45,15 @@ type Rancher = {
   'About Text'?: string;
   'Video URL'?: string;
   'Quarter Price'?: number;
+  'Quarter Deposit'?: number;
   'Quarter lbs'?: string;
   'Quarter Payment Link'?: string;
   'Half Price'?: number;
+  'Half Deposit'?: number;
   'Half lbs'?: string;
   'Half Payment Link'?: string;
   'Whole Price'?: number;
+  'Whole Deposit'?: number;
   'Whole lbs'?: string;
   'Whole Payment Link'?: string;
   'Tier Specialty'?: string[];
@@ -215,12 +218,15 @@ export default function RancherSetupWizard() {
             'About Text': data.rancher['About Text'] || '',
             'Video URL': data.rancher['Video URL'] || '',
             'Quarter Price': data.rancher['Quarter Price'] || '',
+            'Quarter Deposit': data.rancher['Quarter Deposit'] || '',
             'Quarter lbs': data.rancher['Quarter lbs'] || '',
             'Quarter Payment Link': data.rancher['Quarter Payment Link'] || '',
             'Half Price': data.rancher['Half Price'] || '',
+            'Half Deposit': data.rancher['Half Deposit'] || '',
             'Half lbs': data.rancher['Half lbs'] || '',
             'Half Payment Link': data.rancher['Half Payment Link'] || '',
             'Whole Price': data.rancher['Whole Price'] || '',
+            'Whole Deposit': data.rancher['Whole Deposit'] || '',
             'Whole lbs': data.rancher['Whole lbs'] || '',
             'Whole Payment Link': data.rancher['Whole Payment Link'] || '',
             'Tier Specialty': Array.isArray(data.rancher['Tier Specialty'])
@@ -438,10 +444,10 @@ export default function RancherSetupWizard() {
   async function saveStep(slice: Record<string, any>) {
     setSaving(true);
     try {
-      // Coerce numeric price fields to numbers (form state is strings).
+      // Coerce numeric price/deposit fields to numbers (form state is strings).
       const payload: Record<string, any> = {};
       for (const [k, v] of Object.entries(slice)) {
-        if (k.endsWith(' Price') && v !== '' && v != null) {
+        if ((k.endsWith(' Price') || k.endsWith(' Deposit')) && v !== '' && v != null) {
           const n = Number(v);
           payload[k] = isFinite(n) ? n : '';
         } else {
@@ -1234,13 +1240,20 @@ export default function RancherSetupWizard() {
             {(['Quarter', 'Half', 'Whole'] as const).map((tier) => (
               <div key={tier} className="border border-dust p-4 md:p-5 space-y-3 bg-bone-warm">
                 <p className="font-serif text-lg text-charcoal">{tier} Cow</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <Field
                     label="Price ($)"
                     type="number"
                     value={form[`${tier} Price`]}
                     onChange={(v) => setField(`${tier} Price`, v)}
                     placeholder="1200"
+                  />
+                  <Field
+                    label="Deposit ($) — collected upfront"
+                    type="number"
+                    value={form[`${tier} Deposit`]}
+                    onChange={(v) => setField(`${tier} Deposit`, v)}
+                    placeholder="100"
                   />
                   <Field
                     label="Approx finished weight (lbs)"
@@ -1339,12 +1352,15 @@ export default function RancherSetupWizard() {
                 const ok = await saveStep({
                   'Tier Specialty': form['Tier Specialty'],
                   'Quarter Price': form['Quarter Price'],
+                  'Quarter Deposit': form['Quarter Deposit'],
                   'Quarter lbs': form['Quarter lbs'],
                   'Quarter Payment Link': form['Quarter Payment Link'],
                   'Half Price': form['Half Price'],
+                  'Half Deposit': form['Half Deposit'],
                   'Half lbs': form['Half lbs'],
                   'Half Payment Link': form['Half Payment Link'],
                   'Whole Price': form['Whole Price'],
+                  'Whole Deposit': form['Whole Deposit'],
                   'Whole lbs': form['Whole lbs'],
                   'Whole Payment Link': form['Whole Payment Link'],
                   Testimonials: validTestimonials.length
