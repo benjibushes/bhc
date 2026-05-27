@@ -241,7 +241,21 @@ function AccessPageContent() {
   // ── access_view analytics on mount ────────────────────────────────────────
   useEffect(() => {
     trackEvent('access_view');
+    // G5 — quiz_started fires once on /access mount so we have a baseline
+    // for per-step drop-off measurement. Pairs with quiz_step_completed
+    // (fired on email/state/timing/householdSize blur+change below) to
+    // unlock Meta+GA optimization toward LEAD-progression bidding.
+    trackEvent('quiz_started');
   }, []);
+
+  // G5 — per-field idempotency guards prevent double-fire on repeated
+  // blur/change of the same field. Each step fires exactly once per visit.
+  const quizStepFired = useRef<Record<string, boolean>>({});
+  const fireQuizStep = (step: 'email' | 'state' | 'householdSize' | 'timing') => {
+    if (quizStepFired.current[step]) return;
+    quizStepFired.current[step] = true;
+    trackEvent('quiz_step_completed', { step });
+  };
 
   // ── Fetch live stats ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -316,8 +330,12 @@ function AccessPageContent() {
   // ── Abandoned-app capture ─────────────────────────────────────────────────
   const [abandonedCaptured, setAbandonedCaptured] = useState(false);
   const handleEmailBlur = () => {
-    if (!email || abandonedCaptured) return;
+    if (!email) return;
     if (!validateEmail(email)) return;
+    // G5 — fire quiz_step_completed once when email is first validated on blur.
+    // This is the highest-signal step (real email = real lead).
+    fireQuizStep('email');
+    if (abandonedCaptured) return;
     fetch('/api/abandoned-app', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -868,7 +886,10 @@ function AccessPageContent() {
                     required
                     className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
                     value={state}
-                    onChange={(e) => setState(e.target.value)}
+                    onChange={(e) => {
+                      setState(e.target.value);
+                      if (e.target.value) fireQuizStep('state');
+                    }}
                   >
                     {US_STATES.map((s) => (
                       <option key={s.value} value={s.value}>
@@ -891,7 +912,10 @@ function AccessPageContent() {
                     required
                     className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
                     value={householdSize}
-                    onChange={(e) => setHouseholdSize(e.target.value)}
+                    onChange={(e) => {
+                      setHouseholdSize(e.target.value);
+                      if (e.target.value) fireQuizStep('householdSize');
+                    }}
                   >
                     <option value="">how many you feeding?</option>
                     <option value="1-2">1–2 people</option>
@@ -913,7 +937,10 @@ function AccessPageContent() {
                     required
                     className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
                     value={timing}
-                    onChange={(e) => setTiming(e.target.value)}
+                    onChange={(e) => {
+                      setTiming(e.target.value);
+                      if (e.target.value) fireQuizStep('timing');
+                    }}
                   >
                     <option value="">pick a timeline</option>
                     <option value="now">now (within 30 days)</option>
