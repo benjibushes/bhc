@@ -15,6 +15,7 @@ import { createDepositCheckout } from '@/lib/stripeConnect';
 import { recordDeposit } from '@/lib/contracts/payments';
 import { tierFor, TIERS } from '@/lib/tiers';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { fireCapi, buildUserData } from '@/lib/metaCapi';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -185,6 +186,48 @@ export async function POST(req: Request) {
   } catch (e: any) {
     console.error('[checkout/deposit] recordDeposit failed — aborting redirect to prevent orphan payment:', e);
     return NextResponse.json({ error: 'Could not record deposit. Please try again.' }, { status: 500 });
+  }
+
+  // ── Meta Conversions API: server-side `InitiateCheckout` event ──────
+  // Buyer landed on the deposit page and clicked through to Stripe Checkout.
+  // Client Pixel loses 30-50% to iOS 14.5+ ATT + adblockers. Deduped with
+  // client Pixel via event_id=<referralId>. Fire-and-forget. We look up
+  // the buyer's Consumer row best-effort for richer user_data (state,
+  // first name) — failure logs but never blocks the Stripe redirect.
+  try {
+    let buyer: any = null;
+    try {
+      buyer = await getRecordById(TABLES.CONSUMERS, session.consumerId);
+    } catch {}
+    const buyerFullName = String(buyer?.['Full Name'] || '').trim();
+    const buyerFirstName = buyerFullName.split(/\s+/)[0] || undefined;
+    const buyerState = String(buyer?.['State'] || '') || undefined;
+    const buyerPhone = String(buyer?.['Phone'] || '') || undefined;
+    const capiIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+    const capiUserAgent = req.headers.get('user-agent') || undefined;
+
+    fireCapi([{
+      event_name: 'InitiateCheckout',
+      event_time: Math.floor(Date.now() / 1000),
+      event_id: referralId,
+      action_source: 'website',
+      user_data: buildUserData({
+        email: buyerEmail,
+        phone: buyerPhone,
+        firstName: buyerFirstName,
+        state: buyerState,
+        ip: capiIp,
+        userAgent: capiUserAgent,
+      }),
+      custom_data: {
+        value: amountCents / 100,
+        currency: 'usd',
+        content_name: `Beef deposit — ${CUT_LABELS[cutSize]}`,
+        content_category: tier,
+      },
+    }]).catch((e) => console.error('[meta-capi] deposit InitiateCheckout fire failed:', e));
+  } catch (e) {
+    console.error('[meta-capi] deposit InitiateCheckout setup failed:', e);
   }
 
   return NextResponse.json({ url: result.url });

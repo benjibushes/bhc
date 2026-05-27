@@ -12,6 +12,7 @@ import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
 import { transitionBuyerStage } from '@/lib/contracts';
 import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData } from '@/lib/metaCapi';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -336,6 +337,35 @@ export async function POST(request: Request) {
         readyToBuy: !!consumerFields['Ready to Buy'],
       },
     });
+
+    // ── Meta Conversions API: server-side `Lead` event ──────────────────
+    // Client Pixel loses 30-50% of events to iOS 14.5+ ATT + adblockers.
+    // CAPI fires the same Lead event from the server, deduped with the
+    // client Pixel via event_id=<consumerId>. Restores attribution for
+    // paid ad optimization. Fire-and-forget — never block the response.
+    const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+    const capiUserAgent = request.headers.get('user-agent') || undefined;
+    const nameParts = fullName.trim().split(/\s+/);
+    fireCapi([{
+      event_name: 'Lead',
+      event_time: Math.floor(Date.now() / 1000),
+      event_source_url: `${SITE_URL}/access`,
+      event_id: record.id,
+      action_source: 'website',
+      user_data: buildUserData({
+        email,
+        phone,
+        firstName: nameParts[0],
+        lastName: nameParts.slice(1).join(' ') || undefined,
+        state,
+        ip: capiIp,
+        userAgent: capiUserAgent,
+      }),
+      custom_data: {
+        content_name: 'BHC Signup',
+        content_category: consumerSegment,
+      },
+    }]).catch((e) => console.error('[meta-capi] consumer lead fire failed:', e));
 
     // ── REBUILT POST-APPROVAL FLOW (state-machine driven) ────────────────────
     // Old flow sent 2 emails on approval (sendConsumerApproval + then RTB or

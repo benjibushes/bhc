@@ -15,6 +15,7 @@ import { rancherIdFromSubscription } from '@/lib/stripeSubscription';
 import { markDepositSucceeded, markDepositRefunded } from '@/lib/contracts/payments';
 import { recordClose } from '@/lib/contracts/rancher';
 import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData } from '@/lib/metaCapi';
 
 // Airtable table name for Stripe Events (Task 24 idempotency log)
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -579,6 +580,24 @@ async function handleBrandPartnerTierCompleted(session: any) {
     console.warn('[brand-partner-tier] funnel record failed:', e?.message);
   }
 
+  // ── Meta Conversions API: server-side `Purchase` event ──────────────
+  // Client Pixel loses 30-50% under iOS 14.5+ ATT + adblockers. Deduped
+  // with the client Pixel via event_id=<stripeSessionId>. Fire-and-forget.
+  const firstNameForCapi = name?.toString().trim().split(/\s+/)[0] || undefined;
+  fireCapi([{
+    event_name: 'Purchase',
+    event_time: Math.floor(Date.now() / 1000),
+    event_id: sessionId,
+    action_source: 'system_generated',
+    user_data: buildUserData({ email, firstName: firstNameForCapi }),
+    custom_data: {
+      value: amountPaid,
+      currency: 'usd',
+      content_name: `Brand Partner ${tierName}`,
+      content_category: 'brand_partner',
+    },
+  }]).catch((e) => console.error('[meta-capi] brand partner purchase fire failed:', e));
+
   console.log(`[brand-partner-tier] ${tierName} ($${amountPaid}) booked for ${email} → brand ${brandRecordId}`);
 }
 
@@ -758,6 +777,23 @@ async function handleFounderCheckoutCompleted(session: any, metaType: string) {
       console.error('Failed to set Founder Welcome Sent At:', e);
     }
   }
+
+  // ── Meta Conversions API: server-side `Purchase` event ──────────────
+  // Client Pixel loses 30-50% under iOS 14.5+ ATT + adblockers. Deduped
+  // with the client Pixel via event_id=<stripeSessionId>. Fire-and-forget.
+  fireCapi([{
+    event_name: 'Purchase',
+    event_time: Math.floor(Date.now() / 1000),
+    event_id: sessionId,
+    action_source: 'system_generated',
+    user_data: buildUserData({ email, firstName }),
+    custom_data: {
+      value: amountPaid,
+      currency: 'usd',
+      content_name: `Founder ${mapped.tier}`,
+      content_category: metaType === 'founder-lifetime' ? 'lifetime' : 'subscription',
+    },
+  }]).catch((e) => console.error('[meta-capi] founder purchase fire failed:', e));
 
   return NextResponse.json({ received: true, founderNumber });
 }
