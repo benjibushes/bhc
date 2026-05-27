@@ -258,7 +258,7 @@ export default function FullHomepage() {
                   rel="noopener noreferrer"
                   className="inline-block px-12 py-5 bg-bone text-charcoal hover:bg-dust hover:text-bone transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone"
                 >
-                  🧢 Shop Hats →
+                  Shop Hats →
                 </a>
               </div>
               <p className="text-sm text-dust">
@@ -457,7 +457,7 @@ export default function FullHomepage() {
                 rel="noopener noreferrer"
                 className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                🧢 Shop Hats
+                Shop Hats
               </a>
             </div>
             <p className="text-sm pt-4 text-dust">
@@ -482,7 +482,7 @@ export default function FullHomepage() {
               <Button href="/faq" variant="secondary">FAQ</Button>
               <Button href="/about" variant="secondary">About</Button>
               <Button href="/news" variant="secondary">News</Button>
-              <Button href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=footer&utm_campaign=hat-launch" variant="secondary">🧢 Hats</Button>
+              <Button href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=footer&utm_campaign=hat-launch" variant="secondary">Hats</Button>
               <Button href="/member/login" variant="secondary">Member Login</Button>
               <Button href="/rancher/login" variant="secondary">Rancher Login</Button>
             </div>

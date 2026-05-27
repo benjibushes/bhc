@@ -16,7 +16,8 @@ const NAV_LINKS = [
   { href: '/wins', label: 'Wins' },
   { href: '/founders', label: 'Founders' },
   { href: '/brand-partners', label: 'Brands' },
-  { href: HATS_NAV_URL, label: '🧢 Hats', external: true },
+  { href: '/wholesale', label: 'Wholesale' },
+  { href: HATS_NAV_URL, label: 'Hats', external: true },
   { href: '/about', label: 'About' },
   { href: '/faq', label: 'FAQ' },
 ];
