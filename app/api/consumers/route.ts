@@ -6,7 +6,7 @@ import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 90;
-import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy } from '@/lib/email';
+import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy, getSuppressionList } from '@/lib/email';
 import { normalizeState } from '@/lib/states';
 import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
@@ -137,6 +137,21 @@ export async function POST(request: Request) {
 
     if (!isValidEmail(email)) {
       return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
+    }
+
+    // Suppression check — silently pretend success for bounced/unsubscribed
+    // emails so scrapers can't probe suppression state and so re-submitted
+    // dead addresses don't re-enter nurture flows. Fail-open: if the
+    // suppression list fetch errors, let the signup through.
+    try {
+      const suppressionList = await getSuppressionList();
+      if (suppressionList.has(email.trim().toLowerCase())) {
+        console.log(`[signup] SKIPPED ${email} (suppressed: unsubscribed/bounced/complained)`);
+        return NextResponse.json({ success: true }, { status: 201 });
+      }
+    } catch (e) {
+      console.warn('[signup] suppression check failed, allowing through:', e);
+      // Fall through — fail-open on suppression check failure
     }
 
     if (phone && !isValidPhone(phone)) {
