@@ -1,45 +1,15 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Container from './Container';
 import Divider from './Divider';
 import Button from './Button';
 import LiveCounter from './LiveCounter';
 
-function CampaignTracker() {
-  const searchParams = useSearchParams();
-  // Depend on serialized string so the effect runs once per actual URL
-  // change instead of every render (useSearchParams() returns a fresh
-  // object each render).
-  const searchParamsString = searchParams.toString();
-
-  useEffect(() => {
-    const campaign = searchParams.get('campaign');
-    const source = searchParams.get('source') || searchParams.get('utm_source');
-    const ref = searchParams.get('ref') || searchParams.get('aff');
-    const utmParams = searchParams.toString();
-
-    if (campaign) {
-      localStorage.setItem('bhc_campaign', campaign);
-      localStorage.setItem('bhc_source', source || 'email');
-    } else if (source) {
-      localStorage.setItem('bhc_source', source);
-    }
-
-    if (ref) {
-      localStorage.setItem('bhc_ref', ref);
-    }
-
-    if (utmParams) {
-      localStorage.setItem('bhc_utm_params', utmParams);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParamsString]);
-
-  return null;
-}
+// CampaignTracker moved to app/components/UtmCapture.tsx + mounted in
+// app/layout.tsx so UTM/fbclid/gclid land on EVERY entry page, not just /.
+// See: 2026-05-27 P0 marketing fix I-2.
 
 function useLiveStats() {
   const [stats, setStats] = useState<{ rancherCount: number; buyerCount: number; stateCount: number } | null>(null);
@@ -60,9 +30,6 @@ export default function FullHomepage() {
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      <Suspense fallback={null}>
-        <CampaignTracker />
-      </Suspense>
       {/* Logo + Hero */}
       <section className="py-12 md:py-20">
         <Container>

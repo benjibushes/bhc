@@ -5,6 +5,7 @@ import Header from "./components/Header";
 import PromoBar from "./components/PromoBar";
 import Analytics from "./components/Analytics";
 import PixelTracker from "./components/PixelTracker";
+import UtmCapture from "./components/UtmCapture";
 import Footer from "./components/Footer";
 
 // ClerkProvider was added Auth Phase 0 (2026-05-26) and removed same
@@ -108,6 +109,7 @@ export default function RootLayout({
       >
         <PixelTracker />
         <Analytics />
+        <UtmCapture />
         <PromoBar />
         <Header />
         {children}
