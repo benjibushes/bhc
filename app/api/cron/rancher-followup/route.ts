@@ -8,6 +8,10 @@ import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 60;
 
+// Per-run ceiling — protects against unbounded outreach under cohort growth.
+// Matches existing caps on buyer-pulse + email-sequences.
+const MAX_PER_RUN = 25;
+
 // Runs daily 15 UTC — exits early unless today is Monday. Vercel Hobby tier
 // silently dropped the original `0 15 * * 1` day-of-week schedule (0 runs in
 // 14 days as of 2026-05-19 audit). Daily wrapper + Monday guard ensures the
@@ -102,7 +106,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     // Send one Telegram alert per stalled rancher
     const thresholdMap: Record<string, number> = { ...STALL_THRESHOLDS, 'New Applicant': 2 };
 
+    let processed = 0;
     for (const { rancher, stage, daysStuck, isNewApplicant } of stalled) {
+      if (processed >= MAX_PER_RUN) {
+        console.log(`[rancher-followup] hit MAX_PER_RUN=${MAX_PER_RUN}, stopping stalled-rancher alerts`);
+        break;
+      }
       const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown Rancher';
       const state = rancher['State'] || '?';
       const email = rancher['Email'] || 'no email';
@@ -152,6 +161,7 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
         msg,
         keyboard.inline_keyboard.length > 0 ? keyboard : undefined
       );
+      processed++;
     }
 
     // Summary message
@@ -222,6 +232,10 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
       // cron run will retry (since the stamp expires after 7d).
       const { updateRecord } = await import('@/lib/airtable');
       for (const [rancherId, { leads, refIds }] of Object.entries(byRancher)) {
+        if (processed >= MAX_PER_RUN) {
+          console.log(`[rancher-followup] hit MAX_PER_RUN=${MAX_PER_RUN}, stopping lead-nudge emails`);
+          break;
+        }
         try {
           const rancher = ranchers.find((r: any) => r.id === rancherId) as any;
           if (!rancher) continue;
@@ -245,6 +259,7 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
 
           await sendRancherLeadNudge({ rancherName, email: rancherEmail, leads, dashboardUrl });
           nudgesSent++;
+          processed++;
         } catch (e: any) {
           console.error('Lead nudge error:', e.message);
         }

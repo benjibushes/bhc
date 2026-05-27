@@ -28,6 +28,10 @@ export const maxDuration = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
+// Per-run ceiling — protects sender reputation under cohort growth.
+// Matches existing caps on buyer-pulse + email-sequences.
+const MAX_PER_RUN = 25;
+
 function mintSetupUrl(rancherId: string): string {
   const token = jwt.sign({ type: 'rancher-setup', rancherId }, JWT_SECRET, { expiresIn: '60d' });
   return `${SITE_URL}/rancher/setup?token=${token}`;
@@ -78,6 +82,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   let escalated = 0;
 
   for (const r of all) {
+    if (sent + escalated >= MAX_PER_RUN) {
+      console.log(`[onboarding-stuck] hit MAX_PER_RUN=${MAX_PER_RUN}, stopping`);
+      break;
+    }
     if (r['Unsubscribed']) continue;
     const onboarding = (r['Onboarding Status'] || '').toString();
     const agreementSigned = !!r['Agreement Signed'];

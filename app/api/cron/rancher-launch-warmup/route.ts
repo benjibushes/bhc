@@ -22,6 +22,10 @@ const WARMUP_CAP_PER_RUN = 100;
 const NUDGE_CAP_PER_RUN = 50;
 const DEFAULT_WEEKLY_INTRO_PACE = 5;
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
+// Outer per-run ceiling on TOTAL records touched (warmups + nudges).
+// Layered on top of the per-phase caps above; whichever binds first wins.
+// Protects against cohort-growth runaway under paid-scale.
+const MAX_PER_RUN = 25;
 
 function buildEngageUrl(consumerId: string): string {
   const token = jwt.sign({ type: 'warmup-engage', consumerId }, JWT_SECRET, { expiresIn: '30d' });
@@ -102,6 +106,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
     outer: for (const rancher of ranchers) {
       if (warmupsSent >= WARMUP_CAP_PER_RUN) break;
+      if (warmupsSent >= MAX_PER_RUN) {
+        console.log(`[rancher-launch-warmup] hit MAX_PER_RUN=${MAX_PER_RUN} (warmups), stopping phase 1`);
+        break;
+      }
 
       const ranchName = rancher['Ranch Name'] || rancher['Operator Name'] || 'A verified ranch';
       // Single source of truth for "what states does this rancher serve?" —
@@ -150,6 +158,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         let ranchSent = 0;
         for (const buyer of eligible) {
           if (warmupsSent >= WARMUP_CAP_PER_RUN) break outer;
+          if (warmupsSent >= MAX_PER_RUN) {
+            console.log(`[rancher-launch-warmup] hit MAX_PER_RUN=${MAX_PER_RUN} (trust-drain), stopping`);
+            break outer;
+          }
           try {
             const email = (buyer['Email'] || '').trim();
             if (!email) { warmupsSkipped++; continue; }
@@ -239,6 +251,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       let ranchSent = 0;
       for (const { rec } of ranked) {
         if (warmupsSent >= WARMUP_CAP_PER_RUN) break outer;
+        if (warmupsSent >= MAX_PER_RUN) {
+          console.log(`[rancher-launch-warmup] hit MAX_PER_RUN=${MAX_PER_RUN} (throttled), stopping`);
+          break outer;
+        }
         try {
           const email = (rec['Email'] || '').trim();
           if (!email) { warmupsSkipped++; continue; }
@@ -310,6 +326,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
     for (const buyer of nudgeCandidates) {
       if (nudgesSent >= NUDGE_CAP_PER_RUN) break;
+      if (warmupsSent + nudgesSent >= MAX_PER_RUN) {
+        console.log(`[rancher-launch-warmup] hit MAX_PER_RUN=${MAX_PER_RUN} (combined), stopping phase 2`);
+        break;
+      }
       try {
         const email = (buyer['Email'] || '').trim();
         if (!email) continue;
