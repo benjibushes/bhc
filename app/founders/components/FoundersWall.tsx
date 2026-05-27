@@ -98,13 +98,13 @@ export default async function FoundersWall() {
   return (
     <section className="space-y-16">
       <div className="text-center space-y-3">
-        <p className="text-sm uppercase tracking-widest text-[#6B4F3F]">
+        <p className="text-sm uppercase tracking-widest text-saddle">
           The Founders Wall
         </p>
         <h2 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl">
           The names that started this
         </h2>
-        <p className="text-[#6B4F3F] max-w-2xl mx-auto leading-relaxed">
+        <p className="text-saddle max-w-2xl mx-auto leading-relaxed">
           Every name on this wall paid in before the company was easy to bet
           on. They are the proof. They are the reason this works.
         </p>
@@ -112,16 +112,16 @@ export default async function FoundersWall() {
 
       {/* Title Founder */}
       <div className="space-y-6">
-        <div className="flex items-baseline justify-between border-b border-[#A7A29A] pb-3">
+        <div className="flex items-baseline justify-between border-b border-dust pb-3">
           <h3 className="font-[family-name:var(--font-playfair)] text-2xl">
             Title Founder
           </h3>
-          <p className="text-sm text-[#6B4F3F]">
+          <p className="text-sm text-saddle">
             {titleFounders.length} of {TITLE_FOUNDER_CAP} claimed
           </p>
         </div>
         {titleFounders.length === 0 ? (
-          <p className="text-[#A7A29A] italic">
+          <p className="text-dust italic">
             10 spots open. Will be the first 10 names listed here.
           </p>
         ) : (
@@ -129,9 +129,9 @@ export default async function FoundersWall() {
             {titleFounders.map((r) => (
               <li
                 key={r.id}
-                className="border border-[#0E0E0E] bg-white p-6 flex items-baseline gap-4"
+                className="border border-charcoal bg-white p-6 flex items-baseline gap-4"
               >
-                <span className="font-[family-name:var(--font-playfair)] text-3xl text-[#6B4F3F]">
+                <span className="font-[family-name:var(--font-playfair)] text-3xl text-saddle">
                   {r['Founder Number'] ?? '—'}
                 </span>
                 <span className="text-lg">{displayName(r)}</span>
@@ -143,17 +143,17 @@ export default async function FoundersWall() {
 
       {/* Founding 100 — numbered grid + progress */}
       <div className="space-y-6">
-        <div className="flex items-baseline justify-between border-b border-[#A7A29A] pb-3">
+        <div className="flex items-baseline justify-between border-b border-dust pb-3">
           <h3 className="font-[family-name:var(--font-playfair)] text-2xl">
             Founding 100
           </h3>
-          <p className="text-sm text-[#6B4F3F]">
+          <p className="text-sm text-saddle">
             {founding100Filled} of {FOUNDING_100_CAP} claimed
           </p>
         </div>
-        <div className="w-full h-2 bg-[#E5E2DC]">
+        <div className="w-full h-2 bg-bone-deep">
           <div
-            className="h-2 bg-[#0E0E0E] transition-all"
+            className="h-2 bg-charcoal transition-all"
             style={{ width: `${founding100Pct}%` }}
             aria-label={`Founding 100 progress: ${founding100Filled} of ${FOUNDING_100_CAP}`}
           />
@@ -167,12 +167,12 @@ export default async function FoundersWall() {
                 key={n}
                 className={`aspect-square flex flex-col items-center justify-center border ${
                   claimed
-                    ? 'border-[#0E0E0E] bg-white'
-                    : 'border-dashed border-[#A7A29A] bg-[#F4F1EC]'
+                    ? 'border-charcoal bg-white'
+                    : 'border-dashed border-dust bg-bone'
                 }`}
                 title={claimed ? displayName(claimed) : `Spot #${n} — open`}
               >
-                <span className="text-[10px] text-[#A7A29A]">#{n}</span>
+                <span className="text-[10px] text-dust">#{n}</span>
                 {claimed && (
                   <span className="text-[10px] mt-1 px-1 truncate max-w-full">
                     {displayName(claimed).split(' ')[0]}
@@ -186,18 +186,18 @@ export default async function FoundersWall() {
 
       {/* Steward */}
       <div className="space-y-4">
-        <div className="flex items-baseline justify-between border-b border-[#A7A29A] pb-3">
+        <div className="flex items-baseline justify-between border-b border-dust pb-3">
           <h3 className="font-[family-name:var(--font-playfair)] text-2xl">
             Steward
           </h3>
-          <p className="text-sm text-[#6B4F3F]">{stewards.length} backers</p>
+          <p className="text-sm text-saddle">{stewards.length} backers</p>
         </div>
         {stewards.length === 0 ? (
-          <p className="text-[#A7A29A] italic">No Stewards yet.</p>
+          <p className="text-dust italic">No Stewards yet.</p>
         ) : (
           <ul className="grid sm:grid-cols-2 md:grid-cols-3 gap-3 text-sm">
             {stewards.map((r) => (
-              <li key={r.id} className="bg-white border border-[#A7A29A] px-4 py-3">
+              <li key={r.id} className="bg-white border border-dust px-4 py-3">
                 {displayName(r)}
               </li>
             ))}
@@ -207,20 +207,20 @@ export default async function FoundersWall() {
 
       {/* Outlaw */}
       <div className="space-y-4">
-        <div className="flex items-baseline justify-between border-b border-[#A7A29A] pb-3">
+        <div className="flex items-baseline justify-between border-b border-dust pb-3">
           <h3 className="font-[family-name:var(--font-playfair)] text-2xl">
             Outlaw
           </h3>
-          <p className="text-sm text-[#6B4F3F]">{outlaws.length} on the wall</p>
+          <p className="text-sm text-saddle">{outlaws.length} on the wall</p>
         </div>
         {outlaws.length === 0 ? (
-          <p className="text-[#A7A29A] italic">
+          <p className="text-dust italic">
             No public Outlaws yet. Wall placement is opt-in at checkout.
           </p>
         ) : (
           <ul className="grid sm:grid-cols-2 md:grid-cols-4 gap-2 text-sm">
             {outlaws.map((r) => (
-              <li key={r.id} className="bg-white border border-[#A7A29A] px-3 py-2">
+              <li key={r.id} className="bg-white border border-dust px-3 py-2">
                 {displayName(r)}
               </li>
             ))}
@@ -231,22 +231,22 @@ export default async function FoundersWall() {
       {/* Herd (opt-in only — section hides entirely if nobody opted in) */}
       {optedInHerd.length > 0 && (
         <div className="space-y-4">
-          <div className="flex items-baseline justify-between border-b border-[#A7A29A] pb-3">
+          <div className="flex items-baseline justify-between border-b border-dust pb-3">
             <h3 className="font-[family-name:var(--font-playfair)] text-2xl">
               Herd
             </h3>
-            <p className="text-sm text-[#6B4F3F]">
+            <p className="text-sm text-saddle">
               {optedInHerd.length} opted in
             </p>
           </div>
-          <p className="text-xs text-[#A7A29A]">
+          <p className="text-xs text-dust">
             Herd-tier names show only if the backer opted in at checkout.
           </p>
           <ul className="flex flex-wrap gap-2 text-xs">
             {optedInHerd.map((r) => (
               <li
                 key={r.id}
-                className="bg-[#F4F1EC] border border-[#A7A29A] px-3 py-1"
+                className="bg-bone border border-dust px-3 py-1"
               >
                 {displayName(r)}
               </li>

@@ -57,16 +57,16 @@ export default function FounderCheckoutButton({
         disabled={disabled || loading}
         className={`w-full text-center px-6 py-3 text-sm tracking-wide ${
           disabled
-            ? 'bg-[#A7A29A] text-[#F4F1EC] cursor-not-allowed'
+            ? 'bg-dust text-bone cursor-not-allowed'
             : loading
-            ? 'bg-[#6B4F3F] text-[#F4F1EC] cursor-wait'
-            : 'bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]'
+            ? 'bg-saddle text-bone cursor-wait'
+            : 'bg-charcoal text-bone hover:bg-saddle'
         }`}
       >
         {loading ? 'Opening Stripe…' : label}
       </button>
       {error && (
-        <p className="text-xs text-[#8C2F2F] mt-2 text-center">{error}</p>
+        <p className="text-xs text-weathered mt-2 text-center">{error}</p>
       )}
     </div>
   );

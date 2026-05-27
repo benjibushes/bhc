@@ -352,7 +352,7 @@ export default function WholesaleForm() {
       </div>
 
       {error && (
-        <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F] text-sm">
+        <div className="p-4 border border-weathered bg-transparent text-weathered text-sm">
           {error}
         </div>
       )}

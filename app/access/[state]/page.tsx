@@ -51,7 +51,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { name } = resolved;
   const lowerSlug = state.toLowerCase();
   const title = `Buy half-cow direct from ${name} ranchers — BuyHalfCow`;
-  const description = `Verified ${name} ranchers, vetted by BuyHalfCow. 90-second match. No marketplace markup. Direct ranch beef from real ${name} operations.`;
+  const description = `Verified ${name} ranchers. 90-second match. No marketplace markup. No middleman. Direct ranch beef from real ${name} operations.`;
   const url = `https://www.buyhalfcow.com/access/${lowerSlug}`;
 
   return {
@@ -167,7 +167,7 @@ export default async function AccessStatePage({ params }: Props) {
   };
 
   return (
-    <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E] py-16 md:py-24">
+    <main className="min-h-screen bg-bone text-charcoal py-16 md:py-24">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
@@ -185,25 +185,25 @@ export default async function AccessStatePage({ params }: Props) {
       <Container>
         {/* Hero */}
         <div className="max-w-3xl mx-auto text-center space-y-6 mb-16">
-          <p className="text-sm uppercase tracking-widest text-[#6B4F3F]">
+          <p className="text-sm uppercase tracking-widest text-saddle">
             {stateNameFull} · Verified Ranchers
           </p>
           <h1 className="font-[family-name:var(--font-playfair)] text-4xl md:text-5xl leading-tight">
             buy half-cow direct from {stateNameFull} ranchers
           </h1>
           <Divider />
-          <p className="text-[#6B4F3F] text-lg leading-relaxed">
+          <p className="text-saddle text-lg leading-relaxed">
             {hasRanchers ? (
               <>
                 {ranchers.length} verified {ranchers.length === 1 ? 'rancher' : 'ranchers'} in {stateNameFull}.{' '}
                 {totalClosedDeals > 0
-                  ? `${totalClosedDeals} ${stateNameFull} families fed direct this year.`
-                  : '90-second quiz match — no marketplace markup, no middlemen.'}
+                  ? `${totalClosedDeals} ${stateNameFull} ${totalClosedDeals === 1 ? 'family' : 'families'} fed direct this year.`
+                  : '90-second match — no marketplace markup, no middleman.'}
               </>
             ) : (
               <>
-                {stateNameFull} ranchers are joining BuyHalfCow weekly. Get on the waitlist —
-                we'll match you the moment a verified rancher comes online in {stateNameFull}.
+                {stateNameFull} ranchers are joining weekly. get on the list —
+                we'll route you the moment a verified rancher goes live in {stateNameFull}.
               </>
             )}
           </p>
@@ -221,9 +221,9 @@ export default async function AccessStatePage({ params }: Props) {
               <h2 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl">
                 verified ranchers in {stateNameFull}
               </h2>
-              <p className="text-[#6B4F3F] mt-3 max-w-2xl mx-auto">
-                Every operation below has been personally vetted. Click through to see
-                their full story, beef types, and pricing.
+              <p className="text-saddle mt-3 max-w-2xl mx-auto">
+                every operation below has been personally vetted by ben. tap
+                a card to see beef types, pricing, and how to order.
               </p>
             </div>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -231,9 +231,9 @@ export default async function AccessStatePage({ params }: Props) {
                 <Link
                   key={r.id}
                   href={`/ranchers/${r.slug}`}
-                  className="group block border border-[#A7A29A] bg-white hover:border-[#6B4F3F] transition-colors"
+                  className="group block border border-dust bg-white hover:border-saddle transition-colors"
                 >
-                  <div className="h-40 bg-[#F4F1EC] flex items-center justify-center overflow-hidden">
+                  <div className="h-40 bg-bone flex items-center justify-center overflow-hidden">
                     {r.logoUrl ? (
                       <Image
                         src={r.logoUrl}
@@ -243,23 +243,23 @@ export default async function AccessStatePage({ params }: Props) {
                         className="object-contain max-h-32 p-4"
                       />
                     ) : (
-                      <span className="font-[family-name:var(--font-playfair)] text-3xl text-[#A7A29A]">
+                      <span className="font-[family-name:var(--font-playfair)] text-3xl text-dust">
                         {r.ranchName.charAt(0)}
                       </span>
                     )}
                   </div>
                   <div className="p-5 space-y-2">
-                    <h3 className="font-[family-name:var(--font-playfair)] text-xl group-hover:text-[#6B4F3F] transition-colors">
+                    <h3 className="font-[family-name:var(--font-playfair)] text-xl group-hover:text-saddle transition-colors">
                       {r.ranchName}
                     </h3>
                     {r.tagline && (
-                      <p className="text-sm text-[#6B4F3F] line-clamp-2">{r.tagline}</p>
+                      <p className="text-sm text-saddle line-clamp-2">{r.tagline}</p>
                     )}
-                    <p className="text-xs uppercase tracking-widest text-[#A7A29A]">
+                    <p className="text-xs uppercase tracking-widest text-dust">
                       {r.city ? `${r.city}, ${stateCode}` : stateNameFull}
                     </p>
                     {r.certifications && (
-                      <p className="text-xs uppercase tracking-widest text-[#A7A29A] pt-1">
+                      <p className="text-xs uppercase tracking-widest text-dust pt-1">
                         {r.certifications}
                       </p>
                     )}
@@ -272,11 +272,13 @@ export default async function AccessStatePage({ params }: Props) {
 
         {/* Secondary CTA */}
         <div className="max-w-2xl mx-auto text-center mt-20 space-y-4">
-          <p className="text-[#6B4F3F]">
-            Ready to skip the grocery aisle? The 90-second match takes care of the rest.
+          <p className="text-saddle">
+            {hasRanchers
+              ? `skip the grocery aisle. the 90-second match routes you to a real ${stateNameFull} rancher.`
+              : `we'll fire a routing slot the second a verified rancher comes online in ${stateNameFull}.`}
           </p>
           <Button href={`/access?state=${stateCode}`} variant="secondary">
-            start the quiz →
+            {hasRanchers ? 'start the quiz →' : `join the ${stateNameFull} waitlist →`}
           </Button>
         </div>
       </Container>

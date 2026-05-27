@@ -704,7 +704,7 @@ export default async function FoundersPage({
                   a: "Only the Founding Herd list — monthly letter from the road. You can reply directly; it lands with me. We don't sell, share, or run paid ads off this list.",
                 },
               ].map((faq, i) => (
-                <div key={i} className="border-b border-[#E5E2DC] pb-5">
+                <div key={i} className="border-b border-bone-deep pb-5">
                   <p className="font-serif text-lg mb-2">
                     {faq.q}
                   </p>

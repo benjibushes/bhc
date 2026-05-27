@@ -627,7 +627,7 @@ function AccessPageContent() {
                     stacks with future referrals.
                   </p>
                   {affiliateError && (
-                    <p className="text-xs text-[#8C2F2F] mb-3">{affiliateError}</p>
+                    <p className="text-xs text-weathered mb-3">{affiliateError}</p>
                   )}
                   <button
                     type="button"
@@ -764,8 +764,8 @@ function AccessPageContent() {
             )}
 
             <p className="text-saddle text-lg mb-8 leading-relaxed">
-              pick your state. answer 4 questions. we route you to the rancher
-              closest to you. you talk direct.
+              pick your state. answer 4 questions. we route you to a verified
+              rancher in your state. you talk direct, no middleman, no markup.
             </p>
 
             {/* ── Section B — Explainer Video Slot ──────────────────────────
@@ -866,13 +866,28 @@ function AccessPageContent() {
                           {headline}
                         </div>
                         <div className="text-saddle text-xs">
-                          {r.state} · {cutSummary} · available
+                          {r.state} · {cutSummary} · verified
                         </div>
                       </a>
                     );
                   })}
                 </div>
               )}
+
+              {/* BHC Promise — inline trust block, no separate page yet.
+                  Honest scope: 7-day satisfaction window + cold-chain
+                  commitment from the rancher + mediation by BHC. We do not
+                  manage cold-chain ourselves and we don't claim to. */}
+              <div className="mt-8 border-l-2 border-charcoal pl-4 text-sm text-charcoal/85 leading-relaxed">
+                <p className="text-xs uppercase tracking-wider text-saddle font-semibold mb-1">
+                  the bhc promise
+                </p>
+                <p>
+                  ranchers commit to cold-chain handoff. you get 7 days to
+                  flag anything wrong with your beef. if it goes sideways,
+                  ben mediates — direct, no script.
+                </p>
+              </div>
             </div>
 
             <Divider />
@@ -1010,7 +1025,7 @@ function AccessPageContent() {
                     autoComplete="email"
                     className={`w-full border px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal ${
                       emailTouched && !emailValid
-                        ? 'border-[#8C2F2F]'
+                        ? 'border-weathered'
                         : 'border-charcoal/30'
                     }`}
                     value={email}
@@ -1024,14 +1039,14 @@ function AccessPageContent() {
                     }}
                   />
                   {emailTouched && !emailValid && email.length > 0 && (
-                    <p className="mt-1 text-xs text-[#8C2F2F]">
+                    <p className="mt-1 text-xs text-weathered">
                       enter a valid email address
                     </p>
                   )}
                 </div>
 
                 {error && (
-                  <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F] text-sm">
+                  <div className="p-4 border border-weathered bg-transparent text-weathered text-sm">
                     {error}
                   </div>
                 )}

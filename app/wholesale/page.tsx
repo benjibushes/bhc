@@ -100,6 +100,7 @@ export default async function WholesalePage() {
           </h1>
           <p className="text-saddle text-base sm:text-lg leading-relaxed">
             skip the distributor. lock long-term supply with verified ranchers.
+            built for buyers moving 1+ head per month.
           </p>
         </div>
 
