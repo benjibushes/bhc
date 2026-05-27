@@ -169,54 +169,10 @@ export default async function WinsPage() {
                 </a>
               </div>
 
-              {/* Preview cards — show ranchers already on the network so the page
-                  feels populated. Renders examples even before any closes. */}
-              <div className="grid md:grid-cols-2 gap-5">
-                <Card variant="default" padding="lg" className="space-y-4 opacity-70 border-dashed">
-                  <div className="flex items-start gap-3">
-                    <div className="w-12 h-12 bg-bone-deep border border-dust flex items-center justify-center shrink-0">
-                      <span className="font-serif text-xl text-saddle">A</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                        Example
-                      </p>
-                      <p className="font-serif text-lg text-charcoal leading-tight">
-                        A verified ranch in your state
-                      </p>
-                      <p className="text-xs text-saddle">XX</p>
-                    </div>
-                  </div>
-                  <div className="border-t border-dust/60 pt-3 space-y-1.5">
-                    <p className="text-2xl font-serif text-charcoal">$1,200</p>
-                    <p className="text-sm text-charcoal/85">
-                      Half cow · sold to S.K., MT
-                    </p>
-                  </div>
-                </Card>
-                <Card variant="default" padding="lg" className="space-y-4 opacity-70 border-dashed">
-                  <div className="flex items-start gap-3">
-                    <div className="w-12 h-12 bg-bone-deep border border-dust flex items-center justify-center shrink-0">
-                      <span className="font-serif text-xl text-saddle">B</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                        Example
-                      </p>
-                      <p className="font-serif text-lg text-charcoal leading-tight">
-                        Another verified ranch
-                      </p>
-                      <p className="text-xs text-saddle">XX</p>
-                    </div>
-                  </div>
-                  <div className="border-t border-dust/60 pt-3 space-y-1.5">
-                    <p className="text-2xl font-serif text-charcoal">$2,400</p>
-                    <p className="text-sm text-charcoal/85">
-                      Whole cow · sold to J.R., CO
-                    </p>
-                  </div>
-                </Card>
-              </div>
+              <p className="text-saddle text-center max-w-md mx-auto">
+                We&apos;re closing the first deals this week. Take the quiz to be among the
+                first buyers matched as ranchers come online.
+              </p>
 
               <p className="text-center text-sm text-saddle">
                 Want yours up here?{' '}
