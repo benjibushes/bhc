@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Container from '../../components/Container';
@@ -1566,6 +1566,51 @@ function SignStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Tier-aware commission copy. Source of truth lives in lib/tiers.ts;
+  // mirrored here so the gist bullet matches the tier the rancher just
+  // picked at Step 6. Hard-coding "10%" contradicted tier_v2 rates.
+  const pricingModel = String((rancher as any)['Pricing Model'] || 'legacy');
+  const tierSlug = tierSlugFromRancher(rancher);
+  let commissionCopy: ReactNode;
+  if (pricingModel === 'tier_v2' && tierSlug === 'pasture') {
+    commissionCopy = (
+      <>
+        <strong>7% commission</strong> on closed deals only (Pasture tier).
+        Nothing on tire-kickers, nothing on no-shows.
+      </>
+    );
+  } else if (pricingModel === 'tier_v2' && tierSlug === 'ranch') {
+    commissionCopy = (
+      <>
+        <strong>3% commission</strong> on closed deals only (Ranch tier).
+        Nothing on tire-kickers, nothing on no-shows.
+      </>
+    );
+  } else if (pricingModel === 'tier_v2' && tierSlug === 'operator') {
+    commissionCopy = (
+      <>
+        <strong>0% commission</strong> on closed deals (Operator tier · flat
+        subscription only).
+      </>
+    );
+  } else if (pricingModel === 'tier_v2') {
+    // tier_v2 rancher who hasn't locked a tier yet — show the range.
+    commissionCopy = (
+      <>
+        <strong>Commission per your chosen tier</strong> (Pasture 7% · Ranch 3%
+        · Operator 0%). Locked when you finish Step 6.
+      </>
+    );
+  } else {
+    // Legacy ranchers — original 10% commission contract.
+    commissionCopy = (
+      <>
+        <strong>10% commission</strong> on closed deals only. Nothing on
+        tire-kickers, nothing on no-shows.
+      </>
+    );
+  }
+
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
@@ -1660,10 +1705,7 @@ function SignStep({
         <ul className="space-y-2 list-none">
           <li className="flex gap-2.5">
             <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
-            <span>
-              <strong>10% commission</strong> on closed deals only. Nothing on
-              tire-kickers, nothing on no-shows.
-            </span>
+            <span>{commissionCopy}</span>
           </li>
           <li className="flex gap-2.5">
             <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
