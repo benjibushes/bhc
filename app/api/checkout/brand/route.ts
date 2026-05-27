@@ -25,13 +25,14 @@ export const dynamic = 'force-dynamic';
 //   STRIPE_BRAND_PRICE_FEATURED   — price_* id for the $595 tier
 //   STRIPE_BRAND_PRICE_FOUNDING   — price_* id for the $1500 tier
 //
-// Graceful degradation: if a Price ID env var is missing for a tier BUT
-// the legacy Payment Link env var (STRIPE_BRAND_LINK_*) is set, we fall
-// back to the legacy redirect. This preserves any current revenue flow
-// during the env var migration window — webhook still won't fire on the
-// Payment Link path, but at least the purchase completes (better than
-// dropping the buyer on /brand-partners#contact). Operator must populate
-// Price ID env vars to fully close the leak.
+// Hard requirement: each tier MUST resolve to a Stripe Price ID. We used
+// to silently fall back to a legacy Payment Link (STRIPE_BRAND_LINK_*) if
+// the Price ID env var was missing — but Payment Links don't forward
+// metadata, so the webhook never fired, and money landed in Stripe with
+// zero Airtable / welcome email / Telegram side effects (the F1 revenue
+// leak). The fallback is removed. If a tier's Price ID is unset, we hard-
+// error to /brand-partners?error=tier-not-configured so the operator sees
+// the misconfiguration loudly instead of bleeding revenue silently.
 
 const TIER_TO_PRICE_ENV: Record<string, string> = {
   spotlight: 'STRIPE_BRAND_PRICE_SPOTLIGHT',
@@ -39,11 +40,10 @@ const TIER_TO_PRICE_ENV: Record<string, string> = {
   founding: 'STRIPE_BRAND_PRICE_FOUNDING', // $1500 co-marketed tier
 };
 
-const TIER_TO_LEGACY_LINK_ENV: Record<string, string> = {
-  spotlight: 'STRIPE_BRAND_LINK_SPOTLIGHT',
-  featured: 'STRIPE_BRAND_LINK_FEATURED',
-  founding: 'STRIPE_BRAND_LINK_COMARKETED',
-};
+// (Removed) TIER_TO_LEGACY_LINK_ENV — see header note above. Legacy
+// STRIPE_BRAND_LINK_* env vars are intentionally no longer consulted; the
+// Payment Link path bypassed the webhook and broke attribution. Keep them
+// unset / delete from prod env to avoid confusion.
 
 const TIER_NAMES: Record<string, string> = {
   spotlight: 'Spotlight',
@@ -64,23 +64,17 @@ export async function GET(request: Request) {
 
   const priceId = process.env[priceEnv];
 
-  // ── Graceful fallback: if Price ID not configured but legacy Payment
-  //    Link is, use the legacy Payment Link so we don't drop the buyer.
-  //    NOTE: webhook will still skip this purchase because Payment Links
-  //    don't forward metadata. Operator MUST set Price ID env var to
-  //    fully fix the leak.
+  // ── HARD ERROR if Price ID not configured ──
+  //    Previously we fell back to the legacy Payment Link, but that path
+  //    bypassed the webhook (Payment Links don't forward metadata) and
+  //    silently leaked revenue. Now we surface the misconfiguration to
+  //    the buyer with a recoverable error param and log loudly so ops
+  //    notice immediately.
   if (!priceId) {
-    const legacyLinkEnv = TIER_TO_LEGACY_LINK_ENV[tier];
-    const legacyLink = legacyLinkEnv ? process.env[legacyLinkEnv] : undefined;
-    if (legacyLink) {
-      console.warn(
-        `[checkout/brand] ${priceEnv} not set — falling back to legacy Payment Link (webhook will NOT fire). ` +
-        `Set ${priceEnv} to a Stripe Price ID to close the metadata gap.`
-      );
-      return NextResponse.redirect(legacyLink, 302);
-    }
-    console.warn(`[checkout/brand] ${priceEnv} not set — falling back to /brand-partners#contact`);
-    return NextResponse.redirect(new URL('/brand-partners#contact', url.origin), 302);
+    console.error(
+      `[checkout/brand] ${priceEnv} not set — refusing to fall back to legacy Payment Link (silent webhook failure risk).`,
+    );
+    return NextResponse.redirect(new URL('/brand-partners?error=tier-not-configured', url.origin), 302);
   }
 
   try {

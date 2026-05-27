@@ -437,10 +437,58 @@ export async function POST(request: Request) {
           console.log(`[stripe webhook] add-on purchase ${addOnId} marked paid`);
         }
 
-        // ── Tier subscription renewal invoice — no-op (subscription.updated handles status) ──
-        if (inv?.subscription) {
-          console.log('[stripe webhook] subscription invoice paid (no-op):', inv.id);
-          // intentional no-op — subscription.updated event carries status changes
+        // ── Tier subscription renewal invoice ──
+        // Pre-fix: this branch was a no-op, so brand-partner monthly renewals
+        // were never logged. Brand churn analysis impossible without renewal
+        // event stream. Now: look up BRANDS by Stripe Subscription Id and
+        // stamp Last Renewal At + write `brand_partner_renewal` funnel event
+        // when this is a brand-partner sub. Founder subs flow through their
+        // own checkout.session.completed path so they don't double-fire here.
+        if (inv?.subscription && inv?.metadata?.type !== 'brand-listing' && inv?.metadata?.type !== 'commission-invoice') {
+          try {
+            const brandMatches: any[] = await getAllRecords(
+              TABLES.BRANDS,
+              `{Stripe Subscription Id} = "${escapeAirtableValue(inv.subscription)}"`,
+            );
+            if (brandMatches.length > 0) {
+              const brand: any = brandMatches[0];
+              const renewalIso = new Date(((inv.status_transitions?.paid_at || inv.created || Date.now() / 1000) as number) * 1000).toISOString();
+              // Best-effort write — `Last Renewal At` may not exist on the
+              // Airtable schema yet. If the write 422s, log a TODO and keep
+              // going so the funnel event still fires.
+              try {
+                await updateRecord(TABLES.BRANDS, brand.id, {
+                  'Last Renewal At': renewalIso,
+                });
+              } catch (fieldErr: any) {
+                console.warn(
+                  `[stripe webhook] TODO: add 'Last Renewal At' (DateTime) field to BRANDS — write failed: ${fieldErr?.message || fieldErr}`,
+                );
+              }
+              try {
+                await funnelRecord({
+                  stage: 'brand_partner_renewal',
+                  amount: (inv.amount_paid || 0) / 100,
+                  metadata: {
+                    brandRecordId: brand.id,
+                    invoiceId: inv.id,
+                    subscriptionId: inv.subscription,
+                    email: brand['Email'] || inv.customer_email || '',
+                    tier: brand['Tier'] || '',
+                  },
+                });
+              } catch (e: any) {
+                console.warn('[stripe webhook] brand_partner_renewal funnel write failed:', e?.message);
+              }
+              console.log(`[stripe webhook] brand partner renewal logged for ${brand.id} (sub ${inv.subscription})`);
+            } else {
+              // Not a brand subscription — could be founder sub renewal.
+              // Founder renewals still fall through to subscription.updated for status.
+              console.log('[stripe webhook] subscription invoice paid, no brand match (likely founder):', inv.id);
+            }
+          } catch (e: any) {
+            console.warn('[stripe webhook] brand renewal lookup failed (non-fatal):', e?.message);
+          }
         }
 
         // ── Legacy commission invoice ──
@@ -925,7 +973,7 @@ async function markSubscriptionCancelled(subscriptionId: string) {
   if (!subscriptionId) return;
   const matches = await getAllRecords(
     TABLES.CONSUMERS,
-    `{Stripe Subscription ID} = "${escapeAirtableValue(subscriptionId)}"`
+    `{Stripe Subscription Id} = "${escapeAirtableValue(subscriptionId)}"`
   );
   if (matches.length === 0) return;
   const row: any = matches[0];
@@ -962,7 +1010,7 @@ async function alertInvoicePaymentFailed(invoice: any) {
       try {
         const matches = await getAllRecords(
           TABLES.CONSUMERS,
-          `{Stripe Subscription ID} = "${escapeAirtableValue(invoice.subscription)}"`
+          `{Stripe Subscription Id} = "${escapeAirtableValue(invoice.subscription)}"`
         );
         if (matches.length > 0) {
           tier = ((matches[0] as any)['Founder Tier'] as string) || tier;
@@ -984,7 +1032,7 @@ async function alertInvoicePaymentFailed(invoice: any) {
     try {
       const matches = await getAllRecords(
         TABLES.CONSUMERS,
-        `{Stripe Subscription ID} = "${escapeAirtableValue(invoice.subscription)}"`
+        `{Stripe Subscription Id} = "${escapeAirtableValue(invoice.subscription)}"`
       );
       if (matches.length > 0) {
         await updateRecord(TABLES.CONSUMERS, (matches[0] as any).id, {
@@ -998,7 +1046,7 @@ async function alertInvoicePaymentFailed(invoice: any) {
 
   // ── I-7 audit: brand partner past_due dunning email ──────────────────
   // before this, brand subscription failure was silent. now we look up
-  // BRANDS by Stripe Subscription ID (if tracked) OR by customer_email
+  // BRANDS by Stripe Subscription Id (if tracked) OR by customer_email
   // and fire sendBrandPaymentFailed w/ Stripe hosted invoice URL so the
   // brand can update card + pay w/o leaving stripe.
   try {
@@ -1009,7 +1057,7 @@ async function alertInvoicePaymentFailed(invoice: any) {
       try {
         brandMatches = (await getAllRecords(
           TABLES.BRANDS,
-          `{Stripe Subscription ID} = "${escapeAirtableValue(invoice.subscription)}"`,
+          `{Stripe Subscription Id} = "${escapeAirtableValue(invoice.subscription)}"`,
         )) as any[];
       } catch {}
     }
