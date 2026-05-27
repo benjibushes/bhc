@@ -421,6 +421,27 @@ function _markUpdateSeenMemory(id: number): boolean {
   return true;
 }
 
+// H-6 audit fix: inbound command rate limit. Pre-fix, a hijacked admin chat
+// OR a runaway local script could fire /bulkfire / /broadcast / /forcematch
+// in rapid succession with no throttle. Now: 30 commands/minute per chat,
+// rejected w/ a friendly slow-down message past the cap. In-memory Map
+// is fine here — even with horizontal scale-out, 60 commands/minute (worst
+// case if both instances allow full quota) is still well below abuse range.
+const _commandRateLimit = new Map<string, number[]>();
+const COMMAND_LIMIT_PER_MINUTE = 30;
+const COMMAND_LIMIT_WINDOW_MS = 60_000;
+function checkCommandRateLimit(chatId: string): boolean {
+  const now = Date.now();
+  const timestamps = (_commandRateLimit.get(chatId) || []).filter(t => now - t < COMMAND_LIMIT_WINDOW_MS);
+  if (timestamps.length >= COMMAND_LIMIT_PER_MINUTE) {
+    _commandRateLimit.set(chatId, timestamps);
+    return false;
+  }
+  timestamps.push(now);
+  _commandRateLimit.set(chatId, timestamps);
+  return true;
+}
+
 async function markUpdateSeen(id: number): Promise<boolean> {
   const redis = await getTelegramRedis();
   if (!redis) {
@@ -2955,6 +2976,16 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
     if (update.message?.text) {
       const rawText = update.message.text.trim();
+      const incomingChatId = update.message.chat.id.toString();
+
+      // H-6 audit fix: refuse excess commands w/o invoking expensive handlers.
+      // Only gate slash commands — natural language goes to AI chat which has
+      // its own rate budget (and the model bill is the real abuse-limit signal).
+      if (rawText.startsWith('/') && !checkCommandRateLimit(incomingChatId)) {
+        await sendTelegramMessage(incomingChatId, '⚠️ Too many commands — slow down, wait a minute.').catch(() => {});
+        return NextResponse.json({ ok: true });
+      }
+
       // Normalize new categorized command names → existing handlers (zero-risk aliasing).
       // This lets us reorganize commands without rewriting any handler logic.
       const text = (() => {
@@ -5426,33 +5457,44 @@ Confirm send?`;
       }
 
       else if (text === '/help') {
+        // H-6 audit fix: prior /help omitted /comp, /buyer, /brief, /rp,
+        // /segments, /runs, /stats — new operators couldn't discover them.
+        // Now organized by category w/ every 45+ command surfaced.
         const msg = `📖 <b>BuyHalfCow Bot — Command Reference</b>
 
 <b>📊 SEE</b> — what's happening
 /morning — Campaign-aware brief: self-submits, founders, throttle approvals, hot leads
 /today — Daily brief (numbers + AI top 3 priorities)
+/brief — AI-curated narrative brief w/ drill-down buttons
+/stats — Top-level platform counters (consumers + ranchers + referrals)
 /casestudy [name or slug] — Generate copy-paste social blurb for any rancher
-/leads — Pending consumers awaiting review
-/ranchers — Rancher onboarding pipeline
-/money — Revenue + commission summary
-/find [name or phone] — Search consumers, tap 💬 SMS · 📱 Call · 📧 Email
+/leads — Pending consumers awaiting review (alias /pending)
+/ranchers — Rancher onboarding pipeline (alias /rancherpipeline · /rp)
+/money — Revenue + commission summary (alias /revenue)
+/find [name or phone] — Search consumers, tap 💬 SMS · 📱 Call · 📧 Email (alias /lookup · /buyer)
 /capacity — Ranchers near capacity
-/refs — Referral stage breakdown
+/refs — Referral stage breakdown (alias /pipeline)
+/stuckbuyers — Waitlisted &gt;14d, grouped by state
+/stuckranchers — Signed-not-Live + Live-but-quiet
+/ghostranchers — Ranchers with 2+ buyer ghost reports
 
 <b>🎯 DO</b> — single actions
-/route CO the-high-lonesome-ranch [dry|morning] — Bulk-route stuck buyers
+/route [STATE] [slug] [dry|morning] — Bulk-route stuck buyers (alias /routestate)
 /pause [slug] — Stop sending leads to a rancher (vacation, processing month, sick)
 /resume [slug] — Reactivate a paused rancher
 /blast [STATE] [message] — Quick email to all approved buyers in a state
 /setuppage [name] — Build a rancher landing page (interactive wizard)
-/affiliate [email] — Make someone an affiliate
+/affiliate [email] — Make someone an affiliate (alias /makeaffiliate)
+/comp [email] [tier] [note] — Comp a consumer into a Founder tier
+/match [buyer-name] [rancher-name] — Fuzzy match buyer→rancher w/ inline confirm
+/forcematch [email-or-recId] — Bypass cooldowns, match a stuck buyer now
 
 <b>📨 EMAIL</b> — bulk sends, all in one namespace
-/email checkin — Nudge stalled ranchers
-/email onboard — Send onboarding docs to ranchers missing them
-/email blitz — Personalized update emails to all pipeline ranchers
-/email broadcast [seg] [msg] — Quick broadcast (segments: beef, community, all, ranchers)
-/email draft followup [name] — AI drafts a personalized follow-up
+/email checkin — Nudge stalled ranchers (alias /checkin)
+/email onboard — Send onboarding docs to ranchers missing them (alias /bulkonboard)
+/email blitz — Personalized update emails to all pipeline ranchers (alias /blitz)
+/email broadcast [seg] [msg] — Quick broadcast (segments: beef · community · all · ranchers) (alias /broadcast)
+/email draft followup [name] — AI drafts a personalized follow-up (alias /draft)
 /email draft campaign [seg] [topic] — AI drafts a broadcast campaign
 
 <b>🧠 AI</b> — autonomous tasks
@@ -5463,8 +5505,8 @@ Confirm send?`;
 
 <b>⚙️ SYSTEM</b>
 /status — Health check all dependencies (Airtable, Resend, Telegram, AI)
-/cronstatus — Last-24h run status for every cron (catches missing runs)
-/routingstatus — Buyer routing-segment breakdown (MATCH_NOW · WARM_LEAD · etc)
+/cronstatus — Last-24h run status for every cron (alias /runs)
+/routingstatus — Buyer routing-segment breakdown (alias /segments) — MATCH_NOW · WARM_LEAD · etc
 /emaillog [email] — Last 30d email log for a Consumer
 /pausemail [template] — Kill a specific email template
 /resumemail [template] — Re-enable a paused template
@@ -5474,17 +5516,11 @@ Confirm send?`;
 /bulkfire — Promote all Pending Approval → Intro Sent + fire emails (max 50)
 /pausecron [name] — Pause a cron from firing
 /resumecron [name] — Resume a paused cron
-/forcematch [email-or-recId] — Bypass cooldowns, match a stuck buyer now
-/match [buyer-name] [rancher-name] — Fuzzy match buyer→rancher w/ inline confirm. e.g. <code>/match katie renick</code>
-/stuckbuyers — Waitlisted &gt;14d, grouped by state
-/stuckranchers — Signed-not-Live + Live-but-quiet
-/ghostranchers — Ranchers with 2+ buyer ghost reports
 /start — Welcome + quick tour
 /help — This menu
 
 <i>Tip: just type anything in plain English. I'll figure out what you mean.</i>
-
-<i>Legacy command names still work — /pending, /stats, /lookup, /pipeline, /rancherpipeline, /revenue, /broadcast, /blitz, /checkin, /bulkonboard, /makeaffiliate, /draft, /routestate.</i>`;
+<i>Rate limit: 30 commands/minute per chat (H-6 audit hardening).</i>`;
 
         await sendTelegramMessage(chatId, msg);
       }
