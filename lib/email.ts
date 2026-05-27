@@ -138,6 +138,28 @@ async function _gateEmail<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// PREHEADER TEXT INJECTION — #2 driver of open rate after From line.
+// Injects a hidden preview-text block into HTML emails to improve
+// inbox placement. Pattern: hidden div with zero height/opacity right
+// after <body> tag.
+// ─────────────────────────────────────────────────────────────────────
+function injectPreheader(html: string, preheader: string): string {
+  if (!preheader || !html) return html;
+  // Truncate to 100 chars (preheader sweet spot for most clients)
+  const truncated = preheader.slice(0, 100);
+  // Hidden preheader block: display:none, zero size, zero opacity, mso-hide
+  // for Outlook. The invisible character (U+200C) is a zero-width non-joiner
+  // used by some email templates to prevent clients from auto-hiding too-short
+  // preview text.
+  const preheaderBlock = `<div style="display:none;font-size:1px;color:#fefefe;line-height:1px;font-family:Inter,sans-serif;max-height:0px;max-width:0px;opacity:0;overflow:hidden;mso-hide:all;">${truncated}‌​‌​‌​</div>`;
+  // Inject right after <body> if present, else at start of HTML
+  if (/<body[^>]*>/i.test(html)) {
+    return html.replace(/(<body[^>]*>)/i, `$1${preheaderBlock}`);
+  }
+  return preheaderBlock + html;
+}
+
 const resend = {
   emails: {
     send: async (params: any) => {
@@ -187,7 +209,14 @@ const resend = {
         }
       }
       delete params._skipFooter;
-      // Plain text MUST be generated AFTER footer injection
+      // Preheader text injection — optional field to boost open rate.
+      // If preheader not provided, email sends normally without one.
+      // (auto-derive from subject is future optimization)
+      if (params.preheader && params.html) {
+        params.html = injectPreheader(params.html, params.preheader);
+      }
+      delete params.preheader;
+      // Plain text MUST be generated AFTER footer injection (and preheader)
       if (!params.text && params.html) {
         params.text = htmlToPlainText(params.html);
       }
@@ -339,6 +368,7 @@ export async function sendConsumerConfirmation(data: {
       from: getFromEmail(),
       to: data.email,
       subject,
+      preheader: 'Welcome to BuyHalfCow. Here\'s what happens next.',
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -1020,6 +1050,7 @@ export async function sendBuyerIntroNotification(data: {
         from: getFromEmail(),
         to: data.email,
         subject: introSubject,
+        preheader: `Meet your rancher match: ${esc(data.rancherName)}`,
         headers: getUnsubscribeHeaders(data.email),
       };
       if (data.scheduledAt) {
