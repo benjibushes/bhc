@@ -154,3 +154,13 @@ export function commissionRateForTier(tier: TierSlug | null): number {
   if (!tier) return Number(process.env.COMMISSION_RATE_DEFAULT || '0.10');
   return TIERS[tier].commissionRate;
 }
+
+// Brand Partner Founding 100 cap — shared between /brand-partners page +
+// /api/stats/public endpoint. Single source of truth so cap can never
+// drift between display + enforcement.
+export const FOUNDING_BRAND_PARTNER_CAP = 100;
+
+// Founding Herd cap — already enforced in app/api/founders/checkout/route.ts
+// via lib/secrets.ts FOUNDING_100_CAP. Re-exported here for shared
+// reference w/ frontend display logic.
+export { FOUNDING_100_CAP } from './secrets';
