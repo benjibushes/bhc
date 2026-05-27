@@ -27,6 +27,7 @@ import {
   TABLES,
 } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { PAYMENTS_TABLE } from '@/lib/contracts/payments';
 
 // Mirror the platform webhook's Stripe Events table for idempotency.
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -57,43 +58,80 @@ export async function POST(request: Request) {
   }
 
   // ------------------------------------------------------------------
-  // V2 THIN EVENT PARSE + HYDRATE
+  // EVENT PARSE — V2 thin events first, V1 classic events as fallback.
   //
-  // V2 webhooks deliver a thin payload { id, type, related_object }. We
-  // verify the signature via parseThinEvent then retrieve the full event
-  // via stripe.v2.core.events.retrieve(thinEvent.id).
+  // V2 Connect account events deliver a thin payload { id, type,
+  // related_object } verified via parseThinEvent, then hydrated via
+  // stripe.v2.core.events.retrieve.
   //
-  // The Stripe SDK (v20.4.1) types lag behind the V2 surface — cast on
-  // the resource, NOT on the params, so we keep param shape validation.
+  // V1 connected-account events (charge.dispute.*, charge.refunded,
+  // payout.failed — Audit F6/F7/F8) come through the same endpoint as
+  // classic event payloads verified via constructEvent. Same signing
+  // secret; different payload shape.
+  //
+  // We try V2 first because the JSON has identifiable thin-event keys
+  // (no `data.object`). If that throws (invalid signature OR not a thin
+  // event), we fall back to V1 constructEvent. If BOTH fail, the
+  // signature is genuinely bad → 400.
   // ------------------------------------------------------------------
   const stripe = getStripe();
-  let thinEvent: any;
+  let event: any = null;
+  let isV2 = false;
+  let v2HydrateError: string | null = null;
+
   try {
-    thinEvent = (stripe as any).parseThinEvent(body, sig, CONNECT_WEBHOOK_SECRET);
-  } catch (err: any) {
-    console.error('[stripe-connect webhook] signature verification failed:', err?.message);
-    return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
+    const thinEvent: any = (stripe as any).parseThinEvent(body, sig, CONNECT_WEBHOOK_SECRET);
+    // parseThinEvent returns a minimal object — only proceed to hydrate
+    // if it actually looks like a thin V2 payload (has `related_object`
+    // or starts with `v2.`).
+    const looksV2 =
+      thinEvent?.type?.startsWith?.('v2.') ||
+      !!thinEvent?.related_object;
+    if (looksV2) {
+      try {
+        event = await (stripe.v2.core.events as any).retrieve(thinEvent.id);
+        // Re-attach related_object since V2 retrieve doesn't include it
+        // and our downstream code reads it.
+        if (!event.related_object && thinEvent.related_object) {
+          event.related_object = thinEvent.related_object;
+        }
+        isV2 = true;
+      } catch (err: any) {
+        v2HydrateError = err?.message || 'unknown';
+        // Fall through — V1 fallback below.
+      }
+    }
+  } catch {
+    // parseThinEvent threw — could be V1 payload OR genuinely bad sig.
+    // Fall through to V1 verification.
   }
 
-  let event: any;
-  try {
-    event = await (stripe.v2.core.events as any).retrieve(thinEvent.id);
-  } catch (err: any) {
-    console.error('[stripe-connect webhook] failed to hydrate event', thinEvent?.id, err?.message);
-    // Return 200 — Stripe will not retry a hydrate failure usefully and
-    // we'd just keep retrying against an unreachable id.
-    return NextResponse.json({ received: true, error: 'hydrate_failed' });
+  if (!event) {
+    try {
+      event = stripe.webhooks.constructEvent(body, sig, CONNECT_WEBHOOK_SECRET);
+    } catch (err: any) {
+      // Both V2 and V1 verification failed — bad signature.
+      console.error(
+        '[stripe-connect webhook] signature verification failed:',
+        err?.message,
+        v2HydrateError ? `(v2 hydrate also failed: ${v2HydrateError})` : '',
+      );
+      return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
+    }
   }
 
   // ------------------------------------------------------------------
   // Connect events fire on the CONNECTED account. The account id lives
-  // on `related_object.id` for v2.core.account[...] events; some shapes
-  // surface it as `data.id`. Support both for safety.
+  // on different fields depending on event shape:
+  //   - V2 account events: `related_object.id`
+  //   - V1 events: `event.account` (top-level on the Event object)
+  //   - V1 payout events: `event.data.object.destination` is the bank,
+  //     so we use `event.account` (the connected acct that owns the payout)
   // ------------------------------------------------------------------
   const accountId: string =
     (event as any)?.related_object?.id ||
+    (event as any)?.account ||
     (event as any)?.data?.id ||
-    (thinEvent as any)?.related_object?.id ||
     '';
 
   // ------------------------------------------------------------------
@@ -155,6 +193,17 @@ export async function POST(request: Request) {
         await syncRancherConnectStatus(accountId);
         break;
       }
+
+      // ── Audit F6 — dispute handlers (V1 events on connected account) ──
+      // tier_v2 direct-charge buyer disputes fire on the CONNECTED account,
+      // not the platform. Pre-F6 these were invisible to ops until Stripe
+      // emailed; now we stamp the Payments row + LOUD Telegram alert.
+      case 'charge.dispute.created':
+      case 'charge.dispute.funds_withdrawn':
+      case 'charge.dispute.closed':
+        await handleDispute(event);
+        break;
+
       default:
         // V2 ships many account-related event types we don't care about
         // (settings updates, person updates, etc). Skip + log.
@@ -249,6 +298,71 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
     } catch (e: any) {
       console.warn('[stripe-connect webhook] telegram celebration failed:', e?.message);
     }
+  }
+}
+
+// ============================================================================
+// STRIPE DISPUTE — chargeback handler (Audit F6).
+// Mirrors app/api/webhooks/stripe/route.ts:handleDispute. Lives on BOTH
+// webhooks because charge.dispute.* fires on the CONNECTED account for
+// tier_v2 direct charges and on the PLATFORM for legacy charges; either
+// path needs the same response.
+//
+// Looks up the Payments row by Stripe Payment Intent Id (the field
+// recordDeposit() populates), not by Charge ID. dispute.payment_intent
+// links us; for non-tier_v2 charges no row matches but Telegram still fires.
+// ============================================================================
+async function handleDispute(event: any): Promise<void> {
+  const dispute = event?.data?.object as any;
+  const chargeId: string =
+    typeof dispute?.charge === 'string' ? dispute.charge : dispute?.charge?.id || '';
+  const piId: string =
+    typeof dispute?.payment_intent === 'string'
+      ? dispute.payment_intent
+      : dispute?.payment_intent?.id || '';
+  const amount = (dispute?.amount || 0) / 100;
+  const reason = dispute?.reason || 'unknown';
+  const status = dispute?.status || 'unknown';
+  const eventType = event?.type || 'charge.dispute';
+
+  // Try to find the Payments row (tier_v2 deposits only).
+  let paymentRecordId: string | null = null;
+  if (piId) {
+    try {
+      const safePi = piId.replace(/"/g, '\\"');
+      const rows: any[] = await getAllRecords(
+        PAYMENTS_TABLE,
+        `{Stripe Payment Intent Id} = "${safePi}"`,
+      );
+      if (rows.length > 0) {
+        const rowId: string = rows[0].id;
+        paymentRecordId = rowId;
+        await updateRecord(PAYMENTS_TABLE, rowId, {
+          'Dispute Status': status,
+          'Dispute Amount': amount,
+          'Dispute Reason': reason,
+          'Dispute Updated At': new Date().toISOString(),
+        });
+      }
+    } catch (e: any) {
+      console.error('[stripe-connect dispute] Airtable update failed:', e?.message);
+    }
+  }
+
+  // LOUD Telegram alert — ops needs to act fast on disputes.
+  try {
+    await sendTelegramMessage(
+      TELEGRAM_ADMIN_CHAT_ID,
+      `🚨 STRIPE DISPUTE — ${eventType}\n` +
+        `Amount: $${amount}\n` +
+        `Reason: ${reason}\n` +
+        `Status: ${status}\n` +
+        `Charge: ${chargeId}\n` +
+        `Stripe: https://dashboard.stripe.com/payments/${chargeId}` +
+        (paymentRecordId ? `\nPayments row: ${paymentRecordId}` : ''),
+    );
+  } catch (e: any) {
+    console.warn('[stripe-connect dispute] telegram alert failed:', e?.message);
   }
 }
 

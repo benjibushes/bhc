@@ -12,7 +12,7 @@ import { sendBrandListingConfirmation, sendFoundingHerdWelcome, sendPostPurchase
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { commissionRateForTier, TierSlug } from '@/lib/tiers';
 import { rancherIdFromSubscription } from '@/lib/stripeSubscription';
-import { markDepositSucceeded, markDepositRefunded } from '@/lib/contracts/payments';
+import { markDepositSucceeded, markDepositRefunded, PAYMENTS_TABLE } from '@/lib/contracts/payments';
 import { recordClose } from '@/lib/contracts/rancher';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData } from '@/lib/metaCapi';
@@ -324,6 +324,22 @@ export async function POST(request: Request) {
       }
       break;
     }
+
+    // ── Audit F6 — dispute handlers ──
+    // Pre-F6 the platform was silent on chargebacks: buyer disputes silently
+    // debited the rancher bank + clawed back BHC's fee, and operators only
+    // learned via the Stripe email. Now we stamp the Payments row + fire
+    // a LOUD Telegram alert so ops can act fast (file evidence, refund
+    // proactively, etc).
+    case 'charge.dispute.created':
+    case 'charge.dispute.funds_withdrawn':
+    case 'charge.dispute.closed':
+      try {
+        await handleDispute(event);
+      } catch (e: any) {
+        console.warn('[stripe webhook] dispute handler:', e?.message);
+      }
+      break;
 
     case 'invoice.paid': {
       // Rancher commission invoice paid via Stripe hosted page (or via card-on-file).
@@ -1042,6 +1058,75 @@ async function handleTierSubscriptionDeleted(sub: any): Promise<void> {
     // — keep as historical record of the rancher's last tier.
   });
   console.log(`[stripe webhook] tier sub deleted: rancher ${rancherRecordId} marked canceled`);
+}
+
+// ============================================================================
+// STRIPE DISPUTE — chargeback handler (Audit F6).
+// Fires on charge.dispute.{created,funds_withdrawn,closed}. For tier_v2
+// direct charges this fires on the CONNECTED account; for platform charges
+// (founder lifetime, brand listings) it fires on the PLATFORM. Identical
+// handler lives on both webhook files since either could fire depending on
+// charge type.
+//
+// We look up the Payments row by Stripe Payment Intent Id (the field
+// recordDeposit() actually populates), not by Charge ID. dispute.payment_intent
+// gives us the link; for non-tier_v2 charges no Payments row will match and
+// the Airtable update is skipped — but the Telegram alert ALWAYS fires.
+// ============================================================================
+async function handleDispute(event: any): Promise<void> {
+  const dispute = event.data.object as any;
+  const chargeId: string =
+    typeof dispute?.charge === 'string' ? dispute.charge : dispute?.charge?.id || '';
+  const piId: string =
+    typeof dispute?.payment_intent === 'string'
+      ? dispute.payment_intent
+      : dispute?.payment_intent?.id || '';
+  const amount = (dispute?.amount || 0) / 100;
+  const reason = dispute?.reason || 'unknown';
+  const status = dispute?.status || 'unknown';
+  const eventType = event.type;
+
+  // Try to find the Payments row (tier_v2 deposits only). Look up by PI id
+  // since that's what recordDeposit() stores. For founder lifetime / brand
+  // listing charges, no row will match — that's fine, we still alert.
+  let paymentRecordId: string | null = null;
+  if (piId) {
+    try {
+      const safePi = piId.replace(/"/g, '\\"');
+      const rows: any[] = await getAllRecords(
+        PAYMENTS_TABLE,
+        `{Stripe Payment Intent Id} = "${safePi}"`,
+      );
+      if (rows.length > 0) {
+        const rowId: string = rows[0].id;
+        paymentRecordId = rowId;
+        await updateRecord(PAYMENTS_TABLE, rowId, {
+          'Dispute Status': status,
+          'Dispute Amount': amount,
+          'Dispute Reason': reason,
+          'Dispute Updated At': new Date().toISOString(),
+        });
+      }
+    } catch (e: any) {
+      console.error('[dispute] Airtable update failed:', e?.message);
+    }
+  }
+
+  // LOUD Telegram alert — ops needs to act fast on disputes.
+  try {
+    await sendTelegramMessage(
+      TELEGRAM_ADMIN_CHAT_ID,
+      `🚨 STRIPE DISPUTE — ${eventType}\n` +
+        `Amount: $${amount}\n` +
+        `Reason: ${reason}\n` +
+        `Status: ${status}\n` +
+        `Charge: ${chargeId}\n` +
+        `Stripe: https://dashboard.stripe.com/payments/${chargeId}` +
+        (paymentRecordId ? `\nPayments row: ${paymentRecordId}` : ''),
+    );
+  } catch (e: any) {
+    console.warn('[dispute] telegram alert failed:', e?.message);
+  }
 }
 
 // ============================================================================
