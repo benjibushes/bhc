@@ -3,6 +3,9 @@ import base, { createRecord, TABLES } from '@/lib/airtable';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { getSuppressionList } from '@/lib/email';
 import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export const maxDuration = 30;
 
@@ -62,6 +65,7 @@ export async function POST(request: Request) {
     // Dedupe by email — silently skip if already exists. This prevents duplicate
     // Consumer rows and idempotent retries.
     let isNewRecord = false;
+    let consumerId: string | null = null;
     try {
       const existing = await base(TABLES.CONSUMERS)
         .select({
@@ -73,7 +77,7 @@ export async function POST(request: Request) {
 
       if (existing.length === 0) {
         isNewRecord = true;
-        await createRecord(TABLES.CONSUMERS, {
+        const created = await createRecord(TABLES.CONSUMERS, {
           'Email': email,
           'Full Name': firstName || 'Quick Signup',
           'Source': source,
@@ -83,6 +87,9 @@ export async function POST(request: Request) {
           'Notes': `[quick-signup ${new Date().toISOString().slice(0, 10)} via ${source}]`,
           'Created': new Date().toISOString(),
         });
+        consumerId = created.id;
+      } else {
+        consumerId = existing[0].id;
       }
     } catch (e) {
       console.error('[quick-signup] dedupe/create failed:', e);
@@ -100,7 +107,38 @@ export async function POST(request: Request) {
       // Don't fail the whole request — funnel is non-critical
     }
 
-    return NextResponse.json({ ok: true });
+    // ── Meta Conversions API: server-side `Lead` event ──────────────────
+    // P0 audit I-3. exit-intent modal was firing client pixel only —
+    // ios 14.5+ ATT blocked → exit-intent attribution lost. server capi
+    // mirrors w/ event_id=consumerId so meta dedupes client+server fires.
+    // fbp/fbc cookies threaded through for ad-click match (i-1).
+    if (consumerId) {
+      const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(request);
+      const capiUserAgent = request.headers.get('user-agent') || undefined;
+      fireCapi([{
+        event_name: 'Lead',
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: consumerId,
+        event_source_url: `${SITE_URL}/access`,
+        action_source: 'website',
+        user_data: buildUserData({
+          email,
+          firstName: firstName || undefined,
+          ip,
+          userAgent: capiUserAgent,
+          fbp: capiFbp,
+          fbc: capiFbc,
+        }),
+        custom_data: {
+          content_name: 'BHC Exit-Intent Capture',
+          content_category: source,
+        },
+      }]).catch((e) => console.error('[meta-capi] exit-intent fire failed:', e));
+    }
+
+    // Return eventId so client ExitIntentModal can pass to trackEvent for
+    // pixel+capi dedup.
+    return NextResponse.json({ ok: true, eventId: consumerId || undefined });
   } catch (error: any) {
     console.error('[quick-signup] failed:', error?.message);
     // Don't 500 — the modal will graceful-close. Return ok so it doesn't loop.

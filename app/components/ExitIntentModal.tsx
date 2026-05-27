@@ -68,26 +68,30 @@ export default function ExitIntentModal() {
     if (submitting || !email.includes('@')) return;
     setSubmitting(true);
     try {
-      // POST to existing newsletter/email-capture endpoint.
-      // /api/consumers/quick does not exist yet — falls back to /api/newsletter.
-      // Neither endpoint currently accepts email-only + source. Operator follow-up:
-      //   Create /api/consumers/quick accepting { email, source } and writing
-      //   a minimal Consumers record (Source='exit-intent', Segment='Community').
-      //   OR modify this to hit /api/consumers with synthetic full payload.
-      // Graceful degradation: modal still fires analytics + confirms to user.
-      await fetch('/api/consumers/quick', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, source: 'exit-intent' }),
-      }).catch(() => {
-        // Fall back to legacy newsletter endpoint if /quick doesn't exist
-        return fetch('/api/newsletter', {
+      // POST to /api/consumers/quick. Server-side: writes minimal Consumer row,
+      // fires CAPI Lead w/ event_id=consumerId + fbp/fbc cookies (I-1, I-3),
+      // returns eventId. Client passes eventId to trackEvent so Meta dedupes
+      // client Pixel + server CAPI fires.
+      let eventId: string | undefined;
+      try {
+        const res = await fetch('/api/consumers/quick', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, source: 'exit-intent' }),
         });
-      });
-      trackEvent('exit_intent_capture');
+        if (res.ok) {
+          const json = await res.json().catch(() => ({}));
+          if (typeof json?.eventId === 'string') eventId = json.eventId;
+        }
+      } catch {
+        // Network failure — fall back to legacy newsletter endpoint.
+        await fetch('/api/newsletter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, source: 'exit-intent' }),
+        }).catch(() => {});
+      }
+      trackEvent('exit_intent_capture', eventId ? { event_id: eventId } : {});
       setSubmitted(true);
       setTimeout(() => setOpen(false), 2000);
     } catch (err) {
