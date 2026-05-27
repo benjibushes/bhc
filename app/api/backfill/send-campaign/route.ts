@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import jwt from 'jsonwebtoken';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
@@ -11,6 +12,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'bhc-backfill-secret-change-me';
 const EXPIRY_DAYS = parseInt(process.env.BACKFILL_LINK_EXPIRY_DAYS || '30');
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
   try {
     const body = await request.json();
     const { batchSize = 50 } = body;
