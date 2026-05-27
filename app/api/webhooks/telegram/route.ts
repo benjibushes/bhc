@@ -2924,6 +2924,19 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             'Pending Approval',
           ]);
 
+          // ─── Terminal-status guard (added 2026-05-27, P0 audit G-3) ────────
+          // Refuse if Referral.Status already terminal. Without this, operator
+          // could re-reply $ amount to close prompt OR reply to stale prompt →
+          // createCommissionInvoice fired twice → double-billed rancher.
+          if (previousStatus === 'Closed Won' || previousStatus === 'Closed Lost') {
+            await sendTelegramMessage(
+              chatId,
+              `⚠️ Referral <code>${refId}</code> already <b>${previousStatus}</b>. Refusing duplicate close.\n\n` +
+              `If you need to reopen, edit the Airtable record manually.`,
+            );
+            return NextResponse.json({ ok: true });
+          }
+
           // Branch 1: "awaiting" reply → flip to Awaiting Payment + skip invoice
           if (/^(awaiting|pending|later|not paid|not yet|on delivery)\b/i.test(userReply)) {
             await updateRecord(TABLES.REFERRALS, refId, {
