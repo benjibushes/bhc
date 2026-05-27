@@ -378,13 +378,39 @@ Tap a button to fill in that field:`;
 
 export const maxDuration = 60;
 
-// Idempotency Set for Telegram update_ids. Module-level Map survives within
-// a single Vercel function instance; cold starts reset. Good enough for the
-// common case (Telegram redelivers within seconds, not across instances).
-// Audit finding 2026-05-20 #2.
+// Idempotency for Telegram update_ids. H-5 audit fix: prior version was a
+// module-level Map per Vercel function instance. Vercel horizontal scale-out
+// during traffic bursts could leave two instances each processing the same
+// update_id concurrently (Map writes don't cross instances). Rare in practice
+// but the failure mode was a real double-fire of side effects.
+//
+// Now: Upstash Redis SETNX w/ 5min TTL. Cross-instance safe. Falls back to
+// the in-memory Map when Redis isn't configured (dev) OR Redis throws (don't
+// refuse legit Telegram updates because Upstash had a hiccup — better to
+// double-process than to lose).
 const _seenUpdateIds = new Map<number, number>();
 const UPDATE_ID_TTL_MS = 5 * 60_000;
-function _markUpdateSeen(id: number): boolean {
+const UPDATE_ID_TTL_SECONDS = 300;
+
+let _telegramRedis: any | null = null;
+let _telegramRedisInit = false;
+async function getTelegramRedis(): Promise<any | null> {
+  if (_telegramRedisInit) return _telegramRedis;
+  _telegramRedisInit = true;
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  try {
+    const { Redis } = await import('@upstash/redis');
+    _telegramRedis = new Redis({ url, token });
+  } catch (e) {
+    console.error('[telegram] Redis init failed:', e);
+    _telegramRedis = null;
+  }
+  return _telegramRedis;
+}
+
+function _markUpdateSeenMemory(id: number): boolean {
   // Prune old entries opportunistically
   const cutoff = Date.now() - UPDATE_ID_TTL_MS;
   for (const [k, ts] of _seenUpdateIds.entries()) {
@@ -393,6 +419,26 @@ function _markUpdateSeen(id: number): boolean {
   if (_seenUpdateIds.has(id)) return false;
   _seenUpdateIds.set(id, Date.now());
   return true;
+}
+
+async function markUpdateSeen(id: number): Promise<boolean> {
+  const redis = await getTelegramRedis();
+  if (!redis) {
+    return _markUpdateSeenMemory(id);
+  }
+  try {
+    // SETNX semantics via NX flag: returns 'OK' when key was set (first sight),
+    // null when key already existed (duplicate). Upstash JS client returns 'OK'
+    // for success and null for the not-set-because-exists case.
+    const result = await redis.set(`bhc:telegram:update:${id}`, '1', {
+      nx: true,
+      ex: UPDATE_ID_TTL_SECONDS,
+    });
+    return result === 'OK';
+  } catch (e: any) {
+    console.error('[telegram] Redis SETNX failed, falling back to in-memory dedup:', e?.message);
+    return _markUpdateSeenMemory(id);
+  }
 }
 
 export async function POST(request: Request) {
@@ -425,8 +471,10 @@ export async function POST(request: Request) {
   }
 
   // Idempotency — Telegram redelivers on any 5xx or timeout. Drop dupes.
+  // H-5 audit fix: markUpdateSeen now goes through Redis SETNX when available
+  // so two Vercel function instances can't both process the same update_id.
   if (typeof update?.update_id === 'number') {
-    if (!_markUpdateSeen(update.update_id)) {
+    if (!(await markUpdateSeen(update.update_id))) {
       return NextResponse.json({ ok: true, deduped: true });
     }
   }
