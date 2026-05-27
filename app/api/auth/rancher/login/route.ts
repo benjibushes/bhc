@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
-import { sendEmail } from '@/lib/email';
+import { sendMagicLink } from '@/lib/email';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 60;
@@ -124,7 +124,7 @@ export async function POST(request: Request) {
     const loginUrl = `${siteUrl}/rancher/verify?token=${token}`;
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
 
-    await sendEmail({
+    await sendMagicLink({
       to: normalizedEmail,
       subject: 'Your BuyHalfCow Rancher Dashboard Login',
       html: `

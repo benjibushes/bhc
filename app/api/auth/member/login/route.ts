@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
-import { sendEmail } from '@/lib/email';
+import { sendEmail, sendMagicLink } from '@/lib/email';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 60;
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
     const loginUrl = `${siteUrl}/member/verify?token=${token}`;
 
-    await sendEmail({
+    await sendMagicLink({
       to: normalizedEmail,
       subject: 'Your BuyHalfCow Login Link',
       html: `

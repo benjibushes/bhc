@@ -2975,6 +2975,32 @@ export async function sendEmail(params: {
 }
 
 // =====================================================
+// MAGIC LINK — auth-critical login email. Uses its own templateName
+// so it is whitelisted in TRANSACTIONAL_WHITELIST and bypasses the
+// 3/week cap. Routing magic-link sends through generic sendEmail()
+// previously locked members out after 3 login attempts in a week.
+// =====================================================
+
+export async function sendMagicLink(params: {
+  to: string;
+  subject: string;
+  html: string;
+}) {
+  return guardedSend({
+    templateName: 'sendMagicLink',
+    recipientEmail: params.to,
+    subject: params.subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: params.to,
+      subject: params.subject,
+      html: params.html,
+      headers: getUnsubscribeHeaders(params.to),
+    }),
+  });
+}
+
+// =====================================================
 // INSTANT COMMISSION INVOICE — fires the moment a rancher marks Closed Won
 // in their dashboard. Single sale, single line item. Concrete proof of
 // the deal that just closed + clear payment instructions. Monthly cron

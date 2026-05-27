@@ -30,6 +30,24 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendRancherGoLiveEmail',
   'sendRancherSelfSubmitWelcome',
   'sendProspectClaimMagicLink',
+  // Customer-expected order confirmation after wholesale checkout.
+  'sendWholesaleConfirmation',
+  // Customer-expected approval + payment link — blocks revenue if suppressed.
+  'sendBrandApprovalWithPayment',
+  // Customer-expected confirmation that their brand listing is live.
+  'sendBrandListingConfirmation',
+  // Customer-expected payment failure notice — must reach the brand to retry.
+  'sendBrandPaymentFailed',
+  // Customer-expected fulfillment confirmation post-order.
+  'sendBuyerFulfillmentConfirmation',
+  // Customer-expected confirmation that partner application was received.
+  'sendPartnerConfirmation',
+  // Operator-expected internal alerts — capping these blinds the team.
+  'sendAdminAlert',
+  // Operator-expected inquiry alerts so admins can respond in-band.
+  'sendInquiryAlertToAdmin',
+  // Auth-critical: magic-link login. Capping this locks members out.
+  'sendMagicLink',
 ]);
 
 /**
@@ -68,12 +86,9 @@ export async function checkFrequencyCap(
 ): Promise<FrequencyGateResult> {
   const cap = DEFAULT_FREQUENCY_CAP;
 
-  // Transactional whitelist — always pass.
-  if (TRANSACTIONAL_WHITELIST.has(templateName)) {
-    return { ok: true, weekCount: 0, cap };
-  }
-
-  // Check Cron Pauses table for a template-name pause entry.
+  // Pause check runs BEFORE the whitelist so an operator running
+  // `/pausemail <template>` can halt even a transactional template
+  // when it's misbehaving. Emergency stop must always win.
   try {
     const pauses = await getAllRecords(
       TABLES.CRON_PAUSES,
@@ -85,6 +100,11 @@ export async function checkFrequencyCap(
   } catch (e: any) {
     // Don't let pause-table read error block a send. Log + proceed.
     console.warn(`[freqGuard] pause check failed for ${templateName}:`, e?.message);
+  }
+
+  // Transactional whitelist — bypass the rolling 7-day cap.
+  if (TRANSACTIONAL_WHITELIST.has(templateName)) {
+    return { ok: true, weekCount: 0, cap };
   }
 
   // Count rolling 7-day sends to this recipient.
@@ -145,8 +165,6 @@ export async function logEmailSend(input: {
       fields['Recipient Consumer'] = [input.recipientConsumerId];
     }
     await createRecord(TABLES.EMAIL_SENDS, fields);
-    // Invalidate the cap cache for this recipient — next send will refresh.
-    _countCache.delete(input.recipientEmail.toLowerCase());
   } catch (e: any) {
     // Use console.error so this surfaces in Vercel log API (console.warn is invisible there).
     // Log the full error object — statusCode + errors array — so the root cause is findable
@@ -157,6 +175,11 @@ export async function logEmailSend(input: {
       'statusCode:', e?.statusCode,
       'FULL ERROR:', JSON.stringify(e?.errors || e?.error || e),
     );
+  } finally {
+    // Invalidate the cap cache for this recipient regardless of whether
+    // the Airtable log write succeeded. If logging failed (422/403), the
+    // cache would otherwise stay stale and over/under-cap subsequent sends.
+    _countCache.delete(input.recipientEmail.toLowerCase());
   }
 }
 
