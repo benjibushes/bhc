@@ -23,11 +23,12 @@ import { useEffect, useState } from 'react';
 interface Props {
   rancherId: string;
   pricingModel: 'legacy' | 'tier_v2' | string;
+  wizardToken?: string;
   onComplete: () => void;
   onBack?: () => void;
 }
 
-export default function StripeConnectStep({ rancherId, pricingModel, onComplete, onBack }: Props) {
+export default function StripeConnectStep({ rancherId, pricingModel, wizardToken, onComplete, onBack }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -52,7 +53,10 @@ export default function StripeConnectStep({ rancherId, pricingModel, onComplete,
       const res = await fetch('/api/rancher/connect/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rancherId }),
+        // from='wizard' + wizardToken tell the route to set return_url back
+        // to the setup wizard (Step 8) instead of /rancher/billing — so the
+        // rancher resumes Fulfillment + Sign rather than getting stranded.
+        body: JSON.stringify({ rancherId, from: 'wizard', wizardToken }),
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));

@@ -34,6 +34,20 @@ export async function POST(req: Request) {
   if (r instanceof NextResponse) return r;
   const { session } = r;
 
+  // Origin-aware return URL: wizard caller resumes at setup Step 8 (Fulfillment).
+  // Default (billing dashboard caller) returns to /rancher/billing.
+  // Without this, ranchers completing Stripe inside the wizard get stranded on
+  // /rancher/billing and skip Step 8 (Fulfillment) + Step 9 (Sign agreement).
+  let fromWizard = false;
+  let wizardToken = '';
+  try {
+    const body = await req.json().catch(() => ({} as any));
+    fromWizard = body?.from === 'wizard';
+    wizardToken = typeof body?.wizardToken === 'string' ? body.wizardToken : '';
+  } catch {
+    /* body optional */
+  }
+
   const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
   if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
 
@@ -74,9 +88,13 @@ export async function POST(req: Request) {
 
   // Generate onboarding link
   try {
+    const returnUrl =
+      fromWizard && wizardToken
+        ? `${SITE_URL}/rancher/setup?token=${encodeURIComponent(wizardToken)}&connectComplete=1`
+        : `${SITE_URL}/rancher/billing?onboarding=done`;
     const { url } = await createOnboardingLink({
       accountId,
-      returnUrl: `${SITE_URL}/rancher/billing?onboarding=done`,
+      returnUrl,
       refreshUrl: `${SITE_URL}/api/rancher/connect/start`,
     });
     return NextResponse.json({ url, accountId });

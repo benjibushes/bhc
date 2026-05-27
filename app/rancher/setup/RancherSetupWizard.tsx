@@ -240,6 +240,18 @@ export default function RancherSetupWizard() {
     })();
   }, [token]);
 
+  // Resume-from-Stripe handler. After /api/rancher/connect/start sends a tier_v2
+  // rancher to Stripe Express, Stripe redirects back here with ?connectComplete=1
+  // and the wizard should jump straight to Step 8 (Fulfillment) instead of
+  // making them restart from Step 0. Only run once rancher data is loaded so
+  // we don't fight the initial setStep(0).
+  const connectComplete = searchParams.get('connectComplete') === '1';
+  useEffect(() => {
+    if (!connectComplete) return;
+    if (!rancher) return;
+    setStep(8);
+  }, [connectComplete, rancher]);
+
   const setField = (key: string, value: any) => setForm((f) => ({ ...f, [key]: value }));
 
   // Phone mask — formats raw input as (555) 555-5555 progressively. Plays
@@ -1226,6 +1238,7 @@ export default function RancherSetupWizard() {
           <StripeConnectStep
             rancherId={rancher.id}
             pricingModel={String((rancher as any)['Pricing Model'] || 'legacy')}
+            wizardToken={token}
             onComplete={() => setStep(8)}
             onBack={() => setStep(7)}
           />
