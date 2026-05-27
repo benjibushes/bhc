@@ -149,9 +149,23 @@ function DepositPageContent() {
         <h1 className="text-2xl md:text-4xl mt-4 mb-2 font-serif">
           Reserve your beef
         </h1>
-        <p className="text-saddle mb-8">
-          Rancher · <strong>{info.rancher.ranchName || info.rancher.name}</strong>{info.rancher.state ? ` · ${info.rancher.state}` : ''}
+        <p className="text-saddle mb-6">
+          From <strong>{info.rancher.ranchName || info.rancher.name}</strong>{info.rancher.state ? ` in ${info.rancher.state}` : ''} · raised direct
         </p>
+
+        {/* Rancher trust card — name + state + verified pin. Photo + certifications
+            not surfaced via API yet; keep it minimal + honest. */}
+        <div className="bg-white border border-dust p-3 md:p-4 mb-6 flex items-center gap-3">
+          <div className="w-10 h-10 md:w-12 md:h-12 flex-shrink-0 bg-sage-dark text-bone flex items-center justify-center font-serif text-lg" aria-hidden="true">
+            {(info.rancher.name || 'R').charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-medium truncate">{info.rancher.name}</div>
+            <div className="text-xs text-saddle">
+              {info.rancher.ranchName ? `${info.rancher.ranchName} · ` : ''}{info.rancher.state || 'Verified ranch'} · personally certified by Ben
+            </div>
+          </div>
+        </div>
 
         {canceled && (
           <div className="border border-dust bg-bone p-3 mb-6 text-saddle text-sm">
@@ -254,7 +268,7 @@ function DepositPageContent() {
           <div className="bg-white border border-dust p-3 md:p-4">
             <div className="text-xs uppercase tracking-wider text-saddle mb-2">How the payment works</div>
             <p className="text-sm">
-              Your {selectedCutData ? fmtUsd(selectedCutData.price) : ''} goes to {info.rancher.name} through Stripe. We hold no funds at BuyHalfCow. {info.rancher.name} ships/delivers/has you pick up. You + {info.rancher.name} coordinate details by message — we already have a thread open for you.
+              Your {selectedCutData ? fmtUsd(selectedCutData.price) : ''} routes to {info.rancher.name} through Stripe. BuyHalfCow takes its commission off the top — that&apos;s how we stay free for buyers. {info.rancher.name} handles pickup, delivery, or shipping; you two coordinate the details in your message thread.
             </p>
           </div>
         </div>

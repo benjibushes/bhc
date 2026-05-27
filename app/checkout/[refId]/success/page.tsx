@@ -55,43 +55,62 @@ function DepositSuccessContent() {
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      <div className="max-w-2xl mx-auto px-6 py-12">
-        <h1 className="text-4xl mb-2" style={{ fontFamily: 'Georgia, serif' }}>
-          Deposit confirmed
+      <div className="max-w-2xl mx-auto px-4 md:px-6 py-8 md:py-12">
+        <h1 className="font-serif text-3xl md:text-4xl mb-2">
+          Deposit confirmed.
         </h1>
-        <p className="text-saddle mb-8 text-lg">
-          Your payment to <strong>{rancherName}</strong> went through.
+        <p className="text-saddle mb-6 md:mb-8 text-base md:text-lg">
+          Your payment to <strong>{rancherName}</strong> went through. A receipt is in your email.
         </p>
 
-        <div className="bg-white border border-dust p-6 mb-8">
-          <h2 className="text-xl mb-4" style={{ fontFamily: 'Georgia, serif' }}>What happens next:</h2>
-          <ol className="space-y-3 text-charcoal">
-            <li><span className="text-saddle">1.</span> {rancherName} got an email + text. They&apos;ll reply within 24h.</li>
-            <li><span className="text-saddle">2.</span> You + {rancherName} arrange pickup/delivery in the message thread.</li>
-            <li><span className="text-saddle">3.</span> Once you receive your beef, {rancherName} confirms fulfillment and gets paid out.</li>
+        {/* What's next — honest, day-by-day. No tracking promise; rancher
+            coordinates directly. */}
+        <div className="bg-white border border-dust p-4 md:p-6 mb-6">
+          <h2 className="font-serif text-lg md:text-xl mb-4">What happens next</h2>
+          <ol className="space-y-4 text-sm md:text-base text-charcoal">
+            <li className="flex gap-3">
+              <span className="text-saddle font-medium flex-shrink-0">Today:</span>
+              <span>{rancherName} got the deposit notification by email and text. Expect a reply within 24&ndash;48 hours.</span>
+            </li>
+            <li className="flex gap-3">
+              <span className="text-saddle font-medium flex-shrink-0">This week:</span>
+              <span>You and {rancherName} settle pickup or delivery details in your message thread &mdash; date, exact location, balance due at pickup.</span>
+            </li>
+            <li className="flex gap-3">
+              <span className="text-saddle font-medium flex-shrink-0">When ready:</span>
+              <span>You pick up or {rancherName} delivers. {rancherName} confirms fulfillment and gets paid out by Stripe.</span>
+            </li>
           </ol>
+        </div>
+
+        {/* BHC Promise reminder — paid-ad buyers landing here for the first time
+            need the reassurance reinforced. */}
+        <div className="border-l-4 border-sage-dark bg-white p-4 md:p-5 mb-6 md:mb-8">
+          <p className="text-sm text-charcoal leading-relaxed">
+            <strong>BHC Promise still applies.</strong> If anything goes sideways &mdash; cold-chain failure, the beef isn&apos;t what you expected, anything &mdash; reply to your message thread or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a> within 7 days of receipt. We refund the deposit.
+          </p>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3">
           <Link
             href={`/checkout/${refId}/ask`}
-            className="flex-1 text-center bg-charcoal text-bone px-6 py-3 uppercase tracking-wider text-sm hover:bg-saddle transition"
+            className="flex-1 text-center bg-charcoal text-bone px-6 py-3 min-h-[48px] flex items-center justify-center uppercase tracking-wider text-sm hover:bg-saddle transition"
           >
-            Open thread →
+            Open thread with {rancherName.split(' ')[0]} &rarr;
           </Link>
           <Link
             href="/member"
-            className="flex-1 text-center bg-bone border border-charcoal text-charcoal px-6 py-3 uppercase tracking-wider text-sm hover:bg-divider transition"
+            className="flex-1 text-center bg-bone border border-charcoal text-charcoal px-6 py-3 min-h-[48px] flex items-center justify-center uppercase tracking-wider text-sm hover:bg-divider hover:text-bone transition"
           >
             Your dashboard
           </Link>
         </div>
 
         <div className="mt-8 pt-6 border-t border-divider text-center text-saddle text-sm">
-          <p>Receipt sent to your email. You&apos;ll get tracking when your beef ships.</p>
+          <p>Questions? Reply to the receipt email or message {rancherName} directly.</p>
           {sessionId && (
-            <p className="text-xs text-dust mt-2">
-              <code>{sessionId.slice(0, 28)}…</code>
+            <p className="text-xs text-dust mt-3 font-mono break-all">
+              ref: {sessionId.slice(0, 24)}&hellip;
             </p>
           )}
         </div>

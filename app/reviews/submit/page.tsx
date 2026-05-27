@@ -30,14 +30,14 @@ export default async function ReviewSubmitPage({ searchParams }: PageProps) {
 
   if (!token) {
     return (
-      <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E] flex items-center justify-center px-4 py-12">
-        <div className="max-w-md w-full bg-white border border-[#A7A29A] p-10">
-          <h1 className="font-serif text-2xl mb-4">Missing link token</h1>
-          <p className="text-[#6B4F3F] mb-6">
+      <main className="min-h-screen bg-bone text-charcoal flex items-center justify-center px-4 py-12">
+        <div className="max-w-md w-full bg-white border border-dust p-6 md:p-10">
+          <h1 className="font-serif text-2xl mb-3">Missing link token</h1>
+          <p className="text-saddle mb-6 leading-relaxed">
             This page needs the magic link from your email. If you got an email asking for a
             quick review, click the link there to come back here.
           </p>
-          <Link href="/" className="text-[#0E0E0E] underline">
+          <Link href="/" className="text-charcoal underline">
             Back to BuyHalfCow
           </Link>
         </div>
@@ -46,15 +46,16 @@ export default async function ReviewSubmitPage({ searchParams }: PageProps) {
   }
 
   return (
-    <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E] flex items-center justify-center px-4 py-12">
-      <div className="max-w-md w-full bg-white border border-[#A7A29A] p-10">
+    <main className="min-h-screen bg-bone text-charcoal flex items-center justify-center px-4 py-12">
+      <div className="max-w-md w-full bg-white border border-dust p-6 md:p-10">
         <h1 className="font-serif text-2xl mb-2">Quick favor.</h1>
-        <p className="text-[#6B4F3F] mb-6">
-          One rating + one sentence about your beef share. Real words, your voice. Takes 30 seconds.
+        <p className="text-saddle mb-6 leading-relaxed">
+          One rating + one sentence about your beef share. Real words, your voice. Takes 30 seconds &mdash;
+          your review helps the next family find verified beef.
         </p>
         <ReviewSubmitForm token={token} />
-        <p className="mt-8 text-xs text-[#A7A29A]">
-          We share first name + state only — never your last name or email.
+        <p className="mt-8 text-xs text-saddle leading-relaxed">
+          We share first name + state only &mdash; never your last name or email.
         </p>
       </div>
     </main>

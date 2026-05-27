@@ -79,44 +79,44 @@ export default function AskPage() {
   };
 
   if (!loaded) {
-    return <div className="p-8 bg-bone min-h-screen text-charcoal">Loading…</div>;
+    return <div className="p-6 md:p-8 bg-bone min-h-screen text-charcoal">Loading thread&hellip;</div>;
   }
   if (error && !threadId) {
     return (
-      <div className="p-8 bg-bone min-h-screen text-charcoal">
+      <div className="max-w-2xl mx-auto p-6 md:p-8 bg-bone min-h-screen text-charcoal">
         <h1 className="text-2xl font-serif mb-4">Ask your rancher</h1>
         <p className="text-saddle">{error}</p>
         <p className="text-saddle text-sm mt-4">
-          If this looks wrong, <a href="/member" className="underline">go to your dashboard</a> and pick the referral you want to discuss.
+          If this looks wrong, <a href="/member" className="underline">open your dashboard</a> and pick the referral you want to discuss.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-6 bg-bone min-h-screen text-charcoal">
+    <div className="max-w-2xl mx-auto p-4 md:p-6 bg-bone min-h-screen text-charcoal">
       <header className="mb-4">
-        <h1 className="text-2xl font-serif">Ask {rancherName}</h1>
-        <p className="text-saddle text-sm mt-1">
-          Questions before you commit? Send a message — your rancher gets it by email + dashboard. Reply lands here.
+        <h1 className="text-2xl md:text-3xl font-serif">Ask {rancherName}</h1>
+        <p className="text-saddle text-sm mt-2 leading-relaxed">
+          Questions before you reserve? Send a message &mdash; {rancherName} gets it by email + dashboard. Their reply lands here.
         </p>
       </header>
 
-      <div className="border border-dust bg-white p-4 max-h-96 overflow-y-auto mb-4">
+      <div className="border border-dust bg-white p-3 md:p-4 max-h-96 overflow-y-auto mb-4">
         {messages.length === 0 ? (
-          <p className="text-saddle text-sm">No messages yet. Start the conversation below.</p>
+          <p className="text-saddle text-sm">No messages yet. Start the conversation below &mdash; cuts, processing dates, pickup, anything.</p>
         ) : (
           messages.map((m) => {
             const isBuyer = m['Sender Type'] === 'buyer';
             return (
               <div
                 key={m.id}
-                className={`mb-3 border-b border-divider pb-2 ${isBuyer ? '' : ''}`}
+                className="mb-3 border-b border-divider pb-2 last:border-b-0"
               >
                 <div className="text-xs text-saddle uppercase tracking-wide">
-                  {m['Sender Type']} · {new Date(m['Created At']).toLocaleString()}
+                  {isBuyer ? 'you' : rancherName} &middot; {new Date(m['Created At']).toLocaleString()}
                 </div>
-                <div className="mt-1 whitespace-pre-wrap">{m.Body}</div>
+                <div className="mt-1 whitespace-pre-wrap text-sm md:text-base">{m.Body}</div>
               </div>
             );
           })
@@ -127,21 +127,21 @@ export default function AskPage() {
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
-        placeholder={`e.g. Can you do a half cow processed by Aug 15?`}
-        className="w-full border border-dust p-3 min-h-32 bg-white text-charcoal"
+        placeholder={`e.g. Can you do a half cow processed by Aug 15? Local pickup ok?`}
+        className="w-full border border-dust p-3 min-h-32 bg-white text-charcoal text-sm md:text-base"
         maxLength={5000}
       />
-      <div className="flex items-center gap-3 mt-2">
+      <div className="flex items-center justify-between gap-3 mt-2">
         <button
           onClick={send}
           disabled={submitting || !draft.trim()}
-          className="px-6 py-3 bg-charcoal text-bone uppercase tracking-wider text-sm disabled:opacity-50"
+          className="px-6 py-3 min-h-[48px] bg-charcoal text-bone uppercase tracking-wider text-sm hover:bg-saddle transition disabled:opacity-50"
         >
-          {submitting ? 'Sending…' : 'Send Message'}
+          {submitting ? 'Sending&hellip;' : 'Send message'}
         </button>
         <span className="text-saddle text-xs">{draft.length}/5000</span>
       </div>
-      {error && <p className="text-red-700 mt-3 text-sm">{error}</p>}
+      {error && <p className="text-weathered mt-3 text-sm">{error}</p>}
     </div>
   );
 }

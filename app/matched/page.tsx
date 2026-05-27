@@ -72,33 +72,32 @@ export default async function MatchedPage({ searchParams }: Props) {
 
   if (isPending) {
     return (
-      <main className="min-h-screen bg-bone py-16 md:py-24">
+      <main className="min-h-screen bg-bone py-12 md:py-24">
         <Container>
-          <div className="max-w-2xl mx-auto bg-white border border-dust p-10 md:p-14 text-center">
-            <div className="text-6xl mb-6">🤝</div>
-            <h1 className="font-serif text-3xl md:text-4xl mb-4 text-charcoal">
+          <div className="max-w-2xl mx-auto bg-white border border-dust p-6 md:p-14 text-center">
+            <div className="text-5xl md:text-6xl mb-6" aria-hidden="true">🤝</div>
+            <h1 className="font-serif text-2xl md:text-4xl mb-4 text-charcoal">
               You&rsquo;re in.
             </h1>
-            <p className="text-base text-saddle mb-8">
+            <p className="text-base text-saddle mb-8 leading-relaxed">
               I&rsquo;m personally vetting your match with {rancherName} before
-              they reach out — expect 24&ndash;48h.
+              they reach out &mdash; expect 24&ndash;48h.
             </p>
 
             <Divider />
 
-            <div className="text-left bg-bone-warm border-l-4 border-charcoal p-6 my-8 space-y-3">
-              <p className="text-sm text-divider">
+            <div className="text-left bg-bone-warm border-l-4 border-charcoal p-4 md:p-6 my-8 space-y-3">
+              <p className="text-sm text-charcoal leading-relaxed">
                 <strong>Why the pause?</strong> {rancherName} is new to the
                 network and I&rsquo;m hand-checking every intro for the first
-                week. It&rsquo;s how I keep the bar high — for you and for them.
+                week. It&rsquo;s how I keep the bar high &mdash; for you and for them.
               </p>
-              <p className="text-sm text-divider">
+              <p className="text-sm text-charcoal leading-relaxed">
                 <strong>What happens next:</strong> within 24&ndash;48 hours
-                you&rsquo;ll hear from {rancherName} directly. Same flow as a
-                regular match — they&rsquo;ll cover pricing, the next
-                processing date, and how delivery works.
+                you&rsquo;ll hear from {rancherName} directly. They&rsquo;ll
+                cover pricing, the next processing date, and how delivery works.
               </p>
-              <p className="text-sm text-divider">
+              <p className="text-sm text-charcoal leading-relaxed">
                 <strong>Heads up:</strong> the call usually comes from a
                 {' '}{stateLabel} area code on the rancher&rsquo;s personal phone,
                 not an 800 number. Don&rsquo;t miss it.
@@ -107,16 +106,15 @@ export default async function MatchedPage({ searchParams }: Props) {
 
             <Divider />
 
-            <p className="text-xs text-dust mt-10">
-              Reply to my last email if you have questions. I&rsquo;ll personally
-              respond.
+            <p className="text-xs text-saddle mt-8 leading-relaxed">
+              Reply to my last email if you have questions. I&rsquo;ll respond personally.
             </p>
 
-            <p className="text-xs text-dust mt-2">— Benjamin</p>
+            <p className="text-xs text-saddle mt-2">&mdash; Ben</p>
 
-            <div className="mt-10">
+            <div className="mt-8">
               <Link href="/member" className="text-sm underline text-charcoal hover:text-saddle transition-colors">
-                Or go to your member dashboard →
+                Or open your member dashboard &rarr;
               </Link>
             </div>
           </div>
@@ -126,56 +124,56 @@ export default async function MatchedPage({ searchParams }: Props) {
   }
 
   return (
-    <main className="min-h-screen bg-bone py-16 md:py-24">
+    <main className="min-h-screen bg-bone py-12 md:py-24">
       <Container>
-        <div className="max-w-2xl mx-auto bg-white border border-dust p-10 md:p-14 text-center">
-          <div className="text-6xl mb-6">🤝</div>
-          <h1 className="font-serif text-3xl md:text-4xl mb-4 text-charcoal">
-            You're being matched with {rancherName}.
+        <div className="max-w-2xl mx-auto bg-white border border-dust p-6 md:p-14 text-center">
+          <div className="text-5xl md:text-6xl mb-6" aria-hidden="true">🤝</div>
+          <h1 className="font-serif text-2xl md:text-4xl mb-4 text-charcoal">
+            You&rsquo;re matched with {rancherName}.
           </h1>
-          <p className="text-base text-saddle mb-8">
-            Your YES click went through. {rancherName} just got an email with
-            your name, state, and what you're looking for.
+          <p className="text-base text-saddle mb-8 leading-relaxed">
+            Your YES went through. {rancherName} just got an email with your
+            name, state, and what you&rsquo;re looking for.
           </p>
 
           <Divider />
 
-          <div className="text-left bg-bone-warm border-l-4 border-charcoal p-6 my-8 space-y-3">
-            <p className="text-sm text-divider">
-              <strong>Within the next 24–48 hours:</strong> {rancherName} will reach
-              out via email or phone. They have your contact info, your
+          <div className="text-left bg-bone-warm border-l-4 border-charcoal p-4 md:p-6 my-8 space-y-3">
+            <p className="text-sm text-charcoal leading-relaxed">
+              <strong>Next 24&ndash;48 hours:</strong> {rancherName} reaches out
+              direct &mdash; email or phone. They have your contact info, your
               preferred order size, and your state.
             </p>
-            <p className="text-sm text-divider">
-              <strong>What they&rsquo;ll cover on the call:</strong> current pricing
-              for the cut you want, the next processing date, how delivery
-              works, and any questions you have.
+            <p className="text-sm text-charcoal leading-relaxed">
+              <strong>What they&rsquo;ll cover:</strong> current pricing for the
+              cut you want, the next processing date, and how delivery or
+              pickup works.
             </p>
-            <p className="text-sm text-divider">
-              <strong>Pickup or delivery</strong> usually happens 2–4 weeks after
-              you confirm — that&rsquo;s the time the rancher needs to process and
-              age the beef properly.
+            <p className="text-sm text-charcoal leading-relaxed">
+              <strong>Pickup or delivery</strong> usually happens 2&ndash;4 weeks
+              after you confirm &mdash; that&rsquo;s the time the rancher needs
+              to process and age the beef properly.
             </p>
           </div>
 
           <Divider />
 
-          <p className="text-sm text-saddle mt-8">
-            Heads up: the call usually comes from the rancher&rsquo;s personal phone, not
-            an 800 number. If you don&rsquo;t recognize a {stateLabel} area code in the
-            next few days, that&rsquo;s probably them.
+          <p className="text-sm text-saddle mt-8 leading-relaxed">
+            Heads up: the call usually comes from the rancher&rsquo;s personal
+            phone, not an 800 number. A {stateLabel} area code in the next few
+            days &mdash; that&rsquo;s probably them.
           </p>
 
-          <p className="text-xs text-dust mt-10">
-            Reply to my last email if you don&rsquo;t hear from them within 48 hours.
-            I&rsquo;ll personally make sure the connection happens.
+          <p className="text-xs text-saddle mt-8 leading-relaxed">
+            No word within 48 hours? Reply to my last email. I&rsquo;ll make
+            sure the connection happens.
           </p>
 
-          <p className="text-xs text-dust mt-2">— Benjamin</p>
+          <p className="text-xs text-saddle mt-2">&mdash; Ben</p>
 
-          <div className="mt-10">
+          <div className="mt-8">
             <Link href="/member" className="text-sm underline text-charcoal hover:text-saddle transition-colors">
-              Or go to your member dashboard →
+              Or open your member dashboard &rarr;
             </Link>
           </div>
 

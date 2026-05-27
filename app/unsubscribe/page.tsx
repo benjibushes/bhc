@@ -89,16 +89,15 @@ function UnsubscribeContent() {
           ) : submitted ? (
             <>
               <h1 className="font-serif text-2xl mb-3 text-charcoal">
-                You&apos;ve been unsubscribed
+                You&rsquo;re unsubscribed
               </h1>
               <p className="text-saddle leading-relaxed mb-6">
-                We&apos;ve removed <strong>{email}</strong> from our mailing list.
-                You won&apos;t receive any more emails from us.
+                We won&apos;t email <strong>{email}</strong> again.
               </p>
-              <p className="text-dust text-sm">
-                Changed your mind? Email{' '}
-                <a href="mailto:support@buyhalfcow.com" className="text-saddle hover:underline transition-base">
-                  support@buyhalfcow.com
+              <p className="text-saddle text-sm">
+                If this was a mistake, reply{' '}
+                <a href="mailto:hi@buyhalfcow.com" className="text-charcoal hover:underline transition-base">
+                  hi@buyhalfcow.com
                 </a>{' '}
                 and we&apos;ll add you back.
               </p>
@@ -110,8 +109,8 @@ function UnsubscribeContent() {
               </h1>
               <p className="text-saddle leading-relaxed mb-6">
                 {emailFromToken
-                  ? `We're about to unsubscribe ${emailFromToken}.`
-                  : 'Enter your email to unsubscribe from BuyHalfCow emails.'}
+                  ? `We're about to remove ${emailFromToken} from our list.`
+                  : 'Enter your email to stop BuyHalfCow emails.'}
               </p>
               <form onSubmit={handleSubmit}>
                 <input
