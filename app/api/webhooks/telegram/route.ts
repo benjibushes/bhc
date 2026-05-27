@@ -2018,6 +2018,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           await updateRecord(TABLES.RANCHERS, session.rancherId, {
             'Page Live': true,
             'Onboarding Status': 'Live',
+            'Active Status': 'Active',
           });
           triggerLaunchWarmup(`telegram-spgolive:${session.rancherId}`);
           await logSpGolive({
@@ -2236,6 +2237,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           await updateRecord(TABLES.RANCHERS, rancherId, {
             'Page Live': true,
             'Onboarding Status': 'Live',
+            'Active Status': 'Active',
           });
           triggerLaunchWarmup(`telegram-rgolive:${rancherId}`);
           await logGolive({
