@@ -52,6 +52,8 @@ export async function createTierCheckoutSession(input: TierCheckoutInput): Promi
       cancel_url: input.cancelUrl,
       metadata: { rancherId: input.rancherId, tier: input.tier },
       subscription_data: { metadata: { rancherId: input.rancherId, tier: input.tier } },
+      automatic_tax: { enabled: true },
+      customer_update: { address: 'auto' },
     } as any,  // customer_account is V2 — types may lag in SDK 20.4.1
     {
       idempotencyKey: `sub-${input.rancherId}-${input.tier}`,

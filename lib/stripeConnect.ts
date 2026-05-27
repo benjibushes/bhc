@@ -176,6 +176,8 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       },
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
+      automatic_tax: { enabled: true },
+      customer_update: { address: 'auto' },
     },
     {
       stripeAccount: input.rancherConnectAccountId,

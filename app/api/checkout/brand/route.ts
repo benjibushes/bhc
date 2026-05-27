@@ -112,6 +112,9 @@ export async function GET(request: Request) {
         // Allow promo codes — discount levers stay in the Stripe dashboard
         // without code changes.
         allow_promotion_codes: true,
+        automatic_tax: { enabled: true },
+        customer_update: { address: 'auto' },
+        tax_id_collection: { enabled: true },
       },
       {
         idempotencyKey: `brand-tier-${tier}-${Date.now()}`,
