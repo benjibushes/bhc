@@ -5,6 +5,18 @@ import Button from '../components/Button';
 export const metadata = {
   title: 'About',
   description: 'Learn about BuyHalfCow\'s mission to connect serious buyers with verified ranchers',
+  openGraph: {
+    title: 'About',
+    description: 'Learn about BuyHalfCow\'s mission to connect serious buyers with verified ranchers',
+    url: 'https://buyhalfcow.com/about',
+    images: ['/og-image.png'],
+  },
+  twitter: {
+    card: 'summary_large_image' as const,
+    title: 'About',
+    description: 'Learn about BuyHalfCow\'s mission to connect serious buyers with verified ranchers',
+    images: ['/og-image.png'],
+  },
 };
 
 export default function AboutPage() {

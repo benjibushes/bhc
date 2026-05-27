@@ -5,6 +5,18 @@ import Link from 'next/link';
 export const metadata = {
   title: 'Privacy Policy',
   description: 'Privacy Policy for BuyHalfCow private membership network',
+  openGraph: {
+    title: 'Privacy Policy',
+    description: 'Privacy Policy for BuyHalfCow private membership network',
+    url: 'https://buyhalfcow.com/privacy',
+    images: ['/og-image.png'],
+  },
+  twitter: {
+    card: 'summary_large_image' as const,
+    title: 'Privacy Policy',
+    description: 'Privacy Policy for BuyHalfCow private membership network',
+    images: ['/og-image.png'],
+  },
 };
 
 export default function PrivacyPage() {

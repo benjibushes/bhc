@@ -5,6 +5,18 @@ import Link from 'next/link';
 export const metadata = {
   title: 'Terms of Service',
   description: 'Terms of Service for BuyHalfCow private membership network',
+  openGraph: {
+    title: 'Terms of Service',
+    description: 'Terms of Service for BuyHalfCow private membership network',
+    url: 'https://buyhalfcow.com/terms',
+    images: ['/og-image.png'],
+  },
+  twitter: {
+    card: 'summary_large_image' as const,
+    title: 'Terms of Service',
+    description: 'Terms of Service for BuyHalfCow private membership network',
+    images: ['/og-image.png'],
+  },
 };
 
 export default function TermsPage() {

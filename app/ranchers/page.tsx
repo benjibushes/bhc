@@ -9,6 +9,18 @@ import { normalizeImageUrl } from '@/lib/imageUrl';
 export const metadata: Metadata = {
   title: 'Our Ranchers',
   description: 'Browse BuyHalfCow\'s verified rancher partners. Grass-fed, pasture-raised beef — bought direct from the ranch.',
+  openGraph: {
+    title: 'Our Ranchers',
+    description: 'Browse BuyHalfCow\'s verified rancher partners. Grass-fed, pasture-raised beef — bought direct from the ranch.',
+    url: 'https://buyhalfcow.com/ranchers',
+    images: ['/og-image.png'],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Our Ranchers',
+    description: 'Browse BuyHalfCow\'s verified rancher partners. Grass-fed, pasture-raised beef — bought direct from the ranch.',
+    images: ['/og-image.png'],
+  },
 };
 
 // Revalidate every 10 minutes so new live pages appear without a redeploy
