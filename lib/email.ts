@@ -1,8 +1,34 @@
 import { Resend } from 'resend';
 import jwt from 'jsonwebtoken';
+import DOMPurify from 'isomorphic-dompurify';
 import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
 import { JWT_SECRET } from './secrets';
+
+// DOMPurify allowlist for /admin/broadcast HTML mode. P0 audit fix (C-5):
+// operator-supplied HTML was forwarded raw to Resend — compromised template
+// could phish under buyhalfcow.com. Strips <script>, event handlers,
+// javascript: URIs, and anything not in the allowlist.
+const BROADCAST_HTML_ALLOWED_TAGS = [
+  'p', 'br', 'a', 'strong', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4',
+  'blockquote', 'img', 'hr', 'div', 'span', 'table', 'tr', 'td', 'th',
+  'tbody', 'thead', 'b', 'i', 'u', 'small', 'code', 'pre', 'figure',
+  'figcaption', 'html', 'head', 'body', 'style', 'meta', 'title', 'link',
+];
+const BROADCAST_HTML_ALLOWED_ATTR = [
+  'href', 'src', 'alt', 'title', 'style', 'class', 'target', 'rel', 'width',
+  'height', 'border', 'align', 'cellpadding', 'cellspacing', 'bgcolor',
+  'colspan', 'rowspan', 'lang',
+];
+
+export function sanitizeBroadcastHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: BROADCAST_HTML_ALLOWED_TAGS,
+    ALLOWED_ATTR: BROADCAST_HTML_ALLOWED_ATTR,
+    ALLOWED_URI_REGEXP: /^(https?:|mailto:|tel:|\/|#)/i,
+    WHOLE_DOCUMENT: true,
+  });
+}
 
 const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
 
@@ -2012,12 +2038,16 @@ export async function sendBroadcastEmail(data: {
     subject: data.subject,
     send: () => {
       if (data.htmlBody) {
+        // P0 audit fix (C-5): sanitize operator-supplied HTML before Resend.
+        // Strips <script>, on* event handlers, javascript: URIs, and any tag
+        // outside the allowlist (see BROADCAST_HTML_ALLOWED_TAGS above).
+        const cleanHtml = sanitizeBroadcastHtml(data.htmlBody);
         return resend.emails.send({
           from: getFromEmail(),
           to: data.to,
           subject: data.subject,
           headers: getUnsubscribeHeaders(data.to),
-          html: data.htmlBody,
+          html: cleanHtml,
         });
       }
       return resend.emails.send({
