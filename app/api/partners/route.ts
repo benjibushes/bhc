@@ -5,6 +5,7 @@ import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
 import { sendTelegramPartnerAlert } from '@/lib/telegram';
 import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { normalizeState } from '@/lib/states';
 
 export const maxDuration = 60;
 
@@ -81,7 +82,7 @@ export async function POST(request: Request) {
         'Operator Name': operatorName,
         'Email': email,
         'Phone': phone || '',
-        'State': state,
+        'State': normalizeState(state) || state,
         'Beef Types': beefTypes,
         'Monthly Capacity': parseInt(monthlyCapacity) || 0,
         'Certifications': certifications || '',
@@ -158,7 +159,7 @@ export async function POST(request: Request) {
         email,
         details: {
           Operator: operatorName,
-          State: state,
+          State: normalizeState(state) || state,
           'Beef Types': beefTypes,
           'Monthly Capacity': monthlyCapacity,
         },
@@ -291,7 +292,7 @@ export async function POST(request: Request) {
         'Phone': phone || '',
         'Property Type': propertyType,
         'Acreage': parseInt(acreage) || 0,
-        'State': state,
+        'State': normalizeState(state) || state,
         'Property Location': propertyLocation || '',
         'Asking Price': askingPrice || '',
         'Description': description || '',
