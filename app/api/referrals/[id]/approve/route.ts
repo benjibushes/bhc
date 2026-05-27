@@ -5,6 +5,7 @@ import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
+import { requireAdmin } from '@/lib/adminAuth';
 
 function esc(str: string): string {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -14,6 +15,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
+
   try {
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
