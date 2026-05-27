@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createRecord, updateRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, escapeAirtableValue, getRancherBySlug } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { validateAffiliateRefForSignup } from '@/lib/affiliates';
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
       orderType: orderTypeRaw, budgetRange: budgetRangeRaw, timing, notes,
       interestBeef: interestBeefRaw, interestLand, interestMerch, interestAll,
       intentScore, intentClassification, segment,
-      source, campaign, utmParams, ref,
+      source, campaign, utmParams, ref, rancherSlug,
     } = body;
 
     // ── DEFAULT QUALIFICATION SIGNALS — revenue lever ────────────────
@@ -196,9 +196,29 @@ export async function POST(request: Request) {
     // bracket-level weights so casual signups land at ~40, serious buyers at 70+.
     const consumerSegment = (interestBeef || interestAll) && orderType ? 'Beef Buyer' : 'Community';
     const isRancherPageLead = source === 'rancher-page' && campaign?.startsWith('rancher-');
+
+    // G15 — rancher deep-link attribution on /access?rancher=<slug>
+    // Pre-attribute lead to the rancher who shared the link. Lookup rancher by slug
+    // and treat as similar to rancher-page lead (high intent, direct relationship).
+    let rancherRecord: any = null;
+    let isRancherDeepLink = false;
+    if (rancherSlug) {
+      try {
+        rancherRecord = await getRancherBySlug(rancherSlug);
+        if (rancherRecord) {
+          isRancherDeepLink = true;
+        } else {
+          console.warn(`[signup] rancher slug "${rancherSlug}" not found or not live`);
+        }
+      } catch (e) {
+        console.error(`[signup] error looking up rancher slug "${rancherSlug}":`, e);
+      }
+    }
+
     let serverIntentScore = 0;
-    if (isRancherPageLead) {
-      // Rancher page leads clicked "Buy" on a specific rancher — high intent by definition.
+    if (isRancherPageLead || isRancherDeepLink) {
+      // Both rancher-page leads and rancher deep-link signups represent high intent
+      // (clicked "Buy" on rancher or shared rancher's custom link). Boost to 85.
       serverIntentScore = 85;
     } else {
       // Interest signal
@@ -282,26 +302,31 @@ export async function POST(request: Request) {
         timing ? `[Timing: ${timing}]` : '',
         notes || '',
       ].filter(Boolean).join('\n'),
-      'Source': source || 'organic',
+      'Source': isRancherDeepLink ? `rancher-${rancherSlug}` : (source || 'organic'),
       'Intent Score': serverIntentScore,
       'Intent Classification': serverIntentClassification,
       'Referral Status': 'Unmatched',
       'Campaign': campaign || '',
       'UTM Parameters': utmParams || '',
-      // Rancher-page leads explicitly clicked "Buy {tier}" on a specific
-      // rancher's landing page. That's the strongest possible intent signal —
-      // equivalent to a YES click on the Ready-to-Buy prompt. Mark them
-      // ready-to-buy at creation so matching/suggest sees the flag and
-      // formats the rancher's intro email with the 🔥 prefix + READY TO BUY
-      // banner. Telegram fires the READY-TO-BUY MATCH alert too.
+      // Rancher-page leads and rancher deep-link leads explicitly clicked "Buy {tier}"
+      // or shared a rancher's custom link. That's the strongest possible intent signal —
+      // equivalent to a YES click on the Ready-to-Buy prompt. Mark them ready-to-buy at
+      // creation so matching/suggest sees the flag and formats the rancher's intro email
+      // with the 🔥 prefix + READY TO BUY banner. Telegram fires the READY-TO-BUY MATCH alert too.
       // High-intent timing at signup is equivalent to clicking YES on the warmup email.
       // 'Within 30 days' and '1-3 months' both indicate immediate purchase intent, so
       // set Ready to Buy = true at creation. This puts the buyer into the MATCH_NOW
       // segment on the next reclassify-buyers run and fires intro same-second rather
       // than waiting for a warmup email + YES click (multi-day delay).
-      'Ready to Buy': isRancherPageLead || timing === 'Within 30 days' || timing === '1-3 months',
+      'Ready to Buy': isRancherPageLead || isRancherDeepLink || timing === 'Within 30 days' || timing === '1-3 months',
     };
     if (referredBy) consumerFields['Referred By'] = referredBy;
+
+    // G15 — rancher deep-link leads get linked to the rancher who shared the link
+    // (Preferred Rancher field is a linked record).
+    if (isRancherDeepLink && rancherRecord) {
+      consumerFields['Preferred Rancher'] = [rancherRecord.id];
+    }
 
     // Maintenance mode: store the consumer record but skip ALL downstream
     // processing — no emails, no telegram, no matching. Tag the record as
@@ -346,9 +371,10 @@ export async function POST(request: Request) {
       buyerId: record.id,
       intentScore: serverIntentScore,
       metadata: {
-        source: source || 'organic',
+        source: isRancherDeepLink ? `rancher-${rancherSlug}` : (source || 'organic'),
         state,
         isRancherPageLead,
+        isRancherDeepLink,
         readyToBuy: !!consumerFields['Ready to Buy'],
       },
     });

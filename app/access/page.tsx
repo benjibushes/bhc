@@ -198,7 +198,18 @@ function AccessPageContent() {
     source: 'organic',
     utmParams: '',
     ref: '',
+    rancherSlug: '',
   });
+
+  // ── G15 Rancher hero overlay ─────────────────────────────────────────────
+  // When ?rancher=<slug>, optionally fetch rancher name to show "you're
+  // matching with {Ranch Name}" hero copy. Non-blocking: if fetch fails,
+  // the form still works (Preferred Rancher link set server-side).
+  interface RancherHero {
+    id: string;
+    name: string;
+  }
+  const [rancherHero, setRancherHero] = useState<RancherHero | null>(null);
 
   const searchParams = useSearchParams();
   // Stable serialised string prevents useEffect infinite-loop (see legacy bug
@@ -208,20 +219,25 @@ function AccessPageContent() {
   useEffect(() => {
     const refFromUrl = searchParams.get('ref') || searchParams.get('aff');
     if (refFromUrl) localStorage.setItem('bhc_ref', refFromUrl);
+    // G15 — rancher deep-link attribution on /access?rancher=<slug>
+    const rancherSlugFromUrl = searchParams.get('rancher');
+    if (rancherSlugFromUrl) localStorage.setItem('bhc_rancher_slug', rancherSlugFromUrl);
     const campaign = localStorage.getItem('bhc_campaign') || '';
     const source = localStorage.getItem('bhc_source') || 'organic';
     const utmParams = localStorage.getItem('bhc_utm_params') || '';
     const ref = refFromUrl || localStorage.getItem('bhc_ref') || '';
+    const rancherSlug = rancherSlugFromUrl || localStorage.getItem('bhc_rancher_slug') || '';
     setCampaignData((prev) => {
       if (
         prev.campaign === campaign &&
         prev.source === source &&
         prev.utmParams === utmParams &&
-        prev.ref === ref
+        prev.ref === ref &&
+        prev.rancherSlug === rancherSlug
       ) {
         return prev;
       }
-      return { campaign, source, utmParams, ref };
+      return { campaign, source, utmParams, ref, rancherSlug };
     });
 
     // Affiliate click ping — de-duped per session
@@ -237,6 +253,25 @@ function AccessPageContent() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParamsString]);
+
+  // G15 — fetch rancher hero data when ?rancher=<slug> present
+  useEffect(() => {
+    if (campaignData.rancherSlug) {
+      fetch(`/api/public/ranchers?slug=${encodeURIComponent(campaignData.rancherSlug)}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (data?.rancher) {
+            const name = data.rancher['Ranch Name'] || data.rancher['Operator Name'] || 'Ranch';
+            setRancherHero({ id: data.rancher.id, name });
+          }
+        })
+        .catch(() => {
+          // Non-blocking: rancher hero is nice-to-have. If fetch fails, form still works.
+        });
+    } else {
+      setRancherHero(null);
+    }
+  }, [campaignData.rancherSlug]);
 
   // ── access_view analytics on mount ────────────────────────────────────────
   useEffect(() => {
@@ -422,6 +457,7 @@ function AccessPageContent() {
           campaign: campaignData.campaign,
           utmParams: campaignData.utmParams,
           ref: campaignData.ref || undefined,
+          rancherSlug: campaignData.rancherSlug || undefined,
         }),
       });
 
@@ -717,6 +753,16 @@ function AccessPageContent() {
             <h1 className="font-serif text-3xl sm:text-5xl text-charcoal lowercase mb-3 leading-tight">
               get matched to a verified rancher in your state in 90 seconds
             </h1>
+
+            {/* G15 — Rancher hero overlay when ?rancher=<slug> */}
+            {rancherHero && (
+              <div className="bg-amber-50 border border-amber-200 rounded-sm p-4 mb-8 text-center">
+                <p className="text-saddle text-lg font-semibold">
+                  you're matching with <span className="text-charcoal font-serif">{rancherHero.name}</span>
+                </p>
+              </div>
+            )}
+
             <p className="text-saddle text-lg mb-8 leading-relaxed">
               pick your state. answer 4 questions. we route you to the rancher
               closest to you. you talk direct.
