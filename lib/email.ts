@@ -258,14 +258,24 @@ async function guardedSend(opts: {
     return { success: false, suppressed: true, reason: gate.reason };
   }
   try {
-    await opts.send();
+    const result: any = await opts.send();
+    // Detect the internal resend wrapper's short-circuit for suppressed
+    // recipients (Unsubscribed/Bounced/Complained). The wrapper returns
+    // { data: { id: 'skipped-suppressed' } } instead of actually sending.
+    // Without this check, we'd log status='sent' for blocked sends —
+    // poisoning the audit log + frequency-cap denominators.
+    const isSuppressed = result?.data?.id === 'skipped-suppressed';
     await logEmailSend({
       recipientEmail: opts.recipientEmail,
       recipientConsumerId: opts.recipientConsumerId,
       templateName: opts.templateName,
       subject: opts.subject,
-      status: 'sent',
+      status: isSuppressed ? 'suppressed' : 'sent',
+      suppressionReason: isSuppressed ? 'unsubscribed-bounced-or-complained' : undefined,
     });
+    if (isSuppressed) {
+      return { success: false, suppressed: true, reason: 'unsubscribed-bounced-or-complained' };
+    }
     return { success: true };
   } catch (error: any) {
     // Don't log to Email Sends as 'sent' if Resend threw — that would
