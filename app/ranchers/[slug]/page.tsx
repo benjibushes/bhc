@@ -328,6 +328,18 @@ export default async function RancherPage(
                   </div>
                 )}
               </div>
+
+              {/* Secondary CTA: Ask a question (verified ranchers only) */}
+              {!isProspect && (
+                <div className="pt-4">
+                  <Link
+                    href={`/ranchers/${slug}/contact`}
+                    className="text-sm text-saddle hover:text-charcoal underline underline-offset-2 transition-colors"
+                  >
+                    Have a question? Ask {operatorName ? operatorName.split(' ')[0] : 'the ranch'} →
+                  </Link>
+                </div>
+              )}
             </div>
           </div>
         </Container>
