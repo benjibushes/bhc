@@ -6,7 +6,7 @@ import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 90;
-import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy, getSuppressionList } from '@/lib/email';
+import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy, sendStateWaitlistLetter, getSuppressionList } from '@/lib/email';
 import { normalizeState } from '@/lib/states';
 import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
@@ -556,6 +556,34 @@ export async function POST(request: Request) {
             firstName, email, state, rancherAvailable: false,
           });
           buyerStage = 'WAITING';
+
+          // F-1 audit fix: ALSO fire sendStateWaitlistLetter for any
+          // out-of-state signup, including Community-segment buyers
+          // (Order Type blank, Budget blank → segment != "Beef Buyer").
+          // Pre-fix, this letter only fired from matching/suggest:1015 —
+          // which is gated behind formIsQualified + consumerSegment === 'Beef Buyer',
+          // so Community signups never got the founder-voice letter.
+          // Mirror the matching/suggest signature + stamp Routing Segment
+          // counter so email-sequences cron doesn't double-fire.
+          const normalizedBuyerState = normalizeState(state) || state.toString().trim().toUpperCase();
+          if (email) {
+            sendStateWaitlistLetter({
+              email,
+              firstName,
+              buyerState: normalizedBuyerState,
+            })
+              .then(async () => {
+                try {
+                  await updateRecord(TABLES.CONSUMERS, record.id, {
+                    'Routing Segment Send Count': 1,
+                    'Routing Segment Last Sent At': new Date().toISOString(),
+                  });
+                } catch (e) {
+                  console.error('[state-waitlist] segment counter stamp failed:', e);
+                }
+              })
+              .catch(e => console.error('[state-waitlist] signup-time fire failed:', e));
+          }
         }
 
         // Set Buyer Stage + Updated At via contract — emits funnel event.

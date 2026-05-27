@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import { sendRancherApproval, sendRancherGoLiveEmail } from '@/lib/email';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals, MAX_ACTIVE_REFERRALS_FIELD } from '@/lib/rancherCapacity';
+import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
+import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 
 export async function PATCH(
   request: NextRequest,
@@ -96,7 +98,51 @@ export async function PATCH(
       } catch { /* proceed */ }
     }
 
+    // P1 audit D-3: capture pre-state for reversible audit log
+    let prevRancher: any = null;
+    try { prevRancher = await getRecordById(TABLES.RANCHERS, id); } catch { /* non-fatal */ }
+
     const updatedRecord = await updateRecord(TABLES.RANCHERS, id, fields);
+
+    // Audit log: any admin PATCH on a rancher record is a tracked mutation.
+    // Stores the prior values of every field we touched so a Telegram undo
+    // card can restore on misclick. Non-fatal — bare-minimum coverage > none.
+    try {
+      const reverseFields: Record<string, unknown> = {};
+      if (prevRancher) {
+        for (const key of Object.keys(fields)) {
+          reverseFields[key] = prevRancher[key] !== undefined ? prevRancher[key] : null;
+        }
+      }
+      await logAuditEntry({
+        actor: 'manual',
+        tool: 'admin-rancher-patch',
+        targetType: 'Rancher',
+        targetId: id,
+        args: { fieldsChanged: Object.keys(fields) },
+        result: { ok: true },
+        reverseAction: prevRancher
+          ? buildAirtableUpdateReverse(TABLES.RANCHERS, id, reverseFields)
+          : { type: 'noop', reason: 'pre-state unavailable' },
+      });
+    } catch (e: any) {
+      console.error('[admin-rancher-patch] audit log failed (non-fatal):', e?.message);
+    }
+
+    // F8 audit: if THIS PATCH transitions the rancher to Live + Active in one
+    // shot, fire launch-warmup immediately. Pre-fix, manual admin flips waited
+    // up to 24h for the daily cron — buyers in this rancher's state stayed
+    // un-warmed. Gate on previous-state != live so we don't re-fire on every
+    // PATCH that mentions both fields. Idempotent on the cron side anyway.
+    const willGoLive = body.onboarding_status === 'Live' &&
+      (body.active_status === 'Active' || fields['Active Status'] === 'Active');
+    const wasAlreadyLive = prevRancher
+      ? (prevRancher['Onboarding Status'] || '').trim() === 'Live' &&
+        (prevRancher['Active Status'] || '').trim() === 'Active'
+      : false;
+    if (willGoLive && !wasAlreadyLive) {
+      triggerLaunchWarmup(`admin-rancher-patch:${id}`);
+    }
 
     if (shouldSendApproval) {
       try {
@@ -149,7 +195,29 @@ export async function DELETE(
     const __authResp = await requireAdmin(request);
     if (__authResp) return __authResp;
     const { id } = await context.params;
+
+    // Audit log: capture full record before delete so a future undo can
+    // re-create it. delete-reversal not implemented yet but the args
+    // payload preserves the data for a manual restore.
+    let prevRancher: any = null;
+    try { prevRancher = await getRecordById(TABLES.RANCHERS, id); } catch { /* non-fatal */ }
+
     await deleteRecord(TABLES.RANCHERS, id);
+
+    try {
+      await logAuditEntry({
+        actor: 'manual',
+        tool: 'admin-rancher-delete',
+        targetType: 'Rancher',
+        targetId: id,
+        args: { rancherId: id, snapshot: prevRancher || null },
+        result: { ok: true },
+        reverseAction: { type: 'noop', reason: 'delete reversal requires manual restore from snapshot in Args' },
+      });
+    } catch (e: any) {
+      console.error('[admin-rancher-delete] audit log failed (non-fatal):', e?.message);
+    }
+
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('API error deleting rancher:', error);
