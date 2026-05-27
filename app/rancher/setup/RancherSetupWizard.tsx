@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Container from '../../components/Container';
 import LivePreview from './LivePreview';
+import StripeConnectStep from './steps/StripeConnectStep';
 
 // 4-step self-serve wizard. State + transitions live in the component;
 // each step PATCHes /api/rancher/setup with its slice of the payload.
@@ -142,14 +143,16 @@ export default function RancherSetupWizard() {
   //            (Ben backfilled it for an existing rancher OR finished the
   //            call already and tapped the Telegram callback).
   //   Step 7 = Pick Your Plan (tier subscription) [Stage-3 Task 11A]
+  //   Step 9 = Stripe Connect onboarding (tier_v2 only) [Stage-3 Task D2]
   //   Step 8 = Fulfillment + Refund Policy [Stage-3 Task 11B]
   //   Step 5 = inline agreement signing
   //   Step 6 = done (logged in, dashboard auto-link)
   //
-  // Order is 0→1→2→3→4→7→8→5→6 (steps 7/8 are wedged after Call, before Sign).
+  // Order is 0→1→2→3→4→7→9→8→5→6 (steps 7/9/8 are wedged after Call, before Sign).
+  // Step 9 auto-advances for legacy ranchers (no Connect needed).
   // Numbering is awkward to preserve existing setStep call sites; do NOT
   // re-sequence without auditing every setStep(...) in this file.
-  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8>(0);
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>(0);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false); // mobile accordion state
@@ -1210,8 +1213,21 @@ export default function RancherSetupWizard() {
               // screens see the new Tier / Subscription Status without a
               // page refresh.
               if (updated) setRancher(updated);
-              setStep(8);
+              // Step 9 (Stripe Connect) sits between Pick-Plan and Fulfillment.
+              // Legacy ranchers auto-advance through 9 to 8 in StripeConnectStep.
+              setStep(9);
             }}
+          />
+        )}
+
+        {/* STEP 9 — Stripe Connect onboarding (Stage-3 Task D2). tier_v2 only;
+            legacy ranchers auto-advance via the StripeConnectStep effect. */}
+        {step === 9 && rancher && (
+          <StripeConnectStep
+            rancherId={rancher.id}
+            pricingModel={String((rancher as any)['Pricing Model'] || 'legacy')}
+            onComplete={() => setStep(8)}
+            onBack={() => setStep(7)}
           />
         )}
 
@@ -1223,7 +1239,7 @@ export default function RancherSetupWizard() {
             setField={setField}
             saving={saving}
             saveStep={saveStep}
-            onBack={() => setStep(7)}
+            onBack={() => setStep(9)}
             onContinue={() => {
               // After fulfillment is saved, prime the signing token + jump to
               // the signature step.
