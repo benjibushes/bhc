@@ -14,6 +14,7 @@ import { commissionRateForTier, TierSlug } from '@/lib/tiers';
 import { rancherIdFromSubscription } from '@/lib/stripeSubscription';
 import { markDepositSucceeded, markDepositRefunded } from '@/lib/contracts/payments';
 import { recordClose } from '@/lib/contracts/rancher';
+import { funnelRecord } from '@/lib/funnelMetrics';
 
 // Airtable table name for Stripe Events (Task 24 idempotency log)
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -113,6 +114,21 @@ export async function POST(request: Request) {
           await handleFounderCheckoutCompleted(session, metaType);
         } catch (err: any) {
           console.error('[stripe webhook] founder-checkout handler failed:', err?.message);
+          await flipStripeEventFailed(event.id, err?.message);
+          return NextResponse.json({ received: true, error: 'logged' });
+        }
+        break;
+      }
+
+      if (metaType === 'brand-partner-tier') {
+        // ── BRAND PARTNER TIERS (Audit F1 — was the highest $$$ leak) ──
+        // Spotlight ($295) / Featured ($595) / Co-marketed ($1500). Pre-F1 these
+        // fired with no metadata.type the webhook recognized — money landed in
+        // Stripe with ZERO Airtable row, no welcome, no funnel event.
+        try {
+          await handleBrandPartnerTierCompleted(session);
+        } catch (err: any) {
+          console.error('[stripe webhook] brand-partner-tier handler failed:', err?.message);
           await flipStripeEventFailed(event.id, err?.message);
           return NextResponse.json({ received: true, error: 'logged' });
         }
@@ -411,6 +427,159 @@ async function handleBrandListingCompleted(session: any) {
   }
 
   return NextResponse.json({ received: true });
+}
+
+// ============================================================================
+// BRAND PARTNER TIER (Spotlight / Featured / Co-marketed) — Audit F1.
+//
+// Pre-F1 these checkouts (Payment Links in Stripe Dashboard) fired
+// checkout.session.completed with no metadata.type our switch recognized.
+// Money landed in Stripe, but the BRANDS table had zero rows, no welcome
+// email fired, no funnel event was logged, and no Telegram alert reached
+// the operator chat. Highest $$$ leak on the platform.
+//
+// /api/checkout/brand was rewritten to create a Checkout Session with
+// metadata.type='brand-partner-tier' so this handler can take over.
+//
+// Idempotency model — same shape as handleFounderCheckoutCompleted:
+//   1. Look up BRANDS by `Stripe Session ID`. If hit → no-op (Stripe retry).
+//   2. Otherwise look up by email — upsert (existing row gets fields filled
+//      in, new row gets created).
+//   3. Setting `Stripe Session ID` is the lock — second concurrent delivery
+//      falls into branch (1) on its own write loop.
+//   4. Welcome email + Telegram + funnel event — all best-effort, all
+//      non-fatal so retries don't double-fire if any of them succeed but
+//      a later one throws.
+// ============================================================================
+async function handleBrandPartnerTierCompleted(session: any) {
+  const sessionId: string = session.id;
+  const tier: string = (session.metadata?.tier || '').toString().toLowerCase();
+  const tierName: string = (session.metadata?.tier_name || tier || 'Brand Partner').toString();
+
+  // Email — Checkout Sessions surface it on customer_details.email; fall
+  // back to top-level customer_email defensively.
+  const email: string = (
+    session.customer_details?.email ||
+    session.customer_email ||
+    ''
+  )
+    .toString()
+    .trim()
+    .toLowerCase();
+
+  const name: string = (
+    session.customer_details?.name ||
+    session.metadata?.brandName ||
+    ''
+  ).toString();
+
+  const amountPaidCents: number = session.amount_total || 0;
+  const amountPaid = amountPaidCents / 100;
+  const nowIso = new Date().toISOString();
+
+  if (!email) {
+    console.warn(`[brand-partner-tier] session ${sessionId} missing customer email — skipping`);
+    return;
+  }
+
+  // ── 1. IDEMPOTENCY: skip if Stripe Session ID already booked ──
+  const bySession = await getAllRecords(
+    TABLES.BRANDS,
+    `{Stripe Session ID} = "${escapeAirtableValue(sessionId)}"`,
+  );
+  if (bySession.length > 0) {
+    console.log(`[brand-partner-tier] session ${sessionId} already processed — skipping`);
+    return;
+  }
+
+  // Status: Founding for the $1500 co-marketed tier (treat as inner-circle
+  // partner — kept for admin dashboard filtering). Other tiers = Active Partner.
+  const partnerStatus = tier === 'founding' || tier === 'comarketed' ? 'Founding' : 'Active Partner';
+
+  const sharedFields: Record<string, any> = {
+    'Tier': tierName,
+    'Amount Paid': amountPaid,
+    'Stripe Session ID': sessionId,
+    'Payment Status': 'Paid',
+    'Paid At': nowIso,
+    'Status': partnerStatus,
+    'Featured': true,
+  };
+
+  // ── 2. Upsert by email so a Brand who's also a tier purchaser keeps one row ──
+  let brandRecordId: string;
+  try {
+    const byEmail = await getAllRecords(
+      TABLES.BRANDS,
+      `LOWER({Email}) = "${escapeAirtableValue(email)}"`,
+    );
+    if (byEmail.length > 0) {
+      brandRecordId = (byEmail[0] as any).id;
+      await updateRecord(TABLES.BRANDS, brandRecordId, sharedFields);
+    } else {
+      const created = await createRecord(TABLES.BRANDS, {
+        ...sharedFields,
+        'Brand Name': name || email.split('@')[0],
+        'Contact Name': name,
+        'Email': email,
+      });
+      brandRecordId = (created as any).id;
+    }
+  } catch (e: any) {
+    // Same defensive pattern as handleFounderCheckoutCompleted — return
+    // without throwing so the top-level Stripe Events row still flips
+    // to 'processed' and Stripe stops retrying. The Telegram alert below
+    // will fire only if the upsert succeeded, which is the right shape
+    // (no lying celebrations).
+    console.error('[brand-partner-tier] upsert failed (returning, will be 200):', e?.message);
+    throw e;
+  }
+
+  // ── 3. Welcome email — reuses Stage-1 Brand listing template. Same idea
+  //      (welcome to the network), correct enough for tier purchasers. If
+  //      we want tier-specific copy later, branch here on `tier`.
+  try {
+    await sendBrandListingConfirmation({
+      brandName: name || email,
+      email,
+      amountPaid: `$${amountPaid.toFixed(0)}`,
+    });
+  } catch (e: any) {
+    console.error('[brand-partner-tier] welcome email failed:', e?.message);
+  }
+
+  // ── 4. Telegram alert ──
+  try {
+    if (TELEGRAM_ADMIN_CHAT_ID) {
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `💰 <b>BRAND PARTNER — ${tierName}</b>\n\n` +
+          `<b>$${amountPaid.toFixed(0)}</b> from ${name || '(no name)'} (${email})\n\n` +
+          `<a href="https://dashboard.stripe.com/payments/${sessionId}">Stripe session</a>`,
+      );
+    }
+  } catch (e: any) {
+    console.warn('[brand-partner-tier] telegram alert failed:', e?.message);
+  }
+
+  // ── 5. Funnel event for the admin dashboard conversion view ──
+  try {
+    await funnelRecord({
+      stage: 'brand_partner_tier_purchased',
+      amount: amountPaid,
+      metadata: {
+        tier,
+        tierName,
+        brandRecordId,
+        sessionId,
+        email,
+      },
+    });
+  } catch (e: any) {
+    console.warn('[brand-partner-tier] funnel record failed:', e?.message);
+  }
+
+  console.log(`[brand-partner-tier] ${tierName} ($${amountPaid}) booked for ${email} → brand ${brandRecordId}`);
 }
 
 // ============================================================================

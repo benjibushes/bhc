@@ -1,52 +1,126 @@
 import { NextResponse } from 'next/server';
+import { getStripe } from '@/lib/stripe';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Server-side redirect to Stripe Payment Links for brand partner tiers.
+// Brand partner tier checkout — creates a Stripe Checkout Session with
+// explicit metadata.type='brand-partner-tier' so the webhook can dedupe,
+// upsert BRANDS row, send welcome email, fire Telegram alert, and log
+// the funnel event.
 //
-// Why this endpoint instead of inlining URLs into the page?
-// The Stripe Payment Link URLs already exist as Vercel env vars
-// (STRIPE_BRAND_LINK_SPOTLIGHT / STRIPE_BRAND_LINK_FEATURED / STRIPE_BRAND_LINK_COMARKETED)
-// from a prior session. Re-prefixing them with NEXT_PUBLIC_ would
-// require either re-pasting the secret values (already encrypted in
-// Vercel) or pulling them to local first (security risk). Server-side
-// redirect lets the page point CTAs at /api/checkout/brand?tier=spotlight
-// and we read the existing env var server-side without exposing the
-// URL to the client bundle.
+// Why a Checkout Session (and not the Payment Link redirect we had before)?
+//   Audit F1 (2026-05-26): Payment Links forward NO metadata to webhooks
+//   unless explicitly configured in the Stripe Dashboard. The old version
+//   redirected to STRIPE_BRAND_LINK_SPOTLIGHT etc. — Stripe received the
+//   payment, fired `checkout.session.completed`, the webhook switch saw
+//   `metadata.type === undefined`, and money landed in Stripe with ZERO
+//   Airtable rows, no welcome email, and no funnel event. Critical $$$ leak.
 //
-// Caveat: the redirected URL ends up in the browser's address bar
-// anyway after the 302, so this isn't a "secret" — it's the same
-// Stripe Payment Link a buyer would see if they clicked an embedded
-// `<a href=...>` directly. We're just sidestepping the env var rename
-// dance.
+//   Checkout Sessions created in code carry whatever metadata we stamp,
+//   guaranteed end-to-end. We control the contract.
 //
-// If env var missing for a tier, redirect to /brand-partners#contact
-// (the existing fallback anchor) so the CTA degrades gracefully.
+// Required env vars (one per tier):
+//   STRIPE_BRAND_PRICE_SPOTLIGHT  — price_* id for the $295 tier
+//   STRIPE_BRAND_PRICE_FEATURED   — price_* id for the $595 tier
+//   STRIPE_BRAND_PRICE_FOUNDING   — price_* id for the $1500 tier
+//
+// Graceful degradation: if a Price ID env var is missing for a tier BUT
+// the legacy Payment Link env var (STRIPE_BRAND_LINK_*) is set, we fall
+// back to the legacy redirect. This preserves any current revenue flow
+// during the env var migration window — webhook still won't fire on the
+// Payment Link path, but at least the purchase completes (better than
+// dropping the buyer on /brand-partners#contact). Operator must populate
+// Price ID env vars to fully close the leak.
 
-const TIER_TO_ENV: Record<string, string> = {
+const TIER_TO_PRICE_ENV: Record<string, string> = {
+  spotlight: 'STRIPE_BRAND_PRICE_SPOTLIGHT',
+  featured: 'STRIPE_BRAND_PRICE_FEATURED',
+  founding: 'STRIPE_BRAND_PRICE_FOUNDING', // $1500 co-marketed tier
+};
+
+const TIER_TO_LEGACY_LINK_ENV: Record<string, string> = {
   spotlight: 'STRIPE_BRAND_LINK_SPOTLIGHT',
   featured: 'STRIPE_BRAND_LINK_FEATURED',
-  founding: 'STRIPE_BRAND_LINK_COMARKETED', // $1500 tier — co-marketed product
+  founding: 'STRIPE_BRAND_LINK_COMARKETED',
 };
+
+const TIER_NAMES: Record<string, string> = {
+  spotlight: 'Spotlight',
+  featured: 'Featured',
+  founding: 'Co-marketed',
+};
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const tier = (url.searchParams.get('tier') || '').toLowerCase();
 
-  const envName = TIER_TO_ENV[tier];
-  if (!envName) {
+  const priceEnv = TIER_TO_PRICE_ENV[tier];
+  if (!priceEnv) {
     return NextResponse.redirect(new URL('/brand-partners#contact', url.origin), 302);
   }
 
-  const target = process.env[envName];
-  if (!target) {
-    console.warn(`[checkout/brand] ${envName} not set — falling back to /brand-partners#contact`);
+  const priceId = process.env[priceEnv];
+
+  // ── Graceful fallback: if Price ID not configured but legacy Payment
+  //    Link is, use the legacy Payment Link so we don't drop the buyer.
+  //    NOTE: webhook will still skip this purchase because Payment Links
+  //    don't forward metadata. Operator MUST set Price ID env var to
+  //    fully fix the leak.
+  if (!priceId) {
+    const legacyLinkEnv = TIER_TO_LEGACY_LINK_ENV[tier];
+    const legacyLink = legacyLinkEnv ? process.env[legacyLinkEnv] : undefined;
+    if (legacyLink) {
+      console.warn(
+        `[checkout/brand] ${priceEnv} not set — falling back to legacy Payment Link (webhook will NOT fire). ` +
+        `Set ${priceEnv} to a Stripe Price ID to close the metadata gap.`
+      );
+      return NextResponse.redirect(legacyLink, 302);
+    }
+    console.warn(`[checkout/brand] ${priceEnv} not set — falling back to /brand-partners#contact`);
     return NextResponse.redirect(new URL('/brand-partners#contact', url.origin), 302);
   }
 
-  // 302 vs 301: 302 (Found) keeps the URL temporary so future
-  // redeploys can change the destination without browser caching
-  // the old URL.
-  return NextResponse.redirect(target, 302);
+  try {
+    const stripe = getStripe();
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      payment_method_types: ['card'],
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${SITE_URL}/brand-partners?paid=1&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${SITE_URL}/brand-partners?cancelled=1`,
+      // CRITICAL: this is the whole point of the rewrite. The webhook keys
+      // off `metadata.type === 'brand-partner-tier'` to find the handler.
+      metadata: {
+        type: 'brand-partner-tier',
+        tier,
+        tier_name: TIER_NAMES[tier] || tier,
+      },
+      payment_intent_data: {
+        metadata: {
+          type: 'brand-partner-tier',
+          tier,
+        },
+      },
+      // We don't collect a customer_email up front — Stripe Checkout
+      // collects it on the hosted page, which then surfaces on
+      // session.customer_details.email in the webhook payload.
+      billing_address_collection: 'auto',
+      // Allow promo codes — discount levers stay in the Stripe dashboard
+      // without code changes.
+      allow_promotion_codes: true,
+    });
+
+    if (!session.url) {
+      console.error('[checkout/brand] Stripe session has no url for tier', tier);
+      return NextResponse.redirect(new URL('/brand-partners?error=session-failed', url.origin), 302);
+    }
+
+    return NextResponse.redirect(session.url, 303);
+  } catch (e: any) {
+    console.error(`[checkout/brand] Stripe error for tier=${tier}:`, e?.message || e);
+    return NextResponse.redirect(new URL('/brand-partners?error=checkout-failed', url.origin), 302);
+  }
 }
