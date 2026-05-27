@@ -11,7 +11,7 @@ const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_bui
 const SUPPRESSION_TTL_MS = 5 * 60 * 1000;
 let suppressionCache: { emails: Set<string>; loadedAt: number } | null = null;
 
-async function getSuppressionList(): Promise<Set<string>> {
+export async function getSuppressionList(): Promise<Set<string>> {
   const now = Date.now();
   if (suppressionCache && now - suppressionCache.loadedAt < SUPPRESSION_TTL_MS) {
     return suppressionCache.emails;
