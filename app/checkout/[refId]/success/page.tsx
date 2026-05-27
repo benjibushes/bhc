@@ -2,9 +2,10 @@
 
 // Stage-3 Task 8 — post-deposit success page.
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { trackEvent } from '@/lib/analytics';
 
 interface Info {
   rancher: { name: string; ranchName: string };
@@ -25,6 +26,23 @@ function DepositSuccessContent() {
   const sessionId = search.get('session_id') || '';
 
   const [info, setInfo] = useState<Info | null>(null);
+
+  // G4 — deposit_completed client Pixel fire on success landing.
+  // Server-side CAPI Purchase fires from Stripe checkout.session.completed
+  // webhook; this pairs via session_id-scoped event_id for Meta dedup.
+  // Idempotency guard prevents re-fire on remount/back-button.
+  const depositCompletedFired = useRef(false);
+  useEffect(() => {
+    if (depositCompletedFired.current || !refId) return;
+    depositCompletedFired.current = true;
+    trackEvent('deposit_completed', {
+      refId,
+      sessionId: sessionId || '',
+      event_id: sessionId
+        ? `deposit_completed:${sessionId}`
+        : `deposit_completed:${refId}`,
+    });
+  }, [refId, sessionId]);
 
   useEffect(() => {
     fetch(`/api/checkout/deposit?refId=${encodeURIComponent(refId)}`, { credentials: 'include' })

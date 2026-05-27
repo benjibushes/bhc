@@ -6,6 +6,8 @@
  * Standard event names — pick from this list to keep funnel reports clean:
  * - 'access_view'              — /access page view
  * - 'access_quiz_submit'       — quiz form submitted
+ * - 'quiz_started'             — /access quiz mounted (per-field drop-off baseline)
+ * - 'quiz_step_completed'      — individual quiz field completed (step prop: email/state/timing/householdSize)
  * - 'founders_view'            — /founders page view
  * - 'founders_tier_click'      — backer clicked a tier
  * - 'founders_checkout_start'  — Stripe checkout opened
@@ -18,6 +20,8 @@
  * - 'shop_click'               — outbound to /shop or Shopify
  * - 'exit_intent_shown'        — exit modal displayed
  * - 'exit_intent_capture'      — email submitted to exit modal
+ * - 'deposit_initiated'        — buyer landed on /checkout/[refId]/deposit (InitiateCheckout)
+ * - 'deposit_completed'        — buyer landed on /checkout/[refId]/success (Purchase) — dedupe with server CAPI via event_id
  */
 
 declare global {
@@ -31,6 +35,8 @@ declare global {
 export type AnalyticsEventName =
   | 'access_view'
   | 'access_quiz_submit'
+  | 'quiz_started'
+  | 'quiz_step_completed'
   | 'founders_view'
   | 'founders_tier_click'
   | 'founders_checkout_start'
@@ -48,7 +54,9 @@ export type AnalyticsEventName =
   | 'affiliate_link_copied'
   | 'affiliate_link_shared'
   | 'wholesale_view'
-  | 'wholesale_submit_success';
+  | 'wholesale_submit_success'
+  | 'deposit_initiated'
+  | 'deposit_completed';
 
 export function trackEvent(
   event: AnalyticsEventName,
@@ -65,6 +73,11 @@ export function trackEvent(
         founders_checkout_start: 'InitiateCheckout',
         brand_partners_purchased: 'Purchase',
         exit_intent_capture: 'Lead',
+        // G4 — deposit is the MOST VALUABLE conversion event on the platform.
+        // Server-side CAPI fires from /api/checkout/deposit POST (F5); this
+        // client Pixel fire pairs via event_id passed in properties for dedup.
+        deposit_initiated: 'InitiateCheckout',
+        deposit_completed: 'Purchase',
       };
       const standardName = metaStandardEvents[event];
       if (standardName) {

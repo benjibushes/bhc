@@ -4,9 +4,10 @@
 // Renders rancher's fulfillment info + refund policy + cut selector
 // + Continue to Stripe Checkout button. Fires POST /api/checkout/deposit.
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { trackEvent } from '@/lib/analytics';
 
 interface Cut { slug: string; label: string; price: number | null; lbs: string; }
 interface DepositInfo {
@@ -45,6 +46,20 @@ function DepositPageContent() {
   const [error, setError] = useState('');
   const [selectedCut, setSelectedCut] = useState<string>('half');
   const [submitting, setSubmitting] = useState(false);
+
+  // G4 — deposit_initiated client Pixel fire on page mount. Server-side
+  // CAPI InitiateCheckout fires from /api/checkout/deposit POST (F5);
+  // this pairs via refId-scoped event_id so Meta can dedup.
+  // Idempotency guard prevents re-fire if React re-mounts the effect.
+  const depositInitiatedFired = useRef(false);
+  useEffect(() => {
+    if (depositInitiatedFired.current || !refId) return;
+    depositInitiatedFired.current = true;
+    trackEvent('deposit_initiated', {
+      refId,
+      event_id: `deposit_initiated:${refId}`,
+    });
+  }, [refId]);
 
   useEffect(() => {
     fetch(`/api/checkout/deposit?refId=${encodeURIComponent(refId)}`, { credentials: 'include' })
