@@ -1419,6 +1419,69 @@ export async function sendPartnerConfirmation(data: {
   });
 }
 
+// Brand partner past_due dunning email. Fires on first invoice.payment_failed.
+//
+// Audit P0 I-7: prior to this, brand partner subscription past_due was
+// silent — Stripe flipped Subscription Status=past_due but no email fired,
+// brand never knew their card failed, churn was invisible.
+//
+// Stripe handles the 3-attempt dunning automatically; this email closes the
+// loop by linking directly to the Stripe-hosted invoice page where they can
+// update card + pay. Founder voice, low-friction.
+export async function sendBrandPaymentFailed(data: {
+  brandName: string;
+  contactName: string;
+  email: string;
+  // Stripe-hosted invoice URL — customer can update card + pay from there.
+  // Falls back to /brand-partners if Stripe didn't include it on the event.
+  hostedInvoiceUrl?: string;
+  amountCents?: number;
+}) {
+  const first = esc(data.contactName.split(/\s+/)[0] || 'there');
+  const biz = esc(data.brandName);
+  const amount = data.amountCents
+    ? `$${(data.amountCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+    : 'your monthly invoice';
+  const fixUrl = data.hostedInvoiceUrl || `${SITE_URL}/brand-partners`;
+  const subject = `bhc — your payment didn't go through`;
+
+  return guardedSend({
+    templateName: 'sendBrandPaymentFailed',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:24px;margin:0 0 14px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;}
+a{color:#0E0E0E;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+  <p>hey ${first} —</p>
+  <p>quick heads-up: your card on file for <strong>${biz}</strong> just declined ${amount} on the bhc partner subscription.</p>
+  <p>stripe will retry automatically a couple times over the next few days, but if the card's expired or you'd rather swap to a new one, tap below — takes 30 seconds.</p>
+  <p style="text-align:center;margin:28px 0;">
+    <a href="${fixUrl}" class="cta">update payment</a>
+  </p>
+  <p style="font-size:14px;color:#6B4F3F;">no action needed if your card's just temporarily declined — stripe handles the retry. reply to this email if you want to talk anything through.</p>
+  <p style="margin-top:28px;">— ben<br>buyhalfcow</p>
+  <div class="footer">
+    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+    <p style="margin:6px 0 0;">
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
+    </p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
 // Wholesale buyer-side confirmation. Fires immediately at /wholesale signup.
 //
 // Audit P0 I-5: prior to this, /wholesale fired sendAdminAlert only.

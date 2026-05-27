@@ -950,9 +950,8 @@ async function markSubscriptionCancelled(subscriptionId: string) {
 }
 
 // ============================================================================
-// Invoice payment_failed — Telegram only (no DB write yet — past_due is set
-// by Stripe on the subscription object, which fires its own update event we
-// can wire later if needed).
+// Invoice payment_failed — Telegram alert + Subscription Status=past_due +
+// brand-side dunning email (i-7 audit).
 // ============================================================================
 async function alertInvoicePaymentFailed(invoice: any) {
   try {
@@ -995,6 +994,54 @@ async function alertInvoicePaymentFailed(invoice: any) {
     } catch (e) {
       console.error('Failed to mark past_due:', e);
     }
+  }
+
+  // ── I-7 audit: brand partner past_due dunning email ──────────────────
+  // before this, brand subscription failure was silent. now we look up
+  // BRANDS by Stripe Subscription ID (if tracked) OR by customer_email
+  // and fire sendBrandPaymentFailed w/ Stripe hosted invoice URL so the
+  // brand can update card + pay w/o leaving stripe.
+  try {
+    const { sendBrandPaymentFailed } = await import('@/lib/email');
+    const customerEmail = String(invoice.customer_email || '').trim().toLowerCase();
+    let brandMatches: any[] = [];
+    if (invoice.subscription) {
+      try {
+        brandMatches = (await getAllRecords(
+          TABLES.BRANDS,
+          `{Stripe Subscription ID} = "${escapeAirtableValue(invoice.subscription)}"`,
+        )) as any[];
+      } catch {}
+    }
+    if (brandMatches.length === 0 && customerEmail) {
+      try {
+        brandMatches = (await getAllRecords(
+          TABLES.BRANDS,
+          `LOWER({Email}) = "${escapeAirtableValue(customerEmail)}"`,
+        )) as any[];
+      } catch {}
+    }
+    if (brandMatches.length > 0) {
+      const brand = brandMatches[0];
+      const brandEmail = String(brand['Email'] || customerEmail).trim();
+      if (brandEmail) {
+        await sendBrandPaymentFailed({
+          brandName: String(brand['Brand Name'] || brand['Contact Name'] || 'partner'),
+          contactName: String(brand['Contact Name'] || brand['Brand Name'] || 'there'),
+          email: brandEmail,
+          hostedInvoiceUrl: invoice.hosted_invoice_url || undefined,
+          amountCents: invoice.amount_due || 0,
+        });
+        // Stamp past_due on brand row so admin can filter churn-risk surface.
+        try {
+          await updateRecord(TABLES.BRANDS, brand.id, {
+            'Subscription Status': 'past_due',
+          });
+        } catch {}
+      }
+    }
+  } catch (e) {
+    console.error('[brand-past-due] dunning email failed (non-fatal):', e);
   }
 }
 
