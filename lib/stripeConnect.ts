@@ -137,24 +137,49 @@ export interface CreateDepositCheckoutInput {
 export async function createDepositCheckout(input: CreateDepositCheckoutInput): Promise<{ url: string; paymentIntentId: string }> {
   const feeRate = TIERS[input.tier].commissionRate;  // 0.07 / 0.03 / 0
   const platformFeeCents = Math.round(input.amountCents * feeRate);
+  // Buyer pays the rancher's full deposit PLUS the BHC service fee on top.
+  // This guarantees the rancher receives the deposit they self-selected in
+  // their wizard — not deposit minus commission. Stripe still routes the
+  // total to the rancher's Connect acct, then transfers `application_fee_amount`
+  // to the BHC platform acct, so the rancher nets exactly `input.amountCents`.
+  const totalChargedCents = input.amountCents + platformFeeCents;
+  const feePct = Math.round(feeRate * 100);
 
   // Direct charge w/ application_fee_amount. stripeAccount header routes
-  // the charge to the rancher's Connect account; Stripe splits funds
-  // automatically (rancher gets amount - fee, platform gets fee).
+  // the total charge to the rancher's Connect account; Stripe splits funds
+  // automatically (rancher gets total - fee = deposit, platform gets fee).
+  // Two line items chosen over one so the buyer's Stripe-hosted receipt
+  // shows the breakdown explicitly — "deposit" + "BHC service fee" — and
+  // there's no ambiguity about what the buyer is paying.
   const stripe = getStripeClient();
+  const lineItems: any[] = [
+    {
+      price_data: {
+        currency: 'usd',
+        product_data: { name: input.productLabel },
+        unit_amount: input.amountCents,
+      },
+      quantity: 1,
+    },
+  ];
+  if (platformFeeCents > 0) {
+    lineItems.push({
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: 'BuyHalfCow service fee',
+          description: `${feePct}% — covers payment processing, buyer protection, and platform support.`,
+        },
+        unit_amount: platformFeeCents,
+      },
+      quantity: 1,
+    });
+  }
+
   const session = await stripe.checkout.sessions.create(
     {
       mode: 'payment',
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: { name: input.productLabel },
-            unit_amount: input.amountCents,
-          },
-          quantity: 1,
-        },
-      ],
+      line_items: lineItems,
       customer_email: input.buyerEmail,
       payment_intent_data: {
         application_fee_amount: platformFeeCents,
@@ -164,6 +189,12 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
           buyerId: input.buyerId,
           rancherId: input.rancherId,
           tier: input.tier,
+          // Webhook reads `depositCents` (not the total charged) when stamping
+          // Referral Sale Amount + downstream commission math. Without this,
+          // the deposit+fee total would inflate the rancher's recorded sale.
+          depositCents: String(input.amountCents),
+          platformFeeCents: String(platformFeeCents),
+          totalChargedCents: String(totalChargedCents),
         },
       },
       metadata: {
@@ -172,7 +203,9 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
         buyerId: input.buyerId,
         rancherId: input.rancherId,
         tier: input.tier,
+        depositCents: String(input.amountCents),
         platformFeeCents: String(platformFeeCents),
+        totalChargedCents: String(totalChargedCents),
       },
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,

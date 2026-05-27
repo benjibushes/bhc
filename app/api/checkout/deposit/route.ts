@@ -157,8 +157,11 @@ export async function POST(req: Request) {
   // Tier capitalization for Payments table
   const tierCapitalized = (tier.charAt(0).toUpperCase() + tier.slice(1)) as 'Pasture' | 'Ranch' | 'Operator';
 
-  // Compute platform fee (mirrors lib/stripeConnect.createDepositCheckout)
+  // Compute platform fee (mirrors lib/stripeConnect.createDepositCheckout).
+  // BHC service fee is ADDED ON TOP of the rancher's self-selected deposit —
+  // rancher receives the full `amountCents`, buyer pays `amountCents + platformFeeCents`.
   const platformFeeCents = Math.round(amountCents * TIERS[tier].commissionRate);
+  const totalChargedCents = amountCents + platformFeeCents;
 
   // Create Stripe Checkout Session
   let result: { url: string; paymentIntentId: string };
@@ -235,7 +238,10 @@ export async function POST(req: Request) {
         fbc: capiFbc,
       }),
       custom_data: {
-        value: amountCents / 100,
+        // Pixel/CAPI value = TOTAL the buyer will charge to their card
+        // (deposit + BHC service fee) so it matches the eventual Purchase
+        // event value + buyer's bank statement. Keeps ROAS attribution clean.
+        value: totalChargedCents / 100,
         currency: 'usd',
         content_name: `Beef deposit — ${CUT_LABELS[cutSize]}`,
         content_category: tier,

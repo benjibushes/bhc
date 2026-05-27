@@ -216,7 +216,13 @@ export async function POST(request: Request) {
         const referralId = String(pi.metadata?.referralId || '');
         const rancherId = String(pi.metadata?.rancherId || '');
         const tier = String(pi.metadata?.tier || '');
-        const amountCents = Number(pi.amount || 0);
+        // pi.amount is the TOTAL charged (deposit + BHC fee, post fee-on-top fix).
+        // For Sale Amount / funnel LTV we want the rancher-portion only
+        // (depositCents metadata stamped at session creation). Total charged
+        // is used for the buyer-facing CAPI Purchase value below.
+        const totalChargedCents = Number(pi.amount || 0);
+        const depositCents = Number(pi.metadata?.depositCents || totalChargedCents);
+        const platformFeeCents = Number(pi.metadata?.platformFeeCents || 0);
 
         if (!referralId || !rancherId || !pi.id) {
           const metadataKeys = Object.keys(pi.metadata || {}).join(',');
@@ -226,24 +232,24 @@ export async function POST(request: Request) {
         // Flip Payments row pending → succeeded (idempotent — no-op on retry).
         await markDepositSucceeded(pi.id);
 
-        // Flip Referral → Closed Won. Deposit = sale for tier_v2 (Connect direct
-        // charge already captured funds; payout split happens on fulfillment
-        // confirm via Task 9). recordClose decrements rancher capacity + flips
-        // Buyer Stage to CLOSED + closes Threads.
+        // Flip Referral → Closed Won. Sale Amount = depositCents (the rancher's
+        // self-selected deposit, NOT the buyer's total charge which includes
+        // BHC service fee). Keeps rancher analytics + commission math clean.
         await recordClose({
           referralId,
           rancherId,
           outcome: 'won',
-          saleAmount: amountCents / 100,
+          saleAmount: depositCents / 100,
         });
 
         // ── Funnel event — deposit_paid (largest LTV event on platform) ──
         // P0 audit fix: brand-partner + founder flows BOTH fire funnel +
         // CAPI Purchase; buyer deposit (highest-value conversion) didn't.
-        // Without this row the admin conversion dashboard can't see deposit
-        // closes — and CAPI Purchase below is invisible to Meta = no paid-ad
-        // optimization on the most valuable event.
-        const amountDollars = amountCents / 100;
+        // Funnel `amount` = deposit (rancher portion) for clean LTV reporting.
+        // BHC commission is tracked separately via the Payments row's
+        // application_fee_amount, surfaced in revenue dashboards.
+        const amountDollars = depositCents / 100;
+        const totalChargedDollars = totalChargedCents / 100;
         try {
           await funnelRecord({
             stage: 'deposit_paid',
@@ -311,7 +317,10 @@ export async function POST(request: Request) {
           action_source: 'system_generated',
           user_data: buildUserData(buyerForCapi),
           custom_data: {
-            value: amountDollars,
+            // Buyer-paid total (deposit + BHC fee) — matches what buyer
+            // sees in Stripe receipt + their bank statement. Pixel-side
+            // Purchase value should mirror this for clean ROAS attribution.
+            value: totalChargedDollars,
             currency: 'usd',
             content_name: `Beef deposit — ${tier || 'unknown'} tier`,
             content_category: 'buyer-deposit',
@@ -320,9 +329,10 @@ export async function POST(request: Request) {
 
         // Telegram celebration to admin chat.
         try {
+          const feePart = platformFeeCents > 0 ? ` (incl. $${(platformFeeCents / 100).toFixed(2)} BHC fee)` : '';
           await sendTelegramMessage(
             TELEGRAM_ADMIN_CHAT_ID,
-            `💰 DEPOSIT PAID — $${(amountCents / 100).toFixed(2)} (${tier} tier, ref=${referralId.slice(-6)})`,
+            `💰 DEPOSIT PAID — $${(depositCents / 100).toFixed(2)} to rancher${feePart} · ${tier} tier · ref=${referralId.slice(-6)}`,
           );
         } catch (e: any) {
           console.warn('[stripe webhook] telegram deposit alert failed:', e?.message);
@@ -338,8 +348,8 @@ export async function POST(request: Request) {
           tool: 'stripe-webhook-deposit-paid',
           targetType: 'Referral',
           targetId: referralId,
-          args: { paymentIntentId: pi.id, tier, amountCents },
-          result: { status: 'succeeded', amountDollars: amountCents / 100 },
+          args: { paymentIntentId: pi.id, tier, depositCents, platformFeeCents, totalChargedCents },
+          result: { status: 'succeeded', depositDollars: depositCents / 100, totalChargedDollars, platformFeeDollars: platformFeeCents / 100 },
           reverseAction: { type: 'noop', reason: 'Stripe-driven deposit settlement — cannot un-charge via Airtable' },
         }).catch(e => console.error('[audit] deposit-paid log failed:', e));
       } catch (e: any) {
