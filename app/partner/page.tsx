@@ -313,7 +313,26 @@ function PartnerPageContent() {
                   <h2 className="font-serif text-2xl md:text-3xl lowercase">
                     rancher application
                   </h2>
-                  
+
+                  {/* Pricing transparency block. Ranchers were signing the
+                      commission checkbox below with zero pricing context on
+                      this page — fixing the biggest trust gap in the funnel. */}
+                  <div className="bg-bone-warm border border-dust p-4 text-sm">
+                    <p className="font-serif text-base text-charcoal mb-2">How it works</p>
+                    <ul className="text-saddle space-y-1">
+                      <li>· Monthly subscription: <strong>$150–$500</strong> based on tier (you pick at setup)</li>
+                      <li>· Commission per closed deal: <strong>0–7%</strong> (lower commission on higher tiers)</li>
+                      <li>· Cancel anytime. No setup fee. No listing fee.</li>
+                    </ul>
+                    <p className="text-xs text-dust mt-2">
+                      Full breakdown shown at setup.{' '}
+                      <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-charcoal">
+                        See commission terms
+                      </a>
+                      .
+                    </p>
+                  </div>
+
                   <Input
                     label="Ranch Name"
                     name="ranchName"
@@ -436,13 +455,21 @@ function PartnerPageContent() {
 
                   <Divider />
 
-                  <Checkbox
-                    label="I agree to the commission terms for sales facilitated through BuyHalfCow"
-                    name="commissionAgreed"
-                    checked={rancherData.commissionAgreed}
-                    onChange={handleRancherChange}
-                    required
-                  />
+                  <div className="space-y-1.5">
+                    <Checkbox
+                      label="I agree to the commission terms for sales facilitated through BuyHalfCow"
+                      name="commissionAgreed"
+                      checked={rancherData.commissionAgreed}
+                      onChange={handleRancherChange}
+                      required
+                    />
+                    <p className="text-xs text-saddle pl-7">
+                      <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-charcoal">
+                        Read the full commission terms
+                      </a>
+                      .
+                    </p>
+                  </div>
                 </div>
               )}
 
