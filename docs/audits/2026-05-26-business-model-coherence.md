@@ -57,3 +57,28 @@ This keeps `lib/tiers.ts` as the source of truth for implementation, while ensur
 ## Conclusion
 
 The code is **correct and complete**. The audit reveals a **documentation gap**, not a code-to-docs mismatch. This is a candidate for Phase 0 refinement: align BUSINESS-MODEL.md to include the subscription tier model.
+
+---
+
+## Marketing throttle (BHC.md)
+
+Scanned last 30 sent emails for banned words:
+`synergy, disrupt, ecosystem, craft, journey, revolutionary, seamless, platform-as-a-service`.
+
+**Method:** Airtable Email Sends query (appgLT4z009iwAfhs, filtered by Status='sent', sorted desc by Sent At)
+
+**Violations found:** 2
+
+**Details:**
+
+```
+Scanned 30 sends. Violations: 2
+  2026-05-26T17:01:32.100Z | sendEmail | Subject: quick check-in — john & kellie ashcraft on buyhalfcow | Banned words: ['craft']
+  2026-05-26T17:01:25.092Z | sendEmail | Subject: last follow-up — john & kellie ashcraft on buyhalfcow | Banned words: ['craft']
+```
+
+**Analysis:**
+
+Both violations are **false positives** — the banned word "craft" appears in the customer surname "Ashcraft", not as marketing language. Subject lines are conversational and align with BHC voice: "quick check-in" and "last follow-up" are minimal, direct, and avoid jargon.
+
+**Status:** ✅ PASS (no actual voice-rule violations; banned words are customer data, not authored copy)
