@@ -16,6 +16,37 @@ interface CronRunResult {
   skipReasonBreakdown?: Record<string, number>;
 }
 
+// In-memory per-cron alert throttle. Survives the lifetime of a serverless
+// function instance — fine for the use-case (we don't want to spam Telegram
+// when a cron stays broken across multiple runs in the same warm container).
+// Cross-instance throttle isn't required because a still-broken cron will
+// re-alert on the first cold start, which is good signal.
+const _alertLast: Map<string, number> = new Map();
+const ALERT_COOLDOWN_MS = 60 * 60 * 1000;
+
+async function maybeAlertTelegram(cron: string, status: CronStatus, notes: string): Promise<void> {
+  if (status !== 'error' && status !== 'partial') return;
+  const last = _alertLast.get(cron) || 0;
+  if (Date.now() - last < ALERT_COOLDOWN_MS) return;
+  _alertLast.set(cron, Date.now());
+
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chat = process.env.TELEGRAM_ADMIN_CHAT_ID;
+  if (!token || !chat) return;
+
+  const emoji = status === 'error' ? '🚨' : '🟡';
+  const text = `${emoji} <b>CRON ${status.toUpperCase()}</b> · <code>${cron}</code>\n\n${notes.slice(0, 500)}`;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text, parse_mode: 'HTML' }),
+    });
+  } catch (e: any) {
+    console.warn(`[withCronRun:${cron}] alert send failed:`, e?.message);
+  }
+}
+
 /**
  * Wraps a cron handler. Logs start, awaits the function, logs end with
  * status + duration + records-touched count. On exception, records the
@@ -107,6 +138,7 @@ export function withCronRun<T extends CronRunResult>(
       } catch (logErr: any) {
         console.error(`[withCronRun:${name}] log write failed:`, logErr?.message);
       }
+      await maybeAlertTelegram(name, status, notes);
     }
     return returnedResponse!;
   };

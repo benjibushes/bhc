@@ -20,7 +20,7 @@ const AI_CONFIGURED = !!(OLLAMA_URL || ANTHROPIC_KEY);
 
 // Runs daily at 11am MT (17:00 UTC)
 // Auto-sends AI re-engagement emails (max 3 per referral), auto-closes stale referrals
-async function realHandler(request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked' | 'error'; recordsTouched: number; notes: string }> {
+async function realHandler(request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked' | 'error'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
@@ -28,6 +28,8 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
   if (!AI_CONFIGURED) {
     return { status: 'error', recordsTouched: 0, notes: 'AI not configured (set OLLAMA_BASE_URL or ANTHROPIC_API_KEY)' };
   }
+
+  const skipReasons: Record<string, number> = {};
 
   const referrals = await getAllRecords(
       TABLES.REFERRALS,
@@ -65,10 +67,16 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
       const lastActivity = r['Last Chased At'] || r['Intro Sent At'] || r['Approved At'];
       if (!lastActivity) return false;
       const buyerEmail = (r['Buyer Email'] || '').trim().toLowerCase();
-      if (unsubscribedEmails.has(buyerEmail)) return false;
+      if (unsubscribedEmails.has(buyerEmail)) {
+        skipReasons['bounced-or-unsub'] = (skipReasons['bounced-or-unsub'] || 0) + 1;
+        return false;
+      }
       const chaseCount = r['Chase Count'] || 0;
       if (chaseCount >= MAX_CHASE_UPS) return false; // Already maxed out
-      if (recentlyActive(r, 5)) return false; // Skip if rancher or buyer touched it recently
+      if (recentlyActive(r, 5)) {
+        skipReasons['recentlyActive'] = (skipReasons['recentlyActive'] || 0) + 1;
+        return false; // Skip if rancher or buyer touched it recently
+      }
       return (Date.now() - new Date(lastActivity).getTime()) >= 5 * DAY_MS;
     });
 
@@ -82,7 +90,10 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
       // Never hard-close a referral the rancher confirmed is in talks, OR one
       // with recent activity. The activity-aware close block below handles the
       // 30-day disengaged path — this legacy chase-count path should not.
-      if (recentlyActive(r, 7)) return false;
+      if (recentlyActive(r, 7)) {
+        skipReasons['recentlyActive'] = (skipReasons['recentlyActive'] || 0) + 1;
+        return false;
+      }
       return (Date.now() - new Date(lastActivity).getTime()) >= 5 * DAY_MS;
     });
 
@@ -192,8 +203,14 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           if (!rancher) continue;
           const rancherEmail = rancher['Email'] || '';
-          if (!rancherEmail) continue;
-          if (rancher['Unsubscribed'] || rancher['Bounced']) continue;
+          if (!rancherEmail) {
+            skipReasons['no-rancher-email'] = (skipReasons['no-rancher-email'] || 0) + 1;
+            continue;
+          }
+          if (rancher['Unsubscribed'] || rancher['Bounced']) {
+            skipReasons['bounced-or-unsub'] = (skipReasons['bounced-or-unsub'] || 0) + 1;
+            continue;
+          }
 
           const introAt = ref['Intro Sent At'] || ref['Approved At'];
           const days = Math.floor((now - new Date(introAt).getTime()) / DAY_MS);
@@ -425,7 +442,12 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
       if (dryRunMode) {
         const summary = `${promptedRanchers.length} prompts would fire, ${autoClosePlanned.length} hard auto-closes would fire`;
         console.log('[chasup:dryRun]', JSON.stringify({ stalePromptsPlanned: promptedRanchers, autoClosePlanned, summary }));
-        return { status: 'success', recordsTouched: 0, notes: `dryRun: ${summary}` };
+        return {
+          status: 'success',
+          recordsTouched: 0,
+          notes: `dryRun: ${summary}`,
+          skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
+        };
       }
 
       // ── Send rancher prompt emails (one per stale referral, throttled) ──
@@ -518,6 +540,7 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
         status: 'success',
         recordsTouched: autoClosed + rancherReminders + stalledNudges + autoReassigned + stalePromptsFired,
         notes: `no stale; closed=${autoClosed} reminders=${rancherReminders} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired}`,
+        skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
       };
     }
 
@@ -668,6 +691,7 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
     status: errors > 0 ? 'partial' : 'success',
     recordsTouched: touched,
     notes: `stale=${stale.length} sent=${sent} closed=${autoClosed} reminders=${rancherReminders} nudges=${stalledNudges} reassigned=${autoReassigned} prompts=${stalePromptsFired} repeat=${repeatSent} errors=${errors}`,
+    skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
   };
 }
 

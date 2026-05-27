@@ -25,7 +25,13 @@ const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 // Outer per-run ceiling on TOTAL records touched (warmups + nudges).
 // Layered on top of the per-phase caps above; whichever binds first wins.
 // Protects against cohort-growth runaway under paid-scale.
-const MAX_PER_RUN = 25;
+//
+// Bumped 2026-05-27 from 25 → 100. With 1533 buyers + 679 stuck-warmed cohort,
+// the 25/day ceiling was draining the backlog at 25 records/day total — making
+// WARMUP_CAP_PER_RUN=100 + NUDGE_CAP_PER_RUN=50 effectively dead code (the
+// 25-ceiling bound first on every run). 100/day aligns with WARMUP_CAP_PER_RUN
+// so the per-phase + outer caps now agree, drain rate quadruples.
+const MAX_PER_RUN = 100;
 
 function buildEngageUrl(consumerId: string): string {
   const token = jwt.sign({ type: 'warmup-engage', consumerId }, JWT_SECRET, { expiresIn: '30d' });
@@ -83,10 +89,12 @@ function priorityScore(buyer: any): number {
 //
 // Phase 2 (Day-7 nudge) runs after Phase 1 regardless of mode and
 // is unchanged from the pre-throttle implementation.
-async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
+
+  const skipReasons: Record<string, number> = {};
 
   {
     // ── PHASE 1: warmup to operationally-Live ranchers' waitlisted buyers ──
@@ -96,7 +104,13 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // that flag was a pre-throttle one-shot signal. Throttle mode revisits
     // each rancher daily until their state's WAITING/READY queue is drained.
     const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
-    const ranchers = allRanchers.filter(isRancherOperationalForBuyers);
+    const ranchers = allRanchers.filter((r: any) => {
+      if (!isRancherOperationalForBuyers(r)) {
+        skipReasons['rancher-not-operational'] = (skipReasons['rancher-not-operational'] || 0) + 1;
+        return false;
+      }
+      return true;
+    });
 
     let warmupsSent = 0;
     let warmupsSkipped = 0;
@@ -148,11 +162,21 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         ) as any[];
 
         const eligible = waitlistedBuyers.filter((b: any) => {
-          if (b['Unsubscribed'] || b['Bounced']) return false;
-          if (b['Warmup Sent At']) return false;
+          if (b['Unsubscribed'] || b['Bounced']) {
+            skipReasons['bounced-unsub'] = (skipReasons['bounced-unsub'] || 0) + 1;
+            return false;
+          }
+          if (b['Warmup Sent At']) {
+            skipReasons['already-warmed'] = (skipReasons['already-warmed'] || 0) + 1;
+            return false;
+          }
           const buyerState = normalizeState(b['State']);
           if (!buyerState) return false;
-          return rancherStates.has(buyerState);
+          if (!rancherStates.has(buyerState)) {
+            skipReasons['out-of-state'] = (skipReasons['out-of-state'] || 0) + 1;
+            return false;
+          }
+          return true;
         });
 
         let ranchSent = 0;
@@ -207,7 +231,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       const lastBatchRaw = rancher['Warmup Last Batch At'];
       if (lastBatchRaw) {
         const lastMs = new Date(lastBatchRaw).getTime();
-        if (!Number.isNaN(lastMs) && Date.now() - lastMs < COOLDOWN_MS) continue;
+        if (!Number.isNaN(lastMs) && Date.now() - lastMs < COOLDOWN_MS) {
+          skipReasons['dedupe-recent-warmup'] = (skipReasons['dedupe-recent-warmup'] || 0) + 1;
+          continue;
+        }
       }
 
       const weeklyPace = Number(rancher['Onboarding Intro Pace']) || DEFAULT_WEEKLY_INTRO_PACE;
@@ -314,10 +341,19 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     let nudgesSent = 0;
     const now = Date.now();
     const nudgeCandidates = waitlistedForNudges.filter((b: any) => {
-      if (b['Unsubscribed'] || b['Bounced']) return false;
-      if (b['Warmup Engaged At']) return false;
+      if (b['Unsubscribed'] || b['Bounced']) {
+        skipReasons['bounced-unsub'] = (skipReasons['bounced-unsub'] || 0) + 1;
+        return false;
+      }
+      if (b['Warmup Engaged At']) {
+        skipReasons['already-warmed'] = (skipReasons['already-warmed'] || 0) + 1;
+        return false;
+      }
       const stage = b['Warmup Stage']?.name || b['Warmup Stage'];
-      if (stage === 'nudged' || stage === 'matched' || stage === 'dropped') return false;
+      if (stage === 'nudged' || stage === 'matched' || stage === 'dropped') {
+        skipReasons['already-warmed'] = (skipReasons['already-warmed'] || 0) + 1;
+        return false;
+      }
       const sentAt = b['Warmup Sent At'];
       if (!sentAt) return false;
       const days = (now - new Date(sentAt).getTime()) / DAY_MS;
@@ -379,6 +415,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     status: warmupsSkipped > 0 ? 'partial' : 'success',
     recordsTouched: warmupsSent + nudgesSent,
     notes: `warmups=${warmupsSent} nudges=${nudgesSent} ranchers=${ranchersProcessed.length} skipped=${warmupsSkipped}`,
+    skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
   };
   }
 }

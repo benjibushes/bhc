@@ -50,11 +50,12 @@ function makeLoginUrl(consumerId: string, email: string) {
 
 // Runs daily at 10am MT (16:00 UTC) — after batch-approve at 9am MT
 // Sends drip emails to consumers based on how long they've been approved
-async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
 
+  const skipReasons: Record<string, number> = {};
   const now = Date.now();
 
     // ── ABANDONED APPLICATION RECOVERY ────────────────────────────────────
@@ -72,7 +73,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       let abandonSent = 0;
       for (const rec of abandoned) {
         if (abandonSent >= ABANDON_LIMIT_PER_RUN) break;
-        if (rec['Unsubscribed']) continue;
+        if (rec['Unsubscribed']) {
+          skipReasons['unsubscribed'] = (skipReasons['unsubscribed'] || 0) + 1;
+          continue;
+        }
         const email = (rec['Email'] || '').trim().toLowerCase();
         if (!email) continue;
         const stage = rec['Sequence Stage'] || 'abandoned_pending';
@@ -92,7 +96,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           send = 3; nextStage = 'abandoned_email3_sent';
         }
 
-        if (!send) continue;
+        if (!send) {
+          skipReasons['cadence-not-due'] = (skipReasons['cadence-not-due'] || 0) + 1;
+          continue;
+        }
 
         try {
           // MISMATCH FIX: stamp Sequence Stage + Sent At BEFORE send. Prior
@@ -228,12 +235,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         const buyerStage = (consumer['Buyer Stage'] || '').toString();
         const seqStage = (consumer['Sequence Stage'] || '').toString();
         const stageEnteredRaw = consumer['Buyer Stage Updated At'];
-        if (!buyerStage || !stageEnteredRaw) continue; // not migrated yet — skip safely
+        if (!buyerStage || !stageEnteredRaw) {
+          skipReasons['segment-mismatch'] = (skipReasons['segment-mismatch'] || 0) + 1;
+          continue; // not migrated yet — skip safely
+        }
         const daysInStage = (now - new Date(stageEnteredRaw).getTime()) / DAY_MS;
 
         // 24h frequency gate — never two automated emails to same buyer in 1 day
         const lastSentAt = consumer['Sequence Sent At'];
-        if (lastSentAt && (now - new Date(lastSentAt).getTime()) < DAY_MS) continue;
+        if (lastSentAt && (now - new Date(lastSentAt).getTime()) < DAY_MS) {
+          skipReasons['cap-suppressed'] = (skipReasons['cap-suppressed'] || 0) + 1;
+          continue;
+        }
 
         let fired = false;
 
@@ -575,7 +588,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           // Only run post-purchase sequence for buyers who actually bought —
           // CLOSED also includes suppressed/non-responsive (no further outreach).
           const purchased = buyerClosedWonRancher.has(consumerId);
-          if (!purchased) continue;
+          if (!purchased) {
+            skipReasons['closed-or-terminal'] = (skipReasons['closed-or-terminal'] || 0) + 1;
+            continue;
+          }
           const rancherName = buyerClosedWonRancher.get(consumerId) || 'your rancher';
           const orderType = consumer['Order Type'] || 'Not Sure';
 
@@ -755,6 +771,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     status: errors > 0 ? 'partial' : 'success',
     recordsTouched: grandTotal,
     notes: `sent=${grandTotal} (stage=${total} rancherReminders=${rancherReminders} abandoned=${abandonedRecovered}${segmentNote}) errors=${errors}`,
+    skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
   };
 }
 

@@ -44,10 +44,12 @@ const ACTIVE_REFERRAL_STATUSES = [
   'Negotiation',
 ];
 
-async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
+
+  const skipReasons: Record<string, number> = {};
 
   {
     const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -88,17 +90,29 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       const status = (c['Status'] || '').toString();
 
       // Eligible: READY stage, opted in via warmup, beef segment, approved.
-      if (stage !== 'READY') continue;
-      if (!readyToBuy) continue;
+      if (stage !== 'READY') {
+        skipReasons['not-stuck-yet'] = (skipReasons['not-stuck-yet'] || 0) + 1;
+        continue;
+      }
+      if (!readyToBuy) {
+        skipReasons['not-stuck-yet'] = (skipReasons['not-stuck-yet'] || 0) + 1;
+        continue;
+      }
       if (segment !== 'Beef Buyer') continue;
       if (status === 'Rejected') continue;
-      if (buyersWithActiveRef.has(c.id)) continue;
+      if (buyersWithActiveRef.has(c.id)) {
+        skipReasons['already-recovered'] = (skipReasons['already-recovered'] || 0) + 1;
+        continue;
+      }
 
       // Cooldown: don't retry within 24h of last attempt.
       const lastAttempt = c['Last Match Attempt At'];
       if (lastAttempt) {
         const ms = new Date(lastAttempt).getTime();
-        if (ms > 0 && now - ms < DAY_MS) continue;
+        if (ms > 0 && now - ms < DAY_MS) {
+          skipReasons['paused'] = (skipReasons['paused'] || 0) + 1;
+          continue;
+        }
       }
 
       stuck.push(c);
