@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { sendBroadcastEmail } from '@/lib/email';
 import { requireAdmin } from '@/lib/adminAuth';
 import { spamCheck } from '@/lib/spamCheck';
+import { logAuditEntry } from '@/lib/auditLog';
 
 export const maxDuration = 60;
 
@@ -263,6 +264,21 @@ export async function POST(request: Request) {
       }
     } catch (campaignError) {
       console.error('Failed to log campaign (non-fatal):', campaignError);
+    }
+
+    // P1 audit D-3: log the broadcast-send. Emails can't be un-sent — reverseAction=noop.
+    try {
+      await logAuditEntry({
+        actor: 'manual',
+        tool: 'admin-broadcast-send',
+        targetType: 'Other',
+        targetId: reservedCampaignId || campaignName,
+        args: { campaignName, subject, audienceType, selectedStates, includeCTA, ctaText, ctaLink, recipientCount: recipients.length },
+        result: { sent, failed, aborted, finalStatus, recipientCount: recipients.length },
+        reverseAction: { type: 'noop', reason: `Broadcast emails cannot be un-sent — ${sent} delivered.` },
+      });
+    } catch (e: any) {
+      console.error('[broadcast] audit log failed (non-fatal):', e?.message);
     }
 
     return NextResponse.json({
