@@ -1999,7 +1999,7 @@ function TierPickStep({
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
-        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 5 · Pick Your Plan</p>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 6 · Pick Your Plan</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
           Pick the marketing engine that fits your ranch.
         </h2>
@@ -2207,7 +2207,7 @@ function FulfillmentStep({
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
-        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 6 · Fulfillment</p>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 8 · Fulfillment</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
           How do you get the beef to buyers?
         </h2>
