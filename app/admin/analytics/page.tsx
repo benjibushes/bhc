@@ -5,7 +5,6 @@ import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import Link from 'next/link';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
-import { useClerk } from '@clerk/nextjs';
 
 interface CampaignStats {
   campaignName: string;
@@ -38,7 +37,6 @@ interface AnalyticsData {
 }
 
 export default function AnalyticsPage() {
-  const clerk = useClerk();
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -129,8 +127,7 @@ export default function AnalyticsPage() {
                 </Link>
                 <button
                   onClick={async () => {
-                    // Auth Phase 0 — Clerk sign-out.
-                    await clerk.signOut({ redirectUrl: '/admin/login' });
+                    await fetch('/api/admin/auth', { method: 'DELETE' });
                     window.location.href = '/admin/login';
                   }}
                   className="px-4 py-2 text-sm border border-[#8C2F2F] text-[#8C2F2F] hover:bg-[#8C2F2F] hover:text-white transition-colors"

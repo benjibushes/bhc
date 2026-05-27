@@ -5,7 +5,6 @@ import Container from '../components/Container';
 import Divider from '../components/Divider';
 import Button from '../components/Button';
 import AdminAuthGuard from '../components/AdminAuthGuard';
-import { useClerk } from '@clerk/nextjs';
 
 type Tab = 'consumers' | 'ranchers' | 'brands' | 'landDeals';
 
@@ -97,7 +96,6 @@ interface LandDeal {
 }
 
 export default function AdminPage() {
-  const clerk = useClerk();
   const [activeTab, setActiveTab] = useState<Tab>('consumers');
   const [consumers, setConsumers] = useState<Consumer[]>([]);
   const [ranchers, setRanchers] = useState<Rancher[]>([]);
@@ -431,9 +429,8 @@ export default function AdminPage() {
             </div>
             <button
               onClick={async () => {
-                // Auth Phase 0: Clerk sign-out clears the __session cookie
-                // and invalidates the session on Clerk's side.
-                await clerk.signOut({ redirectUrl: '/admin/login' });
+                // Clear bhc-admin cookie via /api/admin/auth DELETE.
+                await fetch('/api/admin/auth', { method: 'DELETE' });
                 window.location.href = '/admin/login';
               }}
               className="px-4 py-2 text-sm border border-[#8C2F2F] text-[#8C2F2F] hover:bg-[#8C2F2F] hover:text-white transition-colors"

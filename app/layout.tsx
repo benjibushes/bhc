@@ -1,11 +1,16 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Inter } from "next/font/google";
-import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 import Header from "./components/Header";
 import PromoBar from "./components/PromoBar";
 import Analytics from "./components/Analytics";
 import PixelTracker from "./components/PixelTracker";
+
+// ClerkProvider was added Auth Phase 0 (2026-05-26) and removed same
+// day after Clerk domain reservation conflict blocked production
+// activation. Clerk wrappers in lib/*Auth.ts remain as flag-gated dead
+// code (CLERK_*_ENABLED default false). No runtime cost. Revisit
+// when picking a TOTP/SSO path (otplib, Auth.js v5, or vendor swap).
 
 const playfair = Playfair_Display({
   variable: "--font-playfair",
@@ -100,13 +105,11 @@ export default function RootLayout({
       <body
         className={`${playfair.variable} ${inter.variable} antialiased`}
       >
-        <ClerkProvider>
-          <PixelTracker />
-          <Analytics />
-          <PromoBar />
-          <Header />
-          {children}
-        </ClerkProvider>
+        <PixelTracker />
+        <Analytics />
+        <PromoBar />
+        <Header />
+        {children}
       </body>
     </html>
   );
