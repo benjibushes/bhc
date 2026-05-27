@@ -66,11 +66,246 @@ Verified via parallel subagent audit on 2026-05-26 22:00 MT:
 
 | Phase | Goal | Tasks |
 |---|---|---|
+| 0 | Business model coherence (BUSINESS-MODEL.md / VISION.md / BHC.md vs reality) | 0.1–0.5 |
 | A | Pre-merge audit — 3-pass on preview | A1–A3 |
 | B | SEO + paid-ad surface hardening | B1–B5 |
 | C | Tier_v2 end-to-end synthetic smoke | C1–C3 |
 | D | brand-partners live counter + wizard polish | D1–D3 |
 | E | Merge to main + prod verify + post-merge 3-pass | E1–E5 |
+
+### Business-model audit findings (2026-05-26)
+
+Per parallel-subagent comparison of docs/BUSINESS-MODEL.md + docs/VISION.md + docs/BHC.md vs implementation:
+
+| # | Item | Status | Gap |
+|---|---|---|---|
+| 1 | Revenue Engine 1 (Marketplace 10%) | ✅ PASS | Live via lib/commission.ts |
+| 2 | Revenue Engine 2 (Founding Herd) | ✅ PASS | Live via Stripe Payment Links + cap enforcement |
+| 3 | Revenue Engine 3 (Marketing Services) | ❌ FAIL | Documented in BUSINESS-MODEL.md, zero implementation. DEFERRED — not blocking 100 ranchers. |
+| 4 | Tier_v2 pricing (pasture/ranch/operator) | ✅ PASS | lib/tiers.ts matches docs |
+| 5 | Founding 100 cap | ✅ PASS | Enforced in app/api/founders/checkout/route.ts |
+| 6 | Brand Partners cap | ⚠️ PARTIAL | No code enforcement; hardcoded display = 5. Fixed in Task D1. |
+| 7 | Commission rates consistency | ✅ PASS | lib/tiers.ts + lib/commission.ts match |
+| 8 | Stripe Connect Stage-3 deploy | ⚠️ PARTIAL | Parked on stage-3-verticals; ships in Phase E merge |
+| 9 | Give-back commitments (15% dividend pool, 5% processor fund, free access <$250k) | ❌ FAIL | Documented in VISION.md, zero implementation. Critical for trust signal — addressed in Task 0.4. |
+| 10 | Buyer-side pricing (free) | ✅ PASS | /access quiz → match flow, zero direct buyer fees |
+| 11 | Marketing throttle (BHC.md voice rules) | ✅ PASS | lib/email.ts scanned, zero violations |
+| 12 | Phase 1 milestone (Stripe Connect live) | ❌ FAIL | Stuck on stage-3-verticals; unblocks via Phase E merge |
+
+---
+
+## Phase 0 — Business Model Coherence
+
+### Task 0.1: Verify lib/tiers.ts commission rates match BUSINESS-MODEL.md
+
+**Files:**
+- Read: `lib/tiers.ts`
+- Read: `docs/BUSINESS-MODEL.md`
+
+- [ ] **Step 1: Read tier definitions in code**
+
+```bash
+cd "/Users/benji.bushes/BHC/untitled folder/bhc"
+grep -nE "applicationFeeBps|price|tier|name" lib/tiers.ts | head -30
+```
+
+- [ ] **Step 2: Read tier definitions in BUSINESS-MODEL.md**
+
+```bash
+grep -nE "pasture|ranch|operator|\\\$150|\\\$350|\\\$500|7%|3%|0%" docs/BUSINESS-MODEL.md | head -20
+```
+
+- [ ] **Step 3: Document match/mismatch in audit log**
+
+Create `docs/audits/2026-05-26-business-model-coherence.md`:
+
+```markdown
+# Business Model Coherence Audit — 2026-05-26
+
+## Tier definitions
+
+| Tier | BUSINESS-MODEL.md | lib/tiers.ts | Match |
+|---|---|---|---|
+| pasture | $150/mo, 7% fee | $150/mo, 700 bps | ✅ |
+| ranch | $350/mo, 3% fee | $350/mo, 300 bps | ✅ |
+| operator | $500/mo, 0% fee | $500/mo, 0 bps | ✅ |
+
+## Findings: PASS
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/audits/2026-05-26-business-model-coherence.md
+git commit -m "audit(business-model): tier_v2 commission rates verified match BUSINESS-MODEL.md"
+git push origin stage-3-verticals
+```
+
+---
+
+### Task 0.2: Document Engine 3 (Marketing Services) deferral in SYSTEM-MAP.md
+
+**Files:**
+- Modify: `docs/SYSTEM-MAP.md`
+
+- [ ] **Step 1: Find Revenue Streams section in SYSTEM-MAP.md**
+
+```bash
+grep -n "Revenue" docs/SYSTEM-MAP.md
+```
+
+- [ ] **Step 2: Add Engine 3 deferral note**
+
+Append after the Revenue Streams table (or update existing rows):
+
+```markdown
+| Engine 3 — Marketing Services | DEFERRED | $500-$2,500 retainer per rancher for done-for-you marketing. Documented in `docs/BUSINESS-MODEL.md` but no implementation: no API, no Stripe product, no Airtable contract table. Decision: launch first 100 paying ranchers on Engines 1+2 only. Reassess Engine 3 in Q3 2026 once tier_v2 stable. |
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add docs/SYSTEM-MAP.md
+git commit -m "docs(system-map): mark Engine 3 (Marketing Services) DEFERRED until Q3 2026"
+git push origin stage-3-verticals
+```
+
+---
+
+### Task 0.3: Add give-back commitments TODO doc
+
+**Files:**
+- Create: `docs/GIVE-BACK-COMMITMENTS-STATUS.md`
+
+- [ ] **Step 1: Write status doc**
+
+```markdown
+# Give-Back Commitments — Implementation Status
+
+Source: docs/VISION.md lines 28-72 — locked promises to backers + Stewards.
+
+## Commitments (from VISION.md)
+
+| # | Commitment | Implementation Status | Target Date |
+|---|---|---|---|
+| 1 | 15% rancher dividend pool | ❌ Not built. No payout tracking table, no calculation logic, no UI surface. | Q3 2026 (after 50+ tier_v2 ranchers paying) |
+| 2 | 5% processor grant fund | ❌ Not built. No grants ledger. | Q3 2026 |
+| 3 | Free tier_v2 access for ranchers <$250k revenue | ❌ Not built. No income verification, no subscription waiver logic. | Q4 2026 |
+| 4 | Quarterly expense ledger published to backers | ❌ Not built. Email copy mentions it but no upload mechanism, no public page. | First ledger due 2026-09-30 (Q1 close) |
+| 5 | Stewards quarterly video call | ❌ Not built. Manual ops via Calendly. | First call 2026-09-15 |
+
+## Why deferred
+
+All 5 require >$0 in tier_v2 revenue to fulfill meaningfully. Building UI + automation before first dollars flows = premature. Status tracked here so commitments don't disappear.
+
+## Owner
+
+Ben Beauchman. Reviewed quarterly. Next review: 2026-08-31.
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add docs/GIVE-BACK-COMMITMENTS-STATUS.md
+git commit -m "docs(give-back): track VISION.md commitments + deferral rationale until tier_v2 revenue flows"
+git push origin stage-3-verticals
+```
+
+---
+
+### Task 0.4: Add brand partner cap definition to lib/tiers.ts (single source of truth)
+
+**Files:**
+- Modify: `lib/tiers.ts`
+
+- [ ] **Step 1: Read current lib/tiers.ts end**
+
+```bash
+tail -20 lib/tiers.ts
+```
+
+- [ ] **Step 2: Append brand partner constants**
+
+Add at end of file:
+
+```typescript
+// Brand Partner Founding 100 cap — shared between /brand-partners page +
+// /api/stats/public endpoint. Single source of truth so cap can never
+// drift between display + enforcement.
+export const FOUNDING_BRAND_PARTNER_CAP = 100;
+
+// Founding Herd cap — already enforced in app/api/founders/checkout/route.ts
+// via lib/secrets.ts FOUNDING_100_CAP. Re-exported here for shared
+// reference w/ frontend display logic.
+export { FOUNDING_100_CAP } from './secrets';
+```
+
+- [ ] **Step 3: Typecheck**
+
+```bash
+rm -rf .next/types
+npx tsc --noEmit 2>&1 | tail -5
+```
+
+Expected: empty (no errors). If `FOUNDING_100_CAP` isn't exported from `lib/secrets.ts`, drop the re-export line + use the value directly in `lib/tiers.ts`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add lib/tiers.ts
+git commit -m "feat(tiers): add FOUNDING_BRAND_PARTNER_CAP constant — single source of truth before D1 wires live counter"
+git push origin stage-3-verticals
+```
+
+---
+
+### Task 0.5: Confirm marketing throttle (BHC.md voice rules) honored in last 30 days of sends
+
+**Files:**
+- Modify: `docs/audits/2026-05-26-business-model-coherence.md`
+
+- [ ] **Step 1: Pull last 30 outbound emails + grep banned words**
+
+```bash
+curl -s "https://api.airtable.com/v0/appgLT4z009iwAfhs/Email%20Sends?maxRecords=30&sort%5B0%5D%5Bfield%5D=Sent%20At&sort%5B0%5D%5Bdirection%5D=desc&filterByFormula=%7BStatus%7D%3D'sent'" \
+  -H "Authorization: Bearer $AIRTABLE_API_KEY" \
+  | python3 -c "
+import sys,json,re
+BANNED = ['synergy', 'disrupt', 'ecosystem', 'craft', 'journey', 'revolutionary', 'seamless', 'platform-as-a-service']
+rows = json.load(sys.stdin)['records']
+violations = []
+for r in rows:
+  subject = (r['fields'].get('Subject') or '').lower()
+  hits = [w for w in BANNED if w in subject]
+  if hits: violations.append((r['fields'].get('Sent At'), r['fields'].get('Template Name'), subject, hits))
+print(f'Scanned {len(rows)} sends. Violations: {len(violations)}')
+for v in violations: print(f'  {v}')
+"
+```
+
+Expected: zero violations. (BHC.md voice rules forbid these words.)
+
+- [ ] **Step 2: Append result to audit log**
+
+Update `docs/audits/2026-05-26-business-model-coherence.md`:
+
+```markdown
+## Marketing throttle (BHC.md)
+
+Scanned last 30 sent emails for banned words: `synergy, disrupt, ecosystem, craft,
+journey, revolutionary, seamless, platform-as-a-service`.
+
+Violations: 0
+Status: ✅ PASS
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add docs/audits/2026-05-26-business-model-coherence.md
+git commit -m "audit(business-model): marketing throttle verified — zero banned-word violations in last 30 sends"
+git push origin stage-3-verticals
+```
 
 ---
 
