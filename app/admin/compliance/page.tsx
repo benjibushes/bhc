@@ -105,9 +105,9 @@ export default function CompliancePage() {
                 <button
                   onClick={() => {
                     if (confirm('Send compliance reminders to all active ranchers?')) {
-                      fetch('/api/cron/compliance-reminders?secret=' + encodeURIComponent(process.env.NEXT_PUBLIC_CRON_SECRET || ''))
+                      fetch('/api/admin/compliance/trigger-cron', { method: 'POST' })
                         .then(r => r.json())
-                        .then(d => alert(`Sent ${d.sentCount} reminders`))
+                        .then(d => alert(d?.error ? `Error: ${d.error}` : `Sent ${d.sentCount ?? 0} reminders`))
                         .catch(() => alert('Error'));
                     }
                   }}
