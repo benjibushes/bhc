@@ -70,13 +70,27 @@ export async function POST(request: Request) {
     // Confirm referral still exists. Don't 500 if it was deleted — return a
     // friendly 410 so the page can render "this review link is no longer
     // valid" instead of a generic error.
+    let referral: any;
     try {
-      const ref: any = await getRecordById(TABLES.REFERRALS, payload.referralId);
-      if (!ref) {
+      referral = await getRecordById(TABLES.REFERRALS, payload.referralId);
+      if (!referral) {
         return NextResponse.json({ error: 'Referral not found' }, { status: 410 });
       }
     } catch {
       return NextResponse.json({ error: 'Referral not found' }, { status: 410 });
+    }
+
+    // F-4 audit fix: idempotency guard. Pre-fix the 120d JWT magic link
+    // accepted unlimited submits — each overwrote Buyer Rating + Buyer
+    // Review. Now: if Review Submitted At is already set, return 409 +
+    // the prior submittedAt so the form can show "you already submitted
+    // a review" instead of a generic error or silent overwrite.
+    const existingSubmittedAt = referral['Review Submitted At'];
+    if (existingSubmittedAt) {
+      return NextResponse.json({
+        error: 'Review already submitted',
+        submittedAt: existingSubmittedAt,
+      }, { status: 409 });
     }
 
     // updateRecord auto-strips unknown field names → these three fields
@@ -104,11 +118,26 @@ export async function POST(request: Request) {
 // Token sanity-check helper for the GET handler in app/reviews/submit/page.tsx.
 // Returns minimal info to the page so it can render the form (or a
 // not-valid-anymore message) without exposing the full referral row.
+// F-4 audit: also surfaces alreadySubmitted=true + submittedAt so the
+// form can render the "thanks, you've already submitted a review" state
+// instead of letting the user fill out a doomed second submission.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const token = searchParams.get('token') || '';
   if (!token) return NextResponse.json({ ok: false, reason: 'missing-token' }, { status: 400 });
   const payload = verifyReviewToken(token);
   if (!payload) return NextResponse.json({ ok: false, reason: 'invalid-token' }, { status: 401 });
-  return NextResponse.json({ ok: true });
+  try {
+    const ref: any = await getRecordById(TABLES.REFERRALS, payload.referralId);
+    if (!ref) return NextResponse.json({ ok: false, reason: 'referral-not-found' }, { status: 410 });
+    const submittedAt = ref['Review Submitted At'];
+    if (submittedAt) {
+      return NextResponse.json({ ok: true, alreadySubmitted: true, submittedAt });
+    }
+    return NextResponse.json({ ok: true, alreadySubmitted: false });
+  } catch {
+    // Soft-fail: token is valid but Airtable hiccup — let the form render.
+    // Server-side idempotency in POST will still catch any re-submit.
+    return NextResponse.json({ ok: true });
+  }
 }

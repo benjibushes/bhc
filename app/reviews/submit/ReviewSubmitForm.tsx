@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface Props {
   token: string;
@@ -12,7 +12,27 @@ export default function ReviewSubmitForm({ token }: Props) {
   const [review, setReview] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [alreadySubmitted, setAlreadySubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // F-4 audit: probe the GET endpoint on mount so we can render the
+  // "already submitted" state immediately instead of letting the user
+  // fill out a doomed form that 409s on submit.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/reviews/submit?token=${encodeURIComponent(token)}`);
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok && data?.alreadySubmitted) {
+          setAlreadySubmitted(true);
+        }
+      } catch {
+        // Soft-fail: server-side 409 still catches re-submit.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,6 +51,13 @@ export default function ReviewSubmitForm({ token }: Props) {
         body: JSON.stringify({ token, rating, review: review.trim() }),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        // F-4: server-side idempotency rejected a second submission.
+        // Flip to the friendly "already submitted" view instead of error.
+        setAlreadySubmitted(true);
+        setSubmitting(false);
+        return;
+      }
       if (!res.ok) {
         setError(data?.error || 'Could not save — try again.');
         setSubmitting(false);
@@ -41,6 +68,17 @@ export default function ReviewSubmitForm({ token }: Props) {
       setError(e?.message || 'Network error — try again.');
       setSubmitting(false);
     }
+  }
+
+  if (alreadySubmitted) {
+    return (
+      <div className="border border-charcoal p-5 md:p-6">
+        <p className="font-serif text-lg mb-2">Thanks — you&apos;ve already submitted a review.</p>
+        <p className="text-saddle leading-relaxed text-sm md:text-base">
+          We&apos;ve got your rating on file. If you want to update it, reply to the email that sent you here and we&apos;ll edit it manually.
+        </p>
+      </div>
+    );
   }
 
   if (submitted) {
