@@ -284,8 +284,15 @@ export async function POST(request: Request) {
       'Email': email.trim().toLowerCase(),
       'Phone': phone || '',
       // F-3 audit: TCPA explicit SMS opt-in. False unless buyer ticked the
-      // checkbox AND supplied a phone. All Twilio sends gate on this field.
+      // checkbox AND supplied a phone. All Twilio sends gate on this field
+      // via sendSMSToConsumer() in lib/twilio.ts.
       'SMS Opt-In': !!smsOptIn && !!(phone && phone.trim().length > 0),
+      // P4-D audit: explicit consent timestamp = TCPA evidence trail. Without
+      // this we can't defend a complaint ("when did you receive consent?").
+      // Stamped only when the opt-in is TRUE at signup. Future flips back to
+      // true from the Twilio inbound webhook (re-opt-in) should re-stamp.
+      // Requires a `SMS Opt-In At` dateTime field on Consumers (Airtable).
+      'SMS Opt-In At': (!!smsOptIn && !!(phone && phone.trim().length > 0)) ? nowIso : null,
       'Created': todayDate,
       'Approved At': nowIso,
       'Buyer Stage': 'NEW',

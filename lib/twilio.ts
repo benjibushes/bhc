@@ -7,6 +7,14 @@
 //   TWILIO_FROM_NUMBER    — Twilio phone number in E.164 (+1XXXXXXXXXX)
 //
 // If any missing, sendSMS() warns + returns false. Never block request paths.
+//
+// TCPA / opt-in posture:
+//   - `sendSMS()` is the raw bottom-half — normalizes phone to E.164 + fires.
+//     ONLY safe to call for one-off admin/test sends to known-consenting numbers.
+//   - `sendSMSToConsumer()` is the consumer-facing top-half — gates on the
+//     Consumer record's `SMS Opt-In === true` AND `Unsubscribed !== true`,
+//     then delegates to sendSMS(). EVERY consumer-facing SMS must go through
+//     this helper so the gate can't be bypassed by a future careless caller.
 
 import twilio from 'twilio';
 
@@ -56,4 +64,57 @@ export async function sendSMS(input: {
     console.error(`[twilio] send failed to ${to}:`, e?.message || e);
     return false;
   }
+}
+
+/**
+ * Consumer-facing SMS gate. THE ONLY safe entry point for sending SMS
+ * to a buyer/rancher. Checks the Consumer (or Rancher) record's opt-in
+ * + suppression state before delegating to sendSMS().
+ *
+ * Hard gates (any one returns false → no SMS):
+ *   - `SMS Opt-In !== true`         — TCPA: no explicit consent, no send
+ *   - `Unsubscribed === true`       — global suppression mirror (email + SMS)
+ *   - empty/invalid phone           — handled downstream in sendSMS()
+ *
+ * Use this from every cron, route, and webhook. Never call sendSMS()
+ * directly from a consumer-facing path.
+ */
+export async function sendSMSToConsumer(input: {
+  consumer: Record<string, any> | null | undefined;
+  body: string;
+  /**
+   * Optional override when caller already pulled phone separately
+   * (e.g. forms where the record-level Phone is empty but the request body
+   *  carried a fresh number). Falls back to consumer['Phone'].
+   */
+  phone?: string;
+  /** For logs / future per-consumer audit. */
+  reason?: string;
+}): Promise<boolean> {
+  const { consumer, body, phone, reason } = input;
+  if (!consumer) {
+    console.warn('[twilio] sendSMSToConsumer: no consumer record', { reason });
+    return false;
+  }
+
+  // Suppression mirror — Unsubscribed flag drives email suppression already;
+  // applying it to SMS keeps the two channels consistent.
+  if (consumer['Unsubscribed'] === true) {
+    console.log('[twilio] gated: Unsubscribed=true', { reason });
+    return false;
+  }
+
+  // TCPA explicit opt-in. Without true here, we never fire.
+  if (consumer['SMS Opt-In'] !== true) {
+    console.log('[twilio] gated: SMS Opt-In !== true', { reason });
+    return false;
+  }
+
+  const to = (phone || consumer['Phone'] || '').toString().trim();
+  if (!to) {
+    console.log('[twilio] gated: no phone on record', { reason });
+    return false;
+  }
+
+  return sendSMS({ to, body });
 }

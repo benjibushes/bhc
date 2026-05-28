@@ -25,7 +25,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
-import { sendSMS } from '@/lib/twilio';
+import { sendSMSToConsumer } from '@/lib/twilio';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import jwt from 'jsonwebtoken';
@@ -146,17 +146,15 @@ p{margin:14px 0;color:#2A2A2A;font-size:15px}
         // than email; lifts pulse-response rate which feeds ghosting signal.
         // Fire-and-forget — never block the per-referral loop on a Twilio
         // hiccup, and never re-pulse (gated above by Buyer Pulse Sent At).
-        // F-3 audit fix: gated on SMS Opt-In field captured at /access quiz.
-        // Pre-fix, every buyer w/ phone got SMS — TCPA exposure waiting on
-        // env vars. Now: no opt-in, no SMS.
-        const buyerPhone = (buyer['Phone'] || '').toString().trim();
-        const buyerSmsOptIn = buyer['SMS Opt-In'] === true;
-        if (buyerPhone && buyerSmsOptIn) {
-          sendSMS({
-            to: buyerPhone,
-            body: `hey ${firstName} — quick check in. did ${rancherName} text you yet? reply 1=yes 2=no 3=need help. reply STOP to opt out. — Ben`,
-          }).catch(() => {});
-        }
+        // F-3 / P4-D audit fix: routed through sendSMSToConsumer which gates
+        // on SMS Opt-In + Unsubscribed. Note the email branch above already
+        // skipped this record if Unsubscribed=true, but the helper double-
+        // gates so future refactors can't slip past.
+        sendSMSToConsumer({
+          consumer: buyer,
+          body: `hey ${firstName} — quick check in. did ${rancherName} text you yet? reply 1=yes 2=no 3=need help. reply STOP to opt out. — Ben`,
+          reason: 'buyer-pulse day-5 check-in',
+        }).catch(() => {});
 
         // Mark pulsed so we don't re-ask
         try {

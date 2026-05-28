@@ -5,7 +5,7 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail, sendBuyerIntroNotification, sendStateWaitlistLetter } from '@/lib/email';
-import { sendSMS } from '@/lib/twilio';
+import { sendSMSToConsumer } from '@/lib/twilio';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
@@ -137,6 +137,111 @@ export async function POST(request: Request) {
 
     const allRanchers: any[] = await getAllRecords(TABLES.RANCHERS);
 
+    // ── Per-state fairness sub-cap (2026-05-27 multi-state fix) ─────────────
+    // PROBLEM: a rancher serving multiple states (Routing States = CA, OR, WA)
+    // shares ONE capacity counter. High-demand states (CA) consume the entire
+    // cap; low-demand states (OR, WA) get waitlisted indefinitely with no
+    // buyer ever reaching the rancher. Bigger states starve smaller ones.
+    //
+    // FIX: per-state sub-cap. Each routing state can claim at most
+    // floor(maxReferrals / numStates) slots by default. Ranchers can override
+    // with a JSON `State Capacity Override` field like {"CA": 5, "OR": 3, "WA": 2}
+    // when they want a non-uniform split.
+    //
+    // BACKWARDS-COMPAT:
+    //   - 1 routing state served → no sub-cap (old behavior preserved exactly).
+    //   - Multi-state rancher with no override → equal-floor split.
+    //   - Legacy referrals (no State Allocation stamp) don't count toward any
+    //     sub-cap bucket — they only count toward the global cap. This is the
+    //     conservative read: a referral with no allocation could belong to any
+    //     state, so attributing it to one would over-count there. As fresh
+    //     referrals stamp their state, the per-state buckets self-populate.
+    //
+    // STAMPING: at referral create below, we record State Allocation = the
+    // buyer's normalized state. The sub-cap math reads this field on subsequent
+    // matches to know how many slots each state has consumed.
+    const rancherRoutingStates = (r: any): string[] => {
+      const adminApprovedMultiState = !!r['Admin Approved Multi-State'];
+      const primaryState = normalizeState(r['State']);
+      if (!adminApprovedMultiState) {
+        return primaryState ? [primaryState] : [];
+      }
+      const routingRaw = (r['Routing States'] || '').toString().trim();
+      const served = normalizeStates(routingRaw || r['States Served']);
+      const merged = new Set<string>();
+      if (primaryState) merged.add(primaryState);
+      for (const s of served) if (s) merged.add(s);
+      return Array.from(merged);
+    };
+    const parseStateOverride = (raw: any): Record<string, number> | null => {
+      if (!raw) return null;
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+        const out: Record<string, number> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          const code = normalizeState(String(k));
+          const n = Math.floor(Number(v));
+          if (code && isFinite(n) && n >= 0) out[code] = n;
+        }
+        return Object.keys(out).length > 0 ? out : null;
+      } catch {
+        return null;
+      }
+    };
+    // Pull all active Intro Sent referrals once so we can bucket per (rancher, state).
+    // Reading-once + grouping avoids one Airtable call per rancher × state.
+    let activeRefsByRancherState = new Map<string, Map<string, number>>();
+    try {
+      const activeReferrals = (await getAllRecords(
+        TABLES.REFERRALS,
+        `{Status} = "Intro Sent"`,
+      )) as any[];
+      for (const ref of activeReferrals) {
+        const rancherIds = (Array.isArray(ref['Rancher']) ? ref['Rancher'] : []) as string[];
+        if (rancherIds.length === 0) continue;
+        // Prefer the State Allocation stamp (added 2026-05-27). Fall back
+        // to Buyer State for legacy referrals created before this fix —
+        // they still bucket correctly since the buyer's home state is the
+        // source state for the sub-cap math by design.
+        const allocRaw = ref['State Allocation'] || ref['Buyer State'] || '';
+        const allocState = normalizeState(String(allocRaw));
+        if (!allocState) continue;
+        for (const rid of rancherIds) {
+          let inner = activeRefsByRancherState.get(rid);
+          if (!inner) {
+            inner = new Map<string, number>();
+            activeRefsByRancherState.set(rid, inner);
+          }
+          inner.set(allocState, (inner.get(allocState) || 0) + 1);
+        }
+      }
+    } catch (e: any) {
+      console.error('[matching/suggest] active-referrals-by-state load failed:', e?.message);
+      // Fail open: empty map → sub-cap behaves as "no allocations yet,"
+      // matching falls back to global cap (legacy behavior).
+      activeRefsByRancherState = new Map();
+    }
+    const getStateSubCap = (
+      rancher: any,
+      state: string,
+      maxReferrals: number,
+    ): number => {
+      const states = rancherRoutingStates(rancher);
+      // Single-state ranchers preserve legacy behavior (no sub-cap).
+      if (states.length <= 1) return maxReferrals;
+      const override = parseStateOverride(rancher['State Capacity Override']);
+      if (override && override[state] !== undefined) return override[state];
+      // Equal-floor split. floor() can leave a slot or two unallocated
+      // (e.g. 10 / 3 = 3 per state, total 9). That's intentional — the
+      // global cap above stays authoritative, but the sub-cap prevents
+      // any single state from hogging more than its fair share.
+      return Math.max(0, Math.floor(maxReferrals / states.length));
+    };
+    const getActiveInState = (rancherId: string, state: string): number => {
+      return activeRefsByRancherState.get(rancherId)?.get(state) || 0;
+    };
+
     // Helper: check if rancher is active, signed, and under capacity.
     // Also excludes any rancher in `excludeRancherIds` — used when re-routing
     // a lead that a rancher just passed on, so the same rancher doesn't get
@@ -164,6 +269,15 @@ export async function POST(request: Request) {
         if (currentReferrals >= maxReferrals * HARD_CEILING_MULTIPLIER) return false;
       } else {
         if (currentReferrals >= maxReferrals) return false;
+      }
+      // Per-state sub-cap. Cold leads only — hot leads keep the bypass
+      // intent (warmup-engaged opt-ins shouldn't sit in queue waiting for
+      // a state-fairness slot to free up). The global 1.2× hard ceiling
+      // above is still enforced atomically post-INCR.
+      if (!isHotLead) {
+        const subCap = getStateSubCap(r, normalizedBuyerState, maxReferrals);
+        const inState = getActiveInState(r.id, normalizedBuyerState);
+        if (inState >= subCap) return false;
       }
       return true;
     };
@@ -472,6 +586,12 @@ export async function POST(request: Request) {
       'Suggested Rancher Name': topMatch['Operator Name'] || topMatch['Ranch Name'] || '',
       'Suggested Rancher State': topMatch['State'] || '',
       'Match Type': matchType === 'direct' ? 'Direct (Rancher Page)' : 'Local',
+      // State Allocation: source state used for the per-state sub-cap math
+      // on future matches. Stamped on every new referral so the activeRefs
+      // grouping in subsequent calls knows which state's bucket this slot
+      // belongs to. For single-state ranchers the sub-cap collapses to the
+      // global cap, so this stamp is harmless but always present.
+      'State Allocation': normalizedBuyerState,
     };
 
     let referral: any;
@@ -936,18 +1056,19 @@ export async function POST(request: Request) {
           // G14: SMS touchpoint right after buyer intro email. Industry +20-40%
           // conversion lift from SMS reminders post-intro. Fire-and-forget so a
           // Twilio outage can't block the matching pipeline.
-          // F-3 audit fix: gated on explicit SMS Opt-In field captured at /access
-          // quiz. Pre-fix, every buyer w/ a phone got SMS — TCPA exposure when
-          // TWILIO_* env vars flip on. Now: no opt-in, no SMS, no exposure.
+          // F-3 / P4-D audit fix: routed through sendSMSToConsumer which gates on
+          // explicit SMS Opt-In + Unsubscribed mirror. Pre-fix, every buyer w/
+          // phone got SMS — TCPA exposure when TWILIO_* env vars flip on.
+          // Now: no opt-in OR unsubscribed, no SMS, no exposure.
           if (buyerPhone) {
             try {
               const consumerForSms: any = await getRecordById(TABLES.CONSUMERS, buyerId);
-              if (consumerForSms?.['SMS Opt-In'] === true) {
-                sendSMS({
-                  to: buyerPhone,
-                  body: `hey ${buyerFirstName} — we just connected you w/ ${rancherName} for half-cow. they'll email you in the next 24h. reply STOP to opt out. — Ben @ BuyHalfCow`,
-                }).catch(() => {});
-              }
+              sendSMSToConsumer({
+                consumer: consumerForSms,
+                phone: buyerPhone,
+                body: `hey ${buyerFirstName} — we just connected you w/ ${rancherName} for half-cow. they'll email you in the next 24h. reply STOP to opt out. — Ben @ BuyHalfCow`,
+                reason: 'matching/suggest intro touchpoint',
+              }).catch(() => {});
             } catch (e) {
               console.warn('[matching/suggest] SMS opt-in check failed:', e);
             }
