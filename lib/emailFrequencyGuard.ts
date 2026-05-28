@@ -180,10 +180,31 @@ export async function logEmailSend(input: {
       'FULL ERROR:', JSON.stringify(e?.errors || e?.error || e),
     );
   } finally {
-    // Invalidate the cap cache for this recipient regardless of whether
-    // the Airtable log write succeeded. If logging failed (422/403), the
-    // cache would otherwise stay stale and over/under-cap subsequent sends.
-    _countCache.delete(input.recipientEmail.toLowerCase());
+    // Update cap cache for this recipient. CRITICAL: increment in-memory
+    // BEFORE Airtable read-after-write becomes visible, so a cron tick
+    // that sends N emails to the same recipient sees count=1, 2, 3,
+    // cap-exceeded — instead of N parallel sends all reading count=0
+    // from a stale Airtable snapshot. PA5 audit (2026-05-28) found
+    // rancher-followup cron bursting 9-11 sendRancherLeadReminder
+    // emails to one rancher per tick because all checks fired before
+    // any Airtable write became visible.
+    //
+    // Only bump on status='sent' or 'suppressed' (those count toward
+    // delivery decisions). 'bounced'/'complained' come via webhook and
+    // already had a 'sent' counted at original send time.
+    const email = input.recipientEmail.toLowerCase();
+    if (input.status === 'sent') {
+      const cached = _countCache.get(email);
+      const newCount = cached ? cached.count + 1 : 1;
+      _countCache.set(email, { count: newCount, ts: Date.now() });
+    } else if (input.status === 'suppressed') {
+      // Suppressed sends don't count toward the cap (that would
+      // self-reinforce suppression). But also don't invalidate the
+      // cache — the count we read is still valid.
+    } else {
+      // bounced / complained — refresh from Airtable next call.
+      _countCache.delete(email);
+    }
   }
 }
 
