@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords } from '@/lib/airtable';
-import { sendRancherLeadNudge } from '@/lib/email';
+import { getAllRecords, updateRecord } from '@/lib/airtable';
+import { sendRancherLeadNudge, sendEmail } from '@/lib/email';
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -12,11 +12,21 @@ export const maxDuration = 60;
 // Matches existing caps on buyer-pulse + email-sequences.
 const MAX_PER_RUN = 25;
 
-// Runs daily 15 UTC — exits early unless today is Monday. Vercel Hobby tier
-// silently dropped the original `0 15 * * 1` day-of-week schedule (0 runs in
-// 14 days as of 2026-05-19 audit). Daily wrapper + Monday guard ensures the
-// cron actually fires on Mondays + Cron Runs has a row every day proving we
-// DID check.
+// Runs daily 15 UTC. Two paths inside this handler with different cadences:
+//
+//   1. Stale-lead nudge to ranchers about pending referrals — MONDAY ONLY
+//      (weekly cadence; per-referral 7d throttle stamp on top).
+//   2. New self-submit / blank-Onboarding-Status prospect nudge — DAILY
+//      (per-rancher throttle via "Last Onboarding Nudge At" ≥ 2 days).
+//   3. Stalled mid-funnel rancher Telegram digest to admin — MONDAY ONLY
+//      (weekly admin summary; daily nudges to ranchers are handled by
+//      /api/cron/onboarding-stuck so we don't double-nudge).
+//
+// Vercel Hobby tier silently dropped the original `0 15 * * 1` day-of-week
+// schedule (0 runs in 14 days as of 2026-05-19 audit). Daily wrapper + in-code
+// Monday guard on the Monday-only loops ensures the weekly work fires on
+// Mondays + Cron Runs has a row every day proving we DID check, while the
+// daily prospect-nudge loop runs every UTC day.
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
@@ -24,9 +34,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
 
   // 0=Sunday, 1=Monday. Use UTC so we don't drift across DST.
   const today = new Date();
-  if (today.getUTCDay() !== 1) {
-    return { status: 'success', recordsTouched: 0, notes: `skipped — not Monday (UTC day=${today.getUTCDay()})` };
-  }
+  const isMonday = today.getUTCDay() === 1;
+  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
   const ranchers = await getAllRecords(TABLES.RANCHERS);
     const now = new Date();
@@ -57,7 +66,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       if (['Paused', 'Non-Compliant'].includes(activeStatus)) continue;
       if (status === 'Live' || status === 'Verification Complete') continue;
 
-      // Handle new applicants: ranchers with NO onboarding status set (just applied)
+      // Handle new applicants: ranchers with NO onboarding status set (just applied).
+      // This path runs DAILY — self-submit prospects shouldn't wait up to 6 days
+      // for first nudge.
       if (!status) {
         const created = new Date(rancher.createdTime || 0);
         const daysOld = Math.floor((now.getTime() - created.getTime()) / DAY_MS);
@@ -66,6 +77,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         }
         continue;
       }
+
+      // Below this line: stalled-mid-funnel checks. Telegram digest is weekly
+      // (Monday only) to avoid spamming admin daily — daily rancher-facing
+      // nudges for these stages are handled by /api/cron/onboarding-stuck.
+      if (!isMonday) continue;
 
       const threshold = STALL_THRESHOLDS[status];
       if (!threshold) continue;
@@ -95,19 +111,27 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       }
     }
 
-    if (stalled.length === 0) {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        '✅ <b>Rancher Follow-Up Check</b>\n\nAll ranchers are progressing on schedule. Nothing stalled.'
-      );
-      return { status: 'success', recordsTouched: 0, notes: 'no stalled ranchers' };
-    }
-
-    // Send one Telegram alert per stalled rancher
-    const thresholdMap: Record<string, number> = { ...STALL_THRESHOLDS, 'New Applicant': 2 };
-
+    // Per-run send counter — used by both new-applicant nudges and the
+    // Monday-only stale-lead loop.
     let processed = 0;
-    for (const { rancher, stage, daysStuck, isNewApplicant } of stalled) {
+    let prospectNudgesSent = 0;
+
+    if (stalled.length === 0) {
+      // Only emit the "all clear" pulse on Monday — the daily-only new-applicant
+      // path being empty is normal and not worth daily noise.
+      if (isMonday) {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          '✅ <b>Rancher Follow-Up Check</b>\n\nAll ranchers are progressing on schedule. Nothing stalled.'
+        );
+      }
+    } else {
+      // Send one Telegram alert per stalled rancher.
+      // For new-applicants we ALSO send a gentle reminder email to the prospect
+      // (daily-eligible, gated by Last Onboarding Nudge At ≥ 2 days).
+      const thresholdMap: Record<string, number> = { ...STALL_THRESHOLDS, 'New Applicant': 2 };
+
+      for (const { rancher, stage, daysStuck, isNewApplicant } of stalled) {
       if (processed >= MAX_PER_RUN) {
         console.log(`[rancher-followup] hit MAX_PER_RUN=${MAX_PER_RUN}, stopping stalled-rancher alerts`);
         break;
@@ -116,6 +140,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       const state = rancher['State'] || '?';
       const email = rancher['Email'] || 'no email';
       const phone = rancher['Phone'] || '';
+
+      // Per-rancher throttle for new-applicant path so daily cron doesn't spam.
+      // Telegram-to-admin AND email-to-prospect both honor the same stamp.
+      if (isNewApplicant) {
+        const lastNudge = rancher['Last Onboarding Nudge At'];
+        if (lastNudge) {
+          const lastNudgeTime = new Date(lastNudge).getTime();
+          if (isFinite(lastNudgeTime) && now.getTime() - lastNudgeTime < 2 * DAY_MS) {
+            continue;
+          }
+        }
+      }
 
       const stageEmoji: Record<string, string> = {
         'New Applicant':       '📬',
@@ -162,23 +198,73 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
         keyboard.inline_keyboard.length > 0 ? keyboard : undefined
       );
       processed++;
+
+      // Daily new-applicant gentle reminder email to the prospect themselves.
+      // We stamp Last Onboarding Nudge At regardless of email outcome so we
+      // don't retry every day on a permanently-bouncing address. Stamp BEFORE
+      // the send so a throw doesn't leave the throttle unset.
+      if (isNewApplicant) {
+        const rancherEmail = (rancher['Email'] || '').toString().trim();
+        const unsubscribed = !!rancher['Unsubscribed'];
+        const stampNow = new Date().toISOString();
+        try {
+          await updateRecord(TABLES.RANCHERS, rancher.id, {
+            'Last Onboarding Nudge At': stampNow,
+          });
+        } catch (stampErr: any) {
+          console.warn('[rancher-followup] new-applicant throttle stamp failed:', rancher.id, stampErr?.message);
+        }
+        if (rancherEmail && !unsubscribed) {
+          const first = (rancher['Operator Name'] || '').toString().split(' ')[0] || 'there';
+          const ranchName = (rancher['Ranch Name'] || rancher['Operator Name'] || 'your ranch').toString();
+          const calLink = process.env.NEXT_PUBLIC_CALENDLY_LINK || `${SITE_URL}/contact`;
+          try {
+            await sendEmail({
+              to: rancherEmail,
+              subject: `${first}, ${ranchName} is on the map — what's next?`,
+              html: `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px;">
+<div style="max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A;">
+  <h1 style="font-family:Georgia,serif;font-size:24px;margin:0 0 18px;">Hey ${first},</h1>
+  <p>Just a quick check-in &mdash; <strong>${ranchName}</strong> has been on the BuyHalfCow map for a couple days now. Yellow pin, visible to buyers, but not yet routed customers.</p>
+  <p>The fastest way to flip from "visible" to "getting leads" is a 15-minute call. I'll show you what we do, ask how you sell today, and we figure out together if it's a fit.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${calLink}" style="display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;">Book the 15-min call</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;">If now isn't the right time, just reply and let me know. No pressure.</p>
+  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">&mdash; Ben<br>Founder, BuyHalfCow</p>
+</div></body></html>`,
+              _replyContext: { type: 'rnc', recordId: rancher.id },
+            } as any);
+            prospectNudgesSent++;
+          } catch (emailErr: any) {
+            console.error('[rancher-followup] new-applicant email failed:', rancher.id, emailErr?.message);
+          }
+        }
+      }
+      }
+
+      // Monday-only summary digest. The daily new-applicant path leans on the
+      // per-rancher Telegram alerts above; no need for a daily digest too.
+      if (isMonday) {
+        const summaryLines = stalled.map(
+          ({ rancher, stage, daysStuck }) =>
+            `• ${rancher['Operator Name'] || rancher['Ranch Name']} — ${stage} (${daysStuck}d)`
+        );
+
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `📊 <b>Follow-Up Summary</b>: ${stalled.length} rancher${stalled.length !== 1 ? 's' : ''} need attention\n\n${summaryLines.join('\n')}`
+        );
+      }
     }
 
-    // Summary message
-    const summaryLines = stalled.map(
-      ({ rancher, stage, daysStuck }) =>
-        `• ${rancher['Operator Name'] || rancher['Ranch Name']} — ${stage} (${daysStuck}d)`
-    );
-
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `📊 <b>Follow-Up Summary</b>: ${stalled.length} rancher${stalled.length !== 1 ? 's' : ''} need attention\n\n${summaryLines.join('\n')}`
-    );
-
     // ── Stale lead nudge emails to active ranchers ─────────────────────────
+    // MONDAY ONLY — weekly cadence is the design (the loop also has a per-
+    // referral 7-day throttle stamp on top of that, but the day-of-week is
+    // the primary gate).
     let nudgesSent = 0;
+    if (isMonday) {
     try {
-      const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
       const staleReferrals = await getAllRecords(
         TABLES.REFERRALS,
         'OR({Status} = "Intro Sent", {Status} = "Rancher Contacted")'
@@ -230,7 +316,6 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
       // re-send a duplicate nudge. Stamping first means at worst we don't
       // nudge this week if the stamp lands but the email throws — the next
       // cron run will retry (since the stamp expires after 7d).
-      const { updateRecord } = await import('@/lib/airtable');
       for (const [rancherId, { leads, refIds }] of Object.entries(byRancher)) {
         if (processed >= MAX_PER_RUN) {
           console.log(`[rancher-followup] hit MAX_PER_RUN=${MAX_PER_RUN}, stopping lead-nudge emails`);
@@ -267,11 +352,12 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
     } catch (e: any) {
       console.error('Stale lead nudge error:', e.message);
     }
+    }
 
   return {
     status: 'success',
-    recordsTouched: stalled.length + nudgesSent,
-    notes: `stalled=${stalled.length} nudges=${nudgesSent}`,
+    recordsTouched: stalled.length + nudgesSent + prospectNudgesSent,
+    notes: `isMonday=${isMonday} stalled=${stalled.length} leadNudges=${nudgesSent} prospectNudges=${prospectNudgesSent}`,
   };
 }
 
