@@ -266,6 +266,27 @@ export async function PATCH(
       });
     }
 
+    // ── IDEMPOTENCY GUARD ──────────────────────────────────────────────
+    // P2-D audit fix: short-circuit terminal → same-terminal PATCHes so a
+    // fat-finger or retry can't double-fire side effects (Stripe invoice
+    // re-create → double-bill the rancher, second post-purchase welcome
+    // email, re-stamped Closed At, duplicate Telegram celebration).
+    // Capacity decrement is already guarded by `shouldDecrementCapacity`,
+    // but the money-moving side effects are not — this closes that gap.
+    //
+    // Only fires on terminal → SAME terminal. Legitimate corrections like
+    // Closed Won → Closed Lost still pass through with their proper side
+    // effects (capacity restore, re-route buyer, etc.).
+    const currentStatus = String(referral['Status'] || '');
+    const TERMINAL_STATUSES = ['Closed Won', 'Closed Lost', 'Refunded'];
+    if (status && currentStatus === status && TERMINAL_STATUSES.includes(currentStatus)) {
+      return NextResponse.json({
+        ok: true,
+        noop: true,
+        reason: `Referral already in ${currentStatus} — no action taken`,
+      });
+    }
+
     const fields: Record<string, any> = {};
 
     // Ranchers can update to these statuses
@@ -360,30 +381,17 @@ export async function PATCH(
                   });
                 }
 
-                // I-9 audit: auto-enroll Closed Won buyer as affiliate.
-                // affiliate program was operator-provisioned only — flywheel
-                // dormant. now: every closed won buyer mints an affiliate
-                // code idempotent by email. existing affiliate-welcome email
-                // + dashboard engages them on first login. fire-and-forget.
-                if (buyerEmail) {
-                  try {
-                    const { ensureBuyerAffiliate } = await import('@/lib/affiliates');
-                    const result = await ensureBuyerAffiliate({
-                      consumerId: buyerId,
-                      email: buyerEmail,
-                      fullName: buyerFullName,
-                    });
-                    if (result && !result.existing) {
-                      // Stamp Consumer row so we don't re-process on a re-edit
-                      // of Closed Won. Audit trail + dedup signal.
-                      await updateRecord(TABLES.CONSUMERS, buyerId, {
-                        'Affiliate Created At': new Date().toISOString(),
-                        'Affiliate Code': result.code,
-                      });
-                    }
-                  } catch (e: any) {
-                    console.warn('[closed-won] auto-affiliate enrollment failed (non-fatal):', e?.message);
-                  }
+                // P2-A audit: affiliate auto-enrollment + welcome email live
+                // in lib/contracts/rancher.ts enrollClosedWonAffiliate() so
+                // every close path (dashboard PATCH here, Stripe webhook
+                // tier_v2 via recordClose, Telegram quick-action via
+                // recordClose) fires the same flywheel. Idempotent via
+                // ensureBuyerAffiliate's email-based lookup.
+                try {
+                  const { enrollClosedWonAffiliate } = await import('@/lib/contracts/rancher');
+                  await enrollClosedWonAffiliate(buyerId);
+                } catch (e: any) {
+                  console.warn('[closed-won] affiliate enroll failed (non-fatal):', e?.message);
                 }
               } catch (e) {
                 console.error('Post-purchase welcome send error:', e);

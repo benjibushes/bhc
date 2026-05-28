@@ -8,6 +8,10 @@ import { updateRecord, getRecordById, getAllRecords, escapeAirtableValue, TABLES
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { transitionBuyerStage } from './buyer';
 import { funnelRecord } from '@/lib/funnelMetrics';
+import { ensureBuyerAffiliate } from '@/lib/affiliates';
+import { sendAffiliateWelcome } from '@/lib/email';
+
+const AFFILIATE_SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 export type ReferralStatus =
   | 'Pending Approval'
@@ -85,6 +89,15 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     } catch (e: any) {
       console.warn('[contracts.recordClose] Buyer Stage flip failed:', e?.message);
     }
+
+    // P2-A audit fix: auto-enroll Closed Won buyer as affiliate AND send the
+    // welcome email. Single helper (enrollClosedWonAffiliate) so every close
+    // path — Stripe webhook tier_v2, admin contract, Telegram quick-action,
+    // legacy dashboard PATCH — gets identical enrollment + welcome behavior.
+    // Pre-fix the dashboard PATCH path called ensureBuyerAffiliate WITHOUT
+    // firing the welcome email; the tier_v2 Stripe webhook path skipped
+    // enrollment entirely. Fire-and-forget: never block the close path.
+    await enrollClosedWonAffiliate(buyerId);
   }
   if (buyerId && input.outcome === 'lost') {
     await restoreBuyerAfterClosedLost(buyerId, input.referralId);
@@ -123,6 +136,64 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
   }
 
   return { ok: true, capacityFreed };
+}
+
+/**
+ * P2-A audit helper. Exported so the legacy dashboard PATCH path
+ * (app/api/rancher/referrals/[id]/route.ts) can share the same affiliate
+ * enrollment + welcome email flow as recordClose() without re-implementing
+ * it. Idempotent via ensureBuyerAffiliate's email-based lookup — calling
+ * this twice for the same buyer is a no-op on the second call.
+ *
+ * Fire-and-forget: every internal step swallows its own error so a Resend
+ * outage or Airtable hiccup never blocks the close path.
+ */
+export async function enrollClosedWonAffiliate(buyerId: string): Promise<void> {
+  if (!buyerId) return;
+  try {
+    const buyerRecord: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+    const buyerEmail = String(buyerRecord?.['Email'] || '').trim();
+    const buyerFullName = String(buyerRecord?.['Full Name'] || '');
+    if (!buyerEmail) return;
+
+    const result = await ensureBuyerAffiliate({
+      consumerId: buyerId,
+      email: buyerEmail,
+      fullName: buyerFullName,
+    });
+    if (!result || result.existing || !result.code) return;
+
+    // Stamp Consumer row so a re-edit of Closed Won doesn't re-process.
+    // Audit trail + dedup signal for downstream crons.
+    try {
+      await updateRecord(TABLES.CONSUMERS, buyerId, {
+        'Affiliate Created At': new Date().toISOString(),
+        'Affiliate Code': result.code,
+      });
+    } catch (e: any) {
+      console.warn('[enrollClosedWonAffiliate] affiliate stamp failed:', e?.message);
+    }
+
+    // Welcome email — fail silently if Resend errors. Mirrors the link
+    // shape used by /api/admin/affiliates POST for consistency.
+    try {
+      const buyerLink = `${AFFILIATE_SITE_URL}/access?ref=${encodeURIComponent(result.code)}`;
+      const rancherLink = `${AFFILIATE_SITE_URL}/partner?ref=${encodeURIComponent(result.code)}`;
+      const dashboardUrl = `${AFFILIATE_SITE_URL}/affiliate`;
+      await sendAffiliateWelcome({
+        name: buyerFullName || buyerEmail,
+        email: buyerEmail,
+        code: result.code,
+        dashboardUrl,
+        buyerLink,
+        rancherLink,
+      });
+    } catch (e: any) {
+      console.warn('[enrollClosedWonAffiliate] sendAffiliateWelcome failed:', e?.message);
+    }
+  } catch (e: any) {
+    console.warn('[enrollClosedWonAffiliate] failed:', e?.message);
+  }
 }
 
 // F-2 audit helper. Exported so non-contract close paths (Telegram reject /
