@@ -155,6 +155,36 @@ export async function POST(request: Request) {
 
     case 'customer.subscription.updated': {
       const sub = event.data.object as any;
+      const subMetaType = sub?.metadata?.type;
+      // ── P4-A Gap 1: brand partner downgrade / status change ──
+      // brand-partner-tier subs fire `updated` on every status flip (active →
+      // past_due → canceled) and on tier downgrade (price_id change). Route
+      // to dedicated handler so we mirror Brands.Subscription Status / Tier /
+      // Active. Falls through to handleTierSubscriptionUpsert only when sub
+      // is a rancher tier_v2 (has customer_account).
+      if (subMetaType === 'brand-partner-tier') {
+        try {
+          await handleBrandPartnerSubscriptionUpdated(sub);
+        } catch (err: any) {
+          console.error('[stripe webhook] brand-partner subscription.updated handler error:', err?.message);
+          await flipStripeEventFailed(event.id, err?.message);
+          return NextResponse.json({ received: true, error: 'logged' });
+        }
+        break;
+      }
+      // ── P4-A Gap 2: backer (founder) subscription downgrade ──
+      // founder-subscription subs (herd-monthly / outlaw-monthly / steward-*)
+      // fire `updated` on tier downgrade. Mirror Consumers.Founder Tier.
+      if (subMetaType === 'founder-subscription') {
+        try {
+          await handleFounderSubscriptionUpdated(sub);
+        } catch (err: any) {
+          console.error('[stripe webhook] founder subscription.updated handler error:', err?.message);
+          await flipStripeEventFailed(event.id, err?.message);
+          return NextResponse.json({ received: true, error: 'logged' });
+        }
+        break;
+      }
       try {
         await handleTierSubscriptionUpsert(sub);
       } catch (err: any) {
@@ -167,6 +197,35 @@ export async function POST(request: Request) {
 
     case 'customer.subscription.deleted': {
       const sub = event.data.object as any;
+      const subMetaType = sub?.metadata?.type;
+      // ── P4-A Gap 1: brand partner cancellation ──
+      // Fires when a brand cancels OR when their final dunning retry fails out.
+      // Flip Brands.Subscription Status='canceled' + Active=false + Telegram alert.
+      if (subMetaType === 'brand-partner-tier') {
+        try {
+          await handleBrandPartnerSubscriptionDeleted(sub);
+        } catch (err: any) {
+          console.error('[stripe webhook] brand-partner subscription.deleted handler error:', err?.message);
+          await flipStripeEventFailed(event.id, err?.message);
+          return NextResponse.json({ received: true, error: 'logged' });
+        }
+        break;
+      }
+      // ── P4-A Gap 2: backer (founder) subscription cancellation ──
+      // founder-subscription subs (herd-monthly / outlaw-monthly / steward-*).
+      // Flip Consumers.Subscription Status='canceled' + Founder Tier Cancelled At
+      // (preserve Founder Tier value for back-compat — Wall placement, founder
+      // number history). Telegram alert.
+      if (subMetaType === 'founder-subscription') {
+        try {
+          await handleFounderSubscriptionDeleted(sub);
+        } catch (err: any) {
+          console.error('[stripe webhook] founder subscription.deleted handler error:', err?.message);
+          await flipStripeEventFailed(event.id, err?.message);
+          return NextResponse.json({ received: true, error: 'logged' });
+        }
+        break;
+      }
       // ── Stage-3 tier subscription deletion ──
       // If the sub has a customer_account (V2 rancher sub), handle as tier cancellation.
       if (sub.customer_account) {
@@ -624,6 +683,20 @@ export async function POST(request: Request) {
             TELEGRAM_ADMIN_CHAT_ID,
             `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
           );
+        } else {
+          // ── P4-A Gap 3: founder lifetime refund ──
+          // No Payments row flipped → could be a founder lifetime (Founding 100
+          // / Title Founder) one-time refund. Pre-fix these were silent —
+          // money refunded in Stripe, founder still showed on the Wall +
+          // counter never released. Now: detect founder-tier metadata and
+          // flip Consumers row + release counter + audit log + Telegram.
+          // Best-effort: failure here does NOT roll back the deposit refund
+          // path above (which already returned flipped:false).
+          try {
+            await handleFounderLifetimeRefundOrDispute(piId, charge, 'refund');
+          } catch (e: any) {
+            console.warn('[stripe webhook] founder-lifetime refund detection failed:', e?.message);
+          }
         }
         // H-3 audit fix: refund mutations were invisible to the audit log
         // unless triggered via /api/admin/payments/refund. Stripe-dashboard
@@ -662,6 +735,26 @@ export async function POST(request: Request) {
         await handleDispute(event);
       } catch (e: any) {
         console.warn('[stripe webhook] dispute handler:', e?.message);
+      }
+      // ── P4-A Gap 3: founder lifetime dispute ──
+      // Only fire on dispute.created (initial chargeback). funds_withdrawn /
+      // updated / closed re-fire on the same dispute and shouldn't re-flip
+      // Consumers.Founder Tier or re-decrement the counter (idempotency).
+      // handleDispute already fires the LOUD Telegram alert, so founder
+      // detection just adds Consumer-row + counter-release on top.
+      if (event.type === 'charge.dispute.created') {
+        try {
+          const dispute = event.data.object as any;
+          const piId: string =
+            typeof dispute?.payment_intent === 'string'
+              ? dispute.payment_intent
+              : dispute?.payment_intent?.id || '';
+          if (piId) {
+            await handleFounderLifetimeRefundOrDispute(piId, dispute, 'dispute');
+          }
+        } catch (e: any) {
+          console.warn('[stripe webhook] founder-lifetime dispute detection failed:', e?.message);
+        }
       }
       break;
 
@@ -1581,6 +1674,607 @@ async function handleDispute(event: any): Promise<void> {
     result: { status, amount, reason, paymentRecordId },
     reverseAction: { type: 'noop', reason: 'Stripe-driven dispute — cannot un-dispute via Airtable' },
   }).catch(e => console.error('[audit] dispute log failed:', e));
+}
+
+// ============================================================================
+// P4-A Gap 1 — BRAND PARTNER SUBSCRIPTION UPDATED.
+//
+// Fires on every customer.subscription.updated for brand-partner-tier subs.
+// Three causes:
+//   1. Status flip — active → past_due (invoice failed) → canceled (final retry)
+//      → unpaid (collections exhausted). Mirror to Brands.Subscription Status.
+//   2. Tier downgrade — price_id changed (Spotlight → Featured or similar).
+//      Mirror to Brands.Tier label.
+//   3. Cancel-at-period-end flag — customer hit "cancel" but sub still active
+//      until period_end. We mirror Subscription Status + stamp Cancel At Period
+//      End so the brand dashboard shows the future-cancel state.
+//
+// Idempotency: read Brands row first, skip if already in target state. This
+// shields us from Stripe's frequent `updated` re-fires (every metered usage
+// report, every invoice generated, etc).
+// ============================================================================
+async function handleBrandPartnerSubscriptionUpdated(sub: any): Promise<void> {
+  const subscriptionId: string = sub.id;
+  if (!subscriptionId) return;
+
+  // Look up Brand row by Stripe Subscription Id (brand schema uses lowercase `Id`).
+  const matches: any[] = await getAllRecords(
+    TABLES.BRANDS,
+    `{Stripe Subscription Id} = "${escapeAirtableValue(subscriptionId)}"`,
+  );
+  if (matches.length === 0) {
+    console.warn(`[brand-sub-updated] no Brand row matches subscription ${subscriptionId}`);
+    return;
+  }
+  const brand: any = matches[0];
+  const brandRecordId: string = brand.id;
+
+  // ── Resolve new tier from price_id ──
+  // sub.items.data[0].price.id is the current active price after the update.
+  // Map env vars back to tier slug so we can stamp the human-readable label.
+  const currentPriceId: string =
+    sub?.items?.data?.[0]?.price?.id || sub?.plan?.id || '';
+  const newTierSlug = brandPriceIdToTierSlug(currentPriceId);
+  const newTierLabel = newTierSlug ? brandTierNameForSlug(newTierSlug) : '';
+
+  // ── Resolve new status. Subscription.status values: active, past_due,
+  //    unpaid, canceled, incomplete, incomplete_expired, trialing, paused ──
+  const newStatus: string = String(sub?.status || '').toLowerCase();
+  const cancelAtPeriodEnd: boolean = !!sub?.cancel_at_period_end;
+  const previousTier: string = String(brand['Tier'] || '').trim();
+  const previousStatus: string = String(brand['Subscription Status'] || '').trim().toLowerCase();
+
+  // ── Idempotency: skip if nothing changed ──
+  const statusChanged = previousStatus !== newStatus;
+  const tierChanged = !!newTierLabel && previousTier !== newTierLabel;
+  if (!statusChanged && !tierChanged) {
+    console.log(`[brand-sub-updated] no-op for ${brandRecordId} — status=${newStatus}, tier=${newTierLabel || previousTier}`);
+    return;
+  }
+
+  // ── Apply update ──
+  const fields: Record<string, any> = {};
+  if (statusChanged) {
+    fields['Subscription Status'] = newStatus;
+    // Stripe's `canceled` status → also flip Active off + Featured off so the
+    // public Brands grid stops surfacing them. `past_due` / `unpaid` keep the
+    // brand surfaced (they may recover via dunning).
+    if (newStatus === 'canceled' || newStatus === 'unpaid') {
+      fields['Active'] = false;
+      fields['Featured'] = false;
+    }
+  }
+  if (tierChanged) {
+    fields['Tier'] = newTierLabel;
+  }
+  if (cancelAtPeriodEnd && sub?.cancel_at) {
+    // Optional best-effort timestamp — field may not exist on schema yet.
+    fields['Cancel At Period End'] = new Date(sub.cancel_at * 1000).toISOString();
+  }
+  try {
+    await updateRecord(TABLES.BRANDS, brandRecordId, fields);
+  } catch (e: any) {
+    // Schema-drift tolerant: if Cancel At Period End / Active doesn't exist
+    // yet, retry without those optional fields so the core status/tier flip
+    // still lands.
+    console.warn(`[brand-sub-updated] full write failed, retrying core fields only: ${e?.message}`);
+    const core: Record<string, any> = {};
+    if (statusChanged) core['Subscription Status'] = newStatus;
+    if (tierChanged) core['Tier'] = newTierLabel;
+    await updateRecord(TABLES.BRANDS, brandRecordId, core);
+  }
+
+  // ── Telegram alert per cause ──
+  try {
+    const brandName = String(brand['Brand Name'] || brand['Contact Name'] || brandRecordId);
+    let alert = '';
+    if (tierChanged) {
+      alert = `🔁 <b>BRAND TIER CHANGE</b>\n${brandName}\n${previousTier || '(unknown)'} → <b>${newTierLabel}</b>\nsub ${subscriptionId.slice(-8)}`;
+    } else if (newStatus === 'canceled') {
+      alert = `⚠️ <b>BRAND CANCELLED</b>\n${brandName}\nprev status: ${previousStatus}\nsub ${subscriptionId.slice(-8)}`;
+    } else if (statusChanged) {
+      alert = `🔔 BRAND status: ${brandName} → <b>${newStatus}</b> (was ${previousStatus || 'unknown'}) · sub ${subscriptionId.slice(-8)}`;
+    }
+    if (alert) await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, alert);
+  } catch (e: any) {
+    console.warn('[brand-sub-updated] telegram alert failed:', e?.message);
+  }
+
+  // ── Funnel event ──
+  try {
+    await funnelRecord({
+      stage: tierChanged ? 'brand_partner_tier_changed' : 'brand_partner_status_changed',
+      metadata: {
+        brandRecordId,
+        subscriptionId,
+        previousTier,
+        newTier: newTierLabel,
+        previousStatus,
+        newStatus,
+      },
+    });
+  } catch (e: any) {
+    console.warn('[brand-sub-updated] funnel record failed:', e?.message);
+  }
+
+  // ── Audit log — Stripe-driven Brand mutation, was previously invisible ──
+  await logAuditEntry({
+    actor: 'cron',
+    tool: 'stripe-webhook-brand-partner-subscription-updated',
+    targetType: 'Other',
+    targetId: brandRecordId,
+    args: { subscriptionId, previousTier, previousStatus, newStatus, newTier: newTierLabel },
+    result: { fields },
+    reverseAction: { type: 'noop', reason: 'Stripe-driven subscription update — replay from Stripe Events row' },
+  }).catch(e => console.error('[audit] brand-sub-updated log failed:', e));
+}
+
+// ============================================================================
+// P4-A Gap 1 — BRAND PARTNER SUBSCRIPTION DELETED.
+//
+// Fires on customer.subscription.deleted when a brand cancels (immediate) OR
+// when their final dunning retry fails and Stripe auto-cancels. Status of the
+// sub at delete time is always 'canceled'.
+//
+// Mirror: Brands.Subscription Status='canceled', Active=false, Featured=false,
+// Cancelled At=now. Telegram alert. Funnel + audit log.
+// Idempotent: re-read row, skip if already canceled.
+// ============================================================================
+async function handleBrandPartnerSubscriptionDeleted(sub: any): Promise<void> {
+  const subscriptionId: string = sub.id;
+  if (!subscriptionId) return;
+
+  const matches: any[] = await getAllRecords(
+    TABLES.BRANDS,
+    `{Stripe Subscription Id} = "${escapeAirtableValue(subscriptionId)}"`,
+  );
+  if (matches.length === 0) {
+    console.warn(`[brand-sub-deleted] no Brand row matches subscription ${subscriptionId}`);
+    return;
+  }
+  const brand: any = matches[0];
+  const brandRecordId: string = brand.id;
+  const previousStatus: string = String(brand['Subscription Status'] || '').trim().toLowerCase();
+
+  // ── Idempotency — already canceled, no-op ──
+  if (previousStatus === 'canceled') {
+    console.log(`[brand-sub-deleted] ${brandRecordId} already canceled — skipping`);
+    return;
+  }
+
+  const fields: Record<string, any> = {
+    'Subscription Status': 'canceled',
+    'Active': false,
+    'Featured': false,
+    'Cancelled At': new Date().toISOString(),
+  };
+  try {
+    await updateRecord(TABLES.BRANDS, brandRecordId, fields);
+  } catch (e: any) {
+    // Schema-drift tolerant: retry without optional fields.
+    console.warn(`[brand-sub-deleted] full write failed, retrying core only: ${e?.message}`);
+    await updateRecord(TABLES.BRANDS, brandRecordId, {
+      'Subscription Status': 'canceled',
+    });
+  }
+
+  // ── Telegram alert ──
+  try {
+    const brandName = String(brand['Brand Name'] || brand['Contact Name'] || brandRecordId);
+    const tier = String(brand['Tier'] || '(unknown)');
+    await sendTelegramMessage(
+      TELEGRAM_ADMIN_CHAT_ID,
+      `❌ <b>BRAND CANCELLED</b>\n<b>${brandName}</b>\nTier: ${tier}\nPrev status: ${previousStatus || 'unknown'}\nsub ${subscriptionId.slice(-8)}\n\nSave attempt recommended within 48h.`,
+    );
+  } catch (e: any) {
+    console.warn('[brand-sub-deleted] telegram alert failed:', e?.message);
+  }
+
+  try {
+    await funnelRecord({
+      stage: 'brand_partner_cancelled',
+      metadata: {
+        brandRecordId,
+        subscriptionId,
+        previousStatus,
+        tier: brand['Tier'] || '',
+      },
+    });
+  } catch (e: any) {
+    console.warn('[brand-sub-deleted] funnel record failed:', e?.message);
+  }
+
+  await logAuditEntry({
+    actor: 'cron',
+    tool: 'stripe-webhook-brand-partner-subscription-deleted',
+    targetType: 'Other',
+    targetId: brandRecordId,
+    args: { subscriptionId, previousStatus },
+    result: { fields },
+    reverseAction: { type: 'noop', reason: 'Stripe-driven subscription cancel — cannot un-cancel via Airtable' },
+  }).catch(e => console.error('[audit] brand-sub-deleted log failed:', e));
+}
+
+// ============================================================================
+// P4-A Gap 2 — FOUNDER (BACKER) SUBSCRIPTION UPDATED.
+//
+// Fires on customer.subscription.updated for founder-subscription subs (recurring
+// Herd / Outlaw / Steward tiers). Cause: tier downgrade (price_id change) or
+// status flip.
+//
+// CONSUMERS schema note: uses uppercase `Stripe Subscription ID` (G-4 fix).
+// Mirror Founder Tier (downgrade) + Subscription Status. Telegram alert.
+// ============================================================================
+async function handleFounderSubscriptionUpdated(sub: any): Promise<void> {
+  const subscriptionId: string = sub.id;
+  if (!subscriptionId) return;
+
+  const matches: any[] = await getAllRecords(
+    TABLES.CONSUMERS,
+    `{Stripe Subscription ID} = "${escapeAirtableValue(subscriptionId)}"`,
+  );
+  if (matches.length === 0) {
+    console.warn(`[founder-sub-updated] no Consumer row matches subscription ${subscriptionId}`);
+    return;
+  }
+  const consumer: any = matches[0];
+  const consumerId: string = consumer.id;
+
+  // Resolve new tier from price_id via metadata.tier on the sub, since founder
+  // Payment Links stamp metadata.tier='herd-monthly' / 'outlaw-monthly' / etc.
+  // For tier downgrades initiated from Stripe Customer Portal, the metadata
+  // stays on the sub (Stripe carries it forward) but new line item may swap.
+  // Fall back to subscription metadata first; if that's stale, leave tier alone.
+  const subTierKey: string = String(sub?.metadata?.tier || '').toLowerCase();
+  const mappedNewTier = TIER_MAP[subTierKey]?.tier;
+
+  const newStatus: string = String(sub?.status || '').toLowerCase();
+  const previousTier: string = String(consumer['Founder Tier'] || '').trim();
+  const previousStatus: string = String(consumer['Subscription Status'] || '').trim().toLowerCase();
+
+  const tierChanged = !!mappedNewTier && previousTier !== mappedNewTier;
+  const statusChanged = previousStatus !== newStatus;
+  if (!tierChanged && !statusChanged) {
+    console.log(`[founder-sub-updated] no-op for ${consumerId} — status=${newStatus}, tier=${mappedNewTier || previousTier}`);
+    return;
+  }
+
+  const fields: Record<string, any> = {};
+  if (statusChanged) fields['Subscription Status'] = newStatus;
+  // Only flip Founder Tier on downgrade (mapped tier present + different).
+  // Do NOT clear Founder Tier here — that's reserved for the deleted handler.
+  if (tierChanged) fields['Founder Tier'] = mappedNewTier;
+  try {
+    await updateRecord(TABLES.CONSUMERS, consumerId, fields);
+  } catch (e: any) {
+    console.warn(`[founder-sub-updated] write failed: ${e?.message}`);
+    throw e;
+  }
+
+  // Telegram alert
+  try {
+    const name = String(consumer['Full Name'] || consumer['Email'] || consumerId);
+    let alert = '';
+    if (tierChanged) {
+      alert = `🔁 <b>FOUNDER TIER CHANGE</b>\n${name}\n${previousTier || '(unknown)'} → <b>${mappedNewTier}</b>\nsub ${subscriptionId.slice(-8)}`;
+    } else if (statusChanged) {
+      alert = `🔔 FOUNDER status: ${name} → <b>${newStatus}</b> (was ${previousStatus || 'unknown'}) · sub ${subscriptionId.slice(-8)}`;
+    }
+    if (alert) await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, alert);
+  } catch (e: any) {
+    console.warn('[founder-sub-updated] telegram alert failed:', e?.message);
+  }
+
+  try {
+    await funnelRecord({
+      stage: tierChanged ? 'founder_tier_changed' : 'founder_status_changed',
+      buyerId: consumerId,
+      metadata: {
+        subscriptionId,
+        previousTier,
+        newTier: mappedNewTier,
+        previousStatus,
+        newStatus,
+      },
+    });
+  } catch (e: any) {
+    console.warn('[founder-sub-updated] funnel record failed:', e?.message);
+  }
+
+  await logAuditEntry({
+    actor: 'cron',
+    tool: 'stripe-webhook-founder-subscription-updated',
+    targetType: 'Consumer',
+    targetId: consumerId,
+    args: { subscriptionId, previousTier, previousStatus, newStatus, newTier: mappedNewTier },
+    result: { fields },
+    reverseAction: { type: 'noop', reason: 'Stripe-driven subscription update — replay from Stripe Events row' },
+  }).catch(e => console.error('[audit] founder-sub-updated log failed:', e));
+}
+
+// ============================================================================
+// P4-A Gap 2 — FOUNDER (BACKER) SUBSCRIPTION DELETED.
+//
+// Fires on customer.subscription.deleted for founder-subscription subs.
+// Cause: backer cancelled (immediate or final dunning retry exhausted).
+//
+// Preservation choice: keep Founder Tier value (Wall placement + founder
+// number history matter for back-compat — Wall page renders from Founder Tier).
+// Instead, stamp Founder Tier Cancelled At + flip Subscription Status='canceled'.
+// This is the SAFE choice the prompt asks us to make explicitly.
+//
+// CONSUMERS schema: uppercase `Stripe Subscription ID` (G-4 fix).
+// ============================================================================
+async function handleFounderSubscriptionDeleted(sub: any): Promise<void> {
+  const subscriptionId: string = sub.id;
+  if (!subscriptionId) return;
+
+  const matches: any[] = await getAllRecords(
+    TABLES.CONSUMERS,
+    `{Stripe Subscription ID} = "${escapeAirtableValue(subscriptionId)}"`,
+  );
+  if (matches.length === 0) {
+    console.warn(`[founder-sub-deleted] no Consumer row matches subscription ${subscriptionId}`);
+    return;
+  }
+  const consumer: any = matches[0];
+  const consumerId: string = consumer.id;
+  const previousStatus: string = String(consumer['Subscription Status'] || '').trim().toLowerCase();
+
+  // ── Idempotency — already canceled, no-op ──
+  if (previousStatus === 'canceled') {
+    console.log(`[founder-sub-deleted] ${consumerId} already canceled — skipping`);
+    return;
+  }
+
+  // Stamp cancellation. Preserve Founder Tier (Wall placement).
+  const fields: Record<string, any> = {
+    'Subscription Status': 'canceled',
+    'Founder Tier Cancelled At': new Date().toISOString(),
+  };
+  try {
+    await updateRecord(TABLES.CONSUMERS, consumerId, fields);
+  } catch (e: any) {
+    // Schema-drift tolerant: if Founder Tier Cancelled At doesn't exist yet,
+    // retry with just the status flip.
+    console.warn(`[founder-sub-deleted] full write failed, retrying core only: ${e?.message}`);
+    await updateRecord(TABLES.CONSUMERS, consumerId, {
+      'Subscription Status': 'canceled',
+    });
+  }
+
+  // Telegram alert via existing helper.
+  try {
+    const { sendTelegramSubscriptionCancelled } = await import('@/lib/telegram');
+    await sendTelegramSubscriptionCancelled({
+      email: (consumer['Email'] as string) || '(no email)',
+      name: (consumer['Full Name'] as string) || '',
+      tier: (consumer['Founder Tier'] as string) || '(no tier)',
+      consumerId,
+    });
+  } catch (e: any) {
+    console.warn('[founder-sub-deleted] telegram alert failed:', e?.message);
+  }
+
+  try {
+    await funnelRecord({
+      stage: 'founder_subscription_cancelled',
+      buyerId: consumerId,
+      metadata: {
+        subscriptionId,
+        previousStatus,
+        tier: consumer['Founder Tier'] || '',
+      },
+    });
+  } catch (e: any) {
+    console.warn('[founder-sub-deleted] funnel record failed:', e?.message);
+  }
+
+  await logAuditEntry({
+    actor: 'cron',
+    tool: 'stripe-webhook-founder-subscription-deleted',
+    targetType: 'Consumer',
+    targetId: consumerId,
+    args: { subscriptionId, previousStatus },
+    result: { fields },
+    reverseAction: { type: 'noop', reason: 'Stripe-driven subscription cancel — cannot un-cancel via Airtable' },
+  }).catch(e => console.error('[audit] founder-sub-deleted log failed:', e));
+}
+
+// ============================================================================
+// P4-A Gap 3 — FOUNDER LIFETIME REFUND / DISPUTE.
+//
+// One-time Founding 100 ($X) + Title Founder ($15k) lifetime payments fire
+// charge.refunded / charge.dispute.created against the platform account. Pre-
+// fix: existing handlers only matched buyer_deposit (Payments table) + brand-
+// listing — so founder lifetime refunds were silent, the Wall kept the founder
+// listed, and the per-tier counter never released the seat.
+//
+// Detection: charge has no Payments row (deposits) and no Brands row (listings).
+// We look up Consumers by Stripe Payment Intent stamped at backer-checkout time.
+// If we don't store PI ID, fall back to fetching the parent session via the
+// Stripe API and matching session.id → Consumers.Stripe Session ID.
+//
+// Action:
+//   - Stamp Consumers.Founder Tier = 'REFUNDED' (or 'DISPUTED') so Wall hides them
+//   - Stamp Founder Refunded At + reason
+//   - Decrement Redis counter so the tier seat is reclaimable
+//   - LOUD Telegram + audit log
+//
+// All writes idempotent (re-read row, skip if already REFUNDED/DISPUTED).
+// ============================================================================
+async function handleFounderLifetimeRefundOrDispute(
+  piId: string,
+  source: any,
+  kind: 'refund' | 'dispute',
+): Promise<void> {
+  if (!piId) return;
+
+  // ── Look up the parent Checkout Session via PI to recover metadata.type ──
+  // Stripe doesn't copy session metadata onto the PI for one-time payments,
+  // so we have to fetch the session via the Stripe API. This is the only
+  // canonical place metadata.type='founder-lifetime' is stamped.
+  let session: any = null;
+  let metaType = '';
+  let consumer: any = null;
+  let consumerId = '';
+  let tierLabel = '';
+  try {
+    const stripe = getStripe();
+    const list = await stripe.checkout.sessions.list({
+      payment_intent: piId,
+      limit: 1,
+    });
+    session = list?.data?.[0] || null;
+    metaType = String(session?.metadata?.type || '');
+  } catch (e: any) {
+    console.warn('[founder-lifetime-refund] session lookup via PI failed:', e?.message);
+  }
+
+  // If we have a session and it's a founder lifetime, find the Consumer.
+  if (session && metaType === 'founder-lifetime') {
+    try {
+      const sessionId = String(session.id || '');
+      const rows: any[] = await getAllRecords(
+        TABLES.CONSUMERS,
+        `{Stripe Session ID} = "${escapeAirtableValue(sessionId)}"`,
+      );
+      if (rows.length > 0) {
+        consumer = rows[0];
+        consumerId = consumer.id;
+        tierLabel = String(consumer['Founder Tier'] || '');
+      }
+    } catch (e: any) {
+      console.warn('[founder-lifetime-refund] Consumer lookup by Session ID failed:', e?.message);
+    }
+  }
+
+  // No founder lifetime detected — quietly exit (this is the "not a founder
+  // refund" path; the charge.refunded outer handler already logged the audit).
+  if (!consumer) {
+    return;
+  }
+
+  // ── Idempotency: skip if already flipped ──
+  const currentTier = String(consumer['Founder Tier'] || '').trim().toUpperCase();
+  if (currentTier === 'REFUNDED' || currentTier === 'DISPUTED') {
+    console.log(`[founder-lifetime-${kind}] ${consumerId} already in terminal state ${currentTier} — skipping`);
+    return;
+  }
+
+  const flipLabel = kind === 'refund' ? 'REFUNDED' : 'DISPUTED';
+  const stampField = kind === 'refund' ? 'Founder Refunded At' : 'Founder Disputed At';
+  const reasonField = kind === 'refund' ? 'Founder Refund Reason' : 'Founder Dispute Reason';
+  const reason: string =
+    kind === 'refund'
+      ? String(source?.refunds?.data?.[0]?.reason || source?.reason || 'unknown')
+      : String(source?.reason || 'unknown');
+  const amountCents: number =
+    kind === 'refund'
+      ? Number(source?.amount_refunded || source?.amount || 0)
+      : Number(source?.amount || 0);
+
+  const fields: Record<string, any> = {
+    'Founder Tier': flipLabel,
+    [stampField]: new Date().toISOString(),
+    [reasonField]: reason.slice(0, 250),
+  };
+  try {
+    await updateRecord(TABLES.CONSUMERS, consumerId, fields);
+  } catch (e: any) {
+    // Schema-drift tolerant: optional stamp/reason fields may not exist —
+    // retry with just the Founder Tier flip so the seat-release still lands.
+    console.warn(`[founder-lifetime-${kind}] full write failed, retrying tier flip only: ${e?.message}`);
+    await updateRecord(TABLES.CONSUMERS, consumerId, {
+      'Founder Tier': flipLabel,
+    });
+  }
+
+  // ── Decrement Redis counter so the tier seat is reclaimable ──
+  // Only applies to numbered tiers (Founding 100 / Title Founder). The
+  // counter key is `bhc:founder-number:<tier-slug>`. Use Redis DECR if the
+  // module is configured; fail-open on miss (the Founder Number remains
+  // "burned" until manually reset — better than crashing the webhook).
+  const numberedTiers = ['Founding 100', 'Title Founder'];
+  if (numberedTiers.includes(tierLabel)) {
+    try {
+      const { Redis } = await import('@upstash/redis');
+      const url = process.env.UPSTASH_REDIS_REST_URL;
+      const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+      if (url && token) {
+        const redis = new Redis({ url, token });
+        const key = `bhc:founder-number:${tierLabel.toLowerCase().replace(/\s+/g, '-')}`;
+        // DECR — atomic. Bottoms out at 0 in Redis so we don't go negative
+        // if the counter was already at the floor.
+        const after = await redis.decr(key);
+        if (typeof after === 'number' && after < 0) {
+          await redis.set(key, 0);
+        }
+        console.log(`[founder-lifetime-${kind}] decremented counter ${key} → ${after}`);
+      }
+    } catch (e: any) {
+      console.warn(`[founder-lifetime-${kind}] counter release failed (non-fatal):`, e?.message);
+    }
+  }
+
+  // ── LOUD Telegram alert ──
+  try {
+    const name = String(consumer['Full Name'] || consumer['Email'] || consumerId);
+    const amountDollars = (amountCents / 100).toFixed(2);
+    const emoji = kind === 'refund' ? '↩️' : '🚨';
+    const headline = kind === 'refund' ? 'FOUNDER LIFETIME REFUNDED' : 'FOUNDER LIFETIME DISPUTED';
+    await sendTelegramMessage(
+      TELEGRAM_ADMIN_CHAT_ID,
+      `${emoji} <b>${headline}</b>\n<b>${name}</b>\nTier: ${tierLabel || '(unknown)'}\nAmount: $${amountDollars}\nReason: ${reason}\nPI ${piId.slice(-8)}\n\nWall placement removed. Seat counter released.`,
+    );
+  } catch (e: any) {
+    console.warn(`[founder-lifetime-${kind}] telegram alert failed:`, e?.message);
+  }
+
+  try {
+    await funnelRecord({
+      stage: kind === 'refund' ? 'founder_lifetime_refunded' : 'founder_lifetime_disputed',
+      buyerId: consumerId,
+      amount: amountCents / 100,
+      reason,
+      metadata: { paymentIntentId: piId, tier: tierLabel },
+    });
+  } catch (e: any) {
+    console.warn(`[founder-lifetime-${kind}] funnel record failed:`, e?.message);
+  }
+
+  await logAuditEntry({
+    actor: 'cron',
+    tool: `stripe-webhook-founder-lifetime-${kind}`,
+    targetType: 'Consumer',
+    targetId: consumerId,
+    args: { paymentIntentId: piId, tier: tierLabel, amountCents, reason },
+    result: { fields, counterReleased: numberedTiers.includes(tierLabel) },
+    reverseAction: { type: 'noop', reason: `Stripe-driven founder lifetime ${kind} — cannot reverse via Airtable` },
+  }).catch(e => console.error(`[audit] founder-lifetime-${kind} log failed:`, e));
+}
+
+// ============================================================================
+// Helpers — brand price_id ↔ tier slug ↔ tier label.
+// Used by handleBrandPartnerSubscriptionUpdated to detect downgrade.
+// ============================================================================
+function brandPriceIdToTierSlug(priceId: string): string | null {
+  if (!priceId) return null;
+  const map: Record<string, string> = {
+    [process.env.STRIPE_BRAND_PRICE_SPOTLIGHT || '__unset_spotlight__']: 'spotlight',
+    [process.env.STRIPE_BRAND_PRICE_FEATURED || '__unset_featured__']: 'featured',
+    [process.env.STRIPE_BRAND_PRICE_FOUNDING || '__unset_founding__']: 'founding',
+  };
+  return map[priceId] || null;
+}
+
+function brandTierNameForSlug(slug: string): string {
+  const names: Record<string, string> = {
+    spotlight: 'Spotlight',
+    featured: 'Featured',
+    founding: 'Co-marketed',
+  };
+  return names[slug] || slug;
 }
 
 // ============================================================================
