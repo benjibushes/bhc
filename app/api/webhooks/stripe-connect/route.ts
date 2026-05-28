@@ -30,6 +30,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
 import { logAuditEntry } from '@/lib/auditLog';
+import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 
 // Mirror the platform webhook's Stripe Events table for idempotency.
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -212,6 +213,21 @@ export async function POST(request: Request) {
       // Telegram to ops + auto-email rancher with failure reason + fix link.
       case 'payout.failed':
         await handlePayoutFailed(event);
+        break;
+
+      // ── P2-C / P3-B — account.application.deauthorized handler ──
+      // When a tier_v2 rancher hits "Disconnect" on BHC under Stripe
+      // Dashboard → Connected Apps, this V1 event fires on the platform-
+      // attached connected acct. Pre-fix it fell through to the no-op
+      // default: rancher stays operational in the matching engine, the
+      // engine keeps routing buyers to them, and the first buyer to hit
+      // /api/checkout/deposit gets a 4xx from Stripe (no connected acct).
+      // Now: detach the rancher (status → 'detached', Active Status →
+      // Paused, stamp Connect Detached At), free residual capacity, and
+      // LOUD Telegram to ops so they re-onboard or mark the rancher
+      // legacy.
+      case 'account.application.deauthorized':
+        await handleConnectDeauthorized(event);
         break;
 
       // ── Audit F8 — charge.refunded mirror ──
@@ -503,6 +519,148 @@ async function handlePayoutFailed(event: any): Promise<void> {
     result: { rancherEmail, rancherName, alerted: !!rancherEmail },
     reverseAction: { type: 'noop', reason: 'Stripe payout failure — fix is rancher-side bank update, not Airtable' },
   }).catch(e => console.error('[audit] payout-failed log failed:', e));
+}
+
+// ============================================================================
+// STRIPE CONNECT DEAUTHORIZED — rancher detached BHC from Stripe (P3-B).
+//
+// account.application.deauthorized fires on the platform webhook when a
+// connected rancher disconnects BHC under Stripe Dashboard → Connected
+// Apps. Pre-fix the event fell through to no-op: the matching engine
+// kept routing buyers, but /api/checkout/deposit failed because Stripe
+// had no live connected account to charge against.
+//
+// Now we: pause the rancher (Active Status='Paused' kills routing
+// eligibility — see lib/rancherEligibility.ts + lib/bulkRoute.ts),
+// stamp Stripe Connect Status='detached' so dashboards surface the
+// reason, free residual capacity if the rancher had open active
+// referrals (otherwise the counter + the engine's "available slots"
+// drift apart), and LOUD Telegram to ops.
+// ============================================================================
+async function handleConnectDeauthorized(event: any): Promise<void> {
+  // event.account is the connected acct that disconnected (V1 event shape).
+  const accountId: string = (event as any)?.account || '';
+  if (!accountId) {
+    console.warn('[stripe-connect deauthorized] missing event.account');
+    return;
+  }
+
+  // Look up rancher by Connect Account ID.
+  const safeAcct = accountId.replace(/"/g, '\\"');
+  const rows: any[] = await getAllRecords(
+    TABLES.RANCHERS,
+    `{Stripe Connect Account Id} = "${safeAcct}"`,
+  );
+  const rancher: any = rows[0];
+
+  if (!rancher) {
+    // No matching rancher — event still valid (e.g. a test acct, or a
+    // rancher we already wiped). Telegram so ops sees the orphan, then
+    // return. The outer handler still marks the Stripe Events row
+    // processed.
+    try {
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `🔌 CONNECT DETACHED — no Ranchers row matches acct ${accountId}. Orphan webhook — verify if this acct was previously wiped.`,
+      );
+    } catch (e: any) {
+      console.warn('[stripe-connect deauthorized] orphan telegram failed:', e?.message);
+    }
+    return;
+  }
+
+  const rancherId: string = rancher.id;
+  const rancherLabel =
+    rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId;
+
+  // Build the write payload. We always flip Status + Active Status; the
+  // Connect Detached At timestamp is best-effort (the field may not yet
+  // exist in the schema — wrapping the whole write in try/catch with a
+  // retry-without-timestamp fallback keeps the pause path bulletproof).
+  const now = new Date().toISOString();
+  const writeFields: Record<string, unknown> = {
+    'Stripe Connect Status': 'detached', // singleSelect; typecast auto-creates option
+    'Active Status': 'Paused',
+    'Connect Detached At': now,
+  };
+
+  try {
+    await updateRecord(TABLES.RANCHERS, rancherId, writeFields);
+  } catch (e: any) {
+    // Likely cause: `Connect Detached At` field missing from Airtable
+    // schema. Retry without the timestamp so the critical fields (pause
+    // routing + flip status) still land.
+    console.warn(
+      '[stripe-connect deauthorized] write w/ Connect Detached At failed — retrying without timestamp:',
+      e?.message,
+    );
+    try {
+      delete (writeFields as any)['Connect Detached At'];
+      await updateRecord(TABLES.RANCHERS, rancherId, writeFields);
+      console.warn(
+        '[stripe-connect deauthorized] TODO: add `Connect Detached At` (dateTime) field to Ranchers table.',
+      );
+    } catch (retryErr: any) {
+      console.error(
+        '[stripe-connect deauthorized] critical write retry failed — rancher still routing:',
+        retryErr?.message,
+      );
+      // Re-throw to bubble to the outer try/catch → Stripe Events row
+      // flipped to 'failed' → operator can replay.
+      throw retryErr;
+    }
+  }
+
+  // Free residual capacity. If the rancher has active referrals counted
+  // in Current Active Referrals, the matching engine still treats those
+  // slots as occupied; without decrementing here the counter + the
+  // engine's available-slots drift apart and ops can't tell why the
+  // rancher's slot count never returns to 0 when they're paused. We
+  // decrement once per active referral.
+  const currentActive = Number(rancher['Current Active Referrals'] || 0);
+  if (currentActive > 0) {
+    try {
+      let next = currentActive;
+      for (let i = 0; i < currentActive; i++) {
+        next = await decrementCapacity(rancherId);
+      }
+      await syncCapacityToAirtable(rancherId, next);
+    } catch (e: any) {
+      console.warn('[stripe-connect deauthorized] capacity decrement failed:', e?.message);
+    }
+  }
+
+  // LOUD Telegram to ops.
+  try {
+    await sendTelegramMessage(
+      TELEGRAM_ADMIN_CHAT_ID,
+      `🔌 CONNECT DETACHED — ${rancherLabel} disconnected Stripe Connect. Routing paused. Action: contact rancher to re-onboard OR mark legacy.`,
+    );
+  } catch (e: any) {
+    console.warn('[stripe-connect deauthorized] telegram alert failed:', e?.message);
+  }
+
+  // Audit log — reverseAction is noop because re-authorizing Connect
+  // requires the rancher to walk back through Stripe Express onboarding.
+  // No Airtable-side undo flips them back to operational without a real
+  // Connect account.
+  await logAuditEntry({
+    actor: 'cron',
+    tool: 'stripe-connect-deauthorize',
+    targetType: 'Rancher',
+    targetId: rancherId,
+    args: { accountId, eventId: event?.id },
+    result: {
+      previousActiveStatus: rancher['Active Status'] || null,
+      previousConnectStatus: rancher['Stripe Connect Status'] || null,
+      previousActiveReferrals: currentActive,
+      rancherLabel,
+    },
+    reverseAction: {
+      type: 'noop',
+      reason: 'rancher must re-onboard Connect via Stripe Express',
+    },
+  }).catch(e => console.error('[audit] connect-deauthorize log failed:', e));
 }
 
 // ============================================================================
