@@ -7,7 +7,10 @@
 // Idempotency is keyed on Stripe Payment Intent ID + Stripe Transfer ID so
 // webhook retries never double-process.
 
-import { createRecord, updateRecord, getAllRecords } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
+import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { logAuditEntry } from '@/lib/auditLog';
+import { sendTelegramUpdate } from '@/lib/telegram';
 
 export type PaymentStatus = 'pending' | 'succeeded' | 'refunded' | 'failed';
 export type PayoutStatus = 'pending' | 'paid' | 'failed';
@@ -100,7 +103,181 @@ export async function markDepositRefunded(
     if (!opts.partial) fallback['Status'] = 'refunded';
     await updateRecord(PAYMENTS_TABLE, payment.id, fallback);
   }
+
+  // P2-A audit fix: full-refund post-flip restore.
+  //
+  // Pre-fix, markDepositRefunded only stamped the Payments row. The linked
+  // Referral stayed Closed Won → buyer permanently showed as converted →
+  // affiliate auto-enroll fired, monthly backer letters went out, repeat-
+  // purchase cron emailed the buyer. Money back, funnel says "won". Disaster.
+  //
+  // On any FULL (non-partial) refund of a buyer-deposit Payments row whose
+  // Referral was Closed Won, revert the deal:
+  //   - Referral.Status → 'Refunded' (new option, typecast-created)
+  //   - Clear Closed At, Sale Amount, Commission Due, Commission Status
+  //   - Stamp Refunded At
+  //   - Decrement rancher capacity (the deal reverts; slot opens back up)
+  //   - Buyer → Buyer Stage='READY', Buyer Health='Active', Sequence Stage=''
+  //   - Audit-log the restore
+  //   - Telegram-alert the operator (no buyer email storm)
+  //
+  // Partial refunds skip the restore — the deal is still "won" with reduced
+  // sale amount. Operator can manually convert to full refund if desired.
+  //
+  // Idempotency: the early-return on Status==='refunded' above already
+  // prevents double-restore. We also guard on Referral.Status==='Closed Won'
+  // so re-running against an already-restored Referral is a no-op.
+  if (!opts.partial) {
+    try {
+      await restoreReferralAfterRefund(payment, stripePaymentIntentId);
+    } catch (e: any) {
+      // Restore failure is non-fatal — the Payments row already flipped,
+      // operator gets a Telegram alert via the catch path.
+      console.error('[markDepositRefunded] restore-referral failed (non-fatal):', e?.message || e);
+      try {
+        await sendTelegramUpdate(
+          `WARN DEPOSIT REFUNDED — Payments row flipped but Referral restore failed. PI ${stripePaymentIntentId.slice(-8)}. Error: ${e?.message || e}. Manual cleanup required.`,
+        );
+      } catch {}
+    }
+  }
+
   return { flipped: true };
+}
+
+/**
+ * Revert the buyer-side / rancher-side funnel state after a full deposit
+ * refund. Called from markDepositRefunded — separated for readability and so
+ * the catch can isolate restore failures from the Payments-row write.
+ *
+ * Idempotent: re-running against an already-Refunded Referral is a no-op
+ * (early-return on Status check). Webhook retries safe.
+ */
+async function restoreReferralAfterRefund(
+  payment: any,
+  stripePaymentIntentId: string,
+): Promise<void> {
+  // Pull linked Referral id from the Payments row. Linked-record fields are
+  // always returned as arrays of record IDs.
+  const referralIds: string[] = (payment['Referral'] || []) as string[];
+  const referralId = Array.isArray(referralIds) ? referralIds[0] : null;
+  if (!referralId) {
+    console.warn('[restoreReferralAfterRefund] no Referral linked on Payments row', payment.id);
+    return;
+  }
+
+  const referral: any = await getRecordById(TABLES.REFERRALS, referralId);
+  if (!referral) {
+    console.warn('[restoreReferralAfterRefund] Referral not found', referralId);
+    return;
+  }
+
+  const currentStatus = String(referral['Status'] || '');
+  // Idempotency: only restore from a Closed Won state. If the Referral was
+  // already flipped to Refunded (re-run), or never reached Closed Won (refund
+  // before close), skip the buyer/rancher restore — operator handles edge cases.
+  if (currentStatus === 'Refunded') {
+    console.log('[restoreReferralAfterRefund] Referral already Refunded, no-op', referralId);
+    return;
+  }
+  if (currentStatus !== 'Closed Won') {
+    console.warn(
+      `[restoreReferralAfterRefund] Referral ${referralId} status=${currentStatus} (not Closed Won) — skipping restore. Operator should review.`,
+    );
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const rancherIds: string[] = (referral['Rancher'] || []) as string[];
+  const rancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
+  const buyerIds: string[] = (referral['Buyer'] || []) as string[];
+  const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+
+  // 1. Flip Referral state. Clear Closed Won-only fields. typecast creates
+  // the 'Refunded' singleSelect option if it doesn't exist yet.
+  const referralUpdates: Record<string, any> = {
+    'Status': 'Refunded',
+    'Closed At': null,
+    'Sale Amount': null,
+    'Commission Due': null,
+    'Commission Status': null,
+    'Refunded At': now,
+  };
+  try {
+    await updateRecord(TABLES.REFERRALS, referralId, referralUpdates);
+  } catch (e: any) {
+    // Schema fallback: Refunded At on Referral may not exist yet. Retry
+    // without it — the Refunded At on the Payments row is the primary audit.
+    console.warn('[restoreReferralAfterRefund] Referral update fallback:', e?.message);
+    const fallback = { ...referralUpdates };
+    delete fallback['Refunded At'];
+    await updateRecord(TABLES.REFERRALS, referralId, fallback);
+  }
+
+  // 2. Decrement rancher capacity — one count back since the deal reverts.
+  // Best-effort: capacity drift on a rare refund is a non-fatal warning.
+  if (rancherId) {
+    try {
+      const newCount = await decrementCapacity(rancherId);
+      await syncCapacityToAirtable(rancherId, newCount);
+    } catch (capErr: any) {
+      console.warn('[restoreReferralAfterRefund] capacity decrement failed:', capErr?.message);
+    }
+  }
+
+  // 3. Restore buyer to the routing pool. Sequence Stage clear stops the
+  // post-purchase email sequence + repeat-purchase cron from firing.
+  if (buyerId) {
+    try {
+      await updateRecord(TABLES.CONSUMERS, buyerId, {
+        'Buyer Stage': 'READY',
+        'Buyer Stage Updated At': now,
+        'Buyer Health': 'Active',
+        'Sequence Stage': '',
+        'Ready to Buy': true,
+      });
+    } catch (e: any) {
+      console.warn('[restoreReferralAfterRefund] Consumer restore failed:', e?.message);
+    }
+  }
+
+  // 4. Audit log. typecast widens the Actor singleSelect to accept 'system'
+  // if it doesn't already exist. We cast through unknown because the existing
+  // AuditActor union doesn't yet include 'system' — refund-restore is a
+  // brand-new actor type and we don't want to ripple the type across every
+  // existing audit call site.
+  try {
+    await logAuditEntry({
+      actor: 'system' as unknown as 'cron',
+      tool: 'stripe-refund-restore',
+      targetType: 'Referral',
+      targetId: referralId,
+      args: {
+        paymentIntentId: stripePaymentIntentId,
+        referralId,
+        rancherId,
+        buyerId,
+        previousStatus: currentStatus,
+      },
+      result: {
+        referralStatus: 'Refunded',
+        capacityDecremented: !!rancherId,
+        buyerRestored: !!buyerId,
+      },
+      reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },
+    });
+  } catch (e: any) {
+    console.warn('[restoreReferralAfterRefund] audit log failed:', e?.message);
+  }
+
+  // 5. Telegram alert — operator decides next step. NO buyer email storm.
+  try {
+    await sendTelegramUpdate(
+      `🔁 DEPOSIT REFUNDED — Referral reverted, buyer back in routing pool: ref=${referralId}`,
+    );
+  } catch (e: any) {
+    console.warn('[restoreReferralAfterRefund] Telegram alert failed:', e?.message);
+  }
 }
 
 export interface MarkDepositDisputedInput {
