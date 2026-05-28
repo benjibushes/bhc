@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import {
   TABLES,
   createRecord,
+  updateRecord,
   getAllRecords,
   escapeAirtableValue,
 } from '@/lib/airtable';
@@ -566,6 +567,7 @@ async function logTurn(args: {
   conversationId: string;
   direction: 'inbound' | 'outbound';
   text: string;
+  messageId?: string;
   signals?: Record<string, string>;
 }) {
   try {
@@ -580,12 +582,97 @@ async function logTurn(args: {
       'Sender Type':
         args.direction === 'inbound' ? 'Prospect' : 'BHC',
     };
+    // Idempotency key — when ManyChat retries the same external request
+    // (common on transient 5xx), we use Message Id to dedup inbound rows.
+    // Field is best-effort: if Conversations schema doesn't have it the
+    // createRecord wrapper strips it and the row still writes.
+    if (args.messageId) {
+      fields['Message Id'] = args.messageId;
+    }
     if (args.signals && Object.keys(args.signals).length) {
       fields['AI Summary'] = JSON.stringify(args.signals);
     }
     await createRecord(TABLES.CONVERSATIONS, fields);
   } catch (e: any) {
     console.error('[manychat webhook] log turn failed:', e?.message);
+  }
+}
+
+// ─── Idempotency, email capture, attribution ──────────────────────────────
+
+// Has this exact ManyChat message_id already been logged inbound? Used to
+// guard against ManyChat retries doubling conversation rows + double-billing
+// AI generation.
+async function alreadyLogged(messageId: string): Promise<boolean> {
+  if (!messageId) return false;
+  try {
+    const filter = `AND({Message Id} = "${escapeAirtableValue(messageId)}", {Direction} = "Inbound")`;
+    const records = (await getAllRecords(TABLES.CONVERSATIONS, filter)) as any[];
+    return records.length > 0;
+  } catch (e) {
+    // Schema may not have Message Id yet — treat as not-dedup'd rather than
+    // blocking the whole webhook. Worst case is a duplicate row on retry,
+    // which is recoverable.
+    console.warn('[manychat webhook] idempotency check failed (treating as miss):', e);
+    return false;
+  }
+}
+
+// Pull email out of free-text DM. Conservative — first match wins.
+const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
+function extractEmailFromMessage(text: string): string | null {
+  const m = text.match(EMAIL_REGEX);
+  return m ? m[0].toLowerCase() : null;
+}
+
+// Upsert a Consumers row when we capture an email from an IG DM. Tags
+// the row with attribution so downstream funnels (CAPI Lead, broadcast,
+// follow-up emails) treat it as IG-sourced. Best-effort, never throws.
+async function upsertConsumerFromDM(args: {
+  email: string;
+  firstName?: string;
+  username: string;
+  state?: string;
+  utmSource?: string;
+  utmCampaign?: string;
+  fbclid?: string;
+  noteEntry: string;
+}): Promise<void> {
+  const email = args.email.trim().toLowerCase();
+  if (!email) return;
+  try {
+    const existing = (await getAllRecords(
+      TABLES.CONSUMERS,
+      `LOWER({Email}) = "${escapeAirtableValue(email)}"`
+    )) as any[];
+
+    if (existing.length > 0) {
+      const rec = existing[0];
+      const newNotes = `${rec['Notes'] || ''}\n${args.noteEntry}`.trim();
+      const updates: Record<string, any> = { 'Notes': newNotes };
+      // Backfill attribution if absent (don't clobber prior UTMs).
+      if (args.utmSource && !rec['utm_source']) updates['utm_source'] = args.utmSource;
+      if (args.utmCampaign && !rec['utm_campaign']) updates['utm_campaign'] = args.utmCampaign;
+      if (args.fbclid && !rec['fbclid']) updates['fbclid'] = args.fbclid;
+      if (args.state && !rec['State']) updates['State'] = args.state;
+      await updateRecord(TABLES.CONSUMERS, rec.id, updates);
+      return;
+    }
+
+    const fullName = args.firstName?.trim() || `@${args.username} (IG DM)`;
+    const fields: Record<string, any> = {
+      'Full Name': fullName,
+      'Email': email,
+      'Source': 'manychat-ig-dm',
+      'Notes': args.noteEntry,
+    };
+    if (args.state) fields['State'] = args.state;
+    if (args.utmSource) fields['utm_source'] = args.utmSource;
+    if (args.utmCampaign) fields['utm_campaign'] = args.utmCampaign;
+    if (args.fbclid) fields['fbclid'] = args.fbclid;
+    await createRecord(TABLES.CONSUMERS, fields);
+  } catch (e: any) {
+    console.error('[manychat webhook] consumer upsert failed:', e?.message);
   }
 }
 
@@ -613,11 +700,50 @@ export async function POST(request: Request) {
   const incomingFields = body.custom_fields || {};
   const incomingTags: string[] = Array.isArray(body.tags) ? body.tags : [];
 
+  // Idempotency key: ManyChat (or the IG/FB upstream) may pass `message_id`,
+  // `mid`, or include one inside custom_fields. Accept any of those keys.
+  const messageId = String(
+    body.message_id ||
+      body.mid ||
+      incomingFields.message_id ||
+      ''
+  ).trim();
+
+  // Attribution: when the DM was triggered from an IG/FB ad click, ManyChat
+  // can pass campaign + ad ids in either the top-level body or custom_fields.
+  // We map these to standard UTM-style fields on Consumers so downstream
+  // funnels (CAPI Lead, /admin/analytics UTM breakdown) attribute correctly.
+  const adCampaignId = String(
+    body.campaign_id || body.ad_campaign_id || incomingFields.campaign_id || ''
+  ).trim();
+  const adId = String(
+    body.ad_id || incomingFields.ad_id || ''
+  ).trim();
+  const clickId = String(
+    body.click_id || body.fbclid || incomingFields.fbclid || incomingFields.click_id || ''
+  ).trim();
+  const utmSource = adCampaignId || adId || clickId ? 'manychat_ig' : '';
+  const utmCampaign = adCampaignId || '';
+  const fbclid = clickId || '';
+
   if (!subscriberId || !message) {
     return NextResponse.json(
       { error: 'subscriber_id and message required' },
       { status: 400 }
     );
+  }
+
+  // Dedup ManyChat retries by message_id. If the same inbound has already
+  // been logged we return a no-op response so ManyChat retries don't pay
+  // for another Claude call or send a duplicate reply.
+  if (messageId && (await alreadyLogged(messageId))) {
+    console.log(`[manychat webhook] dedup hit for message_id=${messageId}`);
+    return NextResponse.json({
+      version: 'v2',
+      content: { messages: [] },
+      actions: [],
+      deduped: true,
+    });
   }
 
   const conversationId =
@@ -665,6 +791,7 @@ export async function POST(request: Request) {
     conversationId,
     direction: 'inbound',
     text: message,
+    messageId,
   });
   void logTurn({
     username,
@@ -673,6 +800,32 @@ export async function POST(request: Request) {
     text: reply,
     signals,
   });
+
+  // Consumer upsert: if the inbound message OR Claude's parsed signals contain
+  // an email, upsert a Consumers row tagged Source='manychat-ig-dm' so we
+  // actually have a contact record (not just a Conversations row). Attribution
+  // fields ride along when present.
+  const emailFromMessage = extractEmailFromMessage(message);
+  const emailFromSignals =
+    signals.email && signals.email !== 'blank' && EMAIL_REGEX.test(signals.email)
+      ? signals.email.toLowerCase()
+      : null;
+  const capturedEmail = emailFromMessage || emailFromSignals;
+  if (capturedEmail) {
+    const stateGuess =
+      (signals.state || incomingFields.state || '').toString().trim().slice(0, 2).toUpperCase();
+    const noteEntry = `[MC-IG-DM ${new Date().toISOString().slice(0, 10)}] @${username || subscriberId} → ${capturedEmail}${utmCampaign ? ` campaign=${utmCampaign}` : ''}${fbclid ? ` fbclid=${fbclid.slice(0, 20)}` : ''}`;
+    void upsertConsumerFromDM({
+      email: capturedEmail,
+      firstName,
+      username: username || subscriberId,
+      state: stateGuess || undefined,
+      utmSource: utmSource || undefined,
+      utmCampaign: utmCampaign || undefined,
+      fbclid: fbclid || undefined,
+      noteEntry,
+    });
+  }
 
   // Build ManyChat actions: write captured signals to custom fields, tag
   // segment.
@@ -736,6 +889,14 @@ export async function POST(request: Request) {
         const emailLine = signals.email ? `\n<b>Email:</b> ${signals.email}` : '';
         const noteLine = signals.note ? `\n<b>Note:</b> ${signals.note}` : '';
         const sourceLine = source !== 'unknown' ? `\n<b>Source:</b> ${source}` : '';
+        // Last 3 prior turns (excluding the new inbound which is shown below
+        // as "Them:") so the operator can see what led up to the flag.
+        const priorBits = history.slice(-3).map((t) =>
+          `${t.role === 'assistant' ? 'BHC' : 'Them'}: ${t.content.slice(0, 200)}`
+        );
+        const priorLine = priorBits.length
+          ? `\n\n<b>Recent context:</b>\n${priorBits.join('\n')}`
+          : '';
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
           `📩 <b>IG DM</b> — ${flagBits.join(' · ')}\n\n` +
@@ -746,6 +907,7 @@ export async function POST(request: Request) {
             stateLine +
             emailLine +
             noteLine +
+            priorLine +
             `\n\n<b>Them:</b> ${message}\n\n<b>AI reply:</b> ${reply}`
         );
       }
