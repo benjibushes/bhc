@@ -14,6 +14,8 @@ interface TodayData {
     underused: number;
     pendingGoLive: number;
     warmupEngaged: number;
+    wholesaleNew?: number;
+    wholesaleActive?: number;
   };
   samples: {
     pendingApproval: { id: string; buyer_name: string; buyer_state: string; intent_score: number; suggested_rancher: string }[];
@@ -22,6 +24,7 @@ interface TodayData {
     highIntentWaiting: { id: string; name: string; state: string; intent: number; warmup: string }[];
     pendingGoLive: { id: string; ranch_name: string; operator: string; state: string; status: string }[];
     warmupEngaged: { id: string; name: string; state: string; engaged_at: string }[];
+    wholesaleActive?: { id: string; business_name: string; contact_name: string; state: string; status: string; created_at: string }[];
   };
 }
 
@@ -155,7 +158,7 @@ export default function TodayPage() {
         <Metric label="Needs approval" value={counts.pendingApproval} flag={counts.pendingApproval > 0 ? 'amber' : undefined} href="/admin/referrals?filter=Pending%20Approval" />
         <Metric label="Stalled 5+ days" value={counts.stalled} flag={counts.stalled > 5 ? 'red' : counts.stalled > 0 ? 'amber' : undefined} href="/admin/referrals?filter=Intro%20Sent" />
         <Metric label="Unpaid commission" value={`$${counts.unpaidTotal.toLocaleString()}`} sub={`${counts.unpaidCommissions} invoices`} flag={counts.unpaidCommissions > 10 ? 'amber' : undefined} href="/admin/commissions" />
-        <Metric label="Warmup engaged" value={counts.warmupEngaged} sub="said YES, not yet matched" flag={counts.warmupEngaged > 0 ? 'green' : undefined} href="/admin/referrals" />
+        <Metric label="Wholesale active" value={counts.wholesaleActive ?? 0} sub={counts.wholesaleNew ? `${counts.wholesaleNew} new` : 'in flight'} flag={(counts.wholesaleNew ?? 0) > 0 ? 'amber' : undefined} href="/admin/inquiries" />
       </div>
 
       {/* Action groups — top 3 are inline-actionable drawers, rest stay as link lists */}
@@ -273,6 +276,29 @@ export default function TodayPage() {
             secondary: `${c.state} · engaged ${c.engaged_at ? new Date(c.engaged_at).toLocaleDateString() : ''}`,
             href: `/admin/consumers/${c.id}`,
             badge: { text: 'YES', tone: 'green' as const },
+          }))}
+        />
+
+        {/* Wholesale active queue — wholesale buyers (restaurants/butchers,
+            $5-15k AOV) move through New → Routed → Quoted → Closed. Newest
+            first. Clicking a row jumps to /admin/inquiries where admin can
+            match ranchers + step status. New rows get a red badge to flag
+            "hasn't been touched yet". */}
+        <ActionGroup
+          title="Wholesale — active queue"
+          emptyText="No active wholesale inquiries."
+          items={(samples.wholesaleActive || []).map((w) => ({
+            key: w.id,
+            primary: w.business_name,
+            secondary: `${w.contact_name}${w.state ? ` · ${w.state}` : ''}${w.created_at ? ` · ${new Date(w.created_at).toLocaleDateString()}` : ''}`,
+            href: `/admin/inquiries`,
+            badge: w.status === 'New'
+              ? { text: 'NEW', tone: 'red' as const }
+              : w.status === 'Routed'
+              ? { text: 'ROUTED', tone: 'amber' as const }
+              : w.status === 'Quoted'
+              ? { text: 'QUOTED', tone: 'amber' as const }
+              : { text: w.status?.toUpperCase() || '', tone: 'gray' as const },
           }))}
         />
       </div>

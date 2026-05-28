@@ -19,6 +19,10 @@ interface Inquiry {
   commission_paid: boolean;
   notes: string | null;
   created_at: string;
+  status_changed_at?: string | null;
+  business_name?: string;
+  buyer_state?: string;
+  matched_ranchers?: { id: string; ranch_name: string; operator_name: string; state: string }[];
   ranchers: {
     ranch_name: string;
     operator_name: string;
@@ -27,10 +31,25 @@ interface Inquiry {
   };
 }
 
+// Ranchers list for the wholesale match picker. Kept light — only the
+// fields we need to render the dropdown w/ state filter.
+interface RancherLite {
+  id: string;
+  ranch_name: string;
+  operator_name: string;
+  state: string;
+}
+
 export default function AdminInquiriesPage() {
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [ranchers, setRanchers] = useState<RancherLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Wholesale match drawer state — null when no row is in match-mode,
+  // otherwise the inquiry ID + selected rancher ID list.
+  const [matchingId, setMatchingId] = useState<string | null>(null);
+  const [matchSelected, setMatchSelected] = useState<string[]>([]);
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [editData, setEditData] = useState<{
     status: string;
     sale_amount: string;
@@ -45,6 +64,7 @@ export default function AdminInquiriesPage() {
 
   useEffect(() => {
     fetchInquiries();
+    fetchRanchers();
   }, []);
 
   const fetchInquiries = async () => {
@@ -57,6 +77,80 @@ export default function AdminInquiriesPage() {
       console.error('Error fetching inquiries:', error);
       setLoading(false);
     }
+  };
+
+  // Pull the rancher list once so the wholesale match picker can filter by
+  // state without an N+1 lookup per inquiry. We only need a slim shape.
+  const fetchRanchers = async () => {
+    try {
+      const response = await fetch('/api/admin/ranchers');
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        setRanchers(
+          data.map((r: any) => ({
+            id: r.id,
+            ranch_name: r.ranch_name || '',
+            operator_name: r.operator_name || '',
+            state: r.state || '',
+          })),
+        );
+      }
+    } catch (error) {
+      console.error('Error fetching ranchers (for wholesale match picker):', error);
+    }
+  };
+
+  // Wholesale Status step buttons — fire a transition + (when entering
+  // Routed) also push the selected rancher IDs in one PATCH. Keeps the
+  // round-trip atomic so admin can't accidentally save a "Routed" row
+  // without ranchers attached.
+  const handleWholesaleTransition = async (
+    id: string,
+    nextStatus: 'Routed' | 'Quoted' | 'Closed Won' | 'Closed Lost',
+    opts?: { matchedRancherIds?: string[]; saleAmount?: number; notes?: string },
+  ) => {
+    setRowBusy(id);
+    try {
+      const payload: Record<string, unknown> = { status: nextStatus };
+      if (opts?.matchedRancherIds) payload.matchedRancherIds = opts.matchedRancherIds;
+      if (opts?.saleAmount !== undefined) payload.sale_amount = opts.saleAmount;
+      if (opts?.notes !== undefined) payload.notes = opts.notes;
+      const response = await fetch(`/api/inquiries/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        alert(`Failed: ${err?.error || response.status}`);
+        return;
+      }
+      await fetchInquiries();
+      // Clean up match drawer state
+      setMatchingId(null);
+      setMatchSelected([]);
+    } catch (error: any) {
+      console.error('Wholesale transition failed:', error);
+      alert(`Failed: ${error?.message || 'unknown'}`);
+    } finally {
+      setRowBusy(null);
+    }
+  };
+
+  const handleMarkClosedWon = async (id: string) => {
+    const raw = prompt('Sale amount ($)?');
+    if (!raw) return;
+    const amt = Number(raw);
+    if (!isFinite(amt) || amt <= 0) {
+      alert('Sale amount must be a positive number');
+      return;
+    }
+    await handleWholesaleTransition(id, 'Closed Won', { saleAmount: amt });
+  };
+
+  const handleMarkClosedLost = async (id: string) => {
+    const reason = prompt('Reason for Closed Lost (optional)?') || '';
+    await handleWholesaleTransition(id, 'Closed Lost', { notes: reason });
   };
 
   const handleEdit = (inquiry: Inquiry) => {
@@ -146,6 +240,12 @@ export default function AdminInquiriesPage() {
       case 'replied': return 'bg-[#6B4F3F]';
       case 'sale_completed': return 'bg-[#0E0E0E]';
       case 'no_sale': return 'bg-[#8C2F2F]';
+      // Wholesale statuses
+      case 'new': return 'bg-yellow-600';
+      case 'routed': return 'bg-[#6B4F3F]';
+      case 'quoted': return 'bg-blue-600';
+      case 'closed won': return 'bg-green-600';
+      case 'closed lost': return 'bg-[#8C2F2F]';
       default: return 'bg-[#A7A29A]';
     }
   };
@@ -165,7 +265,13 @@ export default function AdminInquiriesPage() {
     half_cow: 'Half Cow',
     quarter_cow: 'Quarter Cow',
     whole_cow: 'Whole Cow',
-    custom: 'Custom Order'
+    custom: 'Custom Order',
+    // Title-cased Airtable values that come straight back from the API:
+    'Half Cow': 'Half Cow',
+    'Quarter Cow': 'Quarter Cow',
+    'Whole Cow': 'Whole Cow',
+    'Custom Order': 'Custom Order',
+    Wholesale: 'Wholesale (B2B)',
   };
 
   // Calculate commission summary
@@ -299,12 +405,24 @@ export default function AdminInquiriesPage() {
                             onChange={(e) => setEditData({ ...editData, status: e.target.value })}
                             className="w-full px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC]"
                           >
-                            <option value="Pending">Pending</option>
-                            <option value="Approved">Approved</option>
-                            <option value="Rejected">Rejected</option>
-                            <option value="Replied">Replied</option>
-                            <option value="Sale Completed">Sale Completed</option>
-                            <option value="No Sale">No Sale</option>
+                            {inquiry.interest_type === 'Wholesale' ? (
+                              <>
+                                <option value="New">New</option>
+                                <option value="Routed">Routed</option>
+                                <option value="Quoted">Quoted</option>
+                                <option value="Closed Won">Closed Won</option>
+                                <option value="Closed Lost">Closed Lost</option>
+                              </>
+                            ) : (
+                              <>
+                                <option value="Pending">Pending</option>
+                                <option value="Approved">Approved</option>
+                                <option value="Rejected">Rejected</option>
+                                <option value="Replied">Replied</option>
+                                <option value="Sale Completed">Sale Completed</option>
+                                <option value="No Sale">No Sale</option>
+                              </>
+                            )}
                           </select>
                         </div>
                         <div>
@@ -348,18 +466,81 @@ export default function AdminInquiriesPage() {
                         <div className="flex-1">
                           <div className="flex items-center gap-3 mb-2">
                             <h3 className="font-[family-name:var(--font-serif)] text-xl">
-                              {inquiry.consumer_name} → {inquiry.ranchers.ranch_name}
+                              {inquiry.interest_type === 'Wholesale' ? (
+                                <>
+                                  {inquiry.business_name || inquiry.consumer_name}
+                                  <span className="ml-2 text-sm text-[#6B4F3F] font-normal">
+                                    ({inquiry.consumer_name})
+                                  </span>
+                                </>
+                              ) : (
+                                <>{inquiry.consumer_name} → {inquiry.ranchers.ranch_name}</>
+                              )}
                             </h3>
                             <span className={`px-3 py-1 text-[#F4F1EC] text-xs uppercase ${getStatusColor(inquiry.status)}`}>
                               {inquiry.status.replace('_', ' ')}
                             </span>
+                            {inquiry.interest_type === 'Wholesale' && (
+                              <span className="px-2 py-0.5 bg-[#0E0E0E] text-[#F4F1EC] text-[10px] uppercase tracking-wider">
+                                B2B
+                              </span>
+                            )}
                           </div>
                           <p className="text-sm text-[#6B4F3F]">
-                            {formatDate(inquiry.created_at)} • {interestLabels[inquiry.interest_type]}
+                            {formatDate(inquiry.created_at)} • {interestLabels[inquiry.interest_type] || inquiry.interest_type}
+                            {inquiry.buyer_state ? ` • ${inquiry.buyer_state}` : ''}
                           </p>
                         </div>
                         <div className="flex gap-2">
-                          {inquiry.status === 'Pending' && (
+                          {/* Wholesale step buttons — visible only when row is
+                              Wholesale and not yet in a terminal state. The
+                              "Match Ranchers" button toggles an inline picker
+                              drawer below; the rest are direct transitions. */}
+                          {inquiry.interest_type === 'Wholesale' && (
+                            <>
+                              {inquiry.status === 'New' && (
+                                <button
+                                  onClick={() => {
+                                    setMatchingId(matchingId === inquiry.id ? null : inquiry.id);
+                                    setMatchSelected(inquiry.matched_ranchers?.map((m) => m.id) || []);
+                                  }}
+                                  disabled={rowBusy === inquiry.id}
+                                  className="px-4 py-2 bg-[#6B4F3F] text-[#F4F1EC] hover:bg-[#0E0E0E] transition-colors text-sm font-medium disabled:opacity-50"
+                                >
+                                  {matchingId === inquiry.id ? 'Cancel match' : 'Match ranchers'}
+                                </button>
+                              )}
+                              {inquiry.status === 'Routed' && (
+                                <button
+                                  onClick={() => handleWholesaleTransition(inquiry.id, 'Quoted')}
+                                  disabled={rowBusy === inquiry.id}
+                                  className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50"
+                                >
+                                  Mark Quoted
+                                </button>
+                              )}
+                              {(inquiry.status === 'Routed' || inquiry.status === 'Quoted') && (
+                                <>
+                                  <button
+                                    onClick={() => handleMarkClosedWon(inquiry.id)}
+                                    disabled={rowBusy === inquiry.id}
+                                    className="px-4 py-2 bg-green-600 text-white hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50"
+                                  >
+                                    Closed Won
+                                  </button>
+                                  <button
+                                    onClick={() => handleMarkClosedLost(inquiry.id)}
+                                    disabled={rowBusy === inquiry.id}
+                                    className="px-4 py-2 bg-[#8C2F2F] text-white hover:bg-red-800 transition-colors text-sm font-medium disabled:opacity-50"
+                                  >
+                                    Closed Lost
+                                  </button>
+                                </>
+                              )}
+                            </>
+                          )}
+                          {/* Retail Pending approve/reject — unchanged. */}
+                          {inquiry.interest_type !== 'Wholesale' && inquiry.status === 'Pending' && (
                             <>
                               <button
                                 onClick={() => handleApprove(inquiry.id)}
@@ -388,21 +569,75 @@ export default function AdminInquiriesPage() {
 
                       <div className="grid md:grid-cols-2 gap-6">
                         <div>
-                          <h4 className="text-sm font-medium text-[#6B4F3F] mb-2">Consumer</h4>
+                          <h4 className="text-sm font-medium text-[#6B4F3F] mb-2">
+                            {inquiry.interest_type === 'Wholesale' ? 'Buyer Contact' : 'Consumer'}
+                          </h4>
                           <p className="text-sm">{inquiry.consumer_name}</p>
                           <p className="text-sm text-[#6B4F3F]">{inquiry.consumer_email}</p>
                           <p className="text-sm text-[#6B4F3F]">{inquiry.consumer_phone}</p>
                         </div>
-                        <div>
-                          <h4 className="text-sm font-medium text-[#6B4F3F] mb-2">Rancher</h4>
-                          <p className="text-sm">{inquiry.ranchers.ranch_name}</p>
-                          <p className="text-sm text-[#6B4F3F]">{inquiry.ranchers.operator_name}</p>
-                          <p className="text-sm text-[#6B4F3F]">{inquiry.ranchers.email}</p>
-                        </div>
+                        {inquiry.interest_type === 'Wholesale' ? (
+                          <div>
+                            <h4 className="text-sm font-medium text-[#6B4F3F] mb-2">
+                              Matched Ranchers ({inquiry.matched_ranchers?.length || 0})
+                            </h4>
+                            {!inquiry.matched_ranchers || inquiry.matched_ranchers.length === 0 ? (
+                              <p className="text-sm italic text-[#A7A29A]">No ranchers matched yet.</p>
+                            ) : (
+                              <ul className="space-y-1">
+                                {inquiry.matched_ranchers.map((m) => (
+                                  <li key={m.id} className="text-sm">
+                                    {m.ranch_name || '(no name)'} — {m.operator_name} <span className="text-[#6B4F3F]">({m.state})</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        ) : (
+                          <div>
+                            <h4 className="text-sm font-medium text-[#6B4F3F] mb-2">Rancher</h4>
+                            <p className="text-sm">{inquiry.ranchers.ranch_name}</p>
+                            <p className="text-sm text-[#6B4F3F]">{inquiry.ranchers.operator_name}</p>
+                            <p className="text-sm text-[#6B4F3F]">{inquiry.ranchers.email}</p>
+                          </div>
+                        )}
                       </div>
 
+                      {/* Wholesale match drawer — inline rancher picker that
+                          opens when admin clicks "Match ranchers". Filters
+                          ranchers by buyer state by default; admin can flip
+                          to "Show all" if they want to ship out-of-state.
+                          Submitting fires the Routed transition + attaches
+                          the rancher IDs in a single PATCH. */}
+                      {matchingId === inquiry.id && inquiry.interest_type === 'Wholesale' && (
+                        <WholesaleMatchDrawer
+                          inquiry={inquiry}
+                          ranchers={ranchers}
+                          selected={matchSelected}
+                          onToggle={(rid) =>
+                            setMatchSelected((prev) =>
+                              prev.includes(rid)
+                                ? prev.filter((x) => x !== rid)
+                                : prev.length < 3
+                                ? [...prev, rid]
+                                : prev,
+                            )
+                          }
+                          onSubmit={() => {
+                            if (matchSelected.length === 0) {
+                              alert('Pick at least one rancher to route to.');
+                              return;
+                            }
+                            handleWholesaleTransition(inquiry.id, 'Routed', {
+                              matchedRancherIds: matchSelected,
+                            });
+                          }}
+                          busy={rowBusy === inquiry.id}
+                        />
+                      )}
+
                       <div className="bg-[#F4F1EC] p-4 border-l-4 border-[#6B4F3F]">
-                        <p className="text-sm leading-relaxed">{inquiry.message}</p>
+                        <p className="text-sm leading-relaxed whitespace-pre-line">{inquiry.message}</p>
                       </div>
 
                       {inquiry.sale_amount && (
@@ -440,6 +675,94 @@ export default function AdminInquiriesPage() {
       </Container>
     </main>
     </AdminAuthGuard>
+  );
+}
+
+// Inline rancher picker for wholesale matches. Defaults to filtering by the
+// buyer's state (most matches stay in-state for shipping cost reasons) but
+// admin can flip to "All states" if they want to route cross-country. Caps
+// the selection at 3 to keep the rancher introductions manageable.
+function WholesaleMatchDrawer({
+  inquiry,
+  ranchers,
+  selected,
+  onToggle,
+  onSubmit,
+  busy,
+}: {
+  inquiry: Inquiry;
+  ranchers: RancherLite[];
+  selected: string[];
+  onToggle: (rid: string) => void;
+  onSubmit: () => void;
+  busy: boolean;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const buyerState = (inquiry.buyer_state || '').toUpperCase();
+  const filtered = showAll || !buyerState
+    ? ranchers
+    : ranchers.filter((r) => (r.state || '').toUpperCase() === buyerState);
+
+  return (
+    <div className="p-4 border border-[#6B4F3F] bg-white space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-medium">
+          Pick up to 3 ranchers to route this wholesale buyer to
+        </h4>
+        <label className="text-xs flex items-center gap-2 text-[#6B4F3F]">
+          <input
+            type="checkbox"
+            checked={showAll}
+            onChange={(e) => setShowAll(e.target.checked)}
+          />
+          Show ranchers from all states
+        </label>
+      </div>
+      {buyerState && (
+        <p className="text-xs text-[#6B4F3F]">
+          Filtering by buyer state: <strong>{buyerState}</strong>
+          {filtered.length === 0 && ' — no ranchers in this state. Toggle "Show all" to pick from anywhere.'}
+        </p>
+      )}
+      <div className="max-h-64 overflow-y-auto border border-[#A7A29A]">
+        {filtered.length === 0 ? (
+          <p className="p-3 text-sm italic text-[#A7A29A]">No ranchers to show.</p>
+        ) : (
+          <ul className="divide-y divide-[#F4F1EC]">
+            {filtered.map((r) => {
+              const checked = selected.includes(r.id);
+              const disabled = !checked && selected.length >= 3;
+              return (
+                <li key={r.id} className="flex items-center gap-2 p-2 hover:bg-[#F4F1EC]">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={disabled}
+                    onChange={() => onToggle(r.id)}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm truncate">
+                      {r.ranch_name || '(unnamed)'} <span className="text-[#6B4F3F]">— {r.operator_name}</span>
+                    </p>
+                    <p className="text-xs text-[#A7A29A]">{r.state}</p>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+      <div className="flex justify-between items-center">
+        <p className="text-xs text-[#6B4F3F]">{selected.length}/3 picked</p>
+        <button
+          onClick={onSubmit}
+          disabled={busy || selected.length === 0}
+          className="px-4 py-2 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium disabled:opacity-50"
+        >
+          {busy ? 'Routing…' : `Route to ${selected.length || '0'} rancher${selected.length === 1 ? '' : 's'}`}
+        </button>
+      </div>
+    </div>
   );
 }
 

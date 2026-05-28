@@ -16,6 +16,7 @@ export async function GET(request: Request) {
     let referrals: any[] = [];
     let consumers: any[] = [];
     let ranchers: any[] = [];
+    let inquiries: any[] = [];
     const fetchErrors: string[] = [];
     try { referrals = await getAllRecords(TABLES.REFERRALS) as any[]; }
     catch (e: any) { fetchErrors.push(`Referrals: ${e?.message || 'unknown'}`); console.error('Today/Referrals fetch:', e); }
@@ -23,8 +24,13 @@ export async function GET(request: Request) {
     catch (e: any) { fetchErrors.push(`Consumers: ${e?.message || 'unknown'}`); console.error('Today/Consumers fetch:', e); }
     try { ranchers = await getAllRecords(TABLES.RANCHERS) as any[]; }
     catch (e: any) { fetchErrors.push(`Ranchers: ${e?.message || 'unknown'}`); console.error('Today/Ranchers fetch:', e); }
-    if (fetchErrors.length === 3) {
-      // All 3 reads failed — definitely a DB connectivity issue, fail loudly
+    // Inquiries fetch is non-fatal for the rest of the dashboard — if it
+    // fails, wholesale category just renders as 0 with a soft warning in
+    // fetchErrors instead of nuking referrals/consumers cards.
+    try { inquiries = await getAllRecords(TABLES.INQUIRIES) as any[]; }
+    catch (e: any) { fetchErrors.push(`Inquiries: ${e?.message || 'unknown'}`); console.error('Today/Inquiries fetch:', e); }
+    if (fetchErrors.length >= 3 && referrals.length === 0 && consumers.length === 0 && ranchers.length === 0) {
+      // Core reads all failed — definitely a DB connectivity issue, fail loudly
       return NextResponse.json({ error: 'Database read failed', details: fetchErrors }, { status: 503 });
     }
 
@@ -94,6 +100,25 @@ export async function GET(request: Request) {
       !!c['Warmup Engaged At'] && str(c['Warmup Stage']) !== 'matched'
     );
 
+    // ── Wholesale inquiries needing action ──────────────────────────────
+    // Wholesale rows live in the Inquiries table with Interest Type='Wholesale'.
+    // We surface anything not yet terminal so the operator sees the full
+    // active queue at a glance — "New" rows are the highest priority
+    // (haven't been matched yet) and the count drives the urgency dot.
+    const wholesaleAll = inquiries.filter((i: any) => str(i['Interest Type']) === 'Wholesale');
+    const wholesaleNew = wholesaleAll.filter((i: any) => str(i['Status']) === 'New');
+    const wholesaleActive = wholesaleAll.filter((i: any) => {
+      const s = str(i['Status']);
+      return s !== 'Closed Won' && s !== 'Closed Lost';
+    });
+    // Parse "State: TX" out of the structured Notes payload — best signal
+    // we have for buyer location until the schema adds a clean column.
+    const parseWholesaleState = (notes: any): string => {
+      if (!notes) return '';
+      const m = String(notes).match(/^State:\s*(.+)$/m);
+      return m ? m[1].trim() : '';
+    };
+
     const sample = (arr: any[], n: number, fn: (x: any) => any) => arr.slice(0, n).map(fn);
 
     return NextResponse.json({
@@ -106,6 +131,11 @@ export async function GET(request: Request) {
         underused: underused.length,
         pendingGoLive: pendingGoLive.length,
         warmupEngaged: warmupEngaged.length,
+        // Wholesale funnel — "new" is the urgent count (unmatched applicants),
+        // "active" is the broader work-in-progress queue ($5-15k AOV deals
+        // that haven't terminally won/lost yet).
+        wholesaleNew: wholesaleNew.length,
+        wholesaleActive: wholesaleActive.length,
       },
       samples: {
         pendingApproval: sample(pendingApproval, 5, (r: any) => ({
@@ -160,6 +190,24 @@ export async function GET(request: Request) {
             name: c['Full Name'] || '',
             state: c['State'] || '',
             engaged_at: c['Warmup Engaged At'] || '',
+          })
+        ),
+        // Wholesale samples — newest-first so freshly-arrived applicants
+        // don't get buried under stale rows. We surface "active" (not yet
+        // terminally closed) instead of just "new" so admin sees in-flight
+        // deals too (Routed/Quoted) and can chase a stalled quote.
+        wholesaleActive: sample(
+          wholesaleActive.sort((a: any, b: any) =>
+            new Date(b['Created'] || 0).getTime() - new Date(a['Created'] || 0).getTime()
+          ),
+          5,
+          (i: any) => ({
+            id: i.id,
+            business_name: i['Ranch Name'] || '(unknown)',
+            contact_name: i['Consumer Name'] || '',
+            state: parseWholesaleState(i['Notes']),
+            status: str(i['Status']) || 'New',
+            created_at: i['Created'] || '',
           })
         ),
       },
