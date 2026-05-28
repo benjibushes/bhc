@@ -5,14 +5,19 @@ import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
 import { JWT_SECRET } from './secrets';
 
-// DOMPurify allowlist for /admin/broadcast HTML mode. P0 audit fix (C-5):
-// operator-supplied HTML was forwarded raw to Resend — compromised template
-// could phish under buyhalfcow.com. Strips <script>, event handlers,
-// javascript: URIs, and anything not in the allowlist.
+// DOMPurify allowlist for /admin/broadcast HTML mode. P0 audit fix (C-5)
+// hardened in P4-F: operator-supplied HTML was forwarded raw to Resend — a
+// compromised template could phish under buyhalfcow.com. Strips <script>,
+// event handlers, javascript:/data:/vbscript: URIs, and anything not in the
+// allowlist. We keep <style>/<html>/<head>/<body>/<meta>/<title>/<link>
+// because email HTML is a full document — inline <style> blocks are how
+// every email client renders consistently. Compensating control: a hard
+// FORBID_TAGS list for the unambiguously dangerous elements, FORBID_ATTR
+// for any on* event handler, post-sanitize href validation.
 const BROADCAST_HTML_ALLOWED_TAGS = [
   'p', 'br', 'a', 'strong', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4',
-  'blockquote', 'img', 'hr', 'div', 'span', 'table', 'tr', 'td', 'th',
-  'tbody', 'thead', 'b', 'i', 'u', 'small', 'code', 'pre', 'figure',
+  'h5', 'h6', 'blockquote', 'img', 'hr', 'div', 'span', 'table', 'tr', 'td',
+  'th', 'tbody', 'thead', 'b', 'i', 'u', 'small', 'code', 'pre', 'figure',
   'figcaption', 'html', 'head', 'body', 'style', 'meta', 'title', 'link',
 ];
 const BROADCAST_HTML_ALLOWED_ATTR = [
@@ -20,14 +25,85 @@ const BROADCAST_HTML_ALLOWED_ATTR = [
   'height', 'border', 'align', 'cellpadding', 'cellspacing', 'bgcolor',
   'colspan', 'rowspan', 'lang',
 ];
+// Defense in depth — even if the allowlist somehow leaks, these are
+// hard-blocked. <script>, <iframe>, <object>, <embed>, <form>, <input>,
+// <button> are unambiguously phishing/XSS vectors in email context. <style>
+// is intentionally NOT here because email clients need inline <style> blocks.
+const BROADCAST_HTML_FORBID_TAGS = [
+  'script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea',
+  'select', 'option', 'audio', 'video', 'source', 'track', 'canvas', 'svg',
+  'math', 'base',
+];
+// Block every on* event handler explicitly. DOMPurify's allowlist already
+// excludes these but FORBID_ATTR is a belt-and-suspenders gate.
+const BROADCAST_HTML_FORBID_ATTR = [
+  'onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout', 'onfocus',
+  'onblur', 'onsubmit', 'onreset', 'onchange', 'oninput', 'onkeydown',
+  'onkeyup', 'onkeypress', 'onabort', 'oncanplay', 'oncanplaythrough',
+  'ondblclick', 'ondrag', 'ondragend', 'ondragenter', 'ondragleave',
+  'ondragover', 'ondragstart', 'ondrop', 'ondurationchange', 'onemptied',
+  'onended', 'oninvalid', 'onloadeddata', 'onloadedmetadata', 'onloadstart',
+  'onmousedown', 'onmousemove', 'onmouseup', 'onmousewheel', 'onpause',
+  'onplay', 'onplaying', 'onprogress', 'onratechange', 'onscroll', 'onseeked',
+  'onseeking', 'onselect', 'onshow', 'onstalled', 'onsuspend', 'ontimeupdate',
+  'ontoggle', 'onvolumechange', 'onwaiting', 'onanimationend',
+  'onanimationiteration', 'onanimationstart', 'ontransitionend', 'onwheel',
+  'onbeforeunload', 'onunload', 'onresize', 'onstorage', 'onhashchange',
+  'onmessage', 'onoffline', 'ononline', 'onpopstate', 'onpageshow',
+  'onpagehide', 'oncontextmenu',
+];
+
+// Allow http(s), mailto, tel — and anchor (#) + relative (/) within the
+// email body. Critically BLOCKS javascript:, data:, vbscript:, file: URIs.
+const BROADCAST_URI_ALLOWLIST = /^(?:https?:|mailto:|tel:|\/|#)/i;
+// Final post-sanitize sweep: every <a href> and <img src> URL must match
+// this. Catches anything that slipped past DOMPurify's URI regex (case
+// folding, unicode confusables, CRLF tricks).
+function isSafeBroadcastUrl(url: string): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  // Normalize control chars + whitespace that browsers/clients often strip.
+  // eslint-disable-next-line no-control-regex
+  const normalized = trimmed.replace(/[\x00-\x1f\x7f]/g, '').toLowerCase();
+  // Block well-known dangerous schemes BEFORE allowlist (some clients are
+  // lenient about leading whitespace, so we already trimmed).
+  if (
+    normalized.startsWith('javascript:') ||
+    normalized.startsWith('data:') ||
+    normalized.startsWith('vbscript:') ||
+    normalized.startsWith('file:')
+  ) {
+    return false;
+  }
+  return BROADCAST_URI_ALLOWLIST.test(trimmed);
+}
 
 export function sanitizeBroadcastHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
+  const firstPass = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: BROADCAST_HTML_ALLOWED_TAGS,
     ALLOWED_ATTR: BROADCAST_HTML_ALLOWED_ATTR,
-    ALLOWED_URI_REGEXP: /^(https?:|mailto:|tel:|\/|#)/i,
+    FORBID_TAGS: BROADCAST_HTML_FORBID_TAGS,
+    FORBID_ATTR: BROADCAST_HTML_FORBID_ATTR,
+    ALLOWED_URI_REGEXP: BROADCAST_URI_ALLOWLIST,
+    ALLOW_DATA_ATTR: false,
+    ALLOW_UNKNOWN_PROTOCOLS: false,
+    ADD_TAGS: [],
+    ADD_ATTR: [],
     WHOLE_DOCUMENT: true,
+    SAFE_FOR_TEMPLATES: false,
+    KEEP_CONTENT: true,
   });
+  // Belt-and-suspenders href/src validation — strip the attribute if the URL
+  // isn't in our allowlist. DOMPurify's URI regex usually catches this, but
+  // case-folding and confusable characters can sometimes slip through, so we
+  // verify the rendered output one more time before sending to Resend.
+  return firstPass.replace(
+    /\s(href|src)\s*=\s*("([^"]*)"|'([^']*)')/gi,
+    (match, attr, _quoted, dq, sq) => {
+      const url = dq ?? sq ?? '';
+      return isSafeBroadcastUrl(url) ? match : '';
+    },
+  );
 }
 
 const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');

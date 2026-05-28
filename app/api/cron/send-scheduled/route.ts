@@ -14,7 +14,7 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function getRecipients(audienceType: string, selectedStates?: string[]) {
+async function getRecipients(audienceType: string, _selectedStates?: string[]) {
   let recipients: Array<{ email: string; name: string }> = [];
 
   // CRITICAL: filter out anyone who unsubscribed or hard-bounced. Sending to
@@ -28,13 +28,30 @@ async function getRecipients(audienceType: string, selectedStates?: string[]) {
     return true;
   };
 
-  if (audienceType === 'consumers' || audienceType.startsWith('state:')) {
+  // Audience tokens — must match what the write path (app/api/admin/broadcast/route.ts)
+  // serializes into the Campaigns.Audience field:
+  //   - 'consumers'            (all consumers)
+  //   - 'consumers-beef'       (Segment='Beef Buyer')
+  //   - 'consumers-community'  (Segment blank or 'Community')
+  //   - 'state:CA,TX,...'      (consumers-by-state, serialized from selectedStates)
+  //   - 'ranchers'             (all ranchers)
+  if (
+    audienceType === 'consumers' ||
+    audienceType === 'consumers-beef' ||
+    audienceType === 'consumers-community' ||
+    audienceType.startsWith('state:')
+  ) {
     const consumers = await getAllRecords(TABLES.CONSUMERS);
-    const stateList = audienceType.startsWith('state:') ? audienceType.replace('state:', '').split(',') : null;
-    const filtered = (stateList
-      ? consumers.filter((c: any) => stateList.includes(c['State']))
-      : consumers
-    ).filter(isMailable);
+    let filtered: any[] = consumers;
+    if (audienceType.startsWith('state:')) {
+      const stateList = audienceType.replace('state:', '').split(',').map(s => s.trim()).filter(Boolean);
+      filtered = consumers.filter((c: any) => stateList.includes(c['State']));
+    } else if (audienceType === 'consumers-beef') {
+      filtered = consumers.filter((c: any) => c['Segment'] === 'Beef Buyer');
+    } else if (audienceType === 'consumers-community') {
+      filtered = consumers.filter((c: any) => !c['Segment'] || c['Segment'] === 'Community');
+    }
+    filtered = filtered.filter(isMailable);
     recipients = filtered.map((c: any) => ({
       email: (c['Email'] || '').trim().toLowerCase(),
       name: c['Full Name'] || 'Member',
@@ -86,8 +103,20 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   let totalFailed = 0;
   for (const campaign of due) {
     const audienceType = campaign['Audience'] || 'consumers';
-    const stateFilter = audienceType.startsWith('state:') ? audienceType.replace('state:', '').split(',') : undefined;
-    const recipients = await getRecipients(audienceType, stateFilter);
+    const recipients = await getRecipients(audienceType);
+
+    // Flip Status='Sending' BEFORE the send loop. If the cron crashes mid-send,
+    // the next tick won't re-pick this row (filter is Status='scheduled'). This
+    // prevents double-sending the whole audience after a partial crash.
+    try {
+      await updateRecord(TABLES.CAMPAIGNS, campaign.id, {
+        'Status': 'Sending',
+      });
+    } catch (e) {
+      console.error('Failed to reserve campaign before send:', e);
+      // If we can't reserve, skip rather than risk double-send on retry.
+      continue;
+    }
 
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
     const rawCtaLink = campaign['CTA Link'] || '/member';
@@ -126,9 +155,13 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       }
     }
 
+    // Mirror the immediate-send path in /api/admin/broadcast: flip to 'Partial'
+    // if any failures occurred, else 'Sent'. Operators rely on this status to
+    // know whether to investigate Resend failures or move on.
+    const finalStatus = failed > 0 ? 'Partial' : 'Sent';
     try {
       await updateRecord(TABLES.CAMPAIGNS, campaign.id, {
-        'Status': 'Sent',
+        'Status': finalStatus,
         'Sent At': new Date().toISOString(),
         'Sent': sent,
         'Failed': failed,
