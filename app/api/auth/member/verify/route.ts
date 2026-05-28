@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
+import { verifyJwtWithFallback } from '@/lib/jwt';
 
 import { JWT_SECRET } from '@/lib/secrets';
 const MEMBER_AUTH_COOKIE = 'bhc-member-auth';

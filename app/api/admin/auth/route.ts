@@ -2,8 +2,32 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 import { ADMIN_PASSWORD } from '@/lib/secrets';
+import { signJwt, verifyJwtWithFallback } from '@/lib/jwt';
 
 const AUTH_TOKEN = 'bhc-admin-auth';
+
+// P3-C (2026-05-27): cookie value was the literal string 'authenticated' —
+// any attacker who knew the cookie name could forge admin by setting it.
+// Now it's a signed JWT with claims { role: 'admin', iat }, 7d expiry, signed
+// with JWT_SECRET. Rotating the secret invalidates outstanding admin sessions.
+// requireAdmin() in lib/adminAuth.ts must verify via verifyJwtWithFallback.
+const ADMIN_TOKEN_EXPIRY = '7d';
+
+interface AdminTokenClaims {
+  role: string;
+  iat?: number;
+  exp?: number;
+}
+
+function isValidAdminToken(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const claims = verifyJwtWithFallback<AdminTokenClaims>(value);
+    return claims.role === 'admin';
+  } catch {
+    return false;
+  }
+}
 
 // In-memory rate limiter: max 5 failed POSTs per IP per 15min.
 // Solo-operator scale is fine; lives in process memory and resets on deploy.
@@ -83,9 +107,18 @@ export async function POST(request: Request) {
     if (safeEqual(password, ADMIN_PASSWORD)) {
       // Successful login → clear failure counter for this IP.
       clearFailures(ip);
-      // Set secure HTTP-only cookie (expires in 7 days)
+      // Mint a signed JWT (P3-C). Before: cookie value was literal string
+      // 'authenticated' — anyone who knew the cookie name could forge admin
+      // by hand-setting it (no rotation, no expiry semantics beyond cookie
+      // maxAge). Now: HS256 JWT signed with JWT_SECRET, claims {role,iat},
+      // 7d exp. Rotating JWT_SECRET (with grace via JWT_SECRET_LEGACY)
+      // invalidates outstanding admin sessions.
+      const token = signJwt(
+        { role: 'admin', iat: Math.floor(Date.now() / 1000) },
+        { expiresIn: ADMIN_TOKEN_EXPIRY },
+      );
       const cookieStore = await cookies();
-      cookieStore.set(AUTH_TOKEN, 'authenticated', {
+      cookieStore.set(AUTH_TOKEN, token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
@@ -116,7 +149,7 @@ export async function GET() {
     const cookieStore = await cookies();
     const authCookie = cookieStore.get(AUTH_TOKEN);
 
-    if (authCookie?.value === 'authenticated') {
+    if (isValidAdminToken(authCookie?.value)) {
       return NextResponse.json({ authenticated: true });
     }
 

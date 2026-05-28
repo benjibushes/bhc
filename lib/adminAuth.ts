@@ -1,12 +1,17 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { verifyJwtWithFallback } from './jwt';
 
 /**
  * Centralized admin auth check.
  *
  * Accepts EITHER:
- *   - The `bhc-admin-auth` cookie set by /api/admin/auth (browser sessions)
+ *   - The `bhc-admin-auth` cookie set by /api/admin/auth (browser sessions).
+ *     P3-C (2026-05-27): cookie is now a SIGNED JWT with claims { role: 'admin', iat },
+ *     not the prior literal string 'authenticated'. We verify via verifyJwtWithFallback
+ *     so JWT_SECRET rotation (with JWT_SECRET_LEGACY grace) doesn't blow up
+ *     outstanding admin sessions.
  *   - `?password=...` query param matching ADMIN_PASSWORD (CLI / curl / scripted ops)
  *   - `x-admin-password` header matching ADMIN_PASSWORD (programmatic clients)
  *
@@ -17,6 +22,12 @@ import crypto from 'crypto';
  * same way during streaming responses, and several admin endpoints accept the
  * password in URL/header form for the Telegram bot + cron-style scripts.
  */
+
+interface AdminTokenClaims {
+  role: string;
+  iat?: number;
+  exp?: number;
+}
 
 // Constant-time compare to defeat timing-attacks. P0 audit fix (C-2).
 function safeEqual(a: string | undefined | null, b: string | undefined | null): boolean {
@@ -34,10 +45,21 @@ function safeEqual(a: string | undefined | null, b: string | undefined | null): 
 
 export async function requireAdmin(request: Request): Promise<NextResponse | null> {
   // 1. Cookie auth (set by POST /api/admin/auth)
+  // P3-C: cookie now holds a signed JWT { role: 'admin', iat }. Verify via
+  // verifyJwtWithFallback so JWT_SECRET rotation has a grace window (legacy
+  // secrets listed in JWT_SECRET_LEGACY). On any failure (missing, malformed,
+  // bad signature, expired, wrong role) we fall through to header/query auth.
   try {
     const cookieStore = await cookies();
     const cookie = cookieStore.get('bhc-admin-auth');
-    if (cookie?.value === 'authenticated') return null;
+    if (cookie?.value) {
+      try {
+        const claims = verifyJwtWithFallback<AdminTokenClaims>(cookie.value);
+        if (claims.role === 'admin') return null;
+      } catch {
+        // Bad / expired / unsigned cookie — fall through to header/query auth
+      }
+    }
   } catch {
     // Cookies may not be available in some contexts — fall through to header/query
   }
