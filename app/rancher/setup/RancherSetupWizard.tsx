@@ -1371,10 +1371,20 @@ export default function RancherSetupWizard() {
                   // After pricing, route to step 4 (Book Call). If the rancher
                   // already has Call Complete on file (e.g. Ben backfilled or
                   // they came back to a partially-onboarded record), skip the
-                  // booking step and jump straight to tier-pick (step 7).
-                  // Tier-pick + fulfillment (7/8) always run before sign (5).
+                  // booking step and jump straight to the next gate.
+                  //
+                  // Step ordering depends on Pricing Model:
+                  //   tier_v2: 3 → 4 → 7 (Pick Plan) → 9 (Stripe) → 8 (Fulfill) → 5 (Sign)
+                  //   legacy:  3 → 4 → 8 (Fulfill) → 5 (Sign)  — skip 7+9
+                  // Legacy ranchers pay BHC monthly commission on closed deals
+                  // (no tier subscription), so forcing them through Pick Plan
+                  // (step 7) or Stripe Connect (step 9) is wrong and blocks
+                  // onboarding. (P2-B fix.)
+                  const isLegacy =
+                    String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
+                  const nextAfterPricing = isLegacy ? 8 : 7;
                   if (canSkipBooking()) {
-                    setStep(7);
+                    setStep(nextAfterPricing);
                   } else {
                     setStep(4);
                   }
@@ -1384,15 +1394,23 @@ export default function RancherSetupWizard() {
           </section>
         )}
 
-        {/* STEP 4 — Book onboarding call (Hybrid B gate) */}
-        {step === 4 && (
-          <CallStep
-            rancher={rancher}
-            onAlreadyComplete={() => setStep(7)}
-            onBack={() => setStep(3)}
-            onProceedAnyway={() => setStep(7)}
-          />
-        )}
+        {/* STEP 4 — Book onboarding call (Hybrid B gate).
+            Legacy ranchers skip step 7 (Pick Plan) and step 9 (Stripe Connect)
+            entirely — they pay monthly commission, not a tier subscription.
+            (P2-B fix.) */}
+        {step === 4 && (() => {
+          const isLegacy =
+            String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
+          const nextAfterCall = isLegacy ? 8 : 7;
+          return (
+            <CallStep
+              rancher={rancher}
+              onAlreadyComplete={() => setStep(nextAfterCall)}
+              onBack={() => setStep(3)}
+              onProceedAnyway={() => setStep(nextAfterCall)}
+            />
+          );
+        })()}
 
         {/* STEP 7 — Pick Your Plan (Stage-3 Task 11A) */}
         {step === 7 && (
@@ -1426,25 +1444,37 @@ export default function RancherSetupWizard() {
           />
         )}
 
-        {/* STEP 8 — Fulfillment + Refund Policy (Stage-3 Task 11B) */}
-        {step === 8 && (
-          <FulfillmentStep
-            token={token}
-            form={form}
-            setField={setField}
-            setFieldAndAutoSave={setFieldAndAutoSave}
-            autoSaveStatus={autoSaveStatus}
-            saving={saving}
-            saveStep={saveStep}
-            onBack={() => setStep(9)}
-            onContinue={() => {
-              // After fulfillment is saved, prime the signing token + jump to
-              // the signature step.
-              primeSigningToken();
-              setStep(5);
-            }}
-          />
-        )}
+        {/* STEP 8 — Fulfillment + Refund Policy (Stage-3 Task 11B).
+            Back-button target depends on Pricing Model: tier_v2 ranchers came
+            from step 9 (Stripe), legacy ranchers came from step 4 (or 3 if
+            they skipped Call). Sending legacy ranchers back to step 9 would
+            trap them — StripeConnectStep auto-advances legacy back to step 8.
+            (P2-B fix.) */}
+        {step === 8 && (() => {
+          const isLegacy =
+            String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
+          const backTarget = isLegacy
+            ? (canSkipBooking() ? 3 : 4)
+            : 9;
+          return (
+            <FulfillmentStep
+              token={token}
+              form={form}
+              setField={setField}
+              setFieldAndAutoSave={setFieldAndAutoSave}
+              autoSaveStatus={autoSaveStatus}
+              saving={saving}
+              saveStep={saveStep}
+              onBack={() => setStep(backTarget)}
+              onContinue={() => {
+                // After fulfillment is saved, prime the signing token + jump to
+                // the signature step.
+                primeSigningToken();
+                setStep(5);
+              }}
+            />
+          );
+        })()}
 
         {/* STEP 5 — Inline sign agreement */}
         {step === 5 && (
