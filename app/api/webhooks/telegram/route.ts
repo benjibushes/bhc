@@ -385,12 +385,73 @@ export const maxDuration = 60;
 // but the failure mode was a real double-fire of side effects.
 //
 // Now: Upstash Redis SETNX w/ 5min TTL. Cross-instance safe. Falls back to
-// the in-memory Map when Redis isn't configured (dev) OR Redis throws (don't
-// refuse legit Telegram updates because Upstash had a hiccup — better to
-// double-process than to lose).
+// the in-memory Map when Redis isn't configured (dev) OR Redis throws.
+//
+// P4-G audit fix: prior fail-open on Redis errors was acceptable for low-risk
+// dedup (text-reply ack) but DANGEROUS for high-risk mutations (approve_,
+// reject_, assignto_, ronboard_, mass-send buttons). When Upstash 5xx'd, a
+// double-tap on "Approve" sailed past dedup → duplicate Airtable rows + double
+// intro emails. Same with mass-send buttons (rcheckin_send, blitz_send,
+// bulkonboard_send) → DOUBLE the bulk emails.
+//
+// New behavior:
+//   - claimCallback() returns 'claimed' | 'duplicate' | 'redis_down'
+//   - For low-risk ops (update_id dedup), 'redis_down' falls back to in-memory
+//     Map (best-effort within instance; cross-instance dupes leak but the only
+//     side-effect is a re-processed update which has its own idempotency)
+//   - For high-risk mutations, 'redis_down' fails CLOSED (returns 'duplicate'
+//     equivalent) when Redis has been degraded within the last 5min — better
+//     to refuse a legit action than double-fire intros. The user sees
+//     "Redis degraded — retry in a moment" and operator gets ONE alert.
 const _seenUpdateIds = new Map<number, number>();
 const UPDATE_ID_TTL_MS = 5 * 60_000;
 const UPDATE_ID_TTL_SECONDS = 300;
+
+// In-memory mutation callback dedup. Map<queryId, claimed-at-ts>.
+// Only effective within a single instance; cross-instance dupes are caught by
+// Redis. When Redis is down, this is the only line of defense — better than
+// nothing for the same-instance retry case (Telegram redelivers to the same
+// region/instance with high probability).
+const _claimedMutationCallbacks = new Map<string, number>();
+const MUTATION_CALLBACK_TTL_MS = 5 * 60_000;
+const MUTATION_CALLBACK_TTL_SECONDS = 300;
+
+// Redis health tracker. Once an error is observed, the next 5 minutes of
+// requests are considered "degraded". Mutations fail-closed during that window.
+// An operator alert is sent at most once per degraded window (re-armed when
+// the window expires without further errors).
+const REDIS_DEGRADED_WINDOW_MS = 5 * 60_000;
+let _redisLastErrorAt = 0;
+let _redisDegradedAlertSentAt = 0;
+
+function recordRedisError(op: string, e: any) {
+  _redisLastErrorAt = Date.now();
+  console.error(`[telegram] Redis error in ${op}:`, e?.message || e);
+  // Fire-and-forget operator alert. At most once per degraded window so a
+  // sustained Upstash outage doesn't spam the chat. Best-effort: if the
+  // alert itself fails we just swallow it.
+  void alertOperatorIfNewlyDegraded(op);
+}
+
+function isRedisDegraded(): boolean {
+  return Date.now() - _redisLastErrorAt < REDIS_DEGRADED_WINDOW_MS;
+}
+
+async function alertOperatorIfNewlyDegraded(op: string) {
+  const now = Date.now();
+  // Re-arm if last alert was outside the current degraded window.
+  if (now - _redisDegradedAlertSentAt < REDIS_DEGRADED_WINDOW_MS) return;
+  _redisDegradedAlertSentAt = now;
+  if (!TELEGRAM_ADMIN_CHAT_ID) return;
+  try {
+    await sendTelegramMessage(
+      String(TELEGRAM_ADMIN_CHAT_ID),
+      `⚠️ <b>Redis degraded</b> — Telegram mutations fail-closed for 5 min.\n\nFailing op: <code>${op}</code>\n\nNew /approve, /reject, /assignto, /ronboard, mass-send taps will be refused until Redis recovers (auto-clears after 5 min idle).`
+    );
+  } catch {
+    // Even the alert path can fail — that's fine, console.error already logged.
+  }
+}
 
 let _telegramRedis: any | null = null;
 let _telegramRedisInit = false;
@@ -419,6 +480,65 @@ function _markUpdateSeenMemory(id: number): boolean {
   if (_seenUpdateIds.has(id)) return false;
   _seenUpdateIds.set(id, Date.now());
   return true;
+}
+
+function _claimMutationMemory(queryId: string): boolean {
+  // Prune old entries opportunistically.
+  const cutoff = Date.now() - MUTATION_CALLBACK_TTL_MS;
+  for (const [k, ts] of _claimedMutationCallbacks.entries()) {
+    if (ts < cutoff) _claimedMutationCallbacks.delete(k);
+  }
+  if (_claimedMutationCallbacks.has(queryId)) return false;
+  _claimedMutationCallbacks.set(queryId, Date.now());
+  return true;
+}
+
+// Centralized callback claim helper. Wraps Redis SETNX with a try/catch and
+// falls back to the in-memory Map on Redis error. When `failClosedOnDegraded`
+// is true (set for HIGH-RISK mutations: approve_, reject_, assignto_, ronboard_,
+// mass-send buttons), a Redis error during the current degraded window returns
+// `false` (treat as duplicate) to prevent double-fire. Otherwise (low-risk ops),
+// Redis error falls back to the in-memory Map (cross-instance dupes possible
+// but contained).
+//
+// Returns true → claim succeeded (first sight, proceed).
+// Returns false → duplicate (already claimed) OR fail-closed during degradation.
+async function claimCallback(
+  key: string,
+  ttlSeconds: number,
+  failClosedOnDegraded: boolean,
+): Promise<boolean> {
+  const redis = await getTelegramRedis();
+  if (!redis) {
+    // Redis not configured (dev or missing env) — in-memory is best we can do.
+    return _claimMutationMemory(key);
+  }
+  try {
+    const result = await redis.set(`bhc:telegram:cb:${key}`, '1', {
+      nx: true,
+      ex: ttlSeconds,
+    });
+    return result === 'OK';
+  } catch (e: any) {
+    recordRedisError('claimCallback', e);
+    // Fail-closed mode for high-risk mutations during a Redis outage:
+    // pretend it's a duplicate so the second tap can't slip through.
+    // The first tap also returns false here (it errored) — but Telegram's
+    // built-in retry will redeliver the update; with the in-memory Map
+    // catching the same-instance redelivery, we get best-effort dedup.
+    // Worst case: legit single tap is refused → operator retries → succeeds
+    // on Redis recovery. Better than double-firing the intro.
+    if (failClosedOnDegraded && isRedisDegraded()) {
+      // Still record the local claim so the second in-process tap is also
+      // refused. The first tap will see in-memory miss + still be refused;
+      // operator re-taps after Redis recovers.
+      _claimMutationMemory(key);
+      return false;
+    }
+    // Low-risk fallback: in-memory dedup. Cross-instance dupes possible but
+    // contained by other guards (Airtable status checks, etc.).
+    return _claimMutationMemory(key);
+  }
 }
 
 // H-6 audit fix: inbound command rate limit. Pre-fix, a hijacked admin chat
@@ -457,7 +577,13 @@ async function markUpdateSeen(id: number): Promise<boolean> {
     });
     return result === 'OK';
   } catch (e: any) {
-    console.error('[telegram] Redis SETNX failed, falling back to in-memory dedup:', e?.message);
+    // P4-G fix: record degraded state so subsequent mutation callbacks can
+    // fail-closed within the same window. update_id dedup itself stays
+    // fail-open (low-risk: redelivered updates have their own per-action
+    // idempotency guards downstream) — but flagging the outage here means
+    // the FIRST mutation tap that lands while Upstash is sick will refuse
+    // rather than double-fire.
+    recordRedisError('markUpdateSeen', e);
     return _markUpdateSeenMemory(id);
   }
 }
@@ -555,6 +681,76 @@ async function processUpdate(update: any) {
 
       const [action, referralId] = callbackData.split('_', 2);
       const fullReferralId = callbackData.substring(action.length + 1);
+
+      // ─── P4-G HIGH-RISK callback dedup ──────────────────────────────────
+      // Existing per-handler guards use Airtable status checks ("already
+      // approved? skip"). Those work for SEQUENTIAL double-taps but lose
+      // the race when two taps land in flight before the first Airtable
+      // write commits: BOTH read the pre-state, BOTH proceed, BOTH write →
+      // duplicate Airtable rows + double intro emails.
+      //
+      // Solution: claim a Redis SETNX key on the Telegram callback queryId
+      // (which is unique per button press). Telegram redelivers the SAME
+      // queryId on its own retry, AND a frantic operator double-tap fires
+      // the same queryId. SETNX semantics ensure only the first attempt
+      // claims it; the rest see 'duplicate' and short-circuit.
+      //
+      // Falls back to an in-memory Map within a single Vercel instance when
+      // Redis errors. During a sustained Redis outage (degraded window),
+      // mutations FAIL CLOSED — we'd rather refuse a legit tap than
+      // double-fire an intro. Operator gets ⚠️ Redis degraded alert.
+      const HIGH_RISK_ACTIONS = new Set([
+        'matchfire',     // creates referral + double-side intro emails
+        'approve',       // creates intro send + capacity INCR
+        'reject',        // closes referral + capacity DECR + buyer restore
+        'assignto',      // reassign + double-side intro emails + capacity move
+        'capprove',      // consumer approval + welcome email + matching/suggest
+        'creject',       // consumer rejection
+        'markpaid',      // marks commission paid + receipt email
+        'thankrancher',  // thank-you email
+        'nudgerancher',  // stalled-deal nudge email
+        'closelost',     // close-lost + capacity DECR + buyer restore + audit
+        'hotcontact',    // notes append
+        'hotemail',      // AI draft + Airtable write
+        'ronboard',      // bulk onboarding doc send
+        'chasend',       // chase-up email + Airtable write
+        'draftfollowup', // send/schedule/discard draft email
+      ]);
+      // Mutation callbackData equals-string set (parser-based action above
+      // doesn't catch single-word callbacks like 'rcheckin_send' which
+      // already have their own claim — covered separately below). Includes
+      // rverify_, rgolive_, rcallcompl_ which use startsWith dispatch
+      // farther down. Handled via prefix check.
+      const HIGH_RISK_PREFIXES = [
+        'rverify_',
+        'rgolive_',
+        'rcallcompl_',
+        'spgolive',  // not a prefix but unique value, no-op for matchers
+        'clcheck_',
+        'selfblock_',
+        'firstweek_',
+        'bcsend_',
+      ];
+      const isHighRiskCallback =
+        HIGH_RISK_ACTIONS.has(action) ||
+        HIGH_RISK_PREFIXES.some((p) => callbackData.startsWith(p)) ||
+        callbackData === 'spgolive';
+      if (isHighRiskCallback) {
+        const claimed = await claimCallback(
+          `mutate:${queryId}`,
+          MUTATION_CALLBACK_TTL_SECONDS,
+          /* failClosedOnDegraded */ true,
+        );
+        if (!claimed) {
+          await answerCallbackQuery(
+            queryId,
+            isRedisDegraded()
+              ? '⚠️ Redis degraded — retry in a moment'
+              : 'Already processed',
+          );
+          return NextResponse.json({ ok: true, deduped: true });
+        }
+      }
 
       // ─── /match Direct routing actions ──────────────────────────────────
       // Fires when operator taps "✅ Fire intro now" or "❌ Cancel" on a
@@ -1842,20 +2038,20 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         try {
           // Mass-send dedup: double-tap previously DOUBLED the number of
           // check-in emails (no per-rancher idempotency inside the loop).
-          // Claim a Redis key on the callback id so the second tap is
-          // a no-op. Falls open if Redis is down — better to risk a dupe
-          // than refuse the operator's action.
-          try {
-            const redis = await getTelegramRedis();
-            if (redis) {
-              const claimed = await redis.set(`tg:cb-mass:${queryId}`, '1', { nx: true, ex: 600 });
-              if (claimed !== 'OK') {
-                await answerCallbackQuery(queryId, 'Already running');
-                return NextResponse.json({ ok: true });
-              }
-            }
-          } catch (claimErr: any) {
-            console.warn('[rcheckin_send] mass-send claim failed (open):', claimErr?.message);
+          // P4-G fix: route through claimCallback() so Redis errors are
+          // tracked + mutations fail-closed during a degraded window
+          // (prior version fell OPEN on Redis error → double-tap dupes).
+          const claimed = await claimCallback(
+            `cb-mass:${queryId}`,
+            600,
+            /* failClosedOnDegraded */ true,
+          );
+          if (!claimed) {
+            await answerCallbackQuery(
+              queryId,
+              isRedisDegraded() ? 'Already running (or Redis degraded — retry in a moment)' : 'Already running',
+            );
+            return NextResponse.json({ ok: true });
           }
 
           await answerCallbackQuery(queryId, 'Sending check-in emails...');
@@ -1921,19 +2117,21 @@ Output ONLY the email body. First line should be the subject line prefixed with 
       else if (callbackData === 'blitz_send') {
         try {
           // Mass-send dedup: double-tap previously DOUBLED the pipeline
-          // update emails. Claim a Redis key on the callback id; second
-          // tap becomes a no-op. Open on Redis failure.
-          try {
-            const redis = await getTelegramRedis();
-            if (redis) {
-              const claimed = await redis.set(`tg:cb-mass:${queryId}`, '1', { nx: true, ex: 600 });
-              if (claimed !== 'OK') {
-                await answerCallbackQuery(queryId, 'Already running');
-                return NextResponse.json({ ok: true });
-              }
-            }
-          } catch (claimErr: any) {
-            console.warn('[blitz_send] mass-send claim failed (open):', claimErr?.message);
+          // update emails. P4-G fix: route through claimCallback() so
+          // Redis errors are tracked + mutations fail-closed during a
+          // degraded window. Prior version fell OPEN on Redis errors →
+          // a flaky Upstash response would let a double-tap through.
+          const claimed = await claimCallback(
+            `cb-mass:${queryId}`,
+            600,
+            /* failClosedOnDegraded */ true,
+          );
+          if (!claimed) {
+            await answerCallbackQuery(
+              queryId,
+              isRedisDegraded() ? 'Already running (or Redis degraded — retry in a moment)' : 'Already running',
+            );
+            return NextResponse.json({ ok: true });
           }
 
           await answerCallbackQuery(queryId, 'Sending pipeline update emails...');
@@ -2022,20 +2220,21 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         try {
           // Mass-send dedup: double-tap previously DOUBLED the onboarding
           // packets (each rancher would get the Commission Agreement +
-          // Media Agreement + Info Packet twice). Claim a Redis key on
-          // the callback id; second tap becomes a no-op. Open on Redis
-          // failure.
-          try {
-            const redis = await getTelegramRedis();
-            if (redis) {
-              const claimed = await redis.set(`tg:cb-mass:${queryId}`, '1', { nx: true, ex: 600 });
-              if (claimed !== 'OK') {
-                await answerCallbackQuery(queryId, 'Already running');
-                return NextResponse.json({ ok: true });
-              }
-            }
-          } catch (claimErr: any) {
-            console.warn('[bulkonboard_send] mass-send claim failed (open):', claimErr?.message);
+          // Media Agreement + Info Packet twice). P4-G fix: route through
+          // claimCallback() so Redis errors are tracked + mutations fail-
+          // closed during a degraded window. Prior version fell OPEN on
+          // Redis errors → a flaky Upstash response could let dupes through.
+          const claimed = await claimCallback(
+            `cb-mass:${queryId}`,
+            600,
+            /* failClosedOnDegraded */ true,
+          );
+          if (!claimed) {
+            await answerCallbackQuery(
+              queryId,
+              isRedisDegraded() ? 'Already running (or Redis degraded — retry in a moment)' : 'Already running',
+            );
+            return NextResponse.json({ ok: true });
           }
 
           await answerCallbackQuery(queryId, 'Sending onboarding packages...');
@@ -4945,6 +5144,12 @@ Confirm send?`;
                 await redis.set(`tg:bulkfire-pending:${chatId}`, String(stuck.length), { ex: 60 });
               }
             } catch (cacheErr: any) {
+              // P4-G: track the Redis error so subsequent mutation taps in
+              // the next 5 min fail-closed. The pending-state cache itself
+              // continues to fail-open (preview is non-mutating) — but the
+              // operator should see the degraded alert and know not to
+              // /bulkfire confirm until Redis recovers.
+              recordRedisError('/bulkfire pending-state set', cacheErr);
               console.warn('[/bulkfire] pending-state cache failed (continuing):', cacheErr?.message);
             }
             await sendTelegramMessage(
@@ -4971,6 +5176,11 @@ Confirm send?`;
               }
               await redis.del(`tg:bulkfire-pending:${chatId}`);
             } catch (gateErr: any) {
+              // P4-G: track Redis error so any subsequent mutation taps in
+              // the next 5 min fail-closed. Confirm gate itself already
+              // fails-closed (which is correct — we WANT to refuse a
+              // /bulkfire confirm when we can't verify the prior preview).
+              recordRedisError('/bulkfire confirm gate', gateErr);
               await sendTelegramMessage(chatId, `⚠️ /bulkfire confirm refused: ${gateErr?.message || 'gate check failed'}. Run <code>/bulkfire</code> again.`);
               return NextResponse.json({ ok: true });
             }
