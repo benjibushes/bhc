@@ -217,7 +217,7 @@ export default async function StartPage({
     },
     {
       q: 'how does it actually work?',
-      a: '(1) take the 90-second buyer quiz — we capture your state, household size, timing. (2) we route you to a verified rancher in your state within hours. (3) they email you direct with pricing, processing date, delivery. (4) you talk one-on-one and confirm. (5) beef in your freezer in 2-4 weeks. no middleman, no marketplace markup. BHC Promise (cold-chain + 7-day satisfaction + mediation) on every match.',
+      a: '(1) take the buyer quiz — we capture your state, household size, timing. (2) if a rancher serves your state, we route you within hours; if not, you go on the priority waitlist + we recruit. (3) the rancher emails you direct with pricing, processing date, delivery. (4) you talk one-on-one and confirm. (5) beef in your freezer in 2-4 weeks. no marketplace middleman — you pay the rancher direct, with a transparent service fee shown at checkout. BHC Promise (cold-chain + 7-day satisfaction + mediation) on every match.',
     },
     {
       q: "what if there's no rancher in my state yet?",
@@ -230,8 +230,8 @@ export default async function StartPage({
     ? `real beef. real ranchers in ${detectedState.toLowerCase()}.`
     : 'real beef. real ranchers. direct.';
   const buyerBody = detectedState
-    ? `we route you to a verified rancher in ${detectedState}. you talk to them direct in 24 hours — no middleman, no markup, no grocery middleman.`
-    : 'we route you to a verified rancher in your state. you talk to them direct in 24 hours — no middleman, no markup.';
+    ? `if a rancher serves ${detectedState}, we route you to them within 24 hours. you talk direct — no marketplace middleman, transparent fee at checkout. if no rancher in ${detectedState} yet, you go on the priority waitlist.`
+    : 'if a rancher serves your state, we route you within 24 hours. you talk direct — no marketplace middleman, transparent fee at checkout. if no rancher in your state yet, you go on the priority waitlist.';
 
   // JSON-LD Schema.org Organization markup — Google rich-result eligibility
   // for BuyHalfCow as a primary entity. Renders via JSON.stringify (XSS-safe).
@@ -362,7 +362,7 @@ export default async function StartPage({
                 : 'find real beef in your state'
             }
             proofLine1={`${stats.familiesMatched.toLocaleString()} families in pipeline`}
-            proofLine2={`${stats.totalClosedWon} deals closed · 17 verified ranchers`}
+            proofLine2={`${stats.totalClosedWon} deals closed · ${stats.ranchersActive} verified ranchers`}
             body={buyerBody}
             ctaLabel="talk to a rancher in 24h"
             riskReversal="free · no card · no commitment · cancel anytime"
@@ -457,7 +457,7 @@ export default async function StartPage({
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="text-charcoal font-semibold">✓</span>
-            no middleman, no markup
+            direct from rancher · transparent service fee
           </span>
         </div>
 

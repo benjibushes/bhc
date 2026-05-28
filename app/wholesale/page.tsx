@@ -149,7 +149,7 @@ export default async function WholesalePage() {
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="text-charcoal font-semibold">✓</span>
-            no middleman, no markup
+            direct rancher contracts · transparent fee
           </span>
         </div>
 
