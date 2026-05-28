@@ -38,6 +38,10 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendBrandListingConfirmation',
   // Customer-expected payment failure notice — must reach the brand to retry.
   'sendBrandPaymentFailed',
+  // Customer-expected pre-renewal heads-up (3-7d before subscription renews) —
+  // gives customer time to update card / cancel intentionally / etc. Suppressing
+  // = surprise charge = chargeback. P3-A audit fix.
+  'sendRenewalReminder',
   // Customer-expected fulfillment confirmation post-order.
   'sendBuyerFulfillmentConfirmation',
   // Customer-expected confirmation that partner application was received.

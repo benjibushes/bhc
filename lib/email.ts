@@ -1482,6 +1482,73 @@ a{color:#0E0E0E;}
   });
 }
 
+// Pre-renewal heads-up. Fires on Stripe's `invoice.upcoming` event (3-7d
+// before a subscription renews — configurable in Stripe Dashboard, default
+// 3d). Sent to brand-partner monthly subs + founder annual subs so they have
+// time to update card / cancel intentionally / etc. Suppressing = surprise
+// charge = chargeback risk. P3-A audit fix.
+//
+// recipientType is for the salutation copy only — both branches share the
+// same template. Plan name is best-effort ('your bhc subscription' if unknown).
+export async function sendRenewalReminder(data: {
+  firstName: string;
+  email: string;
+  amountDollars: number;
+  daysUntilRenewal: number;
+  // 'brand-partner' | 'founder' — picks the salutation tone.
+  recipientType: 'brand-partner' | 'founder';
+  planName?: string;
+  // Stripe-hosted billing portal or manage URL. Falls back to /account or
+  // /brand-partners depending on recipientType.
+  manageUrl?: string;
+}) {
+  const first = esc(data.firstName.split(/\s+/)[0] || 'there');
+  const amount = `$${data.amountDollars.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  const days = Math.max(1, Math.round(data.daysUntilRenewal));
+  const plan = esc(data.planName || 'your bhc subscription');
+  const fallbackUrl = data.recipientType === 'brand-partner'
+    ? `${SITE_URL}/brand-partners`
+    : `${SITE_URL}/account`;
+  const manageUrl = data.manageUrl || fallbackUrl;
+  const subject = `bhc — heads up, ${plan} renews in ${days} ${days === 1 ? 'day' : 'days'}`;
+
+  return guardedSend({
+    templateName: 'sendRenewalReminder',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:24px;margin:0 0 14px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;}
+a{color:#0E0E0E;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+  <p>hey ${first} —</p>
+  <p>quick heads-up: <strong>${plan}</strong> renews in <strong>${days} ${days === 1 ? 'day' : 'days'}</strong> for <strong>${amount}</strong>.</p>
+  <p>no action needed if everything's good — your card will charge automatically. if you want to update your card or change anything, tap below.</p>
+  <p style="text-align:center;margin:24px 0;">
+    <a href="${manageUrl}" class="cta">manage subscription</a>
+  </p>
+  <p style="font-size:14px;color:#6B4F3F;">questions? reply to this email — lands directly with me.</p>
+  <p style="margin-top:28px;">— ben<br>buyhalfcow</p>
+  <div class="footer">
+    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+    <p style="margin:6px 0 0;">
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
+    </p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
 // Wholesale buyer-side confirmation. Fires immediately at /wholesale signup.
 //
 // Audit P0 I-5: prior to this, /wholesale fired sendAdminAlert only.
