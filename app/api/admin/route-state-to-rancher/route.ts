@@ -9,9 +9,8 @@ export const maxDuration = 60;
 //   - Cancels duplicate Pending Approval referrals (keeps latest per consumer)
 //   - Updates the latest stuck referral to Intro Sent, points at target rancher, sends intro emails
 //   - Creates fresh Intro Sent referrals for Unmatched/Waitlisted consumers, sends intro emails
-// Auth Phase 0: requireAdmin() handles both Clerk session (browser) AND
-// x-admin-password header (Telegram bot / cron). The ?password= query path
-// and bhc-admin-auth cookie path are gone.
+// Auth: requireAdmin() — bhc-admin-auth cookie (browser admins) or
+// x-admin-password header (Telegram bot / cron).
 // Optional: &send_at=2026-04-10T14:00:00Z   (ISO date — Resend holds + delivers at this time)
 // Optional: &dry_run=true                    (preview only, no Airtable writes, no emails)
 export async function GET(request: Request) {

@@ -24,8 +24,6 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 // we look at the buyer's most recent Closed Won referral.
 export async function POST(request: Request) {
   try {
-    // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
-    // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
     const session = await resolveBuyerSession(request);
     if (!session) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });

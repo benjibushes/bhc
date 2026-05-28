@@ -9,7 +9,6 @@ import { requireRancher } from '@/lib/rancherAuth';
 // PATCH /api/rancher/landing-page — rancher updates their own landing page fields
 export async function PATCH(request: Request) {
   try {
-    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
     const r = await requireRancher(request);
     if (r instanceof NextResponse) return r;
     const { session } = r;

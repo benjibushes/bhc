@@ -16,7 +16,7 @@ import { requireAdmin } from '@/lib/adminAuth';
 //   subject/body ("we've got a rancher in {state} now"). Falls back to the
 //   consumer's State field.
 //
-// Auth (Phase 0): requireAdmin() — Clerk session for browser admins OR
+// Auth: requireAdmin() — bhc-admin-auth cookie for browser admins OR
 // x-admin-password header for server-to-server. x-internal-secret still
 // works for cron-style internal callers.
 

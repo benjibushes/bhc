@@ -6,13 +6,6 @@
 // constant-time compare against ADMIN_PASSWORD env. Server-to-server
 // callers (Telegram bot, cron, ops) still authenticate with the
 // x-admin-password HTTP header — see lib/adminAuth.ts.
-//
-// Clerk was wired in via Auth Phase 0 (2026-05-26) but pulled out
-// 2026-05-26 after a domain reservation conflict on Clerk's platform
-// blocked production activation. Clerk wrappers in lib/adminAuth.ts +
-// lib/buyerAuth.ts + lib/rancherAuth.ts remain as dead code behind
-// CLERK_*_ENABLED flags (all default false), no runtime cost. Revisit
-// auth upgrade (TOTP via otplib or Auth.js v5) in a future sprint.
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';

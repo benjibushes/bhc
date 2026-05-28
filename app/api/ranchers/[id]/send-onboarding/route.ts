@@ -22,8 +22,8 @@ export async function POST(
     const body = await request.json();
     const { callSummary, confirmedCapacity, specialNotes, includeVerification } = body;
 
-    // Auth Phase 0: x-internal-secret kept for cron-style callers, plus
-    // requireAdmin() covers Clerk session + x-admin-password header.
+    // Auth: x-internal-secret kept for cron-style callers, plus
+    // requireAdmin() covers bhc-admin-auth cookie + x-admin-password header.
     // The legacy `password` body field is removed — it leaked the password
     // into request body logs.
     const internalSecret = process.env.INTERNAL_API_SECRET;

@@ -31,7 +31,7 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Auth Phase 0: requireAdmin() handles Clerk session + x-admin-password.
+    // Auth: requireAdmin() handles bhc-admin-auth cookie + x-admin-password.
     // x-internal-secret stays for cron-style internal callers.
     const internalHeader = request.headers.get('x-internal-secret') || '';
     const isInternal = INTERNAL_API_SECRET && internalHeader === INTERNAL_API_SECRET;

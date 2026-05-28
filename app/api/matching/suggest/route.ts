@@ -31,8 +31,8 @@ export async function POST(request: Request) {
       }, { status: 503 });
     }
 
-    // Auth Phase 0: x-internal-secret header (cron/internal callers) OR
-    // requireAdmin() which handles Clerk session + x-admin-password.
+    // Auth: x-internal-secret header (cron/internal callers) OR
+    // requireAdmin() (admin cookie + x-admin-password).
     const internalSecret = process.env.INTERNAL_API_SECRET || '';
     const authHeader = request.headers.get('x-internal-secret') || '';
     const isInternal = internalSecret && authHeader === internalSecret;

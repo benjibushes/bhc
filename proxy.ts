@@ -19,18 +19,10 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0 && aLen === bLen;
 }
 
-// Admin auth — legacy cookie + header path.
-//
-// Clerk was wired in Auth Phase 0 (2026-05-26) and pulled out same day
-// after a Clerk-side domain reservation conflict blocked production
-// activation. Replacing the Clerk session check with the original
-// bhc-admin-auth cookie + x-admin-password header logic that shipped
-// before Phase 0. Buyer + rancher auth was never touched on the
-// proxy layer — they migrate via lib/buyerAuth.ts / lib/rancherAuth.ts
-// behind CLERK_*_ENABLED feature flags (default false).
+// Admin auth — bhc-admin-auth cookie + x-admin-password header.
 //
 // Future TOTP upgrade: add otplib + an Admins Airtable table with
-// per-user TOTP secret. ~1 hour separate task. Picks up after launch.
+// per-user TOTP secret. Picks up after launch.
 
 const ADMIN_AUTH_COOKIE = 'bhc-admin-auth';
 const PUBLIC_ADMIN_PATHS = ['/api/admin/auth', '/admin/login'];

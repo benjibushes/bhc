@@ -37,8 +37,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Stripe Connect not enabled' }, { status: 503 });
   }
 
-  // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
-  // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
   const session = await resolveBuyerSession(req);
   if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
@@ -285,8 +283,6 @@ export async function GET(req: Request) {
   const referralId = url.searchParams.get('refId') || '';
   if (!referralId) return NextResponse.json({ error: 'refId required' }, { status: 400 });
 
-  // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
-  // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
   const session = await resolveBuyerSession(req);
   if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 

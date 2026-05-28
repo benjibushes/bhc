@@ -31,7 +31,6 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
     const auth = await requireRancher(request);
     if (auth instanceof NextResponse) return auth;
     const decoded = { rancherId: auth.session.rancherId };

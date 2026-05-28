@@ -28,7 +28,6 @@ export const maxDuration = 30;
 const PAYING_SUBSCRIPTION_STATES = new Set(['active', 'trialing']);
 
 export async function POST(req: Request) {
-  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
   const r = await requireRancher(req);
   if (r instanceof NextResponse) return r;
   const { session } = r;

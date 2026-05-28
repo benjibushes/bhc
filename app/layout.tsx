@@ -8,12 +8,6 @@ import RouteChangeTracker from "./components/RouteChangeTracker";
 import UtmCapture from "./components/UtmCapture";
 import Footer from "./components/Footer";
 
-// ClerkProvider was added Auth Phase 0 (2026-05-26) and removed same
-// day after Clerk domain reservation conflict blocked production
-// activation. Clerk wrappers in lib/*Auth.ts remain as flag-gated dead
-// code (CLERK_*_ENABLED default false). No runtime cost. Revisit
-// when picking a TOTP/SSO path (otplib, Auth.js v5, or vendor swap).
-
 const playfair = Playfair_Display({
   variable: "--font-playfair",
   subsets: ["latin"],
