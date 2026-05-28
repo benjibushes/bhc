@@ -3451,6 +3451,63 @@ export async function sendAbandonedRecoveryEmail(data: {
 }
 
 // =====================================================
+// ORPHAN CHECKOUT REWARM — buyer abandoned Stripe Checkout >48h ago
+// =====================================================
+
+/**
+ * Fired by /api/cron/orphan-checkout-reaper when a buyer's Stripe Checkout
+ * Session expired (PaymentIntent canceled / requires_payment_method) without
+ * completing. The Payments row gets flipped to 'abandoned' first; this email
+ * is the soft re-engagement — opt-in via ORPHAN_REAPER_REWARM_ENABLED env so
+ * the operator can ship the cron without immediately emailing every orphan
+ * cohort.
+ *
+ * Tone: founder voice, lowercase, no pressure. Single CTA back to the deposit
+ * page so the buyer can finish in one click. No urgency, no scarcity, no
+ * shaming. We've already spooked them once with a $X checkout; the goal is
+ * to leave the door open without making them feel hunted.
+ */
+export async function sendOrphanCheckoutRewarm(data: {
+  firstName?: string;
+  email: string;
+  rancherName: string;
+  referralId: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.firstName || '').trim() || 'there';
+  const subject = `still interested?`;
+  const depositUrl = utm(
+    `${SITE_URL}/checkout/${data.referralId}/deposit`,
+    'orphan-reaper-rewarm',
+    'still-interested',
+  );
+  return guardedSend({
+    templateName: 'sendOrphanCheckoutRewarm',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;margin:16px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <p>Hey ${esc(first)},</p>
+  <p>Noticed you started checkout with ${esc(data.rancherName)} but didn't finish. No worries — Stripe sessions time out after a day.</p>
+  <p>If you're still in, here's the same checkout link. One click and you're back where you left off.</p>
+  <p style="text-align:center;margin-top:24px;"><a href="${depositUrl}" class="cta">Pick up where I left off &rarr;</a></p>
+  <p>If something stopped you — pricing question, freezer space, timing — just hit reply. I read every reply.</p>
+  <p style="margin-top:32px;">— Benjamin</p>
+  <div class="footer">
+    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
+// =====================================================
 // LEAD RESURRECTION — buyer notification when their match falls through
 // =====================================================
 

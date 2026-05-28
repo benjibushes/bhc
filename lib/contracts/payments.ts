@@ -12,7 +12,7 @@ import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
-export type PaymentStatus = 'pending' | 'succeeded' | 'refunded' | 'failed';
+export type PaymentStatus = 'pending' | 'succeeded' | 'refunded' | 'failed' | 'abandoned' | 'requires_webhook_replay';
 export type PayoutStatus = 'pending' | 'paid' | 'failed';
 
 export const PAYMENTS_TABLE = 'Payments';
@@ -57,6 +57,90 @@ export async function markDepositSucceeded(stripePaymentIntentId: string): Promi
     'Status': 'succeeded',
     'Captured At': new Date().toISOString(),
   });
+}
+
+/**
+ * Orphan-reaper contract: flip a pending Payments row to 'abandoned' when the
+ * Stripe PaymentIntent has expired (canceled / requires_payment_method) without
+ * the buyer ever completing checkout. Idempotent — re-running on an already-
+ * abandoned row is a no-op so the cron is safe to run on overlap.
+ *
+ * Deliberately DOES NOT touch the linked Referral.Status. Orphan ≠ Lost — the
+ * buyer can still re-engage later (different rancher, new deposit). Setting
+ * the row to abandoned just stops the funnel from treating this PaymentIntent
+ * as "still alive" indefinitely.
+ *
+ * Returns { found: false } if no Payments row matches the PI (defensive — the
+ * caller should have already filtered to pending rows, but webhook races could
+ * produce a mismatched row).
+ */
+export async function markDepositAbandoned(
+  stripePaymentIntentId: string,
+  opts: { stripeStatus?: string } = {},
+): Promise<{ found: boolean; flipped: boolean }> {
+  const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
+  const existing: any[] = await getAllRecords(
+    PAYMENTS_TABLE,
+    `{Stripe Payment Intent Id} = "${escaped}"`,
+  );
+  if (existing.length === 0) return { found: false, flipped: false };
+  const payment = existing[0];
+  // Idempotency: any non-pending row is a no-op. We only flip pending → abandoned
+  // so a succeeded row never gets downgraded by a delayed cron pass.
+  if (payment['Status'] !== 'pending') return { found: true, flipped: false };
+
+  const fields: Record<string, any> = {
+    'Status': 'abandoned',
+    'Abandoned At': new Date().toISOString(),
+  };
+  if (opts.stripeStatus) fields['Abandoned Reason'] = `stripe_status=${opts.stripeStatus}`;
+
+  try {
+    await updateRecord(PAYMENTS_TABLE, payment.id, fields);
+  } catch (e: any) {
+    // Schema fallback — Abandoned At + Abandoned Reason may not exist yet in
+    // older Airtable schemas. Retry with just Status so the cron still
+    // makes forward progress. createRecord/updateRecord typecast will create
+    // the 'abandoned' singleSelect option on first hit.
+    console.warn('[markDepositAbandoned] schema fallback (retrying with Status only):', e?.message);
+    await updateRecord(PAYMENTS_TABLE, payment.id, { 'Status': 'abandoned' });
+  }
+  return { found: true, flipped: true };
+}
+
+/**
+ * Orphan-reaper escalation contract: when the cron retrieves a PaymentIntent
+ * that is `succeeded` but the local Payments row is still pending, the webhook
+ * missed an event. Flag the row 'requires_webhook_replay' so the operator can
+ * manually replay/repair it — DO NOT silently fire the success branch (that
+ * would skip audit + funnel + Telegram celebration which are tightly coupled
+ * to the webhook handler). Loud Telegram alert is fired by the caller.
+ *
+ * Idempotent — re-running on an already-flagged row is a no-op.
+ */
+export async function markDepositRequiresReplay(
+  stripePaymentIntentId: string,
+): Promise<{ found: boolean; flipped: boolean }> {
+  const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
+  const existing: any[] = await getAllRecords(
+    PAYMENTS_TABLE,
+    `{Stripe Payment Intent Id} = "${escaped}"`,
+  );
+  if (existing.length === 0) return { found: false, flipped: false };
+  const payment = existing[0];
+  if (payment['Status'] !== 'pending') return { found: true, flipped: false };
+
+  try {
+    await updateRecord(PAYMENTS_TABLE, payment.id, {
+      'Status': 'requires_webhook_replay',
+      'Abandoned At': new Date().toISOString(),
+      'Abandoned Reason': 'webhook_missed_succeeded',
+    });
+  } catch (e: any) {
+    console.warn('[markDepositRequiresReplay] schema fallback (Status only):', e?.message);
+    await updateRecord(PAYMENTS_TABLE, payment.id, { 'Status': 'requires_webhook_replay' });
+  }
+  return { found: true, flipped: true };
 }
 
 export interface MarkDepositRefundedOpts {
