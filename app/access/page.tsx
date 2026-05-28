@@ -774,8 +774,13 @@ function AccessPageContent() {
           <div className="max-w-2xl mx-auto py-12 sm:py-20 px-0">
 
             {/* ── Section A — H1 + Value Prop ─────────────────────────────── */}
+            {/* Hero copy is honest about the two-state outcome:
+                  - covered state → matched to a rancher in hours
+                  - uncovered state → priority waitlist + we recruit a rancher
+                Previous "90 seconds" overpromised — only ~15 states have a Live
+                rancher. Buyers in NY/MA/FL hit a waitlist letter and felt baited. */}
             <h1 className="font-serif text-3xl sm:text-5xl text-charcoal lowercase mb-3 leading-tight">
-              get matched to a verified rancher in your state in 90 seconds
+              find your rancher — direct, no marketplace middleman
             </h1>
 
             {/* G15 — Rancher hero overlay when ?rancher=<slug> */}
@@ -788,8 +793,10 @@ function AccessPageContent() {
             )}
 
             <p className="text-saddle text-lg mb-8 leading-relaxed">
-              pick your state. answer 4 questions. we route you to a verified
-              rancher in your state. you talk direct, no middleman, no markup.
+              pick your state. answer 4 questions. if a rancher serves your
+              state, we make the intro within hours. if not, you go on the
+              priority waitlist and we work on it. you talk direct — no
+              marketplace middleman, transparent fee shown at checkout.
             </p>
 
             {/* ── Section B — Explainer Video Slot ──────────────────────────
@@ -826,7 +833,7 @@ function AccessPageContent() {
                     {stats.familiesMatched.toLocaleString()}
                   </div>
                   <div className="text-xs sm:text-sm text-saddle mt-1">
-                    families matched
+                    families in pipeline
                   </div>
                 </div>
                 <div className="text-center">
@@ -834,7 +841,7 @@ function AccessPageContent() {
                     {stats.thisMonthClosedWon}
                   </div>
                   <div className="text-xs sm:text-sm text-saddle mt-1">
-                    closed this month
+                    deals closed this month
                   </div>
                 </div>
               </div>
