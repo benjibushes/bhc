@@ -16,7 +16,6 @@ const PAYOUTS_TABLE = 'Payouts';
 const ADDONS_TABLE = 'Add-On Purchases';
 
 export async function GET(req: Request) {
-  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
   const r = await requireRancher(req);
   if (r instanceof NextResponse) return r;
   const { session } = r;

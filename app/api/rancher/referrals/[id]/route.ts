@@ -40,7 +40,6 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
     const auth = await requireRancher(request);
     if (auth instanceof NextResponse) return auth;
     // Keep the legacy variable name `decoded` to minimize churn through the

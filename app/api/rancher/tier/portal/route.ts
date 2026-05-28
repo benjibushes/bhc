@@ -20,7 +20,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Stripe Connect not enabled' }, { status: 503 });
   }
 
-  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
   const r = await requireRancher(req);
   if (r instanceof NextResponse) return r;
   const { session } = r;

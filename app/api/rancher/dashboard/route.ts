@@ -10,7 +10,6 @@ import { getRancherCommissionRate } from '@/lib/commission';
 
 export async function GET(request: Request) {
   try {
-    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
     const r = await requireRancher(request);
     if (r instanceof NextResponse) return r;
     const { session } = r;

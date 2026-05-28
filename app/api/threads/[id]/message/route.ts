@@ -26,7 +26,6 @@ type AuthInfo =
   | { kind: 'rancher'; id: string; name: string; email: string };
 
 async function authBuyerOrRancher(req: Request): Promise<AuthInfo | null> {
-  // Buyer side — Auth Phase 1 helper picks Clerk or legacy JWT transparently.
   const buyer = await resolveBuyerSession(req);
   if (buyer) {
     return {
@@ -36,8 +35,6 @@ async function authBuyerOrRancher(req: Request): Promise<AuthInfo | null> {
       email: buyer.email,
     };
   }
-  // Rancher side — Auth Phase 2 helper picks Clerk or legacy JWT
-  // transparently. Mirrors the buyer path above.
   const rancher = await resolveRancherSession(req);
   if (rancher) {
     return {

@@ -13,7 +13,7 @@
 //     at capacity), the other 11 should still go through. Operator sees
 //     the failure summary and can manually reassign the stuck one.
 //
-// Auth: requireAdmin (Clerk session OR x-admin-password).
+// Auth: requireAdmin (bhc-admin-auth cookie OR x-admin-password).
 
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Too many ids — max 100 per call' }, { status: 400 });
   }
 
-  // Forward admin auth (Clerk cookie or x-admin-password header) on to the
+  // Forward admin auth (admin cookie or x-admin-password header) on to the
   // single-approve endpoint we're delegating to.
   const cookie = request.headers.get('cookie') || '';
   const adminPw = request.headers.get('x-admin-password') || '';

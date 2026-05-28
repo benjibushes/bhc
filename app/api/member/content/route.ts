@@ -8,8 +8,6 @@ export const maxDuration = 60;
 
 export async function GET(request: Request) {
   try {
-    // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
-    // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
     const session = await resolveBuyerSession(request);
     if (!session) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });

@@ -58,8 +58,6 @@ interface MemberSession {
   state?: string;
 }
 
-// Auth Phase 1: resolveBuyerSession transparently picks Clerk or
-// legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
 // Optional auth — endpoint accepts anonymous requests too (form fills
 // name/email manually for non-logged-in buyers).
 async function getMemberSession(req: Request): Promise<MemberSession | null> {

@@ -16,7 +16,7 @@ import { requireAdmin } from '@/lib/adminAuth';
 //   prod will accept. Any operator-side "send setup link" action must run
 //   on the server. This endpoint is the canonical path.
 //
-// Auth (Phase 0): requireAdmin() handles browser admins (Clerk session)
+// Auth: requireAdmin() handles browser admins (bhc-admin-auth cookie)
 //   AND ops scripts (x-admin-password header). x-internal-secret kept as
 //   a separate cron-style backdoor.
 

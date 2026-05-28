@@ -16,7 +16,7 @@ import { requireAdmin } from '@/lib/adminAuth';
 //   - "Intro Sent" / "Rancher Contacted" / "Negotiation": admin wants
 //     to drop the lead back into a specific stage instead of re-routing.
 //
-// Auth (Phase 0): requireAdmin() — Clerk session for browser admins OR
+// Auth: requireAdmin() — bhc-admin-auth cookie for browser admins OR
 // x-admin-password header for server-to-server. x-internal-secret kept as
 // a separate backdoor for cron-style internal callers.
 

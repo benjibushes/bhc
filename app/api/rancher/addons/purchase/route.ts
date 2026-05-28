@@ -39,7 +39,6 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 export async function POST(request: Request) {
-  // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
   const r = await requireRancher(request);
   if (r instanceof NextResponse) return r;
   const { session } = r;

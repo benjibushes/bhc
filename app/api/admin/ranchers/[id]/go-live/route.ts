@@ -17,7 +17,7 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Auth Phase 0: requireAdmin() — Clerk session OR x-admin-password.
+    // Auth: requireAdmin() — bhc-admin-auth cookie OR x-admin-password.
     const unauthorized = await requireAdmin(request);
     if (unauthorized) return unauthorized;
 
