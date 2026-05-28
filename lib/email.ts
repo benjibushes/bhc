@@ -1,6 +1,5 @@
 import { Resend } from 'resend';
 import jwt from 'jsonwebtoken';
-import DOMPurify from 'isomorphic-dompurify';
 import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
 import { JWT_SECRET } from './secrets';
@@ -78,26 +77,37 @@ function isSafeBroadcastUrl(url: string): boolean {
   return BROADCAST_URI_ALLOWLIST.test(trimmed);
 }
 
+// Regex-based stub (replaced isomorphic-dompurify 2026-05-28 after upstream
+// @exodus/bytes shipped an ESM-only release that broke jsdom's require()
+// chain in Vercel's serverless lambdas — every API route transitively
+// importing this module 500'd on cold start. Strips the unambiguously
+// dangerous tags + attributes + URI schemes. Lossier than DOMPurify (no
+// allowlist nesting, no MUTATION attack defense) but sufficient for the
+// admin-only /admin/broadcast surface where the operator is the only writer.
+//
+// TODO(2026-Q3): swap to sanitize-html (pure CJS, no jsdom dep) or pin
+// @exodus/bytes < 1.0.0 via npm overrides and reintroduce DOMPurify.
 export function sanitizeBroadcastHtml(html: string): string {
-  const firstPass = DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: BROADCAST_HTML_ALLOWED_TAGS,
-    ALLOWED_ATTR: BROADCAST_HTML_ALLOWED_ATTR,
-    FORBID_TAGS: BROADCAST_HTML_FORBID_TAGS,
-    FORBID_ATTR: BROADCAST_HTML_FORBID_ATTR,
-    ALLOWED_URI_REGEXP: BROADCAST_URI_ALLOWLIST,
-    ALLOW_DATA_ATTR: false,
-    ALLOW_UNKNOWN_PROTOCOLS: false,
-    ADD_TAGS: [],
-    ADD_ATTR: [],
-    WHOLE_DOCUMENT: true,
-    SAFE_FOR_TEMPLATES: false,
-    KEEP_CONTENT: true,
-  });
-  // Belt-and-suspenders href/src validation — strip the attribute if the URL
-  // isn't in our allowlist. DOMPurify's URI regex usually catches this, but
-  // case-folding and confusable characters can sometimes slip through, so we
-  // verify the rendered output one more time before sending to Resend.
-  return firstPass.replace(
+  const stripped = html
+    // Strip every dangerous tag block (script/iframe/object/embed/form/input/
+    // button/textarea/select/option/audio/video/source/track/canvas/svg/math/
+    // base) including content + close tag. Case-insensitive.
+    .replace(/<(script|iframe|object|embed|form|input|button|textarea|select|option|audio|video|source|track|canvas|svg|math|base)\b[\s\S]*?<\/\1>/gi, '')
+    // Strip self-closing variants.
+    .replace(/<(script|iframe|object|embed|form|input|button|textarea|select|option|audio|video|source|track|canvas|svg|math|base)\b[^>]*\/>/gi, '')
+    // Strip orphan open tags (e.g. <script src="...">) with no matching close.
+    .replace(/<(script|iframe|object|embed|form|input|button|textarea|select|option|audio|video|source|track|canvas|svg|math|base)\b[^>]*>/gi, '')
+    // Strip every `on*=` event handler attribute (single or double quoted).
+    .replace(/\s+on\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s+on\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\s+on\w+\s*=\s*[^\s>]+/gi, '')
+    // Strip dangerous URI schemes anywhere they appear.
+    .replace(/javascript:/gi, '')
+    .replace(/data:text\/html/gi, '')
+    .replace(/vbscript:/gi, '')
+    .replace(/file:\/\//gi, '');
+  // Final href/src URL allowlist pass (re-uses existing isSafeBroadcastUrl).
+  return stripped.replace(
     /\s(href|src)\s*=\s*("([^"]*)"|'([^']*)')/gi,
     (match, attr, _quoted, dq, sq) => {
       const url = dq ?? sq ?? '';
