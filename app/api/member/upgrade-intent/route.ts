@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
+import { resolveBuyerSession } from '@/lib/buyerAuth';
 
-import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 function calculateIntentScore(orderType: string, budgetRange: string): number {
@@ -26,28 +24,14 @@ function classifyIntent(score: number): string {
 
 export async function PATCH(request: Request) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('bhc-member-auth');
-
-    if (!sessionCookie?.value) {
+    // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
+    // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
+    const session = await resolveBuyerSession(request);
+    if (!session) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
-
-    let memberId = '';
-    let memberEmail = '';
-    try {
-      const decoded: any = jwt.verify(sessionCookie.value, JWT_SECRET);
-      if (decoded.type === 'member-session') {
-        memberId = decoded.consumerId || '';
-        memberEmail = decoded.email || '';
-      }
-    } catch {
-      return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-    }
-
-    if (!memberId) {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
+    const memberId = session.consumerId;
+    const memberEmail = session.email;
 
     const body = await request.json();
     const { orderType, budgetRange } = body;

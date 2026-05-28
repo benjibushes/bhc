@@ -13,15 +13,26 @@
 // emails despite an operational rancher serving them. 48 stranded.
 //
 // The unified rule:
-//   • Active Status === 'Active'           — admin gating
-//   • Agreement Signed === true             — legal: must have signed
-//   • Onboarding Status === 'Live' (or '')  — onboarding finished
+//   • Active Status === 'Active'                    — admin gating
+//   • Agreement Signed === true                      — legal: must have signed
+//   • Onboarding Status === 'Live' (or '')           — onboarding finished
+//   • Subscription Status NOT in past_due|unpaid|    — Stripe collections gate
+//     canceled (active/trialing/'' all pass)
 //
 // Page Live is NOT a routing requirement — it's a UX flag that the rancher's
 // public landing page is published. Routing happens via email; if the buyer
 // asks for the page and it's not up yet, the rancher's intro email still
 // reaches them. Tying routing to Page Live just hides ready ranchers behind
 // a flag that operators forget to flip.
+//
+// Subscription Status gate (2026-05-27): mirrors the 409 gate in
+// /api/checkout/deposit/route.ts. Without this, matching/suggest routed
+// buyers to ranchers in past_due/unpaid/canceled state — rancher took the
+// call, then buyer hit a 409 wall at deposit time. Broken experience. The
+// deposit endpoint stays as a defense-in-depth backstop, but the primary
+// fix is excluding these ranchers from the routing pool upstream. Active,
+// trialing, and empty/unset values all pass (legacy ranchers predating
+// subscription flow have no value).
 //
 // Capacity is intentionally NOT checked here — it's caller-dependent (hot-lead
 // bypass, etc.). This function answers "is this rancher live + signed up?",
@@ -33,6 +44,7 @@ export type RancherFields = Record<string, unknown> & {
   'Active Status'?: unknown;
   'Agreement Signed'?: unknown;
   'Onboarding Status'?: unknown;
+  'Subscription Status'?: unknown;
   'State'?: unknown;
   'States Served'?: unknown;
 };
@@ -49,6 +61,14 @@ function readEnumOrString(v: unknown): string {
 /**
  * True iff the rancher is operationally ready to receive a buyer match.
  * Use this everywhere — signup gates, match filters, warmup queries.
+ *
+ * Gates (all must pass):
+ *   - Active Status === 'Active'
+ *   - Onboarding Status === 'Live' (or empty/unset)
+ *   - Agreement Signed === true
+ *   - Subscription Status NOT in past_due|unpaid|canceled. Active, trialing,
+ *     and empty/unset all pass. Mirrors the deposit 409 gate so we never
+ *     route a buyer to a rancher whose deposit would be blocked downstream.
  */
 export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
   const active = readEnumOrString(rancher['Active Status']);
@@ -58,6 +78,15 @@ export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
   if (onboarding && onboarding !== 'Live') return false;
 
   if (!rancher['Agreement Signed']) return false;
+
+  // Subscription Status gate. Mirrors /api/checkout/deposit/route.ts so we
+  // don't route buyers to ranchers whose deposit endpoint would 409 them.
+  // Active, trialing, and unset values all pass — only the Stripe collections
+  // states (past_due, unpaid, canceled) exclude.
+  const subStatus = String(rancher['Subscription Status'] || '').toLowerCase();
+  if (subStatus === 'past_due' || subStatus === 'unpaid' || subStatus === 'canceled') {
+    return false;
+  }
 
   return true;
 }

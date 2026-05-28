@@ -4,7 +4,7 @@ import { normalizeState, normalizeStates } from './states';
 import { isQualifiedForRouting } from './qualification';
 import jwt from 'jsonwebtoken';
 
-import { JWT_SECRET } from '@/lib/secrets';
+import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export type BulkRouteSummary = {
@@ -264,6 +264,21 @@ export async function bulkRouteStateToRancher(opts: {
           );
           const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
           const buyerFirstName = (buyerName || '').split(' ')[0] || 'there';
+
+          // tier_v2 ranchers route deposits through Stripe Connect direct
+          // charge at /checkout/<refId>/deposit, which requires the
+          // bhc-member-auth cookie. Wrap the deposit deep-link in a magic-link
+          // verify URL so the buyer can land authenticated. Legacy ranchers
+          // stay on the tap-any-tier Payment Link copy (depositMagicLinkUrl
+          // stays undefined).
+          const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+          let depositMagicLinkUrl: string | undefined;
+          if (pricingModel === 'tier_v2' && targetReferralId && targetReferralId !== 'dry-run') {
+            const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
+            const nextPath = `/checkout/${targetReferralId}/deposit`;
+            depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+          }
+
           await sendBuyerIntroNotification({
             firstName: buyerFirstName,
             email: buyerEmail,
@@ -273,6 +288,7 @@ export async function bulkRouteStateToRancher(opts: {
             rancherSlug,
             loginUrl: buyerLoginUrl,
             scheduledAt,
+            depositMagicLinkUrl,
           });
           summary.emails_sent_buyer++;
         } catch (e: any) {

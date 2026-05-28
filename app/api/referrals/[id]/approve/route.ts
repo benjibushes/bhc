@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
+import { requireAdmin } from '@/lib/adminAuth';
 
 function esc(str: string): string {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -13,6 +15,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
+
   try {
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
@@ -41,6 +46,13 @@ export async function PATCH(
     }
 
     const now = new Date().toISOString();
+    // P1 audit D-3: capture pre-state for audit reversibility
+    const reverseAction = buildAirtableUpdateReverse(TABLES.REFERRALS, id, {
+      'Status': referral['Status'],
+      'Rancher': referral['Rancher'] || [],
+      'Approved At': referral['Approved At'] || null,
+      'Intro Sent At': referral['Intro Sent At'] || null,
+    });
     await updateRecord(TABLES.REFERRALS, id, {
       'Status': 'Intro Sent',
       'Rancher': [rancherId],
@@ -53,6 +65,21 @@ export async function PATCH(
     await updateRecord(TABLES.RANCHERS, rancherId, {
       'Last Assigned At': now,
     });
+
+    // P1 audit D-3: log the approve. Non-fatal on failure (try/catch in lib).
+    try {
+      await logAuditEntry({
+        actor: 'manual',
+        tool: 'admin-referral-approve',
+        targetType: 'Referral',
+        targetId: id,
+        args: { rancherId, overrideRancherId },
+        result: { status: 'Intro Sent', approvedAt: now, rancherName: rancher['Operator Name'] || rancher['Ranch Name'] },
+        reverseAction,
+      });
+    } catch (e: any) {
+      console.error('[approve] audit log failed (non-fatal):', e?.message);
+    }
 
     const rancherEmail = rancher['Email'];
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';

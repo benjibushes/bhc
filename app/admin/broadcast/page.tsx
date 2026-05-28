@@ -56,6 +56,8 @@ function BroadcastEmailInner() {
   const [success, setSuccess] = useState(false);
   const [successData, setSuccessData] = useState<any>(null);
   const [error, setError] = useState('');
+  const [aborting, setAborting] = useState(false);
+  const [abortToast, setAbortToast] = useState('');
 
   const US_STATES = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'];
 
@@ -187,6 +189,27 @@ function BroadcastEmailInner() {
       setError(err.message || 'Failed to send emails');
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleAbort = async () => {
+    if (!campaignName) return;
+    if (!confirm(`ABORT broadcast "${campaignName}"? Any in-flight batch will finish, then send loop exits.`)) return;
+    setAborting(true);
+    setAbortToast('');
+    try {
+      const response = await fetch('/api/admin/broadcast/abort', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignName }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Abort failed');
+      setAbortToast(`Abort flag set — send loop will exit at next batch boundary.`);
+    } catch (err: any) {
+      setAbortToast(`Abort error: ${err.message || 'unknown'}`);
+    } finally {
+      setAborting(false);
     }
   };
 
@@ -581,6 +604,36 @@ function BroadcastEmailInner() {
                     <div><strong>Subject:</strong> {previewData.subject}</div>
                     <div><strong>Recipients:</strong> {previewData.recipientCount}</div>
                   </div>
+                  {typeof previewData.spamScore === 'number' && (
+                    <div className={`p-3 border ${
+                      previewData.spamBlocked
+                        ? 'border-[#8C2F2F] bg-[#FAF2F2]'
+                        : previewData.spamScore >= 25
+                        ? 'border-[#C99A2E] bg-[#FAF6EC]'
+                        : 'border-[#A7A29A] bg-[#F4F1EC]'
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium">Spam Score</span>
+                        <span className={`text-lg font-[family-name:var(--font-serif)] ${
+                          previewData.spamBlocked ? 'text-[#8C2F2F]' : 'text-[#0E0E0E]'
+                        }`}>
+                          {previewData.spamScore}/100 {previewData.spamBlocked && '(BLOCKED)'}
+                        </span>
+                      </div>
+                      {previewData.spamViolations?.length > 0 && (
+                        <ul className="text-xs text-[#6B4F3F] space-y-0.5 mt-2">
+                          {previewData.spamViolations.map((v: string, i: number) => (
+                            <li key={i}>• {v}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {previewData.spamBlocked && (
+                        <p className="text-xs text-[#8C2F2F] mt-2">
+                          Score ≥ 50 — send blocked. Edit subject/body to lower score.
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {previewData.sampleRecipients?.length > 0 && (
                     <div>
                       <p className="text-sm font-medium mb-2">Sample recipients:</p>
@@ -598,11 +651,13 @@ function BroadcastEmailInner() {
                     <button
                       type="button"
                       onClick={handleSend}
-                      disabled={sending}
-                      className="flex-1 px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 uppercase font-semibold tracking-wider"
+                      disabled={sending || previewData.spamBlocked}
+                      className="flex-1 px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase font-semibold tracking-wider"
                     >
                       {sending
                         ? (sendMode === 'scheduled' ? 'Scheduling...' : 'Sending...')
+                        : previewData.spamBlocked
+                        ? 'Spam-blocked — edit copy'
                         : sendMode === 'scheduled'
                         ? `Schedule for ${scheduledDate} ${scheduledTime}`
                         : `Confirm & Send to ${previewData.recipientCount}`
@@ -617,6 +672,24 @@ function BroadcastEmailInner() {
                       Edit
                     </button>
                   </div>
+                  {sending && sendMode === 'now' && (
+                    <div className="mt-4 p-4 border-2 border-[#8C2F2F] bg-[#FAF2F2]">
+                      <p className="text-sm font-medium text-[#8C2F2F] mb-2">
+                        Broadcast in progress — emergency kill-switch available.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleAbort}
+                        disabled={aborting}
+                        className="w-full px-6 py-3 bg-[#8C2F2F] text-[#F4F1EC] hover:bg-[#6e1f1f] transition-colors disabled:opacity-50 uppercase font-semibold tracking-wider"
+                      >
+                        {aborting ? 'Aborting...' : 'ABORT BROADCAST'}
+                      </button>
+                      {abortToast && (
+                        <p className="text-xs text-[#0E0E0E] mt-2">{abortToast}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

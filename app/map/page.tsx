@@ -11,7 +11,7 @@ export const revalidate = 1800;
 export const metadata: Metadata = {
   title: 'Discover Map — Direct-to-Consumer Ranchers Across America',
   description:
-    'Every direct-to-consumer rancher in America we know about. Verified partners + prospects we are working to bring into the network.',
+    'Every direct-to-consumer rancher in America we know about. Verified partners + prospects we are working to bring into the network. Add a rancher you know — buyers find the nearest one in their state.',
   openGraph: {
     title: 'BuyHalfCow Discover Map — Direct-to-Consumer Ranchers',
     description:
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 // phone, or operator name on non-verified pins (legal + spam concern).
 //
 // Pipeline-aligned status (added so the public map reflects the full
-// onboarding journey, not just verified vs prospect):
+// onboarding pipeline, not just verified vs prospect):
 //   verified       → Verification=Verified + Onboarding Status=Live
 //                    (green pin, public-routable, buyer can reach out)
 //   onboarding     → Onboarding Status set + not yet Live
@@ -167,13 +167,14 @@ export default async function MapPage() {
       <section className="py-16 md:py-20 border-b border-divider/10">
         <Container>
           <div className="max-w-3xl space-y-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-saddle">Discover Map</p>
-            <h1 className="font-serif text-4xl md:text-6xl leading-tight">
-              Every direct-to-consumer rancher in America
+            <p className="text-xs uppercase tracking-[0.2em] text-saddle">discover map</p>
+            <h1 className="font-serif text-4xl md:text-6xl leading-tight lowercase">
+              every direct-to-consumer rancher in america
             </h1>
             <p className="text-lg text-charcoal/80 leading-relaxed">
-              We&rsquo;re building the public hit list. Pin colors reflect each
-              rancher&rsquo;s spot in the pipeline.
+              The public hit list. Pin color shows where each rancher sits in the
+              pipeline — from verified partner shipping today, to one we&rsquo;re
+              actively cold-emailing this week.
             </p>
             <ul className="text-sm text-charcoal/85 leading-relaxed pt-1 space-y-1">
               <li>
@@ -181,7 +182,7 @@ export default async function MapPage() {
                 <strong>Green</strong> — verified partner shipping today
               </li>
               <li>
-                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style={{ backgroundColor: '#D97757' }} />
+                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full bg-rust mr-2 align-middle" />
                 <strong>Orange</strong> — being onboarded right now (call · docs · agreement · verification)
               </li>
               <li>
@@ -214,15 +215,27 @@ export default async function MapPage() {
                 <strong className="text-charcoal">{stats.statesCovered}</strong> states
               </span>
             </div>
-            <div className="pt-3">
+            <div className="flex flex-wrap gap-3 pt-3">
               <a
                 href="/map/add-a-rancher"
                 className="inline-flex items-center gap-2 px-6 py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
               >
-                Add a rancher to the map
+                Add a rancher
+                <span aria-hidden>→</span>
+              </a>
+              <a
+                href="/access"
+                className="inline-flex items-center gap-2 px-6 py-3 border-2 border-charcoal text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
+              >
+                Get matched in your state
                 <span aria-hidden>→</span>
               </a>
             </div>
+            <p className="text-xs text-saddle pt-1">
+              Don&rsquo;t see a rancher in your state? Drop your zip on{' '}
+              <a href="/access" className="underline hover:text-charcoal">/access</a>
+              {' '}— we&rsquo;ll waitlist you and prioritize scouting your area.
+            </p>
           </div>
         </Container>
       </section>

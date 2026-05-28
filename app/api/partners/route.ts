@@ -5,8 +5,13 @@ import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
 import { sendTelegramPartnerAlert } from '@/lib/telegram';
 import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { normalizeState } from '@/lib/states';
+import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 export const maxDuration = 60;
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -42,11 +47,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
     const { partnerType, ref } = body;
-    // Pull whichever email the body carries (rancher/brand/land each carry
-    // `email` as the primary contact). validateAffiliateRefForSignup uses
-    // it to block self-referral; safe to pass undefined.
+    // Pull whichever email + phone the body carries (rancher/brand/land each
+    // carry `email`/`phone` as the primary contact). validateAffiliateRefForSignup
+    // uses them to block self-referral; safe to pass undefined. Phone match
+    // closes the `me+sock@x.com` loophole — an affiliate trying to refer
+    // themselves under a fresh email but the same phone is rejected.
     const partnerEmail = typeof body?.email === 'string' ? body.email : undefined;
-    const referredBy = await validateAffiliateRefForSignup(ref, partnerEmail);
+    const partnerPhoneRaw = typeof body?.phone === 'string' ? body.phone : undefined;
+    const referredBy = await validateAffiliateRefForSignup(ref, {
+      email: partnerEmail,
+      phone: partnerPhoneRaw,
+    });
 
     if (!partnerType) {
       return NextResponse.json({ error: 'Partner type is required' }, { status: 400 });
@@ -81,7 +92,7 @@ export async function POST(request: Request) {
         'Operator Name': operatorName,
         'Email': email,
         'Phone': phone || '',
-        'State': state,
+        'State': normalizeState(state) || state,
         'Beef Types': beefTypes,
         'Monthly Capacity': parseInt(monthlyCapacity) || 0,
         'Certifications': certifications || '',
@@ -158,7 +169,7 @@ export async function POST(request: Request) {
         email,
         details: {
           Operator: operatorName,
-          State: state,
+          State: normalizeState(state) || state,
           'Beef Types': beefTypes,
           'Monthly Capacity': monthlyCapacity,
         },
@@ -291,7 +302,7 @@ export async function POST(request: Request) {
         'Phone': phone || '',
         'Property Type': propertyType,
         'Acreage': parseInt(acreage) || 0,
-        'State': state,
+        'State': normalizeState(state) || state,
         'Property Location': propertyLocation || '',
         'Asking Price': askingPrice || '',
         'Description': description || '',
@@ -339,6 +350,74 @@ export async function POST(request: Request) {
     else {
       return NextResponse.json({ error: 'Invalid partner type' }, { status: 400 });
     }
+
+    // ── Funnel telemetry — partner_signup ────────────────────────────────
+    // Audit 6 P0: B-side leads (rancher/brand/land) fired zero analytics.
+    // Captures partnerType + state for /funnel dashboard segmentation.
+    // Non-fatal — failure here doesn't break the signup flow.
+    const partnerStateRaw =
+      typeof body?.state === 'string' ? body.state : '';
+    const partnerStateNorm = partnerStateRaw
+      ? normalizeState(partnerStateRaw) || partnerStateRaw
+      : '';
+    await funnelRecord({
+      stage: 'partner_signup',
+      ...(partnerType === 'rancher' ? { rancherId: record.id } : {}),
+      metadata: {
+        partnerType,
+        state: partnerStateNorm,
+        recordId: record.id,
+        tableName,
+      },
+    });
+
+    // ── Meta Conversions API: server-side `Lead` event ──────────────────
+    // Client Pixel loses 30-50% of events to iOS 14.5+ ATT + adblockers.
+    // event_id=record.id pairs the server CAPI fire with the client
+    // partner_submit_success fire on /partner so Meta dedupes. Restores
+    // attribution for rancher/brand/land paid ad optimization.
+    const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+    const capiUserAgent = request.headers.get('user-agent') || undefined;
+    const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(request);
+    const partnerEmailNorm =
+      typeof body?.email === 'string' ? body.email : undefined;
+    const partnerPhone =
+      typeof body?.phone === 'string' ? body.phone : undefined;
+    // Best-effort first/last name split — rancher uses operatorName,
+    // brand uses contactName, land uses sellerName.
+    const rawName =
+      (partnerType === 'rancher' && typeof body?.operatorName === 'string'
+        ? body.operatorName
+        : partnerType === 'brand' && typeof body?.contactName === 'string'
+          ? body.contactName
+          : partnerType === 'land' && typeof body?.sellerName === 'string'
+            ? body.sellerName
+            : '') || '';
+    const nameParts = rawName.trim().split(/\s+/).filter(Boolean);
+    fireCapi([
+      {
+        event_name: 'Lead',
+        event_time: Math.floor(Date.now() / 1000),
+        event_source_url: `${SITE_URL}/partner`,
+        event_id: record.id,
+        action_source: 'website',
+        user_data: buildUserData({
+          email: partnerEmailNorm,
+          phone: partnerPhone,
+          firstName: nameParts[0],
+          lastName: nameParts.slice(1).join(' ') || undefined,
+          state: partnerStateNorm || undefined,
+          ip: capiIp,
+          userAgent: capiUserAgent,
+          fbp: capiFbp,
+          fbc: capiFbc,
+        }),
+        custom_data: {
+          content_name: 'BHC Partner Signup',
+          content_category: partnerType,
+        },
+      },
+    ]).catch((e) => console.error('[meta-capi] partner lead fire failed:', e));
 
     return NextResponse.json({ success: true, partner: record }, { status: 201 });
   } catch (error: any) {

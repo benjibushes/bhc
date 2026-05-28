@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Container from '../../components/Container';
 import LivePreview from './LivePreview';
+import StripeConnectStep from './steps/StripeConnectStep';
 
 // 4-step self-serve wizard. State + transitions live in the component;
 // each step PATCHes /api/rancher/setup with its slice of the payload.
@@ -44,17 +45,82 @@ type Rancher = {
   'About Text'?: string;
   'Video URL'?: string;
   'Quarter Price'?: number;
+  'Quarter Deposit'?: number;
   'Quarter lbs'?: string;
   'Quarter Payment Link'?: string;
   'Half Price'?: number;
+  'Half Deposit'?: number;
   'Half lbs'?: string;
   'Half Payment Link'?: string;
   'Whole Price'?: number;
+  'Whole Deposit'?: number;
   'Whole lbs'?: string;
   'Whole Payment Link'?: string;
   'Tier Specialty'?: string[];
   'Custom Notes'?: string;
+  // Stage-3 tier subscription state (Task 11)
+  Tier?: string | { name: string };
+  'Subscription Status'?: string;
+  'Pricing Model'?: string;
+  // Stage-3 fulfillment fields (Task 11B)
+  'Fulfillment Types'?: string[];
+  'Pickup City'?: string;
+  'Delivery Radius Miles'?: number;
+  'Shipping Lead Time Days'?: number;
+  'Refund Policy'?: string;
+  'Fulfillment Cost Notes'?: string;
 };
+
+// Tier card data. Source of truth lives in lib/tiers.ts; mirrored here as
+// static copy so the wizard renders without an extra fetch. If lib/tiers.ts
+// changes, update these. The slugs MUST match TierSlug exactly.
+const TIER_CARDS: Array<{
+  slug: 'pasture' | 'ranch' | 'operator';
+  label: string;
+  price: string;
+  promise: string;
+  perks: string[];
+}> = [
+  {
+    slug: 'pasture',
+    label: 'Pasture',
+    price: '$150/mo + 7%',
+    promise: 'We send you buyers.',
+    perks: ['Buyer matching for your states', 'Stripe Connect payouts', 'Lead inbox'],
+  },
+  {
+    slug: 'ranch',
+    label: 'Ranch',
+    price: '$350/mo + 3%',
+    promise: 'We send you buyers AND make sure they see you first.',
+    perks: ['Priority placement', 'Featured ranch badge', 'Homepage rotation slot'],
+  },
+  {
+    slug: 'operator',
+    label: 'Operator',
+    price: '$500/mo + 0%',
+    promise: 'We send you buyers, position you, and run your marketing.',
+    perks: ['0% commission', 'Dedicated brand strategist', 'Monthly content + social cadence'],
+  },
+];
+
+// Pull tier slug from a Rancher record. Mirrors lib/tiers.ts tierFor() but
+// operates on the wizard's lighter `Rancher` shape (Airtable returns either
+// a string or {name} for singleSelect fields).
+function tierSlugFromRancher(r: Rancher | null): 'pasture' | 'ranch' | 'operator' | null {
+  if (!r) return null;
+  const raw = r.Tier;
+  const str = raw && typeof raw === 'object' && 'name' in raw ? String(raw.name) : String(raw || '');
+  const slug = str.toLowerCase();
+  if (slug === 'pasture' || slug === 'ranch' || slug === 'operator') return slug;
+  return null;
+}
+
+const FULFILLMENT_OPTIONS = [
+  { value: 'Local Pickup', label: 'Local pickup at my ranch' },
+  { value: 'Local Delivery', label: 'Local delivery (within driving distance)' },
+  { value: 'Cold-Chain Shipping', label: 'Cold-chain shipping (FedEx/UPS)' },
+] as const;
 
 const CALENDLY_LINK = 'https://cal.com/ben-beauchman-1itnsg/30min';
 
@@ -79,11 +145,25 @@ export default function RancherSetupWizard() {
   //            rancher already has Onboarding Status = 'Call Complete' set
   //            (Ben backfilled it for an existing rancher OR finished the
   //            call already and tapped the Telegram callback).
+  //   Step 7 = Pick Your Plan (tier subscription) [Stage-3 Task 11A]
+  //   Step 9 = Stripe Connect onboarding (tier_v2 only) [Stage-3 Task D2]
+  //   Step 8 = Fulfillment + Refund Policy [Stage-3 Task 11B]
   //   Step 5 = inline agreement signing
   //   Step 6 = done (logged in, dashboard auto-link)
-  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(0);
+  //
+  // Order is 0→1→2→3→4→7→9→8→5→6 (steps 7/9/8 are wedged after Call, before Sign).
+  // Step 9 auto-advances for legacy ranchers (no Connect needed).
+  // Numbering is awkward to preserve existing setStep call sites; do NOT
+  // re-sequence without auditing every setStep(...) in this file.
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>(0);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  // P1-1 auto-save: track per-field status so we can show "saving…" → "saved"
+  // micro-indicators next to long-form fields. Map key: field name (e.g.
+  // 'About Text'), value: 'idle' | 'saving' | 'saved'. 'saved' fades after 3s.
+  const [autoSaveStatus, setAutoSaveStatus] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
+  const autoSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const autoSavedFadeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [previewOpen, setPreviewOpen] = useState(false); // mobile accordion state
   const [signing, setSigning] = useState(false);
   const [signatureName, setSignatureName] = useState('');
@@ -138,18 +218,30 @@ export default function RancherSetupWizard() {
             'About Text': data.rancher['About Text'] || '',
             'Video URL': data.rancher['Video URL'] || '',
             'Quarter Price': data.rancher['Quarter Price'] || '',
+            'Quarter Deposit': data.rancher['Quarter Deposit'] || '',
             'Quarter lbs': data.rancher['Quarter lbs'] || '',
             'Quarter Payment Link': data.rancher['Quarter Payment Link'] || '',
             'Half Price': data.rancher['Half Price'] || '',
+            'Half Deposit': data.rancher['Half Deposit'] || '',
             'Half lbs': data.rancher['Half lbs'] || '',
             'Half Payment Link': data.rancher['Half Payment Link'] || '',
             'Whole Price': data.rancher['Whole Price'] || '',
+            'Whole Deposit': data.rancher['Whole Deposit'] || '',
             'Whole lbs': data.rancher['Whole lbs'] || '',
             'Whole Payment Link': data.rancher['Whole Payment Link'] || '',
             'Tier Specialty': Array.isArray(data.rancher['Tier Specialty'])
               ? data.rancher['Tier Specialty']
               : [],
             'Custom Notes': data.rancher['Custom Notes'] || '',
+            // Stage-3 Task 11B — fulfillment + refund fields
+            'Fulfillment Types': Array.isArray(data.rancher['Fulfillment Types'])
+              ? data.rancher['Fulfillment Types']
+              : [],
+            'Pickup City': data.rancher['Pickup City'] || '',
+            'Delivery Radius Miles': data.rancher['Delivery Radius Miles'] || '',
+            'Shipping Lead Time Days': data.rancher['Shipping Lead Time Days'] || '',
+            'Refund Policy': data.rancher['Refund Policy'] || '',
+            'Fulfillment Cost Notes': data.rancher['Fulfillment Cost Notes'] || '',
           });
         }
       } catch {
@@ -159,6 +251,86 @@ export default function RancherSetupWizard() {
       }
     })();
   }, [token]);
+
+  // Resume-from-Stripe handler. After /api/rancher/connect/start sends a tier_v2
+  // rancher to Stripe Express, Stripe redirects back here with ?connectComplete=1
+  // and the wizard should jump straight to Step 8 (Fulfillment) instead of
+  // making them restart from Step 0. Only run once rancher data is loaded so
+  // we don't fight the initial setStep(0).
+  const connectComplete = searchParams.get('connectComplete') === '1';
+  useEffect(() => {
+    if (!connectComplete) return;
+    if (!rancher) return;
+    setStep(8);
+  }, [connectComplete, rancher]);
+
+  // P1-2 — localStorage step persistence. Rancher returning next day with
+  // their token would always land at Step 0 even if they'd previously made it
+  // to Step 7. Now we save the current step keyed by a short token hash so
+  // the next visit picks up where they left off.
+  //
+  // Hash, don't store: the wizard token is a JWT (sensitive). We never put
+  // the full token in localStorage — just a non-reversible hash that's stable
+  // for the same token. Step number itself is non-PII so storing it is safe.
+  //
+  // Precedence: ?connectComplete=1 (Stripe return) overrides saved step (per
+  // P0-2 fix). The Stripe useEffect runs second-ish but its setStep(8) call
+  // wins because both useEffects depend on `rancher` and React batches state
+  // updates — the saved-step restore happens once, then Stripe overrides if
+  // ?connectComplete=1 is present.
+  function tokenHashFor(t: string): string {
+    if (!t) return '';
+    // Cheap deterministic 32-bit hash (djb2). Sufficient to scope a
+    // localStorage key per-rancher without leaking the token contents.
+    let h = 5381;
+    for (let i = 0; i < t.length; i++) {
+      h = ((h << 5) + h + t.charCodeAt(i)) | 0;
+    }
+    return `t${(h >>> 0).toString(36)}`;
+  }
+  const stepStorageKey = token ? `bhc_setup_step_${tokenHashFor(token)}` : '';
+
+  // Restore saved step on first load after rancher data is available. Skip
+  // when ?connectComplete=1 is present — the Stripe useEffect handles that.
+  // Run once per rancher load (guarded by didRestoreStep ref).
+  const didRestoreStep = useRef(false);
+  useEffect(() => {
+    if (!rancher) return;
+    if (connectComplete) return; // Stripe handler wins
+    if (didRestoreStep.current) return;
+    if (!stepStorageKey) return;
+    didRestoreStep.current = true;
+    try {
+      const saved = localStorage.getItem(stepStorageKey);
+      if (!saved) return;
+      const n = parseInt(saved, 10);
+      // Only restore valid in-range steps; 0 means "start at intro" so we
+      // skip — no point setting the same state we already have.
+      if (n > 0 && n <= 9) {
+        setStep(n as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
+      }
+    } catch {
+      /* localStorage disabled — non-fatal, fall back to Step 0. */
+    }
+  }, [rancher, connectComplete, stepStorageKey]);
+
+  // Persist step on every transition. Skip Step 10/6 — at "Done" we clear so
+  // a subsequent rancher visiting the same machine isn't stuck on the
+  // confetti screen.
+  useEffect(() => {
+    if (!stepStorageKey) return;
+    try {
+      // Step 6 = Done. Clear so a re-visit lands at Step 0 (or wherever
+      // server-state guides them).
+      if (step === 6) {
+        localStorage.removeItem(stepStorageKey);
+      } else {
+        localStorage.setItem(stepStorageKey, String(step));
+      }
+    } catch {
+      /* localStorage disabled — non-fatal. */
+    }
+  }, [step, stepStorageKey]);
 
   const setField = (key: string, value: any) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -272,10 +444,10 @@ export default function RancherSetupWizard() {
   async function saveStep(slice: Record<string, any>) {
     setSaving(true);
     try {
-      // Coerce numeric price fields to numbers (form state is strings).
+      // Coerce numeric price/deposit fields to numbers (form state is strings).
       const payload: Record<string, any> = {};
       for (const [k, v] of Object.entries(slice)) {
-        if (k.endsWith(' Price') && v !== '' && v != null) {
+        if ((k.endsWith(' Price') || k.endsWith(' Deposit')) && v !== '' && v != null) {
           const n = Number(v);
           payload[k] = isFinite(n) ? n : '';
         } else {
@@ -300,6 +472,88 @@ export default function RancherSetupWizard() {
       setSaving(false);
     }
   }
+
+  // P1-1 — debounced auto-save for long-form text fields. 800ms after the last
+  // keystroke, PATCH the single field. Prevents the "I typed 4 paragraphs and
+  // then closed the tab" disaster. Validation-failing values (e.g. Refund
+  // Policy below 20 chars) are skipped — autoSave waits until valid.
+  //
+  // Per-field timers live in autoSaveTimers ref so a rapid second keystroke
+  // cancels the pending PATCH and starts a fresh 800ms window. Indicator state
+  // flips to 'saving' on fire, 'saved' on success, then fades to 'idle' after
+  // 3s. No flicker because the fade timer is also debounced.
+  //
+  // Does NOT call setSaving / setLastSavedAt — those are reserved for the
+  // explicit "Save & continue" button so the user still sees a clear primary
+  // save action at step boundaries.
+  const queueAutoSave = useCallback(
+    (key: string, value: any, opts: { isValid?: (v: any) => boolean } = {}) => {
+      const { isValid } = opts;
+      // Cancel pending PATCH for this field.
+      if (autoSaveTimers.current[key]) {
+        clearTimeout(autoSaveTimers.current[key]);
+      }
+      // Don't fire when validation says wait (e.g. Refund Policy < 20 chars).
+      if (isValid && !isValid(value)) {
+        return;
+      }
+      autoSaveTimers.current[key] = setTimeout(async () => {
+        setAutoSaveStatus((s) => ({ ...s, [key]: 'saving' }));
+        try {
+          const payload: Record<string, any> = {};
+          if (key.endsWith(' Price') && value !== '' && value != null) {
+            const n = Number(value);
+            payload[key] = isFinite(n) ? n : '';
+          } else {
+            payload[key] = value;
+          }
+          const res = await fetch(
+            `/api/rancher/setup?token=${encodeURIComponent(token)}`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            }
+          );
+          if (!res.ok) {
+            setAutoSaveStatus((s) => ({ ...s, [key]: 'idle' }));
+            return;
+          }
+          setAutoSaveStatus((s) => ({ ...s, [key]: 'saved' }));
+          // Fade 'saved' → 'idle' after 3s.
+          if (autoSavedFadeTimers.current[key]) {
+            clearTimeout(autoSavedFadeTimers.current[key]);
+          }
+          autoSavedFadeTimers.current[key] = setTimeout(() => {
+            setAutoSaveStatus((s) => ({ ...s, [key]: 'idle' }));
+          }, 3000);
+        } catch {
+          setAutoSaveStatus((s) => ({ ...s, [key]: 'idle' }));
+        }
+      }, 800);
+    },
+    [token]
+  );
+
+  // Cleanup all pending timers on unmount so we don't leak / fire stale PATCH.
+  useEffect(() => {
+    return () => {
+      Object.values(autoSaveTimers.current).forEach((t) => clearTimeout(t));
+      Object.values(autoSavedFadeTimers.current).forEach((t) => clearTimeout(t));
+    };
+  }, []);
+
+  // Convenience setter that updates form state AND queues auto-save. Used for
+  // the 5 highest-risk long-form fields (About Text, Refund Policy, Tagline,
+  // Video URL, Custom Notes). Other fields stick with plain setField + the
+  // explicit Save & continue button.
+  const setFieldAndAutoSave = useCallback(
+    (key: string, value: any, opts: { isValid?: (v: any) => boolean } = {}) => {
+      setField(key, value);
+      queueAutoSave(key, value, opts);
+    },
+    [queueAutoSave]
+  );
 
   // Request a signing JWT (mints a fresh one + stamps Onboarding Status=Docs Sent).
   // Doesn't email — we sign inline. Returns nothing visible, just primes the
@@ -478,6 +732,8 @@ export default function RancherSetupWizard() {
 
   // Show live preview on data-entry steps (1, 2, 3) — not on the intro,
   // sign, or done screens. Step 4 sign-step shows its own listing review.
+  // Tier-pick (7) + fulfillment (8) hide it because the page-preview chrome
+  // isn't relevant to plan selection or fulfillment policy capture.
   const showLivePreview = step >= 1 && step <= 3;
 
   return (
@@ -577,11 +833,14 @@ export default function RancherSetupWizard() {
             </header>
 
             {/* Stat grid — concrete promises up front, before the prose. The
-                "boom-boom-bam" anchor so ranchers see the deal at a glance. */}
+                "boom-boom-bam" anchor so ranchers see the deal at a glance.
+                Subscription messaging is honest about tier_v2 (Step 6 picks
+                the actual monthly + commission rate) — earlier "$0 subscription"
+                wording contradicted the wizard's own pricing step. */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
               {[
-                { stat: '10%', label: 'Commission on closed deals only' },
-                { stat: '$0', label: 'Setup fee · subscription · listing' },
+                { stat: '0–7%', label: 'Commission on closed deals · tier-based' },
+                { stat: '$0', label: 'Setup fee · pick subscription at Step 6' },
                 { stat: '5 min', label: 'From here to your live page' },
                 { stat: 'Anytime', label: 'Pause routing · leave clean' },
               ].map((s) => (
@@ -831,7 +1090,7 @@ export default function RancherSetupWizard() {
                 <Field
                   label="Tagline (one sentence)"
                   value={form.Tagline}
-                  onChange={(v) => setField('Tagline', v)}
+                  onChange={(v) => setFieldAndAutoSave('Tagline', v)}
                   placeholder="Family-raised Angus from the Bitterroot Valley since 1962."
                 />
                 <div className="flex items-start gap-2 flex-wrap">
@@ -847,6 +1106,7 @@ export default function RancherSetupWizard() {
                       {form.Tagline.length}/120 chars
                     </span>
                   )}
+                  <AutoSaveIndicator status={autoSaveStatus['Tagline']} />
                 </div>
                 {showTaglineTemplates && (
                   <div className="border border-dust bg-bone-warm p-3 space-y-1.5">
@@ -901,21 +1161,27 @@ export default function RancherSetupWizard() {
                 )}
               </div>
 
-              <TextareaField
-                label="About your ranch"
-                value={form['About Text']}
-                onChange={(v) => setField('About Text', v)}
-                rows={7}
-                placeholder="A few paragraphs. How you got started, what makes your operation different, what families are buying when they buy from you."
-              />
+              <div className="space-y-1">
+                <TextareaField
+                  label="About your ranch"
+                  value={form['About Text']}
+                  onChange={(v) => setFieldAndAutoSave('About Text', v)}
+                  rows={7}
+                  placeholder="A few paragraphs. How you got started, what makes your operation different, what families are buying when they buy from you."
+                />
+                <AutoSaveIndicator status={autoSaveStatus['About Text']} />
+              </div>
 
-              <Field
-                label="Video URL (YouTube or Vimeo, optional)"
-                value={form['Video URL']}
-                onChange={(v) => setField('Video URL', v)}
-                placeholder="https://youtube.com/watch?v=..."
-                type="url"
-              />
+              <div className="space-y-1">
+                <Field
+                  label="Video URL (YouTube or Vimeo, optional)"
+                  value={form['Video URL']}
+                  onChange={(v) => setFieldAndAutoSave('Video URL', v)}
+                  placeholder="https://youtube.com/watch?v=..."
+                  type="url"
+                />
+                <AutoSaveIndicator status={autoSaveStatus['Video URL']} />
+              </div>
             </div>
             <StepFooter
               saving={saving}
@@ -974,13 +1240,20 @@ export default function RancherSetupWizard() {
             {(['Quarter', 'Half', 'Whole'] as const).map((tier) => (
               <div key={tier} className="border border-dust p-4 md:p-5 space-y-3 bg-bone-warm">
                 <p className="font-serif text-lg text-charcoal">{tier} Cow</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <Field
                     label="Price ($)"
                     type="number"
                     value={form[`${tier} Price`]}
                     onChange={(v) => setField(`${tier} Price`, v)}
                     placeholder="1200"
+                  />
+                  <Field
+                    label="Deposit ($) — collected upfront"
+                    type="number"
+                    value={form[`${tier} Deposit`]}
+                    onChange={(v) => setField(`${tier} Deposit`, v)}
+                    placeholder="100"
                   />
                   <Field
                     label="Approx finished weight (lbs)"
@@ -1079,12 +1352,15 @@ export default function RancherSetupWizard() {
                 const ok = await saveStep({
                   'Tier Specialty': form['Tier Specialty'],
                   'Quarter Price': form['Quarter Price'],
+                  'Quarter Deposit': form['Quarter Deposit'],
                   'Quarter lbs': form['Quarter lbs'],
                   'Quarter Payment Link': form['Quarter Payment Link'],
                   'Half Price': form['Half Price'],
+                  'Half Deposit': form['Half Deposit'],
                   'Half lbs': form['Half lbs'],
                   'Half Payment Link': form['Half Payment Link'],
                   'Whole Price': form['Whole Price'],
+                  'Whole Deposit': form['Whole Deposit'],
                   'Whole lbs': form['Whole lbs'],
                   'Whole Payment Link': form['Whole Payment Link'],
                   Testimonials: validTestimonials.length
@@ -1095,10 +1371,20 @@ export default function RancherSetupWizard() {
                   // After pricing, route to step 4 (Book Call). If the rancher
                   // already has Call Complete on file (e.g. Ben backfilled or
                   // they came back to a partially-onboarded record), skip the
-                  // booking step and prime the signing token for step 5.
+                  // booking step and jump straight to the next gate.
+                  //
+                  // Step ordering depends on Pricing Model:
+                  //   tier_v2: 3 → 4 → 7 (Pick Plan) → 9 (Stripe) → 8 (Fulfill) → 5 (Sign)
+                  //   legacy:  3 → 4 → 8 (Fulfill) → 5 (Sign)  — skip 7+9
+                  // Legacy ranchers pay BHC monthly commission on closed deals
+                  // (no tier subscription), so forcing them through Pick Plan
+                  // (step 7) or Stripe Connect (step 9) is wrong and blocks
+                  // onboarding. (P2-B fix.)
+                  const isLegacy =
+                    String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
+                  const nextAfterPricing = isLegacy ? 8 : 7;
                   if (canSkipBooking()) {
-                    primeSigningToken();
-                    setStep(5);
+                    setStep(nextAfterPricing);
                   } else {
                     setStep(4);
                   }
@@ -1108,21 +1394,87 @@ export default function RancherSetupWizard() {
           </section>
         )}
 
-        {/* STEP 4 — Book onboarding call (Hybrid B gate) */}
-        {step === 4 && (
-          <CallStep
-            rancher={rancher}
-            onAlreadyComplete={() => {
-              primeSigningToken();
-              setStep(5);
-            }}
-            onBack={() => setStep(3)}
-            onProceedAnyway={() => {
-              primeSigningToken();
-              setStep(5);
+        {/* STEP 4 — Book onboarding call (Hybrid B gate).
+            Legacy ranchers skip step 7 (Pick Plan) and step 9 (Stripe Connect)
+            entirely — they pay monthly commission, not a tier subscription.
+            (P2-B fix.) */}
+        {step === 4 && (() => {
+          const isLegacy =
+            String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
+          const nextAfterCall = isLegacy ? 8 : 7;
+          return (
+            <CallStep
+              rancher={rancher}
+              onAlreadyComplete={() => setStep(nextAfterCall)}
+              onBack={() => setStep(3)}
+              onProceedAnyway={() => setStep(nextAfterCall)}
+            />
+          );
+        })()}
+
+        {/* STEP 7 — Pick Your Plan (Stage-3 Task 11A) */}
+        {step === 7 && (
+          <TierPickStep
+            token={token}
+            currentTier={tierSlugFromRancher(rancher)}
+            subscriptionStatus={String((rancher as any)['Subscription Status'] || '')}
+            onBack={() => setStep(canSkipBooking() ? 3 : 4)}
+            onContinue={(updated) => {
+              // updated holds the latest Rancher snapshot from polling — merge
+              // it into our local rancher state so the fulfillment + sign
+              // screens see the new Tier / Subscription Status without a
+              // page refresh.
+              if (updated) setRancher(updated);
+              // Step 9 (Stripe Connect) sits between Pick-Plan and Fulfillment.
+              // Legacy ranchers auto-advance through 9 to 8 in StripeConnectStep.
+              setStep(9);
             }}
           />
         )}
+
+        {/* STEP 9 — Stripe Connect onboarding (Stage-3 Task D2). tier_v2 only;
+            legacy ranchers auto-advance via the StripeConnectStep effect. */}
+        {step === 9 && rancher && (
+          <StripeConnectStep
+            rancherId={rancher.id}
+            pricingModel={String((rancher as any)['Pricing Model'] || 'legacy')}
+            wizardToken={token}
+            onComplete={() => setStep(8)}
+            onBack={() => setStep(7)}
+          />
+        )}
+
+        {/* STEP 8 — Fulfillment + Refund Policy (Stage-3 Task 11B).
+            Back-button target depends on Pricing Model: tier_v2 ranchers came
+            from step 9 (Stripe), legacy ranchers came from step 4 (or 3 if
+            they skipped Call). Sending legacy ranchers back to step 9 would
+            trap them — StripeConnectStep auto-advances legacy back to step 8.
+            (P2-B fix.) */}
+        {step === 8 && (() => {
+          const isLegacy =
+            String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
+          const backTarget = isLegacy
+            ? (canSkipBooking() ? 3 : 4)
+            : 9;
+          return (
+            <FulfillmentStep
+              token={token}
+              form={form}
+              setField={setField}
+              setFieldAndAutoSave={setFieldAndAutoSave}
+              autoSaveStatus={autoSaveStatus}
+              saving={saving}
+              saveStep={saveStep}
+              onBack={() => setStep(backTarget)}
+              onContinue={() => {
+                // After fulfillment is saved, prime the signing token + jump to
+                // the signature step.
+                primeSigningToken();
+                setStep(5);
+              }}
+            />
+          );
+        })()}
 
         {/* STEP 5 — Inline sign agreement */}
         {step === 5 && (
@@ -1137,7 +1489,7 @@ export default function RancherSetupWizard() {
             setAgreedToTerms={setAgreedToTerms}
             signing={signing}
             onSign={signAgreement}
-            onBack={() => setStep(canSkipBooking() ? 3 : 4)}
+            onBack={() => setStep(8)}
           />
         )}
 
@@ -1222,6 +1574,25 @@ export default function RancherSetupWizard() {
 }
 
 // ── Form helpers ──────────────────────────────────────────────────────────
+
+// P1-1 — auto-save status pill. Three states: saving (dust), saved (sage),
+// idle (renders nothing). Small + lowercase so it doesn't fight the existing
+// micro-copy under fields. Inline so it can sit next to char counters.
+function AutoSaveIndicator({ status }: { status?: 'idle' | 'saving' | 'saved' }) {
+  if (!status || status === 'idle') return null;
+  if (status === 'saving') {
+    return (
+      <span className="text-xs text-dust italic ml-2" aria-live="polite">
+        saving…
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs text-sage italic ml-2" aria-live="polite">
+      saved
+    </span>
+  );
+}
 
 function Field({
   label,
@@ -1425,6 +1796,51 @@ function SignStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Tier-aware commission copy. Source of truth lives in lib/tiers.ts;
+  // mirrored here so the gist bullet matches the tier the rancher just
+  // picked at Step 6. Hard-coding "10%" contradicted tier_v2 rates.
+  const pricingModel = String((rancher as any)['Pricing Model'] || 'legacy');
+  const tierSlug = tierSlugFromRancher(rancher);
+  let commissionCopy: ReactNode;
+  if (pricingModel === 'tier_v2' && tierSlug === 'pasture') {
+    commissionCopy = (
+      <>
+        <strong>7% commission</strong> on closed deals only (Pasture tier).
+        Nothing on tire-kickers, nothing on no-shows.
+      </>
+    );
+  } else if (pricingModel === 'tier_v2' && tierSlug === 'ranch') {
+    commissionCopy = (
+      <>
+        <strong>3% commission</strong> on closed deals only (Ranch tier).
+        Nothing on tire-kickers, nothing on no-shows.
+      </>
+    );
+  } else if (pricingModel === 'tier_v2' && tierSlug === 'operator') {
+    commissionCopy = (
+      <>
+        <strong>0% commission</strong> on closed deals (Operator tier · flat
+        subscription only).
+      </>
+    );
+  } else if (pricingModel === 'tier_v2') {
+    // tier_v2 rancher who hasn't locked a tier yet — show the range.
+    commissionCopy = (
+      <>
+        <strong>Commission per your chosen tier</strong> (Pasture 7% · Ranch 3%
+        · Operator 0%). Locked when you finish Step 6.
+      </>
+    );
+  } else {
+    // Legacy ranchers — original 10% commission contract.
+    commissionCopy = (
+      <>
+        <strong>10% commission</strong> on closed deals only. Nothing on
+        tire-kickers, nothing on no-shows.
+      </>
+    );
+  }
+
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
@@ -1475,43 +1891,12 @@ function SignStep({
         )}
       </div>
 
-      {/* First-buyer simulation — shows what the rancher's first inbound
-          intro will look like. Builds anticipation + makes the "leads will
-          actually come" promise concrete. Fully hard-coded mock; no fetch. */}
-      <div className="border border-charcoal bg-charcoal text-bone p-5 space-y-3">
-        <p className="text-[11px] uppercase tracking-widest text-bone/70 font-semibold">
-          Sneak peek — your first buyer intro
-        </p>
-        <p className="text-sm text-bone/85 leading-relaxed">
-          When a buyer in {rancher['State'] as any || form.State || 'your state'} qualifies for {rancher.ranchName}, this lands in your inbox:
-        </p>
-        <div className="bg-bone text-charcoal p-4 space-y-2">
-          <p className="text-[11px] text-saddle font-mono">
-            From: BuyHalfCow &lt;ben@buyhalfcow.com&gt;
-          </p>
-          <p className="text-[11px] text-saddle font-mono">
-            To: {form.Email || 'you@yourranch.com'}
-          </p>
-          <p className="text-sm font-bold text-charcoal">
-            🟢 New buyer for {rancher.ranchName} — Sarah K., {form.State || 'MT'}
-          </p>
-          <p className="text-sm text-charcoal/85 leading-relaxed">
-            Sarah just signed up looking for a Half cow, budget $1,200-$1,500,
-            ready to buy in the next 1-2 months. She picked you. Reach out
-            within 24h — buyers go cold fast.
-          </p>
-          <p className="text-sm text-charcoal/85">
-            <strong>Phone:</strong> (406) 555-0142<br />
-            <strong>Email:</strong> sarah.k@example.com<br />
-            <strong>Notes:</strong> &ldquo;Family of 5, freezer space, prefers
-            grass-fed.&rdquo;
-          </p>
-        </div>
-        <p className="text-xs text-bone/70 italic leading-relaxed">
-          That&rsquo;s the whole product. Pre-screened, in-state, ready-to-buy.
-          You sign below and we start routing real ones to {rancher.ranchName}.
-        </p>
-      </div>
+      {/* P1-3: removed the fabricated "Sarah K." sneak-peek intro mock that
+          previously lived here. It set unrealistic expectations about intro
+          detail level and violated BHC.md integrity rules against invented
+          buyer initials / quotes / phone numbers. If we want a real preview
+          later, it should be a real anonymized closed-won example, not
+          fabricated copy. The agreement step now focuses on the agreement. */}
 
       {/* Plain-language agreement summary. Full legal text linked. */}
       <div className="border border-dust p-5 space-y-3 text-sm text-charcoal/85 leading-relaxed">
@@ -1519,10 +1904,7 @@ function SignStep({
         <ul className="space-y-2 list-none">
           <li className="flex gap-2.5">
             <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
-            <span>
-              <strong>10% commission</strong> on closed deals only. Nothing on
-              tire-kickers, nothing on no-shows.
-            </span>
+            <span>{commissionCopy}</span>
           </li>
           <li className="flex gap-2.5">
             <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
@@ -1775,6 +2157,443 @@ function CallStep({
           title={alreadyBooked ? '' : 'Book a call first'}
         >
           {alreadyBooked ? 'Continue to agreement →' : 'Book a call to continue'}
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-sm text-saddle hover:text-charcoal underline underline-offset-4"
+        >
+          ← Back
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// ── Step 7 — Pick Your Plan (Stage-3 Task 11A) ────────────────────────────
+// Rancher picks one of the three tiers. Each card opens
+// /partner/checkout/[tier] in a new tab. While the rancher is in the
+// Stripe Checkout tab, we poll /api/rancher/setup every 4s to detect when
+// Tier + Subscription Status='active' have been written to Airtable (via
+// the Stripe webhook). When detected, the card shows a ✓ and Continue
+// enables. The rancher can also tap "I picked my plan, continue" once a
+// tier+active subscription is confirmed.
+//
+// We DO NOT advance automatically — rancher confirms to keep them in
+// control (and so we don't blow past mid-loaded state during webhook lag).
+function TierPickStep({
+  token,
+  currentTier,
+  subscriptionStatus,
+  onBack,
+  onContinue,
+}: {
+  token: string;
+  currentTier: 'pasture' | 'ranch' | 'operator' | null;
+  subscriptionStatus: string;
+  onBack: () => void;
+  onContinue: (updated: Rancher | null) => void;
+}) {
+  const [polledTier, setPolledTier] = useState<'pasture' | 'ranch' | 'operator' | null>(currentTier);
+  const [polledStatus, setPolledStatus] = useState<string>(subscriptionStatus);
+  const [lastRancher, setLastRancher] = useState<Rancher | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const isActive = polledStatus === 'active' || polledStatus === 'trialing';
+  const planLocked = !!polledTier && isActive;
+
+  // Poll for Tier + Subscription Status. Runs every 4s while the step is
+  // mounted. Stops once both are set + active (saves Airtable read budget).
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled || planLocked) return;
+      try {
+        const res = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !data?.rancher) return;
+        const r = data.rancher as Rancher;
+        setLastRancher(r);
+        const slug = tierSlugFromRancher(r);
+        setPolledTier(slug);
+        setPolledStatus(String(r['Subscription Status'] || ''));
+      } catch {
+        /* non-fatal; will retry */
+      }
+    };
+    // Fire immediately so a returning rancher sees state without 4s wait.
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [token, planLocked]);
+
+  // Manual refresh button — gives the rancher an "I just paid, check now"
+  // affordance without waiting for the next 4s tick.
+  async function refreshNow() {
+    setChecking(true);
+    try {
+      const res = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.rancher) {
+          const r = data.rancher as Rancher;
+          setLastRancher(r);
+          setPolledTier(tierSlugFromRancher(r));
+          setPolledStatus(String(r['Subscription Status'] || ''));
+        }
+      }
+    } catch {
+      /* non-fatal */
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
+      <header>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 6 · Pick Your Plan</p>
+        <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
+          Pick the marketing engine that fits your ranch.
+        </h2>
+        <p className="text-sm text-saddle mt-1">
+          We send you buyers. You raise the cattle. Cancel anytime.
+        </p>
+      </header>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {TIER_CARDS.map((card) => {
+          const selected = polledTier === card.slug;
+          const showCheckmark = selected && isActive;
+          return (
+            <div
+              key={card.slug}
+              className={`relative bg-white border p-4 md:p-5 flex flex-col ${
+                showCheckmark
+                  ? 'border-2 border-sage'
+                  : selected
+                  ? 'border-2 border-charcoal'
+                  : 'border-divider'
+              }`}
+            >
+              {showCheckmark && (
+                <span className="absolute -top-2.5 right-3 bg-sage text-bone text-[10px] tracking-widest uppercase px-2 py-1 font-bold">
+                  ✓ Active
+                </span>
+              )}
+              {selected && !isActive && (
+                <span className="absolute -top-2.5 right-3 bg-charcoal text-bone text-[10px] tracking-widest uppercase px-2 py-1 font-bold">
+                  Selected
+                </span>
+              )}
+              <h3 className="font-serif text-xl text-charcoal mb-1">{card.label}</h3>
+              <p className="text-sm font-semibold text-charcoal mb-1">{card.price}</p>
+              <p className="text-sm text-saddle min-h-[3rem] mb-3">{card.promise}</p>
+              <ul className="border-t border-divider pt-2.5 mb-3 space-y-1 text-sm text-charcoal/85">
+                {card.perks.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+              <a
+                href={`/partner/checkout/${card.slug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`mt-auto text-center text-[11px] tracking-widest uppercase border px-3 py-2 transition-base ${
+                  showCheckmark
+                    ? 'border-sage text-sage-dark bg-bone-warm hover:bg-bone'
+                    : selected
+                    ? 'border-charcoal bg-charcoal text-bone hover:bg-divider'
+                    : 'border-charcoal text-charcoal hover:bg-charcoal hover:text-bone'
+                }`}
+              >
+                {showCheckmark
+                  ? `Manage ${card.label} →`
+                  : selected
+                  ? `Resume checkout →`
+                  : `Pick ${card.label}`}
+              </a>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="border border-dust bg-bone-warm p-4 text-sm text-charcoal/85 leading-relaxed">
+        {planLocked ? (
+          <p>
+            <span aria-hidden className="text-sage mr-1.5">✓</span>
+            Plan confirmed — <strong>{TIER_CARDS.find((c) => c.slug === polledTier)?.label || polledTier}</strong>.
+            Hit continue to set up fulfillment.
+          </p>
+        ) : polledTier && !isActive ? (
+          <p>
+            You picked <strong>{TIER_CARDS.find((c) => c.slug === polledTier)?.label || polledTier}</strong> but
+            we haven&rsquo;t seen the subscription clear yet (status: {polledStatus || 'pending'}).
+            Finish checkout in the Stripe tab. We&rsquo;ll auto-detect when it&rsquo;s active.
+          </p>
+        ) : (
+          <p>
+            Picking a plan opens Stripe Checkout in a new tab. Once you finish,
+            come back here — we&rsquo;ll auto-detect your active subscription
+            and unlock the continue button.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={refreshNow}
+          disabled={checking}
+          className="mt-2 text-xs uppercase tracking-widest text-saddle underline underline-offset-2 hover:text-charcoal disabled:opacity-50"
+        >
+          {checking ? 'Checking…' : 'Refresh status now'}
+        </button>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center pt-2 border-t border-dust">
+        <button
+          type="button"
+          onClick={() => onContinue(lastRancher)}
+          disabled={!planLocked}
+          className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-40 disabled:cursor-not-allowed"
+          title={planLocked ? '' : 'Pick a plan + finish checkout first'}
+        >
+          {planLocked ? 'I picked my plan, continue →' : 'Pick a plan to continue'}
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-sm text-saddle hover:text-charcoal underline underline-offset-4"
+        >
+          ← Back
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// ── Step 8 — Fulfillment + Refund Policy (Stage-3 Task 11B) ───────────────
+// Captures how the rancher delivers beef to buyers + their refund policy.
+// Refund Policy is shown verbatim on the buyer's pre-payment page so this
+// is the rancher's single-source-of-truth answer to "what happens if…".
+function FulfillmentStep({
+  token,
+  form,
+  setField,
+  setFieldAndAutoSave,
+  autoSaveStatus,
+  saving,
+  saveStep,
+  onBack,
+  onContinue,
+}: {
+  token: string;
+  form: Record<string, any>;
+  setField: (key: string, value: any) => void;
+  setFieldAndAutoSave: (
+    key: string,
+    value: any,
+    opts?: { isValid?: (v: any) => boolean }
+  ) => void;
+  autoSaveStatus: Record<string, 'idle' | 'saving' | 'saved'>;
+  saving: boolean;
+  saveStep: (slice: Record<string, any>) => Promise<boolean>;
+  onBack: () => void;
+  onContinue: () => void;
+}) {
+  const [localError, setLocalError] = useState('');
+
+  const types: string[] = Array.isArray(form['Fulfillment Types']) ? form['Fulfillment Types'] : [];
+  const hasPickup = types.includes('Local Pickup');
+  const hasDelivery = types.includes('Local Delivery');
+  const hasShipping = types.includes('Cold-Chain Shipping');
+
+  const refundPolicy: string = String(form['Refund Policy'] || '');
+  const refundLen = refundPolicy.trim().length;
+
+  const toggle = (val: string) => {
+    const cur = new Set(types);
+    if (cur.has(val)) cur.delete(val);
+    else cur.add(val);
+    setField('Fulfillment Types', Array.from(cur));
+  };
+
+  async function handleContinue() {
+    setLocalError('');
+    // Validation: at least one fulfillment type, conditional sub-fields,
+    // and refund policy 20–500 chars.
+    if (types.length === 0) {
+      setLocalError('Pick at least one fulfillment option.');
+      return;
+    }
+    if (hasPickup && !String(form['Pickup City'] || '').trim()) {
+      setLocalError('Pickup city is required when Local Pickup is selected.');
+      return;
+    }
+    if (hasDelivery) {
+      const n = Number(form['Delivery Radius Miles']);
+      if (!isFinite(n) || n <= 0) {
+        setLocalError('Delivery radius miles is required when Local Delivery is selected.');
+        return;
+      }
+    }
+    if (hasShipping) {
+      const n = Number(form['Shipping Lead Time Days']);
+      if (!isFinite(n) || n <= 0) {
+        setLocalError('Shipping lead time (days) is required when Cold-Chain Shipping is selected.');
+        return;
+      }
+    }
+    if (refundLen < 20) {
+      setLocalError('Refund policy must be at least 20 characters — buyers see this verbatim.');
+      return;
+    }
+    if (refundLen > 500) {
+      setLocalError('Refund policy must be 500 characters or fewer.');
+      return;
+    }
+
+    // PATCH the new fields. Coerce numerics so Airtable stores them as
+    // numbers (the route casts price fields but not these); we send Number
+    // values so they round-trip cleanly.
+    const payload: Record<string, any> = {
+      'Fulfillment Types': types,
+      'Pickup City': hasPickup ? String(form['Pickup City'] || '').trim() : '',
+      'Delivery Radius Miles': hasDelivery ? Number(form['Delivery Radius Miles']) : null,
+      'Shipping Lead Time Days': hasShipping ? Number(form['Shipping Lead Time Days']) : null,
+      'Refund Policy': refundPolicy.trim(),
+      'Fulfillment Cost Notes': String(form['Fulfillment Cost Notes'] || '').trim(),
+    };
+    const ok = await saveStep(payload);
+    if (ok) onContinue();
+  }
+
+  return (
+    <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
+      <header>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 8 · Fulfillment</p>
+        <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
+          How do you get the beef to buyers?
+        </h2>
+        <p className="text-sm text-saddle mt-1">
+          Pick all that apply. Buyers see these options on your listing.
+        </p>
+      </header>
+
+      <div className="border-t border-b border-divider divide-y divide-divider">
+        {FULFILLMENT_OPTIONS.map((opt) => {
+          const checked = types.includes(opt.value);
+          return (
+            <label
+              key={opt.value}
+              className="flex items-center gap-3 py-3 cursor-pointer text-charcoal/90"
+            >
+              <span
+                aria-hidden
+                className={`inline-flex items-center justify-center w-5 h-5 border transition-base ${
+                  checked ? 'bg-charcoal border-charcoal text-bone' : 'bg-white border-charcoal text-transparent'
+                }`}
+              >
+                ✓
+              </span>
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={checked}
+                onChange={() => toggle(opt.value)}
+              />
+              <span className="text-sm">{opt.label}</span>
+            </label>
+          );
+        })}
+      </div>
+
+      {hasPickup && (
+        <Field
+          label="Pickup city + state"
+          required
+          value={form['Pickup City']}
+          onChange={(v) => setField('Pickup City', v)}
+          placeholder="e.g., Bandera, TX"
+        />
+      )}
+
+      {hasDelivery && (
+        <Field
+          label="Delivery radius (miles)"
+          required
+          type="number"
+          value={form['Delivery Radius Miles']}
+          onChange={(v) => setField('Delivery Radius Miles', v)}
+          placeholder="50"
+        />
+      )}
+
+      {hasShipping && (
+        <Field
+          label="Shipping lead time (days after processing)"
+          required
+          type="number"
+          value={form['Shipping Lead Time Days']}
+          onChange={(v) => setField('Shipping Lead Time Days', v)}
+          placeholder="3"
+        />
+      )}
+
+      <TextareaField
+        label="Fulfillment cost notes (optional)"
+        value={form['Fulfillment Cost Notes']}
+        onChange={(v) => setField('Fulfillment Cost Notes', v)}
+        rows={2}
+        placeholder='e.g., "Cooler shipping $45 add-on, paid at pickup."'
+      />
+
+      <div className="space-y-1.5">
+        <TextareaField
+          label="Refund policy (required, 20–500 chars)"
+          value={form['Refund Policy']}
+          onChange={(v) =>
+            setFieldAndAutoSave('Refund Policy', v, {
+              // Auto-save only when within valid range so we don't churn
+              // PATCHes while the rancher is mid-sentence.
+              isValid: (val: any) => {
+                const s = String(val || '');
+                return s.length >= 20 && s.length <= 500;
+              },
+            })
+          }
+          rows={4}
+          placeholder={`Tip: "Full refund within 7 days if cattle isn't processed yet. After processing, store credit only."`}
+        />
+        <p className="text-xs text-saddle italic">
+          Shown verbatim to buyers on the pre-payment page. {refundLen}/500
+          {refundLen < 20 && ' — need at least 20'}
+          {refundLen > 500 && ' — too long, trim it down'}
+          <AutoSaveIndicator status={autoSaveStatus['Refund Policy']} />
+        </p>
+      </div>
+
+      <div className="bg-bone-warm border border-dust p-4 text-sm text-saddle">
+        <strong className="text-charcoal">Why we ask:</strong> buyers see the
+        refund policy verbatim on your deposit page so they can decide before
+        paying. Less back-and-forth for you.
+      </div>
+
+      {localError && (
+        <div role="alert" className="text-sm text-weathered border border-weathered/40 bg-weathered/5 p-3">
+          {localError}
+        </div>
+      )}
+
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center pt-2 border-t border-dust">
+        <button
+          type="button"
+          onClick={handleContinue}
+          disabled={saving}
+          className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save & continue →'}
         </button>
         <button
           type="button"

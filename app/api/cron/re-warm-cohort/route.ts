@@ -40,6 +40,9 @@ export const maxDuration = 60;
 const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
 const DAILY_REANIMATE_CAP = 50;
 const MAX_REWARM_ATTEMPTS = 2;
+// Outer per-run ceiling — layered on top of DAILY_REANIMATE_CAP.
+// Tighter cap under paid-scale to keep cohort drain predictable.
+const MAX_PER_RUN = 25;
 
 async function realHandler(
   _request: Request,
@@ -73,6 +76,10 @@ async function realHandler(
   let reanimated = 0;
 
   for (const b of toReanimate) {
+    if (reanimated >= MAX_PER_RUN) {
+      console.log(`[re-warm-cohort] hit MAX_PER_RUN=${MAX_PER_RUN}, stopping`);
+      break;
+    }
     try {
       await updateRecord(TABLES.CONSUMERS, b.id, {
         // Clear so rancher-launch-warmup Phase 1 NOT({Warmup Sent At}) filter

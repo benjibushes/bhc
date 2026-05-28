@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deposit confirmed · BuyHalfCow</title>
+<style>
+  :root {
+    --bone: #F4F1EC;
+    --charcoal: #0E0E0E;
+    --saddle: #6B4F3F;
+    --dust: #A7A29A;
+    --divider: #E8E3DA;
+    --gold: #C99A2E;
+    --crimson: #8B2C2C;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bone);
+    color: var(--charcoal);
+    line-height: 1.6;
+    padding: 24px 20px 80px;
+  }
+  .back {
+    display: inline-block;
+    color: var(--saddle);
+    text-decoration: none;
+    font-size: 13px;
+    margin-bottom: 32px;
+  }
+  .back:hover { text-decoration: underline; }
+  .container { max-width: 700px; margin: 0 auto; }
+  h1 {
+    font-family: Georgia, serif;
+    font-size: 36px;
+    line-height: 1.2;
+    margin-bottom: 36px;
+  }
+  .what-next-label {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--charcoal);
+  }
+  ol.steps {
+    list-style: none;
+    counter-reset: step;
+    margin-bottom: 36px;
+  }
+  ol.steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 16px 20px 16px 56px;
+    background: #fff;
+    border: 1px solid var(--divider);
+    margin-bottom: 10px;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    width: 28px;
+    height: 28px;
+    background: var(--charcoal);
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: Georgia, serif;
+  }
+  .buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+  .btn {
+    display: block;
+    text-align: center;
+    text-decoration: none;
+    padding: 18px 20px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--charcoal);
+    font-family: inherit;
+  }
+  .btn-primary {
+    background: var(--charcoal);
+    color: #fff;
+  }
+  .btn-primary:hover { background: #000; }
+  .btn-secondary {
+    background: var(--bone);
+    color: var(--charcoal);
+  }
+  .btn-secondary:hover { background: #fff; }
+  .receipt-card {
+    background: var(--bone);
+    border: 1px solid var(--dust);
+    padding: 18px 20px;
+    font-size: 14px;
+    color: var(--saddle);
+    line-height: 1.6;
+  }
+  @media (max-width: 520px) {
+    h1 { font-size: 28px; }
+    .buttons { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <a href="../index.html" class="back">&larr; Back to tour</a>
+    <h1>&#127881; Deposit confirmed &mdash; $700 to Ashcraft Beef</h1>
+
+    <p class="what-next-label">What happens next:</p>
+    <ol class="steps">
+      <li>Ashcraft Beef got an email + text. They'll reply within 24h.</li>
+      <li>You + Ashcraft Beef arrange pickup/delivery in the message thread.</li>
+      <li>Once you receive your beef, Ashcraft Beef confirms fulfillment and gets paid.</li>
+    </ol>
+
+    <div class="buttons">
+      <a href="01-ask.html" class="btn btn-primary">Open thread with Ashcraft Beef &rarr;</a>
+      <a href="../index.html" class="btn btn-secondary">Your dashboard &rarr;</a>
+    </div>
+
+    <div class="receipt-card">
+      Receipt sent to your email &middot; You'll get tracking when your beef ships &middot; Save this page or check your dashboard anytime
+    </div>
+  </div>
+</body>
+</html>

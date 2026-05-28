@@ -1,16 +1,19 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Get Access',
-  description: 'Apply for access to BuyHalfCow — source ranch beef direct from a verified rancher in your state.',
+  title: 'Get matched with a verified rancher',
+  description: '90-second match. Pick your state, answer 4 questions, talk direct to a verified rancher. No marketplace markup. No middleman.',
   openGraph: {
-    title: 'Get Access — BuyHalfCow',
-    description: 'Apply for access to BuyHalfCow — source ranch beef direct from a verified rancher in your state.',
+    title: 'Get matched with a verified rancher',
+    description: '90 seconds. Direct ranch beef. No middleman.',
+    url: 'https://buyhalfcow.com/access',
+    images: ['/og-image.png'],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Get Access — BuyHalfCow',
-    description: 'Apply for access. Source ranch beef direct from a verified rancher in your state.',
+    title: 'Get matched with a verified rancher',
+    description: '90 seconds. Direct ranch beef. No middleman.',
+    images: ['/og-image.png'],
   },
 };
 

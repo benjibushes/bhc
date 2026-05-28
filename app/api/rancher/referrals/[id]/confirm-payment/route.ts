@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import {
   calcCommissionForRancher,
@@ -8,8 +7,7 @@ import {
 } from '@/lib/commission';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { JWT_SECRET } from '@/lib/secrets';
-import jwt from 'jsonwebtoken';
+import { requireRancher } from '@/lib/rancherAuth';
 
 export const maxDuration = 60;
 
@@ -33,21 +31,10 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('bhc-rancher-auth');
-    if (!sessionCookie?.value) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-
-    let decoded: any;
-    try {
-      decoded = jwt.verify(sessionCookie.value, JWT_SECRET);
-    } catch {
-      return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-    }
-    if (decoded.type !== 'rancher-session') {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
+    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+    const auth = await requireRancher(request);
+    if (auth instanceof NextResponse) return auth;
+    const decoded = { rancherId: auth.session.rancherId };
 
     const { id } = await context.params;
     const body = await request.json().catch(() => ({}));
@@ -116,10 +103,18 @@ export async function POST(
     // — if it throws, we surface the error to the dashboard so the rancher
     // can correct + retry. Status stays Closed Won regardless (sale is
     // confirmed; invoice can be re-fired manually).
+    //
+    // Tier_v2 ranchers SKIP — commission already taken at deposit time via
+    // Stripe Connect application_fee_amount. Legacy invoice here = double-bill.
+    const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
+    const skipLegacyInvoice = pricingModel === 'tier_v2';
+    if (skipLegacyInvoice) {
+      console.log(`[confirm-payment] rancher ${rancher.id} is tier_v2 — skipping legacy commission invoice`);
+    }
     let invoiceUrl = '';
     let invoiceId = '';
     let invoiceError = '';
-    try {
+    if (!skipLegacyInvoice) try {
       const result = await createCommissionInvoice({
         rancher: {
           id: rancher.id,

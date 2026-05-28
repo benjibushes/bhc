@@ -5,6 +5,7 @@ import { sendTelegramSaleCelebration } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
 import { calcCommission, getCommissionRate } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 
 export async function PATCH(
   request: Request,
@@ -65,7 +66,46 @@ export async function PATCH(
       fields['Notes'] = notes;
     }
 
+    // P1 audit D-3: capture pre-state for audit log so close/reject is reversible
+    let preState: any = null;
+    if (status === 'Closed Won' || status === 'Closed Lost' || commissionPaid !== undefined) {
+      try {
+        preState = await getRecordById(TABLES.REFERRALS, id);
+      } catch { /* non-fatal */ }
+    }
+
     const updated = await updateRecord(TABLES.REFERRALS, id, fields);
+
+    // P1 audit D-3: log privileged status mutations (reject, close-won) + commission paid
+    if ((status === 'Closed Won' || status === 'Closed Lost' || commissionPaid !== undefined) && preState) {
+      try {
+        const action =
+          status === 'Closed Won' ? 'admin-referral-close-won' :
+          status === 'Closed Lost' ? 'admin-referral-reject' :
+          'admin-referral-commission-paid';
+        const reverseFields: Record<string, unknown> = {};
+        if (status) reverseFields['Status'] = preState['Status'];
+        if (status === 'Closed Won' || status === 'Closed Lost') {
+          reverseFields['Closed At'] = preState['Closed At'] || null;
+        }
+        if (saleAmount !== undefined) {
+          reverseFields['Sale Amount'] = preState['Sale Amount'] || null;
+          reverseFields['Commission Due'] = preState['Commission Due'] || null;
+        }
+        if (commissionPaid !== undefined) reverseFields['Commission Paid'] = preState['Commission Paid'] || false;
+        await logAuditEntry({
+          actor: 'manual',
+          tool: action,
+          targetType: 'Referral',
+          targetId: id,
+          args: { status, saleAmount, commissionPaid, notes, closeReason },
+          result: { newStatus: fields['Status'], saleAmount: fields['Sale Amount'], commissionDue: fields['Commission Due'] },
+          reverseAction: buildAirtableUpdateReverse(TABLES.REFERRALS, id, reverseFields),
+        });
+      } catch (e: any) {
+        console.error('[referrals PATCH] audit log failed (non-fatal):', e?.message);
+      }
+    }
 
     // ── BUYER STATUS + HEALTH SYNC ───────────────────────────────────────
     // Mirror the rancher PATCH: when a referral closes, sync the buyer's

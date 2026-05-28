@@ -26,6 +26,7 @@ export const TABLES = {
   CRON_RUNS: 'Cron Runs',
   CRON_PAUSES: 'Cron Pauses',
   EMAIL_SENDS: 'Email Sends',
+  PAYMENTS: 'Payments',
 };
 
 // Escape a string value for use in Airtable filterByFormula to prevent injection

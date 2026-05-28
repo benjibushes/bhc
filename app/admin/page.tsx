@@ -429,6 +429,7 @@ export default function AdminPage() {
             </div>
             <button
               onClick={async () => {
+                // Clear bhc-admin cookie via /api/admin/auth DELETE.
                 await fetch('/api/admin/auth', { method: 'DELETE' });
                 window.location.href = '/admin/login';
               }}

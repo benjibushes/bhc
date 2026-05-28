@@ -22,6 +22,16 @@ const WARMUP_CAP_PER_RUN = 100;
 const NUDGE_CAP_PER_RUN = 50;
 const DEFAULT_WEEKLY_INTRO_PACE = 5;
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
+// Outer per-run ceiling on TOTAL records touched (warmups + nudges).
+// Layered on top of the per-phase caps above; whichever binds first wins.
+// Protects against cohort-growth runaway under paid-scale.
+//
+// Bumped 2026-05-27 from 25 → 100. With 1533 buyers + 679 stuck-warmed cohort,
+// the 25/day ceiling was draining the backlog at 25 records/day total — making
+// WARMUP_CAP_PER_RUN=100 + NUDGE_CAP_PER_RUN=50 effectively dead code (the
+// 25-ceiling bound first on every run). 100/day aligns with WARMUP_CAP_PER_RUN
+// so the per-phase + outer caps now agree, drain rate quadruples.
+const MAX_PER_RUN = 100;
 
 function buildEngageUrl(consumerId: string): string {
   const token = jwt.sign({ type: 'warmup-engage', consumerId }, JWT_SECRET, { expiresIn: '30d' });
@@ -79,10 +89,12 @@ function priorityScore(buyer: any): number {
 //
 // Phase 2 (Day-7 nudge) runs after Phase 1 regardless of mode and
 // is unchanged from the pre-throttle implementation.
-async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
+
+  const skipReasons: Record<string, number> = {};
 
   {
     // ── PHASE 1: warmup to operationally-Live ranchers' waitlisted buyers ──
@@ -92,7 +104,13 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // that flag was a pre-throttle one-shot signal. Throttle mode revisits
     // each rancher daily until their state's WAITING/READY queue is drained.
     const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
-    const ranchers = allRanchers.filter(isRancherOperationalForBuyers);
+    const ranchers = allRanchers.filter((r: any) => {
+      if (!isRancherOperationalForBuyers(r)) {
+        skipReasons['rancher-not-operational'] = (skipReasons['rancher-not-operational'] || 0) + 1;
+        return false;
+      }
+      return true;
+    });
 
     let warmupsSent = 0;
     let warmupsSkipped = 0;
@@ -102,6 +120,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
     outer: for (const rancher of ranchers) {
       if (warmupsSent >= WARMUP_CAP_PER_RUN) break;
+      if (warmupsSent >= MAX_PER_RUN) {
+        console.log(`[rancher-launch-warmup] hit MAX_PER_RUN=${MAX_PER_RUN} (warmups), stopping phase 1`);
+        break;
+      }
 
       const ranchName = rancher['Ranch Name'] || rancher['Operator Name'] || 'A verified ranch';
       // Single source of truth for "what states does this rancher serve?" —
@@ -140,34 +162,79 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         ) as any[];
 
         const eligible = waitlistedBuyers.filter((b: any) => {
-          if (b['Unsubscribed'] || b['Bounced']) return false;
-          if (b['Warmup Sent At']) return false;
+          if (b['Unsubscribed'] || b['Bounced']) {
+            skipReasons['bounced-unsub'] = (skipReasons['bounced-unsub'] || 0) + 1;
+            return false;
+          }
+          if (b['Warmup Sent At']) {
+            skipReasons['already-warmed'] = (skipReasons['already-warmed'] || 0) + 1;
+            return false;
+          }
           const buyerState = normalizeState(b['State']);
           if (!buyerState) return false;
-          return rancherStates.has(buyerState);
+          if (!rancherStates.has(buyerState)) {
+            skipReasons['out-of-state'] = (skipReasons['out-of-state'] || 0) + 1;
+            return false;
+          }
+          return true;
         });
 
         let ranchSent = 0;
         for (const buyer of eligible) {
           if (warmupsSent >= WARMUP_CAP_PER_RUN) break outer;
+          if (warmupsSent >= MAX_PER_RUN) {
+            console.log(`[rancher-launch-warmup] hit MAX_PER_RUN=${MAX_PER_RUN} (trust-drain), stopping`);
+            break outer;
+          }
           try {
             const email = (buyer['Email'] || '').trim();
             if (!email) { warmupsSkipped++; continue; }
             const first = String(buyer['Full Name'] || '').split(' ')[0] || '';
             const engageUrl = buildEngageUrl(buyer.id);
 
-            await sendRancherLaunchWarmup({
-              email,
-              firstName: first,
-              ranchName,
-              buyerState: normalizeState(buyer['State']),
-              engageUrl,
-            });
+            // Idempotency hardening (P2-H 2026-05-27): stamp dedup field
+            // BEFORE the email send. Trust Mode has no cohort-level cooldown
+            // (unlike the throttled branch's Warmup Last Batch At gate), so a
+            // post-send stamp failure here would let next run re-warm the
+            // same buyer. Preemptive stamp + clear-on-send-failure makes the
+            // worst-case "send + no stamp" → "no send, no duplicate" instead.
+            const stampedAt = nowISO();
+            try {
+              await updateRecord(TABLES.CONSUMERS, buyer.id, {
+                'Warmup Sent At': stampedAt,
+                'Warmup Stage': 'sent',
+              });
+            } catch (e: any) {
+              console.error(`[trust-drain] preemptive stamp failed for buyer ${buyer.id} — skipping send:`, e?.message);
+              warmupsSkipped++;
+              skipReasons['stamp-failed'] = (skipReasons['stamp-failed'] || 0) + 1;
+              continue;
+            }
 
-            await updateRecord(TABLES.CONSUMERS, buyer.id, {
-              'Warmup Sent At': nowISO(),
-              'Warmup Stage': 'sent',
-            });
+            try {
+              await sendRancherLaunchWarmup({
+                email,
+                firstName: first,
+                ranchName,
+                buyerState: normalizeState(buyer['State']),
+                engageUrl,
+              });
+            } catch (sendErr: any) {
+              // Best-effort rollback so next run gets another shot.
+              console.error(`[trust-drain] send failed after stamp for buyer ${buyer.id} — clearing stamp:`, sendErr?.message);
+              try {
+                await updateRecord(TABLES.CONSUMERS, buyer.id, {
+                  'Warmup Sent At': null,
+                  'Warmup Stage': null,
+                });
+              } catch (clearErr: any) {
+                // Stamp left in place — operator alert via cronRun partial signal.
+                console.error(`[trust-drain] stamp clear failed for buyer ${buyer.id}:`, clearErr?.message);
+              }
+              warmupsSkipped++;
+              skipReasons['send-failed'] = (skipReasons['send-failed'] || 0) + 1;
+              continue;
+            }
 
             warmupsSent++;
             ranchSent++;
@@ -195,7 +262,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       const lastBatchRaw = rancher['Warmup Last Batch At'];
       if (lastBatchRaw) {
         const lastMs = new Date(lastBatchRaw).getTime();
-        if (!Number.isNaN(lastMs) && Date.now() - lastMs < COOLDOWN_MS) continue;
+        if (!Number.isNaN(lastMs) && Date.now() - lastMs < COOLDOWN_MS) {
+          skipReasons['dedupe-recent-warmup'] = (skipReasons['dedupe-recent-warmup'] || 0) + 1;
+          continue;
+        }
       }
 
       const weeklyPace = Number(rancher['Onboarding Intro Pace']) || DEFAULT_WEEKLY_INTRO_PACE;
@@ -239,28 +309,66 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       let ranchSent = 0;
       for (const { rec } of ranked) {
         if (warmupsSent >= WARMUP_CAP_PER_RUN) break outer;
+        if (warmupsSent >= MAX_PER_RUN) {
+          console.log(`[rancher-launch-warmup] hit MAX_PER_RUN=${MAX_PER_RUN} (throttled), stopping`);
+          break outer;
+        }
         try {
           const email = (rec['Email'] || '').trim();
           if (!email) { warmupsSkipped++; continue; }
           const first = String(rec['Full Name'] || '').split(' ')[0] || '';
           const engageUrl = buildEngageUrl(rec.id);
 
-          await sendRancherLaunchWarmup({
-            email,
-            firstName: first,
-            ranchName,
-            buyerState: normalizeState(rec['State']),
-            engageUrl,
-          });
-
+          // Idempotency hardening (P2-H 2026-05-27): stamp dedup field
+          // BEFORE the email send. Throttled branch has a 24h cohort
+          // cooldown (Warmup Last Batch At) as primary safety net, but
+          // the same stamp-then-send pattern from the Trust Mode branch
+          // gives defense-in-depth + keeps the two code paths consistent.
           // Buyer Stage flip: WAITING → READY (rancher just became visible to
           // them; we're not yet at MATCHED — that requires a YES click).
-          await updateRecord(TABLES.CONSUMERS, rec.id, {
-            'Warmup Sent At': nowISO(),
-            'Warmup Stage': 'sent',
-            'Buyer Stage': 'READY',
-            'Buyer Stage Updated At': nowISO(),
-          });
+          const stampedAt = nowISO();
+          try {
+            await updateRecord(TABLES.CONSUMERS, rec.id, {
+              'Warmup Sent At': stampedAt,
+              'Warmup Stage': 'sent',
+              'Buyer Stage': 'READY',
+              'Buyer Stage Updated At': stampedAt,
+            });
+          } catch (e: any) {
+            console.error(`[throttle] preemptive stamp failed for buyer ${rec.id} — skipping send:`, e?.message);
+            warmupsSkipped++;
+            skipReasons['stamp-failed'] = (skipReasons['stamp-failed'] || 0) + 1;
+            continue;
+          }
+
+          try {
+            await sendRancherLaunchWarmup({
+              email,
+              firstName: first,
+              ranchName,
+              buyerState: normalizeState(rec['State']),
+              engageUrl,
+            });
+          } catch (sendErr: any) {
+            // Best-effort rollback — clear stamp + restore Buyer Stage so next
+            // run picks them up. Note: 24h cohort cooldown will still gate the
+            // whole rancher's queue for 24h, so retry doesn't happen sooner
+            // than that anyway.
+            console.error(`[throttle] send failed after stamp for buyer ${rec.id} — clearing stamp:`, sendErr?.message);
+            try {
+              await updateRecord(TABLES.CONSUMERS, rec.id, {
+                'Warmup Sent At': null,
+                'Warmup Stage': null,
+                'Buyer Stage': 'WAITING',
+                'Buyer Stage Updated At': nowISO(),
+              });
+            } catch (clearErr: any) {
+              console.error(`[throttle] stamp clear failed for buyer ${rec.id}:`, clearErr?.message);
+            }
+            warmupsSkipped++;
+            skipReasons['send-failed'] = (skipReasons['send-failed'] || 0) + 1;
+            continue;
+          }
 
           warmupsSent++;
           ranchSent++;
@@ -298,10 +406,19 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     let nudgesSent = 0;
     const now = Date.now();
     const nudgeCandidates = waitlistedForNudges.filter((b: any) => {
-      if (b['Unsubscribed'] || b['Bounced']) return false;
-      if (b['Warmup Engaged At']) return false;
+      if (b['Unsubscribed'] || b['Bounced']) {
+        skipReasons['bounced-unsub'] = (skipReasons['bounced-unsub'] || 0) + 1;
+        return false;
+      }
+      if (b['Warmup Engaged At']) {
+        skipReasons['already-warmed'] = (skipReasons['already-warmed'] || 0) + 1;
+        return false;
+      }
       const stage = b['Warmup Stage']?.name || b['Warmup Stage'];
-      if (stage === 'nudged' || stage === 'matched' || stage === 'dropped') return false;
+      if (stage === 'nudged' || stage === 'matched' || stage === 'dropped') {
+        skipReasons['already-warmed'] = (skipReasons['already-warmed'] || 0) + 1;
+        return false;
+      }
       const sentAt = b['Warmup Sent At'];
       if (!sentAt) return false;
       const days = (now - new Date(sentAt).getTime()) / DAY_MS;
@@ -310,6 +427,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
     for (const buyer of nudgeCandidates) {
       if (nudgesSent >= NUDGE_CAP_PER_RUN) break;
+      if (warmupsSent + nudgesSent >= MAX_PER_RUN) {
+        console.log(`[rancher-launch-warmup] hit MAX_PER_RUN=${MAX_PER_RUN} (combined), stopping phase 2`);
+        break;
+      }
       try {
         const email = (buyer['Email'] || '').trim();
         if (!email) continue;
@@ -359,6 +480,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     status: warmupsSkipped > 0 ? 'partial' : 'success',
     recordsTouched: warmupsSent + nudgesSent,
     notes: `warmups=${warmupsSent} nudges=${nudgesSent} ranchers=${ranchersProcessed.length} skipped=${warmupsSkipped}`,
+    skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
   };
   }
 }

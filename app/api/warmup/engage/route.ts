@@ -197,10 +197,15 @@ export async function GET(request: Request) {
       // still mark Warmup Engaged At + Ready to Buy because the buyer DID
       // click YES — but we hold off flipping Buyer Stage to MATCHED until
       // Ben approves on Telegram (callback handler does that flip).
+      //
+      // recordBuyerEngagement contract stamps Warmup Engaged At + Ready to Buy
+      // AND emits an 'engaged' Funnel Event for the conversion dashboard.
+      // Warmup Stage is BHC-internal and not part of the contract; keep direct
+      // updateRecord for that field only.
+      const { recordBuyerEngagement } = await import('@/lib/contracts');
+      await recordBuyerEngagement(payload.consumerId);
       await updateRecord(TABLES.CONSUMERS, payload.consumerId, {
-        'Warmup Engaged At': new Date().toISOString(),
         'Warmup Stage': 'engaged',
-        'Ready to Buy': true,
       });
     }
 
@@ -299,10 +304,12 @@ export async function GET(request: Request) {
       // marks them as "already engaged" for re-warm-cohort. Now: surface to
       // Telegram so operator can manually fix the stage.
       try {
-        await updateRecord(TABLES.CONSUMERS, payload.consumerId, {
-          'Buyer Stage': matchOutcome === 'matched' ? 'MATCHED' : 'READY',
-          'Buyer Stage Updated At': new Date().toISOString(),
-        });
+        const { transitionBuyerStage } = await import('@/lib/contracts');
+        await transitionBuyerStage(
+          payload.consumerId,
+          matchOutcome === 'matched' ? 'MATCHED' : 'READY',
+          `engage:${matchOutcome}`,
+        );
       } catch (e: any) {
         console.error('[warmup/engage] stage flip failed:', e?.message);
         try {

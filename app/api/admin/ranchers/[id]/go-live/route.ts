@@ -1,10 +1,11 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { cookies } from 'next/headers';
 import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { isMaintenanceMode } from '@/lib/maintenance';
+import { requireAdmin } from '@/lib/adminAuth';
+import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 
 export const maxDuration = 60;
 
@@ -16,13 +17,9 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Check admin auth cookie
-    const cookieStore = await cookies();
-    const authCookie = cookieStore.get('bhc-admin-auth');
-
-    if (authCookie?.value !== 'authenticated') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    // Auth Phase 0: requireAdmin() — Clerk session OR x-admin-password.
+    const unauthorized = await requireAdmin(request);
+    if (unauthorized) return unauthorized;
 
     // Honor global maintenance mode. Audit finding 2026-05-20 #39: go-live
     // bypassed MAINTENANCE_MODE → could trigger 50-buyer warmup blast +
@@ -35,6 +32,10 @@ export async function POST(
     }
 
     const { id } = await context.params;
+
+    // P1 audit D-3: capture pre-state so go-live is reversible
+    let prevRancher: any = null;
+    try { prevRancher = await getRecordById(TABLES.RANCHERS, id); } catch { /* non-fatal */ }
 
     // BUG FIX (RW-6 audit): prior version only flipped Page Live. matching/
     // suggest filters by Active Status='Active' — so newly-live rancher
@@ -50,6 +51,28 @@ export async function POST(
       'Onboarding Status': 'Live',
       'Status': 'Active',
     });
+
+    // P1 audit D-3: log go-live so we can trace + reverse if misfired
+    if (prevRancher) {
+      try {
+        await logAuditEntry({
+          actor: 'manual',
+          tool: 'admin-rancher-go-live',
+          targetType: 'Rancher',
+          targetId: id,
+          args: { rancherId: id },
+          result: { activeStatus: 'Active', onboardingStatus: 'Live', pageLive: true },
+          reverseAction: buildAirtableUpdateReverse(TABLES.RANCHERS, id, {
+            'Page Live': prevRancher['Page Live'] || false,
+            'Active Status': prevRancher['Active Status'] || null,
+            'Onboarding Status': prevRancher['Onboarding Status'] || null,
+            'Status': prevRancher['Status'] || null,
+          }),
+        });
+      } catch (e: any) {
+        console.error('[go-live] audit log failed (non-fatal):', e?.message);
+      }
+    }
 
     // Fire launch-warmup IMMEDIATELY for this rancher's state. Without this,
     // newly-Live ranchers' Waitlisted buyer queue waits up to 24h for the

@@ -15,11 +15,15 @@ import {
   TABLES,
 } from '@/lib/airtable';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
-import { sendAdminAlert } from '@/lib/email';
+import { sendAdminAlert, sendWholesaleConfirmation } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { normalizeState } from '@/lib/states';
+import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 export const maxDuration = 60;
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 function isValidEmail(email: string): boolean {
   const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -163,6 +167,19 @@ export async function POST(request: Request) {
       );
     }
 
+    // P0 audit I-5: send wholesale applicant confirmation immediately.
+    // before this, /wholesale fired admin alert only — applicants got
+    // zero email → believed form broken → abandoned.
+    try {
+      await sendWholesaleConfirmation({
+        contactName,
+        businessName,
+        email,
+      });
+    } catch (e: any) {
+      console.warn('[wholesale/signup] applicant confirmation failed (non-fatal):', e?.message);
+    }
+
     // Fire admin alert email — type='consumer' is the closest existing
     // template type. Notes field in details makes the wholesale context
     // unambiguous to the operator.
@@ -200,10 +217,66 @@ export async function POST(request: Request) {
       console.warn('[wholesale/signup] telegram failed (non-fatal):', e?.message);
     }
 
+    // ── Funnel telemetry — wholesale_submit ─────────────────────────────
+    // Audit 6 P1: wholesale buyers ($5-15k AOV) need funnel segmentation
+    // alongside retail. Non-fatal — failure here doesn't break flow.
+    await funnelRecord({
+      stage: 'wholesale_submit',
+      metadata: {
+        businessName,
+        businessType,
+        state,
+        monthlyVolume,
+        timeline,
+        recordId,
+      },
+    });
+
+    // ── Meta Conversions API: server-side `Lead` event ──────────────────
+    // Audit 6 P1: client already fires wholesale_submit_success but iOS
+    // 14.5+ ATT loses 30-50% of client events. Server CAPI mirrors with
+    // event_id=recordId so Meta dedupes client+server fires. Restores
+    // attribution for wholesale paid-ad ROAS measurement.
+    const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+    const capiUserAgent = request.headers.get('user-agent') || undefined;
+    const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(request);
+    const nameParts = contactName.trim().split(/\s+/).filter(Boolean);
+    fireCapi([
+      {
+        event_name: 'Lead',
+        event_time: Math.floor(Date.now() / 1000),
+        event_source_url: `${SITE_URL}/wholesale`,
+        event_id: recordId,
+        action_source: 'website',
+        user_data: buildUserData({
+          email,
+          phone,
+          firstName: nameParts[0],
+          lastName: nameParts.slice(1).join(' ') || undefined,
+          state,
+          ip: capiIp,
+          userAgent: capiUserAgent,
+          fbp: capiFbp,
+          fbc: capiFbc,
+        }),
+        custom_data: {
+          content_name: businessName,
+          content_category: 'wholesale',
+        },
+      },
+    ]).catch((e) =>
+      console.error('[meta-capi] wholesale lead fire failed:', e),
+    );
+
+    // E-4 audit fix: return recordId so the client wholesale_submit_success
+    // Pixel fire can pass event_id=recordId, matching the server CAPI Lead
+    // fire above. Without this the client+server fires are seen by Meta
+    // as two distinct events → double-count + no dedup attribution.
     return NextResponse.json({
       ok: true,
       message:
         "We've received your application. Ben will personally reach out within 24-48 hours with verified ranchers in your state matching your volume + timeline.",
+      recordId,
     });
   } catch (error: any) {
     console.error('[wholesale/signup] unexpected error:', error);

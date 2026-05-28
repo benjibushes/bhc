@@ -31,7 +31,7 @@ import jwt from 'jsonwebtoken';
 // 180s leaves headroom for ~75 emails + Airtable updates per run.
 export const maxDuration = 180;
 
-import { JWT_SECRET } from '@/lib/secrets';
+import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -50,11 +50,12 @@ function makeLoginUrl(consumerId: string, email: string) {
 
 // Runs daily at 10am MT (16:00 UTC) — after batch-approve at 9am MT
 // Sends drip emails to consumers based on how long they've been approved
-async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
+async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
 
+  const skipReasons: Record<string, number> = {};
   const now = Date.now();
 
     // ── ABANDONED APPLICATION RECOVERY ────────────────────────────────────
@@ -72,7 +73,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       let abandonSent = 0;
       for (const rec of abandoned) {
         if (abandonSent >= ABANDON_LIMIT_PER_RUN) break;
-        if (rec['Unsubscribed']) continue;
+        if (rec['Unsubscribed']) {
+          skipReasons['unsubscribed'] = (skipReasons['unsubscribed'] || 0) + 1;
+          continue;
+        }
         const email = (rec['Email'] || '').trim().toLowerCase();
         if (!email) continue;
         const stage = rec['Sequence Stage'] || 'abandoned_pending';
@@ -92,7 +96,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           send = 3; nextStage = 'abandoned_email3_sent';
         }
 
-        if (!send) continue;
+        if (!send) {
+          skipReasons['cadence-not-due'] = (skipReasons['cadence-not-due'] || 0) + 1;
+          continue;
+        }
 
         try {
           // MISMATCH FIX: stamp Sequence Stage + Sent At BEFORE send. Prior
@@ -228,12 +235,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         const buyerStage = (consumer['Buyer Stage'] || '').toString();
         const seqStage = (consumer['Sequence Stage'] || '').toString();
         const stageEnteredRaw = consumer['Buyer Stage Updated At'];
-        if (!buyerStage || !stageEnteredRaw) continue; // not migrated yet — skip safely
+        if (!buyerStage || !stageEnteredRaw) {
+          skipReasons['segment-mismatch'] = (skipReasons['segment-mismatch'] || 0) + 1;
+          continue; // not migrated yet — skip safely
+        }
         const daysInStage = (now - new Date(stageEnteredRaw).getTime()) / DAY_MS;
 
         // 24h frequency gate — never two automated emails to same buyer in 1 day
         const lastSentAt = consumer['Sequence Sent At'];
-        if (lastSentAt && (now - new Date(lastSentAt).getTime()) < DAY_MS) continue;
+        if (lastSentAt && (now - new Date(lastSentAt).getTime()) < DAY_MS) {
+          skipReasons['cap-suppressed'] = (skipReasons['cap-suppressed'] || 0) + 1;
+          continue;
+        }
 
         let fired = false;
 
@@ -283,6 +296,19 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 const rancherEmail = rancher['Email'];
                 const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
                 if (rancherEmail && consumer['Email']) {
+                  // tier_v2 ranchers route deposits through Stripe Connect
+                  // direct charge at /checkout/<refId>/deposit, which requires
+                  // the bhc-member-auth cookie. Wrap the deposit deep-link in
+                  // a magic-link verify URL. Legacy ranchers stay on the tap-
+                  // any-tier Payment Link copy (depositMagicLinkUrl stays
+                  // undefined).
+                  const promotePricingModel = String(rancher['Pricing Model'] || 'legacy');
+                  let promoteDepositMagicLinkUrl: string | undefined;
+                  if (promotePricingModel === 'tier_v2') {
+                    const magicToken = generateMemberLoginToken(consumerId, consumer['Email']);
+                    const nextPath = `/checkout/${stuckRef.id}/deposit`;
+                    promoteDepositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+                  }
                   // Buyer-side intro (w/ rancher pricing + contact)
                   await sendBuyerIntroNotification({
                     firstName,
@@ -299,6 +325,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                     wholePrice: Number(rancher['Whole Price']) || undefined,
                     wholeLbs: rancher['Whole lbs'] || '',
                     nextProcessingDate: rancher['Next Processing Date'] || '',
+                    depositMagicLinkUrl: promoteDepositMagicLinkUrl,
                   }).catch((e: any) => console.warn('[promote-pa] buyer intro failed:', e?.message));
                   // Rancher-side intro
                   await sendEmail({
@@ -452,13 +479,29 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           await sendStateWaitlistLetter({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           segmentCounters.state_waitlist++; totalSent++; fired = true;
         }
-        else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 1) {
+        // i-6 audit P0: incomplete_profile cap 1→3 w/ 14d cadence.
+        // ~69% of buyers (1088/1579 as of 2026-05-27) sat in this segment
+        // w/ a 1-email-lifetime cap → funnel hemorrhage. Now 3 progressive
+        // letters over 28d (d0, d14, d28). Subject escalates: gentle → check
+        // → close-the-loop. After 3 sends, drops to drip-only nurture.
+        else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 3 && daysSinceSegmentSend >= 14) {
+          const subjectVariants = [
+            'two questions on your beef — 30 seconds',
+            'still want beef from your area? — quick check',
+            "last note from me — close your loop or i'll stop",
+          ];
+          const subject = subjectVariants[Math.min(segmentCount, 2)];
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
             'Sequence Sent At': new Date().toISOString(),
           });
-          await sendIncompleteProfileAsk({ email, firstName, buyerState: buyerStateNorm || stateLabel });
+          await sendIncompleteProfileAsk({
+            email,
+            firstName,
+            buyerState: buyerStateNorm || stateLabel,
+            subject,
+          });
           segmentCounters.incomplete_profile++; totalSent++; fired = true;
         }
 
@@ -545,7 +588,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           // Only run post-purchase sequence for buyers who actually bought —
           // CLOSED also includes suppressed/non-responsive (no further outreach).
           const purchased = buyerClosedWonRancher.has(consumerId);
-          if (!purchased) continue;
+          if (!purchased) {
+            skipReasons['closed-or-terminal'] = (skipReasons['closed-or-terminal'] || 0) + 1;
+            continue;
+          }
           const rancherName = buyerClosedWonRancher.get(consumerId) || 'your rancher';
           const orderType = consumer['Order Type'] || 'Not Sure';
 
@@ -725,6 +771,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     status: errors > 0 ? 'partial' : 'success',
     recordsTouched: grandTotal,
     notes: `sent=${grandTotal} (stage=${total} rancherReminders=${rancherReminders} abandoned=${abandonedRecovered}${segmentNote}) errors=${errors}`,
+    skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
   };
 }
 

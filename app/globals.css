@@ -25,6 +25,8 @@
   --color-sage-dark: #2A4A20;
   --color-amber: #E8C547;
   --color-amber-dark: #8A6F1A;
+  --color-rust: #D97757;
+  --color-rust-dark: #8C3D1F;
 
   /* Surface tints for cards / banners — no harsh shadows; just slight value
      shifts. Western aesthetic = paper textures, not Material. */

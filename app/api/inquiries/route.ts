@@ -101,22 +101,41 @@ export async function POST(request: Request) {
   }
 }
 
+// Extract a single labelled field ("State: TX", "Monthly Volume: 200 lb") out of
+// the structured Notes payload that /api/wholesale/signup writes. Falls back to
+// empty string when not present — wholesale rows have no canonical State column
+// today so this is the only reliable read path until a schema migration.
+function readWholesaleField(notes: string | undefined | null, label: string): string {
+  if (!notes) return '';
+  const re = new RegExp(`^${label}:\\s*(.+)$`, 'm');
+  const m = String(notes).match(re);
+  return m ? m[1].trim() : '';
+}
+
 export async function GET() {
   try {
     const inquiries = await getAllRecords(TABLES.INQUIRIES);
-    
-    // Fetch rancher details and normalize field names
+
+    // Fetch rancher details and normalize field names. Wholesale rows have
+    // no Rancher ID — their Ranch Name field is co-opted to store the
+    // applicant's business name. The matchedRancherIds field (newline-
+    // delimited string) is set by admin when they match the buyer to
+    // ranchers — those IDs hydrate into matched_ranchers[].
     const inquiriesWithRanchers = await Promise.all(
       inquiries.map(async (inquiry: any) => {
         const rancherId = inquiry['Rancher ID'];
+        const interestType = inquiry['Interest Type'] || '';
+        const isWholesale = interestType === 'Wholesale';
+
+        // For retail/standard inquiries — hydrate the linked rancher row.
         let rancherData = {
           ranch_name: 'Unknown',
           operator_name: 'Unknown',
           email: '',
           state: '',
         };
-        
-        if (rancherId) {
+
+        if (rancherId && !isWholesale) {
           try {
             const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
             rancherData = {
@@ -128,27 +147,68 @@ export async function GET() {
           } catch (err) {
             console.log(`Could not fetch rancher ${rancherId}:`, err);
           }
+        } else if (isWholesale) {
+          // Wholesale rows: Ranch Name field stores the business name. Surface
+          // it so the admin queue can render "Acme Butchery" without the
+          // confusing "Unknown" rancher fallback.
+          rancherData = {
+            ranch_name: inquiry['Ranch Name'] || '',
+            operator_name: inquiry['Consumer Name'] || '',
+            email: '',
+            state: readWholesaleField(inquiry['Notes'], 'State'),
+          };
         }
-        
-        // Transform Airtable field names to snake_case for frontend
+
+        // Wholesale-matched ranchers are stored as a newline-delimited list
+        // of record IDs in the "Matched Ranchers" long-text field (schema
+        // addition flagged for ops). Best-effort hydration so the admin can
+        // see who got pushed without an extra round-trip.
+        let matchedRanchers: { id: string; ranch_name: string; operator_name: string; state: string }[] = [];
+        const matchedIdsRaw = inquiry['Matched Rancher IDs'] || '';
+        if (isWholesale && matchedIdsRaw) {
+          const ids = String(matchedIdsRaw)
+            .split(/[\n,]/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+          matchedRanchers = await Promise.all(
+            ids.map(async (rid) => {
+              try {
+                const r: any = await getRecordById(TABLES.RANCHERS, rid);
+                return {
+                  id: rid,
+                  ranch_name: r['Ranch Name'] || '',
+                  operator_name: r['Operator Name'] || '',
+                  state: r['State'] || '',
+                };
+              } catch {
+                return { id: rid, ranch_name: '', operator_name: '', state: '' };
+              }
+            }),
+          );
+        }
+
         return {
           id: inquiry.id,
           consumer_name: inquiry['Consumer Name'] || '',
           consumer_email: inquiry['Consumer Email'] || '',
           consumer_phone: inquiry['Consumer Phone'] || '',
           message: inquiry['Message'] || '',
-          interest_type: inquiry['Interest Type'] || '',
+          interest_type: interestType,
           status: inquiry['Status'] || 'Pending',
           sale_amount: inquiry['Sale Amount'] || 0,
           commission_amount: inquiry['Commission Amount'] || 0,
           commission_paid: inquiry['Commission Paid'] || false,
           notes: inquiry['Notes'] || null,
           created_at: inquiry['Created'] || new Date().toISOString(),
+          status_changed_at: inquiry['Status Changed At'] || null,
+          business_name: isWholesale ? (inquiry['Ranch Name'] || '') : '',
+          buyer_state: isWholesale ? readWholesaleField(inquiry['Notes'], 'State') : '',
+          matched_ranchers: matchedRanchers,
           ranchers: rancherData,
         };
       })
     );
-    
+
     return NextResponse.json(inquiriesWithRanchers);
   } catch (error: any) {
     console.error('API error fetching inquiries:', error);

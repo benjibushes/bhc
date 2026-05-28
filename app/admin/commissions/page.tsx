@@ -28,6 +28,16 @@ export default function CommissionsPage() {
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [filterMonth, setFilterMonth] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
+  // P1 audit D-4: replace window.prompt() with an inline modal so mobile users
+  // and non-mainstream browsers get the same UX, and so the input is validated
+  // before the request fires.
+  const [adjustModal, setAdjustModal] = useState<{
+    id: string;
+    currentAmount: number;
+    newAmount: string;
+    reason: string;
+  } | null>(null);
+  const [adjustLoading, setAdjustLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -84,31 +94,37 @@ export default function CommissionsPage() {
     }
   };
 
-  const adjustCommission = async (id: string, currentAmount: number) => {
-    const input = prompt(`Current commission: $${currentAmount.toFixed(2)}\n\nNew amount (USD):`, currentAmount.toFixed(2));
-    if (input === null) return;
-    const amount = parseFloat(input);
+  const openAdjustModal = (id: string, currentAmount: number) => {
+    setAdjustModal({ id, currentAmount, newAmount: currentAmount.toFixed(2), reason: '' });
+  };
+
+  const submitAdjustCommission = async () => {
+    if (!adjustModal) return;
+    const amount = parseFloat(adjustModal.newAmount);
     if (isNaN(amount) || amount < 0) {
       toast.error('Enter a valid amount');
       return;
     }
-    const reason = prompt('Reason for adjustment (optional, logged in referral notes + Telegram):') || '';
+    setAdjustLoading(true);
     try {
-      const res = await fetch(`/api/admin/referrals/${id}/adjust-commission`, {
+      const res = await fetch(`/api/admin/referrals/${adjustModal.id}/adjust-commission`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commissionDue: amount, reason }),
+        body: JSON.stringify({ commissionDue: amount, reason: adjustModal.reason }),
       });
       const data = await res.json();
       if (!res.ok) {
         toast.error('Adjustment failed', data.error);
+        setAdjustLoading(false);
         return;
       }
       toast.success('Commission adjusted', `$${data.oldAmount.toFixed(2)} → $${data.newAmount.toFixed(2)}`);
+      setAdjustModal(null);
       await load();
     } catch (e: any) {
       toast.error('Network error', e?.message);
     }
+    setAdjustLoading(false);
   };
 
   const months = [...new Set(
@@ -263,7 +279,7 @@ export default function CommissionsPage() {
                               {ref.commission_paid ? 'Paid' : 'Mark Paid'}
                             </button>
                             <button
-                              onClick={() => adjustCommission(ref.id, ref.commission_due || 0)}
+                              onClick={() => openAdjustModal(ref.id, ref.commission_due || 0)}
                               title="Adjust commission amount"
                               className="px-2 py-1 text-xs border border-[#A7A29A] hover:bg-[#F4F1EC]"
                             >
@@ -281,6 +297,58 @@ export default function CommissionsPage() {
               </div>
             )}
           </div>
+
+          {/* P1 audit D-4: adjust-commission modal — replaces window.prompt */}
+          {adjustModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white max-w-sm w-full p-6 space-y-4">
+                <h3 className="font-[family-name:var(--font-serif)] text-xl">Adjust commission</h3>
+                <p className="text-sm text-[#6B4F3F]">
+                  Current: <strong>${adjustModal.currentAmount.toFixed(2)}</strong>
+                </p>
+                <label className="block text-sm">
+                  <span className="text-[#6B4F3F]">New amount (USD)</span>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="text-lg">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={adjustModal.newAmount}
+                      onChange={(e) => setAdjustModal({ ...adjustModal, newAmount: e.target.value })}
+                      autoFocus
+                      className="flex-1 px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC]"
+                    />
+                  </div>
+                </label>
+                <label className="block text-sm">
+                  <span className="text-[#6B4F3F]">Reason (optional, logged to notes + Telegram)</span>
+                  <textarea
+                    value={adjustModal.reason}
+                    onChange={(e) => setAdjustModal({ ...adjustModal, reason: e.target.value })}
+                    rows={2}
+                    className="mt-1 w-full px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC]"
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitAdjustCommission}
+                    disabled={adjustLoading}
+                    className="flex-1 px-4 py-2 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium hover:bg-[#2A2A2A] disabled:opacity-50"
+                  >
+                    {adjustLoading ? 'Adjusting…' : 'Adjust'}
+                  </button>
+                  <button
+                    onClick={() => setAdjustModal(null)}
+                    disabled={adjustLoading}
+                    className="flex-1 px-4 py-2 border border-[#A7A29A] text-sm hover:bg-[#A7A29A] disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </Container>
       </main>
     </AdminAuthGuard>

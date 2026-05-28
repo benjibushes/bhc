@@ -14,9 +14,10 @@ import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { buildCronStatusCard, pauseCron, resumeCron } from '@/lib/cronIntrospection';
+import { tierFor, commissionRateForTier, TIERS } from '@/lib/tiers';
 import jwt from 'jsonwebtoken';
 
-import { JWT_SECRET } from '@/lib/secrets';
+import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 
@@ -377,13 +378,100 @@ Tap a button to fill in that field:`;
 
 export const maxDuration = 60;
 
-// Idempotency Set for Telegram update_ids. Module-level Map survives within
-// a single Vercel function instance; cold starts reset. Good enough for the
-// common case (Telegram redelivers within seconds, not across instances).
-// Audit finding 2026-05-20 #2.
+// Idempotency for Telegram update_ids. H-5 audit fix: prior version was a
+// module-level Map per Vercel function instance. Vercel horizontal scale-out
+// during traffic bursts could leave two instances each processing the same
+// update_id concurrently (Map writes don't cross instances). Rare in practice
+// but the failure mode was a real double-fire of side effects.
+//
+// Now: Upstash Redis SETNX w/ 5min TTL. Cross-instance safe. Falls back to
+// the in-memory Map when Redis isn't configured (dev) OR Redis throws.
+//
+// P4-G audit fix: prior fail-open on Redis errors was acceptable for low-risk
+// dedup (text-reply ack) but DANGEROUS for high-risk mutations (approve_,
+// reject_, assignto_, ronboard_, mass-send buttons). When Upstash 5xx'd, a
+// double-tap on "Approve" sailed past dedup → duplicate Airtable rows + double
+// intro emails. Same with mass-send buttons (rcheckin_send, blitz_send,
+// bulkonboard_send) → DOUBLE the bulk emails.
+//
+// New behavior:
+//   - claimCallback() returns 'claimed' | 'duplicate' | 'redis_down'
+//   - For low-risk ops (update_id dedup), 'redis_down' falls back to in-memory
+//     Map (best-effort within instance; cross-instance dupes leak but the only
+//     side-effect is a re-processed update which has its own idempotency)
+//   - For high-risk mutations, 'redis_down' fails CLOSED (returns 'duplicate'
+//     equivalent) when Redis has been degraded within the last 5min — better
+//     to refuse a legit action than double-fire intros. The user sees
+//     "Redis degraded — retry in a moment" and operator gets ONE alert.
 const _seenUpdateIds = new Map<number, number>();
 const UPDATE_ID_TTL_MS = 5 * 60_000;
-function _markUpdateSeen(id: number): boolean {
+const UPDATE_ID_TTL_SECONDS = 300;
+
+// In-memory mutation callback dedup. Map<queryId, claimed-at-ts>.
+// Only effective within a single instance; cross-instance dupes are caught by
+// Redis. When Redis is down, this is the only line of defense — better than
+// nothing for the same-instance retry case (Telegram redelivers to the same
+// region/instance with high probability).
+const _claimedMutationCallbacks = new Map<string, number>();
+const MUTATION_CALLBACK_TTL_MS = 5 * 60_000;
+const MUTATION_CALLBACK_TTL_SECONDS = 300;
+
+// Redis health tracker. Once an error is observed, the next 5 minutes of
+// requests are considered "degraded". Mutations fail-closed during that window.
+// An operator alert is sent at most once per degraded window (re-armed when
+// the window expires without further errors).
+const REDIS_DEGRADED_WINDOW_MS = 5 * 60_000;
+let _redisLastErrorAt = 0;
+let _redisDegradedAlertSentAt = 0;
+
+function recordRedisError(op: string, e: any) {
+  _redisLastErrorAt = Date.now();
+  console.error(`[telegram] Redis error in ${op}:`, e?.message || e);
+  // Fire-and-forget operator alert. At most once per degraded window so a
+  // sustained Upstash outage doesn't spam the chat. Best-effort: if the
+  // alert itself fails we just swallow it.
+  void alertOperatorIfNewlyDegraded(op);
+}
+
+function isRedisDegraded(): boolean {
+  return Date.now() - _redisLastErrorAt < REDIS_DEGRADED_WINDOW_MS;
+}
+
+async function alertOperatorIfNewlyDegraded(op: string) {
+  const now = Date.now();
+  // Re-arm if last alert was outside the current degraded window.
+  if (now - _redisDegradedAlertSentAt < REDIS_DEGRADED_WINDOW_MS) return;
+  _redisDegradedAlertSentAt = now;
+  if (!TELEGRAM_ADMIN_CHAT_ID) return;
+  try {
+    await sendTelegramMessage(
+      String(TELEGRAM_ADMIN_CHAT_ID),
+      `⚠️ <b>Redis degraded</b> — Telegram mutations fail-closed for 5 min.\n\nFailing op: <code>${op}</code>\n\nNew /approve, /reject, /assignto, /ronboard, mass-send taps will be refused until Redis recovers (auto-clears after 5 min idle).`
+    );
+  } catch {
+    // Even the alert path can fail — that's fine, console.error already logged.
+  }
+}
+
+let _telegramRedis: any | null = null;
+let _telegramRedisInit = false;
+async function getTelegramRedis(): Promise<any | null> {
+  if (_telegramRedisInit) return _telegramRedis;
+  _telegramRedisInit = true;
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  try {
+    const { Redis } = await import('@upstash/redis');
+    _telegramRedis = new Redis({ url, token });
+  } catch (e) {
+    console.error('[telegram] Redis init failed:', e);
+    _telegramRedis = null;
+  }
+  return _telegramRedis;
+}
+
+function _markUpdateSeenMemory(id: number): boolean {
   // Prune old entries opportunistically
   const cutoff = Date.now() - UPDATE_ID_TTL_MS;
   for (const [k, ts] of _seenUpdateIds.entries()) {
@@ -394,21 +482,132 @@ function _markUpdateSeen(id: number): boolean {
   return true;
 }
 
+function _claimMutationMemory(queryId: string): boolean {
+  // Prune old entries opportunistically.
+  const cutoff = Date.now() - MUTATION_CALLBACK_TTL_MS;
+  for (const [k, ts] of _claimedMutationCallbacks.entries()) {
+    if (ts < cutoff) _claimedMutationCallbacks.delete(k);
+  }
+  if (_claimedMutationCallbacks.has(queryId)) return false;
+  _claimedMutationCallbacks.set(queryId, Date.now());
+  return true;
+}
+
+// Centralized callback claim helper. Wraps Redis SETNX with a try/catch and
+// falls back to the in-memory Map on Redis error. When `failClosedOnDegraded`
+// is true (set for HIGH-RISK mutations: approve_, reject_, assignto_, ronboard_,
+// mass-send buttons), a Redis error during the current degraded window returns
+// `false` (treat as duplicate) to prevent double-fire. Otherwise (low-risk ops),
+// Redis error falls back to the in-memory Map (cross-instance dupes possible
+// but contained).
+//
+// Returns true → claim succeeded (first sight, proceed).
+// Returns false → duplicate (already claimed) OR fail-closed during degradation.
+async function claimCallback(
+  key: string,
+  ttlSeconds: number,
+  failClosedOnDegraded: boolean,
+): Promise<boolean> {
+  const redis = await getTelegramRedis();
+  if (!redis) {
+    // Redis not configured (dev or missing env) — in-memory is best we can do.
+    return _claimMutationMemory(key);
+  }
+  try {
+    const result = await redis.set(`bhc:telegram:cb:${key}`, '1', {
+      nx: true,
+      ex: ttlSeconds,
+    });
+    return result === 'OK';
+  } catch (e: any) {
+    recordRedisError('claimCallback', e);
+    // Fail-closed mode for high-risk mutations during a Redis outage:
+    // pretend it's a duplicate so the second tap can't slip through.
+    // The first tap also returns false here (it errored) — but Telegram's
+    // built-in retry will redeliver the update; with the in-memory Map
+    // catching the same-instance redelivery, we get best-effort dedup.
+    // Worst case: legit single tap is refused → operator retries → succeeds
+    // on Redis recovery. Better than double-firing the intro.
+    if (failClosedOnDegraded && isRedisDegraded()) {
+      // Still record the local claim so the second in-process tap is also
+      // refused. The first tap will see in-memory miss + still be refused;
+      // operator re-taps after Redis recovers.
+      _claimMutationMemory(key);
+      return false;
+    }
+    // Low-risk fallback: in-memory dedup. Cross-instance dupes possible but
+    // contained by other guards (Airtable status checks, etc.).
+    return _claimMutationMemory(key);
+  }
+}
+
+// H-6 audit fix: inbound command rate limit. Pre-fix, a hijacked admin chat
+// OR a runaway local script could fire /bulkfire / /broadcast / /forcematch
+// in rapid succession with no throttle. Now: 30 commands/minute per chat,
+// rejected w/ a friendly slow-down message past the cap. In-memory Map
+// is fine here — even with horizontal scale-out, 60 commands/minute (worst
+// case if both instances allow full quota) is still well below abuse range.
+const _commandRateLimit = new Map<string, number[]>();
+const COMMAND_LIMIT_PER_MINUTE = 30;
+const COMMAND_LIMIT_WINDOW_MS = 60_000;
+function checkCommandRateLimit(chatId: string): boolean {
+  const now = Date.now();
+  const timestamps = (_commandRateLimit.get(chatId) || []).filter(t => now - t < COMMAND_LIMIT_WINDOW_MS);
+  if (timestamps.length >= COMMAND_LIMIT_PER_MINUTE) {
+    _commandRateLimit.set(chatId, timestamps);
+    return false;
+  }
+  timestamps.push(now);
+  _commandRateLimit.set(chatId, timestamps);
+  return true;
+}
+
+async function markUpdateSeen(id: number): Promise<boolean> {
+  const redis = await getTelegramRedis();
+  if (!redis) {
+    return _markUpdateSeenMemory(id);
+  }
+  try {
+    // SETNX semantics via NX flag: returns 'OK' when key was set (first sight),
+    // null when key already existed (duplicate). Upstash JS client returns 'OK'
+    // for success and null for the not-set-because-exists case.
+    const result = await redis.set(`bhc:telegram:update:${id}`, '1', {
+      nx: true,
+      ex: UPDATE_ID_TTL_SECONDS,
+    });
+    return result === 'OK';
+  } catch (e: any) {
+    // P4-G fix: record degraded state so subsequent mutation callbacks can
+    // fail-closed within the same window. update_id dedup itself stays
+    // fail-open (low-risk: redelivered updates have their own per-action
+    // idempotency guards downstream) — but flagging the outage here means
+    // the FIRST mutation tap that lands while Upstash is sick will refuse
+    // rather than double-fire.
+    recordRedisError('markUpdateSeen', e);
+    return _markUpdateSeenMemory(id);
+  }
+}
+
 export async function POST(request: Request) {
   // Signature verification. Telegram supports X-Telegram-Bot-Api-Secret-Token.
   // Audit finding 2026-05-20 #1 — without this, anyone can POST forged
-  // callback_query and trigger one-tap admin actions. Gracefully degrades
-  // when secret is unset (warn in prod) to avoid bricking the bot during
-  // rollout.
-  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (expectedSecret) {
-    const provided = request.headers.get('x-telegram-bot-api-secret-token');
-    if (provided !== expectedSecret) {
-      console.warn('[telegram-webhook] signature mismatch — rejecting');
-      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  // callback_query and trigger one-tap admin actions.
+  // 2026-05-27 P0 audit G-2: hard-require in production. Previously
+  // graceful-degraded if env var unset → accepted requests in prod with
+  // NO signature check. Now: fail-closed in production. Dev still warns
+  // + accepts for local testing.
+  const headerSecret = request.headers.get('x-telegram-bot-api-secret-token') || '';
+  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET || '';
+
+  if (!expectedSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[telegram-webhook] TELEGRAM_WEBHOOK_SECRET unset in production — refusing request');
+      return NextResponse.json({ error: 'webhook secret not configured' }, { status: 401 });
     }
-  } else if (process.env.NODE_ENV === 'production') {
-    console.warn('[telegram-webhook] TELEGRAM_WEBHOOK_SECRET unset in prod — webhook is unauthenticated');
+    console.warn('[telegram-webhook] TELEGRAM_WEBHOOK_SECRET unset (dev mode — accepting)');
+  } else if (headerSecret !== expectedSecret) {
+    console.warn('[telegram-webhook] webhook secret mismatch — refusing');
+    return NextResponse.json({ error: 'invalid webhook secret' }, { status: 401 });
   }
 
   let update: any;
@@ -419,10 +618,37 @@ export async function POST(request: Request) {
   }
 
   // Idempotency — Telegram redelivers on any 5xx or timeout. Drop dupes.
+  // H-5 audit fix: markUpdateSeen now goes through Redis SETNX when available
+  // so two Vercel function instances can't both process the same update_id.
   if (typeof update?.update_id === 'number') {
-    if (!_markUpdateSeen(update.update_id)) {
+    if (!(await markUpdateSeen(update.update_id))) {
       return NextResponse.json({ ok: true, deduped: true });
     }
+  }
+
+  // ─── Admin chat ID gate (added 2026-05-27, P0 audit G-1) ─────────────────
+  // Defense-in-depth: webhook secret was the only barrier and degraded
+  // gracefully if unset. If the secret ever leaked or env var rotated
+  // incorrectly, ANY chat could run /comp, /casestudy close, /blast,
+  // /broadcast, /pausecron, /forcematch, /bulkfire — full ops compromise.
+  // Now: only the configured admin chat is allowed past this point.
+  // Non-admin chats get a silent no-op (don't reveal command surface).
+  // Fail-closed in production if env unset; dev still allows for testing.
+  const incomingChatId = String(
+    update?.message?.chat?.id ||
+    update?.callback_query?.message?.chat?.id ||
+    update?.edited_message?.chat?.id ||
+    ''
+  );
+  if (TELEGRAM_ADMIN_CHAT_ID) {
+    if (incomingChatId && incomingChatId !== String(TELEGRAM_ADMIN_CHAT_ID)) {
+      console.warn(`[telegram] non-admin chat ${incomingChatId} attempted command; silently ignoring`);
+      return NextResponse.json({ ok: true });
+    }
+  } else if (process.env.NODE_ENV === 'production') {
+    // Fail-closed in prod — refuse rather than accept unauthenticated commands.
+    console.error('[telegram] TELEGRAM_ADMIN_CHAT_ID unset in production — refusing all commands');
+    return NextResponse.json({ ok: true });
   }
 
   // Process the update and respond — Vercel kills the function after response
@@ -455,6 +681,76 @@ async function processUpdate(update: any) {
 
       const [action, referralId] = callbackData.split('_', 2);
       const fullReferralId = callbackData.substring(action.length + 1);
+
+      // ─── P4-G HIGH-RISK callback dedup ──────────────────────────────────
+      // Existing per-handler guards use Airtable status checks ("already
+      // approved? skip"). Those work for SEQUENTIAL double-taps but lose
+      // the race when two taps land in flight before the first Airtable
+      // write commits: BOTH read the pre-state, BOTH proceed, BOTH write →
+      // duplicate Airtable rows + double intro emails.
+      //
+      // Solution: claim a Redis SETNX key on the Telegram callback queryId
+      // (which is unique per button press). Telegram redelivers the SAME
+      // queryId on its own retry, AND a frantic operator double-tap fires
+      // the same queryId. SETNX semantics ensure only the first attempt
+      // claims it; the rest see 'duplicate' and short-circuit.
+      //
+      // Falls back to an in-memory Map within a single Vercel instance when
+      // Redis errors. During a sustained Redis outage (degraded window),
+      // mutations FAIL CLOSED — we'd rather refuse a legit tap than
+      // double-fire an intro. Operator gets ⚠️ Redis degraded alert.
+      const HIGH_RISK_ACTIONS = new Set([
+        'matchfire',     // creates referral + double-side intro emails
+        'approve',       // creates intro send + capacity INCR
+        'reject',        // closes referral + capacity DECR + buyer restore
+        'assignto',      // reassign + double-side intro emails + capacity move
+        'capprove',      // consumer approval + welcome email + matching/suggest
+        'creject',       // consumer rejection
+        'markpaid',      // marks commission paid + receipt email
+        'thankrancher',  // thank-you email
+        'nudgerancher',  // stalled-deal nudge email
+        'closelost',     // close-lost + capacity DECR + buyer restore + audit
+        'hotcontact',    // notes append
+        'hotemail',      // AI draft + Airtable write
+        'ronboard',      // bulk onboarding doc send
+        'chasend',       // chase-up email + Airtable write
+        'draftfollowup', // send/schedule/discard draft email
+      ]);
+      // Mutation callbackData equals-string set (parser-based action above
+      // doesn't catch single-word callbacks like 'rcheckin_send' which
+      // already have their own claim — covered separately below). Includes
+      // rverify_, rgolive_, rcallcompl_ which use startsWith dispatch
+      // farther down. Handled via prefix check.
+      const HIGH_RISK_PREFIXES = [
+        'rverify_',
+        'rgolive_',
+        'rcallcompl_',
+        'spgolive',  // not a prefix but unique value, no-op for matchers
+        'clcheck_',
+        'selfblock_',
+        'firstweek_',
+        'bcsend_',
+      ];
+      const isHighRiskCallback =
+        HIGH_RISK_ACTIONS.has(action) ||
+        HIGH_RISK_PREFIXES.some((p) => callbackData.startsWith(p)) ||
+        callbackData === 'spgolive';
+      if (isHighRiskCallback) {
+        const claimed = await claimCallback(
+          `mutate:${queryId}`,
+          MUTATION_CALLBACK_TTL_SECONDS,
+          /* failClosedOnDegraded */ true,
+        );
+        if (!claimed) {
+          await answerCallbackQuery(
+            queryId,
+            isRedisDegraded()
+              ? '⚠️ Redis degraded — retry in a moment'
+              : 'Already processed',
+          );
+          return NextResponse.json({ ok: true, deduped: true });
+        }
+      }
 
       // ─── /match Direct routing actions ──────────────────────────────────
       // Fires when operator taps "✅ Fire intro now" or "❌ Cancel" on a
@@ -529,9 +825,22 @@ async function processUpdate(update: any) {
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
           const buyerName = buyer['Full Name'] || 'Buyer';
           if (rancherEmail) {
+            // tier_v2 ranchers route deposits through Stripe Connect direct
+            // charge at /checkout/<refId>/deposit, which requires the
+            // bhc-member-auth cookie. Wrap the deposit deep-link in a
+            // magic-link verify URL. Legacy ranchers stay on the tap-any-tier
+            // Payment Link copy (depositMagicLinkUrl stays undefined).
+            const buyerEmailAddr = buyer['Email'] || '';
+            const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+            let depositMagicLinkUrl: string | undefined;
+            if (pricingModel === 'tier_v2' && buyer.id && buyerEmailAddr) {
+              const magicToken = generateMemberLoginToken(buyer.id, buyerEmailAddr);
+              const nextPath = `/checkout/${refRecord.id}/deposit`;
+              depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+            }
             await sendBuyerIntroNotification({
               firstName: (buyerName.split(' ')[0]) || 'there',
-              email: buyer['Email'] || '',
+              email: buyerEmailAddr,
               rancherName,
               rancherEmail,
               rancherPhone: rancher['Phone'] || '',
@@ -544,6 +853,7 @@ async function processUpdate(update: any) {
               wholePrice: Number(rancher['Whole Price']) || undefined,
               wholeLbs: rancher['Whole lbs'] || '',
               nextProcessingDate: rancher['Next Processing Date'] || '',
+              depositMagicLinkUrl,
             }).catch((e: any) => console.error('[match] buyer intro failed:', e?.message));
             await sendEmail({
               to: rancherEmail,
@@ -703,6 +1013,20 @@ async function processUpdate(update: any) {
               );
               const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
               const buyerFirstName = (referral['Buyer Name'] || '').split(' ')[0] || 'there';
+
+              // tier_v2 ranchers route deposits through Stripe Connect direct
+              // charge at /checkout/<refId>/deposit, which requires the
+              // bhc-member-auth cookie. Wrap the deposit deep-link in a
+              // magic-link verify URL. Legacy ranchers stay on the tap-any-
+              // tier Payment Link copy (depositMagicLinkUrl stays undefined).
+              const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+              let depositMagicLinkUrl: string | undefined;
+              if (pricingModel === 'tier_v2') {
+                const magicToken = generateMemberLoginToken(consumerId, buyerEmail);
+                const nextPath = `/checkout/${fullReferralId}/deposit`;
+                depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+              }
+
               await sendBuyerIntroNotification({
                 firstName: buyerFirstName,
                 email: buyerEmail,
@@ -711,6 +1035,7 @@ async function processUpdate(update: any) {
                 rancherPhone,
                 rancherSlug: rancher['Slug'] || '',
                 loginUrl: buyerLoginUrl,
+                depositMagicLinkUrl,
               });
             } catch (e) {
               console.error('Error sending buyer intro notification:', e);
@@ -745,10 +1070,34 @@ async function processUpdate(update: any) {
         try {
           const referral: any = await getRecordById(TABLES.REFERRALS, fullReferralId);
 
+          // Terminal-status guard (mirrors closelost L1464 + clcheck_lost L2665).
+          // Without this, double-tap on an already-closed referral re-runs the
+          // decrement path → capacity underflow (DECR clamps at 0 but the
+          // buyer-restore + audit re-fire). Short-circuit on terminal status.
+          const currentStatus = String(referral?.['Status'] || '');
+          if (currentStatus === 'Closed Lost' || currentStatus === 'Closed Won' || currentStatus === 'Rejected') {
+            await answerCallbackQuery(queryId, `Already ${currentStatus}`);
+            return NextResponse.json({ ok: true });
+          }
+
           await updateRecord(TABLES.REFERRALS, fullReferralId, {
             'Status': 'Closed Lost',
             'Closed At': new Date().toISOString(),
           });
+
+          // F-2 audit fix: restore buyer to READY if no other active referrals.
+          // Without this, rejecting via Telegram leaves Buyer Stage=MATCHED
+          // forever → stuck-buyer-recovery cron skips them (only retries READY).
+          try {
+            const buyerLinks = referral['Buyer'] || [];
+            const buyerLinkId = Array.isArray(buyerLinks) ? buyerLinks[0] : null;
+            if (buyerLinkId) {
+              const { restoreBuyerAfterClosedLost } = await import('@/lib/contracts/rancher');
+              await restoreBuyerAfterClosedLost(buyerLinkId, fullReferralId);
+            }
+          } catch (restoreErr: any) {
+            console.warn('[telegram reject] buyer restore failed:', restoreErr?.message);
+          }
 
           // MISMATCH FIX: use atomic Redis DECR (lib/rancherCapacity) so
           // concurrent reject/closelost clicks on the same rancher don't
@@ -829,6 +1178,18 @@ async function processUpdate(update: any) {
 
         try {
           const referral: any = await getRecordById(TABLES.REFERRALS, refId);
+
+          // Idempotency guard: double-tap on the SAME target rancher previously
+          // re-fired the intro emails to both sides AND double-INCRed capacity
+          // on the new rancher (old-side ACTIVE_REF guard existed, new-side
+          // INCR was unconditional). Short-circuit when already at the target.
+          const prevStatusForAssign = String(referral?.['Status'] || '');
+          const prevRancherIdForAssign =
+            referral?.['Rancher']?.[0] || referral?.['Suggested Rancher']?.[0] || null;
+          if (prevStatusForAssign === 'Intro Sent' && prevRancherIdForAssign === newRancherId) {
+            await answerCallbackQuery(queryId, 'Already assigned');
+            return NextResponse.json({ ok: true });
+          }
 
           const oldRancherId = referral['Rancher']?.[0] || referral['Suggested Rancher']?.[0];
           // Atomic decrement on the OLD rancher only if the referral was in
@@ -918,6 +1279,20 @@ async function processUpdate(update: any) {
               );
               const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
               const buyerFirstName = (referral['Buyer Name'] || '').split(' ')[0] || 'there';
+
+              // tier_v2 ranchers route deposits through Stripe Connect direct
+              // charge at /checkout/<refId>/deposit, which requires the
+              // bhc-member-auth cookie. Wrap the deposit deep-link in a
+              // magic-link verify URL. Legacy ranchers stay on the tap-any-
+              // tier Payment Link copy (depositMagicLinkUrl stays undefined).
+              const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+              let depositMagicLinkUrl: string | undefined;
+              if (pricingModel === 'tier_v2') {
+                const magicToken = generateMemberLoginToken(buyerConsumerId, buyerEmail);
+                const nextPath = `/checkout/${refId}/deposit`;
+                depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+              }
+
               await sendBuyerIntroNotification({
                 firstName: buyerFirstName,
                 email: buyerEmail,
@@ -926,6 +1301,7 @@ async function processUpdate(update: any) {
                 rancherPhone: rancher['Phone'] || '',
                 rancherSlug: rancher['Slug'] || '',
                 loginUrl: buyerLoginUrl,
+                depositMagicLinkUrl,
               });
             } catch (e) {
               console.error('Error sending buyer intro on reassignment:', e);
@@ -1328,6 +1704,19 @@ Source: ${c['Source'] || 'organic'}`;
             result: { previousStatus, newStatus: 'Closed Lost' },
             reverseAction: reverse,
           });
+          // F-2 audit fix: restore buyer to READY if no other active referrals.
+          // Closelost via Telegram bypassed the contract; pre-fix the buyer
+          // sat in MATCHED forever and stuck-buyer-recovery cron skipped them.
+          try {
+            const buyerLinks = ref['Buyer'] || [];
+            const buyerLinkId = Array.isArray(buyerLinks) ? buyerLinks[0] : null;
+            if (buyerLinkId) {
+              const { restoreBuyerAfterClosedLost } = await import('@/lib/contracts/rancher');
+              await restoreBuyerAfterClosedLost(buyerLinkId, refId);
+            }
+          } catch (restoreErr: any) {
+            console.warn('[telegram closelost] buyer restore failed:', restoreErr?.message);
+          }
           // MISMATCH FIX: atomic Redis DECR same as reject path above —
           // protects against concurrent closelost clicks under-decrementing.
           if (Array.isArray(rancherIds) && rancherIds[0]) {
@@ -1428,6 +1817,16 @@ Output ONLY the email body. First line should be the subject line prefixed with 
         try {
           // Fetch rancher to include their call notes and capacity
           const rancher: any = await getRecordById(TABLES.RANCHERS, fullReferralId);
+
+          // Idempotency guard: double-tap previously re-sent the entire
+          // onboarding packet (Commission Agreement, Media Agreement, etc.).
+          // Skip when rancher has already progressed past Docs Sent.
+          const onb = String(rancher?.['Onboarding Status'] || '');
+          if (['Docs Sent', 'Agreement Signed', 'Live'].includes(onb)) {
+            await answerCallbackQuery(queryId, `Already ${onb}`);
+            return NextResponse.json({ ok: true });
+          }
+
           const res = await fetch(`${SITE_URL}/api/ranchers/${fullReferralId}/send-onboarding`, {
             method: 'POST',
             headers: {
@@ -1637,6 +2036,24 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
       else if (callbackData === 'rcheckin_send') {
         try {
+          // Mass-send dedup: double-tap previously DOUBLED the number of
+          // check-in emails (no per-rancher idempotency inside the loop).
+          // P4-G fix: route through claimCallback() so Redis errors are
+          // tracked + mutations fail-closed during a degraded window
+          // (prior version fell OPEN on Redis error → double-tap dupes).
+          const claimed = await claimCallback(
+            `cb-mass:${queryId}`,
+            600,
+            /* failClosedOnDegraded */ true,
+          );
+          if (!claimed) {
+            await answerCallbackQuery(
+              queryId,
+              isRedisDegraded() ? 'Already running (or Redis degraded — retry in a moment)' : 'Already running',
+            );
+            return NextResponse.json({ ok: true });
+          }
+
           await answerCallbackQuery(queryId, 'Sending check-in emails...');
 
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
@@ -1699,6 +2116,24 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
       else if (callbackData === 'blitz_send') {
         try {
+          // Mass-send dedup: double-tap previously DOUBLED the pipeline
+          // update emails. P4-G fix: route through claimCallback() so
+          // Redis errors are tracked + mutations fail-closed during a
+          // degraded window. Prior version fell OPEN on Redis errors →
+          // a flaky Upstash response would let a double-tap through.
+          const claimed = await claimCallback(
+            `cb-mass:${queryId}`,
+            600,
+            /* failClosedOnDegraded */ true,
+          );
+          if (!claimed) {
+            await answerCallbackQuery(
+              queryId,
+              isRedisDegraded() ? 'Already running (or Redis degraded — retry in a moment)' : 'Already running',
+            );
+            return NextResponse.json({ ok: true });
+          }
+
           await answerCallbackQuery(queryId, 'Sending pipeline update emails...');
 
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
@@ -1783,6 +2218,25 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
       else if (callbackData === 'bulkonboard_send') {
         try {
+          // Mass-send dedup: double-tap previously DOUBLED the onboarding
+          // packets (each rancher would get the Commission Agreement +
+          // Media Agreement + Info Packet twice). P4-G fix: route through
+          // claimCallback() so Redis errors are tracked + mutations fail-
+          // closed during a degraded window. Prior version fell OPEN on
+          // Redis errors → a flaky Upstash response could let dupes through.
+          const claimed = await claimCallback(
+            `cb-mass:${queryId}`,
+            600,
+            /* failClosedOnDegraded */ true,
+          );
+          if (!claimed) {
+            await answerCallbackQuery(
+              queryId,
+              isRedisDegraded() ? 'Already running (or Redis degraded — retry in a moment)' : 'Already running',
+            );
+            return NextResponse.json({ ok: true });
+          }
+
           await answerCallbackQuery(queryId, 'Sending onboarding packages...');
 
           const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
@@ -1943,6 +2397,19 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
           const slug = rancher['Slug'] || '';
 
+          // Idempotency guard — refuse re-fire if already live.
+          // Without this, double-tap re-sends the launch email + re-runs the
+          // waitlist blast (could re-route waiting buyers a second time).
+          const currentStatus = String(rancher['Onboarding Status'] || '');
+          if (currentStatus === 'Live') {
+            await answerCallbackQuery(queryId, 'Already live');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ <b>${escHtml(session.rancherName)}</b> is already live. Skipping re-fire.`);
+            }
+            setupPageSessions.delete(chatId!);
+            return NextResponse.json({ ok: true });
+          }
+
           // Validate minimum content
           if (!slug) {
             await answerCallbackQuery(queryId, 'Set a URL slug first!');
@@ -1974,6 +2441,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           await updateRecord(TABLES.RANCHERS, session.rancherId, {
             'Page Live': true,
             'Onboarding Status': 'Live',
+            'Active Status': 'Active',
           });
           triggerLaunchWarmup(`telegram-spgolive:${session.rancherId}`);
           await logSpGolive({
@@ -1987,6 +2455,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           });
           await answerCallbackQuery(queryId, '🚀 Page is live!');
           const liveUrl = `${SITE_URL}/ranchers/${slug}`;
+
+          // Build tier-aware commission language
+          const rancherTier = tierFor(rancher);
+          const commissionLine = (() => {
+            if (rancherTier === 'pasture') return 'BuyHalfCow earns 7% commission on referred sales (per your Pasture tier).';
+            if (rancherTier === 'ranch') return 'BuyHalfCow earns 3% commission on referred sales (per your Ranch tier).';
+            if (rancherTier === 'operator') return 'No per-deal commission (per your Operator tier flat subscription).';
+            return 'Commission per your tier — see /rancher/billing for details.';
+          })();
 
           // Notify the rancher they're live
           const rancherEmail = rancher['Email'];
@@ -2007,7 +2484,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                   <li>Buyers in your area will see your page in our directory</li>
                   <li>When a buyer clicks to purchase, you'll get an email</li>
                   <li>We'll send you qualified leads directly via email</li>
-                  <li>BuyHalfCow earns 10% commission on referred sales</li>
+                  <li>${commissionLine}</li>
                 </ul>
                 <p>Share your page: <a href="${liveUrl}">${liveUrl}</a></p>
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
@@ -2092,9 +2569,16 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           const before = await getRecordById(TABLES.RANCHERS, rancherId) as any;
           const previousOnboarding = before?.['Onboarding Status'] ?? null;
           const previousVerification = before?.['Verification Status'] ?? null;
+          // Capture Active Status + Page Live too in case the rverify flip
+          // also auto-promotes the rancher to live (see readyToGoLiveVerify
+          // below). The reverse needs to restore all four fields.
+          const previousActiveStatusVerify = before?.['Active Status'] ?? null;
+          const previousPageLiveVerify = before?.['Page Live'] ?? null;
           const reverse = buildAirtableUpdateReverse(TABLES.RANCHERS, rancherId, {
             'Onboarding Status': previousOnboarding,
             'Verification Status': previousVerification,
+            'Active Status': previousActiveStatusVerify,
+            'Page Live': previousPageLiveVerify,
           });
           // Set BOTH fields. Prior version only flipped Onboarding Status,
           // leaving Verification Status='Prospect' which contradicts
@@ -2102,17 +2586,52 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           // flip together. batch-approve gates on Onboarding Status so
           // routing worked, but other reads (admin dashboards, public
           // page, audit log) saw inconsistent state.
-          await updateRecord(TABLES.RANCHERS, rancherId, {
+          //
+          // Auto-go-live: if the rancher's page is already content-complete
+          // (slug + at least one price + at least one payment link), flip
+          // Active='Active' + Page Live=true + Onboarding='Live' in the same
+          // write and fire launch warmup. Mirrors the sign-agreement
+          // readyToGoLive path so the "Verify Now & Unlock Routing" button
+          // delivers on its promise. Otherwise (page incomplete) we still
+          // need the batch-approve cron OR a manual rgolive tap.
+          const hasSlugVerify = !!(before?.['Slug']);
+          const hasPriceVerify = !!(
+            before?.['Quarter Price'] ||
+            before?.['Half Price'] ||
+            before?.['Whole Price']
+          );
+          const hasPaymentLinkVerify = !!(
+            before?.['Quarter Payment Link'] ||
+            before?.['Half Payment Link'] ||
+            before?.['Whole Payment Link']
+          );
+          const readyToGoLiveVerify = hasSlugVerify && hasPriceVerify && hasPaymentLinkVerify;
+
+          const verifyUpdate: Record<string, unknown> = {
             'Onboarding Status': 'Verification Complete',
             'Verification Status': 'Verified',
-          });
+          };
+          if (readyToGoLiveVerify) {
+            verifyUpdate['Onboarding Status'] = 'Live';
+            verifyUpdate['Active Status'] = 'Active';
+            verifyUpdate['Page Live'] = true;
+          }
+          await updateRecord(TABLES.RANCHERS, rancherId, verifyUpdate);
+
+          if (readyToGoLiveVerify) {
+            try {
+              triggerLaunchWarmup(`telegram-rverify:${rancherId}`);
+            } catch (warmErr: any) {
+              console.warn('[rverify] could not trigger launch warmup:', warmErr?.message);
+            }
+          }
           await logAuditEntry({
             actor: 'manual',
             tool: 'rverify',
             targetType: 'Rancher',
             targetId: rancherId,
             args: { callbackData },
-            result: { previousOnboarding, previousVerification, newOnboarding: 'Verification Complete', newVerification: 'Verified' },
+            result: { previousOnboarding, previousVerification, newOnboarding: readyToGoLiveVerify ? 'Live' : 'Verification Complete', newVerification: 'Verified', wentLive: readyToGoLiveVerify },
             reverseAction: reverse,
           });
           await answerCallbackQuery(queryId, '✅ Verification approved!');
@@ -2162,6 +2681,18 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           const slug = rancher['Slug'] || '';
           const rancherEmail = rancher['Email'];
 
+          // Idempotency guard — refuse re-fire if already live.
+          // Without this, double-tap re-sends the launch email + re-runs the
+          // waitlist blast (could re-route waiting buyers a second time).
+          const currentStatus = String(rancher['Onboarding Status'] || '');
+          if (currentStatus === 'Live') {
+            await answerCallbackQuery(queryId, 'Already live');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ <b>${escHtml(name)}</b> is already live. Skipping re-fire.`);
+            }
+            return NextResponse.json({ ok: true });
+          }
+
           // Validate minimum content before going live
           if (!slug) {
             await answerCallbackQuery(queryId, 'Set a URL slug first!');
@@ -2192,6 +2723,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           await updateRecord(TABLES.RANCHERS, rancherId, {
             'Page Live': true,
             'Onboarding Status': 'Live',
+            'Active Status': 'Active',
           });
           triggerLaunchWarmup(`telegram-rgolive:${rancherId}`);
           await logGolive({
@@ -2204,6 +2736,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             reverseAction: goliveReverse,
           });
           await answerCallbackQuery(queryId, '🟢 Page is live!');
+
+          // Build tier-aware commission language
+          const rancherTierRgolive = tierFor(rancher);
+          const commissionLineRgolive = (() => {
+            if (rancherTierRgolive === 'pasture') return 'BuyHalfCow earns 7% commission on referred sales (per your Pasture tier).';
+            if (rancherTierRgolive === 'ranch') return 'BuyHalfCow earns 3% commission on referred sales (per your Ranch tier).';
+            if (rancherTierRgolive === 'operator') return 'No per-deal commission (per your Operator tier flat subscription).';
+            return 'Commission per your tier — see /rancher/billing for details.';
+          })();
 
           // Notify the rancher they're live
           if (rancherEmail) {
@@ -2223,7 +2764,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                   <li>Buyers in your area will see your page in our rancher directory</li>
                   <li>When a buyer clicks to purchase, you'll get an email notification</li>
                   <li>We'll also send you qualified buyer leads directly via email</li>
-                  <li>BuyHalfCow earns 10% commission on referred sales — that's it</li>
+                  <li>${commissionLineRgolive}</li>
                 </ul>
                 <p>Share your page link with your own customers too: <a href="${liveUrl}">${liveUrl}</a></p>
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
@@ -2442,6 +2983,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                 `[BHC:close:${refId}]`
               );
             } else if (action === 'lost') {
+              // Idempotency guard — refuse re-fire if already terminal.
+              // Without this, double-tap double-decrements capacity + flips
+              // buyer stage twice (CLOSED is idempotent but the capacity math
+              // is not).
+              if (previousStatus === 'Closed Won' || previousStatus === 'Closed Lost') {
+                await answerCallbackQuery(queryId, `Already ${previousStatus}`);
+                await editTelegramMessage(chatId, messageId, `⚠️ <b>${buyerName}</b> already ${previousStatus}. Skipping.`);
+                return NextResponse.json({ ok: true });
+              }
               await answerCallbackQuery(queryId, '❌ Marked Closed Lost');
               await updateRecord(TABLES.REFERRALS, refId, {
                 'Status': 'Closed Lost',
@@ -2493,6 +3043,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
                 result: { previousStatus, newStatus: 'Closed Lost' },
                 reverseAction: reverse,
               });
+              try {
+                const { funnelRecord } = await import('@/lib/funnelMetrics');
+                await funnelRecord({
+                  stage: 'close:lost',
+                  rancherId: rancherIdForLost || undefined,
+                  referralId: refId,
+                  reason: 'telegram-clcheck_lost',
+                });
+              } catch {}
               await editTelegramMessage(chatId, messageId, `❌ <b>Closed Lost</b> — ${buyerName}\n\nReferral closed out. Capacity freed. Buyer Stage → CLOSED.`);
             } else if (action === 'working') {
               await answerCallbackQuery(queryId, '⏳ Will check again in 7 days');
@@ -2603,6 +3162,20 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             const ranchName = referral?.['Suggested Rancher Name'] || 'rancher';
 
             if (action === 'approve') {
+              // Idempotency guard — refuse re-fire if approval already
+              // decided. Without this, double-tap fires matching/suggest a
+              // second time → second intro email to rancher + second
+              // buyer-side notification.
+              const currentApproval = String(referral?.['Approval Status'] || 'pending');
+              if (currentApproval !== 'pending' && currentApproval !== '') {
+                await answerCallbackQuery(queryId, `Already ${currentApproval}`);
+                await editTelegramMessage(
+                  chatId,
+                  messageId,
+                  `⚠️ <b>${buyerName}</b> already ${currentApproval}. Skipping re-fire.`
+                );
+                return NextResponse.json({ ok: true });
+              }
               await answerCallbackQuery(queryId, '✅ Approved — firing intro');
               const suggestedRancherId = referral?.['Suggested Rancher']?.[0] || '';
 
@@ -2728,6 +3301,16 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
     if (update.message?.text) {
       const rawText = update.message.text.trim();
+      const incomingChatId = update.message.chat.id.toString();
+
+      // H-6 audit fix: refuse excess commands w/o invoking expensive handlers.
+      // Only gate slash commands — natural language goes to AI chat which has
+      // its own rate budget (and the model bill is the real abuse-limit signal).
+      if (rawText.startsWith('/') && !checkCommandRateLimit(incomingChatId)) {
+        await sendTelegramMessage(incomingChatId, '⚠️ Too many commands — slow down, wait a minute.').catch(() => {});
+        return NextResponse.json({ ok: true });
+      }
+
       // Normalize new categorized command names → existing handlers (zero-risk aliasing).
       // This lets us reorganize commands without rewriting any handler logic.
       const text = (() => {
@@ -2793,6 +3376,19 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             'Pending Approval',
           ]);
 
+          // ─── Terminal-status guard (added 2026-05-27, P0 audit G-3) ────────
+          // Refuse if Referral.Status already terminal. Without this, operator
+          // could re-reply $ amount to close prompt OR reply to stale prompt →
+          // createCommissionInvoice fired twice → double-billed rancher.
+          if (previousStatus === 'Closed Won' || previousStatus === 'Closed Lost') {
+            await sendTelegramMessage(
+              chatId,
+              `⚠️ Referral <code>${refId}</code> already <b>${previousStatus}</b>. Refusing duplicate close.\n\n` +
+              `If you need to reopen, edit the Airtable record manually.`,
+            );
+            return NextResponse.json({ ok: true });
+          }
+
           // Branch 1: "awaiting" reply → flip to Awaiting Payment + skip invoice
           if (/^(awaiting|pending|later|not paid|not yet|on delivery)\b/i.test(userReply)) {
             await updateRecord(TABLES.REFERRALS, refId, {
@@ -2824,6 +3420,15 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               `Use the rancher dashboard "Confirm Payment Received" button (or reply /confirmpaid ${refId} $X here) when buyer pays. Invoice fires automatically at that point.\n\n` +
               `I'll nudge you at 14 days if it's still unresolved.`,
             );
+            try {
+              const { funnelRecord } = await import('@/lib/funnelMetrics');
+              await funnelRecord({
+                stage: 'close:awaiting_payment',
+                rancherId,
+                referralId: refId,
+                reason: 'telegram-awaiting-reply',
+              });
+            } catch {}
             return NextResponse.json({ ok: true });
           }
 
@@ -2925,11 +3530,20 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           // Fire Stripe invoice. createCommissionInvoice has its own floor +
           // ratio guards (lib/stripe-commission.ts) — they'll throw before we
           // generate a bogus invoice.
+          //
+          // Tier_v2 ranchers SKIP — commission already taken at deposit time
+          // via Stripe Connect application_fee_amount. Legacy invoice here
+          // would double-bill.
+          const pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
+          const skipLegacyInvoice = pricingModel === 'tier_v2';
+          if (skipLegacyInvoice) {
+            console.log(`[telegram close-reply won] rancher ${rancher.id} is tier_v2 — skipping legacy commission invoice`);
+          }
           const { createCommissionInvoice } = await import('@/lib/stripe-commission');
           let stripeInvoiceUrl = '';
           let invoiceFailed = false;
           let invoiceErrMsg = '';
-          try {
+          if (!skipLegacyInvoice) try {
             const result = await createCommissionInvoice({
               rancher: {
                 id: rancher.id,
@@ -3043,6 +3657,18 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               ? `\n\nFix the underlying issue and use the dashboard close flow to re-fire the invoice.`
               : `\n\nStripe will email ${rancher['Email'] || 'the rancher'} the hosted invoice. Webhook flips Commission Paid on payment.`),
           );
+
+          // Funnel telemetry — bridge until full close path migrates to recordClose.
+          try {
+            const { funnelRecord } = await import('@/lib/funnelMetrics');
+            await funnelRecord({
+              stage: 'close:won',
+              rancherId,
+              referralId: refId,
+              amount: saleAmount,
+              reason: 'telegram-close-reply',
+            });
+          } catch {}
         } catch (e: any) {
           await sendTelegramMessage(chatId, `⚠️ Close-reply handler failed: ${e?.message || 'unknown'}`);
         }
@@ -3985,11 +4611,15 @@ Confirm send?`;
           const name = consumer ? (consumer['Full Name'] || emailArg) : emailArg;
 
           const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+          // Auth Phase 0 — Telegram bot uses the x-admin-password header
+          // (server-to-server path). The legacy bhc-admin-auth cookie no
+          // longer authenticates after Clerk migration.
+          const adminPw = process.env.ADMIN_PASSWORD || '';
           const res = await fetch(`${siteUrl}/api/admin/affiliates`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Cookie': `bhc-admin-auth=authenticated`,
+              ...(adminPw ? { 'x-admin-password': adminPw } : {}),
             },
             body: JSON.stringify({ name, email: emailArg }),
           });
@@ -4493,13 +5123,67 @@ Confirm send?`;
       // /bulkfire — promote every Pending Approval referral to Intro Sent
       // + fire intro emails to buyer + rancher. Clears the gate-staged
       // backlog in one tap. Caps at 50 per run for safety.
-      else if (text === '/bulkfire') {
+      //
+      // Two-step confirmation: a bare /bulkfire just shows the preview +
+      // caches a 60s pending state in Redis. The actual send only fires
+      // when the operator follows up with `/bulkfire confirm`. Without
+      // this, a single misclick on the prefilled command in mobile
+      // Telegram could fire up to 50 irreversible intro emails.
+      else if (text === '/bulkfire' || text === '/bulkfire confirm') {
+        const isConfirm = text === '/bulkfire confirm';
         try {
           const all = (await getAllRecords(TABLES.REFERRALS)) as any[];
           const stuck = all.filter((r: any) => r['Status'] === 'Pending Approval').slice(0, 50);
           if (stuck.length === 0) {
             await sendTelegramMessage(chatId, '✅ No Pending Approval referrals to fire.');
+          } else if (!isConfirm) {
+            // Preview-only step. Cache pending state for 60s, then bail.
+            try {
+              const redis = await getTelegramRedis();
+              if (redis) {
+                await redis.set(`tg:bulkfire-pending:${chatId}`, String(stuck.length), { ex: 60 });
+              }
+            } catch (cacheErr: any) {
+              // P4-G: track the Redis error so subsequent mutation taps in
+              // the next 5 min fail-closed. The pending-state cache itself
+              // continues to fail-open (preview is non-mutating) — but the
+              // operator should see the degraded alert and know not to
+              // /bulkfire confirm until Redis recovers.
+              recordRedisError('/bulkfire pending-state set', cacheErr);
+              console.warn('[/bulkfire] pending-state cache failed (continuing):', cacheErr?.message);
+            }
+            await sendTelegramMessage(
+              chatId,
+              `⚠️ <b>/bulkfire preview</b>\n\n` +
+              `This will promote <b>${stuck.length}</b> Pending Approval referrals → Intro Sent and fire intro emails to BOTH the buyer and the rancher for each (irreversible).\n\n` +
+              `Reply <code>/bulkfire confirm</code> within 60s to send.`
+            );
+            return NextResponse.json({ ok: true });
           } else {
+            // Confirm step. Require a fresh pending state in Redis. If
+            // Redis is down, fail closed — refuse the send rather than
+            // bypass the confirmation gate.
+            try {
+              const redis = await getTelegramRedis();
+              if (!redis) {
+                await sendTelegramMessage(chatId, '⚠️ /bulkfire confirm refused: Redis unavailable, cannot verify confirmation state. Run <code>/bulkfire</code> again.');
+                return NextResponse.json({ ok: true });
+              }
+              const pending = await redis.get(`tg:bulkfire-pending:${chatId}`);
+              if (!pending) {
+                await sendTelegramMessage(chatId, '⚠️ No pending /bulkfire to confirm (expired after 60s). Run <code>/bulkfire</code> first.');
+                return NextResponse.json({ ok: true });
+              }
+              await redis.del(`tg:bulkfire-pending:${chatId}`);
+            } catch (gateErr: any) {
+              // P4-G: track Redis error so any subsequent mutation taps in
+              // the next 5 min fail-closed. Confirm gate itself already
+              // fails-closed (which is correct — we WANT to refuse a
+              // /bulkfire confirm when we can't verify the prior preview).
+              recordRedisError('/bulkfire confirm gate', gateErr);
+              await sendTelegramMessage(chatId, `⚠️ /bulkfire confirm refused: ${gateErr?.message || 'gate check failed'}. Run <code>/bulkfire</code> again.`);
+              return NextResponse.json({ ok: true });
+            }
             let fired = 0;
             let errored = 0;
             for (const ref of stuck) {
@@ -4519,6 +5203,20 @@ Confirm send?`;
                 const notes = ref['Notes'] || '';
 
                 if (rancherEmail) {
+                  // tier_v2 ranchers route deposits through Stripe Connect
+                  // direct charge at /checkout/<refId>/deposit, which requires
+                  // the bhc-member-auth cookie. Wrap the deposit deep-link in
+                  // a magic-link verify URL. Legacy ranchers stay on the tap-
+                  // any-tier Payment Link copy (depositMagicLinkUrl stays
+                  // undefined).
+                  const bulkPricingModel = String(rancher['Pricing Model'] || 'legacy');
+                  const bulkBuyerId = ref['Buyer']?.[0] || '';
+                  let bulkDepositMagicLinkUrl: string | undefined;
+                  if (bulkPricingModel === 'tier_v2' && bulkBuyerId && buyerEmail) {
+                    const magicToken = generateMemberLoginToken(bulkBuyerId, buyerEmail);
+                    const nextPath = `/checkout/${ref.id}/deposit`;
+                    bulkDepositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+                  }
                   await sendBuyerIntroNotification({
                     firstName: buyerName.split(' ')[0] || 'there',
                     email: buyerEmail,
@@ -4534,6 +5232,7 @@ Confirm send?`;
                     wholePrice: Number(rancher['Whole Price']) || undefined,
                     wholeLbs: rancher['Whole lbs'] || '',
                     nextProcessingDate: rancher['Next Processing Date'] || '',
+                    depositMagicLinkUrl: bulkDepositMagicLinkUrl,
                   }).catch((e: any) => console.error('[bulkfire] buyer intro failed:', e?.message));
 
                   await sendEmail({
@@ -4717,7 +5416,7 @@ Confirm send?`;
 
       // /freqcap <number> | show — global rolling 7d cap per Consumer
       else if (text === '/freqcap show' || text === '/freqcap') {
-        const cap = process.env.EMAIL_FREQUENCY_CAP_PER_WEEK || '10 (default)';
+        const cap = process.env.EMAIL_FREQUENCY_CAP_PER_WEEK || '3 (default)';
         await sendTelegramMessage(
           chatId,
           `<b>Frequency cap</b>: ${cap} emails/Consumer/7d\n\n` +
@@ -5137,33 +5836,44 @@ Confirm send?`;
       }
 
       else if (text === '/help') {
+        // H-6 audit fix: prior /help omitted /comp, /buyer, /brief, /rp,
+        // /segments, /runs, /stats — new operators couldn't discover them.
+        // Now organized by category w/ every 45+ command surfaced.
         const msg = `📖 <b>BuyHalfCow Bot — Command Reference</b>
 
 <b>📊 SEE</b> — what's happening
 /morning — Campaign-aware brief: self-submits, founders, throttle approvals, hot leads
 /today — Daily brief (numbers + AI top 3 priorities)
+/brief — AI-curated narrative brief w/ drill-down buttons
+/stats — Top-level platform counters (consumers + ranchers + referrals)
 /casestudy [name or slug] — Generate copy-paste social blurb for any rancher
-/leads — Pending consumers awaiting review
-/ranchers — Rancher onboarding pipeline
-/money — Revenue + commission summary
-/find [name or phone] — Search consumers, tap 💬 SMS · 📱 Call · 📧 Email
+/leads — Pending consumers awaiting review (alias /pending)
+/ranchers — Rancher onboarding pipeline (alias /rancherpipeline · /rp)
+/money — Revenue + commission summary (alias /revenue)
+/find [name or phone] — Search consumers, tap 💬 SMS · 📱 Call · 📧 Email (alias /lookup · /buyer)
 /capacity — Ranchers near capacity
-/refs — Referral stage breakdown
+/refs — Referral stage breakdown (alias /pipeline)
+/stuckbuyers — Waitlisted &gt;14d, grouped by state
+/stuckranchers — Signed-not-Live + Live-but-quiet
+/ghostranchers — Ranchers with 2+ buyer ghost reports
 
 <b>🎯 DO</b> — single actions
-/route CO the-high-lonesome-ranch [dry|morning] — Bulk-route stuck buyers
+/route [STATE] [slug] [dry|morning] — Bulk-route stuck buyers (alias /routestate)
 /pause [slug] — Stop sending leads to a rancher (vacation, processing month, sick)
 /resume [slug] — Reactivate a paused rancher
 /blast [STATE] [message] — Quick email to all approved buyers in a state
 /setuppage [name] — Build a rancher landing page (interactive wizard)
-/affiliate [email] — Make someone an affiliate
+/affiliate [email] — Make someone an affiliate (alias /makeaffiliate)
+/comp [email] [tier] [note] — Comp a consumer into a Founder tier
+/match [buyer-name] [rancher-name] — Fuzzy match buyer→rancher w/ inline confirm
+/forcematch [email-or-recId] — Bypass cooldowns, match a stuck buyer now
 
 <b>📨 EMAIL</b> — bulk sends, all in one namespace
-/email checkin — Nudge stalled ranchers
-/email onboard — Send onboarding docs to ranchers missing them
-/email blitz — Personalized update emails to all pipeline ranchers
-/email broadcast [seg] [msg] — Quick broadcast (segments: beef, community, all, ranchers)
-/email draft followup [name] — AI drafts a personalized follow-up
+/email checkin — Nudge stalled ranchers (alias /checkin)
+/email onboard — Send onboarding docs to ranchers missing them (alias /bulkonboard)
+/email blitz — Personalized update emails to all pipeline ranchers (alias /blitz)
+/email broadcast [seg] [msg] — Quick broadcast (segments: beef · community · all · ranchers) (alias /broadcast)
+/email draft followup [name] — AI drafts a personalized follow-up (alias /draft)
 /email draft campaign [seg] [topic] — AI drafts a broadcast campaign
 
 <b>🧠 AI</b> — autonomous tasks
@@ -5174,8 +5884,8 @@ Confirm send?`;
 
 <b>⚙️ SYSTEM</b>
 /status — Health check all dependencies (Airtable, Resend, Telegram, AI)
-/cronstatus — Last-24h run status for every cron (catches missing runs)
-/routingstatus — Buyer routing-segment breakdown (MATCH_NOW · WARM_LEAD · etc)
+/cronstatus — Last-24h run status for every cron (alias /runs)
+/routingstatus — Buyer routing-segment breakdown (alias /segments) — MATCH_NOW · WARM_LEAD · etc
 /emaillog [email] — Last 30d email log for a Consumer
 /pausemail [template] — Kill a specific email template
 /resumemail [template] — Re-enable a paused template
@@ -5185,17 +5895,11 @@ Confirm send?`;
 /bulkfire — Promote all Pending Approval → Intro Sent + fire emails (max 50)
 /pausecron [name] — Pause a cron from firing
 /resumecron [name] — Resume a paused cron
-/forcematch [email-or-recId] — Bypass cooldowns, match a stuck buyer now
-/match [buyer-name] [rancher-name] — Fuzzy match buyer→rancher w/ inline confirm. e.g. <code>/match katie renick</code>
-/stuckbuyers — Waitlisted &gt;14d, grouped by state
-/stuckranchers — Signed-not-Live + Live-but-quiet
-/ghostranchers — Ranchers with 2+ buyer ghost reports
 /start — Welcome + quick tour
 /help — This menu
 
 <i>Tip: just type anything in plain English. I'll figure out what you mean.</i>
-
-<i>Legacy command names still work — /pending, /stats, /lookup, /pipeline, /rancherpipeline, /revenue, /broadcast, /blitz, /checkin, /bulkonboard, /makeaffiliate, /draft, /routestate.</i>`;
+<i>Rate limit: 30 commands/minute per chat (H-6 audit hardening).</i>`;
 
         await sendTelegramMessage(chatId, msg);
       }

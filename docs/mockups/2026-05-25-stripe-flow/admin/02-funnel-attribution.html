@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BuyHalfCow Admin — Funnel Attribution</title>
+<style>
+  :root{
+    --bone:#F4F1EC;
+    --charcoal:#0E0E0E;
+    --saddle:#6B4F3F;
+    --dust:#A7A29A;
+    --divider:#E8E3DA;
+    --gold:#C99A2E;
+    --crimson:#8B2C2C;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bone);
+    color:var(--charcoal);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .serif{font-family:Georgia,serif}
+  a{color:var(--charcoal)}
+  .nav{
+    border-bottom:1px solid var(--divider);
+    padding:20px 24px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .nav .brand{
+    font-family:Georgia,serif;
+    font-size:22px;
+    letter-spacing:0.04em;
+  }
+  .back{
+    font-size:13px;
+    color:var(--saddle);
+    text-decoration:none;
+  }
+  .shell{
+    display:grid;
+    grid-template-columns:220px 1fr;
+    min-height:calc(100vh - 64px);
+  }
+  @media (max-width:880px){
+    .shell{grid-template-columns:1fr}
+    .sidebar{display:none}
+  }
+  .sidebar{
+    border-right:1px solid var(--divider);
+    background:#fff;
+    padding:24px 0;
+  }
+  .sidebar .label{
+    padding:0 20px;
+    font-size:10px;
+    text-transform:uppercase;
+    letter-spacing:0.12em;
+    color:var(--dust);
+    margin-bottom:8px;
+  }
+  .sidebar a{
+    display:block;
+    padding:9px 20px;
+    text-decoration:none;
+    color:var(--saddle);
+    font-size:13px;
+    border-left:3px solid transparent;
+  }
+  .sidebar a.active{
+    color:var(--charcoal);
+    font-weight:600;
+    border-left-color:var(--charcoal);
+    background:var(--bone);
+  }
+  .sidebar .group{margin-bottom:18px}
+  .main{
+    padding:36px 36px 80px;
+    min-width:0;
+  }
+  @media (max-width:880px){.main{padding:24px 20px 60px}}
+  h1.page-title{
+    font-family:Georgia,serif;
+    font-size:28px;
+    margin:0 0 6px;
+    font-weight:500;
+  }
+  .page-sub{
+    color:var(--saddle);
+    font-size:14px;
+    margin:0 0 24px;
+  }
+
+  /* Tabs */
+  .tabs{
+    border-bottom:1px solid var(--divider);
+    display:flex;
+    gap:28px;
+    margin-bottom:20px;
+  }
+  .tabs a{
+    text-decoration:none;
+    padding:10px 0 12px;
+    font-size:14px;
+    color:var(--saddle);
+    border-bottom:2px solid transparent;
+    margin-bottom:-1px;
+  }
+  .tabs a.active{
+    color:var(--charcoal);
+    font-weight:600;
+    border-bottom-color:var(--charcoal);
+  }
+
+  /* Window selector */
+  .window-row{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:30px;
+  }
+  .window-row label{
+    font-size:13px;
+    color:var(--saddle);
+  }
+  .window-row select{
+    font-family:inherit;
+    font-size:13px;
+    padding:6px 10px;
+    border:1px solid var(--divider);
+    background:#fff;
+    color:var(--charcoal);
+  }
+
+  .section-title{
+    font-family:Georgia,serif;
+    font-size:18px;
+    font-weight:500;
+    margin:32px 0 14px;
+    padding-bottom:8px;
+    border-bottom:1px solid var(--divider);
+  }
+
+  .table-wrap{
+    background:#fff;
+    border:1px solid var(--divider);
+    overflow-x:auto;
+  }
+  table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:13px;
+  }
+  thead th{
+    text-align:left;
+    padding:12px 16px;
+    background:var(--bone);
+    border-bottom:1px solid var(--divider);
+    font-weight:600;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--saddle);
+    white-space:nowrap;
+  }
+  thead th.num{text-align:right}
+  tbody td{
+    padding:12px 16px;
+    border-bottom:1px solid var(--divider);
+    vertical-align:top;
+  }
+  tbody td.num{
+    text-align:right;
+    font-variant-numeric:tabular-nums;
+  }
+  tbody td.rate{
+    text-align:right;
+    font-weight:600;
+    font-variant-numeric:tabular-nums;
+  }
+  tbody tr:last-child td{border-bottom:0}
+  tbody td.source{font-weight:600}
+  tbody td .muted{color:var(--dust);font-style:italic;font-weight:400}
+
+  .footnote{
+    margin-top:28px;
+    font-size:12px;
+    color:var(--saddle);
+  }
+  .footnote a{color:var(--saddle);text-decoration:underline}
+</style>
+</head>
+<body>
+  <div class="nav">
+    <div style="display:flex;gap:24px;align-items:center">
+      <a class="back" href="../index.html">← Back to tour</a>
+      <div class="brand">BUYHALFCOW</div>
+    </div>
+    <div style="font-size:12px;color:var(--saddle)">/admin/funnel/attribution</div>
+  </div>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="group">
+        <div class="label">Operations</div>
+        <a href="#">Overview</a>
+        <a href="#">Ranchers</a>
+        <a href="#">Buyers</a>
+        <a href="#">Referrals</a>
+      </div>
+      <div class="group">
+        <div class="label">Money</div>
+        <a href="01-payments.html">Payments</a>
+        <a href="#">Payouts</a>
+        <a href="#">Subscriptions</a>
+        <a href="#">Add-ons</a>
+      </div>
+      <div class="group">
+        <div class="label">Growth</div>
+        <a href="#">Funnel</a>
+        <a href="#" class="active">Attribution</a>
+        <a href="#">Cohorts</a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <h1 class="page-title">Funnel · Attribution</h1>
+      <p class="page-sub">UTM source + campaign breakdown · signup → engaged → matched → deposit → won</p>
+
+      <!-- Tabs -->
+      <nav class="tabs">
+        <a href="#">Overview</a>
+        <a href="#" class="active">Attribution</a>
+        <a href="#">Cohorts</a>
+      </nav>
+
+      <!-- Window selector -->
+      <div class="window-row">
+        <label for="window">Window:</label>
+        <select id="window">
+          <option>Last 30 days</option>
+          <option>Last 7 days</option>
+          <option>Last 90 days</option>
+          <option>Year to date</option>
+        </select>
+      </div>
+
+      <!-- SECTION 1 — BY UTM SOURCE -->
+      <div class="section-title">By UTM source</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th class="num">Signups</th>
+              <th class="num">Engaged</th>
+              <th class="num">Matched</th>
+              <th class="num">Deposit paid</th>
+              <th class="num">Closed Won</th>
+              <th class="num">Signup→Won %</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="source">direct</td>
+              <td class="num">142</td>
+              <td class="num">38</td>
+              <td class="num">22</td>
+              <td class="num">9</td>
+              <td class="num">6</td>
+              <td class="rate">4.2%</td>
+            </tr>
+            <tr>
+              <td class="source">twitter</td>
+              <td class="num">87</td>
+              <td class="num">19</td>
+              <td class="num">11</td>
+              <td class="num">4</td>
+              <td class="num">3</td>
+              <td class="rate">3.4%</td>
+            </tr>
+            <tr>
+              <td class="source">google</td>
+              <td class="num">64</td>
+              <td class="num">12</td>
+              <td class="num">7</td>
+              <td class="num">2</td>
+              <td class="num">1</td>
+              <td class="rate">1.6%</td>
+            </tr>
+            <tr>
+              <td class="source">instagram</td>
+              <td class="num">41</td>
+              <td class="num">14</td>
+              <td class="num">8</td>
+              <td class="num">3</td>
+              <td class="num">2</td>
+              <td class="rate">4.9%</td>
+            </tr>
+            <tr>
+              <td class="source">facebook</td>
+              <td class="num">29</td>
+              <td class="num">5</td>
+              <td class="num">3</td>
+              <td class="num">1</td>
+              <td class="num">0</td>
+              <td class="rate">0.0%</td>
+            </tr>
+            <tr>
+              <td class="source"><span class="muted">(no source)</span></td>
+              <td class="num">18</td>
+              <td class="num">4</td>
+              <td class="num">2</td>
+              <td class="num">1</td>
+              <td class="num">0</td>
+              <td class="rate">0.0%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- SECTION 2 — BY CAMPAIGN -->
+      <div class="section-title">By campaign</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Campaign</th>
+              <th class="num">Signups</th>
+              <th class="num">Engaged</th>
+              <th class="num">Matched</th>
+              <th class="num">Deposit paid</th>
+              <th class="num">Closed Won</th>
+              <th class="num">Signup→Won %</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="source">founder-list-launch</td>
+              <td class="num">38</td>
+              <td class="num">18</td>
+              <td class="num">12</td>
+              <td class="num">6</td>
+              <td class="num">4</td>
+              <td class="rate">10.5%</td>
+            </tr>
+            <tr>
+              <td class="source">map-state-tx</td>
+              <td class="num">24</td>
+              <td class="num">11</td>
+              <td class="num">8</td>
+              <td class="num">3</td>
+              <td class="num">2</td>
+              <td class="rate">8.3%</td>
+            </tr>
+            <tr>
+              <td class="source">map-state-co</td>
+              <td class="num">19</td>
+              <td class="num">7</td>
+              <td class="num">5</td>
+              <td class="num">2</td>
+              <td class="num">1</td>
+              <td class="rate">5.3%</td>
+            </tr>
+            <tr>
+              <td class="source">partner-page</td>
+              <td class="num">12</td>
+              <td class="num">5</td>
+              <td class="num">3</td>
+              <td class="num">2</td>
+              <td class="num">1</td>
+              <td class="rate">8.3%</td>
+            </tr>
+            <tr>
+              <td class="source"><span class="muted">(none)</span></td>
+              <td class="num">286</td>
+              <td class="num">51</td>
+              <td class="num">25</td>
+              <td class="num">7</td>
+              <td class="num">4</td>
+              <td class="rate">1.4%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="footnote">
+        Powered by Funnel Events table — populated by lib/contracts/* mutations · See <a href="#">/admin/funnel</a> for overview
+      </p>
+    </main>
+  </div>
+</body>
+</html>

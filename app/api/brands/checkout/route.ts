@@ -71,6 +71,9 @@ export async function POST(request: Request) {
       ],
       success_url: `${SITE_URL}/brand/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${SITE_URL}/brand/payment?token=${token}&cancelled=true`,
+      automatic_tax: { enabled: true },
+      customer_update: { address: 'auto' },
+      tax_id_collection: { enabled: true },
     });
 
     return NextResponse.json({ url: session.url });

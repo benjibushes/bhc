@@ -46,12 +46,15 @@ const ALLOWED_FIELDS = new Set([
   'About Text',
   'Video URL',
   'Quarter Price',
+  'Quarter Deposit',
   'Quarter lbs',
   'Quarter Payment Link',
   'Half Price',
+  'Half Deposit',
   'Half lbs',
   'Half Payment Link',
   'Whole Price',
+  'Whole Deposit',
   'Whole lbs',
   'Whole Payment Link',
   'Tier Specialty',
@@ -66,6 +69,13 @@ const ALLOWED_FIELDS = new Set([
   'Testimonials',
   'Custom Products',
   'Certifications',
+  // Stage-3 Task 11B — fulfillment + refund policy (shown to buyers verbatim)
+  'Fulfillment Types',
+  'Pickup City',
+  'Delivery Radius Miles',
+  'Shipping Lead Time Days',
+  'Refund Policy',
+  'Fulfillment Cost Notes',
 ]);
 
 function verifyToken(token: string): { rancherId: string } | null {
@@ -111,6 +121,11 @@ export async function GET(req: Request) {
     // ranchers whose Onboarding Status got bumped to a non-canonical
     // value (e.g. "Docs Sent") while skipping past "Call Complete".
     callCompletedAt: rancher['Call Completed At'] || '',
+    // Stage-3 Task 11 — surface tier subscription state so the wizard's
+    // Pick-Your-Plan step can detect when checkout completed.
+    Tier: rancher['Tier'] || '',
+    'Subscription Status': rancher['Subscription Status'] || '',
+    'Pricing Model': rancher['Pricing Model'] || '',
   };
   for (const f of ALLOWED_FIELDS) {
     if (rancher[f] !== undefined) out[f] = rancher[f];
@@ -141,6 +156,45 @@ export async function PATCH(req: Request) {
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
+  }
+
+  // Stage-3 Task 11B — server-side validation for fulfillment fields. These
+  // render verbatim on the buyer deposit page; the client-side gate alone is
+  // not enough since a buggy or malicious client can still write garbage.
+  if ('Refund Policy' in updates) {
+    const policy = String(updates['Refund Policy'] || '').trim();
+    if (policy.length < 20 || policy.length > 500) {
+      return NextResponse.json({
+        error: 'Refund Policy must be 20–500 characters.',
+      }, { status: 400 });
+    }
+    updates['Refund Policy'] = policy;
+  }
+  if ('Delivery Radius Miles' in updates) {
+    const v = Number(updates['Delivery Radius Miles']);
+    if (!Number.isInteger(v) || v <= 0 || v > 500) {
+      return NextResponse.json({
+        error: 'Delivery Radius Miles must be a positive whole number ≤ 500.',
+      }, { status: 400 });
+    }
+    updates['Delivery Radius Miles'] = v;
+  }
+  if ('Shipping Lead Time Days' in updates) {
+    const v = Number(updates['Shipping Lead Time Days']);
+    if (!Number.isInteger(v) || v <= 0 || v > 180) {
+      return NextResponse.json({
+        error: 'Shipping Lead Time Days must be a positive whole number ≤ 180.',
+      }, { status: 400 });
+    }
+    updates['Shipping Lead Time Days'] = v;
+  }
+  if ('Fulfillment Cost Notes' in updates) {
+    const notes = String(updates['Fulfillment Cost Notes'] || '').trim().slice(0, 500);
+    updates['Fulfillment Cost Notes'] = notes;
+  }
+  if ('Pickup City' in updates) {
+    const city = String(updates['Pickup City'] || '').trim().slice(0, 100);
+    updates['Pickup City'] = city;
   }
 
   // If ZIP / City / State changed, re-geocode and store fresh lat/lng so the

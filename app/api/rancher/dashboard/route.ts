@@ -1,36 +1,21 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getRecordById, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { requireRancher } from '@/lib/rancherAuth';
 
 export const maxDuration = 60;
 
-import { JWT_SECRET } from '@/lib/secrets';
 import { getRancherCommissionRate } from '@/lib/commission';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('bhc-rancher-auth');
+    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+    const r = await requireRancher(request);
+    if (r instanceof NextResponse) return r;
+    const { session } = r;
 
-    if (!sessionCookie?.value) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-
-    let decoded: any;
-    try {
-      decoded = jwt.verify(sessionCookie.value, JWT_SECRET);
-    } catch {
-      return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-    }
-
-    if (decoded.type !== 'rancher-session') {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
-
-    const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+    const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
     if (!rancher) {
       return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
     }
@@ -45,7 +30,7 @@ export async function GET() {
     let myReferrals: any[] = [];
     try {
       const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
-      const myId = decoded.rancherId;
+      const myId = session.rancherId;
       myReferrals = allRefs.filter((r: any) => {
         const rancher = Array.isArray(r['Rancher']) ? r['Rancher'] : [];
         const suggested = Array.isArray(r['Suggested Rancher']) ? r['Suggested Rancher'] : [];
@@ -88,6 +73,10 @@ export async function GET() {
       last_buyer_activity_at: r['Last Buyer Activity At'] || '',
       rancher_engaged_flag: !!r['Rancher Engaged Flag'],
       stripe_invoice_url: r['Stripe Invoice URL'] || '',
+      // Stage-3 Audit B4 — surface fulfillment status so the dashboard
+      // can render the green pill on already-confirmed Closed Won deals
+      // and gate the "Mark beef delivered" CTA on the missing field.
+      fulfillment_confirmed_at: r['Fulfillment Confirmed At'] || '',
     }));
 
     // Sort: active first, then by date
@@ -170,6 +159,14 @@ export async function GET() {
         wholePrice: rancher['Whole Price'] || '',
         wholeLbs: rancher['Whole lbs'] || '',
         wholePaymentLink: rancher['Whole Payment Link'] || '',
+        // P1-4: surface tier specialty so the dashboard can render a
+        // no-pricing alarm card. Buyers picking a Quarter/Half/Whole that
+        // the rancher's Tier Specialty includes but has no price set get
+        // 409'd at /api/checkout/deposit — silent buyer bounce. The
+        // dashboard needs both fields to compute the missing-cut list.
+        tierSpecialty: Array.isArray(rancher['Tier Specialty'])
+          ? (rancher['Tier Specialty'] as string[])
+          : [],
         nextProcessingDate: rancher['Next Processing Date'] || '',
         reserveLink: rancher['Reserve Link'] || '',
         customNotes: rancher['Custom Notes'] || '',
@@ -185,6 +182,20 @@ export async function GET() {
         quarterClicks: rancher['Quarter Clicks'] || 0,
         halfClicks: rancher['Half Clicks'] || 0,
         wholeClicks: rancher['Whole Clicks'] || 0,
+        // Stage-3 Task 11C — fields the dashboard banner cascade needs.
+        // Pricing Model gates legacy vs tier_v2 ranchers. Tier is the
+        // singleSelect string (Airtable returns either a string or
+        // {id,name,color} — coerce to string here). Connect status is
+        // the Airtable cache; the /api/rancher/billing/data endpoint
+        // refreshes it live. Banner cascade is OK with the cache.
+        pricingModel: String(rancher['Pricing Model'] || 'legacy'),
+        tier: (() => {
+          const raw = rancher['Tier'];
+          if (raw && typeof raw === 'object' && 'name' in (raw as any)) return String((raw as any).name);
+          return raw ? String(raw) : null;
+        })(),
+        subscriptionStatus: String(rancher['Subscription Status'] || ''),
+        connectStatus: String(rancher['Stripe Connect Status'] || 'not_connected'),
       },
       stats: {
         totalReferrals: myReferrals.length,

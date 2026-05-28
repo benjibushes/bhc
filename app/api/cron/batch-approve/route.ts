@@ -99,9 +99,16 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // EXCLUDE abandoned-application stubs (they're handled by the email-sequences
     // cron which sends recovery emails — they should NEVER be auto-approved into
     // the network without finishing the real signup form).
+    //
+    // EXCLUDE quick-signup leads (Source='quick-signup'). They arrive with NO
+    // State / Order Type / Phone — auto-approving them flips Status=Approved +
+    // Buyer Stage=WAITING, but the warmup cron query requires a State predicate
+    // so they stick at WAITING permanently and never get re-engaged. Better to
+    // leave them in Status=Pending until they complete /access (which calls the
+    // upgrade-stub path in /api/consumers and elevates them properly).
     const pending = await getAllRecords(
       TABLES.CONSUMERS,
-      `AND(OR({Status} = "Pending", {Status} = "", {Status} = BLANK()), {Source} != "abandoned_application")`
+      `AND(OR({Status} = "Pending", {Status} = "", {Status} = BLANK()), {Source} != "abandoned_application", {Source} != "quick-signup")`
     );
 
     if (pending.length === 0) {

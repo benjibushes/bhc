@@ -1,6 +1,110 @@
 import { Resend } from 'resend';
+import jwt from 'jsonwebtoken';
+import DOMPurify from 'isomorphic-dompurify';
 import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
+import { JWT_SECRET } from './secrets';
+
+// DOMPurify allowlist for /admin/broadcast HTML mode. P0 audit fix (C-5)
+// hardened in P4-F: operator-supplied HTML was forwarded raw to Resend — a
+// compromised template could phish under buyhalfcow.com. Strips <script>,
+// event handlers, javascript:/data:/vbscript: URIs, and anything not in the
+// allowlist. We keep <style>/<html>/<head>/<body>/<meta>/<title>/<link>
+// because email HTML is a full document — inline <style> blocks are how
+// every email client renders consistently. Compensating control: a hard
+// FORBID_TAGS list for the unambiguously dangerous elements, FORBID_ATTR
+// for any on* event handler, post-sanitize href validation.
+const BROADCAST_HTML_ALLOWED_TAGS = [
+  'p', 'br', 'a', 'strong', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4',
+  'h5', 'h6', 'blockquote', 'img', 'hr', 'div', 'span', 'table', 'tr', 'td',
+  'th', 'tbody', 'thead', 'b', 'i', 'u', 'small', 'code', 'pre', 'figure',
+  'figcaption', 'html', 'head', 'body', 'style', 'meta', 'title', 'link',
+];
+const BROADCAST_HTML_ALLOWED_ATTR = [
+  'href', 'src', 'alt', 'title', 'style', 'class', 'target', 'rel', 'width',
+  'height', 'border', 'align', 'cellpadding', 'cellspacing', 'bgcolor',
+  'colspan', 'rowspan', 'lang',
+];
+// Defense in depth — even if the allowlist somehow leaks, these are
+// hard-blocked. <script>, <iframe>, <object>, <embed>, <form>, <input>,
+// <button> are unambiguously phishing/XSS vectors in email context. <style>
+// is intentionally NOT here because email clients need inline <style> blocks.
+const BROADCAST_HTML_FORBID_TAGS = [
+  'script', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea',
+  'select', 'option', 'audio', 'video', 'source', 'track', 'canvas', 'svg',
+  'math', 'base',
+];
+// Block every on* event handler explicitly. DOMPurify's allowlist already
+// excludes these but FORBID_ATTR is a belt-and-suspenders gate.
+const BROADCAST_HTML_FORBID_ATTR = [
+  'onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout', 'onfocus',
+  'onblur', 'onsubmit', 'onreset', 'onchange', 'oninput', 'onkeydown',
+  'onkeyup', 'onkeypress', 'onabort', 'oncanplay', 'oncanplaythrough',
+  'ondblclick', 'ondrag', 'ondragend', 'ondragenter', 'ondragleave',
+  'ondragover', 'ondragstart', 'ondrop', 'ondurationchange', 'onemptied',
+  'onended', 'oninvalid', 'onloadeddata', 'onloadedmetadata', 'onloadstart',
+  'onmousedown', 'onmousemove', 'onmouseup', 'onmousewheel', 'onpause',
+  'onplay', 'onplaying', 'onprogress', 'onratechange', 'onscroll', 'onseeked',
+  'onseeking', 'onselect', 'onshow', 'onstalled', 'onsuspend', 'ontimeupdate',
+  'ontoggle', 'onvolumechange', 'onwaiting', 'onanimationend',
+  'onanimationiteration', 'onanimationstart', 'ontransitionend', 'onwheel',
+  'onbeforeunload', 'onunload', 'onresize', 'onstorage', 'onhashchange',
+  'onmessage', 'onoffline', 'ononline', 'onpopstate', 'onpageshow',
+  'onpagehide', 'oncontextmenu',
+];
+
+// Allow http(s), mailto, tel — and anchor (#) + relative (/) within the
+// email body. Critically BLOCKS javascript:, data:, vbscript:, file: URIs.
+const BROADCAST_URI_ALLOWLIST = /^(?:https?:|mailto:|tel:|\/|#)/i;
+// Final post-sanitize sweep: every <a href> and <img src> URL must match
+// this. Catches anything that slipped past DOMPurify's URI regex (case
+// folding, unicode confusables, CRLF tricks).
+function isSafeBroadcastUrl(url: string): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  // Normalize control chars + whitespace that browsers/clients often strip.
+  // eslint-disable-next-line no-control-regex
+  const normalized = trimmed.replace(/[\x00-\x1f\x7f]/g, '').toLowerCase();
+  // Block well-known dangerous schemes BEFORE allowlist (some clients are
+  // lenient about leading whitespace, so we already trimmed).
+  if (
+    normalized.startsWith('javascript:') ||
+    normalized.startsWith('data:') ||
+    normalized.startsWith('vbscript:') ||
+    normalized.startsWith('file:')
+  ) {
+    return false;
+  }
+  return BROADCAST_URI_ALLOWLIST.test(trimmed);
+}
+
+export function sanitizeBroadcastHtml(html: string): string {
+  const firstPass = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: BROADCAST_HTML_ALLOWED_TAGS,
+    ALLOWED_ATTR: BROADCAST_HTML_ALLOWED_ATTR,
+    FORBID_TAGS: BROADCAST_HTML_FORBID_TAGS,
+    FORBID_ATTR: BROADCAST_HTML_FORBID_ATTR,
+    ALLOWED_URI_REGEXP: BROADCAST_URI_ALLOWLIST,
+    ALLOW_DATA_ATTR: false,
+    ALLOW_UNKNOWN_PROTOCOLS: false,
+    ADD_TAGS: [],
+    ADD_ATTR: [],
+    WHOLE_DOCUMENT: true,
+    SAFE_FOR_TEMPLATES: false,
+    KEEP_CONTENT: true,
+  });
+  // Belt-and-suspenders href/src validation — strip the attribute if the URL
+  // isn't in our allowlist. DOMPurify's URI regex usually catches this, but
+  // case-folding and confusable characters can sometimes slip through, so we
+  // verify the rendered output one more time before sending to Resend.
+  return firstPass.replace(
+    /\s(href|src)\s*=\s*("([^"]*)"|'([^']*)')/gi,
+    (match, attr, _quoted, dq, sq) => {
+      const url = dq ?? sq ?? '';
+      return isSafeBroadcastUrl(url) ? match : '';
+    },
+  );
+}
 
 const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_build');
 
@@ -11,7 +115,7 @@ const _resend = new Resend(process.env.RESEND_API_KEY || 're_placeholder_for_bui
 const SUPPRESSION_TTL_MS = 5 * 60 * 1000;
 let suppressionCache: { emails: Set<string>; loadedAt: number } | null = null;
 
-async function getSuppressionList(): Promise<Set<string>> {
+export async function getSuppressionList(): Promise<Set<string>> {
   const now = Date.now();
   if (suppressionCache && now - suppressionCache.loadedAt < SUPPRESSION_TTL_MS) {
     return suppressionCache.emails;
@@ -138,6 +242,28 @@ async function _gateEmail<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// PREHEADER TEXT INJECTION — #2 driver of open rate after From line.
+// Injects a hidden preview-text block into HTML emails to improve
+// inbox placement. Pattern: hidden div with zero height/opacity right
+// after <body> tag.
+// ─────────────────────────────────────────────────────────────────────
+function injectPreheader(html: string, preheader: string): string {
+  if (!preheader || !html) return html;
+  // Truncate to 100 chars (preheader sweet spot for most clients)
+  const truncated = preheader.slice(0, 100);
+  // Hidden preheader block: display:none, zero size, zero opacity, mso-hide
+  // for Outlook. The invisible character (U+200C) is a zero-width non-joiner
+  // used by some email templates to prevent clients from auto-hiding too-short
+  // preview text.
+  const preheaderBlock = `<div style="display:none;font-size:1px;color:#fefefe;line-height:1px;font-family:Inter,sans-serif;max-height:0px;max-width:0px;opacity:0;overflow:hidden;mso-hide:all;">${truncated}‌​‌​‌​</div>`;
+  // Inject right after <body> if present, else at start of HTML
+  if (/<body[^>]*>/i.test(html)) {
+    return html.replace(/(<body[^>]*>)/i, `$1${preheaderBlock}`);
+  }
+  return preheaderBlock + html;
+}
+
 const resend = {
   emails: {
     send: async (params: any) => {
@@ -171,7 +297,7 @@ const resend = {
       if (!params.replyTo) {
         const { replyToFor, REPLIES_DOMAIN } = await import('./replyAddressing');
         if (params._replyContext) {
-          const ctx = params._replyContext as { type: 'ref'|'usr'|'rnc'|'inq'; recordId: string };
+          const ctx = params._replyContext as { type: 'ref'|'usr'|'rnc'|'inq'|'thread'; recordId: string };
           params.replyTo = replyToFor(ctx.type, ctx.recordId);
         } else {
           params.replyTo = `inbox@${REPLIES_DOMAIN}`;
@@ -187,7 +313,14 @@ const resend = {
         }
       }
       delete params._skipFooter;
-      // Plain text MUST be generated AFTER footer injection
+      // Preheader text injection — optional field to boost open rate.
+      // If preheader not provided, email sends normally without one.
+      // (auto-derive from subject is future optimization)
+      if (params.preheader && params.html) {
+        params.html = injectPreheader(params.html, params.preheader);
+      }
+      delete params.preheader;
+      // Plain text MUST be generated AFTER footer injection (and preheader)
       if (!params.text && params.html) {
         params.text = htmlToPlainText(params.html);
       }
@@ -226,9 +359,28 @@ function getFromEmail(): string {
   return `BuyHalfCow <ben@${domain}>`;
 }
 
+/**
+ * Generate a signed JWT token for unsubscribe links.
+ * Token expires in 365 days to handle old email links from inboxes.
+ * Reduces PII exposure in URLs (browser history, referrer headers, analytics).
+ */
+function generateUnsubscribeToken(email: string): string {
+  return jwt.sign({ email, type: 'unsubscribe' }, JWT_SECRET, { expiresIn: '365d' });
+}
+
+/**
+ * Generate unsubscribe link — token-based for PII privacy.
+ * Legacy ?email= fallback kept for ~30 days to handle in-flight inbox links.
+ */
+function getUnsubscribeUrl(email: string): string {
+  const token = generateUnsubscribeToken(email);
+  return `${SITE_URL}/unsubscribe?token=${token}`;
+}
+
 function getUnsubscribeHeaders(email: string) {
+  const token = generateUnsubscribeToken(email);
   return {
-    'List-Unsubscribe': `<${SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}>`,
+    'List-Unsubscribe': `<${SITE_URL}/api/unsubscribe?token=${token}>`,
     'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
   };
 }
@@ -258,14 +410,24 @@ async function guardedSend(opts: {
     return { success: false, suppressed: true, reason: gate.reason };
   }
   try {
-    await opts.send();
+    const result: any = await opts.send();
+    // Detect the internal resend wrapper's short-circuit for suppressed
+    // recipients (Unsubscribed/Bounced/Complained). The wrapper returns
+    // { data: { id: 'skipped-suppressed' } } instead of actually sending.
+    // Without this check, we'd log status='sent' for blocked sends —
+    // poisoning the audit log + frequency-cap denominators.
+    const isSuppressed = result?.data?.id === 'skipped-suppressed';
     await logEmailSend({
       recipientEmail: opts.recipientEmail,
       recipientConsumerId: opts.recipientConsumerId,
       templateName: opts.templateName,
       subject: opts.subject,
-      status: 'sent',
+      status: isSuppressed ? 'suppressed' : 'sent',
+      suppressionReason: isSuppressed ? 'unsubscribed-bounced-or-complained' : undefined,
     });
+    if (isSuppressed) {
+      return { success: false, suppressed: true, reason: 'unsubscribed-bounced-or-complained' };
+    }
     return { success: true };
   } catch (error: any) {
     // Don't log to Email Sends as 'sent' if Resend threw — that would
@@ -280,7 +442,7 @@ const BUSINESS_ADDRESS = process.env.BUSINESS_ADDRESS || 'BuyHalfCow · 1001 S. 
 // Shared email footer — CAN-SPAM compliant: physical address + visible unsubscribe.
 // Append this to every outbound email HTML body.
 function emailFooter(recipientEmail: string): string {
-  const unsubUrl = `${SITE_URL}/unsubscribe?email=${encodeURIComponent(recipientEmail)}`;
+  const unsubUrl = getUnsubscribeUrl(recipientEmail);
   return `
     <div style="margin-top:40px;padding-top:20px;border-top:1px solid #E5E2DC;font-size:12px;color:#A7A29A;line-height:1.6;">
       <p style="margin:0;">${BUSINESS_ADDRESS}</p>
@@ -329,6 +491,7 @@ export async function sendConsumerConfirmation(data: {
       from: getFromEmail(),
       to: data.email,
       subject,
+      preheader: 'Welcome to BuyHalfCow. Here\'s what happens next.',
       headers: getUnsubscribeHeaders(data.email),
       html: `
         <!DOCTYPE html>
@@ -353,7 +516,7 @@ export async function sendConsumerConfirmation(data: {
             <p>Questions? Reply to this email or contact <a href="mailto:${ADMIN_EMAIL}" style="color: #0E0E0E;">${ADMIN_EMAIL}</a></p>
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow</p>
-              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
+              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -390,7 +553,7 @@ export async function sendConsumerApproval(data: {
       <li>Verified ranchers in your state</li>
       <li>Direct, personal introductions</li>
       <li>Exclusive land deals and brand promotions</li>
-      <li>A curated network — no spam, no middlemen</li>
+      <li>A real network — no spam, no middlemen</li>
     </ul>
     <a href="${loginUtm}" class="button">Go to Your Dashboard</a>
     <p style="font-size: 13px; color: #A7A29A;">Watch for the "Ready to buy?" email coming next — your one-click YES is what triggers the rancher introduction. Not ready yet? No pressure — you stay on the list and we check back when timing fits.</p>
@@ -399,7 +562,7 @@ export async function sendConsumerApproval(data: {
   const communityBody = `
     <h1>Welcome to BuyHalfCow</h1>
     <p>Hi ${esc(data.firstName)},</p>
-    <p><strong>You're in.</strong> Welcome — a curated network built around American agriculture, real ranches, and direct relationships.</p>
+    <p><strong>You're in.</strong> Welcome — a real network built around American agriculture, real ranches, and direct relationships.</p>
     <div class="divider"></div>
     <p><strong>What you have access to:</strong></p>
     <ul style="color: #6B4F3F; line-height: 2;">
@@ -445,7 +608,7 @@ export async function sendConsumerApproval(data: {
             ${isBeef ? beefBody : communityBody}
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
-              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
+              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -518,7 +681,7 @@ export async function sendWelcomeAndReadyToBuy(data: {
   <p style="font-size:12px;color:#A7A29A;">— Benjamin<br>BuyHalfCow</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -610,7 +773,7 @@ export async function sendFounderLetterWaiting(data: {
   <p style="margin-top:32px;">— Benjamin<br>Founder, BuyHalfCow</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -648,7 +811,7 @@ export async function sendMatchedDay4CheckIn(data: {
   <p style="margin-top:32px;">— Ben</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -708,7 +871,7 @@ export async function sendPostPurchaseWelcome(data: {
   <p style="margin-top:32px;">— Benjamin</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -778,7 +941,7 @@ export async function sendCutsEducation(data: {
   </div>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -821,7 +984,7 @@ export async function sendClosedMonthlyLetter(data: {
   <p style="margin-top:32px;">— Benjamin</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -859,7 +1022,7 @@ export async function sendRepeatPurchaseAsk(data: {
   <p style="margin-top:32px;">— Ben</p>
   <div class="footer">
     <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -900,6 +1063,11 @@ export async function sendBuyerIntroNotification(data: {
   // the buyer sends gets captured + classified by /api/webhooks/resend-inbound.
   // Without this, replies go to ben@buyhalfcow.com and miss the data layer.
   referralId?: string;
+  // tier_v2 ranchers only. Full magic-link URL to /api/auth/member/verify with
+  // `next=/checkout/<refId>/deposit` so the buyer arrives at the deposit page
+  // already authed. When unset (legacy ranchers), the email falls back to the
+  // tap-any-tier copy that points at the rancher landing page payment links.
+  depositMagicLinkUrl?: string;
 }) {
   // Build pricing block when any tier is configured.
   const pricingRows: string[] = [];
@@ -932,20 +1100,44 @@ export async function sendBuyerIntroNotification(data: {
   </div>`
     : '';
 
-  // Reserve-your-share callout — appears whenever any tier has a payment link
-  // configured. Open-ended on timing because ranchers process on a rolling
-  // cycle, not a single fixed date. Drives the buyer to convert NOW with a
-  // deposit instead of "I'll think about it" → drift to inactive.
+  // Reserve-your-share callout. Two flavors:
+  //
+  //   - tier_v2 (depositMagicLinkUrl present): prominent button-CTA that
+  //     deep-links into /checkout/<refId>/deposit via the magic-link verify
+  //     endpoint. Buyer is one tap away from a Stripe-Connect direct charge.
+  //
+  //   - legacy (depositMagicLinkUrl absent): keep the existing tap-any-tier
+  //     copy that points at the rancher landing page's per-tier Payment Links.
+  //     Renders only when at least one tier price + slug is configured.
+  //
+  // Open-ended on timing because ranchers process on a rolling cycle, not a
+  // single fixed date. Drives the buyer to convert NOW with a deposit instead
+  // of "I'll think about it" → drift to inactive.
+  const hasMagicLink = !!data.depositMagicLinkUrl;
   const hasAnyPayLink = !!(
     pricingRows.length > 0 && data.rancherSlug
   );
-  const reserveBlock = hasAnyPayLink
-    ? `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
+  let reserveBlock = '';
+  if (hasMagicLink) {
+    // Inline-styled button matches BHC design tokens (bg-#0E0E0E text-white).
+    // The href is the verify endpoint, NOT the deposit page directly — verify
+    // sets the cookie then 302s to /checkout/<refId>/deposit so the buyer
+    // arrives authed. Without the cookie hop, the deposit page 401s.
+    reserveBlock = `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
+    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Reserve Your Share Now</p>
+    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — your deposit puts you on the books for the next available slot. Spots fill first-come, first-served.</p>
+    <p style="margin:16px 0 4px 0;text-align:center;">
+      <a href="${data.depositMagicLinkUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Reserve your share — secure deposit &rarr;</a>
+    </p>
+    <p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;"><strong>No deposit, no slot held.</strong></p>
+  </div>`;
+  } else if (hasAnyPayLink) {
+    reserveBlock = `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
     <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Reserve Your Share Now</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — your deposit puts you on the books for the next available slot. Spots fill first-come, first-served.</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Tap any tier above to lock in your share. <strong>No deposit, no slot held.</strong></p>
-  </div>`
-    : '';
+  </div>`;
+  }
 
   const contactBlock = data.rancherSlug
     ? `<div class="contact-box">
@@ -981,6 +1173,7 @@ export async function sendBuyerIntroNotification(data: {
         from: getFromEmail(),
         to: data.email,
         subject: introSubject,
+        preheader: `Meet your rancher match: ${esc(data.rancherName)}`,
         headers: getUnsubscribeHeaders(data.email),
       };
       if (data.scheduledAt) {
@@ -1013,7 +1206,7 @@ export async function sendBuyerIntroNotification(data: {
   <p style="font-size:13px;">If you don't hear back within 48 hours, reply to this email and I'll follow up on my end.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`;
       return resend.emails.send(introEmailData);
@@ -1207,7 +1400,7 @@ h2{font-family:Georgia,serif;font-size:20px;margin:26px 0 8px;color:#0E0E0E;}
 
 <div class="footer">
 <p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p>
-<p style="margin:6px 0 0;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
+<p style="margin:6px 0 0;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
 </div>
 
 </div></body></html>`,
@@ -1298,6 +1491,189 @@ export async function sendPartnerConfirmation(data: {
         </body>
         </html>
       `,
+    }),
+  });
+}
+
+// Brand partner past_due dunning email. Fires on first invoice.payment_failed.
+//
+// Audit P0 I-7: prior to this, brand partner subscription past_due was
+// silent — Stripe flipped Subscription Status=past_due but no email fired,
+// brand never knew their card failed, churn was invisible.
+//
+// Stripe handles the 3-attempt dunning automatically; this email closes the
+// loop by linking directly to the Stripe-hosted invoice page where they can
+// update card + pay. Founder voice, low-friction.
+export async function sendBrandPaymentFailed(data: {
+  brandName: string;
+  contactName: string;
+  email: string;
+  // Stripe-hosted invoice URL — customer can update card + pay from there.
+  // Falls back to /brand-partners if Stripe didn't include it on the event.
+  hostedInvoiceUrl?: string;
+  amountCents?: number;
+}) {
+  const first = esc(data.contactName.split(/\s+/)[0] || 'there');
+  const biz = esc(data.brandName);
+  const amount = data.amountCents
+    ? `$${(data.amountCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+    : 'your monthly invoice';
+  const fixUrl = data.hostedInvoiceUrl || `${SITE_URL}/brand-partners`;
+  const subject = `bhc — your payment didn't go through`;
+
+  return guardedSend({
+    templateName: 'sendBrandPaymentFailed',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:24px;margin:0 0 14px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;}
+a{color:#0E0E0E;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+  <p>hey ${first} —</p>
+  <p>quick heads-up: your card on file for <strong>${biz}</strong> just declined ${amount} on the bhc partner subscription.</p>
+  <p>stripe will retry automatically a couple times over the next few days, but if the card's expired or you'd rather swap to a new one, tap below — takes 30 seconds.</p>
+  <p style="text-align:center;margin:28px 0;">
+    <a href="${fixUrl}" class="cta">update payment</a>
+  </p>
+  <p style="font-size:14px;color:#6B4F3F;">no action needed if your card's just temporarily declined — stripe handles the retry. reply to this email if you want to talk anything through.</p>
+  <p style="margin-top:28px;">— ben<br>buyhalfcow</p>
+  <div class="footer">
+    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+    <p style="margin:6px 0 0;">
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
+    </p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
+// Pre-renewal heads-up. Fires on Stripe's `invoice.upcoming` event (3-7d
+// before a subscription renews — configurable in Stripe Dashboard, default
+// 3d). Sent to brand-partner monthly subs + founder annual subs so they have
+// time to update card / cancel intentionally / etc. Suppressing = surprise
+// charge = chargeback risk. P3-A audit fix.
+//
+// recipientType is for the salutation copy only — both branches share the
+// same template. Plan name is best-effort ('your bhc subscription' if unknown).
+export async function sendRenewalReminder(data: {
+  firstName: string;
+  email: string;
+  amountDollars: number;
+  daysUntilRenewal: number;
+  // 'brand-partner' | 'founder' — picks the salutation tone.
+  recipientType: 'brand-partner' | 'founder';
+  planName?: string;
+  // Stripe-hosted billing portal or manage URL. Falls back to /account or
+  // /brand-partners depending on recipientType.
+  manageUrl?: string;
+}) {
+  const first = esc(data.firstName.split(/\s+/)[0] || 'there');
+  const amount = `$${data.amountDollars.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  const days = Math.max(1, Math.round(data.daysUntilRenewal));
+  const plan = esc(data.planName || 'your bhc subscription');
+  const fallbackUrl = data.recipientType === 'brand-partner'
+    ? `${SITE_URL}/brand-partners`
+    : `${SITE_URL}/account`;
+  const manageUrl = data.manageUrl || fallbackUrl;
+  const subject = `bhc — heads up, ${plan} renews in ${days} ${days === 1 ? 'day' : 'days'}`;
+
+  return guardedSend({
+    templateName: 'sendRenewalReminder',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:24px;margin:0 0 14px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;}
+a{color:#0E0E0E;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+  <p>hey ${first} —</p>
+  <p>quick heads-up: <strong>${plan}</strong> renews in <strong>${days} ${days === 1 ? 'day' : 'days'}</strong> for <strong>${amount}</strong>.</p>
+  <p>no action needed if everything's good — your card will charge automatically. if you want to update your card or change anything, tap below.</p>
+  <p style="text-align:center;margin:24px 0;">
+    <a href="${manageUrl}" class="cta">manage subscription</a>
+  </p>
+  <p style="font-size:14px;color:#6B4F3F;">questions? reply to this email — lands directly with me.</p>
+  <p style="margin-top:28px;">— ben<br>buyhalfcow</p>
+  <div class="footer">
+    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+    <p style="margin:6px 0 0;">
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
+    </p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
+// Wholesale buyer-side confirmation. Fires immediately at /wholesale signup.
+//
+// Audit P0 I-5: prior to this, /wholesale fired sendAdminAlert only.
+// Wholesale applicants (restaurants/butchers, $5-15k AOV) received no
+// email → believed form broken → abandoned. Founder voice, 48h response
+// promise + calendly link to take initiative.
+export async function sendWholesaleConfirmation(data: {
+  contactName: string;
+  businessName: string;
+  email: string;
+}) {
+  const first = esc(data.contactName.split(/\s+/)[0] || 'there');
+  const biz = esc(data.businessName);
+  const subject = `bhc wholesale — got your application, ${biz}`;
+
+  return guardedSend({
+    templateName: 'sendWholesaleConfirmation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:24px;margin:0 0 14px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;}
+a{color:#0E0E0E;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+  <p>hey ${first} —</p>
+  <p>got your wholesale application for <strong>${biz}</strong>. real human on the other end, not a queue.</p>
+  <p>i'll personally review it and reach out within <strong>48 hours</strong> with next steps — which ranchers in your region can supply your volume, pricing, and how the supply relationship works.</p>
+  <p>if you want to move faster, grab a time on my calendar below and we'll jump straight into the conversation.</p>
+  <p style="text-align:center;margin:28px 0;">
+    <a href="${CALENDLY_LINK}" class="cta">book a call</a>
+  </p>
+  <p style="font-size:14px;color:#6B4F3F;">questions in the meantime? reply to this email — it lands directly with me.</p>
+  <p style="margin-top:28px;">— ben<br>buyhalfcow</p>
+  <div class="footer">
+    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+    <p style="margin:6px 0 0;">
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
+    </p>
+  </div>
+</div></body></html>`,
     }),
   });
 }
@@ -1576,7 +1952,86 @@ a{color:#0E0E0E;}
   <div class="footer">
     <p style="margin:0;">${BUSINESS_ADDRESS}</p>
     <p style="margin:6px 0 0;">
-      <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a>
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">Unsubscribe</a>
+    </p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
+// Backer monthly letter — fulfills /founders explicit promise of "monthly
+// founder letter". Sent to every Consumer row with a non-empty Founder Tier
+// once per calendar month (cron: backer-monthly-letter).
+//
+// Voice: lowercase, plainspoken, founder-on-the-road. Honest stats only —
+// no fabricated metrics. Receives live stats payload from cron.
+export async function sendBackerMonthlyLetter(data: {
+  firstName: string;
+  email: string;
+  tier?: string;
+  founderNumber?: number;
+  // Live stats pulled from /api/stats/public at cron-run time.
+  stats: {
+    rancherCount?: number;
+    buyerCount?: number;
+    stateCount?: number;
+    monthClosedWon?: number;
+    monthNewRanchers?: number;
+    foundingHundredClaimed?: number;
+  };
+}) {
+  const first = esc(data.firstName || 'there');
+  const monthLabel = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' }).toLowerCase();
+  const subject = `bhc ${monthLabel} — founder letter`;
+
+  const ranchers = data.stats.rancherCount ?? 0;
+  const buyers = data.stats.buyerCount ?? 0;
+  const states = data.stats.stateCount ?? 0;
+  const closedThisMonth = data.stats.monthClosedWon ?? 0;
+  const newRanchers = data.stats.monthNewRanchers ?? 0;
+  const f100 = data.stats.foundingHundredClaimed ?? 0;
+
+  const numberLine = data.founderNumber ? `founder #${data.founderNumber} —` : '';
+
+  return guardedSend({
+    templateName: 'sendBackerMonthlyLetter',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head><style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:24px;}
+.container{max-width:600px;margin:0 auto;background:#fff;padding:40px 36px;border:1px solid #A7A29A;}
+h1{font-family:Georgia,serif;font-size:24px;margin:0 0 14px;}
+p{margin:14px 0;color:#2A2A2A;font-size:15px;}
+.stat{padding:14px 18px;background:#F4F1EC;border-left:3px solid #0E0E0E;margin:18px 0;}
+.stat strong{font-size:22px;font-family:Georgia,serif;}
+a{color:#0E0E0E;}
+.footer{margin-top:32px;padding-top:18px;border-top:1px solid #E5E2DC;font-size:11px;color:#A7A29A;line-height:1.5;}
+</style></head><body><div class="container">
+  <p>hey ${first} —</p>
+  <p>monthly letter from the road. ${numberLine} this is the part i committed to when you backed bhc — no skipping a month, no PR fluff. just where we are.</p>
+  <h1>this month</h1>
+  <div class="stat">
+    <strong>${closedThisMonth}</strong> deal${closedThisMonth === 1 ? '' : 's'} closed
+    ${newRanchers > 0 ? `· <strong>${newRanchers}</strong> new rancher${newRanchers === 1 ? '' : 's'} live` : ''}
+  </div>
+  <p>cumulative across the network: <strong>${ranchers}</strong> ranchers, <strong>${buyers}</strong> buyers, <strong>${states}</strong> state${states === 1 ? '' : 's'} active. every count above is a real row in airtable — i don't round up.</p>
+  ${f100 > 0 ? `<p>founding 100: <strong>${f100}/100</strong> claimed. when this fills, the wall closes and the next tier opens.</p>` : ''}
+  <h1>what's next</h1>
+  <p>the rebuild keeps going. if you have a rancher you want me to chase, a state you think we should open, or just want to talk — reply to this email and it lands directly with me.</p>
+  <p style="font-style:italic;color:#6B4F3F;font-family:Georgia,serif;font-size:16px;border-left:3px solid #0E0E0E;padding-left:14px;margin:24px 0;">
+    we're gonna take back american ranching and agriculture. one family, one rancher, one freezer at a time.
+  </p>
+  <p style="margin-top:28px;">— ben</p>
+  <div class="footer">
+    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
+    <p style="margin:6px 0 0;">
+      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
     </p>
   </div>
 </div></body></html>`,
@@ -1921,12 +2376,16 @@ export async function sendBroadcastEmail(data: {
     subject: data.subject,
     send: () => {
       if (data.htmlBody) {
+        // P0 audit fix (C-5): sanitize operator-supplied HTML before Resend.
+        // Strips <script>, on* event handlers, javascript: URIs, and any tag
+        // outside the allowlist (see BROADCAST_HTML_ALLOWED_TAGS above).
+        const cleanHtml = sanitizeBroadcastHtml(data.htmlBody);
         return resend.emails.send({
           from: getFromEmail(),
           to: data.to,
           subject: data.subject,
           headers: getUnsubscribeHeaders(data.to),
-          html: data.htmlBody,
+          html: cleanHtml,
         });
       }
       return resend.emails.send({
@@ -2018,7 +2477,7 @@ a{color:#0E0E0E;}
 <p style="margin-top:22px;">— Benjamin</p>
 <div class="footer">
 <p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p>
-<p style="margin:6px 0 0;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
+<p style="margin:6px 0 0;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
 </div>
 </div></body></html>`,
     }),
@@ -2144,7 +2603,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <p style="font-size: 13px;">Questions? Just reply to this email.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -2260,7 +2719,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <p style="font-size: 13px;">Not ready yet? No worries — you'll stay in our network and we'll check in again when the time is right.</p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
+    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
   </div>
 </div>
 </body>
@@ -2407,7 +2866,7 @@ export async function sendRancherCheckIn(data: {
 
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Reply directly or email ${ADMIN_EMAIL}</p>
-              <p style="font-size: 10px; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
+              <p style="font-size: 10px; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -2558,7 +3017,7 @@ export async function sendPipelineUpdateEmail(data: {
             <p>Questions? Reply to this email or call me directly.</p>
             <div class="footer">
               <p>— Benjamin, Founder<br>BuyHalfCow</p>
-              <p style="font-size: 10px; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
+              <p style="font-size: 10px; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
             </div>
           </div>
         </body>
@@ -2630,7 +3089,7 @@ export async function sendEmail(params: {
   scheduledAt?: string; // ISO date string — Resend holds + delivers at this time
   // Tagged Reply-To: when present, sets Reply-To to <type>-<recordId>@replies.buyhalfcow.com
   // so any reply lands in /api/webhooks/resend-inbound for classification + logging.
-  _replyContext?: { type: 'ref' | 'usr' | 'rnc' | 'inq'; recordId: string };
+  _replyContext?: { type: 'ref' | 'usr' | 'rnc' | 'inq' | 'thread'; recordId: string };
 }) {
   return guardedSend({
     templateName: 'sendEmail',
@@ -2655,6 +3114,32 @@ export async function sendEmail(params: {
       }
       return resend.emails.send(emailData);
     },
+  });
+}
+
+// =====================================================
+// MAGIC LINK — auth-critical login email. Uses its own templateName
+// so it is whitelisted in TRANSACTIONAL_WHITELIST and bypasses the
+// 3/week cap. Routing magic-link sends through generic sendEmail()
+// previously locked members out after 3 login attempts in a week.
+// =====================================================
+
+export async function sendMagicLink(params: {
+  to: string;
+  subject: string;
+  html: string;
+}) {
+  return guardedSend({
+    templateName: 'sendMagicLink',
+    recipientEmail: params.to,
+    subject: params.subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: params.to,
+      subject: params.subject,
+      html: params.html,
+      headers: getUnsubscribeHeaders(params.to),
+    }),
   });
 }
 
@@ -2835,7 +3320,7 @@ export async function sendMonthlyCommissionInvoice(data: {
 
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -3035,6 +3520,63 @@ export async function sendAbandonedRecoveryEmail(data: {
   <p style="text-align:center;margin-top:24px;"><a href="${accessUrl}" class="cta">Finish My Application →</a></p>
   <div class="footer">
     <p>— Benjamin, Founder<br>BuyHalfCow</p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
+// =====================================================
+// ORPHAN CHECKOUT REWARM — buyer abandoned Stripe Checkout >48h ago
+// =====================================================
+
+/**
+ * Fired by /api/cron/orphan-checkout-reaper when a buyer's Stripe Checkout
+ * Session expired (PaymentIntent canceled / requires_payment_method) without
+ * completing. The Payments row gets flipped to 'abandoned' first; this email
+ * is the soft re-engagement — opt-in via ORPHAN_REAPER_REWARM_ENABLED env so
+ * the operator can ship the cron without immediately emailing every orphan
+ * cohort.
+ *
+ * Tone: founder voice, lowercase, no pressure. Single CTA back to the deposit
+ * page so the buyer can finish in one click. No urgency, no scarcity, no
+ * shaming. We've already spooked them once with a $X checkout; the goal is
+ * to leave the door open without making them feel hunted.
+ */
+export async function sendOrphanCheckoutRewarm(data: {
+  firstName?: string;
+  email: string;
+  rancherName: string;
+  referralId: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.firstName || '').trim() || 'there';
+  const subject = `still interested?`;
+  const depositUrl = utm(
+    `${SITE_URL}/checkout/${data.referralId}/deposit`,
+    'orphan-reaper-rewarm',
+    'still-interested',
+  );
+  return guardedSend({
+    templateName: 'sendOrphanCheckoutRewarm',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;margin:16px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <p>Hey ${esc(first)},</p>
+  <p>Noticed you started checkout with ${esc(data.rancherName)} but didn't finish. No worries — Stripe sessions time out after a day.</p>
+  <p>If you're still in, here's the same checkout link. One click and you're back where you left off.</p>
+  <p style="text-align:center;margin-top:24px;"><a href="${depositUrl}" class="cta">Pick up where I left off &rarr;</a></p>
+  <p>If something stopped you — pricing question, freezer space, timing — just hit reply. I read every reply.</p>
+  <p style="margin-top:32px;">— Benjamin</p>
+  <div class="footer">
+    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -3520,10 +4062,13 @@ export async function sendIncompleteProfileAsk(data: {
   email: string;
   firstName: string;
   buyerState: string;
+  // i-6 audit: cron now sends up to 3 letters over 28d. Optional subject
+  // override lets the cron escalate tone per attempt (D0, D14, D28).
+  subject?: string;
 }) {
   const first = data.firstName || 'there';
   const accessUrl = `${SITE_URL}/access`;
-  const subject = `two questions on your beef — 30 seconds`;
+  const subject = data.subject || `two questions on your beef — 30 seconds`;
   return guardedSend({
     templateName: 'sendIncompleteProfileAsk',
     recipientEmail: data.email,
@@ -3633,6 +4178,16 @@ export async function sendTestimonialAsk(data: {
   const cut = (data.orderType || 'beef').toLowerCase();
   const cutPhrase = /half|whole|quarter/.test(cut) ? `a ${cut}` : 'beef';
   const subject = `quick favor — one sentence about your ${cut}?`;
+  // Mint review-submit JWT — 120d so late repliers still land. Verified by
+  // /api/reviews/submit which writes Buyer Rating + Buyer Review onto the
+  // Referrals row. Buyer can still hit reply for free-form (Conversations
+  // table) — the magic link is just the 30-second express lane.
+  const reviewToken = jwt.sign(
+    { type: 'review-submit', referralId: data.referralId },
+    JWT_SECRET,
+    { expiresIn: '120d' }
+  );
+  const reviewUrl = `${SITE_URL}/reviews/submit?token=${reviewToken}`;
   return guardedSend({
     templateName: 'sendTestimonialAsk',
     recipientEmail: data.email,
@@ -3644,13 +4199,14 @@ export async function sendTestimonialAsk(data: {
       headers: getUnsubscribeHeaders(data.email),
       _replyContext: { type: 'ref', recordId: data.referralId },
       html: `<!DOCTYPE html><html><head>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}</style>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.cta{text-align:center;margin:28px 0}.cta a{display:inline-block;background:#0E0E0E;color:#F4F1EC;padding:14px 32px;font-size:13px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;text-decoration:none}</style>
 </head><body><div class="container">
   <h1>Quick favor, ${esc(first)}.</h1>
   <p>Hey ${esc(first)} — Ben here, founder of BuyHalfCow.</p>
   <p>You got ${cutPhrase} from ${esc(data.ranchName)} a couple weeks back. How is it?</p>
-  <p>If you have 30 seconds, hit reply with <strong>one sentence</strong> about your experience. Real words, your voice. I'd like to share it on the site (first name + state only — no last name, no email).</p>
-  <p>Nothing fancy. Just a sentence. Something like:</p>
+  <p>If you have 30 seconds, click below to leave a quick rating + one sentence. Real words, your voice. I'd like to share it on the site (first name + state only — no last name, no email).</p>
+  <div class="cta"><a href="${reviewUrl}">Leave a quick review</a></div>
+  <p>Or just hit reply with one sentence — like:</p>
   <p style="border-left:3px solid #A7A29A;padding-left:14px;color:#6B4F3F;font-style:italic;">"freezer's full, family's fed, talked to the rancher direct."</p>
   <p>If you'd rather not, totally fine — no follow-up.</p>
   <p>Thanks for backing real ranchers.</p>
@@ -3686,6 +4242,54 @@ export async function sendStateWaitlistLetter(data: {
   <p>I'll email when it happens. No spam in the meantime — just one short monthly note so you know the platform is still building.</p>
   <p>Thanks for being patient w/ a small platform doing it right.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    }),
+  });
+}
+
+// ── Stage-3 Task 9: rancher confirmed fulfillment → buyer receives "your beef is here" ──
+// Sent to the buyer when the rancher hits "Confirm Fulfillment" on the
+// dashboard. Closes the loop — the buyer knows BHC + the rancher have
+// reconciled the deal. For tier_v2 deposits the funds already settled at
+// charge time via Connect direct charge, so this email is purely a status
+// confirmation (no payment action needed from the buyer).
+export async function sendBuyerFulfillmentConfirmation(data: {
+  email: string;
+  firstName: string;
+  rancherName: string;
+  ranchName: string;
+  orderType: string;
+  rancherNote?: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = data.firstName || 'there';
+  const subject = `${data.ranchName} confirmed your beef is in your hands`;
+  const noteBlock = data.rancherNote && data.rancherNote.trim()
+    ? `<div class="box"><p style="margin:0;"><strong>Note from ${esc(data.rancherName)}:</strong></p><p style="margin:8px 0 0;color:#2A2A2A;">${esc(data.rancherNote)}</p></div>`
+    : '';
+  return guardedSend({
+    templateName: 'sendBuyerFulfillmentConfirmation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>Beef received — you're set, ${esc(first)}.</h1>
+  <p>${esc(data.rancherName)} from ${esc(data.ranchName)} just confirmed your ${esc(data.orderType || 'share')} is in your hands. The deal is officially closed.</p>
+  ${noteBlock}
+  <p><strong>What now:</strong></p>
+  <ul style="color:#2A2A2A;line-height:2;">
+    <li>Stack the vacuum-sealed packs flat in your freezer — easier to find cuts later.</li>
+    <li>In ~2 weeks I'll send you a cuts education email — what to do with the oxtail, the shanks, the trim that becomes burger.</li>
+    <li>Around the 5-month mark I'll ping you about reserving the next share — from ${esc(data.rancherName)} again or another rancher in your area if their next harvest fits your timing better.</li>
+  </ul>
+  <p>If anything was off about pickup/delivery, reply to this email. I read every reply.</p>
+  <p style="margin-top:32px;">— Benjamin</p>
   ${emailFooter(data.email)}
 </div></body></html>`,
     }),

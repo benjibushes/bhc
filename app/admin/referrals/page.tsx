@@ -100,6 +100,10 @@ export default function ReferralsPage() {
   const [saleAmount, setSaleAmount] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // P1 audit D-2: bulk select state. Track Set of selected referral IDs +
+  // bulk-op in-flight flag so the sticky bar can show a progress spinner.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -283,6 +287,83 @@ export default function ReferralsPage() {
     }
   };
 
+  // P1 audit D-2: bulk-select helpers
+  const toggleSelected = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedIds(new Set());
+  const selectAllVisible = (visibleIds: string[]) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      visibleIds.forEach(id => next.add(id));
+      return next;
+    });
+  };
+
+  const handleBulkApprove = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (!confirm(`Approve ${ids.length} referral${ids.length === 1 ? '' : 's'}?`)) return;
+    setBulkLoading(true);
+    try {
+      const res = await fetch('/api/admin/referrals/bulk-approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        toast.error('Bulk approve failed', payload?.error || `HTTP ${res.status}`);
+      } else if (payload.failed > 0) {
+        toast.warning(
+          `Approved ${payload.approved}/${payload.total}`,
+          `${payload.failed} failed (check capacity / status)`,
+        );
+      } else {
+        toast.success(`Approved ${payload.approved}/${payload.total}`);
+      }
+      clearSelection();
+      await fetchData();
+    } catch (e: any) {
+      toast.error('Bulk approve error', e?.message);
+    }
+    setBulkLoading(false);
+  };
+
+  const handleBulkReject = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (!confirm(`Reject (Closed Lost) ${ids.length} referral${ids.length === 1 ? '' : 's'}? This cannot be undone in bulk.`)) return;
+    setBulkLoading(true);
+    try {
+      const res = await fetch('/api/admin/referrals/bulk-reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        toast.error('Bulk reject failed', payload?.error || `HTTP ${res.status}`);
+      } else if (payload.failed > 0) {
+        toast.warning(
+          `Rejected ${payload.rejected}/${payload.total}`,
+          `${payload.failed} failed`,
+        );
+      } else {
+        toast.success(`Rejected ${payload.rejected}/${payload.total}`);
+      }
+      clearSelection();
+      await fetchData();
+    } catch (e: any) {
+      toast.error('Bulk reject error', e?.message);
+    }
+    setBulkLoading(false);
+  };
+
   const filteredReferrals = filter === 'all'
     ? referrals
     : referrals.filter(r => r.status === filter);
@@ -378,11 +459,52 @@ export default function ReferralsPage() {
               </div>
             ) : (
               <div className="space-y-4">
+                {/* P1 audit D-2: select-all toggle for current filter view */}
+                <div className="flex items-center justify-between text-xs text-[#6B4F3F] px-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const visibleIds = filteredReferrals.map(r => r.id);
+                      const allSelected = visibleIds.every(id => selectedIds.has(id));
+                      if (allSelected) {
+                        // Deselect just the visible ones
+                        setSelectedIds(prev => {
+                          const next = new Set(prev);
+                          visibleIds.forEach(id => next.delete(id));
+                          return next;
+                        });
+                      } else {
+                        selectAllVisible(visibleIds);
+                      }
+                    }}
+                    className="underline hover:text-[#0E0E0E]"
+                  >
+                    {filteredReferrals.every(r => selectedIds.has(r.id)) && filteredReferrals.length > 0
+                      ? `Deselect all (${filteredReferrals.length})`
+                      : `Select all visible (${filteredReferrals.length})`}
+                  </button>
+                  {selectedIds.size > 0 && (
+                    <span>{selectedIds.size} selected</span>
+                  )}
+                </div>
                 {filteredReferrals.map((ref) => (
-                  <div key={ref.id} className="p-6 border border-[#A7A29A] bg-white space-y-4">
+                  <div
+                    key={ref.id}
+                    className={`p-6 border bg-white space-y-4 ${
+                      selectedIds.has(ref.id) ? 'border-[#0E0E0E] ring-1 ring-[#0E0E0E]' : 'border-[#A7A29A]'
+                    }`}
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div className="flex-1 min-w-[250px]">
                         <div className="flex items-center gap-3 mb-2">
+                          {/* P1 audit D-2: per-row select checkbox */}
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(ref.id)}
+                            onChange={() => toggleSelected(ref.id)}
+                            aria-label={`Select ${ref.buyer_name}`}
+                            className="w-4 h-4 accent-[#0E0E0E] cursor-pointer"
+                          />
                           <h3 className="font-medium text-lg">{ref.buyer_name}</h3>
                           <span className={`px-2 py-0.5 text-xs border ${STATUS_COLORS[ref.status] || 'bg-gray-100'}`}>
                             {ref.status}
@@ -602,6 +724,47 @@ export default function ReferralsPage() {
               </div>
             )}
           </div>
+
+          {/* P1 audit D-2: sticky bulk-action bar */}
+          {selectedIds.size > 0 && (
+            <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#0E0E0E] text-[#F4F1EC] shadow-lg">
+              <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="font-medium">Selected {selectedIds.size}</span>
+                  <span className="text-xs text-[#A7A29A]">
+                    {(() => {
+                      const sel = referrals.filter(r => selectedIds.has(r.id));
+                      const pending = sel.filter(r => r.status === 'Pending Approval').length;
+                      return `${pending} pending · ${sel.length - pending} other`;
+                    })()}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleBulkApprove}
+                    disabled={bulkLoading}
+                    className="px-4 py-2 bg-[#F4F1EC] text-[#0E0E0E] text-sm font-medium hover:bg-white disabled:opacity-50"
+                  >
+                    {bulkLoading ? 'Approving…' : 'Approve Selected'}
+                  </button>
+                  <button
+                    onClick={handleBulkReject}
+                    disabled={bulkLoading}
+                    className="px-4 py-2 border border-[#D97757] text-[#D97757] text-sm hover:bg-[#D97757] hover:text-[#F4F1EC] disabled:opacity-50"
+                  >
+                    {bulkLoading ? 'Rejecting…' : 'Reject Selected'}
+                  </button>
+                  <button
+                    onClick={clearSelection}
+                    disabled={bulkLoading}
+                    className="px-3 py-2 border border-[#A7A29A] text-[#A7A29A] text-sm hover:bg-[#A7A29A] hover:text-[#0E0E0E] disabled:opacity-50"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Reassign Modal */}
           {reassignModal && (

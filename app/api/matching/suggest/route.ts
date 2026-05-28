@@ -4,16 +4,18 @@ import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
-import { sendEmail, sendBuyerIntroNotification } from '@/lib/email';
+import { sendEmail, sendBuyerIntroNotification, sendStateWaitlistLetter } from '@/lib/email';
+import { sendSMSToConsumer } from '@/lib/twilio';
 import { normalizeState, normalizeStates } from '@/lib/states';
-import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 90;
 
-import { JWT_SECRET } from '@/lib/secrets';
+import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
+import { funnelRecord } from '@/lib/funnelMetrics';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function POST(request: Request) {
@@ -29,23 +31,14 @@ export async function POST(request: Request) {
       }, { status: 503 });
     }
 
-    // Auth: admin cookie, internal-secret header, or admin password header.
-    // Adding x-admin-password matches the convention in lib/adminAuth.ts so
-    // operational scripts can run against prod with the same credential they
-    // use for every other admin endpoint (no separate INTERNAL_API_SECRET
-    // setup required).
+    // Auth Phase 0: x-internal-secret header (cron/internal callers) OR
+    // requireAdmin() which handles Clerk session + x-admin-password.
     const internalSecret = process.env.INTERNAL_API_SECRET || '';
-    const adminPassword = process.env.ADMIN_PASSWORD || '';
     const authHeader = request.headers.get('x-internal-secret') || '';
-    const adminPwHeader = request.headers.get('x-admin-password') || '';
-    const cookieStore = await cookies();
-    const adminCookie = cookieStore.get('bhc-admin-auth');
-    const isAdmin = adminCookie?.value === 'authenticated';
     const isInternal = internalSecret && authHeader === internalSecret;
-    const isAdminPw = adminPassword && adminPwHeader === adminPassword;
-
-    if (!isAdmin && !isInternal && !isAdminPw) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!isInternal) {
+      const unauthorized = await requireAdmin(request);
+      if (unauthorized) return unauthorized;
     }
 
     const body = await request.json();
@@ -144,6 +137,111 @@ export async function POST(request: Request) {
 
     const allRanchers: any[] = await getAllRecords(TABLES.RANCHERS);
 
+    // ── Per-state fairness sub-cap (2026-05-27 multi-state fix) ─────────────
+    // PROBLEM: a rancher serving multiple states (Routing States = CA, OR, WA)
+    // shares ONE capacity counter. High-demand states (CA) consume the entire
+    // cap; low-demand states (OR, WA) get waitlisted indefinitely with no
+    // buyer ever reaching the rancher. Bigger states starve smaller ones.
+    //
+    // FIX: per-state sub-cap. Each routing state can claim at most
+    // floor(maxReferrals / numStates) slots by default. Ranchers can override
+    // with a JSON `State Capacity Override` field like {"CA": 5, "OR": 3, "WA": 2}
+    // when they want a non-uniform split.
+    //
+    // BACKWARDS-COMPAT:
+    //   - 1 routing state served → no sub-cap (old behavior preserved exactly).
+    //   - Multi-state rancher with no override → equal-floor split.
+    //   - Legacy referrals (no State Allocation stamp) don't count toward any
+    //     sub-cap bucket — they only count toward the global cap. This is the
+    //     conservative read: a referral with no allocation could belong to any
+    //     state, so attributing it to one would over-count there. As fresh
+    //     referrals stamp their state, the per-state buckets self-populate.
+    //
+    // STAMPING: at referral create below, we record State Allocation = the
+    // buyer's normalized state. The sub-cap math reads this field on subsequent
+    // matches to know how many slots each state has consumed.
+    const rancherRoutingStates = (r: any): string[] => {
+      const adminApprovedMultiState = !!r['Admin Approved Multi-State'];
+      const primaryState = normalizeState(r['State']);
+      if (!adminApprovedMultiState) {
+        return primaryState ? [primaryState] : [];
+      }
+      const routingRaw = (r['Routing States'] || '').toString().trim();
+      const served = normalizeStates(routingRaw || r['States Served']);
+      const merged = new Set<string>();
+      if (primaryState) merged.add(primaryState);
+      for (const s of served) if (s) merged.add(s);
+      return Array.from(merged);
+    };
+    const parseStateOverride = (raw: any): Record<string, number> | null => {
+      if (!raw) return null;
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+        const out: Record<string, number> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          const code = normalizeState(String(k));
+          const n = Math.floor(Number(v));
+          if (code && isFinite(n) && n >= 0) out[code] = n;
+        }
+        return Object.keys(out).length > 0 ? out : null;
+      } catch {
+        return null;
+      }
+    };
+    // Pull all active Intro Sent referrals once so we can bucket per (rancher, state).
+    // Reading-once + grouping avoids one Airtable call per rancher × state.
+    let activeRefsByRancherState = new Map<string, Map<string, number>>();
+    try {
+      const activeReferrals = (await getAllRecords(
+        TABLES.REFERRALS,
+        `{Status} = "Intro Sent"`,
+      )) as any[];
+      for (const ref of activeReferrals) {
+        const rancherIds = (Array.isArray(ref['Rancher']) ? ref['Rancher'] : []) as string[];
+        if (rancherIds.length === 0) continue;
+        // Prefer the State Allocation stamp (added 2026-05-27). Fall back
+        // to Buyer State for legacy referrals created before this fix —
+        // they still bucket correctly since the buyer's home state is the
+        // source state for the sub-cap math by design.
+        const allocRaw = ref['State Allocation'] || ref['Buyer State'] || '';
+        const allocState = normalizeState(String(allocRaw));
+        if (!allocState) continue;
+        for (const rid of rancherIds) {
+          let inner = activeRefsByRancherState.get(rid);
+          if (!inner) {
+            inner = new Map<string, number>();
+            activeRefsByRancherState.set(rid, inner);
+          }
+          inner.set(allocState, (inner.get(allocState) || 0) + 1);
+        }
+      }
+    } catch (e: any) {
+      console.error('[matching/suggest] active-referrals-by-state load failed:', e?.message);
+      // Fail open: empty map → sub-cap behaves as "no allocations yet,"
+      // matching falls back to global cap (legacy behavior).
+      activeRefsByRancherState = new Map();
+    }
+    const getStateSubCap = (
+      rancher: any,
+      state: string,
+      maxReferrals: number,
+    ): number => {
+      const states = rancherRoutingStates(rancher);
+      // Single-state ranchers preserve legacy behavior (no sub-cap).
+      if (states.length <= 1) return maxReferrals;
+      const override = parseStateOverride(rancher['State Capacity Override']);
+      if (override && override[state] !== undefined) return override[state];
+      // Equal-floor split. floor() can leave a slot or two unallocated
+      // (e.g. 10 / 3 = 3 per state, total 9). That's intentional — the
+      // global cap above stays authoritative, but the sub-cap prevents
+      // any single state from hogging more than its fair share.
+      return Math.max(0, Math.floor(maxReferrals / states.length));
+    };
+    const getActiveInState = (rancherId: string, state: string): number => {
+      return activeRefsByRancherState.get(rancherId)?.get(state) || 0;
+    };
+
     // Helper: check if rancher is active, signed, and under capacity.
     // Also excludes any rancher in `excludeRancherIds` — used when re-routing
     // a lead that a rancher just passed on, so the same rancher doesn't get
@@ -171,6 +269,15 @@ export async function POST(request: Request) {
         if (currentReferrals >= maxReferrals * HARD_CEILING_MULTIPLIER) return false;
       } else {
         if (currentReferrals >= maxReferrals) return false;
+      }
+      // Per-state sub-cap. Cold leads only — hot leads keep the bypass
+      // intent (warmup-engaged opt-ins shouldn't sit in queue waiting for
+      // a state-fairness slot to free up). The global 1.2× hard ceiling
+      // above is still enforced atomically post-INCR.
+      if (!isHotLead) {
+        const subCap = getStateSubCap(r, normalizedBuyerState, maxReferrals);
+        const inState = getActiveInState(r.id, normalizedBuyerState);
+        if (inState >= subCap) return false;
       }
       return true;
     };
@@ -479,6 +586,12 @@ export async function POST(request: Request) {
       'Suggested Rancher Name': topMatch['Operator Name'] || topMatch['Ranch Name'] || '',
       'Suggested Rancher State': topMatch['State'] || '',
       'Match Type': matchType === 'direct' ? 'Direct (Rancher Page)' : 'Local',
+      // State Allocation: source state used for the per-state sub-cap math
+      // on future matches. Stamped on every new referral so the activeRefs
+      // grouping in subsequent calls knows which state's bucket this slot
+      // belongs to. For single-state ranchers the sub-cap collapses to the
+      // global cap, so this stamp is harmless but always present.
+      'State Allocation': normalizedBuyerState,
     };
 
     let referral: any;
@@ -877,6 +990,25 @@ export async function POST(request: Request) {
           );
           const buyerLoginUrl = `${SITE_URL}/member/verify?token=${buyerToken}`;
           const buyerFirstName = (buyerName || '').split(' ')[0] || 'there';
+
+          // tier_v2 ranchers run buyer deposits through Stripe Connect direct
+          // charge at /checkout/<refId>/deposit. The deposit page requires
+          // bhc-member-auth cookie, so we wrap the deep-link in a magic-link
+          // verify URL — verify sets the cookie then 302s to the deposit page.
+          // Legacy ranchers stay on the old per-tier Payment Link flow (the
+          // depositMagicLinkUrl stays undefined so the email helper falls back
+          // to its tap-any-tier copy).
+          const rancherPricingModel = String(topMatch['Pricing Model'] || 'legacy');
+          let depositMagicLinkUrl: string | undefined;
+          // Guard empty buyerId/email — signing a token with `''` produces a
+          // valid JWT that fails at getRecordById time on the verify handler,
+          // surfacing as "expired link" in the buyer's UI. Better to skip the
+          // CTA than ship a guaranteed-broken link.
+          if (rancherPricingModel === 'tier_v2' && buyerId && buyerEmail) {
+            const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
+            const nextPath = `/checkout/${referral.id}/deposit`;
+            depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+          }
           // Same try/catch + Telegram alert pattern as the rancher email.
           // The buyer-side intro is what actually shows them rancher contact
           // info in the dashboard email — a silent send failure here makes
@@ -903,6 +1035,9 @@ export async function POST(request: Request) {
               readyToBuy: buyerReadyToBuy,
               // Tag Reply-To so any buyer reply lands in /api/webhooks/resend-inbound
               referralId: referral.id,
+              // tier_v2 only — undefined for legacy ranchers (preserves the
+              // tap-any-tier Payment Link copy in the email template).
+              depositMagicLinkUrl,
             });
           } catch (e: any) {
             console.error('Buyer intro email failed:', e?.message);
@@ -917,7 +1052,48 @@ export async function POST(request: Request) {
               );
             } catch {}
           }
+
+          // G14: SMS touchpoint right after buyer intro email. Industry +20-40%
+          // conversion lift from SMS reminders post-intro. Fire-and-forget so a
+          // Twilio outage can't block the matching pipeline.
+          // F-3 / P4-D audit fix: routed through sendSMSToConsumer which gates on
+          // explicit SMS Opt-In + Unsubscribed mirror. Pre-fix, every buyer w/
+          // phone got SMS — TCPA exposure when TWILIO_* env vars flip on.
+          // Now: no opt-in OR unsubscribed, no SMS, no exposure.
+          if (buyerPhone) {
+            try {
+              const consumerForSms: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+              sendSMSToConsumer({
+                consumer: consumerForSms,
+                phone: buyerPhone,
+                body: `hey ${buyerFirstName} — we just connected you w/ ${rancherName} for half-cow. they'll email you in the next 24h. reply STOP to opt out. — Ben @ BuyHalfCow`,
+                reason: 'matching/suggest intro touchpoint',
+              }).catch(() => {});
+            } catch (e) {
+              console.warn('[matching/suggest] SMS opt-in check failed:', e);
+            }
+          }
         }
+
+        // H-2 audit fix: funnel event for the intro-fire moment. Pre-fix
+        // /admin/funnel could see signup/engaged/transition but not the actual
+        // "match emailed both sides" milestone — couldn't measure intro→close
+        // rate. Now: every successful matching/suggest run records match_sent
+        // tied to the new referral + rancher + buyer.
+        try {
+          await funnelRecord({
+            stage: 'match_sent',
+            referralId: referral.id,
+            rancherId: topMatch.id,
+            buyerId,
+            metadata: {
+              state: buyerState,
+              matchType,
+              rancherSlug: topMatch['Slug'] || '',
+              readyToBuy: buyerReadyToBuy,
+            },
+          });
+        } catch (e) { console.error('[funnel] match_sent failed:', e); }
 
         // Telegram noise reduction: per-match notifications were creating
         // dozens of pings/day with no required action. Routine matches now
@@ -941,6 +1117,43 @@ export async function POST(request: Request) {
         });
       } catch (e) {
         console.error('Error updating consumer referral status:', e);
+      }
+
+      // F-1 audit fix: fire sendStateWaitlistLetter immediately at signup.
+      // Pre-fix, buyer signed up in an uncovered state → Status=Waitlisted +
+      // Buyer Stage=WAITING → NO email until reclassify-buyers cron segmented
+      // them as STATE_WAITLIST + email-sequences fired the letter days later.
+      // For cold paid-ad traffic this 24-48h silence was the bounce/trust hit.
+      // Gate on Routing Segment Send Count == 0 so a buyer hitting the
+      // endpoint twice (re-signup, retry) doesn't get the letter twice — the
+      // email-sequences cron also honors this counter.
+      if (buyerEmail) {
+        try {
+          const consumer = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+          const segCount = Number(consumer?.['Routing Segment Send Count'] || 0);
+          if (segCount === 0) {
+            const firstName = String(buyerName || '').split(' ')[0] || 'there';
+            sendStateWaitlistLetter({
+              email: buyerEmail,
+              firstName,
+              buyerState: normalizedBuyerState,
+            })
+              .then(async () => {
+                // Stamp the counter so email-sequences cron doesn't double-fire.
+                try {
+                  await updateRecord(TABLES.CONSUMERS, buyerId, {
+                    'Routing Segment Send Count': 1,
+                    'Routing Segment Last Sent At': new Date().toISOString(),
+                  });
+                } catch (e) {
+                  console.error('[state-waitlist] segment counter stamp failed:', e);
+                }
+              })
+              .catch(e => console.error('[state-waitlist] fire failed:', e));
+          }
+        } catch (e) {
+          console.error('[state-waitlist] consumer fetch failed:', e);
+        }
       }
 
       // Telegram noise reduction: routine no-match events roll into the

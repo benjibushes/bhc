@@ -180,6 +180,7 @@ async function resolveLinks(context: ReplyContext | null): Promise<{
   referralId?: string;
   consumerId?: string;
   rancherId?: string;
+  threadId?: string;
 }> {
   if (!context) return {};
 
@@ -200,6 +201,26 @@ async function resolveLinks(context: ReplyContext | null): Promise<{
   }
   if (context.type === 'usr') return { consumerId: context.recordId };
   if (context.type === 'rnc') return { rancherId: context.recordId };
+  if (context.type === 'thread') {
+    // Resolve the thread's buyer + rancher + referral so the downstream
+    // activity stamp + audit log + Telegram alert have full context.
+    try {
+      const { THREADS_TABLE } = await import('@/lib/contracts/threads');
+      const t: any = await getRecordById(THREADS_TABLE, context.recordId);
+      if (!t) return { threadId: context.recordId };
+      const buyerLinks = t['Buyer'] || [];
+      const rancherLinks = t['Rancher'] || [];
+      const referralLinks = t['Referral'] || [];
+      return {
+        threadId: context.recordId,
+        consumerId: Array.isArray(buyerLinks) ? buyerLinks[0] : undefined,
+        rancherId: Array.isArray(rancherLinks) ? rancherLinks[0] : undefined,
+        referralId: Array.isArray(referralLinks) ? referralLinks[0] : undefined,
+      };
+    } catch {
+      return { threadId: context.recordId };
+    }
+  }
   return {};
 }
 
@@ -360,13 +381,96 @@ export async function POST(request: Request) {
       }
     }
 
+    // ── THREAD ROUTING ─────────────────────────────────────────────────────
+    // If the inbound was tagged with thread-<id>@replies, post the body into
+    // the thread so it appears in both the buyer's /checkout/<refId>/ask page
+    // and the rancher's /rancher/inbox dashboard. Idempotent on Message-Id
+    // header so Resend webhook retries don't double-write.
+    if (links.threadId) {
+      try {
+        const { postMessage } = await import('@/lib/contracts/threads');
+        // Determine sender: match `from` against buyer + rancher emails.
+        let senderType: 'buyer' | 'rancher' | 'admin' = 'admin';
+        let senderId = '';
+        const { getRecordById, TABLES } = await import('@/lib/airtable');
+        let buyerEmail = '';
+        let rancherEmail = '';
+        if (links.consumerId) {
+          try {
+            const b: any = await getRecordById(TABLES.CONSUMERS, links.consumerId);
+            buyerEmail = String(b?.['Email'] || '').toLowerCase().trim();
+          } catch {}
+        }
+        if (links.rancherId) {
+          try {
+            const r: any = await getRecordById(TABLES.RANCHERS, links.rancherId);
+            rancherEmail = String(r?.['Email'] || '').toLowerCase().trim();
+          } catch {}
+        }
+        const fromLower = String(from || '').toLowerCase().trim();
+        const addrMatch = fromLower.match(/<([^>]+)>/);
+        const fromAddr = addrMatch ? addrMatch[1] : fromLower;
+        if (buyerEmail && fromAddr.includes(buyerEmail)) {
+          senderType = 'buyer';
+          senderId = links.consumerId || '';
+        } else if (rancherEmail && fromAddr.includes(rancherEmail)) {
+          senderType = 'rancher';
+          senderId = links.rancherId || '';
+        }
+
+        const emailMessageId = String(
+          (headers as any)?.['message-id'] ||
+          (headers as any)?.['Message-Id'] ||
+          (headers as any)?.['Message-ID'] ||
+          '',
+        );
+
+        await postMessage({
+          threadId: links.threadId,
+          senderType,
+          senderId,
+          body: bodyForClassify.slice(0, 5000),
+          sentVia: 'email',
+          emailMessageId,
+        });
+
+        // Telegram visibility — operator sees every thread message inbound so
+        // they can intervene if a deal gets stuck in a back-and-forth. Mute
+        // by ignoring 'system' senders. Dedupe via Message-Id so Resend
+        // webhook retries don't double-ping.
+        try {
+          const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+          const senderEmoji = senderType === 'buyer' ? '👤' : senderType === 'rancher' ? '🤠' : '📨';
+          const truncated = bodyForClassify.length > 300
+            ? bodyForClassify.slice(0, 300) + '…'
+            : bodyForClassify;
+          const safeBody = truncated
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `💬 <b>Thread message</b> ${senderEmoji}\n\n` +
+            `<b>From:</b> ${String(from || '').slice(0, 100)}\n` +
+            `<b>Thread:</b> <code>${links.threadId}</code>` +
+            (links.referralId ? `\n<b>Referral:</b> <code>${links.referralId}</code>` : '') +
+            `\n\n<i>${safeBody}</i>`,
+          );
+        } catch (telErr: any) {
+          console.warn('[resend-inbound] thread Telegram alert failed:', telErr?.message);
+        }
+      } catch (e: any) {
+        console.warn('[resend-inbound] thread message post failed:', e?.message);
+      }
+    }
+
     // Audit log — every inbound capture is auditable
     try {
       await logAuditEntry({
         actor: 'cron',
         tool: 'resend-inbound',
-        targetType: links.referralId ? 'Referral' : links.consumerId ? 'Consumer' : links.rancherId ? 'Rancher' : 'Other',
-        targetId: links.referralId || links.consumerId || links.rancherId || 'unknown',
+        targetType: links.threadId ? 'Thread' : links.referralId ? 'Referral' : links.consumerId ? 'Consumer' : links.rancherId ? 'Rancher' : 'Other',
+        targetId: links.threadId || links.referralId || links.consumerId || links.rancherId || 'unknown',
         args: { from, to, subject, hadContext: !!context },
         result: { classification, conversationId },
         reverseAction: { type: 'noop', reason: 'inbound capture is read-only' },

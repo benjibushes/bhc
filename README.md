@@ -231,7 +231,7 @@ bhc/
 │   ├── airtable.ts                 # Airtable client + helpers
 │   ├── email.ts                    # All email templates (Resend)
 │   └── telegram.ts                 # Telegram bot notifications
-├── middleware.ts                    # Auth + security headers
+├── proxy.ts                    # Auth + security headers
 ├── public/
 │   ├── docs/                       # Legal documents (TOS, agreements)
 │   ├── favicon.ico

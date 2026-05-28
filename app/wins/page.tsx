@@ -42,6 +42,10 @@ type Win = {
   orderType: string;
   closedAt: string;
   rancherLogo?: string;
+  // I-8 audit: surface H12-collected reviews on /wins cards.
+  // Buyer Review + Buyer Rating fields populated by /api/reviews/submit.
+  buyerReview?: string;
+  buyerRating?: number;
 };
 
 async function fetchWins(): Promise<{
@@ -75,6 +79,17 @@ async function fetchWins(): Promise<{
       // Buyer privacy — first initial of name only.
       const buyerName = (ref['Buyer Name'] || '').toString().trim();
       const initial = buyerName ? `${buyerName[0]}.${buyerName.split(' ')[1]?.[0] || ''}` : '?';
+      const reviewText = String(ref['Buyer Review'] || '').trim();
+      const reviewRatingRaw = ref['Buyer Rating'];
+      const reviewRating =
+        typeof reviewRatingRaw === 'number' && reviewRatingRaw > 0
+          ? reviewRatingRaw
+          : undefined;
+      // Filter ≤3-star reviews from public surface (collected, not amplified).
+      const surfaceReview =
+        reviewText && (reviewRating === undefined || reviewRating >= 4)
+          ? reviewText
+          : undefined;
       return {
         id: ref.id,
         rancherName: rancher['Ranch Name'] || rancher['Operator Name'] || 'Ranch',
@@ -87,6 +102,8 @@ async function fetchWins(): Promise<{
         orderType: (ref['Order Type'] || 'Beef').toString(),
         closedAt: (ref['Closed At'] || '').toString(),
         rancherLogo: normalizeImageUrl((rancher['Logo URL'] || '').toString()),
+        buyerReview: surfaceReview,
+        buyerRating: surfaceReview ? reviewRating : undefined,
       } as Win;
     })
     .filter((w): w is Win => w !== null && w.saleAmount > 0)
@@ -122,21 +139,21 @@ export default async function WinsPage() {
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      <section className="py-16 md:py-24 border-b border-divider/10">
+      <section className="py-14 md:py-24 border-b border-divider/10">
         <Container>
           <div className="max-w-3xl space-y-5">
             <Pill tone="positive">Real deals · real ranchers</Pill>
-            <h1 className="font-serif text-4xl md:text-6xl leading-tight">
-              The proof, on a wall.
+            <h1 className="font-serif text-4xl md:text-6xl leading-tight lowercase">
+              the proof, on a wall.
             </h1>
-            <p className="text-lg text-charcoal/80 leading-relaxed">
-              Every closed deal on the BuyHalfCow network &mdash; updated live as
+            <p className="text-base md:text-lg text-charcoal/80 leading-relaxed">
+              Every closed deal on the BuyHalfCow network &mdash; updated as
               ranchers mark wins. No vanity metrics. No "thousands of customers"
               fluff. Just the actual list of families who bought real beef from
               real ranchers because we connected them.
             </p>
 
-            {/* Aggregate stats */}
+            {/* Aggregate stats — real numbers from Airtable Closed Won. */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-dust/60">
               <Stat
                 value={`$${totalGmv.toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
@@ -151,77 +168,31 @@ export default async function WinsPage() {
       </section>
 
       {/* Wins grid */}
-      <section className="py-14 md:py-16">
+      <section className="py-12 md:py-16">
         <Container>
           {wins.length === 0 ? (
-            <div className="max-w-3xl mx-auto space-y-8">
-              <div className="text-center space-y-3">
-                <Pill tone="amber" className="mx-auto">Coming soon</Pill>
-                <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
-                  First deal posts here the moment it closes.
-                </h2>
-                <p className="text-saddle max-w-xl mx-auto leading-relaxed">
-                  No vanity placeholders. When a real rancher closes a real deal
-                  with a real family, it goes here automatically. Until then,
-                  here&rsquo;s what these will look like.
-                </p>
-              </div>
-
-              {/* Preview cards — show ranchers already on the network so the page
-                  feels populated. Renders examples even before any closes. */}
-              <div className="grid md:grid-cols-2 gap-5">
-                <Card variant="default" padding="lg" className="space-y-4 opacity-70 border-dashed">
-                  <div className="flex items-start gap-3">
-                    <div className="w-12 h-12 bg-bone-deep border border-dust flex items-center justify-center shrink-0">
-                      <span className="font-serif text-xl text-saddle">A</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                        Example
-                      </p>
-                      <p className="font-serif text-lg text-charcoal leading-tight">
-                        A verified ranch in your state
-                      </p>
-                      <p className="text-xs text-saddle">XX</p>
-                    </div>
-                  </div>
-                  <div className="border-t border-dust/60 pt-3 space-y-1.5">
-                    <p className="text-2xl font-serif text-charcoal">$1,200</p>
-                    <p className="text-sm text-charcoal/85">
-                      Half cow · sold to S.K., MT
-                    </p>
-                  </div>
-                </Card>
-                <Card variant="default" padding="lg" className="space-y-4 opacity-70 border-dashed">
-                  <div className="flex items-start gap-3">
-                    <div className="w-12 h-12 bg-bone-deep border border-dust flex items-center justify-center shrink-0">
-                      <span className="font-serif text-xl text-saddle">B</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                        Example
-                      </p>
-                      <p className="font-serif text-lg text-charcoal leading-tight">
-                        Another verified ranch
-                      </p>
-                      <p className="text-xs text-saddle">XX</p>
-                    </div>
-                  </div>
-                  <div className="border-t border-dust/60 pt-3 space-y-1.5">
-                    <p className="text-2xl font-serif text-charcoal">$2,400</p>
-                    <p className="text-sm text-charcoal/85">
-                      Whole cow · sold to J.R., CO
-                    </p>
-                  </div>
-                </Card>
-              </div>
-
-              <p className="text-center text-sm text-saddle">
-                Want yours up here?{' '}
-                <a href="/access" className="underline underline-offset-2 hover:text-charcoal">Take the quiz</a>
-                {' · '}
-                <a href="/map/add-a-rancher" className="underline underline-offset-2 hover:text-charcoal">Or add a rancher</a>
+            <div className="max-w-2xl mx-auto space-y-6 text-center">
+              <Pill tone="amber" className="mx-auto">First closes loading</Pill>
+              <p className="text-saddle leading-relaxed">
+                We're closing the first deals on the network now. Take the
+                quiz and we'll match you to a rancher in your state as they
+                come online.
               </p>
+              <div className="flex flex-wrap justify-center gap-3 pt-1">
+                <a
+                  href="/access"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-charcoal text-bone uppercase tracking-wide text-sm hover:bg-saddle transition-colors"
+                >
+                  Take the quiz
+                  <span aria-hidden>→</span>
+                </a>
+                <a
+                  href="/map/add-a-rancher"
+                  className="inline-flex items-center gap-2 px-6 py-3 border border-charcoal text-sm tracking-wide uppercase hover:bg-charcoal hover:text-bone transition-colors"
+                >
+                  Add a rancher
+                </a>
+              </div>
             </div>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5 max-w-6xl mx-auto">
@@ -261,6 +232,22 @@ export default async function WinsPage() {
                       {w.buyerState ? `, ${w.buyerState}` : ''}
                     </p>
                   </div>
+                  {w.buyerReview && (
+                    <div className="border-t border-dust/60 pt-3 space-y-2">
+                      {w.buyerRating !== undefined && (
+                        <div className="flex items-center gap-0.5 text-saddle text-sm" aria-label={`${w.buyerRating} of 5 stars`}>
+                          {Array.from({ length: 5 }).map((_, idx) => (
+                            <span key={idx} className={idx < (w.buyerRating || 0) ? '' : 'opacity-30'} aria-hidden>
+                              ★
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-sm italic text-charcoal/85 leading-relaxed">
+                        &ldquo;{w.buyerReview}&rdquo;
+                      </p>
+                    </div>
+                  )}
                   {w.rancherSlug && (
                     <a
                       href={`/ranchers/${w.rancherSlug}`}
@@ -278,26 +265,26 @@ export default async function WinsPage() {
       </section>
 
       {/* Bottom CTAs */}
-      <section className="py-14 border-t border-dust/40">
+      <section className="py-12 md:py-14 border-t border-dust/40">
         <Container>
-          <div className="max-w-3xl mx-auto text-center space-y-4">
-            <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
-              Want to be on this list?
+          <div className="max-w-3xl mx-auto text-center space-y-4 px-1">
+            <h2 className="font-serif text-2xl md:text-3xl text-charcoal lowercase">
+              want to be on this list?
             </h2>
-            <p className="text-saddle leading-relaxed">
+            <p className="text-saddle leading-relaxed max-w-xl mx-auto">
               Whether you&rsquo;re a rancher with beef to sell or a family
               looking for it &mdash; we&rsquo;ll match you in your state.
             </p>
-            <div className="flex flex-wrap justify-center gap-3 pt-2">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap justify-center gap-3 pt-2">
               <a
                 href="/access"
-                className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+                className="inline-flex items-center justify-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
               >
                 I want beef →
               </a>
               <a
                 href="/map/add-a-rancher"
-                className="inline-flex items-center gap-2 px-7 py-3.5 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
+                className="inline-flex items-center justify-center gap-2 px-7 py-3.5 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
               >
                 I&rsquo;m a rancher →
               </a>

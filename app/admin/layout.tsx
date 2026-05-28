@@ -15,6 +15,7 @@ const NAV: { label: string; href: string; icon: string; group: string }[] = [
   { group: 'OPS', icon: '✔️', label: 'Compliance', href: '/admin/compliance' },
   { group: 'OPS', icon: '🤝', label: 'Affiliates', href: '/admin/affiliates' },
   { group: 'INSIGHT', icon: '📊', label: 'Analytics', href: '/admin/analytics' },
+  { group: 'INSIGHT', icon: '🪜', label: 'Funnel', href: '/admin/funnel' },
   { group: 'INSIGHT', icon: '🗺', label: 'Heatmap', href: '/admin/heatmap' },
   { group: 'INSIGHT', icon: '📬', label: 'Inquiries', href: '/admin/inquiries' },
   { group: 'INSIGHT', icon: '🗃', label: 'Backfill', href: '/admin/backfill' },

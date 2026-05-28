@@ -207,6 +207,70 @@ export async function getLiveCapacity(rancherId: string): Promise<number> {
   }
 }
 
+/**
+ * Drift-recovery helper. Force-sets both Redis counter + Airtable
+ * Current Active Referrals to the same canonical value.
+ *
+ * Use ONLY from the capacity-drift-check cron OR a manual operator
+ * intervention. The runtime increment/decrement paths handle their own
+ * Redis writes; this exists to repair the mirror when Redis loss /
+ * Airtable rebuild causes the two sources to diverge.
+ *
+ * Returns { redisOk, airtableOk } so the caller can log partial failures
+ * without crashing the audit loop.
+ */
+export async function setCapacityCounter(
+  rancherId: string,
+  value: number,
+): Promise<{ redisOk: boolean; airtableOk: boolean }> {
+  const clamped = Math.max(0, Math.floor(Number(value) || 0));
+  let redisOk = false;
+  const redis = getRedis();
+  if (redis) {
+    try {
+      await redis.set(capacityKey(rancherId), clamped);
+      redisOk = true;
+    } catch (e: any) {
+      console.error('[setCapacityCounter] Redis SET failed:', e?.message);
+    }
+  } else {
+    // No Redis configured — the cron should still rewrite Airtable so the
+    // mirror is correct; Redis will bootstrap from Airtable next runtime.
+    redisOk = true;
+  }
+  let airtableOk = false;
+  try {
+    await updateRecord(TABLES.RANCHERS, rancherId, {
+      'Current Active Referrals': clamped,
+    });
+    airtableOk = true;
+  } catch (e: any) {
+    console.error('[setCapacityCounter] Airtable write failed:', e?.message);
+  }
+  return { redisOk, airtableOk };
+}
+
+/**
+ * Read the raw Redis counter for a rancher without bootstrapping or
+ * fallback writes. Returns null if Redis is missing OR the key doesn't
+ * exist. Used by the drift cron to compare against the Airtable mirror
+ * WITHOUT mutating either side.
+ */
+export async function peekRedisCapacity(rancherId: string): Promise<number | null> {
+  const redis = getRedis();
+  if (!redis) return null;
+  try {
+    const key = capacityKey(rancherId);
+    const exists = await redis.exists(key);
+    if (!exists) return null;
+    const raw = await redis.get<number>(key);
+    return Number(raw || 0);
+  } catch (e: any) {
+    console.error('[peekRedisCapacity] Redis GET failed:', e?.message);
+    return null;
+  }
+}
+
 async function legacyIncrement(rancherId: string): Promise<number> {
   try {
     const live = await currentAirtableCount(rancherId);

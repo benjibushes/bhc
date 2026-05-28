@@ -131,6 +131,9 @@ export async function POST(request: Request) {
       ],
       success_url: `${SITE_URL}/founders?success=1&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${SITE_URL}/founders?cancelled=1`,
+      automatic_tax: { enabled: true },
+      customer_update: { address: 'auto' },
+      tax_id_collection: { enabled: true },
     });
 
     return NextResponse.json({ url: session.url });

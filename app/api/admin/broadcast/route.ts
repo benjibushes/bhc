@@ -3,6 +3,8 @@ import { getAllRecords, createRecord, escapeAirtableValue } from '@/lib/airtable
 import { TABLES } from '@/lib/airtable';
 import { sendBroadcastEmail } from '@/lib/email';
 import { requireAdmin } from '@/lib/adminAuth';
+import { spamCheck } from '@/lib/spamCheck';
+import { logAuditEntry } from '@/lib/auditLog';
 
 export const maxDuration = 60;
 
@@ -63,6 +65,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No recipients found' }, { status: 400 });
     }
 
+    // Spam-word scrub. P0 audit fix (C-3): we surface the score on PREVIEW
+    // so operator sees it before confirming, and we HARD-BLOCK on send if
+    // either subject or body scores >= 50. Better one false-positive than
+    // a Resend blacklist that kills transactional refund + intro emails.
+    const subjectCheck = spamCheck(subject);
+    const bodyText = htmlBody || message || '';
+    const bodyCheck = spamCheck(bodyText);
+    const spamScore = Math.max(subjectCheck.score, bodyCheck.score);
+    const spamViolations = [
+      ...subjectCheck.violations.map((v) => `subject: ${v}`),
+      ...bodyCheck.violations.map((v) => `body: ${v}`),
+    ];
+
     if (preview) {
       return NextResponse.json({
         preview: true,
@@ -70,7 +85,18 @@ export async function POST(request: Request) {
         sampleRecipients: recipients.slice(0, 10).map(r => ({ name: r.name, email: r.email.replace(/(.{2}).*(@.*)/, '$1***$2') })),
         subject,
         campaignName,
+        spamScore,
+        spamViolations,
+        spamBlocked: spamScore >= 50,
       });
+    }
+
+    if (spamScore >= 50) {
+      return NextResponse.json({
+        error: 'Broadcast blocked by spam check',
+        spamScore,
+        spamViolations,
+      }, { status: 400 });
     }
 
     // Duplicate campaign protection. Now checks for ANY prior row with the
@@ -164,7 +190,27 @@ export async function POST(request: Request) {
     // Batch send with rate limiting
     let sent = 0;
     let failed = 0;
+    let aborted = false;
     for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+      // Abort kill-switch. P0 audit fix (C-4): poll the reserved Campaigns
+      // row at each batch boundary. If operator hit POST /api/admin/broadcast/abort,
+      // Status flips to 'Aborting' and we bail out. Skipped if reservation
+      // failed (no row to poll).
+      if (reservedCampaignId) {
+        try {
+          const { getRecord } = await import('@/lib/airtable');
+          const row: any = await getRecord(TABLES.CAMPAIGNS, reservedCampaignId);
+          if (row && (row['Status'] || '') === 'Aborting') {
+            aborted = true;
+            break;
+          }
+        } catch (pollErr) {
+          // Non-fatal — if Airtable read fails, keep sending. The dupe gate
+          // protects against the next run if we crash anyway.
+          console.warn('[broadcast] abort poll failed (continuing):', pollErr);
+        }
+      }
+
       const batch = recipients.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map(recipient =>
@@ -193,11 +239,12 @@ export async function POST(request: Request) {
     // If reservation failed earlier, fall back to creating a fresh row so we
     // still have an audit trail (with the caveat that dupe protection won't
     // catch a crashed retry in that fallback path).
+    const finalStatus = aborted ? 'Aborted' : (failed > 0 ? 'Partial' : 'Sent');
     try {
       if (reservedCampaignId) {
         const { updateRecord } = await import('@/lib/airtable');
         await updateRecord(TABLES.CAMPAIGNS, reservedCampaignId, {
-          'Status': failed > 0 ? 'Partial' : 'Sent',
+          'Status': finalStatus,
           'Sent': sent,
           'Failed': failed,
         });
@@ -212,19 +259,35 @@ export async function POST(request: Request) {
           'Recipients': recipients.length,
           'Sent': sent,
           'Failed': failed,
-          'Status': failed > 0 ? 'Partial' : 'Sent',
+          'Status': finalStatus,
         });
       }
     } catch (campaignError) {
       console.error('Failed to log campaign (non-fatal):', campaignError);
     }
 
+    // P1 audit D-3: log the broadcast-send. Emails can't be un-sent — reverseAction=noop.
+    try {
+      await logAuditEntry({
+        actor: 'manual',
+        tool: 'admin-broadcast-send',
+        targetType: 'Other',
+        targetId: reservedCampaignId || campaignName,
+        args: { campaignName, subject, audienceType, selectedStates, includeCTA, ctaText, ctaLink, recipientCount: recipients.length },
+        result: { sent, failed, aborted, finalStatus, recipientCount: recipients.length },
+        reverseAction: { type: 'noop', reason: `Broadcast emails cannot be un-sent — ${sent} delivered.` },
+      });
+    } catch (e: any) {
+      console.error('[broadcast] audit log failed (non-fatal):', e?.message);
+    }
+
     return NextResponse.json({
       success: true,
+      aborted,
       recipientCount: recipients.length,
       sent,
       failed,
-      campaignName
+      campaignName,
     });
   } catch (error: any) {
     console.error('Error sending broadcast email:', error);

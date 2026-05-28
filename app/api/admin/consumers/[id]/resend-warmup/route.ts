@@ -1,10 +1,10 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // POST /api/admin/consumers/[id]/resend-warmup
 //
@@ -16,7 +16,9 @@ import { JWT_SECRET } from '@/lib/secrets';
 //   subject/body ("we've got a rancher in {state} now"). Falls back to the
 //   consumer's State field.
 //
-// Auth: admin cookie OR x-internal-secret header.
+// Auth (Phase 0): requireAdmin() — Clerk session for browser admins OR
+// x-admin-password header for server-to-server. x-internal-secret still
+// works for cron-style internal callers.
 
 export const maxDuration = 30;
 
@@ -28,13 +30,11 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const cookieStore = await cookies();
-    const authCookie = cookieStore.get('bhc-admin-auth');
     const internalHeader = request.headers.get('x-internal-secret') || '';
-    const isAdmin = authCookie?.value === 'authenticated';
     const isInternal = INTERNAL_API_SECRET && internalHeader === INTERNAL_API_SECRET;
-    if (!isAdmin && !isInternal) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!isInternal) {
+      const unauthorized = await requireAdmin(request);
+      if (unauthorized) return unauthorized;
     }
 
     const { id } = await context.params;

@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BHC Stripe Flow Mockups · Tour</title>
+<style>
+  :root {
+    --bone: #F4F1EC;
+    --charcoal: #0E0E0E;
+    --saddle: #6B4F3F;
+    --dust: #A7A29A;
+    --divider: #E8E3DA;
+    --gold: #C99A2E;
+    --crimson: #8B2C2C;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bone);
+    color: var(--charcoal);
+    line-height: 1.6;
+    padding: 40px 24px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 {
+    font-family: Georgia, serif;
+    font-size: 36px;
+    margin-bottom: 8px;
+  }
+  .subhead {
+    color: var(--saddle);
+    margin-bottom: 32px;
+    font-size: 14px;
+  }
+  .notice {
+    background: #FFF6E0;
+    border: 1px solid var(--gold);
+    padding: 16px 20px;
+    margin-bottom: 32px;
+    font-size: 14px;
+  }
+  .notice strong { color: var(--charcoal); }
+  .group {
+    margin-bottom: 40px;
+    border: 1px solid var(--dust);
+    background: #fff;
+  }
+  .group-header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--divider);
+    background: var(--bone);
+  }
+  .group-header h2 {
+    font-family: Georgia, serif;
+    font-size: 22px;
+    margin-bottom: 4px;
+  }
+  .group-header p {
+    font-size: 13px;
+    color: var(--saddle);
+  }
+  .screens {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0;
+  }
+  .screen {
+    border-right: 1px solid var(--divider);
+    border-bottom: 1px solid var(--divider);
+    padding: 18px 20px;
+    transition: background 0.1s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  .screen:hover { background: var(--bone); }
+  .screen-num {
+    font-size: 11px;
+    color: var(--dust);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  .screen-title {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 4px;
+  }
+  .screen-desc {
+    font-size: 12px;
+    color: var(--saddle);
+    line-height: 1.5;
+  }
+  .screen-tag {
+    display: inline-block;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 6px;
+    margin-top: 8px;
+    background: var(--divider);
+    color: var(--saddle);
+  }
+  .tag-new { background: #DDF3E0; color: #1A6B2D; }
+  .tag-existing { background: #E8E3DA; color: var(--saddle); }
+  .tag-legacy { background: #FFF6E0; color: #A07520; }
+  footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--divider);
+    font-size: 13px;
+    color: var(--saddle);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>BHC Stripe Flow Mockups</h1>
+  <p class="subhead">Visual tour of the full new flow · stage-3-verticals branch · 2026-05-25</p>
+
+  <div class="notice">
+    <strong>Read first:</strong> these are STATIC HTML mockups. No Stripe, no backend, no live data. Click through to feel the flow. Compare against the OLD flow in production. Feedback before any code wiring lands.
+  </div>
+
+  <div class="group">
+    <div class="group-header">
+      <h2>1 · Rancher onboarding (new signup)</h2>
+      <p>From discovery to "live on map" — 6 screens. NEW signups follow this path.</p>
+    </div>
+    <div class="screens">
+      <a class="screen" href="rancher/01-partner.html">
+        <div class="screen-num">01</div>
+        <div class="screen-title">/partner — 3-tier comparison</div>
+        <div class="screen-desc">Public landing. Live counters, 3 tier cards, add-on menu, Operator SLA.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="rancher/02-checkout-tier.html">
+        <div class="screen-num">02</div>
+        <div class="screen-title">/partner/checkout/[tier]</div>
+        <div class="screen-desc">Tier confirmation before Stripe Checkout. "You're about to start Pasture — $150/mo + 7%"</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="rancher/03-kyc-interstitial.html">
+        <div class="screen-num">03</div>
+        <div class="screen-title">Post-Stripe KYC interstitial</div>
+        <div class="screen-desc">Research-backed explainer card BEFORE the Stripe Account Link. Addresses SSN/EIN trust friction.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="rancher/04-setup-wizard-tier.html">
+        <div class="screen-num">04</div>
+        <div class="screen-title">/rancher/setup — Pick Your Plan step</div>
+        <div class="screen-desc">Wizard step inserted between Profile + Fulfillment. 3 tier cards inside wizard shell.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="rancher/05-setup-wizard-fulfillment.html">
+        <div class="screen-num">05</div>
+        <div class="screen-title">/rancher/setup — Fulfillment step</div>
+        <div class="screen-desc">Captures Fulfillment Types + Pickup City + Lead Time + Refund Policy. Shown verbatim on buyer deposit page.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="rancher/06-billing.html">
+        <div class="screen-num">06</div>
+        <div class="screen-title">/rancher/billing</div>
+        <div class="screen-desc">Tier badge · Subscription status · Connect status · Pending payouts · Add-on shop · Stripe Portal link.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="rancher/07-dashboard-banners.html">
+        <div class="screen-num">07</div>
+        <div class="screen-title">/rancher — banner cascade</div>
+        <div class="screen-desc">5-state banner system: legacy upgrade / tier missing / bank missing / fulfillment missing / going-live.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-header">
+      <h2>2 · Buyer deposit + messaging</h2>
+      <p>What the buyer sees once matched to a tier_v2 rancher.</p>
+    </div>
+    <div class="screens">
+      <a class="screen" href="buyer/01-ask.html">
+        <div class="screen-num">01</div>
+        <div class="screen-title">/checkout/[refId]/ask</div>
+        <div class="screen-desc">Pre-purchase question form. Buyer + rancher conversation thread. (Already shipped Tasks 7-10, mocked for full tour.)</div>
+        <span class="screen-tag tag-existing">Shipped</span>
+      </a>
+      <a class="screen" href="buyer/02-deposit.html">
+        <div class="screen-num">02</div>
+        <div class="screen-title">/checkout/[refId]/deposit</div>
+        <div class="screen-desc">Cut selector + Fulfillment block (How You Get It) + Refund Policy + How Payment Works + Continue to Secure Payment.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="buyer/03-success.html">
+        <div class="screen-num">03</div>
+        <div class="screen-title">/checkout/[refId]/success</div>
+        <div class="screen-desc">Deposit confirmed. Thread CTA + dashboard CTA + next-steps explainer.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-header">
+      <h2>3 · Legacy rancher path (existing 64 ranchers)</h2>
+      <p>What changes for grandfathered ranchers (spoiler: nothing forced).</p>
+    </div>
+    <div class="screens">
+      <a class="screen" href="legacy/01-dashboard-with-upgrade-banner.html">
+        <div class="screen-num">01</div>
+        <div class="screen-title">/rancher — legacy with upgrade banner</div>
+        <div class="screen-desc">Existing dashboard + optional gold upgrade banner. Dismissible. No forced migration.</div>
+        <span class="screen-tag tag-legacy">Legacy</span>
+      </a>
+      <a class="screen" href="legacy/02-partner-from-upgrade.html">
+        <div class="screen-num">02</div>
+        <div class="screen-title">/partner?from=upgrade</div>
+        <div class="screen-desc">Legacy rancher visits /partner — sees "Upgrade my account" CTA explaining the migration.</div>
+        <span class="screen-tag tag-legacy">Legacy</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-header">
+      <h2>4 · Admin / operator dashboards</h2>
+      <p>Per-tier MRR + payout tracking + attribution.</p>
+    </div>
+    <div class="screens">
+      <a class="screen" href="admin/01-payments.html">
+        <div class="screen-num">01</div>
+        <div class="screen-title">/admin/payments</div>
+        <div class="screen-desc">Per-tier MRR · Active subscriptions · Pending + paid payouts last 30d · Platform fee retained · Add-on purchases.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="admin/02-funnel-attribution.html">
+        <div class="screen-num">02</div>
+        <div class="screen-title">/admin/funnel/attribution</div>
+        <div class="screen-desc">UTM source/medium/campaign breakdown with signup → engaged → matched → deposit_paid → close:won rates.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-header">
+      <h2>5 · Email mockups</h2>
+      <p>Research-backed moments: peak-end activation, loss-aversion retention.</p>
+    </div>
+    <div class="screens">
+      <a class="screen" href="emails/01-first-payout-celebration.html">
+        <div class="screen-num">01</div>
+        <div class="screen-title">First payout celebration</div>
+        <div class="screen-desc">Peak-end moment. Mock Stripe payout screenshot embedded. Suggested social share text. ($Y just hit your bank.)</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="emails/02-tier-upgrade-nudge.html">
+        <div class="screen-num">02</div>
+        <div class="screen-title">Tier upgrade nudge (Pasture → Ranch)</div>
+        <div class="screen-desc">Loss-framed copy: "You paid $X · would have been $Y on Ranch · save $Z/mo."</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="emails/03-tier-abandoned-recovery.html">
+        <div class="screen-num">03</div>
+        <div class="screen-title">Abandoned tier-select recovery</div>
+        <div class="screen-desc">Cart-abandonment email for ranchers who signed up but didn't finish Stripe Checkout.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+      <a class="screen" href="emails/04-tier-welcome.html">
+        <div class="screen-num">04</div>
+        <div class="screen-title">Tier welcome (post Stripe payment)</div>
+        <div class="screen-desc">"You're in. Here's what happens next." + Connect bank CTA + activation timeline.</div>
+        <span class="screen-tag tag-new">New</span>
+      </a>
+    </div>
+  </div>
+
+  <footer>
+    <p><strong>Open with:</strong> <code>open docs/mockups/2026-05-25-stripe-flow/index.html</code> from terminal · or VSCode "Open with Live Server" extension</p>
+    <p style="margin-top: 8px;">Design tokens locked: bone <code>#F4F1EC</code> · charcoal <code>#0E0E0E</code> · saddle <code>#6B4F3F</code> · dust <code>#A7A29A</code> · divider <code>#E8E3DA</code> · gold accent <code>#C99A2E</code> · crimson alert <code>#8B2C2C</code></p>
+  </footer>
+</div>
+</body>
+</html>

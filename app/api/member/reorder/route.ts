@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getRecordById, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import jwt from 'jsonwebtoken';
+import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { funnelRecord } from '@/lib/funnelMetrics';
 
 export const maxDuration = 30;
 
-import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 // Repeat-customer reorder flow — fixes the largest revenue leak in the
@@ -25,26 +24,14 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 // we look at the buyer's most recent Closed Won referral.
 export async function POST(request: Request) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('bhc-member-auth');
-    if (!sessionCookie?.value) {
+    // Auth Phase 1: resolveBuyerSession transparently picks Clerk or
+    // legacy JWT based on CLERK_BUYER_ENABLED. Same return shape either way.
+    const session = await resolveBuyerSession(request);
+    if (!session) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
-
-    let memberId = '';
-    let memberEmail = '';
-    try {
-      const decoded: any = jwt.verify(sessionCookie.value, JWT_SECRET);
-      if (decoded.type === 'member-session') {
-        memberId = decoded.consumerId || '';
-        memberEmail = decoded.email || '';
-      }
-    } catch {
-      return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-    }
-    if (!memberId) {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
+    const memberId = session.consumerId;
+    const memberEmail = session.email;
 
     const body = await request.json().catch(() => ({}));
     const { previousReferralId, rancherId: explicitRancherId } = body || {};
@@ -149,6 +136,25 @@ export async function POST(request: Request) {
       referralId = data.referralId || null;
       matchOk = !!data.matchFound;
     }
+
+    // H-2 audit fix: funnel event for the reorder moment. Pre-fix, repeat
+    // purchases were the largest unmeasured revenue stream — buyers came
+    // back, hit reorder, no telemetry. Now: /admin/funnel sees the actual
+    // lifetime value signal.
+    try {
+      await funnelRecord({
+        stage: 'repeat_purchase_requested',
+        buyerId: memberId,
+        rancherId,
+        referralId: referralId || undefined,
+        metadata: {
+          state: buyerState,
+          rancherSlug,
+          rematchOk: matchOk,
+          previousReferralId: previousReferralId || null,
+        },
+      });
+    } catch (e) { console.error('[funnel] repeat_purchase_requested failed:', e); }
 
     // Telegram so Ben knows a reorder is in flight
     try {

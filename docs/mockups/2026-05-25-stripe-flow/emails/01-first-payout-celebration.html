@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>First Payout Celebration · Email Mockup</title>
+<style>
+  :root {
+    --bone: #F4F1EC;
+    --charcoal: #0E0E0E;
+    --saddle: #6B4F3F;
+    --dust: #A7A29A;
+    --divider: #E8E3DA;
+    --gold: #C99A2E;
+    --crimson: #8B2C2C;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #e9e7e3;
+    color: var(--charcoal);
+    line-height: 1.6;
+    padding: 24px 20px 80px;
+  }
+  .back {
+    display: inline-block;
+    color: var(--saddle);
+    text-decoration: none;
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .back:hover { text-decoration: underline; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+
+  /* Gmail-style preview frame */
+  .email-frame {
+    background: #fff;
+    border: 1px solid var(--dust);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .email-header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--divider);
+    background: #fafafa;
+  }
+  .email-header .subject {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--charcoal);
+    margin-bottom: 10px;
+    line-height: 1.3;
+  }
+  .email-header .meta {
+    font-size: 13px;
+    color: var(--saddle);
+    line-height: 1.6;
+  }
+  .email-header .meta .label {
+    color: var(--dust);
+    display: inline-block;
+    width: 50px;
+  }
+  .email-body {
+    background: var(--bone);
+    padding: 36px 32px;
+  }
+
+  /* Email content */
+  h1 {
+    font-family: Georgia, serif;
+    font-size: 28px;
+    line-height: 1.2;
+    margin-bottom: 20px;
+    color: var(--charcoal);
+  }
+  p {
+    font-size: 15px;
+    margin-bottom: 18px;
+    color: var(--charcoal);
+  }
+  .stripe-screenshot {
+    background: #f6f9fc;
+    border: 1px solid #e3e8ee;
+    border-radius: 8px;
+    padding: 22px 24px;
+    margin: 24px 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+  }
+  .stripe-screenshot .stripe-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e3e8ee;
+  }
+  .stripe-screenshot .stripe-title {
+    font-size: 13px;
+    color: #425466;
+    font-weight: 600;
+  }
+  .stripe-screenshot .stripe-logo {
+    background: #635BFF;
+    color: #fff;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 3px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+  }
+  .stripe-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 8px 0;
+    font-size: 14px;
+  }
+  .stripe-row .k { color: #697386; }
+  .stripe-row .v { color: #1a1f36; font-weight: 500; }
+  .stripe-row.amount .v {
+    font-size: 22px;
+    font-weight: 700;
+    color: #0a2540;
+  }
+  .stripe-row .status {
+    background: #d7f7c2;
+    color: #1a6b00;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .stripe-screenshot .stripe-link {
+    display: inline-block;
+    margin-top: 14px;
+    font-size: 12px;
+    color: #635BFF;
+    text-decoration: none;
+  }
+  .stripe-screenshot .stripe-link:hover { text-decoration: underline; }
+  .quote-box {
+    background: var(--bone);
+    border-left: 3px solid var(--gold);
+    padding: 18px 22px;
+    margin: 16px 0 22px;
+    font-size: 15px;
+    color: var(--saddle);
+    font-style: italic;
+    line-height: 1.55;
+  }
+  .quote-box a {
+    color: var(--charcoal);
+    text-decoration: underline;
+  }
+  .sign {
+    margin-top: 28px;
+    font-size: 15px;
+    color: var(--charcoal);
+  }
+  @media (max-width: 520px) {
+    .email-body { padding: 24px 20px; }
+    h1 { font-size: 23px; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <a href="../index.html" class="back">&larr; Back to tour</a>
+
+    <div class="email-frame">
+      <div class="email-header">
+        <div class="subject">&#128176; $643 just hit your bank &mdash; your first BuyHalfCow payout</div>
+        <div class="meta">
+          <div><span class="label">From:</span> BuyHalfCow &lt;ben@buyhalfcow.com&gt;</div>
+          <div><span class="label">To:</span> john@ashcraftbeef.com</div>
+        </div>
+      </div>
+
+      <div class="email-body">
+        <h1>Your first payout just landed.</h1>
+        <p>John &mdash; your first BuyHalfCow buyer paid $700 for a Half Cow on May 20. Today, $643 hit your bank account (after the 7% Pasture commission). Your second buyer is already matched.</p>
+
+        <div class="stripe-screenshot">
+          <div class="stripe-head">
+            <div class="stripe-title">Stripe Payout &middot; May 24, 2026</div>
+            <div class="stripe-logo">stripe</div>
+          </div>
+          <div class="stripe-row amount">
+            <span class="k">Amount</span>
+            <span class="v">$643.00</span>
+          </div>
+          <div class="stripe-row">
+            <span class="k">To</span>
+            <span class="v">ASH&hellip;BANK ending 3829</span>
+          </div>
+          <div class="stripe-row">
+            <span class="k">Status</span>
+            <span class="status">PAID</span>
+          </div>
+          <div class="stripe-row">
+            <span class="k">Available in your account by</span>
+            <span class="v">May 26, 2026</span>
+          </div>
+          <a href="#" class="stripe-link">View in Stripe Dashboard &rarr;</a>
+        </div>
+
+        <p>Want to share this? Here's a draft post &mdash; feel free to use as-is:</p>
+
+        <div class="quote-box">
+          Closed my first sale through BuyHalfCow this week. Cow on the ground in Texas, $643 in my bank in 3 days, zero buyer chasing. They sent me the buyer, I just had to do what I do. Recommend &rarr; <a href="#">[your /ranchers/ashcraft-beef link]</a>
+        </div>
+
+        <p class="sign">Reply to this email to update your bank info, ask a question, or just say thanks (Ben reads every reply).<br>&mdash; Ben</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

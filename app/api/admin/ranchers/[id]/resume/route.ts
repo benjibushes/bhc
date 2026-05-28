@@ -3,6 +3,7 @@ import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 
 // POST /api/admin/ranchers/[id]/resume
 // Reactivates a paused rancher. Returns them to Active Status so matching resumes.
@@ -22,10 +23,28 @@ export async function POST(
     const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
     const cap = getMaxActiveReferrals(rancher);
     const current = Number(rancher['Current Active Referrals']) || 0;
+    const newStatus = current >= cap ? 'At Capacity' : 'Active';
 
     await updateRecord(TABLES.RANCHERS, id, {
-      'Active Status': current >= cap ? 'At Capacity' : 'Active',
+      'Active Status': newStatus,
     });
+
+    // P1 audit D-3: log resume so we can trace mid-incident reactivations
+    try {
+      await logAuditEntry({
+        actor: 'manual',
+        tool: 'admin-rancher-resume',
+        targetType: 'Rancher',
+        targetId: id,
+        args: { rancherId: id },
+        result: { activeStatus: newStatus, capacity: `${current}/${cap}` },
+        reverseAction: buildAirtableUpdateReverse(TABLES.RANCHERS, id, {
+          'Active Status': rancher['Active Status'] || null,
+        }),
+      });
+    } catch (e: any) {
+      console.error('[resume] audit log failed (non-fatal):', e?.message);
+    }
 
     await sendTelegramUpdate(`▶️ <b>Rancher resumed</b>: ${name}`).catch(() => {});
 

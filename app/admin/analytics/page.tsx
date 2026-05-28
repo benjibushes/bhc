@@ -16,7 +16,17 @@ interface CampaignStats {
   totalCommission: number;
 }
 
+// P1 audit D-5: per-Source attribution row
+interface SourceRow {
+  source: string;
+  signups: number;
+  matches: number;
+  closes: number;
+  commissionDue: number;
+}
+
 interface AnalyticsData {
+  filter?: { sinceDays: number | null; label: string };
   overview: {
     totalConsumers: number;
     totalInquiries: number;
@@ -26,6 +36,7 @@ interface AnalyticsData {
     conversionRate: number;
   };
   campaigns: CampaignStats[];
+  sourceBreakdown?: SourceRow[];
   recentActivity: {
     type: 'signup' | 'inquiry' | 'sale';
     name: string;
@@ -36,24 +47,36 @@ interface AnalyticsData {
   }[];
 }
 
+// Date filter dropdown options. 'all' is back-compat.
+type SinceFilter = '7' | '30' | '90' | 'all';
+const SINCE_LABELS: Record<SinceFilter, string> = {
+  '7': 'Last 7 days',
+  '30': 'Last 30 days',
+  '90': 'Last 90 days',
+  'all': 'All time',
+};
+
 export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  // P1 audit D-5: date filter state. Default '30' since "did this week's
+  // campaign perform?" is the most common question — all-time was the bug.
+  const [sinceFilter, setSinceFilter] = useState<SinceFilter>('30');
 
   useEffect(() => {
-    fetchAnalytics();
-  }, []);
+    fetchAnalytics(sinceFilter);
+  }, [sinceFilter]);
 
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = async (since: SinceFilter) => {
+    setLoading(true);
     try {
-      const response = await fetch('/api/admin/analytics');
+      const response = await fetch(`/api/admin/analytics?sinceDays=${since}`);
       const analyticsData = await response.json();
       setData(analyticsData);
-      setLoading(false);
     } catch (err) {
       console.error('Error fetching analytics:', err);
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   const formatCurrency = (amount: number) => {
@@ -115,10 +138,24 @@ export default function AnalyticsPage() {
                   Analytics & Attribution
                 </h1>
                 <p className="text-[#6B4F3F]">
-                  Track campaign performance and revenue
+                  Track campaign performance and revenue · <strong>{data.filter?.label || SINCE_LABELS[sinceFilter]}</strong>
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center">
+                {/* P1 audit D-5: date range selector */}
+                <label className="text-sm text-[#6B4F3F] flex items-center gap-2">
+                  Range:
+                  <select
+                    value={sinceFilter}
+                    onChange={(e) => setSinceFilter(e.target.value as SinceFilter)}
+                    className="px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
+                  >
+                    <option value="7">{SINCE_LABELS['7']}</option>
+                    <option value="30">{SINCE_LABELS['30']}</option>
+                    <option value="90">{SINCE_LABELS['90']}</option>
+                    <option value="all">{SINCE_LABELS['all']}</option>
+                  </select>
+                </label>
                 <Link
                   href="/admin"
                   className="px-4 py-2 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
@@ -228,6 +265,54 @@ export default function AnalyticsPage() {
                             <td className="p-4 text-right text-sm text-[#6B4F3F]">
                               {formatCurrency(roi)}/email
                             </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <Divider />
+
+            {/* P1 audit D-5: per-Source attribution breakdown */}
+            <div>
+              <h2 className="font-[family-name:var(--font-serif)] text-2xl mb-2">
+                Source Attribution
+              </h2>
+              <p className="text-sm text-[#6B4F3F] mb-4">
+                Funnel by Consumer Source — organic vs rancher-page vs partner-XXX vs exit-intent.
+                Closest signal to per-channel CAC w/o paid-ad spend integration.
+              </p>
+              {!data.sourceBreakdown || data.sourceBreakdown.length === 0 ? (
+                <div className="p-8 border border-[#A7A29A] bg-white text-center text-[#6B4F3F]">
+                  No source data in this range.
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-[#A7A29A]">
+                  <table className="w-full bg-white">
+                    <thead>
+                      <tr className="border-b border-[#A7A29A] bg-[#F4F1EC]">
+                        <th className="text-left p-4 font-medium">Source</th>
+                        <th className="text-right p-4 font-medium">Signups</th>
+                        <th className="text-right p-4 font-medium">Matches</th>
+                        <th className="text-right p-4 font-medium">Closes</th>
+                        <th className="text-right p-4 font-medium">Commission $</th>
+                        <th className="text-right p-4 font-medium">Conv %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.sourceBreakdown.map((s, idx) => {
+                        const convRate = s.signups > 0 ? s.closes / s.signups : 0;
+                        return (
+                          <tr key={idx} className="border-b border-[#A7A29A] hover:bg-[#F4F1EC]">
+                            <td className="p-4 font-medium">{s.source}</td>
+                            <td className="p-4 text-right">{s.signups}</td>
+                            <td className="p-4 text-right">{s.matches}</td>
+                            <td className="p-4 text-right">{s.closes}</td>
+                            <td className="p-4 text-right font-semibold">{formatCurrency(s.commissionDue)}</td>
+                            <td className="p-4 text-right text-sm text-[#6B4F3F]">{formatPercent(convRate)}</td>
                           </tr>
                         );
                       })}

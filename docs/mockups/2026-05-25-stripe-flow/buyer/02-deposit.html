@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reserve your beef · BuyHalfCow</title>
+<style>
+  :root {
+    --bone: #F4F1EC;
+    --charcoal: #0E0E0E;
+    --saddle: #6B4F3F;
+    --dust: #A7A29A;
+    --divider: #E8E3DA;
+    --gold: #C99A2E;
+    --crimson: #8B2C2C;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bone);
+    color: var(--charcoal);
+    line-height: 1.6;
+    padding: 24px 20px 80px;
+  }
+  .back {
+    display: inline-block;
+    color: var(--saddle);
+    text-decoration: none;
+    font-size: 13px;
+    margin-bottom: 32px;
+  }
+  .back:hover { text-decoration: underline; }
+  .container { max-width: 700px; margin: 0 auto; }
+  h1 {
+    font-family: Georgia, serif;
+    font-size: 36px;
+    line-height: 1.15;
+    margin-bottom: 16px;
+  }
+  .rancher-line {
+    font-size: 16px;
+    color: var(--charcoal);
+    margin-bottom: 4px;
+  }
+  .rancher-sub {
+    font-size: 13px;
+    color: var(--saddle);
+    margin-bottom: 32px;
+  }
+  .pick-label {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--charcoal);
+  }
+  .cuts {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 32px;
+  }
+  .cut {
+    background: #fff;
+    border: 1px solid var(--dust);
+    padding: 16px 14px;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.1s;
+  }
+  .cut.selected {
+    border: 2px solid var(--charcoal);
+    padding: 15px 13px;
+  }
+  .cut-name {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .cut-price {
+    font-size: 20px;
+    font-family: Georgia, serif;
+    margin-bottom: 4px;
+  }
+  .cut-sub {
+    font-size: 11px;
+    color: var(--saddle);
+  }
+  .divider-label {
+    text-align: center;
+    color: var(--saddle);
+    font-size: 13px;
+    margin: 8px 0 20px;
+    letter-spacing: 0.04em;
+  }
+  .info-card {
+    background: var(--bone);
+    border: 1px solid var(--dust);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .info-card h3 {
+    font-size: 11px;
+    color: var(--saddle);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .info-card p {
+    font-size: 14px;
+    color: var(--charcoal);
+    line-height: 1.55;
+  }
+  .info-card .extras {
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--saddle);
+  }
+  .cta {
+    display: block;
+    width: 100%;
+    background: var(--charcoal);
+    color: #fff;
+    border: none;
+    padding: 18px 24px;
+    font-size: 16px;
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    margin: 28px 0 12px;
+    letter-spacing: 0.01em;
+  }
+  .cta:hover { background: #000; }
+  .stripe-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--saddle);
+    font-size: 12px;
+    margin-bottom: 28px;
+  }
+  .stripe-logo {
+    background: #635BFF;
+    color: #fff;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    font-family: -apple-system, sans-serif;
+  }
+  .ask-link {
+    display: block;
+    text-align: center;
+    color: var(--saddle);
+    text-decoration: none;
+    font-size: 14px;
+    padding: 12px;
+    border-top: 1px solid var(--divider);
+  }
+  .ask-link:hover { color: var(--charcoal); text-decoration: underline; }
+  @media (max-width: 520px) {
+    h1 { font-size: 28px; }
+    .cuts { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <a href="../index.html" class="back">&larr; Back to tour</a>
+    <h1>Reserve your beef</h1>
+    <p class="rancher-line">Rancher &middot; Ashcraft Beef</p>
+    <p class="rancher-sub">Mason, TX &middot; Local pickup + Cold-chain shipping</p>
+
+    <p class="pick-label">Pick your cut:</p>
+    <div class="cuts">
+      <div class="cut">
+        <div class="cut-name">Quarter</div>
+        <div class="cut-price">$400</div>
+        <div class="cut-sub">&asymp; 80 lbs</div>
+      </div>
+      <div class="cut selected">
+        <div class="cut-name">Half</div>
+        <div class="cut-price">$700</div>
+        <div class="cut-sub">&asymp; 160 lbs</div>
+      </div>
+      <div class="cut">
+        <div class="cut-name">Whole</div>
+        <div class="cut-price">$1,300</div>
+        <div class="cut-sub">&asymp; 320 lbs</div>
+      </div>
+    </div>
+
+    <p class="divider-label">&mdash;&mdash;&mdash;&mdash; Before you pay &mdash;&mdash;&mdash;&mdash;</p>
+
+    <div class="info-card">
+      <h3>How you get it</h3>
+      <p>Cold-chain shipping. Ships in ~7 days after processing on Aug 12, 2026. Local pickup also available at Mason, TX.</p>
+      <p class="extras">Extras: Cooler shipping $45 added to total</p>
+    </div>
+
+    <div class="info-card">
+      <h3>Refund policy</h3>
+      <p>Full refund within 7 days if cattle isn't processed yet. After processing, store credit only. Any quality issues: we'll fix it or refund you 100% &mdash; no questions, just text me.</p>
+    </div>
+
+    <div class="info-card">
+      <h3>How the payment works</h3>
+      <p>Your $700 goes to Ashcraft Beef through Stripe. We hold no funds at BuyHalfCow. Ashcraft Beef ships your beef. You + Ashcraft Beef coordinate details by message (we already have a thread open for you).</p>
+    </div>
+
+    <button class="cta">Continue to Secure Payment &rarr;</button>
+
+    <div class="stripe-row">
+      <span>Powered by</span>
+      <span class="stripe-logo">stripe</span>
+      <span>&middot; BuyHalfCow doesn't store card data</span>
+    </div>
+
+    <a href="01-ask.html" class="ask-link">Have questions first? Message Ashcraft Beef &rarr;</a>
+  </div>
+</body>
+</html>

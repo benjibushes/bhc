@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { getRecordById, updateRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTelegramSaleCelebration } from '@/lib/telegram';
@@ -9,6 +8,7 @@ import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, getRancherCommissionRate } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import jwt from 'jsonwebtoken';
+import { requireRancher } from '@/lib/rancherAuth';
 
 // Pass reasons a rancher can give when declining a lead.
 // Mutually exclusive — "Other" deliberately omitted to force a real signal.
@@ -40,23 +40,18 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('bhc-rancher-auth');
-
-    if (!sessionCookie?.value) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
-
-    let decoded: any;
-    try {
-      decoded = jwt.verify(sessionCookie.value, JWT_SECRET);
-    } catch {
-      return NextResponse.json({ error: 'Session expired' }, { status: 401 });
-    }
-
-    if (decoded.type !== 'rancher-session') {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
-    }
+    // Auth Phase 2: requireRancher routes through Clerk or legacy JWT.
+    const auth = await requireRancher(request);
+    if (auth instanceof NextResponse) return auth;
+    // Keep the legacy variable name `decoded` to minimize churn through the
+    // ~800-line handler below. Shape mirrors the prior JWT payload's hot
+    // fields (rancherId, name) plus everything else requireRancher exposes.
+    const decoded = {
+      rancherId: auth.session.rancherId,
+      name: auth.session.name,
+      email: auth.session.email,
+      ranchName: auth.session.ranchName,
+    };
 
     const { id } = await params;
     const body = await request.json();
@@ -271,6 +266,27 @@ export async function PATCH(
       });
     }
 
+    // ── IDEMPOTENCY GUARD ──────────────────────────────────────────────
+    // P2-D audit fix: short-circuit terminal → same-terminal PATCHes so a
+    // fat-finger or retry can't double-fire side effects (Stripe invoice
+    // re-create → double-bill the rancher, second post-purchase welcome
+    // email, re-stamped Closed At, duplicate Telegram celebration).
+    // Capacity decrement is already guarded by `shouldDecrementCapacity`,
+    // but the money-moving side effects are not — this closes that gap.
+    //
+    // Only fires on terminal → SAME terminal. Legitimate corrections like
+    // Closed Won → Closed Lost still pass through with their proper side
+    // effects (capacity restore, re-route buyer, etc.).
+    const currentStatus = String(referral['Status'] || '');
+    const TERMINAL_STATUSES = ['Closed Won', 'Closed Lost', 'Refunded'];
+    if (status && currentStatus === status && TERMINAL_STATUSES.includes(currentStatus)) {
+      return NextResponse.json({
+        ok: true,
+        noop: true,
+        reason: `Referral already in ${currentStatus} — no action taken`,
+      });
+    }
+
     const fields: Record<string, any> = {};
 
     // Ranchers can update to these statuses
@@ -364,6 +380,19 @@ export async function PATCH(
                     orderType,
                   });
                 }
+
+                // P2-A audit: affiliate auto-enrollment + welcome email live
+                // in lib/contracts/rancher.ts enrollClosedWonAffiliate() so
+                // every close path (dashboard PATCH here, Stripe webhook
+                // tier_v2 via recordClose, Telegram quick-action via
+                // recordClose) fires the same flywheel. Idempotent via
+                // ensureBuyerAffiliate's email-based lookup.
+                try {
+                  const { enrollClosedWonAffiliate } = await import('@/lib/contracts/rancher');
+                  await enrollClosedWonAffiliate(buyerId);
+                } catch (e: any) {
+                  console.warn('[closed-won] affiliate enroll failed (non-fatal):', e?.message);
+                }
               } catch (e) {
                 console.error('Post-purchase welcome send error:', e);
               }
@@ -373,25 +402,22 @@ export async function PATCH(
           }
         }
 
-        // ── Closed Lost → Buyer Stage CLOSED ────────────────────────────
-        // Audit finding: dashboard PATCH flipped Buyer Stage to CLOSED on
-        // Closed Won (line ~346) but NOT on Closed Lost. Per Airtable Buyer
-        // Stage field spec, CLOSED is terminal for BOTH purchased AND
-        // ghosted/non-responsive. Without this flip:
-        //   - Buyer stays MATCHED forever after a lost deal
-        //   - Stats counter mislabels them as "in pipeline"
-        //   - Email-sequences cron may keep nurturing a terminal buyer
+        // ── Closed Lost → restore READY if no other active referrals ────
+        // F-2 audit fix: Closed Lost is NOT terminal for the buyer when they
+        // have no other active referrals. Pre-fix this branch flipped Buyer
+        // Stage straight to CLOSED → stuck-buyer-recovery cron skipped them
+        // (only retries READY). Dead-end. Helper in lib/contracts/rancher.ts
+        // handles the lookup + branch (READY restore vs MATCHED-stay vs
+        // CLOSED fail-safe) so all close paths agree.
         if (status === 'Closed Lost') {
           const buyerIds = referral['Buyer'] || [];
           const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
           if (buyerId) {
             try {
-              await updateRecord(TABLES.CONSUMERS, buyerId, {
-                'Buyer Stage': 'CLOSED',
-                'Buyer Stage Updated At': new Date().toISOString(),
-              });
+              const { restoreBuyerAfterClosedLost } = await import('@/lib/contracts/rancher');
+              await restoreBuyerAfterClosedLost(buyerId, id);
             } catch (stageErr: any) {
-              console.error('Closed Lost Buyer Stage flip error:', stageErr?.message);
+              console.error('Closed Lost Buyer Stage restoration error:', stageErr?.message);
             }
           }
         }
@@ -612,6 +638,26 @@ export async function PATCH(
 
     await updateRecord(TABLES.REFERRALS, id, fields);
 
+    // Funnel telemetry — emit close event so the admin dashboard sees this
+    // dashboard-PATCH close in the same conversion funnel as quick-action and
+    // Telegram closes. Contract recordClose() handles the canonical mutation
+    // (Status, Closed At, capacity, Buyer Stage); legacy dashboard PATCH
+    // already executed those inline above. funnelRecord here is the bridge
+    // until a future refactor consolidates the close path through recordClose().
+    if (status === 'Closed Won' || status === 'Closed Lost' || status === 'Awaiting Payment') {
+      const { funnelRecord } = await import('@/lib/funnelMetrics');
+      const outcomeKey = status === 'Closed Won' ? 'close:won' :
+                         status === 'Closed Lost' ? 'close:lost' :
+                         'close:awaiting_payment';
+      await funnelRecord({
+        stage: outcomeKey,
+        rancherId: decoded.rancherId,
+        referralId: id,
+        amount: status === 'Closed Won' ? (saleAmount || 0) : undefined,
+        reason: `dashboard-PATCH:${status}`,
+      });
+    }
+
     // Notify admin via Telegram
     try {
       const buyerName = referral['Buyer Name'] || 'Unknown';
@@ -668,7 +714,14 @@ export async function PATCH(
           try {
             const rancherForInvoice = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
             const invoiceEmail = rancherForInvoice?.['Email'] || '';
-            if (invoiceEmail) {
+            // Tier_v2 ranchers SKIP — commission already taken at deposit via
+            // application_fee_amount. Legacy invoice here would double-bill.
+            const pricingModel = String(rancherForInvoice?.['Pricing Model'] || 'legacy');
+            const skipLegacyInvoice = pricingModel === 'tier_v2';
+            if (skipLegacyInvoice) {
+              console.log(`[referrals/close] rancher ${decoded.rancherId} is tier_v2 — skipping legacy commission invoice`);
+            }
+            if (invoiceEmail && !skipLegacyInvoice) {
               try {
                 const stripeResult = await createCommissionInvoice({
                   rancher: {

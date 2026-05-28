@@ -24,19 +24,21 @@ import ExitIntentModal from '@/app/components/ExitIntentModal';
 export const metadata: Metadata = {
   title: 'Brand Partners — get your brand in front of d2c ranchers',
   description:
-    'Three tiers, real distribution. Get your brand in front of D2C ranchers + the families who buy their beef. Logo placement, posts, pinned features.',
+    'Three tiers, real distribution. Get your brand in front of D2C ranchers + the families who buy their beef. Logo placement, founder broadcasts, co-branded social.',
   openGraph: {
     title: 'Brand Partners · get in front of d2c ranchers',
     description:
-      '$99 spotlight · $499 featured · $1,500 founding partner. Logo placement, pinned posts, audience access.',
+      '$99/mo spotlight · $499/mo featured · $2,500/3mo co-marketed. Logo placement, founder broadcasts, audience access.',
     type: 'website',
     url: 'https://www.buyhalfcow.com/brand-partners',
+    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'Brand Partners — get in front of d2c ranchers' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Brand Partners · get in front of d2c ranchers',
     description:
-      '$99 spotlight · $499 featured · $1,500 founding partner.',
+      '$99/mo spotlight · $499/mo featured · $2,500/3mo co-marketed.',
+    images: ['/og-image.png'],
   },
 };
 
@@ -50,9 +52,32 @@ const featuredLink = '/api/checkout/brand?tier=featured';
 const foundingCalendly =
   process.env.NEXT_PUBLIC_BRAND_FOUNDING_CALENDLY || '/api/checkout/brand?tier=founding';
 
-// TODO: wire real Airtable count via /api/stats/public once endpoint exposes
-// founding_brand_partners_remaining. For now hardcode 5.
-const FOUNDING_SPOTS_REMAINING: number = 5;
+// Live count pulled from /api/stats/public (computed from Airtable Brands
+// where Payment Status = 'Paid', subtracted from FOUNDING_BRAND_PARTNER_CAP).
+// Fallback value matches the API's catch-path fallback so the scarcity
+// counter degrades gracefully if Airtable is unreachable.
+const FOUNDING_SPOTS_REMAINING_FALLBACK = 5;
+
+async function getFoundingSpotsRemaining(): Promise<number> {
+  try {
+    // Server-side fetch hits the route handler directly — uses the same
+    // 5-min revalidate as /api/stats/public itself, so we don't hammer
+    // Airtable on every brand-partners page hit.
+    const siteUrl =
+      process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+    const res = await fetch(`${siteUrl}/api/stats/public`, {
+      next: { revalidate: 300 },
+    });
+    if (!res.ok) return FOUNDING_SPOTS_REMAINING_FALLBACK;
+    const json = await res.json();
+    const remaining = Number(json?.brandPartnersRemaining);
+    return Number.isFinite(remaining) && remaining >= 0
+      ? remaining
+      : FOUNDING_SPOTS_REMAINING_FALLBACK;
+  } catch {
+    return FOUNDING_SPOTS_REMAINING_FALLBACK;
+  }
+}
 
 // JSON-LD Schema.org Service markup — Google rich-result eligibility for
 // brand partner placements. Three tiers mirror the page below. Renders via
@@ -85,15 +110,16 @@ const brandPartnersJsonLd = {
     },
     {
       '@type': 'Offer',
-      name: 'Founding Brand Partner',
-      price: '1500',
+      name: 'Co-marketed',
+      price: '2500',
       priceCurrency: 'USD',
       url: 'https://www.buyhalfcow.com/brand-partners#tiers',
     },
   ],
 };
 
-export default function BrandPartnersPage() {
+export default async function BrandPartnersPage() {
+  const foundingSpotsRemaining = await getFoundingSpotsRemaining();
   return (
     <main className="min-h-screen bg-bone text-charcoal">
       <script
@@ -190,11 +216,11 @@ export default function BrandPartnersPage() {
               <BrandTierCTA
                 tier="spotlight"
                 href={spotlightLink}
-                label="claim spotlight — $99"
+                label="claim spotlight — $99/mo"
               />
             </article>
 
-            {/* ── Featured — $499/quarter ── */}
+            {/* ── Featured — $499/month ── */}
             <article className="p-7 md:p-8 space-y-6 flex flex-col bg-bone-warm border-2 border-charcoal hover:border-charcoal transition-base">
               <header className="space-y-1.5">
                 <p className="text-[11px] uppercase tracking-[0.18em] text-saddle font-semibold">
@@ -204,16 +230,16 @@ export default function BrandPartnersPage() {
                   Featured
                 </p>
                 <p className="text-base text-charcoal font-medium">
-                  $499 <span className="text-saddle font-normal">per quarter</span>
+                  $499 <span className="text-saddle font-normal">per month</span>
                 </p>
               </header>
               <ul className="text-sm text-charcoal/85 space-y-2.5 leading-relaxed flex-1">
                 {[
                   'Logo + 100-word brand story on /brand-partners',
-                  'Featured in 3 founder broadcast emails over the quarter',
-                  '2 co-branded social posts on @buyhalfcow',
-                  'Brand spotlight slot at /matched success page (post-rancher-intro)',
-                  'Listed in "trusted partners" section of the platform',
+                  'Featured in 3 founder broadcast emails per month',
+                  '2 co-branded social posts on @buyhalfcow each month',
+                  'Brand slot at /matched success page (post-rancher-intro)',
+                  'Listed in "trusted partners" section of the site',
                 ].map((b, i) => (
                   <li key={i} className="flex gap-2.5">
                     <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
@@ -224,36 +250,36 @@ export default function BrandPartnersPage() {
               <BrandTierCTA
                 tier="featured"
                 href={featuredLink}
-                label="claim featured — $499"
+                label="claim featured — $499/mo"
               />
             </article>
 
-            {/* ── Founding Brand Partner — $1,500/quarter ── */}
+            {/* ── Co-marketed — $2,500 / 3 months ── */}
             <article className="p-7 md:p-8 space-y-6 flex flex-col bg-bone border border-dust hover:border-charcoal transition-base">
               <header className="space-y-1.5">
                 <p className="text-[11px] uppercase tracking-[0.18em] text-saddle font-semibold">
-                  Brand · Founding
+                  Brand · Co-marketed
                 </p>
                 <p className="font-serif text-3xl text-charcoal leading-tight">
-                  Founding Brand Partner
+                  Co-marketed
                 </p>
                 <p className="text-base text-charcoal font-medium">
-                  $1,500 <span className="text-saddle font-normal">per quarter</span>
+                  $2,500 <span className="text-saddle font-normal">per 3 months</span>
                 </p>
-                {/* Scarcity counter — TODO: wire real count from /api/stats/public
-                    once endpoint exposes founding_brand_partners_remaining */}
+                {/* Scarcity counter — live from /api/stats/public, computed
+                    from active paid Brand Partners in Airtable. */}
                 <p className="text-xs font-semibold text-saddle uppercase tracking-wide pt-0.5">
-                  {FOUNDING_SPOTS_REMAINING} spot{FOUNDING_SPOTS_REMAINING !== 1 ? 's' : ''} remaining
+                  {foundingSpotsRemaining} founding spot{foundingSpotsRemaining !== 1 ? 's' : ''} left of {100}
                 </p>
               </header>
               <ul className="text-sm text-charcoal/85 space-y-2.5 leading-relaxed flex-1">
                 {[
                   'Everything in Featured PLUS',
-                  'Permanent founders wall placement (your brand alongside the founding 100)',
-                  '1-on-1 call with Ben quarterly to strategize',
+                  'Permanent founders wall placement (your brand listed alongside the founding 100)',
+                  '1-on-1 call with Ben every quarter to plan the next push',
                   'First access to new rancher cohorts in your category',
-                  'Featured slot in monthly investor update letter',
-                  '5 spots total — first-come, first-served',
+                  'Featured slot in the monthly founder letter',
+                  'Soft category exclusivity for the quarter you pay',
                 ].map((b, i) => (
                   <li key={i} className="flex gap-2.5">
                     <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
@@ -264,7 +290,7 @@ export default function BrandPartnersPage() {
               <BrandTierCTA
                 tier="founding"
                 href={foundingCalendly}
-                label="book a 30-min call"
+                label="book a 30-min fit call"
               />
             </article>
 

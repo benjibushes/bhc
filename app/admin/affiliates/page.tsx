@@ -5,6 +5,7 @@ import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
 import Link from 'next/link';
+import { toast } from '@/lib/toast';
 
 interface Affiliate {
   id: string;
@@ -62,9 +63,10 @@ export default function AdminAffiliatesPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send');
-      alert('Invite sent!');
+      // P1 audit D-4: toast instead of alert for invite confirmations
+      toast.success('Invite sent');
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to send invite');
+      toast.error('Failed to send invite', err instanceof Error ? err.message : undefined);
     } finally {
       setSending(null);
     }

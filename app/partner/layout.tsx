@@ -1,11 +1,19 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Partner With Us',
-  description: 'Apply as a rancher, brand, or land seller. BuyHalfCow connects verified operations with qualified buyers through a private, trust-first network.',
+  title: 'Partner with BuyHalfCow',
+  description: 'Partner with BuyHalfCow as a brand or affiliate. Direct ranch beef network, premium audience.',
   openGraph: {
-    title: 'Partner With BuyHalfCow',
-    description: 'Join the BuyHalfCow network as a rancher, brand, or land seller.',
+    title: 'Partner with BuyHalfCow',
+    description: 'Partner with BuyHalfCow as a brand or affiliate. Direct ranch beef network, premium audience.',
+    url: 'https://buyhalfcow.com/partner',
+    images: ['/og-image.png'],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Partner with BuyHalfCow',
+    description: 'Partner with BuyHalfCow as a brand or affiliate. Direct ranch beef network, premium audience.',
+    images: ['/og-image.png'],
   },
 };
 

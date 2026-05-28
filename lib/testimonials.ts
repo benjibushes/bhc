@@ -27,7 +27,8 @@ export interface Testimonial {
   ranchSlug: string;     // empty string if rancher has no slug
   saleAmount: number;
   orderType: string;     // "Quarter" | "Half" | "Whole" | "Beef" etc.
-  quote: string;         // synthesized; brand-voice
+  quote: string;         // real buyer text (Buyer Review or Testimonial/Quote)
+  rating?: number;       // 1-5 stars from Buyer Rating (H12 field)
   daysAgo: number;       // for "2 weeks ago" UI labels
   closedAt: string;      // ISO string — useful for sorting downstream
 }
@@ -121,25 +122,41 @@ export async function getRecentTestimonials(limit: number = 3): Promise<Testimon
         const orderType = (ref['Order Type'] || 'Beef').toString();
         const closedAt = (ref['Closed At'] || '').toString();
 
-        // REAL QUOTES ONLY. If the buyer hasn't supplied a Testimonial
-        // or Quote, exclude them — never fabricate words attributed to
-        // a real named buyer (impersonation). Operator collects real
-        // quotes via post-purchase email + writes into the field.
-        const explicit = (ref['Testimonial'] || ref['Quote'] || '').toString().trim();
+        // REAL QUOTES ONLY. If the buyer hasn't supplied a review,
+        // exclude them — never fabricate words attributed to a real
+        // named buyer (impersonation). Operator collects real quotes
+        // via post-purchase email + writes into the field.
+        //
+        // I-8 audit: H12 wired JWT magic-link → /api/reviews/submit which
+        // writes Buyer Review + Buyer Rating + Review Submitted At.
+        // Prior to this, testimonials.ts only read Testimonial/Quote
+        // fields → reviews collected but never displayed.
+        const buyerReview = (ref['Buyer Review'] || '').toString().trim();
+        const legacyQuote = (ref['Testimonial'] || ref['Quote'] || '').toString().trim();
+        const explicit = buyerReview || legacyQuote;
         if (!explicit) return null;
-        const quote = explicit;
 
-        return {
+        const ratingRaw = ref['Buyer Rating'];
+        const rating =
+          typeof ratingRaw === 'number' && ratingRaw > 0 ? ratingRaw : undefined;
+        // Filter out ≤3-star reviews from public surfaces — we still
+        // collect them (operator can see in Airtable), but don't
+        // amplify negatives on rancher landing pages.
+        if (rating !== undefined && rating < 4) return null;
+
+        const out: Testimonial = {
           buyerName,
           buyerState,
           rancherName,
           ranchSlug,
           saleAmount,
           orderType,
-          quote,
+          quote: explicit,
           daysAgo: daysBetween(closedAt),
           closedAt,
-        } satisfies Testimonial;
+        };
+        if (rating !== undefined) out.rating = rating;
+        return out;
       })
       .filter((t): t is Testimonial => t !== null);
 

@@ -4,6 +4,7 @@ import { getRecordById, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // POST /api/admin/ranchers/[id]/impersonate
 //
@@ -30,14 +31,15 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const cookieStore = await cookies();
-    const authCookie = cookieStore.get('bhc-admin-auth');
+    // Auth Phase 0: requireAdmin() handles Clerk session + x-admin-password.
+    // x-internal-secret stays for cron-style internal callers.
     const internalHeader = request.headers.get('x-internal-secret') || '';
-    const isAdmin = authCookie?.value === 'authenticated';
     const isInternal = INTERNAL_API_SECRET && internalHeader === INTERNAL_API_SECRET;
-    if (!isAdmin && !isInternal) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!isInternal) {
+      const unauthorized = await requireAdmin(request);
+      if (unauthorized) return unauthorized;
     }
+    const cookieStore = await cookies();
 
     const { id } = await context.params;
     if (!id || !id.startsWith('rec')) {

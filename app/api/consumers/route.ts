@@ -1,15 +1,18 @@
 import { NextResponse } from 'next/server';
-import { createRecord, updateRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, escapeAirtableValue, getRancherBySlug } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 90;
-import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy } from '@/lib/email';
+import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy, sendStateWaitlistLetter, getSuppressionList } from '@/lib/email';
 import { normalizeState } from '@/lib/states';
 import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
+import { transitionBuyerStage } from '@/lib/contracts';
+import { funnelRecord } from '@/lib/funnelMetrics';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -83,11 +86,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
     const {
-      fullName, email, phone, state,
+      fullName, email, phone, smsOptIn, state,
       orderType: orderTypeRaw, budgetRange: budgetRangeRaw, timing, notes,
       interestBeef: interestBeefRaw, interestLand, interestMerch, interestAll,
       intentScore, intentClassification, segment,
-      source, campaign, utmParams, ref,
+      source, campaign, utmParams, ref, rancherSlug,
     } = body;
 
     // ── DEFAULT QUALIFICATION SIGNALS — revenue lever ────────────────
@@ -136,6 +139,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
     }
 
+    // Suppression check — silently pretend success for bounced/unsubscribed
+    // emails so scrapers can't probe suppression state and so re-submitted
+    // dead addresses don't re-enter nurture flows. Fail-open: if the
+    // suppression list fetch errors, let the signup through.
+    try {
+      const suppressionList = await getSuppressionList();
+      if (suppressionList.has(email.trim().toLowerCase())) {
+        console.log(`[signup] SKIPPED ${email} (suppressed: unsubscribed/bounced/complained)`);
+        return NextResponse.json({ success: true }, { status: 201 });
+      }
+    } catch (e) {
+      console.warn('[signup] suppression check failed, allowing through:', e);
+      // Fall through — fail-open on suppression check failure
+    }
+
     if (phone && !isValidPhone(phone)) {
       return NextResponse.json({ error: 'Please enter a valid phone number' }, { status: 400 });
     }
@@ -178,9 +196,29 @@ export async function POST(request: Request) {
     // bracket-level weights so casual signups land at ~40, serious buyers at 70+.
     const consumerSegment = (interestBeef || interestAll) && orderType ? 'Beef Buyer' : 'Community';
     const isRancherPageLead = source === 'rancher-page' && campaign?.startsWith('rancher-');
+
+    // G15 — rancher deep-link attribution on /access?rancher=<slug>
+    // Pre-attribute lead to the rancher who shared the link. Lookup rancher by slug
+    // and treat as similar to rancher-page lead (high intent, direct relationship).
+    let rancherRecord: any = null;
+    let isRancherDeepLink = false;
+    if (rancherSlug) {
+      try {
+        rancherRecord = await getRancherBySlug(rancherSlug);
+        if (rancherRecord) {
+          isRancherDeepLink = true;
+        } else {
+          console.warn(`[signup] rancher slug "${rancherSlug}" not found or not live`);
+        }
+      } catch (e) {
+        console.error(`[signup] error looking up rancher slug "${rancherSlug}":`, e);
+      }
+    }
+
     let serverIntentScore = 0;
-    if (isRancherPageLead) {
-      // Rancher page leads clicked "Buy" on a specific rancher — high intent by definition.
+    if (isRancherPageLead || isRancherDeepLink) {
+      // Both rancher-page leads and rancher deep-link signups represent high intent
+      // (clicked "Buy" on rancher or shared rancher's custom link). Boost to 85.
       serverIntentScore = 85;
     } else {
       // Interest signal
@@ -221,9 +259,11 @@ export async function POST(request: Request) {
     const firstName = fullName.split(' ')[0];
 
     // validateAffiliateRefForSignup normalizes case + blocks self-referrals
-    // (when the affiliate's own email matches the buyer's). Returns '' if
-    // the ref is invalid for any reason. Stored lowercased.
-    const referredBy = await validateAffiliateRefForSignup(ref, email);
+    // (when the affiliate's own email OR phone matches the buyer's). Returns
+    // '' if the ref is invalid for any reason. Stored lowercased. Phone
+    // included because an affiliate could otherwise sign up under
+    // `me+sock@x.com` (fresh email, same phone) and farm self-attribution.
+    const referredBy = await validateAffiliateRefForSignup(ref, { email, phone });
 
     // ── Stamp lifecycle fields at signup ────────────────────────────────
     // Previously these were written by downstream crons (reclassify-buyers,
@@ -243,6 +283,16 @@ export async function POST(request: Request) {
       'Full Name': fullName.trim(),
       'Email': email.trim().toLowerCase(),
       'Phone': phone || '',
+      // F-3 audit: TCPA explicit SMS opt-in. False unless buyer ticked the
+      // checkbox AND supplied a phone. All Twilio sends gate on this field
+      // via sendSMSToConsumer() in lib/twilio.ts.
+      'SMS Opt-In': !!smsOptIn && !!(phone && phone.trim().length > 0),
+      // P4-D audit: explicit consent timestamp = TCPA evidence trail. Without
+      // this we can't defend a complaint ("when did you receive consent?").
+      // Stamped only when the opt-in is TRUE at signup. Future flips back to
+      // true from the Twilio inbound webhook (re-opt-in) should re-stamp.
+      // Requires a `SMS Opt-In At` dateTime field on Consumers (Airtable).
+      'SMS Opt-In At': (!!smsOptIn && !!(phone && phone.trim().length > 0)) ? nowIso : null,
       'Created': todayDate,
       'Approved At': nowIso,
       'Buyer Stage': 'NEW',
@@ -264,26 +314,31 @@ export async function POST(request: Request) {
         timing ? `[Timing: ${timing}]` : '',
         notes || '',
       ].filter(Boolean).join('\n'),
-      'Source': source || 'organic',
+      'Source': isRancherDeepLink ? `rancher-${rancherSlug}` : (source || 'organic'),
       'Intent Score': serverIntentScore,
       'Intent Classification': serverIntentClassification,
       'Referral Status': 'Unmatched',
       'Campaign': campaign || '',
       'UTM Parameters': utmParams || '',
-      // Rancher-page leads explicitly clicked "Buy {tier}" on a specific
-      // rancher's landing page. That's the strongest possible intent signal —
-      // equivalent to a YES click on the Ready-to-Buy prompt. Mark them
-      // ready-to-buy at creation so matching/suggest sees the flag and
-      // formats the rancher's intro email with the 🔥 prefix + READY TO BUY
-      // banner. Telegram fires the READY-TO-BUY MATCH alert too.
+      // Rancher-page leads and rancher deep-link leads explicitly clicked "Buy {tier}"
+      // or shared a rancher's custom link. That's the strongest possible intent signal —
+      // equivalent to a YES click on the Ready-to-Buy prompt. Mark them ready-to-buy at
+      // creation so matching/suggest sees the flag and formats the rancher's intro email
+      // with the 🔥 prefix + READY TO BUY banner. Telegram fires the READY-TO-BUY MATCH alert too.
       // High-intent timing at signup is equivalent to clicking YES on the warmup email.
       // 'Within 30 days' and '1-3 months' both indicate immediate purchase intent, so
       // set Ready to Buy = true at creation. This puts the buyer into the MATCH_NOW
       // segment on the next reclassify-buyers run and fires intro same-second rather
       // than waiting for a warmup email + YES click (multi-day delay).
-      'Ready to Buy': isRancherPageLead || timing === 'Within 30 days' || timing === '1-3 months',
+      'Ready to Buy': isRancherPageLead || isRancherDeepLink || timing === 'Within 30 days' || timing === '1-3 months',
     };
     if (referredBy) consumerFields['Referred By'] = referredBy;
+
+    // G15 — rancher deep-link leads get linked to the rancher who shared the link
+    // (Preferred Rancher field is a linked record).
+    if (isRancherDeepLink && rancherRecord) {
+      consumerFields['Preferred Rancher'] = [rancherRecord.id];
+    }
 
     // Maintenance mode: store the consumer record but skip ALL downstream
     // processing — no emails, no telegram, no matching. Tag the record as
@@ -319,6 +374,54 @@ export async function POST(request: Request) {
     } else {
       record = await createRecord(TABLES.CONSUMERS, consumerFields);
     }
+
+    // Funnel telemetry — every signup gets a 'signup' event in the Funnel Events
+    // table so the admin dashboard can compute conversion rates. Non-fatal; a
+    // write failure logs a warning but doesn't break the signup flow.
+    await funnelRecord({
+      stage: 'signup',
+      buyerId: record.id,
+      intentScore: serverIntentScore,
+      metadata: {
+        source: isRancherDeepLink ? `rancher-${rancherSlug}` : (source || 'organic'),
+        state,
+        isRancherPageLead,
+        isRancherDeepLink,
+        readyToBuy: !!consumerFields['Ready to Buy'],
+      },
+    });
+
+    // ── Meta Conversions API: server-side `Lead` event ──────────────────
+    // Client Pixel loses 30-50% of events to iOS 14.5+ ATT + adblockers.
+    // CAPI fires the same Lead event from the server, deduped with the
+    // client Pixel via event_id=<consumerId>. Restores attribution for
+    // paid ad optimization. Fire-and-forget — never block the response.
+    const capiIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+    const capiUserAgent = request.headers.get('user-agent') || undefined;
+    const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(request);
+    const nameParts = fullName.trim().split(/\s+/);
+    fireCapi([{
+      event_name: 'Lead',
+      event_time: Math.floor(Date.now() / 1000),
+      event_source_url: `${SITE_URL}/access`,
+      event_id: record.id,
+      action_source: 'website',
+      user_data: buildUserData({
+        email,
+        phone,
+        firstName: nameParts[0],
+        lastName: nameParts.slice(1).join(' ') || undefined,
+        state,
+        ip: capiIp,
+        userAgent: capiUserAgent,
+        fbp: capiFbp,
+        fbc: capiFbc,
+      }),
+      custom_data: {
+        content_name: 'BHC Signup',
+        content_category: consumerSegment,
+      },
+    }]).catch((e) => console.error('[meta-capi] consumer lead fire failed:', e));
 
     // ── REBUILT POST-APPROVAL FLOW (state-machine driven) ────────────────────
     // Old flow sent 2 emails on approval (sendConsumerApproval + then RTB or
@@ -462,13 +565,41 @@ export async function POST(request: Request) {
             firstName, email, state, rancherAvailable: false,
           });
           buyerStage = 'WAITING';
+
+          // F-1 audit fix: ALSO fire sendStateWaitlistLetter for any
+          // out-of-state signup, including Community-segment buyers
+          // (Order Type blank, Budget blank → segment != "Beef Buyer").
+          // Pre-fix, this letter only fired from matching/suggest:1015 —
+          // which is gated behind formIsQualified + consumerSegment === 'Beef Buyer',
+          // so Community signups never got the founder-voice letter.
+          // Mirror the matching/suggest signature + stamp Routing Segment
+          // counter so email-sequences cron doesn't double-fire.
+          const normalizedBuyerState = normalizeState(state) || state.toString().trim().toUpperCase();
+          if (email) {
+            sendStateWaitlistLetter({
+              email,
+              firstName,
+              buyerState: normalizedBuyerState,
+            })
+              .then(async () => {
+                try {
+                  await updateRecord(TABLES.CONSUMERS, record.id, {
+                    'Routing Segment Send Count': 1,
+                    'Routing Segment Last Sent At': new Date().toISOString(),
+                  });
+                } catch (e) {
+                  console.error('[state-waitlist] segment counter stamp failed:', e);
+                }
+              })
+              .catch(e => console.error('[state-waitlist] signup-time fire failed:', e));
+          }
         }
 
-        // Set Buyer Stage + Updated At — ONE write
-        await updateRecord(TABLES.CONSUMERS, record.id, {
-          'Buyer Stage': buyerStage,
-          'Buyer Stage Updated At': new Date().toISOString(),
-        });
+        // Set Buyer Stage + Updated At via contract — emits funnel event.
+        // Replaces a direct updateRecord that bypassed the funnel telemetry +
+        // duplicated the stage-write logic seen in /api/warmup/engage,
+        // /api/matching/suggest, and the rancher PATCH handler.
+        await transitionBuyerStage(record.id, buyerStage, `signup:${autoRouted ? 'auto-routed' : isRancherPageLead ? 'rancher-page' : hasInStateRancher ? 'in-state' : 'no-rancher'}`);
       } catch (e) {
         console.error('Post-approval flow error:', e);
       }

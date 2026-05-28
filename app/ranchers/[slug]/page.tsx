@@ -7,8 +7,10 @@ import Divider from '../../components/Divider';
 import Pill from '../../components/Pill';
 import Card from '../../components/Card';
 import ProspectClaimBanner from '../../components/ProspectClaimBanner';
-import { getRancherOrProspectBySlug, getActiveRancherPages } from '@/lib/airtable';
+import BHCPromiseBadge from '../../components/BHCPromiseBadge';
+import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import RancherOrderForm from './RancherOrderForm';
+import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
 
 // Public rancher landing page — the unit of conversion. Verified partners
 // get full pricing + lead capture; prospects get the same shell with pricing
@@ -107,6 +109,7 @@ export default async function RancherPage(
   const facebookUrl = r['Facebook URL'] || '';
   const instagramUrl = r['Instagram URL'] || '';
   const processingFacility = r['Processing Facility'] || '';
+  const refundPolicy = r['Refund Policy'] || '';
 
   // Parse JSON-encoded fields. All wrapped in try/catch — a bad row can't
   // break the page, just hides the section. Audit finding 2026-05-20 #32:
@@ -119,6 +122,55 @@ export default async function RancherPage(
   try {
     if (r['Testimonials']) testimonials = JSON.parse(r['Testimonials']);
   } catch (e) { logBadJson('Testimonials', e); }
+
+  // I-8 audit: H12 wired Buyer Review + Buyer Rating + Review Submitted At
+  // fields on Referrals. Reviews were collected but never displayed.
+  // Now: pull this rancher's Closed Won referrals where the buyer submitted
+  // a review w/ rating >= 4. First-name-only privacy. Surfaces below.
+  let buyerReviews: {
+    buyerName: string;
+    buyerState: string;
+    review: string;
+    rating: number;
+    orderType: string;
+    daysAgo: number;
+  }[] = [];
+  try {
+    const rancherRefs = (await getAllRecords(
+      TABLES.REFERRALS,
+      `AND({Status} = "Closed Won", {Review Submitted At} != BLANK(), {Buyer Rating} >= 4)`,
+    )) as any[];
+    // Filter to refs that link to THIS rancher.
+    const matching = rancherRefs.filter((ref) => {
+      const ids: string[] = ref['Rancher'] || ref['Suggested Rancher'] || [];
+      return ids.includes(r.id);
+    });
+    buyerReviews = matching
+      .sort((a, b) => {
+        const aDate = (a['Review Submitted At'] || '').toString();
+        const bDate = (b['Review Submitted At'] || '').toString();
+        return bDate > aDate ? 1 : bDate < aDate ? -1 : 0;
+      })
+      .slice(0, 6)
+      .map((ref) => {
+        const firstName = String(ref['Buyer Name'] || 'a buyer').trim().split(/\s+/)[0];
+        const submittedAt = String(ref['Review Submitted At'] || '');
+        const days = submittedAt
+          ? Math.max(0, Math.floor((Date.now() - new Date(submittedAt).getTime()) / 86_400_000))
+          : 0;
+        return {
+          buyerName: firstName,
+          buyerState: String(ref['Buyer State'] || '').toString(),
+          review: String(ref['Buyer Review'] || '').trim(),
+          rating: Number(ref['Buyer Rating']) || 5,
+          orderType: String(ref['Order Type'] || 'Beef'),
+          daysAgo: days,
+        };
+      })
+      .filter((rev) => rev.review.length > 0);
+  } catch (e) {
+    console.error(`[rancher-page] buyer reviews fetch failed for ${slug}:`, e);
+  }
 
   let galleryPhotos: string[] = [];
   try {
@@ -150,6 +202,42 @@ export default async function RancherPage(
   const lat = Number(r['Latitude']);
   const lng = Number(r['Longitude']);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+
+  // Build offers array + priceRange (verified ranchers only)
+  const offers: any[] = [];
+  if (!isProspect && quarterPrice) {
+    offers.push({
+      '@type': 'Offer',
+      name: 'Quarter Beef',
+      price: quarterPrice,
+      priceCurrency: 'USD',
+      availability: 'https://schema.org/InStock',
+    });
+  }
+  if (!isProspect && halfPrice) {
+    offers.push({
+      '@type': 'Offer',
+      name: 'Half Beef',
+      price: halfPrice,
+      priceCurrency: 'USD',
+      availability: 'https://schema.org/InStock',
+    });
+  }
+  if (!isProspect && wholePrice) {
+    offers.push({
+      '@type': 'Offer',
+      name: 'Whole Beef',
+      price: wholePrice,
+      priceCurrency: 'USD',
+      availability: 'https://schema.org/InStock',
+    });
+  }
+
+  const prices = [quarterPrice, halfPrice, wholePrice]
+    .filter((p) => typeof p === 'number' && p > 0) as number[];
+  const priceRange =
+    prices.length > 0 ? `$${Math.min(...prices)}–$${Math.max(...prices)}` : undefined;
+
   const jsonLd: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'LocalBusiness',
@@ -161,6 +249,8 @@ export default async function RancherPage(
       : {}),
     ...(logoUrl ? { image: logoUrl } : {}),
     ...(tagline ? { description: tagline } : {}),
+    ...(offers.length > 0 ? { makesOffer: offers } : {}),
+    ...(priceRange ? { priceRange } : {}),
     ...(isProspect
       ? {
           disambiguatingDescription:
@@ -187,6 +277,16 @@ export default async function RancherPage(
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
+      {/* Audit 6 P1 — paid-scale tracking: fires rancher_page_view on mount
+          with rancherId/slug/state custom_data for per-rancher Meta + GA
+          segmentation. PixelTracker's generic PageView didn't carry this
+          metadata, blinding paid creative ROAS by rancher. */}
+      <RancherPageAnalytics
+        rancherId={r.id}
+        rancherSlug={slug}
+        rancherState={state}
+      />
+
       {isProspect && <ProspectClaimBanner ranchName={name} slug={slug} state={state} />}
 
       {/* ── HERO ──────────────────────────────────────────────────────────────
@@ -205,7 +305,6 @@ export default async function RancherPage(
                 fill
                 className="object-cover"
                 priority
-                unoptimized
                 sizes="100vw"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-charcoal/85 via-charcoal/50 to-charcoal/30" />
@@ -249,7 +348,6 @@ export default async function RancherPage(
                       alt={`${name} logo`}
                       fill
                       className="object-contain"
-                      unoptimized
                     />
                   </div>
                 )}
@@ -267,13 +365,15 @@ export default async function RancherPage(
               {/* CTA row — verified gets pricing-jump, prospect gets claim */}
               <div className="flex flex-wrap gap-3 pt-2">
                 {hasPricing ? (
-                  <a
+                  <RancherPricingCTA
                     href="#shares"
+                    rancherSlug={slug}
+                    rancherState={state}
                     className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
                   >
                     See pricing
                     <span aria-hidden>↓</span>
-                  </a>
+                  </RancherPricingCTA>
                 ) : isProspect ? (
                   <Link
                     href={`/ranchers/${slug}/claim`}
@@ -326,6 +426,18 @@ export default async function RancherPage(
                   </div>
                 )}
               </div>
+
+              {/* Secondary CTA: Ask a question (verified ranchers only) */}
+              {!isProspect && (
+                <div className="pt-4">
+                  <Link
+                    href={`/ranchers/${slug}/contact`}
+                    className="text-sm text-saddle hover:text-charcoal underline underline-offset-2 transition-colors"
+                  >
+                    Have a question? Ask {operatorName ? operatorName.split(' ')[0] : 'the ranch'} →
+                  </Link>
+                </div>
+              )}
             </div>
           </div>
         </Container>
@@ -358,6 +470,42 @@ export default async function RancherPage(
                   <strong>{statesServed}</strong>
                 </span>
               )}
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── BHC PROMISE BADGE ─────────────────────────────────────────────────
+          Trust floor (cold-chain + 7d satisfaction + mediation) displayed on
+          verified ranchers BEFORE checkout. Audit 1 + 4 P1: move upstream from
+          /checkout/[refId]/deposit so buyers see trust commitment before the fence.
+         ───────────────────────────────────────────────────────────────────── */}
+      {!isProspect && (
+        <section className="py-16 md:py-20">
+          <Container>
+            <div className="max-w-4xl mx-auto">
+              <BHCPromiseBadge />
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── RANCHER REFUND POLICY ─────────────────────────────────────────────
+          H2: Surface rancher's refund policy publicly on landing page.
+          Captured in setup wizard step 8 (20-500 char validated), now shown
+          alongside BHC Promise so buyers can compare policies pre-purchase.
+          Only rendered for verified ranchers when policy is set.
+         ───────────────────────────────────────────────────────────────────── */}
+      {!isProspect && refundPolicy && (
+        <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
+          <Container>
+            <div className="max-w-4xl mx-auto">
+              <div className="border-l-2 border-dust pl-4 py-3 text-sm">
+                <p className="font-semibold text-charcoal text-xs uppercase tracking-widest">
+                  Rancher refund policy
+                </p>
+                <p className="text-saddle mt-1 whitespace-pre-wrap">{refundPolicy}</p>
+              </div>
             </div>
           </Container>
         </section>
@@ -467,10 +615,56 @@ export default async function RancherPage(
                       alt={`${name} ranch photo ${i + 2}`}
                       fill
                       className="object-cover transition-base group-hover:scale-105"
-                      unoptimized
                       sizes="(min-width: 1024px) 25vw, (min-width: 768px) 33vw, 50vw"
                     />
                   </div>
+                ))}
+              </div>
+            </div>
+          </Container>
+        </section>
+      )}
+
+      {/* ── BUYER REVIEWS (H12 collected via /api/reviews/submit) ────────────
+          P0 audit I-8: H12 wired review collection → JWT magic link →
+          /api/reviews/submit writes Buyer Rating + Buyer Review + Review
+          Submitted At. But testimonials display only read legacy
+          Testimonial/Quote fields. Now real reviews surface here.
+          ───────────────────────────────────────────────────────────────────── */}
+      {buyerReviews.length > 0 && (
+        <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
+          <Container>
+            <div className="max-w-5xl mx-auto space-y-10">
+              <div className="text-center space-y-2">
+                <Pill tone="neutral" className="mx-auto">Verified buyers</Pill>
+                <h2 className="font-serif text-3xl md:text-4xl">What buyers say</h2>
+              </div>
+              <div className="grid md:grid-cols-2 gap-5 md:gap-6">
+                {buyerReviews.map((rev, i) => (
+                  <Card key={i} variant="default" padding="lg" className="space-y-4">
+                    <div className="flex items-center gap-1 text-saddle" aria-label={`${rev.rating} of 5 stars`}>
+                      {Array.from({ length: 5 }).map((_, idx) => (
+                        <span key={idx} className={idx < rev.rating ? '' : 'opacity-30'} aria-hidden>
+                          ★
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-charcoal/90 leading-relaxed text-base md:text-lg italic">
+                      {rev.review}
+                    </p>
+                    <div className="flex items-center gap-3 pt-3 border-t border-dust/60 text-sm">
+                      <div className="w-10 h-10 border border-dust flex items-center justify-center rounded-full bg-bone-deep">
+                        <span className="text-saddle font-medium">{rev.buyerName.charAt(0)}</span>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-charcoal">{rev.buyerName}</p>
+                        <p className="text-xs text-dust">
+                          {rev.orderType}{rev.buyerState ? ` · ${rev.buyerState}` : ''}
+                          {rev.daysAgo > 0 ? ` · ${rev.daysAgo === 1 ? '1 day ago' : rev.daysAgo < 30 ? `${rev.daysAgo} days ago` : `${Math.floor(rev.daysAgo / 30)} mo ago`}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                  </Card>
                 ))}
               </div>
             </div>
@@ -509,7 +703,6 @@ export default async function RancherPage(
                           width={40}
                           height={40}
                           className="rounded-full object-cover"
-                          unoptimized
                         />
                       ) : (
                         <div className="w-10 h-10 border border-dust flex items-center justify-center rounded-full bg-bone-deep">
@@ -533,15 +726,19 @@ export default async function RancherPage(
 
       {/* ── PROCESS ──────────────────────────────────────────────────────────
           Three-step explainer. Big numbers in serif, restrained borders.
+          Copy is honest about logistics — pickup OR delivery depending on
+          the rancher, not promised either way.
          ───────────────────────────────────────────────────────────────────── */}
       <section className="py-16 md:py-20">
         <Container>
           <div className="max-w-5xl mx-auto space-y-10">
             <div className="text-center space-y-2">
               <Pill tone="neutral" className="mx-auto">How it works</Pill>
-              <h2 className="font-serif text-3xl md:text-4xl">Direct from {name} to your freezer</h2>
+              <h2 className="font-serif text-3xl md:text-4xl">
+                Direct from {name} to your freezer
+              </h2>
             </div>
-            <div className="grid md:grid-cols-3 gap-5 md:gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 md:gap-6">
               {[
                 {
                   num: '01',
@@ -550,13 +747,13 @@ export default async function RancherPage(
                 },
                 {
                   num: '02',
-                  title: 'Pay & confirm',
-                  blurb: `Secure your share with a deposit. ${name} reaches out to confirm cut sheet, timing, pickup.`,
+                  title: 'Reserve & confirm',
+                  blurb: `Hold your share with a deposit. ${operatorName ? operatorName.split(' ')[0] : name} reaches out to confirm cut sheet, timing, and logistics.`,
                 },
                 {
                   num: '03',
                   title: 'Pickup or delivery',
-                  blurb: 'Custom butchered, vacuum-sealed, packed into coolers. Ready on processing day.',
+                  blurb: 'Custom butchered and vacuum-sealed on processing day. Pickup or delivery is worked out direct with the ranch.',
                 },
               ].map((step) => (
                 <Card key={step.num} variant="default" padding="lg" className="space-y-3">

@@ -92,6 +92,11 @@ interface PublicStats {
   thisMonthClosedWon: number;
 }
 
+// Consumed by hero JSX (`{stats.ranchersActive}` etc.) which renders the raw
+// number — no em-dash fallback layer for 0. So if we hardcoded zeros here,
+// /api/stats/public failure would lie with "0 verified ranchers" rather than
+// degrade to a placeholder. Real, conservative numbers are safer than fake-low
+// zeros. Verified against prod 2026-05-27 — re-verify monthly.
 const STATS_FALLBACK: PublicStats = {
   ranchersActive: 17,
   familiesMatched: 1533,
@@ -145,6 +150,8 @@ function AccessPageContent() {
   const [state, setState] = useState('');
   const [householdSize, setHouseholdSize] = useState('');
   const [timing, setTiming] = useState('');
+  const [phone, setPhone] = useState('');
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [website, setWebsite] = useState(''); // honeypot
 
   // ── UI state ──────────────────────────────────────────────────────────────
@@ -198,7 +205,18 @@ function AccessPageContent() {
     source: 'organic',
     utmParams: '',
     ref: '',
+    rancherSlug: '',
   });
+
+  // ── G15 Rancher hero overlay ─────────────────────────────────────────────
+  // When ?rancher=<slug>, optionally fetch rancher name to show "you're
+  // matching with {Ranch Name}" hero copy. Non-blocking: if fetch fails,
+  // the form still works (Preferred Rancher link set server-side).
+  interface RancherHero {
+    id: string;
+    name: string;
+  }
+  const [rancherHero, setRancherHero] = useState<RancherHero | null>(null);
 
   const searchParams = useSearchParams();
   // Stable serialised string prevents useEffect infinite-loop (see legacy bug
@@ -208,20 +226,25 @@ function AccessPageContent() {
   useEffect(() => {
     const refFromUrl = searchParams.get('ref') || searchParams.get('aff');
     if (refFromUrl) localStorage.setItem('bhc_ref', refFromUrl);
+    // G15 — rancher deep-link attribution on /access?rancher=<slug>
+    const rancherSlugFromUrl = searchParams.get('rancher');
+    if (rancherSlugFromUrl) localStorage.setItem('bhc_rancher_slug', rancherSlugFromUrl);
     const campaign = localStorage.getItem('bhc_campaign') || '';
     const source = localStorage.getItem('bhc_source') || 'organic';
     const utmParams = localStorage.getItem('bhc_utm_params') || '';
     const ref = refFromUrl || localStorage.getItem('bhc_ref') || '';
+    const rancherSlug = rancherSlugFromUrl || localStorage.getItem('bhc_rancher_slug') || '';
     setCampaignData((prev) => {
       if (
         prev.campaign === campaign &&
         prev.source === source &&
         prev.utmParams === utmParams &&
-        prev.ref === ref
+        prev.ref === ref &&
+        prev.rancherSlug === rancherSlug
       ) {
         return prev;
       }
-      return { campaign, source, utmParams, ref };
+      return { campaign, source, utmParams, ref, rancherSlug };
     });
 
     // Affiliate click ping — de-duped per session
@@ -238,10 +261,43 @@ function AccessPageContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParamsString]);
 
+  // G15 — fetch rancher hero data when ?rancher=<slug> present
+  useEffect(() => {
+    if (campaignData.rancherSlug) {
+      fetch(`/api/public/ranchers?slug=${encodeURIComponent(campaignData.rancherSlug)}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (data?.rancher) {
+            const name = data.rancher['Ranch Name'] || data.rancher['Operator Name'] || 'Ranch';
+            setRancherHero({ id: data.rancher.id, name });
+          }
+        })
+        .catch(() => {
+          // Non-blocking: rancher hero is nice-to-have. If fetch fails, form still works.
+        });
+    } else {
+      setRancherHero(null);
+    }
+  }, [campaignData.rancherSlug]);
+
   // ── access_view analytics on mount ────────────────────────────────────────
   useEffect(() => {
     trackEvent('access_view');
+    // G5 — quiz_started fires once on /access mount so we have a baseline
+    // for per-step drop-off measurement. Pairs with quiz_step_completed
+    // (fired on email/state/timing/householdSize blur+change below) to
+    // unlock Meta+GA optimization toward LEAD-progression bidding.
+    trackEvent('quiz_started');
   }, []);
+
+  // G5 — per-field idempotency guards prevent double-fire on repeated
+  // blur/change of the same field. Each step fires exactly once per visit.
+  const quizStepFired = useRef<Record<string, boolean>>({});
+  const fireQuizStep = (step: 'email' | 'state' | 'householdSize' | 'timing') => {
+    if (quizStepFired.current[step]) return;
+    quizStepFired.current[step] = true;
+    trackEvent('quiz_step_completed', { step });
+  };
 
   // ── Fetch live stats ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -316,8 +372,12 @@ function AccessPageContent() {
   // ── Abandoned-app capture ─────────────────────────────────────────────────
   const [abandonedCaptured, setAbandonedCaptured] = useState(false);
   const handleEmailBlur = () => {
-    if (!email || abandonedCaptured) return;
+    if (!email) return;
     if (!validateEmail(email)) return;
+    // G5 — fire quiz_step_completed once when email is first validated on blur.
+    // This is the highest-signal step (real email = real lead).
+    fireQuizStep('email');
+    if (abandonedCaptured) return;
     fetch('/api/abandoned-app', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -386,8 +446,11 @@ function AccessPageContent() {
           state,
           timing,
           householdSize,
-          // Preserved API contract fields — empty defaults for follow-up sequence
-          phone: '',
+          // Preserved API contract fields — empty defaults for follow-up sequence.
+          // Phone optional; SMS opt-in only meaningful when phone supplied
+          // (TCPA — Twilio sends gated on both).
+          phone: phone.trim(),
+          smsOptIn: smsOptIn && phone.trim().length > 0,
           orderType: '',
           budgetRange: '',
           notes: '',
@@ -404,6 +467,7 @@ function AccessPageContent() {
           campaign: campaignData.campaign,
           utmParams: campaignData.utmParams,
           ref: campaignData.ref || undefined,
+          rancherSlug: campaignData.rancherSlug || undefined,
         }),
       });
 
@@ -412,27 +476,41 @@ function AccessPageContent() {
         throw new Error(data.error || 'submission failed');
       }
 
+      let consumerIdForCapi: string | undefined;
       try {
         const data = await response.json();
         setSubmittedRancherAvailable(!!data?.rancherAvailable);
         const consumerId = data?.consumer?.id;
         if (typeof consumerId === 'string' && consumerId.startsWith('rec')) {
           setSubmittedConsumerId(consumerId);
+          consumerIdForCapi = consumerId;
         }
       } catch {}
 
       setIsSubmitted(true);
 
-      // Analytics — both systems
-      trackEvent('access_quiz_submit', { state, timing });
+      // Analytics — both systems.
+      // E-4 audit fix: server CAPI Lead at app/api/consumers/route.ts:394
+      // uses event_id=record.id. Pass same id here so Meta dedup pairs
+      // client Pixel + server CAPI fires for accurate Lead attribution.
+      trackEvent('access_quiz_submit', {
+        state,
+        timing,
+        ...(consumerIdForCapi ? { event_id: consumerIdForCapi } : {}),
+      });
       track('Lead', {
         segment,
         state,
         orderType: '',
         budget: '',
         source: campaignData.campaign || 'access',
+        ...(consumerIdForCapi ? { event_id: consumerIdForCapi } : {}),
       });
-      track('CompleteRegistration', { segment, state });
+      track('CompleteRegistration', {
+        segment,
+        state,
+        ...(consumerIdForCapi ? { event_id: consumerIdForCapi } : {}),
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'something went wrong. please try again.';
       setError(message);
@@ -573,7 +651,7 @@ function AccessPageContent() {
                     stacks with future referrals.
                   </p>
                   {affiliateError && (
-                    <p className="text-xs text-[#8C2F2F] mb-3">{affiliateError}</p>
+                    <p className="text-xs text-weathered mb-3">{affiliateError}</p>
                   )}
                   <button
                     type="button"
@@ -699,9 +777,19 @@ function AccessPageContent() {
             <h1 className="font-serif text-3xl sm:text-5xl text-charcoal lowercase mb-3 leading-tight">
               get matched to a verified rancher in your state in 90 seconds
             </h1>
+
+            {/* G15 — Rancher hero overlay when ?rancher=<slug> */}
+            {rancherHero && (
+              <div className="bg-amber-50 border border-amber-200 rounded-sm p-4 mb-8 text-center">
+                <p className="text-saddle text-lg font-semibold">
+                  you're matching with <span className="text-charcoal font-serif">{rancherHero.name}</span>
+                </p>
+              </div>
+            )}
+
             <p className="text-saddle text-lg mb-8 leading-relaxed">
-              pick your state. answer 4 questions. we route you to the rancher
-              closest to you. you talk direct.
+              pick your state. answer 4 questions. we route you to a verified
+              rancher in your state. you talk direct, no middleman, no markup.
             </p>
 
             {/* ── Section B — Explainer Video Slot ──────────────────────────
@@ -802,13 +890,28 @@ function AccessPageContent() {
                           {headline}
                         </div>
                         <div className="text-saddle text-xs">
-                          {r.state} · {cutSummary} · available
+                          {r.state} · {cutSummary} · verified
                         </div>
                       </a>
                     );
                   })}
                 </div>
               )}
+
+              {/* BHC Promise — inline trust block, no separate page yet.
+                  Honest scope: 7-day satisfaction window + cold-chain
+                  commitment from the rancher + mediation by BHC. We do not
+                  manage cold-chain ourselves and we don't claim to. */}
+              <div className="mt-8 border-l-2 border-charcoal pl-4 text-sm text-charcoal/85 leading-relaxed">
+                <p className="text-xs uppercase tracking-wider text-saddle font-semibold mb-1">
+                  the bhc promise
+                </p>
+                <p>
+                  ranchers commit to cold-chain handoff. you get 7 days to
+                  flag anything wrong with your beef. if it goes sideways,
+                  ben mediates — direct, no script.
+                </p>
+              </div>
             </div>
 
             <Divider />
@@ -868,7 +971,10 @@ function AccessPageContent() {
                     required
                     className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
                     value={state}
-                    onChange={(e) => setState(e.target.value)}
+                    onChange={(e) => {
+                      setState(e.target.value);
+                      if (e.target.value) fireQuizStep('state');
+                    }}
                   >
                     {US_STATES.map((s) => (
                       <option key={s.value} value={s.value}>
@@ -891,7 +997,10 @@ function AccessPageContent() {
                     required
                     className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
                     value={householdSize}
-                    onChange={(e) => setHouseholdSize(e.target.value)}
+                    onChange={(e) => {
+                      setHouseholdSize(e.target.value);
+                      if (e.target.value) fireQuizStep('householdSize');
+                    }}
                   >
                     <option value="">how many you feeding?</option>
                     <option value="1-2">1–2 people</option>
@@ -913,7 +1022,10 @@ function AccessPageContent() {
                     required
                     className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
                     value={timing}
-                    onChange={(e) => setTiming(e.target.value)}
+                    onChange={(e) => {
+                      setTiming(e.target.value);
+                      if (e.target.value) fireQuizStep('timing');
+                    }}
                   >
                     <option value="">pick a timeline</option>
                     <option value="now">now (within 30 days)</option>
@@ -937,7 +1049,7 @@ function AccessPageContent() {
                     autoComplete="email"
                     className={`w-full border px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal ${
                       emailTouched && !emailValid
-                        ? 'border-[#8C2F2F]'
+                        ? 'border-weathered'
                         : 'border-charcoal/30'
                     }`}
                     value={email}
@@ -951,14 +1063,49 @@ function AccessPageContent() {
                     }}
                   />
                   {emailTouched && !emailValid && email.length > 0 && (
-                    <p className="mt-1 text-xs text-[#8C2F2F]">
+                    <p className="mt-1 text-xs text-weathered">
                       enter a valid email address
                     </p>
                   )}
                 </div>
 
+                {/* 6. Phone (optional) + SMS opt-in. F-3 audit: TCPA explicit
+                    opt-in required before any Twilio send. Without checkbox
+                    checked, no SMS will ever fire regardless of phone presence. */}
+                <div>
+                  <label
+                    htmlFor="phone"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    phone <span className="text-saddle">(optional — faster rancher intro)</span>
+                  </label>
+                  <input
+                    id="phone"
+                    type="tel"
+                    autoComplete="tel"
+                    placeholder="555-555-5555"
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+
+                {phone.trim().length > 0 && (
+                  <label className="flex items-start gap-2 text-sm text-saddle cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={smsOptIn}
+                      onChange={(e) => setSmsOptIn(e.target.checked)}
+                      className="mt-1"
+                    />
+                    <span>
+                      SMS updates ok &mdash; we&apos;ll text you when your rancher reaches out. Reply STOP to opt out anytime. Standard rates apply.
+                    </span>
+                  </label>
+                )}
+
                 {error && (
-                  <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F] text-sm">
+                  <div className="p-4 border border-weathered bg-transparent text-weathered text-sm">
                     {error}
                   </div>
                 )}

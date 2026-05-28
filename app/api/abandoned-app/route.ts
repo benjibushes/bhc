@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { normalizeState } from '@/lib/states';
+import { getSuppressionList } from '@/lib/email';
 
 export const maxDuration = 15;
 
@@ -33,6 +34,20 @@ export async function POST(request: Request) {
     const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
     if (!re.test(rawEmail)) {
       return NextResponse.json({ ok: false, error: 'invalid email' }, { status: 400 });
+    }
+
+    // Suppression check — silently pretend success for bounced/unsubscribed
+    // emails so scrapers can't probe suppression state and so re-submitted
+    // dead addresses don't re-enter nurture flows. Fail-open on error.
+    try {
+      const suppressionList = await getSuppressionList();
+      if (suppressionList.has(rawEmail)) {
+        console.log(`[abandoned-app] SKIPPED ${rawEmail} (suppressed: unsubscribed/bounced/complained)`);
+        return NextResponse.json({ ok: true, captured: true });
+      }
+    } catch (e) {
+      console.warn('[abandoned-app] suppression check failed, allowing through:', e);
+      // Fall through — fail-open on suppression check failure
     }
 
     // CRITICAL: normalizeState handles full names ("Montana" → "MT") + codes.

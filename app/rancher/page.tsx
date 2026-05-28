@@ -53,6 +53,17 @@ interface RancherInfo {
   // the Airtable side; parsed lazily where used).
   galleryPhotos?: string;
   testimonials?: string;
+  // Stage-3 tier subscription + Connect status (Task 11C banner cascade).
+  // Pricing Model gates which banners render: 'legacy' = old commission
+  // model, no tier banners; 'tier_v2' = subscription required.
+  pricingModel?: string;
+  tier?: string | null;
+  subscriptionStatus?: string;
+  connectStatus?: string;
+  // P1-4 — Tier Specialty drives the no-pricing alarm card. If the
+  // specialty includes 'Half' but Half Price is missing, /api/checkout/deposit
+  // 409s the buyer; rancher never finds out unless we surface it here.
+  tierSpecialty?: string[];
 }
 
 interface Stats {
@@ -86,6 +97,10 @@ interface Referral {
   last_buyer_activity_at?: string;
   rancher_engaged_flag?: boolean;
   stripe_invoice_url?: string;
+  // Stage-3 Audit B4 — present (ISO timestamp) when rancher has confirmed
+  // the buyer received their beef. Drives the Closed Deals card green pill
+  // and gates the "Mark beef delivered" CTA visibility.
+  fulfillment_confirmed_at?: string;
 }
 
 interface NetworkBenefit {
@@ -568,6 +583,70 @@ export default function RancherDashboardPage() {
           </div>
 
           <Divider />
+
+          {/* P1-4 — No-pricing alarm. If the rancher's Tier Specialty includes
+              a cut size but the corresponding price field is empty/zero, the
+              /api/checkout/deposit endpoint 409s any buyer who picks that
+              size. The rancher never learns about the bounce. This card
+              names the missing cuts + links to the My Page pricing editor. */}
+          {(() => {
+            const missingCuts: string[] = [];
+            const specialty = (rancherInfo.tierSpecialty || []) as string[];
+            const priceMissing = (v: string | number | undefined): boolean => {
+              if (v === undefined || v === null || v === '') return true;
+              const n = Number(v);
+              return !isFinite(n) || n <= 0;
+            };
+            if (specialty.includes('Quarter') && priceMissing(rancherInfo.quarterPrice)) {
+              missingCuts.push('Quarter');
+            }
+            if (specialty.includes('Half') && priceMissing(rancherInfo.halfPrice)) {
+              missingCuts.push('Half');
+            }
+            if (specialty.includes('Whole') && priceMissing(rancherInfo.wholePrice)) {
+              missingCuts.push('Whole');
+            }
+            if (missingCuts.length === 0) return null;
+            return (
+              <div className="border-l-4 border-rust bg-rust/10 px-4 py-3 mb-4">
+                <p className="font-semibold text-rust text-xs uppercase tracking-widest">
+                  pricing missing
+                </p>
+                <p className="text-saddle text-sm mt-1">
+                  Buyers picking <strong>{missingCuts.join(' or ')}</strong> can&apos;t
+                  check out today — the deposit page 409s until you set a
+                  price.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('my_page')}
+                    className="underline underline-offset-2 hover:text-charcoal"
+                  >
+                    set prices in my page →
+                  </button>
+                </p>
+              </div>
+            );
+          })()}
+
+          {/* Stage-3 Task 11C — Banner cascade for tier_v2 ranchers.
+              Shows ALL applicable banners stacked. Priority (top → bottom):
+                1. No tier picked yet (blue) → /partner
+                2. Connect not_connected (amber) → /api/rancher/connect/start
+                3. Connect onboarding (amber) → resume same link
+                4. Connect restricted (red) → billing portal
+                5. Subscription past_due (red) → billing portal
+              Legacy ranchers (Pricing Model !== 'tier_v2') see nothing here. */}
+          {rancherInfo.pricingModel === 'tier_v2' && (
+            <DashboardBannerCascade rancher={rancherInfo} />
+          )}
+
+          {/* Legacy → tier_v2 upgrade banner.
+              Two states:
+                - Discovery: legacy w/ no tier yet → CTA to /partner
+                - Ready: legacy + tier subscription paying + Connect active → one-click POST /api/rancher/legacy-upgrade flips Pricing Model */}
+          {rancherInfo.pricingModel === 'legacy' && (
+            <LegacyUpgradeBanner rancher={rancherInfo} />
+          )}
 
           {/* Onboarding Banner */}
           {rancherInfo.onboardingStatus && rancherInfo.onboardingStatus !== 'Live' && (() => {
@@ -1105,32 +1184,50 @@ export default function RancherDashboardPage() {
                   <h2 className="font-serif text-2xl">Closed Deals</h2>
                   <div className="space-y-4">
                     {closedRefs.map((ref) => (
-                      <div key={ref.id} className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                        <div>
-                          <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-gray-100 text-gray-600'}`}>
-                            {ref.status}
-                          </span>
-                          <p className="font-medium mt-1">{ref.buyer_name}</p>
-                          <p className="text-xs text-dust">{ref.closed_at ? new Date(ref.closed_at).toLocaleDateString() : ''}</p>
+                      <div key={ref.id} className="border border-dust bg-white">
+                        <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                          <div>
+                            <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-gray-100 text-gray-600'}`}>
+                              {ref.status}
+                            </span>
+                            <p className="font-medium mt-1">{ref.buyer_name}</p>
+                            <p className="text-xs text-dust">{ref.closed_at ? new Date(ref.closed_at).toLocaleDateString() : ''}</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {ref.status === 'Closed Won' && (
+                              <div className="text-right">
+                                <p className="font-serif text-lg">${ref.sale_amount.toLocaleString()}</p>
+                                <p className="text-xs text-dust">Commission: ${ref.commission_due.toLocaleString()}</p>
+                              </div>
+                            )}
+                            {isAdminImpersonating && ref.status === 'Closed Lost' && (
+                              <button
+                                onClick={() => handleReviveLead(ref)}
+                                disabled={updating === ref.id}
+                                className="px-3 py-1.5 text-xs border border-charcoal bg-charcoal text-bone hover:bg-saddle disabled:opacity-50"
+                                title="Admin only: flip this Closed Lost back to an actionable status. Audit fires to Telegram."
+                              >
+                                ♻️ Revive Lead
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          {ref.status === 'Closed Won' && (
-                            <div className="text-right">
-                              <p className="font-serif text-lg">${ref.sale_amount.toLocaleString()}</p>
-                              <p className="text-xs text-dust">Commission: ${ref.commission_due.toLocaleString()}</p>
-                            </div>
-                          )}
-                          {isAdminImpersonating && ref.status === 'Closed Lost' && (
-                            <button
-                              onClick={() => handleReviveLead(ref)}
-                              disabled={updating === ref.id}
-                              className="px-3 py-1.5 text-xs border border-charcoal bg-charcoal text-bone hover:bg-saddle disabled:opacity-50"
-                              title="Admin only: flip this Closed Lost back to an actionable status. Audit fires to Telegram."
-                            >
-                              ♻️ Revive Lead
-                            </button>
-                          )}
-                        </div>
+                        {/* Stage-3 Audit B4 — fulfillment confirm row. Gated on tier_v2 + Closed Won.
+                            Legacy ranchers use the post-close commission invoice flow, not fulfillment confirm. */}
+                        {ref.status === 'Closed Won' && rancherInfo.pricingModel === 'tier_v2' && (
+                          <FulfillmentConfirmRow
+                            referral={ref}
+                            onConfirmed={(when) => {
+                              // Optimistic update — flip just this referral's fulfillment_confirmed_at
+                              // so the pill renders without a full dashboard refetch latency hit.
+                              setReferrals((prev) =>
+                                prev.map((r) =>
+                                  r.id === ref.id ? { ...r, fulfillment_confirmed_at: when } : r,
+                                ),
+                              );
+                            }}
+                          />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -2158,6 +2255,349 @@ function ReferralCard({
           Pass on Lead
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Stage-3 Audit B4 — Fulfillment confirm row ───────────────────────────
+// Renders under each Closed Won card for tier_v2 ranchers. Two-step disclosure:
+//   click 1 → expand textarea + reveal "Send confirmation"
+//   click 2 → POST /api/rancher/fulfillment/confirm { referralId, note }
+// On 200: parent flips the local referral row to show the green pill.
+// On error: inline red error text; the button stays clickable for retry.
+function FulfillmentConfirmRow({
+  referral,
+  onConfirmed,
+}: {
+  referral: Referral;
+  onConfirmed: (when: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [note, setNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  // Already-confirmed → render the green pill, no button.
+  if (referral.fulfillment_confirmed_at) {
+    const when = new Date(referral.fulfillment_confirmed_at).toLocaleDateString();
+    return (
+      <div className="px-4 py-3 border-t border-dust bg-bone">
+        <span
+          role="status"
+          aria-label={`Beef delivered ${when}`}
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-100 text-green-800"
+        >
+          <span aria-hidden="true">✓</span> Beef delivered {when}
+        </span>
+      </div>
+    );
+  }
+
+  async function submit() {
+    setSubmitting(true);
+    setError('');
+    try {
+      const res = await fetch('/api/rancher/fulfillment/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ referralId: referral.id, note: note.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errMsg = typeof data?.error === 'string' ? data.error : 'Could not confirm fulfillment. Please try again.';
+        setError(errMsg);
+        return;
+      }
+      onConfirmed(String(data?.fulfillmentConfirmedAt || new Date().toISOString()));
+    } catch {
+      setError('Network error — try again in a moment.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="px-4 py-3 border-t border-dust bg-bone space-y-2">
+      {!expanded ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="bg-charcoal text-white px-4 py-2 text-xs font-semibold uppercase tracking-widest hover:bg-saddle transition-colors"
+        >
+          Mark beef delivered →
+        </button>
+      ) : (
+        <>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value.slice(0, 500))}
+            placeholder="Optional — any handoff details to share with the buyer"
+            aria-label="Handoff note for buyer (optional)"
+            rows={2}
+            maxLength={500}
+            className="w-full px-3 py-2 text-sm border border-dust bg-white text-charcoal focus:outline-none focus:border-charcoal"
+          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={submit}
+              disabled={submitting}
+              className="bg-charcoal text-white px-4 py-2 text-xs font-semibold uppercase tracking-widest hover:bg-saddle transition-colors disabled:opacity-50"
+            >
+              {submitting ? 'Sending…' : 'Send confirmation'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setExpanded(false); setNote(''); setError(''); }}
+              disabled={submitting}
+              className="px-4 py-2 text-xs font-semibold uppercase tracking-widest border border-dust text-saddle hover:bg-dust hover:text-bone transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <span className="text-xs text-dust ml-auto">{note.length}/500</span>
+          </div>
+        </>
+      )}
+      {error && <p className="text-xs text-red-700">{error}</p>}
+    </div>
+  );
+}
+
+// ── Stage-3 Task 11C — Dashboard banner cascade ───────────────────────────
+// Five states, ALL stacked when applicable (no priority short-circuit).
+// State → color → CTA:
+//   1. No tier picked  → blue   → /partner
+//   2. Connect not_connected  → amber  → POST /api/rancher/connect/start
+//   3. Connect onboarding     → amber  → same as #2 (resume)
+//   4. Connect restricted     → red    → GET /api/rancher/tier/portal
+//   5. Subscription past_due  → red    → GET /api/rancher/tier/portal
+//
+// Gated by Pricing Model === 'tier_v2' at the caller — legacy ranchers
+// never see this section. Each banner opens its target in a new tab so the
+// dashboard state stays around for refresh-based feedback.
+function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
+  const noTier = !rancher.tier;
+  const status = rancher.subscriptionStatus || '';
+  // Treat trialing as "subscription is paying-or-pre-paying" — consistent with
+  // wizard TierPickStep which unlocks on either active OR trialing. A trialing
+  // rancher will still need a connected bank when their trial converts.
+  const subPaying = status === 'active' || status === 'trialing';
+  // Broken-subscription states. past_due is the canonical needs-card-update,
+  // but incomplete/incomplete_expired/unpaid/canceled all mean the subscription
+  // is not paying us and the rancher can't receive new leads. Group them
+  // under one banner so no state falls through silently.
+  const subBroken = status === 'past_due' || status === 'unpaid'
+    || status === 'incomplete' || status === 'incomplete_expired'
+    || status === 'canceled';
+  const connect = rancher.connectStatus || 'not_connected';
+
+  // Banner gates follow the spec literal — only #2 (Connect not_connected)
+  // requires the rancher to have a paying subscription first, so we don't
+  // ask them to connect a bank before they've picked a plan. States 3/4
+  // fire on the singular Connect field. State 5 catches any broken sub.
+  const showConnectNotConnected = !noTier && subPaying && connect === 'not_connected';
+  const showConnectOnboarding = connect === 'onboarding';
+  const showConnectRestricted = connect === 'restricted';
+  const showSubBroken = !noTier && subBroken;
+
+  const anyBanner =
+    noTier || showConnectNotConnected || showConnectOnboarding || showConnectRestricted || showSubBroken;
+  if (!anyBanner) return null;
+
+  // Opens Stripe Connect onboarding link from /api/rancher/connect/start in
+  // a new tab. Same handler powers #2 + #3 (start auto-resumes existing
+  // onboarding when account already exists).
+  async function openConnectOnboarding() {
+    try {
+      const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
+      const data = await res.json();
+      if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
+      else alert(data?.error || 'Could not start Stripe Connect onboarding.');
+    } catch {
+      alert('Network error — try again in a moment.');
+    }
+  }
+
+  // Opens Stripe Customer Portal (used for billing past_due + restricted
+  // Connect cases where the portal lets the rancher fix payment method or
+  // resolve the dispute that flagged them).
+  async function openBillingPortal() {
+    try {
+      const res = await fetch('/api/rancher/tier/portal', { credentials: 'include' });
+      const data = await res.json();
+      if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
+      else alert(data?.error || 'Could not open billing portal.');
+    } catch {
+      alert('Network error — try again in a moment.');
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {noTier && (
+        <div className="p-4 border-l-4 border-blue-500 bg-blue-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-blue-900">
+            <strong>Pick your plan to start receiving buyers.</strong>{' '}
+            Choose Pasture, Ranch, or Operator on /partner.
+          </p>
+          <a
+            href="/partner"
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-blue-700 text-white hover:bg-blue-800 transition-colors"
+          >
+            See plans →
+          </a>
+        </div>
+      )}
+
+      {showConnectNotConnected && (
+        <div className="p-4 border-l-4 border-yellow-500 bg-yellow-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-yellow-900">
+            <strong>Connect your bank account so we can pay you.</strong>{' '}
+            Stripe Connect onboarding takes ~5 minutes.
+          </p>
+          <button
+            type="button"
+            onClick={openConnectOnboarding}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors"
+          >
+            Connect bank →
+          </button>
+        </div>
+      )}
+
+      {showConnectOnboarding && (
+        <div className="p-4 border-l-4 border-yellow-500 bg-yellow-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-yellow-900">
+            <strong>Finish identity verification with Stripe.</strong>{' '}
+            Resume where you left off — Stripe will pick up at the next required step.
+          </p>
+          <button
+            type="button"
+            onClick={openConnectOnboarding}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors"
+          >
+            Resume verification →
+          </button>
+        </div>
+      )}
+
+      {showConnectRestricted && (
+        <div className="p-4 border-l-4 border-red-600 bg-red-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-red-900">
+            <strong>Stripe needs more info to keep payouts active.</strong>{' '}
+            Your Connect account is restricted — open the portal to clear the flag.
+          </p>
+          <button
+            type="button"
+            onClick={openBillingPortal}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors"
+          >
+            Open portal →
+          </button>
+        </div>
+      )}
+
+      {showSubBroken && (
+        <div className="p-4 border-l-4 border-red-600 bg-red-50 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-red-900">
+            <strong>
+              {status === 'canceled'
+                ? 'Your tier subscription is canceled.'
+                : status === 'past_due' || status === 'unpaid'
+                ? 'Your tier payment failed — update your card.'
+                : 'Your tier subscription needs attention.'}
+            </strong>{' '}
+            New leads pause until the subscription is current again.
+          </p>
+          <button
+            type="button"
+            onClick={openBillingPortal}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors"
+          >
+            {status === 'canceled' ? 'Reactivate →' : 'Update card →'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Legacy → tier_v2 opt-in banner. Renders only when Pricing Model === 'legacy'.
+// Two states:
+//   1. Discovery — no tier yet. Pitches the upgrade + sends to /partner.
+//   2. Ready — tier subscription paying + Connect active. One-click button
+//      hits /api/rancher/legacy-upgrade to atomically flip Pricing Model.
+function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
+  const status = rancher.subscriptionStatus || '';
+  const subPaying = status === 'active' || status === 'trialing';
+  const connect = rancher.connectStatus || 'not_connected';
+  const ready = subPaying && connect === 'active';
+
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  async function confirmUpgrade() {
+    const ok = window.confirm(
+      'Switch to tier_v2 pricing? This is one-way — your closed deals will run through Stripe Connect direct charges instead of post-close commission invoices.',
+    );
+    if (!ok) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      const res = await fetch('/api/rancher/legacy-upgrade', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // Reload the page so the cascade re-renders against the new Pricing Model.
+        window.location.reload();
+      } else {
+        setError(data?.message || data?.error || 'Upgrade failed.');
+      }
+    } catch {
+      setError('Network error — try again in a moment.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (ready) {
+    return (
+      <div className="p-4 border-l-4 border-green-600 bg-green-50 flex items-center justify-between gap-4 flex-wrap">
+        <div className="text-sm text-green-900">
+          <p>
+            <strong>You&rsquo;re set up to switch to tier_v2.</strong>{' '}
+            Subscription is paying, Stripe Connect is active. One click finishes the upgrade.
+          </p>
+          {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
+        </div>
+        <button
+          type="button"
+          onClick={confirmUpgrade}
+          disabled={submitting}
+          className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+        >
+          {submitting ? 'Switching…' : 'Switch to tier_v2 →'}
+        </button>
+      </div>
+    );
+  }
+
+  // Discovery state — pitch the upgrade.
+  return (
+    <div className="p-4 border-l-4 border-blue-500 bg-blue-50 flex items-center justify-between gap-4 flex-wrap">
+      <p className="text-sm text-blue-900">
+        <strong>Skip the commission invoice. Get paid by Stripe direct.</strong>{' '}
+        Pick a paid tier ($150/$350/$500/mo) → Stripe collects buyer deposits → BHC&rsquo;s cut comes off the top → the rest hits your bank automatically.
+      </p>
+      <a
+        href="/partner"
+        className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-blue-700 text-white hover:bg-blue-800 transition-colors"
+      >
+        See plans →
+      </a>
     </div>
   );
 }
