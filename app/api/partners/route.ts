@@ -47,11 +47,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
     const { partnerType, ref } = body;
-    // Pull whichever email the body carries (rancher/brand/land each carry
-    // `email` as the primary contact). validateAffiliateRefForSignup uses
-    // it to block self-referral; safe to pass undefined.
+    // Pull whichever email + phone the body carries (rancher/brand/land each
+    // carry `email`/`phone` as the primary contact). validateAffiliateRefForSignup
+    // uses them to block self-referral; safe to pass undefined. Phone match
+    // closes the `me+sock@x.com` loophole — an affiliate trying to refer
+    // themselves under a fresh email but the same phone is rejected.
     const partnerEmail = typeof body?.email === 'string' ? body.email : undefined;
-    const referredBy = await validateAffiliateRefForSignup(ref, partnerEmail);
+    const partnerPhoneRaw = typeof body?.phone === 'string' ? body.phone : undefined;
+    const referredBy = await validateAffiliateRefForSignup(ref, {
+      email: partnerEmail,
+      phone: partnerPhoneRaw,
+    });
 
     if (!partnerType) {
       return NextResponse.json({ error: 'Partner type is required' }, { status: 400 });

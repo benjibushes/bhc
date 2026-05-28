@@ -192,18 +192,49 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             const first = String(buyer['Full Name'] || '').split(' ')[0] || '';
             const engageUrl = buildEngageUrl(buyer.id);
 
-            await sendRancherLaunchWarmup({
-              email,
-              firstName: first,
-              ranchName,
-              buyerState: normalizeState(buyer['State']),
-              engageUrl,
-            });
+            // Idempotency hardening (P2-H 2026-05-27): stamp dedup field
+            // BEFORE the email send. Trust Mode has no cohort-level cooldown
+            // (unlike the throttled branch's Warmup Last Batch At gate), so a
+            // post-send stamp failure here would let next run re-warm the
+            // same buyer. Preemptive stamp + clear-on-send-failure makes the
+            // worst-case "send + no stamp" → "no send, no duplicate" instead.
+            const stampedAt = nowISO();
+            try {
+              await updateRecord(TABLES.CONSUMERS, buyer.id, {
+                'Warmup Sent At': stampedAt,
+                'Warmup Stage': 'sent',
+              });
+            } catch (e: any) {
+              console.error(`[trust-drain] preemptive stamp failed for buyer ${buyer.id} — skipping send:`, e?.message);
+              warmupsSkipped++;
+              skipReasons['stamp-failed'] = (skipReasons['stamp-failed'] || 0) + 1;
+              continue;
+            }
 
-            await updateRecord(TABLES.CONSUMERS, buyer.id, {
-              'Warmup Sent At': nowISO(),
-              'Warmup Stage': 'sent',
-            });
+            try {
+              await sendRancherLaunchWarmup({
+                email,
+                firstName: first,
+                ranchName,
+                buyerState: normalizeState(buyer['State']),
+                engageUrl,
+              });
+            } catch (sendErr: any) {
+              // Best-effort rollback so next run gets another shot.
+              console.error(`[trust-drain] send failed after stamp for buyer ${buyer.id} — clearing stamp:`, sendErr?.message);
+              try {
+                await updateRecord(TABLES.CONSUMERS, buyer.id, {
+                  'Warmup Sent At': null,
+                  'Warmup Stage': null,
+                });
+              } catch (clearErr: any) {
+                // Stamp left in place — operator alert via cronRun partial signal.
+                console.error(`[trust-drain] stamp clear failed for buyer ${buyer.id}:`, clearErr?.message);
+              }
+              warmupsSkipped++;
+              skipReasons['send-failed'] = (skipReasons['send-failed'] || 0) + 1;
+              continue;
+            }
 
             warmupsSent++;
             ranchSent++;
@@ -288,22 +319,56 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           const first = String(rec['Full Name'] || '').split(' ')[0] || '';
           const engageUrl = buildEngageUrl(rec.id);
 
-          await sendRancherLaunchWarmup({
-            email,
-            firstName: first,
-            ranchName,
-            buyerState: normalizeState(rec['State']),
-            engageUrl,
-          });
-
+          // Idempotency hardening (P2-H 2026-05-27): stamp dedup field
+          // BEFORE the email send. Throttled branch has a 24h cohort
+          // cooldown (Warmup Last Batch At) as primary safety net, but
+          // the same stamp-then-send pattern from the Trust Mode branch
+          // gives defense-in-depth + keeps the two code paths consistent.
           // Buyer Stage flip: WAITING → READY (rancher just became visible to
           // them; we're not yet at MATCHED — that requires a YES click).
-          await updateRecord(TABLES.CONSUMERS, rec.id, {
-            'Warmup Sent At': nowISO(),
-            'Warmup Stage': 'sent',
-            'Buyer Stage': 'READY',
-            'Buyer Stage Updated At': nowISO(),
-          });
+          const stampedAt = nowISO();
+          try {
+            await updateRecord(TABLES.CONSUMERS, rec.id, {
+              'Warmup Sent At': stampedAt,
+              'Warmup Stage': 'sent',
+              'Buyer Stage': 'READY',
+              'Buyer Stage Updated At': stampedAt,
+            });
+          } catch (e: any) {
+            console.error(`[throttle] preemptive stamp failed for buyer ${rec.id} — skipping send:`, e?.message);
+            warmupsSkipped++;
+            skipReasons['stamp-failed'] = (skipReasons['stamp-failed'] || 0) + 1;
+            continue;
+          }
+
+          try {
+            await sendRancherLaunchWarmup({
+              email,
+              firstName: first,
+              ranchName,
+              buyerState: normalizeState(rec['State']),
+              engageUrl,
+            });
+          } catch (sendErr: any) {
+            // Best-effort rollback — clear stamp + restore Buyer Stage so next
+            // run picks them up. Note: 24h cohort cooldown will still gate the
+            // whole rancher's queue for 24h, so retry doesn't happen sooner
+            // than that anyway.
+            console.error(`[throttle] send failed after stamp for buyer ${rec.id} — clearing stamp:`, sendErr?.message);
+            try {
+              await updateRecord(TABLES.CONSUMERS, rec.id, {
+                'Warmup Sent At': null,
+                'Warmup Stage': null,
+                'Buyer Stage': 'WAITING',
+                'Buyer Stage Updated At': nowISO(),
+              });
+            } catch (clearErr: any) {
+              console.error(`[throttle] stamp clear failed for buyer ${rec.id}:`, clearErr?.message);
+            }
+            warmupsSkipped++;
+            skipReasons['send-failed'] = (skipReasons['send-failed'] || 0) + 1;
+            continue;
+          }
 
           warmupsSent++;
           ranchSent++;

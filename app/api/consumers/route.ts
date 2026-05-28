@@ -259,9 +259,11 @@ export async function POST(request: Request) {
     const firstName = fullName.split(' ')[0];
 
     // validateAffiliateRefForSignup normalizes case + blocks self-referrals
-    // (when the affiliate's own email matches the buyer's). Returns '' if
-    // the ref is invalid for any reason. Stored lowercased.
-    const referredBy = await validateAffiliateRefForSignup(ref, email);
+    // (when the affiliate's own email OR phone matches the buyer's). Returns
+    // '' if the ref is invalid for any reason. Stored lowercased. Phone
+    // included because an affiliate could otherwise sign up under
+    // `me+sock@x.com` (fresh email, same phone) and farm self-attribution.
+    const referredBy = await validateAffiliateRefForSignup(ref, { email, phone });
 
     // ── Stamp lifecycle fields at signup ────────────────────────────────
     // Previously these were written by downstream crons (reclassify-buyers,
