@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { getAllRecords, updateRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 
 export const maxDuration = 60;
 
@@ -19,13 +20,25 @@ export const maxDuration = 60;
 // Events handled:
 //   BOOKING_CREATED      → flip Onboarding Status to "Call Scheduled" if rancher
 //                          is in earlier stage. Telegram + ?email auto-match.
-//   BOOKING_RESCHEDULED  → Telegram alert with new time. No status change.
-//   BOOKING_CANCELLED    → Telegram alert. No status downgrade (rancher might
-//                          rebook). Manual cleanup via bhc-ops if needed.
+//   BOOKING_RESCHEDULED  → if rancher was in cancelled / empty / New state, flip
+//                          back to "Call Scheduled" (cancel-then-rebook flow);
+//                          otherwise just Telegram-alert. Always alerts.
+//   BOOKING_CANCELLED    → revert Onboarding Status from "Call Scheduled" back
+//                          to "" so wizard's alreadyBooked gate flips false and
+//                          rancher-followup cron can nudge them to rebook.
+//                          Telegram alert always.
+//   MEETING_ENDED        → flip Onboarding Status to "Call Complete" so wizard
+//                          unblocks the signing step. NO-SHOW guard: if Cal
+//                          payload signals attendee no-show, suppress the
+//                          auto-advance and Telegram-alert admin to follow up.
 //
 // Setup endpoint (Cal.com → BHC) is created via API at:
 //   /Users/benji.bushes/BHC/untitled folder/bhc/scripts/_setup-cal-webhook.mjs
 // Webhook ID: 470e07e5-09b9-497d-86c5-110bbd4e1520
+//
+// Audit: every Airtable mutation here writes an audit entry via logAuditEntry()
+// so admin can replay reverse-actions from /admin/audit if a webhook fires
+// in error (e.g. spoofed BOOKING_CANCELLED before Cal hardens signing).
 
 function verifyCalSignature(rawBody: string, headers: Headers): boolean {
   const secret = process.env.CAL_WEBHOOK_SECRET;
@@ -116,11 +129,26 @@ export async function POST(request: Request) {
         try {
           const currentStatus = (rancher['Onboarding Status'] || '').toString();
           // Don't downgrade — only set Call Scheduled if rancher is in
-          // pre-call stages (empty or already Call Scheduled).
+          // pre-call stages (empty / New / already Call Scheduled). Note we
+          // do NOT include later stages: a rancher who is e.g. Verification
+          // Pending and books a follow-up call shouldn't get knocked back.
           if (!currentStatus || currentStatus === 'Call Scheduled' || currentStatus === 'New') {
+            const reverse = buildAirtableUpdateReverse(TABLES.RANCHERS, rancher.id, {
+              'Onboarding Status': rancher['Onboarding Status'],
+              'Call Scheduled': rancher['Call Scheduled'],
+            });
             await updateRecord(TABLES.RANCHERS, rancher.id, {
               'Onboarding Status': 'Call Scheduled',
               'Call Scheduled': true,
+            });
+            await logAuditEntry({
+              actor: 'cron',
+              tool: 'cal-webhook-booking-created',
+              targetType: 'Rancher',
+              targetId: rancher.id,
+              args: { attendeeEmail, startTime, previousStatus: currentStatus },
+              result: { status: 'Call Scheduled', callScheduled: true },
+              reverseAction: reverse,
             });
           }
         } catch (e) {
@@ -151,6 +179,37 @@ export async function POST(request: Request) {
       // Auto-flip Onboarding Status='Call Complete' so the rancher's setup
       // wizard unblocks the signing step without operator intervention.
       // Cal.com fires MEETING_ENDED when the booking's end time passes.
+      //
+      // No-show guard: Cal v2 can signal no-show via either
+      //   - bookingPayload.attendees[i].noShow (boolean per-attendee)
+      //   - bookingPayload.noShowHost (boolean — host didn't show)
+      //   - bookingPayload.noShow (rare, top-level)
+      // If ANY attendee was a no-show, we DO NOT advance the wizard — a no-show
+      // call hasn't actually qualified the rancher, so the signing step should
+      // stay gated. Alert admin to follow up manually.
+      const attendeeNoShow =
+        Array.isArray(attendees) &&
+        attendees.some((a: any) => a && (a.noShow === true || a.no_show === true));
+      const hostNoShow =
+        bookingPayload.noShowHost === true || bookingPayload.no_show_host === true;
+      const topLevelNoShow = bookingPayload.noShow === true || bookingPayload.no_show === true;
+      const isNoShow = attendeeNoShow || hostNoShow || topLevelNoShow;
+
+      if (isNoShow) {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🚨 <b>RANCHER NO-SHOW</b>\n\n` +
+          `🤠 ${rancherName}\n` +
+          `📧 ${attendeeEmail}\n` +
+          `📅 ${dateDisplay} MT\n\n` +
+          `<i>Cal flagged ${hostNoShow ? 'host' : 'attendee'} as no-show — wizard NOT auto-advanced. ` +
+          (rancher
+            ? `Reach out to rebook, or use /bhc-ops to advance manually if call did happen.</i>`
+            : `Rancher not in DB either — likely junk booking.</i>`)
+        );
+        return NextResponse.json({ success: true, event: triggerEvent, rancher: rancherName, noShow: true });
+      }
+
       if (rancher) {
         try {
           const currentStatus = (rancher['Onboarding Status'] || '').toString();
@@ -158,9 +217,22 @@ export async function POST(request: Request) {
           // Signed / Verification Complete / Live if rancher somehow got
           // ahead via dashboard.
           if (currentStatus === 'Call Scheduled') {
+            const reverse = buildAirtableUpdateReverse(TABLES.RANCHERS, rancher.id, {
+              'Onboarding Status': rancher['Onboarding Status'],
+              'Call Completed At': rancher['Call Completed At'],
+            });
             await updateRecord(TABLES.RANCHERS, rancher.id, {
               'Onboarding Status': 'Call Complete',
               'Call Completed At': new Date().toISOString().slice(0, 10),
+            });
+            await logAuditEntry({
+              actor: 'cron',
+              tool: 'cal-webhook-meeting-ended',
+              targetType: 'Rancher',
+              targetId: rancher.id,
+              args: { attendeeEmail, previousStatus: currentStatus },
+              result: { status: 'Call Complete' },
+              reverseAction: reverse,
             });
             await sendTelegramMessage(
               TELEGRAM_ADMIN_CHAT_ID,
@@ -170,26 +242,100 @@ export async function POST(request: Request) {
         } catch (e) {
           console.error('[cal webhook] MEETING_ENDED update failed:', e);
         }
+      } else {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `⚠️ <b>UNMATCHED MEETING_ENDED</b>\n\n📧 ${attendeeEmail}\n📅 ${dateDisplay} MT\n\n<i>Call ended but attendee email doesn't match any Rancher row.</i>`
+        );
       }
     }
 
     else if (triggerEvent === 'BOOKING_CANCELLED') {
+      // Revert Onboarding Status if rancher was sitting in Call Scheduled —
+      // without this, the wizard's alreadyBooked gate (status==='Call Scheduled')
+      // would falsely report they're booked AND the rancher-followup cron's
+      // threshold for "Call Scheduled" stage would never fire a rebook nudge
+      // (it keys off createdTime, not call time, and ranchers are usually
+      // >2 days post-signup by this point so the rancher LOOKS overdue
+      // forever). Clearing to '' puts them back in the New Applicant nudge
+      // loop. Don't downgrade later-stage ranchers (Docs Sent, etc.) — a
+      // late-stage rancher cancelling a follow-up call shouldn't reset.
+      if (rancher) {
+        try {
+          const currentStatus = (rancher['Onboarding Status'] || '').toString();
+          if (currentStatus === 'Call Scheduled') {
+            const reverse = buildAirtableUpdateReverse(TABLES.RANCHERS, rancher.id, {
+              'Onboarding Status': rancher['Onboarding Status'],
+              'Call Scheduled': rancher['Call Scheduled'],
+            });
+            await updateRecord(TABLES.RANCHERS, rancher.id, {
+              'Onboarding Status': '',
+              'Call Scheduled': false,
+            });
+            await logAuditEntry({
+              actor: 'cron',
+              tool: 'cal-webhook-booking-cancelled',
+              targetType: 'Rancher',
+              targetId: rancher.id,
+              args: { attendeeEmail, previousStatus: currentStatus },
+              result: { status: '', callScheduled: false },
+              reverseAction: reverse,
+            });
+          }
+        } catch (e) {
+          console.error('[cal webhook] BOOKING_CANCELLED update failed:', e);
+        }
+      }
       await sendTelegramMessage(
         TELEGRAM_ADMIN_CHAT_ID,
         `❌ <b>CALL CANCELLED</b>\n\n` +
         `🤠 ${rancherName}\n` +
         `📧 ${attendeeEmail}\n` +
-        `Originally: ${dateDisplay} MT`
+        `Originally: ${dateDisplay} MT` +
+        (rancher
+          ? `\n\n<i>Onboarding Status reset — rancher-followup cron will nudge them to rebook.</i>`
+          : `\n\n<i>⚠️ Rancher not in DB — no status change applied.</i>`)
       );
     }
 
     else if (triggerEvent === 'BOOKING_RESCHEDULED') {
+      // If a rancher cancelled (status reset to '') and then rebooks via the
+      // SAME Cal link, Cal can fire BOOKING_RESCHEDULED rather than
+      // BOOKING_CREATED. Flip status back to 'Call Scheduled' for empty/New
+      // ranchers so the wizard and stalled-call cron see them correctly.
+      if (rancher) {
+        try {
+          const currentStatus = (rancher['Onboarding Status'] || '').toString();
+          if (!currentStatus || currentStatus === 'New') {
+            const reverse = buildAirtableUpdateReverse(TABLES.RANCHERS, rancher.id, {
+              'Onboarding Status': rancher['Onboarding Status'],
+              'Call Scheduled': rancher['Call Scheduled'],
+            });
+            await updateRecord(TABLES.RANCHERS, rancher.id, {
+              'Onboarding Status': 'Call Scheduled',
+              'Call Scheduled': true,
+            });
+            await logAuditEntry({
+              actor: 'cron',
+              tool: 'cal-webhook-booking-rescheduled',
+              targetType: 'Rancher',
+              targetId: rancher.id,
+              args: { attendeeEmail, startTime, previousStatus: currentStatus },
+              result: { status: 'Call Scheduled', callScheduled: true },
+              reverseAction: reverse,
+            });
+          }
+        } catch (e) {
+          console.error('[cal webhook] BOOKING_RESCHEDULED update failed:', e);
+        }
+      }
       await sendTelegramMessage(
         TELEGRAM_ADMIN_CHAT_ID,
         `🔄 <b>CALL RESCHEDULED</b>\n\n` +
         `🤠 ${rancherName}\n` +
         `📅 New time: ${dateDisplay} MT\n` +
-        `📧 ${attendeeEmail}`
+        `📧 ${attendeeEmail}` +
+        (rancher ? '' : `\n\n<i>⚠️ Rancher not in DB.</i>`)
       );
     }
 
