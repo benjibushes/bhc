@@ -104,17 +104,15 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
           'Closed At': new Date().toISOString(),
           'Notes': (referral['Notes'] || '') + '\n[Auto-closed: no response after 3 follow-ups]',
         });
-        // Decrement rancher's active referral count
+        // Decrement rancher's active referral count atomically via Redis.
+        // Was non-atomic read+write — race with concurrent matching/suggest
+        // INCR could drift the counter. PA-MATCH audit (2026-05-28) flagged.
         const rancherIds = referral['Suggested Rancher'] || referral['Rancher'] || [];
         if (rancherIds.length > 0) {
           try {
-            const rancher: any = await getRecordById(TABLES.RANCHERS, rancherIds[0]);
-            const count = rancher['Current Active Referrals'] || 0;
-            if (count > 0) {
-              await updateRecord(TABLES.RANCHERS, rancherIds[0], {
-                'Current Active Referrals': count - 1,
-              });
-            }
+            const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
+            const newCount = await decrementCapacity(rancherIds[0]);
+            await syncCapacityToAirtable(rancherIds[0], newCount);
           } catch (e) { console.error('Error decrementing rancher count:', e); }
         }
 
@@ -509,13 +507,12 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
           const prevRancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
           if (prevRancherId) {
             try {
-              const r: any = await getRecordById(TABLES.RANCHERS, prevRancherId);
-              const cur = Number(r['Current Active Referrals'] || 0);
-              if (cur > 0) {
-                await updateRecord(TABLES.RANCHERS, prevRancherId, {
-                  'Current Active Referrals': cur - 1,
-                });
-              }
+              // Atomic Redis decrement + Airtable mirror sync. Replaces
+              // non-atomic read+write that could race with matching/suggest
+              // INCR. PA-MATCH audit (2026-05-28).
+              const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
+              const newCount = await decrementCapacity(prevRancherId);
+              await syncCapacityToAirtable(prevRancherId, newCount);
             } catch {}
           }
           autoReassigned++;

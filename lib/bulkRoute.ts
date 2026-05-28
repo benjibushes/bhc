@@ -311,16 +311,29 @@ export async function bulkRouteStateToRancher(opts: {
     }
   }
 
-  // Increment rancher's active referral count
+  // Increment rancher's active referral count atomically via Redis (one INCR
+  // per netNew slot). Previously this did a non-atomic Airtable read+write
+  // which could lose slots under burst (matching/suggest INCR in flight when
+  // bulkRoute writes the stale read+1). PA-MATCH audit (2026-05-28) flagged.
+  // syncCapacityToAirtable mirrors the final value once at the end so the
+  // dashboard sees consistent counts.
   if (!dryRun) {
     try {
       const netNew = summary.updated_stuck_referral + summary.created_new_referral;
       if (netNew > 0) {
-        const currentRefs = rancher['Current Active Referrals'] || 0;
+        const { incrementCapacity, syncCapacityToAirtable } = await import('./rancherCapacity');
+        let lastN = 0;
+        for (let i = 0; i < netNew; i++) {
+          lastN = await incrementCapacity(rancherId);
+        }
+        // Mirror to Airtable + stamp Last Assigned At in one update.
         await updateRecord(TABLES.RANCHERS, rancherId, {
-          'Current Active Referrals': currentRefs + netNew,
+          'Current Active Referrals': lastN,
           'Last Assigned At': now,
         });
+        // syncCapacityToAirtable not needed — we already wrote the field in
+        // the same update along with Last Assigned At.
+        void syncCapacityToAirtable;
       }
     } catch (e: any) {
       summary.errors.push(`Increment rancher count: ${e.message}`);
