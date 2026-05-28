@@ -353,6 +353,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                   'Approval Status': 'approved',
                   'Intro Sent At': new Date().toISOString(),
                 });
+                // Promote-PA flips Pending Approval → Intro Sent. The slot
+                // was never atomically claimed (matching/suggest only INCRs
+                // when CREATING a referral). Increment rancher capacity now
+                // so /api/cron/capacity-drift-check doesn't have to self-heal
+                // on next run. PA-MATCH audit (2026-05-28) flagged.
+                try {
+                  const { incrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
+                  const newCount = await incrementCapacity(rancherId);
+                  await syncCapacityToAirtable(rancherId, newCount);
+                } catch (capErr: any) {
+                  console.warn('[promote-pa] capacity INCR failed (self-heals daily):', capErr?.message);
+                }
                 autoRouted = true;
                 await updateRecord(TABLES.CONSUMERS, consumerId, {
                   'Routing Segment Send Count': segmentCount + 1,
