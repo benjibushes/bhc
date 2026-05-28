@@ -390,6 +390,224 @@ export async function POST(request: Request) {
       break;
     }
 
+    // ── P3-A audit fix: SCA / 3DS challenge silently abandoned ──
+    // When the buyer hits a 3DS challenge that they don't complete, the PI
+    // sits in `requires_action` forever. Pre-fix the platform never alerted
+    // and the Payments row never reflected this state, so deal looked "pending"
+    // indefinitely on the admin surfaces. Now: flip Payments row to
+    // `awaiting_auth` + LOUD Telegram so operator can DM/call the buyer.
+    // We do NOT touch the Referral (deal isn't settled — Closed Won only on
+    // payment_intent.succeeded).
+    case 'payment_intent.requires_action': {
+      const pi = event.data.object as any;
+      const metaType = pi?.metadata?.type;
+      if (metaType !== 'buyer_deposit') break;
+      try {
+        const referralId = String(pi.metadata?.referralId || '?');
+        const tier = String(pi.metadata?.tier || '?');
+        // Best-effort flip Payments row → awaiting_auth so the admin
+        // Payments dashboard reflects the buyer-side blocker. Lookup by
+        // Stripe Payment Intent Id (the only field guaranteed populated
+        // at recordDeposit time). Status flip is best-effort — Telegram
+        // alert always fires.
+        try {
+          const escaped = String(pi.id).replace(/"/g, '\\"');
+          const rows: any[] = await getAllRecords(
+            PAYMENTS_TABLE,
+            `{Stripe Payment Intent Id} = "${escaped}"`,
+          );
+          if (rows.length > 0) {
+            await updateRecord(PAYMENTS_TABLE, (rows[0] as any).id, {
+              'Status': 'awaiting_auth',
+            });
+          }
+        } catch (fieldErr: any) {
+          // 'awaiting_auth' may not exist as a Status option in older
+          // Airtable schemas. Log + continue so the Telegram alert fires.
+          console.warn(
+            `[stripe webhook] TODO: add 'awaiting_auth' to Payments.Status singleSelect — flip failed: ${fieldErr?.message || fieldErr}`,
+          );
+        }
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `⚠️ DEPOSIT NEEDS AUTH — buyer hit 3DS challenge, ref=${referralId.slice(-6)}, ${tier} tier, PI ${String(pi.id).slice(-8)}`,
+        );
+      } catch (e: any) {
+        console.error('[stripe webhook] payment_intent.requires_action handler:', e);
+      }
+      break;
+    }
+
+    // ── P3-A audit fix: ACH/bank-debit failure path ──
+    // checkout.session.async_payment_failed fires when an ACH/bank debit
+    // initiated through a Checkout Session fails AFTER the session completed
+    // (ACH settles asynchronously over 3-5 business days). This is the ONLY
+    // event Stripe sends — payment_intent.payment_failed does NOT fire for
+    // async payment methods. Pre-fix: ACH failures were silent.
+    //
+    // Mirror invoice.payment_failed: dunning email for brands (Stripe-hosted
+    // invoice URL doesn't apply here — async session failures use the original
+    // Checkout URL or just a manage link), generic operator Telegram alert
+    // otherwise.
+    case 'checkout.session.async_payment_failed': {
+      const session = event.data.object as any;
+      try {
+        const customerEmail = String(
+          session?.customer_details?.email ||
+          session?.customer_email ||
+          '',
+        ).trim().toLowerCase();
+        const amountCents = Number(session?.amount_total || 0);
+        const sessionId = String(session?.id || '');
+        const metaType = String(session?.metadata?.type || '');
+
+        // ── Brand dunning email if this session belongs to a brand ──
+        let brandMatches: any[] = [];
+        if (customerEmail) {
+          try {
+            brandMatches = (await getAllRecords(
+              TABLES.BRANDS,
+              `LOWER({Email}) = "${escapeAirtableValue(customerEmail)}"`,
+            )) as any[];
+          } catch {}
+        }
+        if (brandMatches.length > 0) {
+          const brand = brandMatches[0];
+          const brandEmail = String(brand['Email'] || customerEmail).trim();
+          if (brandEmail) {
+            try {
+              const { sendBrandPaymentFailed } = await import('@/lib/email');
+              await sendBrandPaymentFailed({
+                brandName: String(brand['Brand Name'] || brand['Contact Name'] || 'partner'),
+                contactName: String(brand['Contact Name'] || brand['Brand Name'] || 'there'),
+                email: brandEmail,
+                // Async-session failures don't have a hosted_invoice_url —
+                // sendBrandPaymentFailed falls back to /brand-partners.
+                hostedInvoiceUrl: undefined,
+                amountCents,
+              });
+            } catch (e: any) {
+              console.error('[stripe webhook] async_payment_failed brand dunning failed:', e?.message);
+            }
+            // Stamp past_due so churn-risk dashboards surface it.
+            try {
+              await updateRecord(TABLES.BRANDS, brand.id, {
+                'Subscription Status': 'past_due',
+              });
+            } catch {}
+          }
+        }
+
+        // Always fire the operator Telegram so we know an ACH failed.
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `⚠️ ACH/BANK PAYMENT FAILED — ${metaType || 'unknown type'}, ${customerEmail || '(no email)'}, $${(amountCents / 100).toFixed(2)}, session ${sessionId.slice(-8)}`,
+        );
+      } catch (e: any) {
+        console.error('[stripe webhook] checkout.session.async_payment_failed handler:', e);
+      }
+      break;
+    }
+
+    // ── P3-A audit fix: pre-renewal heads-up ──
+    // Stripe fires `invoice.upcoming` 3-7d before a subscription renews
+    // (default 3d, configurable in Stripe Dashboard). Used to send brand
+    // partners + founder annual subs a heads-up email so they have time
+    // to update card / cancel intentionally before the charge. Pre-fix
+    // these were silent — surprise charge = chargeback risk.
+    //
+    // Lookup: invoice.customer (Stripe Customer ID) → match against
+    // BRANDS by `Stripe Customer ID` first, then CONSUMERS (founder subs).
+    // If neither matches, Telegram-alert operator (data integrity signal).
+    case 'invoice.upcoming': {
+      const inv = event.data.object as any;
+      try {
+        const customerId = String(inv?.customer || '').trim();
+        const amountCents = Number(inv?.amount_due || inv?.total || 0);
+        const amountDollars = amountCents / 100;
+        // Stripe gives us a Unix epoch (seconds) for `next_payment_attempt`
+        // or `period_end` — compute days from now defensively.
+        const renewalEpoch = Number(
+          inv?.next_payment_attempt || inv?.period_end || (Date.now() / 1000),
+        );
+        const daysUntilRenewal = Math.max(
+          1,
+          Math.round((renewalEpoch * 1000 - Date.now()) / (24 * 60 * 60 * 1000)),
+        );
+
+        if (!customerId) {
+          console.warn('[stripe webhook] invoice.upcoming with no customer id — skipping');
+          break;
+        }
+
+        // ── 1. Try BRANDS first (brand partner monthly renewals) ──
+        let matched = false;
+        try {
+          const brandMatches: any[] = await getAllRecords(
+            TABLES.BRANDS,
+            `{Stripe Customer ID} = "${escapeAirtableValue(customerId)}"`,
+          );
+          if (brandMatches.length > 0) {
+            const brand: any = brandMatches[0];
+            const email = String(brand['Email'] || '').trim();
+            if (email) {
+              const { sendRenewalReminder } = await import('@/lib/email');
+              await sendRenewalReminder({
+                firstName: String(brand['Contact Name'] || brand['Brand Name'] || 'there'),
+                email,
+                amountDollars,
+                daysUntilRenewal,
+                recipientType: 'brand-partner',
+                planName: brand['Tier'] ? `your ${String(brand['Tier']).toLowerCase()} partnership` : 'your bhc partnership',
+              });
+              matched = true;
+            }
+          }
+        } catch (e: any) {
+          console.warn('[stripe webhook] invoice.upcoming brand lookup failed:', e?.message);
+        }
+
+        // ── 2. Fall back to CONSUMERS (founder annual subs) ──
+        if (!matched) {
+          try {
+            const consumerMatches: any[] = await getAllRecords(
+              TABLES.CONSUMERS,
+              `{Stripe Customer ID} = "${escapeAirtableValue(customerId)}"`,
+            );
+            if (consumerMatches.length > 0) {
+              const consumer: any = consumerMatches[0];
+              const email = String(consumer['Email'] || '').trim();
+              if (email) {
+                const { sendRenewalReminder } = await import('@/lib/email');
+                await sendRenewalReminder({
+                  firstName: String(consumer['Full Name'] || 'there'),
+                  email,
+                  amountDollars,
+                  daysUntilRenewal,
+                  recipientType: 'founder',
+                  planName: consumer['Founder Tier'] ? `your ${String(consumer['Founder Tier'])} membership` : 'your founder membership',
+                });
+                matched = true;
+              }
+            }
+          } catch (e: any) {
+            console.warn('[stripe webhook] invoice.upcoming consumer lookup failed:', e?.message);
+          }
+        }
+
+        // ── 3. No match → data-integrity Telegram alert ──
+        if (!matched) {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `⚠️ INVOICE.UPCOMING — customer ${customerId} not found in Brands or Consumers ($${amountDollars.toFixed(2)} renewing in ~${daysUntilRenewal}d). Data drift check needed.`,
+          );
+        }
+      } catch (e: any) {
+        console.error('[stripe webhook] invoice.upcoming handler:', e);
+      }
+      break;
+    }
+
     case 'charge.refunded': {
       // Refund on a charge. For Connect direct charges metadata lives on the
       // parent PaymentIntent, not the Charge — so we look up the Payments
@@ -433,6 +651,12 @@ export async function POST(request: Request) {
     // proactively, etc).
     case 'charge.dispute.created':
     case 'charge.dispute.funds_withdrawn':
+    // P3-A audit fix: `updated` (evidence submitted, status transitions
+    // like under_review → won/lost) was falling through silently. handleDispute
+    // is idempotent on event.id via markDepositDisputed + the top-of-handler
+    // Stripe Events dedup, so re-fires for status transitions cleanly land
+    // on the Payments row with the latest dispute status.
+    case 'charge.dispute.updated':
     case 'charge.dispute.closed':
       try {
         await handleDispute(event);
