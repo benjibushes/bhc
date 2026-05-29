@@ -3,7 +3,7 @@ import { updateRecord, getRecordById, getAllRecords, escapeAirtableValue, TABLES
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { normalizeStates, stringifyStates } from '@/lib/states';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
-import { MAX_ACTIVE_REFERRALS_FIELD } from '@/lib/rancherCapacity';
+import { MAX_ACTIVE_REFERRALS_FIELD, getLiveCapacity } from '@/lib/rancherCapacity';
 import { requireRancher } from '@/lib/rancherAuth';
 
 // PATCH /api/rancher/landing-page — rancher updates their own landing page fields
@@ -60,17 +60,49 @@ export async function PATCH(request: Request) {
       if (isNaN(maxReferrals) || maxReferrals < 1 || maxReferrals > 50) {
         return NextResponse.json({ error: 'Capacity must be between 1 and 50' }, { status: 400 });
       }
+
+      // Audit #8 + #3 (2026-05-28): read LIVE capacity (Redis-aware), not the
+      // stale Airtable mirror. Previously a buyer signup mid-edit could have
+      // INCR'd Redis without the Airtable mirror catching up — rancher raises
+      // cap by 1 thinking they're at 5/5, actually at 6/5; status stuck At
+      // Capacity.
+      const liveCurrent = await getLiveCapacity(session.rancherId);
+      const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
+
+      // Audit #8 (2026-05-28): BLOCK LOWERING BELOW CURRENT ACTIVE COUNT.
+      // Previously unguarded — rancher could drop max from 10 → 3 while
+      // currently routing 7 active deals. Matching/suggest gate would then
+      // keep routing UP TO the new max (i.e. zero new leads) but rancher
+      // wouldn't flip to At Capacity. Over-routing in flight + UX confusion.
+      //
+      // New behavior: block the lower if it would put them OVER the new
+      // ceiling. Tell them to wait for active deals to close first.
+      if (maxReferrals < liveCurrent) {
+        return NextResponse.json(
+          {
+            error: `Can't lower capacity below your current ${liveCurrent} active deals. Either close some leads first or set the cap to ${liveCurrent} or higher.`,
+            currentActive: liveCurrent,
+          },
+          { status: 400 }
+        );
+      }
+
       await updateRecord(TABLES.RANCHERS, session.rancherId, {
         [MAX_ACTIVE_REFERRALS_FIELD]: maxReferrals,
       });
-      // If they were at capacity but increased the limit, set back to Active
-      const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
-      const current = rancher['Current Active Referrals'] || 0;
-      if (rancher['Active Status'] === 'At Capacity' && current < maxReferrals) {
+
+      // Capacity flip logic — read fresh state after the max write:
+      //   • lowered to current ceiling exactly → force At Capacity (no new
+      //     leads until one closes)
+      //   • raised above current while At Capacity → flip back to Active +
+      //     fire launch warmup so waitlisted buyers get the YES email
+      if (maxReferrals === liveCurrent && rancher['Active Status'] !== 'At Capacity') {
+        await updateRecord(TABLES.RANCHERS, session.rancherId, { 'Active Status': 'At Capacity' });
+      } else if (rancher['Active Status'] === 'At Capacity' && liveCurrent < maxReferrals) {
         await updateRecord(TABLES.RANCHERS, session.rancherId, { 'Active Status': 'Active' });
         triggerLaunchWarmup(`landing-page-capacity-raise:${session.rancherId}`);
       }
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, currentActive: liveCurrent, newMax: maxReferrals });
     }
 
     if (body._action === 'request-verification') {
