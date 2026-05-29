@@ -29,9 +29,16 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 //
 // MIN_SALE_AMOUNT: no half-cow sells for under $50. If we see less, it's a
 // placeholder OR a mis-keyed amount.
+// MAX_SALE_AMOUNT: audit #13 (2026-05-28) — typo-million-dollar guard. A
+// whole-beef carcass tops out around $8-12k retail; a single deal above
+// $25k is almost certainly a fat-finger (e.g. typing 25000 instead of 2500).
+// Wholesale deals may legitimately exceed this — they don't run through
+// commissionable referrals though, so this floor applies to D2C-only.
+// Operator can override via MAX_SALE_AMOUNT_FOR_INVOICE env var.
 // MIN_RATIO / MAX_RATIO: a commission outside [3%, 20%] is wrong — either
 // rate not locked, manual override gone bad, or sale amount junk.
 const MIN_SALE_AMOUNT = Number(process.env.MIN_SALE_AMOUNT_FOR_INVOICE) || 50;
+const MAX_SALE_AMOUNT = Number(process.env.MAX_SALE_AMOUNT_FOR_INVOICE) || 25000;
 const MIN_RATIO = 0.03;
 const MAX_RATIO = 0.20;
 
@@ -124,6 +131,25 @@ export async function createCommissionInvoice(
   // fire with bad data.
   if (args.referral.saleAmount < MIN_SALE_AMOUNT) {
     const msg = `Refused commission invoice: Sale Amount $${args.referral.saleAmount} below $${MIN_SALE_AMOUNT} floor. Referral ${args.referral.id} (${args.referral.buyerName}) → ${args.rancher.operatorName}.`;
+    try {
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'sale',
+        summary: msg,
+        refs: [
+          { type: 'referral', id: args.referral.id, label: args.referral.buyerName },
+          { type: 'rancher', id: args.rancher.id, label: args.rancher.operatorName },
+        ],
+      });
+    } catch {}
+    throw new Error(msg);
+  }
+
+  // Sale-amount ceiling — audit #13 (2026-05-28). Catches typo-million-dollar
+  // ($25M instead of $2.5k) before Stripe creates a real invoice. Loud alert
+  // so operator can sanity-check before any commission email fires.
+  if (args.referral.saleAmount > MAX_SALE_AMOUNT) {
+    const msg = `Refused commission invoice: Sale Amount $${args.referral.saleAmount.toLocaleString()} ABOVE $${MAX_SALE_AMOUNT.toLocaleString()} ceiling. Likely typo. Referral ${args.referral.id} (${args.referral.buyerName}) → ${args.rancher.operatorName}.`;
     try {
       await sendOperatorSignal({
         urgency: 'loud',
