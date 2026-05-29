@@ -146,6 +146,12 @@ export default function RancherDashboardPage() {
   const [passReason, setPassReason] = useState<'out_of_area' | 'at_capacity' | 'not_a_fit' | 'no_response'>('not_a_fit');
   const [passSubmitting, setPassSubmitting] = useState(false);
   const [passResult, setPassResult] = useState<{ rematchOutcome: string; newRancherName: string | null } | null>(null);
+  // Mark-Lost modal — audit #17 (2026-05-28) replaces window.prompt picker.
+  // Mobile Safari renders window.prompt as a tiny native popup that ranchers
+  // abandoned. Branded modal matches close + pass UX.
+  const [lostModal, setLostModal] = useState<Referral | null>(null);
+  const [lostReasonCode, setLostReasonCode] = useState<'no_response' | 'price' | 'not_a_fit' | 'other'>('no_response');
+  const [lostFreeText, setLostFreeText] = useState('');
   const [pageForm, setPageForm] = useState<Record<string, string>>({});
   const [pageSaving, setPageSaving] = useState(false);
   const [pageSaved, setPageSaved] = useState(false);
@@ -314,50 +320,48 @@ export default function RancherDashboardPage() {
     }
   };
 
-  const handleMarkLost = async (referral: Referral) => {
-    // Two-step prompt: pick canonical reason first, then optional notes.
-    // The canonical reason flows to closeReason so the backend's buyer-
-    // health auto-flag (Non-Responsive after 2x no_response) actually
-    // fires. Earlier free-text-only prompt meant the flag was dead code
-    // unless the rancher literally typed "no_response".
-    const choice = window.prompt(
-      `Mark "${referral.buyer_name}" as Closed Lost — why?\n\n` +
-      `  1 = Buyer ghosted / never responded\n` +
-      `  2 = Price / budget mismatch\n` +
-      `  3 = Not a fit\n` +
-      `  4 = Other (free text)\n\nEnter 1, 2, 3, or 4:`,
-      '1'
-    );
-    if (choice === null) return; // user cancelled
-    const map: Record<string, { code: string; label: string }> = {
-      '1': { code: 'no_response', label: 'Buyer ghosted' },
-      '2': { code: 'price', label: 'Price / budget mismatch' },
-      '3': { code: 'not_a_fit', label: 'Not a fit' },
-      '4': { code: 'other', label: 'Other' },
+  // Audit #17 (2026-05-28): open branded modal instead of window.prompt.
+  // Real submit happens in submitMarkLost — invoked from the modal's CTA.
+  const handleMarkLost = (referral: Referral) => {
+    setLostReasonCode('no_response');
+    setLostFreeText('');
+    setUpdateError('');
+    setLostModal(referral);
+  };
+
+  const submitMarkLost = async () => {
+    if (!lostModal) return;
+    const reasonMap: Record<string, string> = {
+      no_response: 'Buyer ghosted',
+      price: 'Price / budget mismatch',
+      not_a_fit: 'Not a fit',
+      other: 'Other',
     };
-    const picked = map[choice.trim()] || map['4'];
-    let freeText = '';
-    if (picked.code === 'other') {
-      const t = window.prompt('Free-text reason:', '');
-      if (t === null) return;
-      freeText = t.trim();
+    const label = reasonMap[lostReasonCode];
+    const freeText = lostReasonCode === 'other' ? lostFreeText.trim() : '';
+    if (lostReasonCode === 'other' && !freeText) {
+      setUpdateError('Please add a quick reason — "Other" needs a note.');
+      return;
     }
-    setUpdating(referral.id);
+    setUpdating(lostModal.id);
     setUpdateError('');
     try {
-      const res = await fetch(`/api/rancher/referrals/${referral.id}`, {
+      const res = await fetch(`/api/rancher/referrals/${lostModal.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'Closed Lost',
-          closeReason: picked.code,
-          notes: `[CLOSED LOST · ${picked.label}]${freeText ? ` ${freeText}` : ''}`,
+          closeReason: lostReasonCode,
+          notes: `[CLOSED LOST · ${label}]${freeText ? ` ${freeText}` : ''}`,
         }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setUpdateError(data.error || 'Failed to mark lost. Please try again.');
+        setUpdating(null);
+        return;
       }
+      setLostModal(null);
       await fetchDashboard();
     } catch {
       setUpdateError('Network error. Please check your connection.');
@@ -1836,6 +1840,73 @@ export default function RancherDashboardPage() {
           </div>
         </div>
       </Container>
+
+      {/* Mark Lost Modal — Audit #17 (2026-05-28) replaces window.prompt */}
+      {lostModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6">
+            <div className="flex justify-between items-start">
+              <h2 className="font-serif text-2xl">Mark Closed Lost</h2>
+              <button onClick={() => { setLostModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle">×</button>
+            </div>
+            <p className="text-sm text-saddle">Buyer: <strong className="text-charcoal">{lostModal.buyer_name}</strong></p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Reason</label>
+                <select
+                  value={lostReasonCode}
+                  onChange={(e) => setLostReasonCode(e.target.value as typeof lostReasonCode)}
+                  className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                >
+                  <option value="no_response">Buyer ghosted / never responded</option>
+                  <option value="price">Price / budget mismatch</option>
+                  <option value="not_a_fit">Not a fit</option>
+                  <option value="other">Other</option>
+                </select>
+                <p className="text-xs text-saddle mt-2">
+                  "Buyer ghosted" flags the buyer as Non-Responsive after 2 such marks across ranchers — helps us reroute future leads away from time-wasters.
+                </p>
+              </div>
+
+              {lostReasonCode === 'other' && (
+                <div>
+                  <label className="block text-sm font-medium mb-2">Tell us why</label>
+                  <textarea
+                    value={lostFreeText}
+                    onChange={(e) => setLostFreeText(e.target.value)}
+                    rows={3}
+                    placeholder="What happened?"
+                    className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                  />
+                </div>
+              )}
+            </div>
+
+            {updateError && (
+              <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+                {updateError}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setLostModal(null); setUpdateError(''); }}
+                className="flex-1 px-4 py-3 border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium uppercase text-sm tracking-wider"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitMarkLost}
+                disabled={!!updating || (lostReasonCode === 'other' && !lostFreeText.trim())}
+                className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+              >
+                {updating ? 'Saving...' : 'Confirm Closed Lost'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Close Deal Modal */}
       {closeModal && (
