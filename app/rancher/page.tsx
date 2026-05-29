@@ -1869,11 +1869,22 @@ export default function RancherDashboardPage() {
                       value={closeForm.saleAmount}
                       onChange={(e) => setCloseForm(prev => ({ ...prev, saleAmount: e.target.value, confirmed: false }))}
                       placeholder="e.g. 2500"
+                      min="50"
+                      max="25000"
+                      step="0.01"
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
                     />
-                    {closeForm.saleAmount && parseFloat(closeForm.saleAmount) > 0 && (
+                    {closeForm.saleAmount && parseFloat(closeForm.saleAmount) > 0 && parseFloat(closeForm.saleAmount) <= 25000 && (
                       <p className="text-xs text-saddle mt-1">
                         Commission ({((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}%): ${(parseFloat(closeForm.saleAmount) * (rancherInfo.commissionRate ?? 0.10)).toFixed(2)} &middot; You keep: ${(parseFloat(closeForm.saleAmount) * (1 - (rancherInfo.commissionRate ?? 0.10))).toFixed(2)}
+                      </p>
+                    )}
+                    {/* Audit #13 (2026-05-28): typo-million-dollar guard. Server-side
+                        ceiling at $25k in lib/stripe-commission.ts; this UI warning
+                        catches it before submit and disables the confirm button. */}
+                    {closeForm.saleAmount && parseFloat(closeForm.saleAmount) > 25000 && (
+                      <p className="text-xs text-[#8C2F2F] mt-1 font-medium">
+                        Sale amount exceeds $25,000 ceiling. Likely typo — double-check the agreed price. If genuinely above $25k, contact support to manually create the invoice.
                       </p>
                     )}
                   </div>
@@ -1935,7 +1946,7 @@ export default function RancherDashboardPage() {
                 disabled={
                   !!updating ||
                   (closeForm.status === 'Closed Won' &&
-                    (!closeForm.saleAmount || parseFloat(closeForm.saleAmount) <= 0 || !closeForm.confirmed))
+                    (!closeForm.saleAmount || parseFloat(closeForm.saleAmount) <= 0 || parseFloat(closeForm.saleAmount) > 25000 || !closeForm.confirmed))
                 }
                 className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
               >
