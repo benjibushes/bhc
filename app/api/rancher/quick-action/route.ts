@@ -17,6 +17,19 @@ import {
 import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { sendInstantCommissionInvoice } from '@/lib/email';
 
+// Site URL for internal calls (used by pass-action re-route → matching/suggest)
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+
+// ── Multi-secret JWT verify (mirrors activate/route.ts pattern) ────────────
+// 2026-05-28 audit #14: prior version only verified against JWT_SECRET. If
+// JWT_SECRET ever rotates without JWT_SECRET_LEGACY mirrored here, all
+// in-flight intro emails carrying quick-action JWTs (up to 30d expiry) die.
+// Fallback array reads comma-separated legacy secrets so rotation is graceful.
+const FALLBACK_SECRETS: string[] = (process.env.JWT_SECRET_LEGACY || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 // Rancher one-click action endpoint. Reachable via JWT-signed URLs in the
 // intro email so the rancher can update a referral status without logging
 // in. Each link in the email carries a `rancher-quick-action` JWT scoped
@@ -49,28 +62,44 @@ interface ActionToken {
   rancherId: string;
 }
 
-function verifyToken(token: string): ActionToken | null {
+function tryDecode(token: string, secret: string): any | null {
   try {
-    const decoded: any = jwt.verify(token, JWT_SECRET);
-    if (
-      decoded.type !== 'rancher-quick-action' ||
-      !decoded.referralId ||
-      !decoded.rancherId
-    ) {
-      return null;
-    }
-    return {
-      type: decoded.type,
-      referralId: decoded.referralId,
-      rancherId: decoded.rancherId,
-    };
+    return jwt.verify(token, secret);
   } catch {
     return null;
   }
 }
 
+function verifyToken(token: string): ActionToken | null {
+  let decoded: any = tryDecode(token, JWT_SECRET);
+  if (!decoded) {
+    for (const s of FALLBACK_SECRETS) {
+      decoded = tryDecode(token, s);
+      if (decoded) break;
+    }
+  }
+  if (!decoded) return null;
+  if (
+    decoded.type !== 'rancher-quick-action' ||
+    !decoded.referralId ||
+    !decoded.rancherId
+  ) {
+    return null;
+  }
+  return {
+    type: decoded.type,
+    referralId: decoded.referralId,
+    rancherId: decoded.rancherId,
+  };
+}
+
 const ALLOWED_ACTIONS = new Set(['in_talks', 'won', 'lost', 'pass']);
-const TERMINAL_STATUSES = ['Closed Won', 'Closed Lost'];
+// 2026-05-28 audit #15: 'Awaiting Payment' added to terminal set. Without
+// this, a re-click of the won button after the deal already advanced to
+// Awaiting Payment would re-fire createCommissionInvoice + persist a fresh
+// Stripe Invoice URL over the existing one. Stripe idempotencyKey saves the
+// actual double-charge, but the URL/ID overwrite still confuses the dashboard.
+const TERMINAL_STATUSES = ['Closed Won', 'Closed Lost', 'Awaiting Payment'];
 
 function htmlPage(
   title: string,
@@ -142,6 +171,14 @@ async function applyAction(
     updates['Status'] = 'Rancher Contacted';
     summary = 'Status flipped to Rancher Contacted. Buyer is in active conversation with you.';
   } else if (action === 'won') {
+    // Idempotency: if already terminal, don't re-fire Stripe invoice.
+    // Audit #15: previously could re-fire and overwrite Stripe Invoice URL/ID.
+    if (TERMINAL_STATUSES.includes(currentStatus)) {
+      try {
+        await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
+      } catch {}
+      return { ok: true, message: `Already marked "${currentStatus}". Invoice already on its way.` };
+    }
     if (!saleAmount || saleAmount <= 0) {
       return { ok: false, message: 'Sale amount required for Closed Won.' };
     }
@@ -166,6 +203,12 @@ async function applyAction(
     updates['Closed At'] = new Date().toISOString();
     summary = `Marked Closed Won at $${saleAmount.toFixed(2)}. Commission ($${updates['Commission Due'].toFixed(2)}) invoice on the way.`;
   } else if (action === 'lost') {
+    if (TERMINAL_STATUSES.includes(currentStatus)) {
+      try {
+        await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
+      } catch {}
+      return { ok: true, message: `Already "${currentStatus}".` };
+    }
     updates['Status'] = 'Closed Lost';
     updates['Closed At'] = new Date().toISOString();
     if (reason) {
@@ -175,12 +218,18 @@ async function applyAction(
     }
     summary = 'Marked Closed Lost.';
   } else if (action === 'pass') {
+    if (TERMINAL_STATUSES.includes(currentStatus)) {
+      try {
+        await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
+      } catch {}
+      return { ok: true, message: `Already "${currentStatus}". Buyer was already re-routed.` };
+    }
     updates['Status'] = 'Closed Lost';
     updates['Closed At'] = new Date().toISOString();
     const existing = (referral['Notes'] || '').toString();
     const stamp = `[PASSED ${new Date().toISOString().slice(0, 10)}] ${reason || 'Rancher passed via email link'}`;
     updates['Notes'] = existing ? `${stamp}\n\n${existing}` : stamp;
-    summary = 'Passed on this lead. We\'ll re-route the buyer.';
+    summary = 'Passed on this lead. Buyer is being re-routed now.';
   } else {
     return { ok: false, message: 'Unknown action.' };
   }
@@ -223,6 +272,89 @@ async function applyAction(
       }
     } catch (e: any) {
       console.warn('[quick-action] supplemental field write failed:', e?.message);
+    }
+
+    // ── Audit #7 (2026-05-28): PASS RE-ROUTES BUYER ────────────────────────
+    // Previously: action=pass via email link just marked Closed Lost and
+    // dead-ended. Dashboard pass calls matching/suggest with excludeRancherIds
+    // — email pass did not. Result: paid-ad buyers whose first-suggested
+    // rancher passed via email were silently abandoned.
+    //
+    // Fix: after recordClose runs (which set Buyer Stage=CLOSED), restore
+    // Buyer Stage to WAITING and fire matching/suggest with the passing
+    // rancher excluded. Re-route is best-effort — if it fails the buyer is
+    // still flagged WAITING for cron recovery.
+    if (action === 'pass') {
+      try {
+        const buyerLinkedIds: string[] = Array.isArray(referral['Buyer']) ? referral['Buyer'] : [];
+        const buyerId = buyerLinkedIds[0];
+        if (buyerId) {
+          // Restore Buyer Stage so matching/suggest treats them as re-routable
+          // and recovery crons pick them up if the re-route fetch fails.
+          try {
+            const { transitionBuyerStage } = await import('@/lib/contracts');
+            await transitionBuyerStage(buyerId, 'WAITING', 'pass:reroute');
+          } catch (stageErr: any) {
+            console.warn('[quick-action pass] buyer stage restore failed:', stageErr?.message);
+          }
+
+          // Hydrate the buyer record for the matching/suggest call.
+          let buyer: any = null;
+          try {
+            buyer = await getRecordById(TABLES.CONSUMERS, buyerId);
+          } catch (bErr: any) {
+            console.warn('[quick-action pass] buyer hydrate failed:', bErr?.message);
+          }
+
+          if (buyer && buyer['Email'] && buyer['State']) {
+            try {
+              const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(process.env.INTERNAL_API_SECRET
+                    ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET }
+                    : {}),
+                },
+                body: JSON.stringify({
+                  buyerState: buyer['State'],
+                  buyerId,
+                  buyerName: buyer['Full Name'] || '',
+                  buyerEmail: buyer['Email'],
+                  buyerPhone: buyer['Phone'] || '',
+                  orderType: buyer['Order Type'] || '',
+                  budgetRange: buyer['Budget'] || '',
+                  intentScore: buyer['Intent Score'] || 0,
+                  intentClassification: buyer['Intent Classification'] || '',
+                  notes: buyer['Notes'] || '',
+                  excludeRancherIds: [decoded.rancherId],
+                  // Treat as warmup-engaged so hot-lead bypass works for
+                  // already-engaged buyers (they clicked YES once before).
+                  warmupEngaged: !!buyer['Warmup Engaged At'],
+                }),
+              });
+              if (matchRes.ok) {
+                try {
+                  const j: any = await matchRes.json();
+                  if (j?.matchFound && j?.suggestedRancher?.name) {
+                    summary = `Passed. Buyer routed to ${j.suggestedRancher.name}.`;
+                  } else if (j?.alreadyActive) {
+                    summary = 'Passed. Buyer already has another active match — no re-route needed.';
+                  } else {
+                    summary = 'Passed. No other rancher available in their state — buyer waitlisted.';
+                  }
+                } catch {}
+              } else {
+                console.warn(`[quick-action pass] re-route returned ${matchRes.status}; buyer flagged WAITING for cron recovery`);
+              }
+            } catch (mErr: any) {
+              console.error('[quick-action pass] matching/suggest call failed:', mErr?.message);
+            }
+          }
+        }
+      } catch (rerouteErr: any) {
+        console.error('[quick-action pass] re-route block failed:', rerouteErr?.message);
+      }
     }
   } else {
     // Non-close transition (e.g. in_talks → Rancher Contacted) — direct write
