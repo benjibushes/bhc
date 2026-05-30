@@ -917,6 +917,100 @@ export default function RancherSetupWizard() {
               </div>
             )}
 
+            {/* ── What we actually run for you ─────────────────────────────
+                Surfaces the marketing + ops infrastructure ranchers are
+                signing up to. Previously this lived only in tier_v2 plan
+                copy (which legacy ranchers never saw), so the "what BHC
+                does for me" question went unanswered for 100% of current
+                ranchers. 5 buckets, scannable. */}
+            <div className="space-y-4 border-t border-dust pt-7">
+              <div>
+                <p className="text-xs uppercase tracking-widest text-saddle mb-2">
+                  What we run for you in the background
+                </p>
+                <h3 className="font-serif text-xl md:text-2xl text-charcoal leading-tight">
+                  You raise cattle. We run the marketing engine.
+                </h3>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Traffic & reach */}
+                <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
+                  <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+                    Traffic &amp; reach
+                  </p>
+                  <ul className="text-sm text-charcoal/90 space-y-1.5 leading-snug">
+                    <li>· Paid Meta + Google ads targeting buyers in your state</li>
+                    <li>· Programmatic SEO landing pages per state</li>
+                    <li>· Public map listing — every D2C rancher in America</li>
+                    <li>· Founders campaign exposure (every backer email)</li>
+                    <li>· Brand-partner cross-promo on every partner page</li>
+                  </ul>
+                </div>
+
+                {/* Conversion engine */}
+                <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
+                  <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+                    Conversion engine
+                  </p>
+                  <ul className="text-sm text-charcoal/90 space-y-1.5 leading-snug">
+                    <li>· Auto-routing of state-matched buyers when you go live</li>
+                    <li>· Launch warmup — every waitlisted buyer pinged on go-live</li>
+                    <li>· Ready-to-buy email sequence + YES-button engagement</li>
+                    <li>· Hot-lead bypass when buyers click ready-to-buy</li>
+                    <li>· Multi-state routing if you ship beyond your home state</li>
+                  </ul>
+                </div>
+
+                {/* Lead management */}
+                <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
+                  <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+                    Lead management
+                  </p>
+                  <ul className="text-sm text-charcoal/90 space-y-1.5 leading-snug">
+                    <li>· Real-time Telegram alerts for every new lead</li>
+                    <li>· One-click email buttons — Won / Lost / Pass</li>
+                    <li>· AI reply triage — classifies inbound buyer responses</li>
+                    <li>· Auto-responses for ghosting + scheduling questions</li>
+                    <li>· Capacity guard — never over-route beyond your max</li>
+                  </ul>
+                </div>
+
+                {/* Revenue infrastructure */}
+                <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
+                  <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+                    Revenue infrastructure
+                  </p>
+                  <ul className="text-sm text-charcoal/90 space-y-1.5 leading-snug">
+                    <li>· Stripe-hosted commission invoicing — auto on Closed Won</li>
+                    <li>· Optional Stripe Connect — buyers pay you direct</li>
+                    <li>· Sale tracking + monthly earnings dashboard</li>
+                    <li>· Affiliate auto-enrollment for past customers</li>
+                    <li>· Wholesale lead routing (B2B funnel built separate)</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Compliance + ops — full width strip */}
+              <div className="border border-dust bg-bone-warm p-5 space-y-2.5">
+                <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+                  Compliance &amp; operations (handled for you)
+                </p>
+                <ul className="text-sm text-charcoal/90 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 leading-snug">
+                  <li>· TCPA-compliant SMS opt-in gating</li>
+                  <li>· Suppression list — bounces &amp; complaints auto-honored</li>
+                  <li>· Cron observability + operator escalation on failures</li>
+                  <li>· Webhook signing, JWT rotation, Redis fail-open</li>
+                  <li>· Audit logs on every approve / reject / close action</li>
+                  <li>· Capacity drift recovery + atomic counter sync</li>
+                </ul>
+              </div>
+
+              <p className="text-xs text-saddle italic leading-relaxed">
+                You set prices, capacity, and pace. We send the buyers, run the funnel, and stay out of your way.
+              </p>
+            </div>
+
             <div className="border-t border-dust pt-5 flex flex-col sm:flex-row sm:items-center gap-3">
               <button
                 type="button"
@@ -931,7 +1025,7 @@ export default function RancherSetupWizard() {
                 rel="noopener noreferrer"
                 className="text-sm text-saddle hover:text-charcoal underline underline-offset-4 sm:ml-2"
               >
-                Or schedule a 15-min call
+                Or schedule a 30-min onboarding call
               </a>
             </div>
           </section>
@@ -1561,7 +1655,7 @@ export default function RancherSetupWizard() {
               rel="noopener noreferrer"
               className="underline underline-offset-2 hover:text-charcoal"
             >
-              Book a 15-min call with Ben
+              Book a 30-min onboarding call with Ben
             </a>
             {' · '}
             or reply to your welcome email.
@@ -2075,7 +2169,7 @@ function CallStep({
       <header>
         <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 4</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
-          {alreadyBooked ? 'Your call is booked.' : 'Book your 15-min onboarding call.'}
+          {alreadyBooked ? 'Your call is booked.' : 'Book your 30-min onboarding call.'}
         </h2>
         <p className="text-sm text-saddle mt-1">
           {alreadyBooked
@@ -2088,7 +2182,7 @@ function CallStep({
         <>
           <div className="bg-bone-warm border border-dust p-5 space-y-2 text-sm text-charcoal/85">
             <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
-              What we&rsquo;ll cover (15 min)
+              What we&rsquo;ll cover (30 min)
             </p>
             <ul className="space-y-1.5">
               <li className="flex gap-2.5">
