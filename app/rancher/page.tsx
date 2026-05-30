@@ -113,7 +113,7 @@ interface NetworkBenefit {
   contact_email: string;
 }
 
-type Tab = 'overview' | 'referrals' | 'earnings' | 'benefits' | 'my_page';
+type Tab = 'overview' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page';
 
 const statusStyles: Record<string, string> = {
   'Intro Sent': 'bg-blue-100 text-blue-800',
@@ -547,6 +547,7 @@ export default function RancherDashboardPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'referrals', label: `My Buyers (${activeRefs.length})` },
+    { key: 'marketing', label: 'Marketing' },
     { key: 'earnings', label: 'Earnings' },
     { key: 'benefits', label: `Network Benefits${benefits.length > 0 ? ` (${benefits.length})` : ''}` },
     { key: 'my_page', label: 'My Page' },
@@ -1237,6 +1238,179 @@ export default function RancherDashboardPage() {
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* Marketing Tab — BUILD-6 (2026-05-29) ──────────────────────────
+              Surfaces what BHC actively runs FOR the rancher. Static cards
+              w/ real links + counts where available; placeholder text for
+              data not yet wired (paid ad spend, impressions, etc).
+              Goal: rancher sees the value being generated on their behalf,
+              not just the leads. */}
+          {activeTab === 'marketing' && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="font-serif text-2xl text-charcoal">Marketing engine</h2>
+                <p className="text-sm text-saddle mt-1">
+                  What BHC is running on your behalf right now. We bring the buyers
+                  to your state — you close them.
+                </p>
+              </div>
+
+              {/* Traffic + reach */}
+              <div className="bg-bone-warm border border-dust p-5 md:p-6 space-y-4">
+                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
+                  Traffic &amp; reach in {rancherInfo.state || 'your state'}
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-bone border border-dust p-4">
+                    <p className="text-[11px] uppercase tracking-widest text-saddle">
+                      State landing page
+                    </p>
+                    <p className="font-serif text-base text-charcoal mt-1.5 mb-2">
+                      /access/{(rancherInfo.state || 'mt').toLowerCase()}
+                    </p>
+                    <a
+                      href={`/access/${(rancherInfo.state || 'mt').toLowerCase()}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-saddle underline underline-offset-2 hover:text-charcoal"
+                    >
+                      Preview page →
+                    </a>
+                  </div>
+                  <div className="bg-bone border border-dust p-4">
+                    <p className="text-[11px] uppercase tracking-widest text-saddle">
+                      Public map listing
+                    </p>
+                    <p className="font-serif text-base text-charcoal mt-1.5 mb-2">
+                      Pinned in {rancherInfo.state || 'your state'}
+                    </p>
+                    <a
+                      href="/map"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-saddle underline underline-offset-2 hover:text-charcoal"
+                    >
+                      View map →
+                    </a>
+                  </div>
+                  <div className="bg-bone border border-dust p-4">
+                    <p className="text-[11px] uppercase tracking-widest text-saddle">
+                      Paid ads (Meta + Google)
+                    </p>
+                    <p className="font-serif text-base text-charcoal mt-1.5 mb-2">
+                      Always-on in your state
+                    </p>
+                    <p className="text-xs text-saddle italic">
+                      Live spend dashboard coming soon
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Conversion engine */}
+              <div className="bg-bone-warm border border-dust p-5 md:p-6 space-y-4">
+                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
+                  Conversion engine running for you
+                </p>
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-charcoal/90 leading-snug">
+                  <li>✓ Auto-routing — buyers in your state matched + emailed within minutes</li>
+                  <li>✓ Launch warmup — waitlist gets YES-button email when you go live</li>
+                  <li>✓ Ready-to-buy sequence — pre-engagement emails before match</li>
+                  <li>✓ Hot-lead bypass — engaged buyers route around capacity caps</li>
+                  <li>✓ Re-warm cohort — dormant buyers re-engaged automatically</li>
+                  <li>✓ Multi-state routing — if your routing states are approved</li>
+                </ul>
+              </div>
+
+              {/* Lead management */}
+              <div className="bg-bone-warm border border-dust p-5 md:p-6 space-y-4">
+                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
+                  Lead management
+                </p>
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-charcoal/90 leading-snug">
+                  <li>✓ Real-time Telegram alerts on every new lead</li>
+                  <li>✓ One-click email buttons (Won / Lost / Pass) — no login needed</li>
+                  <li>✓ AI reply triage — classifies inbound buyer responses</li>
+                  <li>✓ Auto-responses for ghosting + scheduling Qs</li>
+                  <li>✓ Capacity guard — never over-route past your max</li>
+                  <li>✓ Buyer health tracking — flags time-wasters cross-rancher</li>
+                </ul>
+              </div>
+
+              {/* Cross-promo + exposure */}
+              <div className="bg-bone-warm border border-dust p-5 md:p-6 space-y-4">
+                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
+                  Brand exposure on BHC properties
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-bone border border-dust p-4 space-y-1.5">
+                    <p className="text-[11px] uppercase tracking-widest text-saddle">
+                      Founders campaign
+                    </p>
+                    <p className="text-sm text-charcoal leading-snug">
+                      Every backer email + the /founders wall mentions verified ranchers
+                    </p>
+                  </div>
+                  <div className="bg-bone border border-dust p-4 space-y-1.5">
+                    <p className="text-[11px] uppercase tracking-widest text-saddle">
+                      Brand partners
+                    </p>
+                    <p className="text-sm text-charcoal leading-snug">
+                      Partner pages (knife makers, etc) cross-link verified ranchers
+                    </p>
+                  </div>
+                  <div className="bg-bone border border-dust p-4 space-y-1.5">
+                    <p className="text-[11px] uppercase tracking-widest text-saddle">
+                      Affiliate engine
+                    </p>
+                    <p className="text-sm text-charcoal leading-snug">
+                      Your Closed Won buyers auto-enroll as affiliates — refer-a-rancher
+                    </p>
+                  </div>
+                  <div className="bg-bone border border-dust p-4 space-y-1.5">
+                    <p className="text-[11px] uppercase tracking-widest text-saddle">
+                      Wholesale funnel
+                    </p>
+                    <p className="text-sm text-charcoal leading-snug">
+                      Restaurants + butchers route through /wholesale — your state surfaces
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Compliance + ops */}
+              <div className="border border-dust p-5 md:p-6 space-y-3">
+                <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
+                  Handled for you in the background
+                </p>
+                <p className="text-sm text-charcoal/85 leading-relaxed">
+                  TCPA-compliant SMS opt-in · suppression list (bounces + complaints auto-honored)
+                  · cron observability + operator escalation · JWT rotation + Redis fail-open
+                  · audit logs on every approve/reject/close action · capacity drift recovery
+                  · Stripe webhook signing · payment dispute monitoring.
+                </p>
+              </div>
+
+              {/* Want more */}
+              <div className="bg-charcoal text-bone p-5 md:p-6 space-y-3">
+                <p className="text-xs uppercase tracking-widest text-bone/70 font-semibold">
+                  Want even more visibility?
+                </p>
+                <p className="text-sm leading-relaxed">
+                  Upgrade to tier_v2 unlocks: priority placement, featured ranch
+                  badge, homepage rotation slot. Top tier adds 0% commission + a
+                  dedicated brand strategist running monthly content + social
+                  cadence for you.
+                </p>
+                <a
+                  href="/rancher/billing"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-bone text-charcoal text-xs font-medium tracking-wide uppercase hover:bg-bone-warm transition-base"
+                >
+                  See tier options →
+                </a>
+              </div>
             </div>
           )}
 
