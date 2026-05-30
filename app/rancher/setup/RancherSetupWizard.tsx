@@ -2167,14 +2167,14 @@ function CallStep({
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
-        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 4</p>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 4 · Onboarding call</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
-          {alreadyBooked ? 'Your call is booked.' : 'Book your 30-min onboarding call.'}
+          {alreadyBooked ? 'Your onboarding call is booked.' : 'Book your 30-min onboarding call.'}
         </h2>
         <p className="text-sm text-saddle mt-1">
           {alreadyBooked
-            ? `Great — looking forward to chatting. After our call, I'll mark you complete and unlock the agreement signing step.`
-            : `One short call before you go live. We walk through your operation, answer your questions, confirm fit, and queue up your agreement. After the call you sign + go live.`}
+            ? `Great — looking forward to walking through your dashboard, expectations, and agreement on the call. After it, you sign + go live.`
+            : `This is the second of two calls. If you already had a 15-min discovery call via /apply, this is the deeper 30-min onboarding session — we walk through your dashboard, confirm fit, and queue up your agreement. After this call you sign + go live.`}
         </p>
       </header>
 

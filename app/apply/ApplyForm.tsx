@@ -97,12 +97,8 @@ export default function ApplyForm() {
       }
       const data = await res.json();
       setSuccess({ wizardUrl: data.wizardUrl, manualReview: !!data.manualReview });
-      if (data.wizardUrl) {
-        // Auto-redirect to wizard after 2s — give them time to read confirmation
-        setTimeout(() => {
-          window.location.href = data.wizardUrl;
-        }, 2500);
-      }
+      // Don't auto-redirect — user picks between book-discovery vs skip-to-wizard
+      // via UI in the success state (2-call architecture).
     } catch (err: any) {
       setError(err?.message || 'Could not submit application. Try again.');
     } finally {
@@ -111,28 +107,77 @@ export default function ApplyForm() {
   };
 
   if (success) {
+    // Two-call architecture: Discovery (15-min, BEFORE wizard) + Onboarding
+    // (30-min, IN wizard Step 4). The Discovery call is optional for hot
+    // leads who self-redirect to the wizard immediately, but recommended
+    // for everyone else. Cal.com embed inline below CTA so they can book
+    // without leaving the page.
+    const DISCOVERY_CAL =
+      process.env.NEXT_PUBLIC_CALENDLY_DISCOVERY_LINK ||
+      process.env.NEXT_PUBLIC_CALENDLY_LINK ||
+      'https://cal.com/ben-beauchman-1itnsg/15min';
+    const calEmbed = DISCOVERY_CAL.includes('?')
+      ? `${DISCOVERY_CAL}&embed=true&theme=light`
+      : `${DISCOVERY_CAL}?embed=true&theme=light`;
+
     return (
-      <div className="border border-dust bg-bone-warm p-8 max-w-2xl">
-        <p className="text-xs uppercase tracking-wider text-saddle font-semibold mb-3">
-          {success.wizardUrl ? 'pre-approved' : 'application received'}
-        </p>
-        <h2 className="font-serif text-2xl text-charcoal mb-4">
-          {success.wizardUrl
-            ? 'You\'re in. Setting up your account…'
-            : 'Thanks — we\'ll be in touch.'}
-        </h2>
-        <p className="text-saddle text-sm sm:text-base leading-relaxed mb-4">
-          {success.wizardUrl
-            ? "We're redirecting you to the setup wizard now. Takes about 5 minutes."
-            : "Ben reviews every application himself. Expect an email within 24 hours."}
-        </p>
+      <div className="space-y-6 max-w-2xl">
+        <div className="border border-dust bg-bone-warm p-8">
+          <p className="text-xs uppercase tracking-wider text-saddle font-semibold mb-3">
+            {success.wizardUrl ? 'pre-approved' : 'application received'}
+          </p>
+          <h2 className="font-serif text-2xl text-charcoal mb-4">
+            {success.wizardUrl
+              ? "You're in. Two paths to live."
+              : "Thanks — we'll be in touch."}
+          </h2>
+          <p className="text-saddle text-sm sm:text-base leading-relaxed mb-4">
+            {success.wizardUrl
+              ? "Step 1 (recommended): 15-min discovery call so we can answer questions and tailor your setup. Step 2: setup wizard (5 min). Or skip ahead and dive into the wizard now."
+              : "Ben reviews every application himself. Expect an email within 24 hours."}
+          </p>
+          {success.wizardUrl && (
+            <a
+              href={success.wizardUrl}
+              className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+            >
+              Skip — open wizard now →
+            </a>
+          )}
+        </div>
+
         {success.wizardUrl && (
-          <a
-            href={success.wizardUrl}
-            className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
-          >
-            Open setup wizard →
-          </a>
+          <div className="border border-dust bg-bone p-6 space-y-4">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-saddle font-semibold mb-2">
+                Recommended next step
+              </p>
+              <h3 className="font-serif text-xl text-charcoal mb-2">
+                15-min discovery call with Ben
+              </h3>
+              <p className="text-sm text-saddle leading-relaxed">
+                Quick fit-check + Q&amp;A. Helps us tailor your wizard
+                setup. Onboarding call (30 min) comes after you complete
+                the wizard.
+              </p>
+            </div>
+            <div
+              className="relative w-full overflow-hidden border border-dust"
+              style={{ paddingBottom: '85%' }}
+            >
+              <iframe
+                src={calEmbed}
+                title="Book discovery call with Ben"
+                className="absolute inset-0 w-full h-full"
+                frameBorder={0}
+              />
+            </div>
+            <p className="text-xs text-saddle italic">
+              After booking, your wizard link stays available — we'll
+              email it again with the calendar invite. Or skip the call
+              and use the CTA above.
+            </p>
+          </div>
         )}
       </div>
     );
