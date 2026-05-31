@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { jwtVerify } from 'jose';
 
 /**
  * Constant-time string compare. Edge-runtime safe (no node:crypto). Stops a
@@ -19,6 +20,39 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0 && aLen === bLen;
 }
 
+/**
+ * Edge-runtime safe JWT verify with multi-secret rotation grace.
+ *
+ * P0 hotfix (2026-05-30): proxy.ts middleware was checking
+ * `cookie.value === 'authenticated'` literal string after P3-C (2026-05-27)
+ * upgraded the admin cookie to a signed JWT. Result: every valid JWT cookie
+ * failed middleware → /admin redirected to /admin/login → "Checking…" forever
+ * on every login attempt. Total admin lockout.
+ *
+ * Mirrors lib/jwt.ts::verifyJwtWithFallback but uses jose (Web Crypto API)
+ * instead of jsonwebtoken (node:crypto). Required because middleware runs
+ * in the edge runtime where node:crypto isn't available.
+ */
+async function verifyAdminJwt(token: string): Promise<{ role?: string } | null> {
+  const primary = process.env.JWT_SECRET;
+  if (!primary) return null;
+  const legacySecrets = (process.env.JWT_SECRET_LEGACY || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const secrets = [primary, ...legacySecrets];
+  for (const secret of secrets) {
+    try {
+      const key = new TextEncoder().encode(secret);
+      const { payload } = await jwtVerify(token, key);
+      return payload as { role?: string };
+    } catch {
+      // Try next secret in rotation chain
+    }
+  }
+  return null;
+}
+
 // Admin auth — bhc-admin-auth cookie + x-admin-password header.
 //
 // Future TOTP upgrade: add otplib + an Admins Airtable table with
@@ -27,10 +61,14 @@ function safeEqual(a: string, b: string): boolean {
 const ADMIN_AUTH_COOKIE = 'bhc-admin-auth';
 const PUBLIC_ADMIN_PATHS = ['/api/admin/auth', '/admin/login'];
 
-function isAdminAuthed(request: NextRequest): boolean {
+async function isAdminAuthed(request: NextRequest): Promise<boolean> {
   // 7-day session cookie set by POST /api/admin/auth.
-  if (request.cookies.get(ADMIN_AUTH_COOKIE)?.value === 'authenticated') {
-    return true;
+  // P0 fix (2026-05-30): cookie value is a signed JWT (per P3-C 2026-05-27),
+  // not the literal string 'authenticated'. Verify via jose (edge-safe).
+  const cookieValue = request.cookies.get(ADMIN_AUTH_COOKIE)?.value;
+  if (cookieValue) {
+    const claims = await verifyAdminJwt(cookieValue);
+    if (claims?.role === 'admin') return true;
   }
   // Server-to-server fallback: x-admin-password header (Telegram, cron, ops).
   // Constant-time compared. Their threat profile differs from a phishable
@@ -63,7 +101,7 @@ const VANITY_REDIRECTS: Record<string, string> = {
   '/trucker': `${MERCH_HAT_URL}?utm_source=buyhalfcow&utm_medium=vanity&utm_campaign=hat-launch&utm_content=trucker`,
 };
 
-export default function middleware(request: NextRequest) {
+export default async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Vanity merch redirects (308 — preserve method, permanent for SEO/share).
@@ -78,7 +116,7 @@ export default function middleware(request: NextRequest) {
     (isAdminRoute(pathname) && !PUBLIC_ADMIN_PATHS.some((p) => pathname.startsWith(p))) ||
     isInquiryAdmin;
 
-  if (needsAdmin && !isAdminAuthed(request)) {
+  if (needsAdmin && !(await isAdminAuthed(request))) {
     // API routes: 401 JSON. UI routes: redirect to login page.
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
