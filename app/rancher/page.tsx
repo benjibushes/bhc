@@ -101,6 +101,19 @@ interface Referral {
   // the buyer received their beef. Drives the Closed Deals card green pill
   // and gates the "Mark beef delivered" CTA visibility.
   fulfillment_confirmed_at?: string;
+  // Deposit + final invoice tracking (tier_v2 Stripe Connect flow).
+  // Drives the "Send Final Invoice" button visibility on Awaiting Payment
+  // referrals. deposit_paid_at present = buyer already paid deposit, rancher
+  // can now invoice the balance for fulfillment. final_invoice_sent_at
+  // present = invoice already created (don't re-send unless explicit).
+  deposit_paid_at?: string;
+  deposit_amount?: number;
+  final_invoice_url?: string;
+  final_invoice_sent_at?: string;
+  final_invoice_amount?: number;
+  final_paid_at?: string;
+  total_sale_amount?: number;
+  processing_date?: string;
 }
 
 interface NetworkBenefit {
@@ -152,6 +165,15 @@ export default function RancherDashboardPage() {
   const [lostModal, setLostModal] = useState<Referral | null>(null);
   const [lostReasonCode, setLostReasonCode] = useState<'no_response' | 'price' | 'not_a_fit' | 'other'>('no_response');
   const [lostFreeText, setLostFreeText] = useState('');
+  // FINAL INVOICE modal (FINAL-5 2026-05-31): sent by rancher after deposit
+  // lands + processing date is locked. Stripe Connect direct charge, app_fee=0,
+  // 100% to rancher. Posts to /api/rancher/referrals/[id]/send-final-invoice.
+  const [finalInvoiceModal, setFinalInvoiceModal] = useState<Referral | null>(null);
+  const [finalInvoiceTotalSale, setFinalInvoiceTotalSale] = useState('');
+  const [finalInvoiceProcessingDate, setFinalInvoiceProcessingDate] = useState('');
+  const [finalInvoiceNotes, setFinalInvoiceNotes] = useState('');
+  const [finalInvoiceSubmitting, setFinalInvoiceSubmitting] = useState(false);
+  const [finalInvoiceResult, setFinalInvoiceResult] = useState<{ url: string; balanceAmount: number } | null>(null);
   const [pageForm, setPageForm] = useState<Record<string, string>>({});
   const [pageSaving, setPageSaving] = useState(false);
   const [pageSaved, setPageSaved] = useState(false);
@@ -437,6 +459,77 @@ export default function RancherDashboardPage() {
     setPassModal(null);
     setPassReason('not_a_fit');
     setPassResult(null);
+  };
+
+  // FINAL-5 (2026-05-31): open final invoice modal for a referral. Prefills
+  // total sale from referral.total_sale_amount when already set (re-send case),
+  // otherwise empty so rancher must enter explicit total before submit.
+  const openFinalInvoiceModal = (referral: Referral) => {
+    setFinalInvoiceModal(referral);
+    setFinalInvoiceTotalSale(
+      referral.total_sale_amount && referral.total_sale_amount > 0
+        ? String(referral.total_sale_amount)
+        : '',
+    );
+    setFinalInvoiceProcessingDate(referral.processing_date || '');
+    setFinalInvoiceNotes('');
+    setFinalInvoiceResult(null);
+    setUpdateError('');
+  };
+
+  const closeFinalInvoiceModal = () => {
+    setFinalInvoiceModal(null);
+    setFinalInvoiceTotalSale('');
+    setFinalInvoiceProcessingDate('');
+    setFinalInvoiceNotes('');
+    setFinalInvoiceResult(null);
+  };
+
+  const submitFinalInvoice = async (resend = false) => {
+    if (!finalInvoiceModal) return;
+    const total = parseFloat(finalInvoiceTotalSale);
+    if (!isFinite(total) || total <= 0) {
+      setUpdateError('Enter the total final sale price (e.g. 2000).');
+      return;
+    }
+    const deposit = finalInvoiceModal.deposit_amount || 0;
+    if (deposit <= 0) {
+      setUpdateError('No deposit recorded on this referral. Cannot compute balance.');
+      return;
+    }
+    if (total <= deposit) {
+      setUpdateError(`Total sale ($${total}) must exceed deposit ($${deposit}). Balance must be > $0.`);
+      return;
+    }
+    setFinalInvoiceSubmitting(true);
+    setUpdateError('');
+    try {
+      const url = `/api/rancher/referrals/${finalInvoiceModal.id}/send-final-invoice${resend ? '?resend=true' : ''}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          totalSaleAmount: total,
+          processingDate: finalInvoiceProcessingDate.trim() || undefined,
+          notes: finalInvoiceNotes.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setUpdateError(data.error || 'Failed to send final invoice.');
+        return;
+      }
+      setFinalInvoiceResult({
+        url: data.url,
+        balanceAmount: data.balanceAmount || total - deposit,
+      });
+      // Refresh dashboard so the row reflects Awaiting Payment status + invoice URL
+      await fetchDashboard();
+    } catch {
+      setUpdateError('Network error. Please try again.');
+    } finally {
+      setFinalInvoiceSubmitting(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -1081,6 +1174,7 @@ export default function RancherDashboardPage() {
                         onClose={() => setCloseModal(ref)}
                         onPass={() => setPassModal(ref)}
                         onLost={() => handleMarkLost(ref)}
+                        onSendFinal={() => openFinalInvoiceModal(ref)}
                         updating={updating}
                       />
                     ))}
@@ -1166,6 +1260,7 @@ export default function RancherDashboardPage() {
                         onClose={() => setCloseModal(ref)}
                         onPass={() => setPassModal(ref)}
                         onLost={() => handleMarkLost(ref)}
+                        onSendFinal={() => openFinalInvoiceModal(ref)}
                         updating={updating}
                       />
                     ))}
@@ -2082,6 +2177,126 @@ export default function RancherDashboardPage() {
         </div>
       )}
 
+      {/* Final Invoice Modal — FINAL-5 (2026-05-31). For tier_v2 Stripe Connect
+          ranchers — after the buyer's deposit lands + processing date is set,
+          rancher sends the final balance invoice via Stripe Connect direct
+          charge with application_fee=0 (100% to rancher, BHC takes nothing
+          since commission was already collected at deposit time). */}
+      {finalInvoiceModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6">
+            <div className="flex justify-between items-start">
+              <h2 className="font-serif text-2xl">Send Final Invoice</h2>
+              <button onClick={closeFinalInvoiceModal} className="text-2xl leading-none hover:text-saddle">×</button>
+            </div>
+            <p className="text-sm text-saddle">
+              Buyer: <strong className="text-charcoal">{finalInvoiceModal.buyer_name}</strong>
+              {finalInvoiceModal.deposit_amount && finalInvoiceModal.deposit_amount > 0 ? (
+                <> · Deposit paid: <strong className="text-charcoal">${finalInvoiceModal.deposit_amount.toFixed(2)}</strong></>
+              ) : null}
+            </p>
+
+            {finalInvoiceResult ? (
+              <div className="border border-green-600 bg-green-50 p-4 space-y-3">
+                <p className="text-sm text-green-900">
+                  <strong>Invoice sent.</strong> Buyer received an email with the Stripe payment link for <strong>${finalInvoiceResult.balanceAmount.toFixed(2)}</strong>. 100% to your account when they pay — BHC takes nothing on the final balance.
+                </p>
+                <p className="text-xs text-green-800">
+                  Payment link:{' '}
+                  <a href={finalInvoiceResult.url} target="_blank" rel="noopener noreferrer" className="underline break-all">
+                    {finalInvoiceResult.url}
+                  </a>
+                </p>
+                <button
+                  type="button"
+                  onClick={closeFinalInvoiceModal}
+                  className="px-4 py-2 text-xs uppercase tracking-wider bg-green-700 text-white hover:bg-green-800"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Total final sale price ($)</label>
+                    <input
+                      type="number"
+                      value={finalInvoiceTotalSale}
+                      onChange={(e) => setFinalInvoiceTotalSale(e.target.value)}
+                      placeholder="e.g. 2000"
+                      min="50"
+                      max="25000"
+                      step="0.01"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                    />
+                    {finalInvoiceTotalSale && parseFloat(finalInvoiceTotalSale) > 0 && finalInvoiceModal.deposit_amount && finalInvoiceModal.deposit_amount > 0 && (
+                      <p className="text-xs text-saddle mt-1">
+                        Balance owed: <strong>${Math.max(0, parseFloat(finalInvoiceTotalSale) - finalInvoiceModal.deposit_amount).toFixed(2)}</strong> (= ${parseFloat(finalInvoiceTotalSale).toFixed(2)} total &minus; ${finalInvoiceModal.deposit_amount.toFixed(2)} deposit)
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Processing / pickup date (optional)</label>
+                    <input
+                      type="text"
+                      value={finalInvoiceProcessingDate}
+                      onChange={(e) => setFinalInvoiceProcessingDate(e.target.value)}
+                      placeholder="e.g. Wednesday, June 15"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Note to buyer (optional)</label>
+                    <textarea
+                      value={finalInvoiceNotes}
+                      onChange={(e) => setFinalInvoiceNotes(e.target.value)}
+                      rows={3}
+                      placeholder="Cut sheet notes, pickup logistics, anything else they need to know."
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                    />
+                  </div>
+
+                  <div className="bg-bone-warm border border-dust p-4 text-xs text-charcoal/85 leading-relaxed">
+                    <strong>How this works:</strong> buyer gets an email with a Stripe payment link. They pay the balance, money lands in your Stripe account, BHC takes <strong>$0</strong> on this invoice (our commission was already collected at deposit). When they pay, the referral auto-marks Closed Won.
+                  </div>
+                </div>
+
+                {updateError && (
+                  <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">{updateError}</div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={closeFinalInvoiceModal}
+                    className="flex-1 px-4 py-3 border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium uppercase text-sm tracking-wider"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => submitFinalInvoice(!!finalInvoiceModal.final_invoice_url)}
+                    disabled={
+                      finalInvoiceSubmitting ||
+                      !finalInvoiceTotalSale ||
+                      parseFloat(finalInvoiceTotalSale) <= 0
+                    }
+                    className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+                  >
+                    {finalInvoiceSubmitting
+                      ? 'Sending…'
+                      : finalInvoiceModal.final_invoice_url
+                        ? 'Re-send invoice'
+                        : 'Send invoice'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Close Deal Modal */}
       {closeModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -2349,7 +2564,16 @@ function ResponseDeadline({ referral }: { referral: Referral }) {
   );
 }
 
-function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; updating: string | null }) {
+function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; updating: string | null }) {
+  // FINAL-5 (2026-05-31): show "Send Final Invoice" when deposit landed +
+  // referral isn't yet Closed Won / Closed Lost / fully paid. Re-send label
+  // if invoice already sent (final_invoice_url present).
+  const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
+  const finalSent = !!referral.final_invoice_url;
+  const finalPaid = !!referral.final_paid_at;
+  const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
+  const showFinalInvoice = !!onSendFinal && depositPaid && !finalPaid && !isTerminal;
+
   return (
     <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
       <div>
@@ -2359,6 +2583,14 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, updating }: 
           </span>
           <FreshnessIndicator referral={referral} />
           <ResponseDeadline referral={referral} />
+          {depositPaid && (
+            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800" title={`Deposit of $${(referral.deposit_amount || 0).toFixed(2)} paid ${referral.deposit_paid_at || ''}`}>
+              Deposit ${(referral.deposit_amount || 0).toFixed(0)} ✓
+            </span>
+          )}
+          {finalSent && !finalPaid && (
+            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800">Invoice sent</span>
+          )}
         </div>
         <p className="font-medium mt-1">{referral.buyer_name}</p>
         <p className="text-xs text-dust">{referral.buyer_state} &middot; {referral.order_type}</p>
@@ -2371,6 +2603,15 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, updating }: 
             className="px-3 py-1.5 text-xs border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
             Contacted ✓
+          </button>
+        )}
+        {showFinalInvoice && (
+          <button
+            onClick={onSendFinal}
+            className="px-3 py-1.5 text-xs bg-green-700 text-white hover:bg-green-800 transition-colors"
+            title="Send final balance invoice to buyer (100% to you, no BHC fee)"
+          >
+            {finalSent ? 'Re-send invoice' : 'Send Final Invoice'}
           </button>
         )}
         <button
@@ -2430,6 +2671,7 @@ function ReferralCard({
   onClose,
   onPass,
   onLost,
+  onSendFinal,
   updating,
 }: {
   referral: Referral;
@@ -2437,8 +2679,15 @@ function ReferralCard({
   onClose: () => void;
   onPass: () => void;
   onLost: () => void;
+  onSendFinal?: () => void;
   updating: string | null;
 }) {
+  // FINAL-5 (2026-05-31): see ReferralRow for parity logic + button intent.
+  const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
+  const finalSent = !!referral.final_invoice_url;
+  const finalPaid = !!referral.final_paid_at;
+  const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
+  const showFinalInvoice = !!onSendFinal && depositPaid && !finalPaid && !isTerminal;
   return (
     <div className="p-6 border border-dust bg-white space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
@@ -2488,6 +2737,15 @@ function ReferralCard({
             className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
             {updating === referral.id ? 'Updating...' : 'In Negotiation'}
+          </button>
+        )}
+        {showFinalInvoice && (
+          <button
+            onClick={onSendFinal}
+            className="px-4 py-2 text-sm bg-green-700 text-white hover:bg-green-800 transition-colors"
+            title="Send final balance invoice to buyer (100% to you, no BHC fee)"
+          >
+            {finalSent ? 'Re-send Final Invoice' : 'Send Final Invoice'}
           </button>
         )}
         <button

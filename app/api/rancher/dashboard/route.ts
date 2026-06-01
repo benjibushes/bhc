@@ -76,6 +76,17 @@ export async function GET(request: Request) {
       // can render the green pill on already-confirmed Closed Won deals
       // and gate the "Mark beef delivered" CTA on the missing field.
       fulfillment_confirmed_at: r['Fulfillment Confirmed At'] || '',
+      // FINAL-5 (2026-05-31) — deposit + final invoice tracking so the
+      // "Send Final Invoice" button can render on Awaiting Payment rows
+      // (tier_v2 Stripe Connect flow).
+      deposit_paid_at: r['Deposit Paid At'] || '',
+      deposit_amount: Number(r['Deposit Amount'] || 0),
+      final_invoice_url: r['Final Invoice URL'] || '',
+      final_invoice_sent_at: r['Final Invoice Sent At'] || '',
+      final_invoice_amount: Number(r['Final Invoice Amount'] || 0),
+      final_paid_at: r['Final Paid At'] || '',
+      total_sale_amount: Number(r['Total Sale Amount'] || 0),
+      processing_date: r['Processing Date'] || '',
     }));
 
     // Sort: active first, then by date
