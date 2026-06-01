@@ -266,6 +266,80 @@ export async function POST(request: Request) {
     case 'payment_intent.succeeded': {
       const pi = event.data.object as any;
       const metaType = pi?.metadata?.type;
+
+      // ── Final invoice settlement (tier_v2 balance, rancher-initiated) ────
+      // PaymentIntent metadata.type='final_invoice' is stamped by
+      // lib/stripeConnect.createFinalInvoiceCheckout. Application_fee=0 —
+      // 100% lands in rancher's Connect account. Triggers final Closed Won
+      // state on the referral (deposit already moved it to Awaiting Payment
+      // or similar terminal).
+      if (metaType === 'final_invoice') {
+        try {
+          const referralId = String(pi.metadata?.referralId || '');
+          const rancherId = String(pi.metadata?.rancherId || '');
+          const finalCents = Number(pi.amount || 0);
+          if (!referralId || !rancherId || !pi.id) {
+            const metadataKeys = Object.keys(pi.metadata || {}).join(',');
+            throw new Error(`final_invoice missing required ids — refId=${!!referralId} rancherId=${!!rancherId} piId=${!!pi.id} actualMetadataKeys=[${metadataKeys}]`);
+          }
+
+          // Hydrate referral to compute Total Sale Amount for Closed Won.
+          let referralRow: any = null;
+          try {
+            referralRow = await getRecordById(TABLES.REFERRALS, referralId);
+          } catch {}
+          const totalSaleAmount = Number(referralRow?.['Total Sale Amount'] || 0);
+          const depositAmount = Number(referralRow?.['Deposit Amount'] || 0);
+          const finalAmount = finalCents / 100;
+          // Sale amount on Referral = total (deposit + final). Falls back to
+          // deposit + finalAmount if Total Sale Amount not stamped at invoice time.
+          const closeSaleAmount = totalSaleAmount > 0 ? totalSaleAmount : (depositAmount + finalAmount);
+
+          // Stamp Final Paid At + amount on the referral.
+          try {
+            await updateRecord(TABLES.REFERRALS, referralId, {
+              'Final Paid At': new Date().toISOString(),
+              'Final Paid Amount': finalAmount,
+            });
+          } catch (e: any) {
+            console.warn('[stripe webhook] final_invoice referral stamp failed:', e?.message);
+          }
+
+          // Closed Won transition. recordClose handles status flip, capacity
+          // decrement (idempotent if already Closed Won), and Buyer Stage flip.
+          // saleAmount is the FULL sale (deposit + balance) so monthly stats +
+          // affiliate enrollment payout calculations work correctly.
+          await recordClose({
+            referralId,
+            rancherId,
+            outcome: 'won',
+            saleAmount: closeSaleAmount,
+          });
+
+          try {
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `🎯 FINAL INVOICE PAID — $${finalAmount.toFixed(2)} · total sale $${closeSaleAmount.toFixed(2)} · ref=${referralId.slice(-6)} · BHC fee $0 (collected at deposit)`,
+            );
+          } catch {}
+
+          await logAuditEntry({
+            actor: 'cron',
+            tool: 'stripe-webhook-final-invoice-paid',
+            targetType: 'Referral',
+            targetId: referralId,
+            args: { paymentIntentId: pi.id, finalCents, totalSaleAmount: closeSaleAmount },
+            result: { status: 'closed_won', finalDollars: finalAmount, totalDollars: closeSaleAmount },
+            reverseAction: { type: 'noop', reason: 'Stripe-driven final invoice settlement' },
+          }).catch(e => console.error('[audit] final-invoice-paid log failed:', e));
+        } catch (e: any) {
+          console.error('[stripe webhook] payment_intent.succeeded (final_invoice) failed:', e);
+          await flipStripeEventFailed(event.id, e?.message || 'unknown');
+          return NextResponse.json({ received: true });
+        }
+        break;
+      }
+
       if (metaType !== 'buyer_deposit') {
         // Other PI succeeded events (founder one-shots, brand listings)
         // flow through checkout.session.completed. Skip.
