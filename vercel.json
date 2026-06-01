@@ -1,6 +1,6 @@
 {
   "env": {
-    "STRIPE_CONNECT_ENABLED": "false",
+    "STRIPE_CONNECT_ENABLED": "true",
     "ON_PLATFORM_MESSAGING_ENABLED": "false",
     "VERTICAL_BOUNDARY_ENFORCE": "warn"
   },
