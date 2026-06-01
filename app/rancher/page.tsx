@@ -34,12 +34,18 @@ interface RancherInfo {
   aboutText: string;
   videoUrl: string;
   quarterPrice: string | number;
+  quarterDeposit?: string | number;
+  quarterProcessingFee?: string | number;
   quarterLbs: string;
   quarterPaymentLink: string;
   halfPrice: string | number;
+  halfDeposit?: string | number;
+  halfProcessingFee?: string | number;
   halfLbs: string;
   halfPaymentLink: string;
   wholePrice: string | number;
+  wholeDeposit?: string | number;
+  wholeProcessingFee?: string | number;
   wholeLbs: string;
   wholePaymentLink: string;
   nextProcessingDate: string;
@@ -469,12 +475,29 @@ export default function RancherDashboardPage() {
   // otherwise empty so rancher must enter explicit total before submit.
   const openFinalInvoiceModal = (referral: Referral) => {
     setFinalInvoiceModal(referral);
+    // Pre-fill listed sale price + processing fee from rancher's per-tier
+    // setup if available. PFEE-2 (2026-05-31). Rancher can override in modal.
+    const orderType = String(referral.order_type || '').toLowerCase();
+    let prefillPrice: string | number = '';
+    let prefillProcessingFee: string | number = '';
+    if (rancherInfo) {
+      if (orderType.includes('quarter')) {
+        prefillPrice = rancherInfo.quarterPrice || '';
+        prefillProcessingFee = rancherInfo.quarterProcessingFee || '';
+      } else if (orderType.includes('whole')) {
+        prefillPrice = rancherInfo.wholePrice || '';
+        prefillProcessingFee = rancherInfo.wholeProcessingFee || '';
+      } else if (orderType.includes('half')) {
+        prefillPrice = rancherInfo.halfPrice || '';
+        prefillProcessingFee = rancherInfo.halfProcessingFee || '';
+      }
+    }
     setFinalInvoiceTotalSale(
       referral.total_sale_amount && referral.total_sale_amount > 0
         ? String(referral.total_sale_amount)
-        : '',
+        : prefillPrice ? String(prefillPrice) : '',
     );
-    setFinalInvoiceProcessingFee('');
+    setFinalInvoiceProcessingFee(prefillProcessingFee ? String(prefillProcessingFee) : '');
     setFinalInvoiceProcessingDate(referral.processing_date || '');
     setFinalInvoiceNotes('');
     setFinalInvoiceResult(null);

@@ -46,14 +46,17 @@ type Rancher = {
   'Video URL'?: string;
   'Quarter Price'?: number;
   'Quarter Deposit'?: number;
+  'Quarter Processing Fee'?: number;
   'Quarter lbs'?: string;
   'Quarter Payment Link'?: string;
   'Half Price'?: number;
   'Half Deposit'?: number;
+  'Half Processing Fee'?: number;
   'Half lbs'?: string;
   'Half Payment Link'?: string;
   'Whole Price'?: number;
   'Whole Deposit'?: number;
+  'Whole Processing Fee'?: number;
   'Whole lbs'?: string;
   'Whole Payment Link'?: string;
   'Tier Specialty'?: string[];
@@ -219,14 +222,17 @@ export default function RancherSetupWizard() {
             'Video URL': data.rancher['Video URL'] || '',
             'Quarter Price': data.rancher['Quarter Price'] || '',
             'Quarter Deposit': data.rancher['Quarter Deposit'] || '',
+            'Quarter Processing Fee': data.rancher['Quarter Processing Fee'] || '',
             'Quarter lbs': data.rancher['Quarter lbs'] || '',
             'Quarter Payment Link': data.rancher['Quarter Payment Link'] || '',
             'Half Price': data.rancher['Half Price'] || '',
             'Half Deposit': data.rancher['Half Deposit'] || '',
+            'Half Processing Fee': data.rancher['Half Processing Fee'] || '',
             'Half lbs': data.rancher['Half lbs'] || '',
             'Half Payment Link': data.rancher['Half Payment Link'] || '',
             'Whole Price': data.rancher['Whole Price'] || '',
             'Whole Deposit': data.rancher['Whole Deposit'] || '',
+            'Whole Processing Fee': data.rancher['Whole Processing Fee'] || '',
             'Whole lbs': data.rancher['Whole lbs'] || '',
             'Whole Payment Link': data.rancher['Whole Payment Link'] || '',
             'Tier Specialty': Array.isArray(data.rancher['Tier Specialty'])
@@ -1334,35 +1340,53 @@ export default function RancherSetupWizard() {
             {(['Quarter', 'Half', 'Whole'] as const).map((tier) => (
               <div key={tier} className="border border-dust p-4 md:p-5 space-y-3 bg-bone-warm">
                 <p className="font-serif text-lg text-charcoal">{tier} Cow</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field
-                    label="Price ($)"
+                    label="Listed sale price ($)"
                     type="number"
                     value={form[`${tier} Price`]}
                     onChange={(v) => setField(`${tier} Price`, v)}
-                    placeholder="1200"
+                    placeholder="2000"
                   />
                   <Field
-                    label="Deposit ($) — collected upfront"
+                    label="Processing fee ($) — your processor cost"
                     type="number"
-                    value={form[`${tier} Deposit`]}
-                    onChange={(v) => setField(`${tier} Deposit`, v)}
-                    placeholder="100"
+                    value={form[`${tier} Processing Fee`]}
+                    onChange={(v) => setField(`${tier} Processing Fee`, v)}
+                    placeholder="1000"
                   />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field
                     label="Approx finished weight (lbs)"
                     value={form[`${tier} lbs`]}
                     onChange={(v) => setField(`${tier} lbs`, v)}
                     placeholder="~150 lbs"
                   />
+                  <Field
+                    label="Stripe / payment link (optional)"
+                    value={form[`${tier} Payment Link`]}
+                    onChange={(v) => setField(`${tier} Payment Link`, v)}
+                    type="url"
+                    placeholder="https://buy.stripe.com/..."
+                  />
                 </div>
-                <Field
-                  label="Stripe / payment link (optional — auto-built later)"
-                  value={form[`${tier} Payment Link`]}
-                  onChange={(v) => setField(`${tier} Payment Link`, v)}
-                  type="url"
-                  placeholder="https://buy.stripe.com/..."
-                />
+                {form[`${tier} Price`] && form[`${tier} Processing Fee`] && Number(form[`${tier} Price`]) > 0 && Number(form[`${tier} Processing Fee`]) >= 0 && (
+                  <div className="bg-bone border border-dust p-3 text-xs text-charcoal/85 leading-relaxed">
+                    <p className="font-medium mb-1">How the math works on a {tier.toLowerCase()}:</p>
+                    <p>
+                      Deposit collected upfront: <strong>${(Number(form[`${tier} Processing Fee`]) + Number(form[`${tier} Price`]) * 0.10).toFixed(2)}</strong>{' '}
+                      (your $${Number(form[`${tier} Processing Fee`]).toFixed(2)} processing recoup + 10% BHC fee on $${Number(form[`${tier} Price`]).toFixed(2)} listed)
+                    </p>
+                    <p>
+                      Final invoice (rancher net): <strong>${(Number(form[`${tier} Price`]) - Number(form[`${tier} Processing Fee`])).toFixed(2)}</strong>{' '}
+                      (listed minus processing, 100% to you)
+                    </p>
+                    <p className="text-saddle italic mt-1">
+                      You keep ${Number(form[`${tier} Price`]).toFixed(2)} total (your full listed price). Buyer pays ${(Number(form[`${tier} Price`]) * 1.10).toFixed(2)} total (listed + 10% BHC fee on top).
+                    </p>
+                  </div>
+                )}
               </div>
             ))}
 
@@ -1447,14 +1471,17 @@ export default function RancherSetupWizard() {
                   'Tier Specialty': form['Tier Specialty'],
                   'Quarter Price': form['Quarter Price'],
                   'Quarter Deposit': form['Quarter Deposit'],
+                  'Quarter Processing Fee': form['Quarter Processing Fee'],
                   'Quarter lbs': form['Quarter lbs'],
                   'Quarter Payment Link': form['Quarter Payment Link'],
                   'Half Price': form['Half Price'],
                   'Half Deposit': form['Half Deposit'],
+                  'Half Processing Fee': form['Half Processing Fee'],
                   'Half lbs': form['Half lbs'],
                   'Half Payment Link': form['Half Payment Link'],
                   'Whole Price': form['Whole Price'],
                   'Whole Deposit': form['Whole Deposit'],
+                  'Whole Processing Fee': form['Whole Processing Fee'],
                   'Whole lbs': form['Whole lbs'],
                   'Whole Payment Link': form['Whole Payment Link'],
                   Testimonials: validTestimonials.length
