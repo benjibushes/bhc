@@ -168,8 +168,11 @@ export default function RancherDashboardPage() {
   // FINAL INVOICE modal (FINAL-5 2026-05-31): sent by rancher after deposit
   // lands + processing date is locked. Stripe Connect direct charge, app_fee=0,
   // 100% to rancher. Posts to /api/rancher/referrals/[id]/send-final-invoice.
+  // Commission was collected upfront at deposit time on top of the listed
+  // sale price — so balance = listed − processingFee, NOT listed − deposit.
   const [finalInvoiceModal, setFinalInvoiceModal] = useState<Referral | null>(null);
   const [finalInvoiceTotalSale, setFinalInvoiceTotalSale] = useState('');
+  const [finalInvoiceProcessingFee, setFinalInvoiceProcessingFee] = useState('');
   const [finalInvoiceProcessingDate, setFinalInvoiceProcessingDate] = useState('');
   const [finalInvoiceNotes, setFinalInvoiceNotes] = useState('');
   const [finalInvoiceSubmitting, setFinalInvoiceSubmitting] = useState(false);
@@ -471,6 +474,7 @@ export default function RancherDashboardPage() {
         ? String(referral.total_sale_amount)
         : '',
     );
+    setFinalInvoiceProcessingFee('');
     setFinalInvoiceProcessingDate(referral.processing_date || '');
     setFinalInvoiceNotes('');
     setFinalInvoiceResult(null);
@@ -480,6 +484,7 @@ export default function RancherDashboardPage() {
   const closeFinalInvoiceModal = () => {
     setFinalInvoiceModal(null);
     setFinalInvoiceTotalSale('');
+    setFinalInvoiceProcessingFee('');
     setFinalInvoiceProcessingDate('');
     setFinalInvoiceNotes('');
     setFinalInvoiceResult(null);
@@ -489,16 +494,25 @@ export default function RancherDashboardPage() {
     if (!finalInvoiceModal) return;
     const total = parseFloat(finalInvoiceTotalSale);
     if (!isFinite(total) || total <= 0) {
-      setUpdateError('Enter the total final sale price (e.g. 2000).');
+      setUpdateError('Enter your listed sale price (e.g. 2000).');
       return;
     }
-    const deposit = finalInvoiceModal.deposit_amount || 0;
-    if (deposit <= 0) {
-      setUpdateError('No deposit recorded on this referral. Cannot compute balance.');
+    const processingFeeRaw = finalInvoiceProcessingFee.trim();
+    const processingFee = processingFeeRaw === '' ? null : parseFloat(processingFeeRaw);
+    if (processingFee !== null && (!isFinite(processingFee) || processingFee < 0)) {
+      setUpdateError('Processing fee must be a positive number.');
       return;
     }
-    if (total <= deposit) {
-      setUpdateError(`Total sale ($${total}) must exceed deposit ($${deposit}). Balance must be > $0.`);
+    // Validate balance > 0 using new formula. processingFee preferred,
+    // depositAmount fallback (legacy).
+    const subtract = processingFee !== null ? processingFee : (finalInvoiceModal.deposit_amount || 0);
+    if (subtract <= 0) {
+      setUpdateError('Enter your processing fee (e.g. 1000) so we can compute the balance.');
+      return;
+    }
+    if (total <= subtract) {
+      const label = processingFee !== null ? 'processing fee' : 'deposit';
+      setUpdateError(`Listed sale ($${total}) must exceed ${label} ($${subtract}). Balance must be > $0.`);
       return;
     }
     setFinalInvoiceSubmitting(true);
@@ -510,6 +524,7 @@ export default function RancherDashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           totalSaleAmount: total,
+          processingFee: processingFee !== null ? processingFee : undefined,
           processingDate: finalInvoiceProcessingDate.trim() || undefined,
           notes: finalInvoiceNotes.trim() || undefined,
         }),
@@ -521,7 +536,7 @@ export default function RancherDashboardPage() {
       }
       setFinalInvoiceResult({
         url: data.url,
-        balanceAmount: data.balanceAmount || total - deposit,
+        balanceAmount: data.balanceAmount || total - subtract,
       });
       // Refresh dashboard so the row reflects Awaiting Payment status + invoice URL
       await fetchDashboard();
@@ -2219,7 +2234,7 @@ export default function RancherDashboardPage() {
               <>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Total final sale price ($)</label>
+                    <label className="block text-sm font-medium mb-2">Your listed sale price ($)</label>
                     <input
                       type="number"
                       value={finalInvoiceTotalSale}
@@ -2230,12 +2245,39 @@ export default function RancherDashboardPage() {
                       step="0.01"
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
                     />
-                    {finalInvoiceTotalSale && parseFloat(finalInvoiceTotalSale) > 0 && finalInvoiceModal.deposit_amount && finalInvoiceModal.deposit_amount > 0 && (
-                      <p className="text-xs text-saddle mt-1">
-                        Balance owed: <strong>${Math.max(0, parseFloat(finalInvoiceTotalSale) - finalInvoiceModal.deposit_amount).toFixed(2)}</strong> (= ${parseFloat(finalInvoiceTotalSale).toFixed(2)} total &minus; ${finalInvoiceModal.deposit_amount.toFixed(2)} deposit)
-                      </p>
-                    )}
+                    <p className="text-xs text-saddle mt-1">
+                      This is your gross sale price (what you want to net). Commission was already charged on top of this at deposit time — you keep 100% of this number.
+                    </p>
                   </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Your processing fee ($)</label>
+                    <input
+                      type="number"
+                      value={finalInvoiceProcessingFee}
+                      onChange={(e) => setFinalInvoiceProcessingFee(e.target.value)}
+                      placeholder="e.g. 1000"
+                      min="0"
+                      max="25000"
+                      step="0.01"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                    />
+                    <p className="text-xs text-saddle mt-1">
+                      What you paid out-of-pocket to the USDA processor. This was recouped by the deposit you already received.
+                    </p>
+                  </div>
+
+                  {finalInvoiceTotalSale && finalInvoiceProcessingFee && parseFloat(finalInvoiceTotalSale) > 0 && parseFloat(finalInvoiceProcessingFee) >= 0 && (
+                    <div className="bg-bone-warm border-l-4 border-charcoal p-4 space-y-1 text-sm">
+                      <p className="font-medium">Balance owed by buyer:</p>
+                      <p className="font-serif text-2xl text-charcoal">
+                        ${Math.max(0, parseFloat(finalInvoiceTotalSale) - parseFloat(finalInvoiceProcessingFee)).toFixed(2)}
+                      </p>
+                      <p className="text-xs text-saddle">
+                        ${parseFloat(finalInvoiceTotalSale).toFixed(2)} listed sale &minus; ${parseFloat(finalInvoiceProcessingFee).toFixed(2)} processing fee already covered by deposit
+                      </p>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium mb-2">Processing / pickup date (optional)</label>
@@ -2260,7 +2302,7 @@ export default function RancherDashboardPage() {
                   </div>
 
                   <div className="bg-bone-warm border border-dust p-4 text-xs text-charcoal/85 leading-relaxed">
-                    <strong>How this works:</strong> buyer gets an email with a Stripe payment link. They pay the balance, money lands in your Stripe account, BHC takes <strong>$0</strong> on this invoice (our commission was already collected at deposit). When they pay, the referral auto-marks Closed Won.
+                    <strong>How this works:</strong> buyer gets an email with a Stripe payment link for the balance. Money lands in your Stripe account, BHC takes <strong>$0</strong> on this invoice (our commission was already collected upfront at deposit, on top of your listed price). When buyer pays, the referral auto-marks Closed Won.
                   </div>
                 </div>
 

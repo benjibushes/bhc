@@ -43,11 +43,32 @@ const MIN_FINAL_INVOICE_CENTS = 100;       // $1 floor — Stripe requires > $0
 
 interface SendFinalInvoiceBody {
   /**
-   * The total final sale price the rancher is invoicing the buyer for the
-   * remaining balance. In DOLLARS (UI sends `2000` for $2000 sale).
-   * Server computes balance = totalSaleAmount - depositAmount.
+   * The rancher's LISTED sale price (gross what they want to net on the deal).
+   * In DOLLARS (UI sends `2000` for $2000 sale).
+   *
+   * Commission is collected upfront on the deposit charge (calculated on this
+   * listed price) and rides ON TOP of buyer's payment — does NOT eat into
+   * rancher margin. Math:
+   *   Buyer total = listed + (listed × commissionRate)
+   *   Rancher net = listed (full)
+   *   BHC net    = listed × commissionRate
+   *
+   * Final invoice balance = listed − processingFee (the rancher portion still
+   * owed for the listed sale, after the processing portion was recouped at
+   * deposit time). NOT listed − depositAmount (depositAmount = processing +
+   * commission so subtracting it would under-charge the buyer + leave the
+   * rancher short).
    */
   totalSaleAmount?: number;
+  /**
+   * Rancher's processing fee for this cut (already paid out-of-pocket to the
+   * USDA processor). In DOLLARS. Server computes:
+   *   balance = totalSaleAmount − processingFee
+   * If unset, falls back to legacy behavior:
+   *   balance = totalSaleAmount − depositAmount
+   * (assumes deposit was ONLY processing, no commission bundled).
+   */
+  processingFee?: number;
   /**
    * Processing date the buyer can expect to pick up / receive their beef.
    * ISO string preferred but server accepts loose date input.
@@ -131,15 +152,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   }
 
-  // Compute balance
+  // Compute balance per new commission-on-top model:
+  //   balance = listed − processingFee  (preferred)
+  //   balance = listed − depositAmount  (legacy fallback when processingFee unset)
+  // Commission rode on top of the deposit charge, so subtracting deposit
+  // would double-discount the rancher (they'd lose the commission portion
+  // of the listed price). Use processingFee whenever rancher knows their
+  // out-of-pocket processor cost.
   const totalSaleAmount = body.totalSaleAmount;
-  const balanceDollars = Math.round((totalSaleAmount - depositAmount) * 100) / 100;
+  const processingFeeInput = typeof body.processingFee === 'number' && body.processingFee >= 0
+    ? body.processingFee
+    : null;
+  const subtractFrom = processingFeeInput !== null ? processingFeeInput : depositAmount;
+  const balanceDollars = Math.round((totalSaleAmount - subtractFrom) * 100) / 100;
   const balanceCents = Math.round(balanceDollars * 100);
 
   if (balanceCents < MIN_FINAL_INVOICE_CENTS) {
+    const subtractLabel = processingFeeInput !== null ? `processing fee ($${subtractFrom})` : `deposit ($${subtractFrom})`;
     return NextResponse.json(
       {
-        error: `Final balance must be at least $${(MIN_FINAL_INVOICE_CENTS / 100).toFixed(2)}. Total sale ($${totalSaleAmount}) minus deposit ($${depositAmount}) = $${balanceDollars}.`,
+        error: `Final balance must be at least $${(MIN_FINAL_INVOICE_CENTS / 100).toFixed(2)}. Total sale ($${totalSaleAmount}) minus ${subtractLabel} = $${balanceDollars}.`,
       },
       { status: 400 },
     );
@@ -221,7 +253,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // Stamp referral fields. Total Sale Amount is the rancher's authoritative
   // declaration of the full deal value — useful for downstream stats +
-  // Closed Won transition when webhook fires.
+  // Closed Won transition when webhook fires. Processing Fee is stamped so
+  // re-sends + audit replays can recompute balance without rancher re-input.
   const nowISO = new Date().toISOString();
   try {
     await updateRecord(TABLES.REFERRALS, referralId, {
@@ -230,6 +263,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       'Final Invoice Amount': balanceDollars,
       'Final Invoice Payment Intent ID': paymentIntentId,
       'Total Sale Amount': totalSaleAmount,
+      ...(processingFeeInput !== null ? { 'Processing Fee': processingFeeInput } : {}),
       ...(body.processingDate ? { 'Processing Date': body.processingDate } : {}),
       Status: 'Awaiting Payment',
     });
@@ -261,12 +295,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Telegram alert
   try {
     if (TELEGRAM_ADMIN_CHAT_ID) {
+      const subtractDesc = processingFeeInput !== null
+        ? `processing fee $${processingFeeInput.toFixed(2)}`
+        : `deposit $${depositAmount.toFixed(2)}`;
       await sendTelegramMessage(
         TELEGRAM_ADMIN_CHAT_ID,
         `📑 <b>FINAL INVOICE SENT</b>\n\n` +
           `<b>${ranchName}</b> → ${buyerName}\n` +
-          `Total sale: $${totalSaleAmount.toFixed(2)}\n` +
-          `Deposit paid: $${depositAmount.toFixed(2)}\n` +
+          `Listed sale: $${totalSaleAmount.toFixed(2)}\n` +
+          `Less ${subtractDesc}\n` +
           `Balance owed: $${balanceDollars.toFixed(2)} (100% to rancher, BHC fee $0)\n` +
           (body.processingDate ? `Processing: ${body.processingDate}\n` : '') +
           `\nReferral ${referralId}`,
@@ -283,5 +320,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     balanceAmount: balanceDollars,
     totalSaleAmount,
     depositAmount,
+    processingFee: processingFeeInput,
   });
 }
