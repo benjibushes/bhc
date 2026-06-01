@@ -257,3 +257,104 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
   }
   return { url, paymentIntentId };
 }
+
+// ─── FINAL INVOICE (balance owed after deposit) ────────────────────────────
+//
+// Rancher-initiated invoice for the FULL fulfillment balance — sent to the
+// buyer AFTER the deposit landed + processing date is locked. application_fee
+// is ZERO: BHC's commission was already collected upfront via the deposit
+// (bundled in there alongside the processor recoup). The final invoice is
+// purely between buyer and rancher; BHC takes nothing.
+//
+// Use case (e.g. $2000 Half cow):
+//   Deposit ($1200) — already paid via createDepositCheckout
+//     • $1000 to rancher (covers processing fee they fronted)
+//     • $200 to BHC (10% commission on full $2000)
+//   Final invoice ($800) — created here
+//     • $800 to rancher
+//     • $0 to BHC
+//   Total: rancher $1800, BHC $200, exactly 10% of $2000.
+
+export interface CreateFinalInvoiceCheckoutInput {
+  rancherConnectAccountId: string;
+  /**
+   * Balance owed by the buyer, in cents. Typically:
+   *   fullSaleCents − depositAmountCents
+   * Validated upstream — endpoint refuses if <= 0 or > $25k.
+   */
+  amountCents: number;
+  buyerEmail: string;
+  referralId: string;
+  buyerId: string;
+  rancherId: string;
+  productLabel: string;       // e.g. "Half Cow Final Balance — Ashcraft Beef"
+  processingDate?: string;    // ISO date string for buyer receipt context
+  notes?: string;             // optional rancher message to buyer
+  successUrl: string;
+  cancelUrl: string;
+}
+
+export async function createFinalInvoiceCheckout(
+  input: CreateFinalInvoiceCheckoutInput,
+): Promise<{ url: string; paymentIntentId: string }> {
+  if (input.amountCents <= 0) {
+    throw new Error('Final invoice amount must be greater than zero');
+  }
+
+  const stripe = getStripeClient();
+  const description = [
+    input.processingDate ? `Processing date: ${input.processingDate}` : null,
+    input.notes,
+    'Final balance — collected by rancher direct, no BuyHalfCow fee.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const session = await stripe.checkout.sessions.create(
+    {
+      mode: 'payment',
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: input.productLabel,
+              description,
+            },
+            unit_amount: input.amountCents,
+          },
+          quantity: 1,
+        },
+      ],
+      customer_email: input.buyerEmail,
+      payment_intent_data: {
+        // application_fee_amount intentionally OMITTED (== 0). BHC takes no
+        // commission on the final invoice — already collected upfront on
+        // the deposit charge.
+        metadata: {
+          type: 'final_invoice',
+          kind: 'final-invoice',  // webhook distinguish vs 'buyer_deposit'
+          referralId: input.referralId,
+          buyerId: input.buyerId,
+          rancherId: input.rancherId,
+          ...(input.processingDate ? { processingDate: input.processingDate } : {}),
+        },
+      },
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      // Tax handling kept off for final invoice — rancher's tax setup applies
+      // (this is direct billing, BHC doesn't touch tax collection here).
+    },
+    {
+      stripeAccount: input.rancherConnectAccountId,
+      idempotencyKey: `final-invoice-${input.referralId}`,
+    },
+  );
+
+  const url = session.url;
+  const paymentIntentId = session.payment_intent ? String(session.payment_intent) : '';
+  if (!url || !paymentIntentId) {
+    throw new Error(`Stripe Checkout (final invoice) returned incomplete fields (url=${!!url}, payment_intent=${!!paymentIntentId})`);
+  }
+  return { url, paymentIntentId };
+}

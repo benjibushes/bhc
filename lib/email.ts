@@ -4305,3 +4305,66 @@ export async function sendBuyerFulfillmentConfirmation(data: {
     }),
   });
 }
+
+// =====================================================
+// BUYER FINAL INVOICE — sent by rancher after deposit + processing locked.
+// Direct Stripe Connect Checkout link, 100% to rancher (no BHC fee). Buyer
+// pays the remaining balance — that's the rest of the deal. After they pay,
+// webhook flips referral Closed Won.
+// =====================================================
+export async function sendBuyerFinalInvoice(data: {
+  buyerEmail: string;
+  buyerName: string;
+  ranchName: string;
+  orderType: string;
+  balanceAmount: number;      // remaining balance owed (dollars)
+  totalSaleAmount: number;    // full sale price (dollars)
+  depositAmount: number;      // already-paid deposit (dollars)
+  processingDate?: string;    // ISO string or human-readable date
+  notes?: string;             // optional rancher message
+  checkoutUrl: string;        // Stripe Connect Checkout Session URL
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.buyerName || 'there').split(' ')[0] || 'there';
+  const subject = `${data.ranchName} sent your final invoice — ${data.orderType}`;
+  const processingLine = data.processingDate
+    ? `<p style="margin:8px 0;"><strong>Processing/pickup date:</strong> ${esc(data.processingDate)}</p>`
+    : '';
+  const notesBlock = data.notes && data.notes.trim()
+    ? `<div class="box"><p style="margin:0;"><strong>Note from ${esc(data.ranchName)}:</strong></p><p style="margin:8px 0 0;color:#2A2A2A;white-space:pre-wrap;">${esc(data.notes)}</p></div>`
+    : '';
+
+  return guardedSend({
+    templateName: 'sendBuyerFinalInvoice',
+    recipientEmail: data.buyerEmail,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.buyerEmail,
+      subject,
+      headers: getUnsubscribeHeaders(data.buyerEmail),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px;line-height:1.3}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0}.summary{border:1px solid #E5E2DC;padding:18px 20px;margin:18px 0}.summary table{width:100%;border-collapse:collapse;font-size:14px}.summary td{padding:6px 0}.summary td.r{text-align:right;font-weight:600}.summary tr.total td{border-top:1px solid #A7A29A;padding-top:12px;font-size:16px;color:#0E0E0E}.cta{display:inline-block;padding:14px 28px;background:#0E0E0E;color:#fff !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;margin:8px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>${esc(data.ranchName)} sent your final invoice.</h1>
+  <p>Hey ${esc(first)} —</p>
+  <p>Your ${esc(data.orderType.toLowerCase())} from ${esc(data.ranchName)} is locked in. Below is the final balance owed to the rancher — pay it via the secure link to complete your order.</p>
+  ${processingLine}
+  ${notesBlock}
+  <div class="summary">
+    <table>
+      <tr><td>Total sale price</td><td class="r">$${data.totalSaleAmount.toFixed(2)}</td></tr>
+      <tr><td>Deposit already paid</td><td class="r">&minus; $${data.depositAmount.toFixed(2)}</td></tr>
+      <tr class="total"><td>Final balance owed</td><td class="r">$${data.balanceAmount.toFixed(2)}</td></tr>
+    </table>
+  </div>
+  <p style="text-align:center;margin:24px 0;">
+    <a href="${data.checkoutUrl}" class="cta">Pay final balance &rarr;</a>
+  </p>
+  <p style="font-size:13px;color:#6B4F3F;">This payment goes directly to ${esc(data.ranchName)} — 100% of the balance, no BuyHalfCow fee. Our service fee was already collected with your deposit, upfront.</p>
+  <p style="font-size:13px;color:#6B4F3F;">Questions about cuts, pickup, or timing? Reply to this email — it goes straight to the rancher.</p>
+  <p style="margin-top:32px;">— Benjamin (BuyHalfCow)</p>
+  ${emailFooter(data.buyerEmail)}
+</div></body></html>`,
+    }),
+  });
+}
