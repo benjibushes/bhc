@@ -58,6 +58,11 @@ export async function POST(
         await sendEmail({
           to: rancherEmail,
           subject: `[Resend] BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+          // P0 hotfix (2026-06-02): pin templateName to whitelisted value so
+          // the rolling 3/week cap doesn't drop the resend on a rancher who
+          // already received multiple matches this week. Operator-initiated
+          // resend is intentional and must always fire.
+          templateName: 'sendRancherIntroNotification',
           html: `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
 <h1 style="font-family:Georgia,serif;">Buyer Lead — Resent</h1>
 <p>Hi ${esc(rancherName)},</p>
