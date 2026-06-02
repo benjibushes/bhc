@@ -3100,9 +3100,16 @@ export async function sendEmail(params: {
   // Tagged Reply-To: when present, sets Reply-To to <type>-<recordId>@replies.buyhalfcow.com
   // so any reply lands in /api/webhooks/resend-inbound for classification + logging.
   _replyContext?: { type: 'ref' | 'usr' | 'rnc' | 'inq' | 'thread'; recordId: string };
+  // Optional templateName override (P0 hotfix 2026-06-02). Callers that need
+  // their email to bypass the 3/week rolling cap can pass a templateName
+  // listed in TRANSACTIONAL_WHITELIST. Default 'sendEmail' is rate-limited.
+  // Rancher intros from /api/matching/suggest MUST use
+  // 'sendRancherIntroNotification' so they bypass the cap — otherwise
+  // high-volume routing weeks silently drop 60%+ of rancher introductions.
+  templateName?: string;
 }) {
   return guardedSend({
-    templateName: 'sendEmail',
+    templateName: params.templateName || 'sendEmail',
     recipientEmail: params.to,
     subject: params.subject,
     send: () => {

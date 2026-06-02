@@ -897,6 +897,13 @@ export async function POST(request: Request) {
             const emailResult: any = await sendEmail({
               to: rancherEmail,
               subject: `${subjectPrefix}BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+              // P0 hotfix (2026-06-02): pin templateName to a whitelisted value
+              // so the rolling 3/week frequency cap doesn't silently drop the
+              // intro. Before this fix, ranchers receiving 3+ matches per
+              // week hit the cap on lead #4 — Airtable showed Intro Sent At
+              // stamped but Resend never sent. Caused ~60% silent drop rate
+              // during the volume spike on 2026-06-01.
+              templateName: 'sendRancherIntroNotification',
               // Tag Reply-To with the referral context so when the rancher
               // hits Reply (or Reply-all) the message lands in the inbound
               // webhook + Conversations table. Lets us track exactly when

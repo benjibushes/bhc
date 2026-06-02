@@ -23,6 +23,11 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendMonthlyCommissionInvoice',
   'sendRancherApproval',
   'sendBuyerIntroNotification',
+  // P0 hotfix (2026-06-02): rancher intro email from /api/matching/suggest
+  // was hitting the 3/week cap silently — 60%+ of intros suppressed during
+  // volume spikes. Whitelisted because this is revenue-critical (without it
+  // the rancher never knows a buyer was matched to them).
+  'sendRancherIntroNotification',
   'sendInquiryToRancher',
   'sendMatchedDay4CheckIn',
   'sendConsumerApproval',
