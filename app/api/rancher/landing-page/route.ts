@@ -248,6 +248,33 @@ export async function PATCH(request: Request) {
       fields['Ships Nationwide'] = fields['Ships Nationwide'] === 'true' || fields['Ships Nationwide'] === true;
     }
 
+    // Cal.com Slug — normalize + validate. Mirror of /api/rancher/setup so the
+    // wizard + dashboard apply the same gate. Strip the cal.com URL prefix,
+    // leading/trailing slashes. Reject anything that would render as a broken
+    // cal.com link in every buyer intro email. Empty is OK (clear field).
+    if ('Cal.com Slug' in fields) {
+      const raw = String(fields['Cal.com Slug'] || '')
+        .trim()
+        .replace(/^https?:\/\/(www\.)?cal\.com\//i, '')
+        .replace(/^\/+/, '')
+        .replace(/\/+$/, '');
+      if (raw.length === 0) {
+        fields['Cal.com Slug'] = null;
+      } else {
+        if (raw.length > 120) {
+          return NextResponse.json({
+            error: 'Cal.com slug looks too long — paste just the part after cal.com/ (e.g. "yourname/buyhalfcow-intro").',
+          }, { status: 400 });
+        }
+        if (!/^[a-zA-Z0-9._\-\/]+$/.test(raw)) {
+          return NextResponse.json({
+            error: 'Cal.com slug can only contain letters, numbers, dashes, underscores, dots, and slashes. Paste just the part after cal.com/.',
+          }, { status: 400 });
+        }
+        fields['Cal.com Slug'] = raw;
+      }
+    }
+
     // Validate slug: lowercase alphanumeric + hyphens only.
     // MISMATCH FIX: enforce uniqueness across ranchers. Two ranchers picking
     // the same slug would silently overwrite each other in Airtable; whichever

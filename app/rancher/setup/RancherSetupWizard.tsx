@@ -1114,20 +1114,36 @@ export default function RancherSetupWizard() {
                   onChange={(v) => setField('Cal.com Slug', v.trim().replace(/^https?:\/\/(www\.)?cal\.com\//, ''))}
                   placeholder="yourname or yourname/buyhalfcow-intro"
                 />
-                <p className="text-xs text-saddle mt-2 leading-relaxed">
-                  We embed this in every buyer&rsquo;s introduction email so they can book a 15-min call directly with you — no phone tag.
-                  Paste your username (e.g. <code className="bg-bone px-1">yourname</code>) or full event link.
-                  Don&rsquo;t have one?{' '}
-                  <a
-                    href="https://cal.com/signup"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline text-charcoal"
-                  >
-                    Sign up free at cal.com →
-                  </a>{' '}
-                  Add <code className="bg-bone px-1">benibeauchman@gmail.com</code> as an additional invitee on your event so Ben can attend if needed.
-                </p>
+                <div className="bg-bone border border-dust p-4 mt-3 text-sm leading-relaxed text-charcoal">
+                  <p className="font-medium mb-2">3-step setup (5 minutes total):</p>
+                  <ol className="list-decimal pl-5 space-y-1.5 text-saddle">
+                    <li>
+                      <a
+                        href="https://cal.com/signup"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline text-charcoal"
+                      >
+                        Sign up free at cal.com
+                      </a>{' '}
+                      (if you don&rsquo;t already have an account).
+                    </li>
+                    <li>
+                      Create a <strong>15-minute event type</strong> named &ldquo;BuyHalfCow Intro&rdquo; with your real availability windows.
+                    </li>
+                    <li>
+                      In that event&rsquo;s settings, add{' '}
+                      <code className="bg-white border border-dust px-1.5 py-0.5">benibeauchman@gmail.com</code>{' '}
+                      as an <strong>Additional Guest</strong> (Cal.com → Event Type → Limits/Workflows → Add invitee).
+                      That&rsquo;s how Ben sees every booking and can join if needed.
+                    </li>
+                  </ol>
+                  <p className="mt-3 text-xs text-saddle">
+                    Then paste your link above — just the part after <code className="bg-white px-1">cal.com/</code> works
+                    (e.g. <code className="bg-white px-1">yourname/buyhalfcow-intro</code>).
+                    We embed this in every buyer&rsquo;s intro email as the primary call-to-action.
+                  </p>
+                </div>
               </div>
             </div>
             <StepFooter

@@ -105,6 +105,15 @@ export default async function RancherPage(
   const nextProcessingDate = r['Next Processing Date'] || '';
   const reserveLink = r['Reserve Link'] || '';
   const customNotes = r['Custom Notes'] || '';
+  // Cal.com slug — normalized (strip cal.com URL prefix, leading/trailing
+  // slashes). When set, surface "Book a 15-min call" CTA on the public page
+  // so organic-search visitors can self-schedule without going through the
+  // /access → matching → intro email flow.
+  const calComSlug = ((r['Cal.com Slug'] as string) || '')
+    .trim()
+    .replace(/^https?:\/\/(www\.)?cal\.com\//i, '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
   const googleReviewsUrl = r['Google Reviews URL'] || '';
   const facebookUrl = r['Facebook URL'] || '';
   const instagramUrl = r['Instagram URL'] || '';
@@ -544,6 +553,28 @@ export default async function RancherPage(
                   Contact BuyHalfCow
                 </Link>
               </p>
+
+              {calComSlug && (
+                <div className="mt-8 border border-charcoal bg-bone p-6 md:p-7 text-center">
+                  <p className="text-xs uppercase tracking-widest text-saddle mb-2">
+                    Have questions before you buy?
+                  </p>
+                  <h3 className="font-serif text-2xl text-charcoal mb-3">
+                    Schedule a 15-min call with {operatorName ? operatorName.split(' ')[0] : 'the rancher'}
+                  </h3>
+                  <p className="text-sm text-saddle mb-5 max-w-xl mx-auto">
+                    Walk through pricing, processing date, cut options, and delivery — direct with the rancher, no middleman. They set their availability, you pick a time.
+                  </p>
+                  <a
+                    href={`https://cal.com/${calComSlug}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block px-7 py-3.5 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase tracking-widest text-xs"
+                  >
+                    Book your 15-min call →
+                  </a>
+                </div>
+              )}
             </div>
           </Container>
         </section>

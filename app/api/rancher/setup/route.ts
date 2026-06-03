@@ -200,6 +200,35 @@ export async function PATCH(req: Request) {
     const city = String(updates['Pickup City'] || '').trim().slice(0, 100);
     updates['Pickup City'] = city;
   }
+  // Cal.com Slug — normalize + validate. Strip the cal.com URL prefix the
+  // wizard already auto-strips on the client, plus any leading/trailing
+  // slashes. Allowed shape: alphanumeric, dash, underscore, dot, slash.
+  // Anything else (spaces, @, special chars) is almost certainly a paste
+  // error and would render as a broken cal.com link in every buyer intro
+  // email — reject with a friendly message instead of writing garbage.
+  // Empty string is OK (rancher hasn't set one yet).
+  if ('Cal.com Slug' in updates) {
+    const raw = String(updates['Cal.com Slug'] || '')
+      .trim()
+      .replace(/^https?:\/\/(www\.)?cal\.com\//i, '')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '');
+    if (raw.length === 0) {
+      updates['Cal.com Slug'] = '';
+    } else {
+      if (raw.length > 120) {
+        return NextResponse.json({
+          error: 'Cal.com slug looks too long — paste just the part after cal.com/ (e.g. "yourname/buyhalfcow-intro").',
+        }, { status: 400 });
+      }
+      if (!/^[a-zA-Z0-9._\-\/]+$/.test(raw)) {
+        return NextResponse.json({
+          error: 'Cal.com slug can only contain letters, numbers, dashes, underscores, dots, and slashes. Paste just the part after cal.com/.',
+        }, { status: 400 });
+      }
+      updates['Cal.com Slug'] = raw;
+    }
+  }
 
   // If ZIP / City / State changed, re-geocode and store fresh lat/lng so the
   // public map reflects the rancher's chosen location accurately. ZIP-first

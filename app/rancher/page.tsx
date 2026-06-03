@@ -1865,30 +1865,49 @@ export default function RancherDashboardPage() {
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
                     {pageForm['Cal.com Slug'] ? (
-                      <p className="text-xs text-saddle mt-1">
-                        Preview:{' '}
-                        <a
-                          href={`https://cal.com/${pageForm['Cal.com Slug']}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline text-charcoal"
-                        >
-                          https://cal.com/{pageForm['Cal.com Slug']} ↗
-                        </a>
-                      </p>
+                      <div className="text-xs mt-1 space-y-1">
+                        <p className="text-saddle">
+                          Live link:{' '}
+                          <a
+                            href={`https://cal.com/${pageForm['Cal.com Slug']}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline text-charcoal"
+                          >
+                            cal.com/{pageForm['Cal.com Slug']} ↗
+                          </a>
+                        </p>
+                        <p className="text-saddle">
+                          ✓ Confirmed{' '}
+                          <code className="bg-bone px-1">benibeauchman@gmail.com</code>{' '}
+                          is added as Additional Guest on your event? If not, do that now —
+                          it&apos;s how Ben sees every booking.
+                        </p>
+                      </div>
                     ) : (
-                      <p className="text-xs text-dust mt-1">
-                        Don&apos;t have one?{' '}
-                        <a
-                          href="https://cal.com/signup"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline text-saddle"
-                        >
-                          Sign up free at cal.com →
-                        </a>{' '}
-                        Add <code className="bg-bone px-1">benibeauchman@gmail.com</code> as additional invitee so Ben sees every booking.
-                      </p>
+                      <div className="text-xs text-saddle mt-1 space-y-1">
+                        <p className="font-medium text-charcoal">3-step setup:</p>
+                        <ol className="list-decimal pl-5 space-y-0.5">
+                          <li>
+                            <a
+                              href="https://cal.com/signup"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline text-charcoal"
+                            >
+                              Sign up free at cal.com
+                            </a>
+                          </li>
+                          <li>Create a 15-min event type called &ldquo;BuyHalfCow Intro&rdquo;</li>
+                          <li>
+                            Add{' '}
+                            <code className="bg-bone px-1">benibeauchman@gmail.com</code>{' '}
+                            as <strong>Additional Guest</strong> on that event (Cal.com →
+                            Event Type → Limits/Workflows → Add invitee). This is how Ben sees every booking.
+                          </li>
+                        </ol>
+                        <p>Then paste your slug above (e.g. <code className="bg-bone px-1">yourname/buyhalfcow-intro</code>).</p>
+                      </div>
                     )}
                   </div>
 

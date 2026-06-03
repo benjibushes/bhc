@@ -418,6 +418,18 @@ function AccessPageContent() {
       setError('please enter a valid email address.');
       return;
     }
+    // Phone REQUIRED (2026-06-03). Matched ranchers need a callback channel —
+    // email-only buyers ghost ~50% of the time. Block the submit here so the
+    // 400 from /api/consumers is never reached for missing-phone signups.
+    if (!phone.trim()) {
+      setError('phone number is required so your rancher can reach you.');
+      return;
+    }
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (phoneDigits.length < 10) {
+      setError('please enter a valid phone number (at least 10 digits).');
+      return;
+    }
 
     // Intent score — simplified for 5-field form.
     // Timing carries the most signal available; householdSize feeds
@@ -1084,13 +1096,14 @@ function AccessPageContent() {
                     htmlFor="phone"
                     className="block text-sm text-charcoal mb-1"
                   >
-                    phone <span className="text-saddle">(optional — faster rancher intro)</span>
+                    phone <span className="text-saddle">(required so your rancher can reach you)</span>
                   </label>
                   <input
                     id="phone"
                     type="tel"
                     autoComplete="tel"
                     placeholder="555-555-5555"
+                    required
                     className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}

@@ -154,7 +154,14 @@ export async function POST(request: Request) {
       // Fall through — fail-open on suppression check failure
     }
 
-    if (phone && !isValidPhone(phone)) {
+    // Phone REQUIRED (2026-06-03). Previously optional, but matched ranchers
+    // can't reliably reach buyers without it (email-only ghost rate ~50%).
+    // Booking the Cal.com intro call also needs a callback channel, and SMS
+    // opt-in needs a number to send to. Reject signups missing or invalid.
+    if (!phone || !phone.trim()) {
+      return NextResponse.json({ error: 'Phone number is required so your rancher can reach you' }, { status: 400 });
+    }
+    if (!isValidPhone(phone)) {
       return NextResponse.json({ error: 'Please enter a valid phone number' }, { status: 400 });
     }
 

@@ -654,11 +654,11 @@ export async function sendWelcomeAndReadyToBuy(data: {
       <div class="q"><strong>One question:</strong> are you ready to buy in the next 1–2 months?</div>
       <p>If yes, click below. I'll personally match you with a verified rancher in ${esc(stateLabel)} and you'll get an email within minutes with everything you need:</p>
       <ul style="color:#2A2A2A;line-height:1.9;padding-left:22px;">
-        <li><strong>A scheduling link</strong> to book a 15-min call with your rancher at a time they set as available — no phone tag.</li>
+        <li><strong>Direct contact info</strong> — name, email, phone. Plus a 15-min scheduling link if your rancher offers one (most do).</li>
         <li><strong>Current pricing + processing date</strong> right in the email so you don't have to ask.</li>
         <li><strong>A reserve-your-share button</strong> if your rancher takes deposits — secures your slot for the next processing run.</li>
       </ul>
-      <p style="font-size:14px;color:#2A2A2A;">By clicking <strong>Yes</strong> you're confirming you want to be contacted. The rancher will know you're ready, and the next move is yours: book a call, pay a deposit, or reply with questions.</p>
+      <p style="font-size:14px;color:#2A2A2A;">By clicking <strong>Yes</strong> you're confirming you want to be contacted. The rancher will know you're coming and reach out within 24–48 hours. Next move is yours: schedule a call, pay a deposit, or reply with questions.</p>
       <div style="text-align:center;margin:30px 0;">
         <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
         <p style="font-size:13px;color:#A7A29A;margin-top:10px;">One click confirms. We only introduce ranchers to confirmed buyers — keeps quality high on both sides.</p>
@@ -1234,11 +1234,12 @@ export async function sendBuyerIntroNotification(data: {
   <h1>Your Rancher Introduction</h1>
   <p>Hi ${esc(data.firstName)},</p>
   ${readyBlock}
-  <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They know you're coming — easiest way to connect is the scheduling link below.</p>
-  ${calBlock}
+  <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They know you're coming — here's what to do next.</p>
   ${contactBlock}
   ${pricingBlock}
-  ${reserveBlock}
+  ${hasMagicLink
+    ? `${reserveBlock}${calBlock}`
+    : `${calBlock}${reserveBlock}`}
   <p><strong>What to discuss:</strong></p>
   <ul style="color:#6B4F3F;line-height:2">
     <li>What cuts are available and current pricing</li>
