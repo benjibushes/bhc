@@ -424,19 +424,20 @@ export async function POST(request: Request) {
     };
 
     // ── PRIORITY: If lead came from a specific rancher's page, assign to THAT rancher ──
-    // Always assign to the page rancher — even at capacity. They clicked "Buy" on THIS rancher.
-    // Only require Active + Agreement Signed (skip capacity check for direct page leads).
+    // Direct page leads have explicit intent for THIS rancher, so we bypass the
+    // soft capacity cap (the post-INCR 1.2× hard ceiling still applies). But we
+    // MUST run the full operational gate including Subscription Status —
+    // otherwise a past_due rancher gets the lead via their page and the buyer
+    // hits a 409 at deposit checkout (silent revenue blackhole, bug #16 from
+    // 2026-06-02 audit). Reuses the canonical operational gate from
+    // lib/rancherEligibility.ts (Active + Live + Signed + Sub Status pass).
     let directMatchRancher: any = null;
     let matchType: string | null = null;
     if (campaign && campaign.startsWith('rancher-')) {
       const rancherSlug = campaign.replace('rancher-', '');
       directMatchRancher = allRanchers.find((r: any) => {
         const slug = r['Slug'] || '';
-        const activeStatus = r['Active Status'] || '';
-        const agreementSigned = r['Agreement Signed'] || false;
-        const onboardingStatus = r['Onboarding Status'] || '';
-        return slug === rancherSlug && activeStatus === 'Active' && agreementSigned &&
-          (!onboardingStatus || onboardingStatus === 'Live');
+        return slug === rancherSlug && isRancherOperationalForBuyers(r);
       });
       if (directMatchRancher) {
         matchType = 'direct';
@@ -480,8 +481,15 @@ export async function POST(request: Request) {
           // Strict home-only match.
           if (rState !== normalizedBuyerState) return false;
         } else {
+          // Routing States is the ADMIN-CONTROLLED gate. Do NOT fall back to
+          // States Served — that field is rancher-editable in the dashboard
+          // and would let a rancher silently route cross-state by editing
+          // their own profile, defeating the entire 2026-05-13 admin gate.
+          // Fix from 2026-06-02 audit bug #10. If admin flipped Multi-State
+          // without populating Routing States, the rancher routes home-state
+          // only (same as the !adminApprovedMultiState branch).
           const routingRaw = (r['Routing States'] || '').toString().trim();
-          const served = normalizeStates(routingRaw || r['States Served']);
+          const served = normalizeStates(routingRaw);
           if (!(rState === normalizedBuyerState || served.includes(normalizedBuyerState))) return false;
         }
         // Tier Specialty filter — see definition above. Quarter buyers won't
@@ -534,6 +542,52 @@ export async function POST(request: Request) {
       });
 
       topMatch = eligible.length > 0 ? eligible[0] : null;
+
+      // ── NATIONWIDE FALLBACK (2026-06-02) ────────────────────────────────
+      // RULE: if no in-state coverage (no primary-state rancher AND no
+      // admin-approved multi-state rancher serves this buyer's state),
+      // check for ranchers explicitly opted into nationwide shipping via
+      // `Ships Nationwide=true`. This is the ONLY mechanism for cross-state
+      // overflow — the field gates whether a rancher accepts any-state
+      // buyers. Admin toggles per-rancher in /admin/ranchers/[id] OR
+      // rancher self-opts in /rancher dashboard.
+      //
+      // Order of priority preserved:
+      //   1. In-state primary rancher (above sort)
+      //   2. Admin-approved multi-state rancher serving this state (above)
+      //   3. Ships Nationwide fallback (this block) ← only when 1+2 empty
+      //   4. State waitlist letter (below)
+      //
+      // All other gates still apply (operational + capacity + tier + price
+      // + sub-cap). Nationwide ranchers don't bypass capacity — their cap
+      // protects them from drowning in cross-state demand.
+      if (!topMatch) {
+        const nationwideEligible = allRanchers.filter((r: any) => {
+          if (r['Ships Nationwide'] !== true) return false;
+          if (!isEligibleBase(r)) return false;
+          if (!isTierFit(r)) return false;
+          if (!passesFiveBarBeefPolicy(r)) return false;
+          return true;
+        }).filter(isPriceFit);
+
+        nationwideEligible.sort((a: any, b: any) => {
+          const aRefs = a['Current Active Referrals'] || 0;
+          const bRefs = b['Current Active Referrals'] || 0;
+          if (aRefs !== bRefs) return aRefs - bRefs;
+          const aDate = a['Last Assigned At'] ? new Date(a['Last Assigned At']).getTime() : 0;
+          const bDate = b['Last Assigned At'] ? new Date(b['Last Assigned At']).getTime() : 0;
+          if (aDate !== bDate) return aDate - bDate;
+          const aScore = a['Performance Score'] || 50;
+          const bScore = b['Performance Score'] || 50;
+          return bScore - aScore;
+        });
+
+        if (nationwideEligible.length > 0) {
+          topMatch = nationwideEligible[0];
+          matchType = 'nationwide';
+          console.log(`[match] Nationwide fallback fired: ${topMatch['Operator Name']} (${topMatch['State']}) -> buyer in ${normalizedBuyerState}`);
+        }
+      }
     }
 
     // ── NO-MATCH SHORT-CIRCUIT (2026-05-09 fix) ──
@@ -585,7 +639,7 @@ export async function POST(request: Request) {
       'Suggested Rancher': [topMatch.id],
       'Suggested Rancher Name': topMatch['Operator Name'] || topMatch['Ranch Name'] || '',
       'Suggested Rancher State': topMatch['State'] || '',
-      'Match Type': matchType === 'direct' ? 'Direct (Rancher Page)' : 'Local',
+      'Match Type': matchType === 'direct' ? 'Direct (Rancher Page)' : matchType === 'nationwide' ? 'Nationwide' : 'Local',
       // State Allocation: source state used for the per-state sub-cap math
       // on future matches. Stamped on every new referral so the activeRefs
       // grouping in subsequent calls knows which state's bucket this slot
