@@ -224,107 +224,26 @@ export async function GET(request: Request) {
     const gateRancherName = '';
     const gateRancherState = '';
 
-    let matchedRancherName = '';
-    let matchedRancherState = '';
-
-    if (!gateActive) {
-      // ── IMMEDIATE ROUTE on YES click ──────────────────────────────────
-      // The user's vision: signup → welcome → ready-to-buy prompt → click →
-      // intro fires within seconds. We trigger matching/suggest synchronously
-      // here so the buyer + rancher get the intro emails before they even
-      // close their browser tab. matching/suggest is idempotent — if they
-      // already have an active referral it returns the existing one cleanly.
-      //
-      // NOTE: this fires on EVERY click, not just the first. Previously we
-      // gated on `!wasAlreadyEngaged` — but that left a hole where a buyer
-      // who engaged when no rancher was live (or rancher was at capacity)
-      // could click again later and have nothing happen. Re-attempting is
-      // safe because matching/suggest is idempotent.
-      //
-      // Buyer Stage flip happens AFTER matching/suggest returns. Previously
-      // we pre-emptively flipped to MATCHED before firing matching, which
-      // stranded buyers in MATCHED stage with no referral when matching
-      // failed (no rancher available, all at capacity, etc.). Now:
-      //   - matchFound      → MATCHED
-      //   - alreadyActive   → MATCHED (idempotent re-click, prior match holds)
-      //   - no match        → READY (engaged, waiting for capacity to open)
-      //   - matching errored → READY (recovery cron will retry)
-      let matchOutcome: 'matched' | 'ready' = 'ready';
-      if (consumer['Email'] && consumer['State']) {
-        try {
-          const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
-            },
-            body: JSON.stringify({
-              buyerState: consumer['State'],
-              buyerId: payload.consumerId,
-              buyerName: consumer['Full Name'] || '',
-              buyerEmail: consumer['Email'],
-              buyerPhone: consumer['Phone'] || '',
-              orderType: consumer['Order Type'] || '',
-              budgetRange: consumer['Budget'] || '',
-              intentScore: consumer['Intent Score'] || 0,
-              intentClassification: consumer['Intent Classification'] || '',
-              notes: consumer['Notes'] || '',
-              // Hot-lead bypass: warmup-engaged buyers can route to over-cap
-              // ranchers. Matching/suggest will fire a Telegram alert if the
-              // bypass triggers.
-              warmupEngaged: true,
-            }),
-          });
-          if (matchRes.ok) {
-            try {
-              const j = await matchRes.json();
-              if (j.suggestedRancher?.name) {
-                matchedRancherName = j.suggestedRancher.name;
-                matchedRancherState = j.suggestedRancher.state || '';
-              }
-              if (j.matchFound || j.alreadyActive) {
-                matchOutcome = 'matched';
-              }
-            } catch { /* non-fatal: redirect to /member fallback below */ }
-          } else {
-            console.warn(`Immediate route attempt for ${payload.consumerId} returned ${matchRes.status} — buyer flagged Ready to Buy, will route on next opportunity`);
-          }
-        } catch (e: any) {
-          console.error('Immediate route on YES click failed:', e?.message);
-        }
-      }
-
-      // Now flip stage based on outcome. READY means "engaged + waiting for
-      // capacity"; the stuck-buyer-recovery cron retries READY buyers daily.
-      //
-      // MISMATCH FIX: prior version swallowed errors silently. Buyer's
-      // Warmup Engaged At was already stamped (line 254 above), so on a
-      // stage-flip failure the buyer entered a half-engaged state: cron
-      // can't see them in MATCHED/READY and skips, but Warmup Engaged At=true
-      // marks them as "already engaged" for re-warm-cohort. Now: surface to
-      // Telegram so operator can manually fix the stage.
-      try {
-        const { transitionBuyerStage } = await import('@/lib/contracts');
-        await transitionBuyerStage(
-          payload.consumerId,
-          matchOutcome === 'matched' ? 'MATCHED' : 'READY',
-          `engage:${matchOutcome}`,
-        );
-      } catch (e: any) {
-        console.error('[warmup/engage] stage flip failed:', e?.message);
-        try {
-          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
-          await sendOperatorSignal({
-            urgency: 'loud',
-            kind: 'system-error',
-            summary: `🚨 ENGAGE STAGE FLIP FAILED: ${consumer['Full Name'] || consumer['Email'] || payload.consumerId} clicked YES but Buyer Stage write threw`,
-            detail: `Warmup Engaged At stamped (Ready to Buy=true). Manually set Buyer Stage='${matchOutcome === 'matched' ? 'MATCHED' : 'READY'}' in Airtable so cron picks them up. Error: ${(e?.message || 'unknown').slice(0, 200)}`,
-            refs: [{ type: 'consumer', id: payload.consumerId, label: consumer['Full Name'] || consumer['Email'] || '?' }],
-            dedupeKey: `engage-stage-fail:${payload.consumerId}`,
-          });
-        } catch {}
-      }
-    }
+    // ── QUALIFICATION GATE INTERSTITIAL (2026-06-03) ─────────────────────
+    // YES click NO LONGER fires matching/suggest synchronously. Instead the
+    // buyer is redirected to /qualify/<consumerId>?token=<qualifyJwt> where
+    // a gamified 4-question quiz validates real intent (tier, timing, storage,
+    // ack). Only after the quiz passes does /api/qualify fire matching/suggest
+    // and either route to the rancher OR (for tier_v2 ranchers) jump straight
+    // to /checkout/<refId>/deposit.
+    //
+    // Rancher value: only QUALIFIED buyers (cleared all 4 questions + ack'd
+    // commitment) reach their inbox. Eliminates window-shoppers + bot YES
+    // clicks. Buyer value: clearer expectations + ability to skip the call
+    // and pay deposit immediately if they know what they want.
+    //
+    // Stage transition: still flip to MATCHED inside /api/qualify (after
+    // routing succeeds). Here we just stamp engagement (already done above)
+    // and prepare the auth session for the /qualify page.
+    //
+    // Backwards-compat: if the buyer already passed quiz and re-clicks YES
+    // (rare — they got a duplicate RTB email), /qualify GET will detect
+    // Qualification Path is set and skip straight to /matched.
 
     // Auto-login: the warmup JWT already verified this person owns the
     // consumerId (only they have the email-issued token). That's enough auth
@@ -349,17 +268,34 @@ export async function GET(request: Request) {
       { expiresIn: '30d' }
     );
 
-    // Ceremonial handoff page —
-    //   • gateActive  → /matched?rancher=...&state=...&pending=true (vetting copy)
-    //   • match found → /matched?rancher=...&state=...           (standard handoff)
-    //   • no match    → /member?warmup=engaged                    (logged-in fallback)
+    // Qualification gate handoff —
+    //   • already-qualified (rare re-click) → /matched
+    //   • first-time YES click             → /qualify/<consumerId>?token=<qualifyJwt>
+    //
+    // The qualify JWT is short-lived (24h) and scoped to ONE consumerId. It's
+    // what /api/qualify verifies on quiz submission. Separate from the member-
+    // session cookie because we want the page to be one-shot (refreshes after
+    // quiz pass redirect to /matched naturally).
+    const alreadyQualified =
+      !!consumer['Qualified At'] &&
+      String(consumer['Qualification Path'] || '') !== 'incomplete';
     let handoffUrl: string;
-    if (gateActive && gateRancherName) {
-      handoffUrl = `${SITE_URL}/matched?rancher=${encodeURIComponent(gateRancherName)}&state=${encodeURIComponent(gateRancherState)}&pending=true`;
-    } else if (matchedRancherName) {
-      handoffUrl = `${SITE_URL}/matched?rancher=${encodeURIComponent(matchedRancherName)}&state=${encodeURIComponent(matchedRancherState)}`;
+    if (alreadyQualified) {
+      // Buyer already passed the quiz once — skip to /matched. Their existing
+      // referral is still in play; matching/suggest was already fired by the
+      // first /api/qualify call.
+      handoffUrl = `${SITE_URL}/matched?already=qualified`;
     } else {
-      handoffUrl = `${SITE_URL}/member?warmup=engaged`;
+      const qualifyJwt = jwt.sign(
+        {
+          type: 'qualify-access',
+          consumerId: payload.consumerId,
+          email: (consumer['Email'] || '').trim().toLowerCase(),
+        },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+      handoffUrl = `${SITE_URL}/qualify/${encodeURIComponent(payload.consumerId)}?token=${encodeURIComponent(qualifyJwt)}`;
     }
     const response = NextResponse.redirect(handoffUrl);
     response.cookies.set('bhc-member-auth', sessionToken, {

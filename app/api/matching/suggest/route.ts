@@ -890,10 +890,38 @@ export async function POST(request: Request) {
 
         // Look up Ready-to-Buy state on the buyer record so the rancher email
         // emphasizes urgency. Don't fail the route if Airtable hiccups.
+        // Also pull qualification quiz answers so the rancher sees what the
+        // buyer committed to (tier / timing / storage / ack). Qualified buyers
+        // = much higher close rate; surfacing the gate they cleared signals
+        // quality to the rancher.
         let buyerReadyToBuy = false;
+        let qualBlock = '';
         try {
           const buyerRec: any = await getRecordById(TABLES.CONSUMERS, buyerId);
           buyerReadyToBuy = !!buyerRec['Ready to Buy'];
+          const qualScore = Number(buyerRec['Qualification Score'] || 0);
+          const qualRaw = String(buyerRec['Qualification Answers'] || '');
+          if (qualScore >= 75 && qualRaw) {
+            try {
+              const qa = JSON.parse(qualRaw);
+              const storageLabels: Record<string, string> = {
+                have_freezer: 'Has freezer space',
+                need_freezer: 'Buying a freezer',
+                rancher_holds: 'Needs rancher to hold short-term',
+                cuts_only: 'Pickup cuts only',
+              };
+              qualBlock = `<div style="background:#F4F1EC;border:2px solid #0E0E0E;padding:14px 18px;margin:16px 0;font-size:14px;color:#0E0E0E;">
+                <p style="margin:0 0 8px 0;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">⭐ Qualified buyer — ${qualScore}/100</p>
+                <p style="margin:4px 0;"><strong>Tier:</strong> ${qa.tier || 'unspecified'}</p>
+                <p style="margin:4px 0;"><strong>Timing:</strong> ${qa.timing || 'unspecified'}</p>
+                <p style="margin:4px 0;"><strong>Storage:</strong> ${storageLabels[qa.storage] || qa.storage || 'unspecified'}</p>
+                <p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;">Buyer cleared the 4-question qualification quiz and acknowledged commitment to respond within 24 hours.</p>
+              </div>`;
+            } catch {
+              // Bad JSON — show raw fallback so the data isn't lost.
+              qualBlock = `<p style="font-size:13px;color:#6B4F3F;"><strong>Qualification:</strong> ${qualScore}/100</p>`;
+            }
+          }
         } catch {}
 
         // Send rancher the buyer's info. Wrap in try/catch + Telegram alert
@@ -968,6 +996,7 @@ export async function POST(request: Request) {
                 <h1 style="font-family:Georgia,serif;">New Qualified Buyer Lead</h1>
                 <p>Hi ${rancherName},</p>
                 ${readyBanner}
+                ${qualBlock}
                 <p>A qualified buyer in your area just came through BuyHalfCow and has been connected to you:</p>
                 <p><strong>Buyer:</strong> ${buyerName}</p>
                 <p><strong>Email:</strong> ${buyerEmail}</p>
