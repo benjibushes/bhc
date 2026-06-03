@@ -84,7 +84,7 @@ export function isQualifiedForRancherMatch(opts: {
  *       (a) Warmup Engaged At is set (clicked YES on launch warmup), OR
  *       (b) Created within last 14 days AND Intent Score >= 80 (fresh hot lead)
  */
-export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: string; signal?: 'ready-to-buy' | 'warmup-engaged' | 'fresh-hot-signup' } {
+export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: string; signal?: 'qualified-quiz' | 'ready-to-buy' | 'warmup-engaged' | 'fresh-hot-signup' } {
   if (!buyer) return { ok: false, reason: 'no buyer record' };
 
   // Operator-vetted
@@ -122,22 +122,31 @@ export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: strin
     return { ok: false, reason: 'just exploring — buyer hasn\'t committed yet' };
   }
 
-  // CONSENT SIGNAL — exactly two paths qualify, both require an explicit click.
+  // CONSENT SIGNAL — three tiers, top-priority first.
   // Quality over quantity: a buyer never reaches a rancher's inbox unless
   // they actively pressed a button affirming they want this introduction.
   //
-  // (a) Explicit "Ready to Buy" — clicked YES on the new ready-to-buy prompt
-  //     email or any warmup email (the YES CTA sets Ready to Buy = true).
+  // (a) PRIMARY (2026-06-03): qualified via 4-question quiz at /qualify.
+  //     Strongest signal we have — buyer answered tier/timing/storage and
+  //     acknowledged the commitment. Score >=75 already filtered upstream.
+  //     All new buyers MUST go through this path.
+  const qualScore = Number(buyer['Qualification Score'] || 0);
+  if (buyer['Qualified At'] && qualScore >= 75) {
+    return { ok: true, signal: 'qualified-quiz' };
+  }
+
+  // (b) LEGACY (pre-2026-06-03): clicked YES on the old Ready-to-Buy email.
+  //     Grandfathered for buyers in DB before the quiz shipped. Once these
+  //     drain through close cycles, this fallback can be removed.
   if (buyer['Ready to Buy']) return { ok: true, signal: 'ready-to-buy' };
 
-  // (b) Legacy warmup engagement — clicked YES on a launch warmup before the
-  //     CTA was renamed. Same explicit-click signal, just older copy.
+  // (c) LEGACY: clicked YES on a launch warmup before the CTA was renamed.
   if (buyer['Warmup Engaged At']) return { ok: true, signal: 'warmup-engaged' };
 
-  // No path 3 by design. Fresh signups, regardless of intent score or form
-  // completeness, must click the Ready-to-Buy prompt email before any rancher
-  // hears about them. Form completion alone is not enough — the click is.
-  return { ok: false, reason: 'no explicit consent click yet — buyer must click "Ready to Buy" to be routed' };
+  // No path 4 by design. Fresh signups, regardless of intent score or form
+  // completeness, must complete /qualify before any rancher hears about them.
+  // Form completion alone is not enough — the quiz click is.
+  return { ok: false, reason: 'no qualification signal yet — buyer must complete /qualify quiz to be routed' };
 }
 
 /**

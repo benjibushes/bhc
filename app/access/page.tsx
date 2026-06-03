@@ -489,6 +489,7 @@ function AccessPageContent() {
       }
 
       let consumerIdForCapi: string | undefined;
+      let qualifyRedirect: string | null = null;
       try {
         const data = await response.json();
         setSubmittedRancherAvailable(!!data?.rancherAvailable);
@@ -497,9 +498,24 @@ function AccessPageContent() {
           setSubmittedConsumerId(consumerId);
           consumerIdForCapi = consumerId;
         }
+        // /api/consumers returns qualifyUrl for hot signups (intent>=60 +
+        // in-state rancher + concrete tier/budget/timing). Redirect directly
+        // to the gamified quiz so the buyer never has to wait for the
+        // welcome email. Single-page flow: signup → qualify → match.
+        if (typeof data?.qualifyUrl === 'string' && data.qualifyUrl.startsWith('http')) {
+          qualifyRedirect = data.qualifyUrl;
+        }
       } catch {}
 
       setIsSubmitted(true);
+
+      if (qualifyRedirect) {
+        // Use window.location so any extension/router state is cleared and the
+        // qualify page mounts fresh. router.push would keep the /access state
+        // in memory which could leak if buyer navigates back.
+        window.location.href = qualifyRedirect;
+        return;
+      }
 
       // Analytics — both systems.
       // E-4 audit fix: server CAPI Lead at app/api/consumers/route.ts:394

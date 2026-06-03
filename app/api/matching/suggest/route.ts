@@ -73,6 +73,40 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Unrecognized buyer state: ${buyerState}` }, { status: 400 });
     }
 
+    // ── QUALIFICATION TELEMETRY (2026-06-03) ────────────────────────────
+    // /api/qualify is the canonical buyer-initiated entry point. Anything
+    // else that calls matching/suggest is either an operator action (admin
+    // go-live, manual reassign) or a legacy code path that hasn't been
+    // updated to gate on Qualified At yet.
+    //
+    // This block does NOT block — soft-log only. Telegram fires once per
+    // buyer-day so we see bypass volume without spam. Once telemetry shows
+    // no bypass for a stretch, flip to a hard 412 gate.
+    try {
+      const buyerRecForGate: any = await getRecordById(TABLES.CONSUMERS, buyerId);
+      if (buyerRecForGate && !buyerRecForGate['Qualified At']) {
+        const buyerLabel =
+          buyerRecForGate['Full Name'] || buyerRecForGate['Email'] || buyerId;
+        console.warn(
+          `[matching/suggest] BYPASS WARNING — buyer ${buyerLabel} routed without Qualified At`,
+        );
+        // Best-effort Telegram telemetry. Doesn't block routing.
+        try {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `⚠️ <b>QUALIFICATION BYPASS</b>\n\n` +
+              `Buyer: ${buyerLabel} (${buyerRecForGate['State'] || '?'})\n` +
+              `Called matching/suggest without first completing /qualify.\n\n` +
+              `<i>Likely caller: admin action, batch-approve, or a legacy member route. Not blocked.</i>`,
+          );
+        } catch {}
+      }
+    } catch (e: any) {
+      console.warn(
+        `[matching/suggest] qualification telemetry skipped: ${e?.message}`,
+      );
+    }
+
     // ── Guard: skip if buyer already has an active referral ────────────────
     // Prevents duplicate referrals when waitlisted retry re-calls this endpoint.
     //

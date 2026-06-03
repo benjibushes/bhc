@@ -438,6 +438,11 @@ export async function POST(request: Request) {
     //   rancher in state, auto-routed  → MATCHED  (matching/suggest fired intro)
     //   rancher in state, not routed   → READY    (welcome includes YES button)
     //   not approved (rare path)       → NEW      (sendConsumerConfirmation only)
+    // Hoisted so the final response builder (after the try block) can include
+    // the qualifyUrl when the buyer should be redirected directly to /qualify
+    // instead of waiting for the welcome+RTB email.
+    let qualifyUrlForResponse: string | null = null;
+
     if (status === 'Approved') {
       const isRancherPageLead = (campaign || '').startsWith('rancher-');
       let buyerStage: 'WAITING' | 'READY' | 'MATCHED' = 'WAITING';
@@ -446,104 +451,65 @@ export async function POST(request: Request) {
         const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
         const hasInStateRancher = hasOperationalRancherForState(allRanchers, state);
 
-        // Beef-buyer auto-route attempt (only when rancher available + form qualified)
-        // Rancher-page-leads are routed in backgroundTasks below; skip here.
-        let autoRouted = false;
+        // ── QUALIFICATION GATE REDIRECT (2026-06-03) ─────────────────────
+        // Previously: high-intent signup → matching/suggest fires immediately
+        // → rancher gets intro before buyer even sees the welcome email.
+        //
+        // Now: ALL beef-buyer signups must clear /qualify before any rancher
+        // sees them. For high-intent signups w/ a state-matched rancher, mint
+        // a qualify JWT and return qualifyUrl in the response so /access can
+        // redirect the buyer directly to the gamified quiz. They never wait
+        // on email delivery. Low-intent signups still get the welcome+RTB
+        // email and reach /qualify via the YES click.
+        //
+        // No bypass: matching/suggest is no longer called here. /api/qualify
+        // is the SINGLE entry point that fires routing for buyer-initiated
+        // flows. Eliminates the lead-quality leak.
+        let qualifyUrl: string | null = null;
+        let redirectToQualify = false;
         if (hasInStateRancher && consumerSegment === 'Beef Buyer' && !isRancherPageLead) {
-          // QUALITY GATE — protects rancher reputation; sub-budget leads bash the
-          // platform when they see real prices. Buyers who fail still get the
-          // welcome email (with YES button) and can opt in via click — not blocked.
           const isJustExploring = /just exploring/i.test(budgetRange || '') ||
             /just exploring/i.test(timing || '');
           const isFutureTiming = /3-6 months/i.test(timing || '');
-          // Phone optional for high-intent (>=80) buyers — phone signal is
-          // already baked into the intent score itself (lib has +15 for phone).
-          // Requiring it as a hard gate dropped ~15% of high-quality signups.
-          // Score >=80 means the buyer cleared the bar even without phone, so
-          // route them. Medium-intent (60-79) still requires phone as proxy
-          // for seriousness.
+          // Phone is REQUIRED at signup (2026-06-03), so the (intent>=80 || phone)
+          // ladder collapses to just intent>=60. Sub-60 intents stay on the
+          // welcome email path so the buyer self-selects via YES click.
           const formIsQualified =
             !!orderType && !!budgetRange &&
             !/unsure|not sure/i.test(orderType) &&
             !/unsure/i.test(budgetRange) &&
             !isJustExploring &&
             !isFutureTiming &&
-            serverIntentScore >= 60 &&
-            (serverIntentScore >= 80 || !!phone);
+            serverIntentScore >= 60;
 
           if (formIsQualified) {
+            const qualifyToken = jwt.sign(
+              { type: 'qualify-access', consumerId: record.id, email: email.trim().toLowerCase() },
+              JWT_SECRET,
+              { expiresIn: '24h' }
+            );
+            qualifyUrl = `${SITE_URL}/qualify/${encodeURIComponent(record.id)}?token=${encodeURIComponent(qualifyToken)}`;
+            qualifyUrlForResponse = qualifyUrl;
+            redirectToQualify = true;
+            // Mark Ready to Buy so the existing tooling treats this buyer as
+            // engaged (same as a YES click would). Warmup Engaged At gets
+            // stamped after they actually complete the quiz in /api/qualify.
             try {
-              const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
-                },
-                body: JSON.stringify({
-                  buyerState: state,
-                  buyerId: record.id,
-                  buyerName: fullName.trim(),
-                  buyerEmail: email.trim().toLowerCase(),
-                  buyerPhone: phone || '',
-                  orderType: orderType || '',
-                  budgetRange: budgetRange || '',
-                  intentScore: serverIntentScore,
-                  intentClassification: serverIntentClassification,
-                  notes: notes || '',
-                  warmupEngaged: false, // fresh signup is normal capacity
-                }),
+              await updateRecord(TABLES.CONSUMERS, record.id, {
+                'Ready to Buy': true,
               });
-              if (matchRes.ok) {
-                const j = await matchRes.json();
-                if (j.matchFound) autoRouted = true;
-              } else {
-                // MISMATCH FIX: previously this branch fell through silently —
-                // non-2xx from matching/suggest (auth fail, 5xx, rate limit)
-                // left autoRouted=false with no operator alert. Now ping admin
-                // so the orphan is visible. Same shape as the fetch-failure
-                // catch below so operator sees a uniform "signup matching
-                // failed" alert regardless of failure mode.
-                const status = matchRes.status;
-                let bodySnippet = '';
-                try {
-                  bodySnippet = (await matchRes.text()).slice(0, 200);
-                } catch {}
-                console.error(`Signup auto-route HTTP ${status}:`, bodySnippet);
-                try {
-                  const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
-                  await sendTelegramMessage(
-                    TELEGRAM_ADMIN_CHAT_ID,
-                    `⚠️ <b>SIGNUP MATCHING HTTP ${status}</b>\n\n` +
-                    `Buyer: ${fullName} (${email})\nState: ${state}\nScore: ${serverIntentScore}\n\n` +
-                    `Body: <code>${bodySnippet.slice(0, 160).replace(/</g, '&lt;')}</code>\n\n` +
-                    `<i>Consumer record was created; matching/suggest returned non-2xx. batch-approve will retry within 2h.</i>`
-                  );
-                } catch {}
-              }
             } catch (e: any) {
-              // Hardening 2026-05-13: fetch failures used to log-and-forget,
-              // stranding the consumer. Now ping admin so the orphan is
-              // visible AND batch-approve still gets a shot on next tick.
-              console.error('Signup auto-route failed:', e?.message);
-              try {
-                const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
-                await sendTelegramMessage(
-                  TELEGRAM_ADMIN_CHAT_ID,
-                  `⚠️ <b>SIGNUP MATCHING FETCH FAILED</b>\n\n` +
-                  `Buyer: ${fullName} (${email})\nState: ${state}\nScore: ${serverIntentScore}\n\n` +
-                  `Error: ${(e?.message || 'unknown').slice(0, 200)}\n\n` +
-                  `<i>Consumer record was created; matching/suggest never ran. batch-approve will retry within 2h.</i>`
-                );
-              } catch {}
+              console.warn('[signup] Ready-to-Buy stamp failed:', e?.message);
             }
           }
         }
 
         // Determine stage + send the appropriate single welcome email
-        if (autoRouted) {
-          // matching/suggest already sent the intro emails — no welcome needed.
-          // Buyer Stage = MATCHED.
-          buyerStage = 'MATCHED';
+        if (redirectToQualify) {
+          // Hot signup — /access is about to redirect them to /qualify directly.
+          // No welcome email needed; the quiz page IS the welcome experience.
+          // Stage stays READY; /api/qualify will flip to MATCHED post-quiz pass.
+          buyerStage = 'READY';
         } else if (hasInStateRancher && !isRancherPageLead) {
           // Rancher available, not auto-routed (form not qualified or rancher full).
           // Send welcome with YES button — engageUrl drives the matching click later.
@@ -606,7 +572,7 @@ export async function POST(request: Request) {
         // Replaces a direct updateRecord that bypassed the funnel telemetry +
         // duplicated the stage-write logic seen in /api/warmup/engage,
         // /api/matching/suggest, and the rancher PATCH handler.
-        await transitionBuyerStage(record.id, buyerStage, `signup:${autoRouted ? 'auto-routed' : isRancherPageLead ? 'rancher-page' : hasInStateRancher ? 'in-state' : 'no-rancher'}`);
+        await transitionBuyerStage(record.id, buyerStage, `signup:${redirectToQualify ? 'qualify-redirect' : isRancherPageLead ? 'rancher-page' : hasInStateRancher ? 'in-state' : 'no-rancher'}`);
       } catch (e) {
         console.error('Post-approval flow error:', e);
       }
@@ -746,6 +712,10 @@ export async function POST(request: Request) {
       success: true,
       consumer: record,
       rancherAvailable,
+      // /access form checks for qualifyUrl and router.push() if present.
+      // Hot signups (intent>=60 + in-state rancher + concrete tier/budget/timing)
+      // get routed directly to the gamified quiz instead of waiting for email.
+      qualifyUrl: qualifyUrlForResponse,
     }, { status: 201 });
   } catch (error: any) {
     // Sanitize: never echo internal error messages to the client (may leak

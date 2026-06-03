@@ -4,6 +4,8 @@ import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
+import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 30;
 
@@ -31,6 +33,27 @@ export async function POST(request: Request) {
     const consumer: any = await getRecordById(TABLES.CONSUMERS, memberId);
     if (!consumer) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
+
+    // ── QUALIFICATION GATE (2026-06-03) ────────────────────────────────
+    // Dashboard RTB click was previously a direct shortcut to matching/suggest.
+    // Now: if the buyer hasn't completed /qualify, redirect them through the
+    // gamified quiz first. Mint a fresh 24h JWT + return qualifyUrl so the
+    // client can router.push. Keeps the rancher-quality bar consistent across
+    // every entry point (signup, email YES click, dashboard RTB).
+    if (!consumer['Qualified At']) {
+      const qualifyToken = jwt.sign(
+        { type: 'qualify-access', consumerId: memberId, email: (memberEmail || '').toLowerCase() },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+      const qualifyUrl = `${SITE_URL}/qualify/${encodeURIComponent(memberId)}?token=${encodeURIComponent(qualifyToken)}`;
+      return NextResponse.json({
+        success: false,
+        needsQualification: true,
+        qualifyUrl,
+        message: 'Answer 4 quick questions to confirm your match.',
+      }, { status: 200 });
     }
 
     const buyerName = consumer['Full Name'] || '';
