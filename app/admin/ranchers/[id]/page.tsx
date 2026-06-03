@@ -238,6 +238,25 @@ export default function AdminRancherDetailPage() {
                 >
                   🕵️ View Dashboard as Rancher
                 </button>
+                {String(rancher.pricing_model || '').toLowerCase() !== 'tier_v2' && (
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Send v2 upgrade invite to ${rancher.operator_name || rancher.ranch_name}? Email explains the deposit standardization + opens wizard for tier subscription + Stripe Connect.`)) return;
+                      const res = await fetch(`/api/admin/ranchers/${id}/send-v2-upgrade`, { method: 'POST' });
+                      if (!res.ok) {
+                        const t = await res.text();
+                        alert('Upgrade invite failed — check console');
+                        console.error(t);
+                        return;
+                      }
+                      alert(`✓ Upgrade invite sent to ${rancher.email}`);
+                    }}
+                    className="px-4 py-2 text-sm border border-[#C99A2E] bg-[#FFF6E0] text-[#0E0E0E] hover:bg-[#FFE9B0]"
+                    title="Sends the rancher a 5-min wizard link to pick a tier, complete Stripe Connect, and start collecting deposits via the platform. Currently shows because Pricing Model is not tier_v2."
+                  >
+                    🚀 Send V2 Upgrade Invite
+                  </button>
+                )}
                 <button
                   onClick={handleSave}
                   disabled={saving}

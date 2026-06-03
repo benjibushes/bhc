@@ -73,6 +73,21 @@ export async function GET(request: Request) {
       verification_method: record['Verification Method'] || '',
       verification_notes: record['Verification Notes'] || '',
       ships_nationwide: record['Ships Nationwide'] || false,
+      // Pricing Model + tier + Stripe Connect status — surfaced so admin UI
+      // can show v2 upgrade button for legacy ranchers + adoption funnel.
+      pricing_model: record['Pricing Model'] || 'legacy',
+      tier: (() => {
+        const t = record['Tier'];
+        if (!t) return '';
+        if (typeof t === 'object' && 'name' in t) return String(t.name || '');
+        return String(t);
+      })(),
+      subscription_status: record['Subscription Status'] || '',
+      stripe_connect_account_id: record['Stripe Account Id'] || record['Stripe Connect Account Id'] || '',
+      v2_upgrade_invite_sent_at: record['V2 Upgrade Invite Sent At'] || '',
+      quarter_deposit: record['Quarter Deposit'] || null,
+      half_deposit: record['Half Deposit'] || null,
+      whole_deposit: record['Whole Deposit'] || null,
       quarter_clicks: record['Quarter Clicks'] || 0,
       half_clicks: record['Half Clicks'] || 0,
       whole_clicks: record['Whole Clicks'] || 0,

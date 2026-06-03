@@ -3232,19 +3232,45 @@ function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
     );
   }
 
-  // Discovery state — pitch the upgrade.
+  // Discovery state — pitch the upgrade. Loud + clear; we're standardizing
+  // the funnel so every rancher collects deposits via the platform. Buyers
+  // are now gated through the /qualify quiz, so deposit-funded buyers ARE
+  // ready to commit by the time they hit your inbox.
   return (
-    <div className="p-4 border-l-4 border-blue-500 bg-blue-50 flex items-center justify-between gap-4 flex-wrap">
-      <p className="text-sm text-blue-900">
-        <strong>Skip the commission invoice. Get paid by Stripe direct.</strong>{' '}
-        Pick a paid tier ($150/$350/$500/mo) → Stripe collects buyer deposits → BHC&rsquo;s cut comes off the top → the rest hits your bank automatically.
-      </p>
-      <a
-        href="/partner"
-        className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-blue-700 text-white hover:bg-blue-800 transition-colors"
-      >
-        See plans →
-      </a>
+    <div className="border-2 border-charcoal bg-bone p-5 md:p-6 space-y-4">
+      <div className="flex items-start gap-3 flex-wrap">
+        <span className="text-2xl leading-none">🚀</span>
+        <div className="flex-1 min-w-[260px]">
+          <p className="text-xs uppercase tracking-widest text-saddle mb-1">Action required — funnel upgrade</p>
+          <h3 className="font-serif text-xl text-charcoal mb-2">
+            Switch to platform-collected deposits
+          </h3>
+          <p className="text-sm text-charcoal leading-relaxed">
+            We&rsquo;re standardizing every rancher onto the same checkout. Buyers pay deposit
+            on the platform → money lands in <strong>your</strong> Stripe account same-day. No invoice
+            chase. Buyers who deposit don&rsquo;t ghost — they&rsquo;ve committed cash, so
+            close rate jumps.
+          </p>
+        </div>
+      </div>
+
+      <ul className="text-sm text-saddle leading-relaxed space-y-1.5 pl-2">
+        <li>✓ Same commission rate you signed up for — collected at deposit instead of after the close</li>
+        <li>✓ One-click final invoice when processing&rsquo;s done (BHC takes 0% on the final)</li>
+        <li>✓ Buyers see Reserve-Your-Share button on every match — fewer questions, more closes</li>
+      </ul>
+
+      <div className="flex items-center justify-between gap-4 flex-wrap pt-2 border-t border-dust">
+        <p className="text-xs text-saddle">
+          Takes 5 min: pick subscription tier ($150/$350/$500/mo) → Stripe Connect → set deposits per tier.
+        </p>
+        <a
+          href="/partner"
+          className="inline-flex items-center gap-1 px-5 py-2.5 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
+        >
+          Start the upgrade →
+        </a>
+      </div>
     </div>
   );
 }
