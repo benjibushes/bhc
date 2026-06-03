@@ -1099,6 +1099,9 @@ export async function POST(request: Request) {
               // tier_v2 only — undefined for legacy ranchers (preserves the
               // tap-any-tier Payment Link copy in the email template).
               depositMagicLinkUrl,
+              // Rancher's Cal.com slug — drives the "Schedule 15-min call" CTA.
+              // Falsy → email falls back to email/phone contact box only.
+              calComSlug: topMatch['Cal.com Slug'] || undefined,
             });
           } catch (e: any) {
             console.error('Buyer intro email failed:', e?.message);

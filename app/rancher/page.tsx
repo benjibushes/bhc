@@ -21,6 +21,7 @@ interface RancherInfo {
   maxActiveReferrals: number;
   monthlyCapacity: number;
   beefTypes: string;
+  calComSlug?: string;
   statesServed: string;
   preferredStates?: string;
   routingStates?: string;
@@ -263,6 +264,7 @@ export default function RancherDashboardPage() {
         'Preferred States': r.preferredStates || r.statesServed || '',
         'Ships Nationwide': r.shipsNationwide ? 'true' : '',
         'Beef Types': r.beefTypes || '',
+        'Cal.com Slug': r.calComSlug || '',
         'Certifications': r.certifications || '',
         'Team Emails': (r as any).teamEmails || '',
       });
@@ -1841,6 +1843,53 @@ export default function RancherDashboardPage() {
                       placeholder="Angus, Hereford"
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                     />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">
+                      Cal.com Booking Link
+                      <span className="text-dust font-normal"> (so buyers can self-schedule a call with you)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={pageForm['Cal.com Slug'] || ''}
+                      onChange={e =>
+                        setPageForm(p => ({
+                          ...p,
+                          'Cal.com Slug': e.target.value
+                            .trim()
+                            .replace(/^https?:\/\/(www\.)?cal\.com\//, ''),
+                        }))
+                      }
+                      placeholder="yourname or yourname/buyhalfcow-intro"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                    />
+                    {pageForm['Cal.com Slug'] ? (
+                      <p className="text-xs text-saddle mt-1">
+                        Preview:{' '}
+                        <a
+                          href={`https://cal.com/${pageForm['Cal.com Slug']}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline text-charcoal"
+                        >
+                          https://cal.com/{pageForm['Cal.com Slug']} ↗
+                        </a>
+                      </p>
+                    ) : (
+                      <p className="text-xs text-dust mt-1">
+                        Don&apos;t have one?{' '}
+                        <a
+                          href="https://cal.com/signup"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline text-saddle"
+                        >
+                          Sign up free at cal.com →
+                        </a>{' '}
+                        Add <code className="bg-bone px-1">benibeauchman@gmail.com</code> as additional invitee so Ben sees every booking.
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-1">

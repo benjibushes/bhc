@@ -47,6 +47,7 @@ export async function PATCH(request: Request) {
       'Preferred States',
       'Ships Nationwide',
       'Beef Types',
+      'Cal.com Slug',
       'Certifications',
       'Testimonials',
       'Gallery Photos',

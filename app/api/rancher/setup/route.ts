@@ -40,6 +40,7 @@ const ALLOWED_FIELDS = new Set([
   // Preferred → Ben reviews + promotes into Routing.
   'Preferred States',
   'Beef Types',
+  'Cal.com Slug',
   'Logo URL',
   'Website',
   'Tagline',

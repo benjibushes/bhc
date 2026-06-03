@@ -652,7 +652,13 @@ export async function sendWelcomeAndReadyToBuy(data: {
   const ctaBlock = data.rancherAvailable && data.engageUrl
     ? `
       <div class="q"><strong>One question:</strong> are you ready to buy in the next 1–2 months?</div>
-      <p>If yes, click below. I'll personally match you with a verified rancher in ${esc(stateLabel)} and they'll reach out within 24–48 hours with current pricing, processing date, and how to lock in your order.</p>
+      <p>If yes, click below. I'll personally match you with a verified rancher in ${esc(stateLabel)} and you'll get an email within minutes with everything you need:</p>
+      <ul style="color:#2A2A2A;line-height:1.9;padding-left:22px;">
+        <li><strong>A scheduling link</strong> to book a 15-min call with your rancher at a time they set as available — no phone tag.</li>
+        <li><strong>Current pricing + processing date</strong> right in the email so you don't have to ask.</li>
+        <li><strong>A reserve-your-share button</strong> if your rancher takes deposits — secures your slot for the next processing run.</li>
+      </ul>
+      <p style="font-size:14px;color:#2A2A2A;">By clicking <strong>Yes</strong> you're confirming you want to be contacted. The rancher will know you're ready, and the next move is yours: book a call, pay a deposit, or reply with questions.</p>
       <div style="text-align:center;margin:30px 0;">
         <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
         <p style="font-size:13px;color:#A7A29A;margin-top:10px;">One click confirms. We only introduce ranchers to confirmed buyers — keeps quality high on both sides.</p>
@@ -1078,6 +1084,12 @@ export async function sendBuyerIntroNotification(data: {
   // already authed. When unset (legacy ranchers), the email falls back to the
   // tap-any-tier copy that points at the rancher landing page payment links.
   depositMagicLinkUrl?: string;
+  // Rancher's Cal.com slug (e.g., "ashcraftbeef" or "ashcraftbeef/buyhalfcow-intro").
+  // When set, embeds a "Schedule 15-min call" CTA pointing at cal.com/<slug>.
+  // Kills phone tag — buyer self-books at a time the rancher set as available.
+  // Rancher invites ben@buyhalfcow.com to their Cal.com event so Ben sees every
+  // booking via the cal-webhook handler.
+  calComSlug?: string;
 }) {
   // Build pricing block when any tier is configured.
   const pricingRows: string[] = [];
@@ -1162,6 +1174,27 @@ export async function sendBuyerIntroNotification(data: {
     ${data.rancherPhone ? `<p>Phone: <a href="tel:${esc(data.rancherPhone)}" style="color:#0E0E0E;">${esc(data.rancherPhone)}</a></p>` : ''}
   </div>`;
 
+  // Cal.com booking CTA — buyer self-schedules a 15-min call w/ the rancher
+  // at a time the rancher set as available. Eliminates phone tag. Rancher
+  // invites ben@buyhalfcow.com to their event so Ben sees every booking via
+  // the cal-webhook handler. When slug is unset, falls back to the
+  // existing email/phone contact box.
+  const normalizedCalSlug = (data.calComSlug || '')
+    .trim()
+    .replace(/^https?:\/\/(www\.)?cal\.com\//i, '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+  const calBlock = normalizedCalSlug
+    ? `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
+    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Schedule a 15-min intro call</p>
+    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Pick a time that works for both of you. ${esc(data.rancherName)} sets their availability — book a slot and they'll be expecting your call. No phone tag.</p>
+    <p style="margin:16px 0 4px 0;text-align:center;">
+      <a href="https://cal.com/${esc(normalizedCalSlug)}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Book your 15-min call &rarr;</a>
+    </p>
+    <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Ben (BuyHalfCow founder) is CC'd on every booking — we make sure both sides show up prepared.</p>
+  </div>`
+    : '';
+
   // Subject prefix when this buyer confirmed Ready-to-Buy. Tells the recipient
   // (and the rancher when they reply-all) this is a high-priority match that
   // both sides have explicitly opted into.
@@ -1201,7 +1234,8 @@ export async function sendBuyerIntroNotification(data: {
   <h1>Your Rancher Introduction</h1>
   <p>Hi ${esc(data.firstName)},</p>
   ${readyBlock}
-  <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They know you're coming — reach out whenever you're ready.</p>
+  <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They know you're coming — easiest way to connect is the scheduling link below.</p>
+  ${calBlock}
   ${contactBlock}
   ${pricingBlock}
   ${reserveBlock}

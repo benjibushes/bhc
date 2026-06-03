@@ -113,6 +113,8 @@ export async function POST(request: Request) {
       ? (rancher['Operator Name'] || rancher['Ranch Name'] || attendeeEmail)
       : attendeeEmail;
 
+    // Hoisted up from below so the buyer↔rancher detection block (next) can
+    // include it in the Telegram alert without redeclaring.
     const dateDisplay = startTime
       ? new Date(startTime).toLocaleString('en-US', {
           weekday: 'short',
@@ -123,6 +125,87 @@ export async function POST(request: Request) {
           timeZone: 'America/Denver',
         })
       : 'TBD';
+
+    // ── BUYER ↔ RANCHER BOOKING DETECTION (2026-06-03) ──────────────────
+    // When a buyer self-schedules a call via the rancher's Cal.com link from
+    // the intro email, the HOST is the rancher and the ATTENDEE is the buyer
+    // (inverse of Ben's onboarding-call flow above). Detect by looking up
+    // the organizer's email against the Ranchers table — if found AND the
+    // attendee is NOT also a rancher, this is a buyer↔rancher booking.
+    //
+    // We don't mutate Onboarding Status for these — just emit a loud
+    // Telegram alert so Ben sees every booking come through (visibility
+    // mandate), and short-circuit before the onboarding-call status logic
+    // runs (it would no-op anyway since the attendee isn't a rancher, but
+    // explicit early-return prevents future drift).
+    const organizerEmail = (
+      bookingPayload.organizer?.email ||
+      payload.organizer?.email ||
+      ''
+    ).toString().trim().toLowerCase();
+    if (organizerEmail && !rancher) {
+      let hostRanchers: any[] = [];
+      try {
+        hostRanchers = await getAllRecords(
+          TABLES.RANCHERS,
+          `LOWER({Email}) = "${escapeAirtableValue(organizerEmail)}"`
+        );
+      } catch (e) {
+        console.error('[cal webhook] host-rancher lookup failed:', e);
+      }
+      if (hostRanchers.length > 0) {
+        const hostRancher = hostRanchers[0];
+        const hostName = hostRancher['Operator Name'] || hostRancher['Ranch Name'] || organizerEmail;
+        const buyerDisplay = attendees[0]?.name || attendeeEmail;
+        const eventTitle = bookingPayload.title || 'Buyer call';
+        const meetingUrl = bookingPayload.metadata?.videoCallUrl || bookingPayload.location || '';
+        const verb =
+          triggerEvent === 'BOOKING_CREATED' ? '📅 NEW BOOKING'
+          : triggerEvent === 'BOOKING_RESCHEDULED' ? '🔄 RESCHEDULED'
+          : triggerEvent === 'BOOKING_CANCELLED' ? '❌ CANCELLED'
+          : triggerEvent === 'MEETING_ENDED' ? '✅ CALL ENDED'
+          : '📅 ' + triggerEvent;
+        try {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `${verb} — Buyer ↔ Rancher\n\n` +
+              `👤 <b>Buyer:</b> ${buyerDisplay} (${attendeeEmail})\n` +
+              `🤠 <b>Rancher:</b> ${hostName}\n` +
+              `🗓 ${dateDisplay}\n` +
+              `🎯 ${eventTitle}` +
+              (meetingUrl ? `\n🔗 ${meetingUrl}` : '')
+          );
+        } catch (e) {
+          console.error('[cal webhook] buyer-rancher Telegram alert failed:', e);
+        }
+        // Stamp Conversations table so the booking shows up in the activity
+        // feed for that rancher+buyer pair. Non-fatal — if the table or
+        // fields don't match yet, just continue.
+        try {
+          const { createRecord } = await import('@/lib/airtable');
+          await createRecord(TABLES.CONVERSATIONS, {
+            'Channel': 'Cal.com',
+            'Direction': 'system',
+            'Sender Email': organizerEmail,
+            'Recipient Email': attendeeEmail,
+            'Subject': `${verb} — ${eventTitle}`,
+            'Body': `Booking ${triggerEvent} at ${dateDisplay}.${meetingUrl ? ` Meeting: ${meetingUrl}` : ''}`,
+            'Sent At': new Date().toISOString(),
+          });
+        } catch (e: any) {
+          // Conversations schema may not include these exact field names —
+          // OK to swallow. Telegram is the primary signal.
+          console.warn('[cal webhook] buyer-rancher Conversations log skipped:', e?.message);
+        }
+        return NextResponse.json({
+          success: true,
+          event: triggerEvent,
+          path: 'buyer-rancher',
+          rancher: hostName,
+          buyer: attendeeEmail,
+        });
+      }
+    }
 
     if (triggerEvent === 'BOOKING_CREATED') {
       if (rancher) {

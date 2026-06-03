@@ -40,6 +40,7 @@ type Rancher = {
   Zip?: string;
   'States Served'?: string;
   'Beef Types'?: string;
+  'Cal.com Slug'?: string;
   'Logo URL'?: string;
   Tagline?: string;
   'About Text'?: string;
@@ -216,6 +217,7 @@ export default function RancherSetupWizard() {
             Zip: data.rancher.Zip || '',
             'States Served': data.rancher['States Served'] || '',
             'Beef Types': data.rancher['Beef Types'] || '',
+            'Cal.com Slug': data.rancher['Cal.com Slug'] || '',
             'Logo URL': data.rancher['Logo URL'] || '',
             Tagline: data.rancher.Tagline || '',
             'About Text': data.rancher['About Text'] || '',
@@ -1105,6 +1107,28 @@ export default function RancherSetupWizard() {
                 onChange={(v) => setField('Beef Types', v)}
                 placeholder="100% grass-fed Angus"
               />
+              <div className="border-t border-dust pt-4 mt-4">
+                <Field
+                  label="Cal.com booking link (so buyers can self-schedule calls with you)"
+                  value={form['Cal.com Slug']}
+                  onChange={(v) => setField('Cal.com Slug', v.trim().replace(/^https?:\/\/(www\.)?cal\.com\//, ''))}
+                  placeholder="yourname or yourname/buyhalfcow-intro"
+                />
+                <p className="text-xs text-saddle mt-2 leading-relaxed">
+                  We embed this in every buyer&rsquo;s introduction email so they can book a 15-min call directly with you — no phone tag.
+                  Paste your username (e.g. <code className="bg-bone px-1">yourname</code>) or full event link.
+                  Don&rsquo;t have one?{' '}
+                  <a
+                    href="https://cal.com/signup"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline text-charcoal"
+                  >
+                    Sign up free at cal.com →
+                  </a>{' '}
+                  Add <code className="bg-bone px-1">benibeauchman@gmail.com</code> as an additional invitee on your event so Ben can attend if needed.
+                </p>
+              </div>
             </div>
             <StepFooter
               saving={saving}
@@ -1131,6 +1155,7 @@ export default function RancherSetupWizard() {
                   // Served when unset, so initial routing still works.
                   'Preferred States': form['States Served'],
                   'Beef Types': form['Beef Types'],
+                  'Cal.com Slug': form['Cal.com Slug'] || '',
                 });
                 if (ok) setStep(2);
               }}

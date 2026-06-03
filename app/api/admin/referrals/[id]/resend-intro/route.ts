@@ -125,6 +125,7 @@ export async function POST(
           nextProcessingDate: rancher['Next Processing Date'] || '',
           rancherSlug: rancher['Slug'] || '',
           depositMagicLinkUrl,
+          calComSlug: rancher['Cal.com Slug'] || undefined,
         });
         buyerSent = true;
       } catch (e) {

@@ -145,6 +145,7 @@ export async function GET(request: Request) {
         maxActiveReferrals: getMaxActiveReferrals(rancher),
         monthlyCapacity: rancher['Monthly Capacity'] || 0,
         beefTypes: rancher['Beef Types'] || '',
+        calComSlug: rancher['Cal.com Slug'] || '',
         statesServed: rancher['States Served'] || '',
         // Preferred States = rancher's requested service area (editable).
         // Routing States = admin-controlled, drives actual matching. We
