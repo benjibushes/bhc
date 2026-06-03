@@ -59,20 +59,23 @@ async function realHandler(_request: Request): Promise<DriftResult> {
     const name = rancher['Operator Name'] || rancher['Ranch Name'] || rancherId;
     const airtableCount = Number(rancher['Current Active Referrals'] || 0);
 
-    // Ground-truth count: actual Intro Sent referrals attached to this rancher.
-    // Filter on linked record id requires the Airtable formula to compare
-    // against the RECORD_ID() of the linked row. Using FIND() against the
-    // ARRAYJOIN of the linked field is the canonical Airtable pattern.
+    // Ground-truth count: every NON-TERMINAL referral attached to this rancher.
+    // A slot is held from the Intro Sent INCR until the Closed Won/Lost DECR.
+    // Statuses BETWEEN those bookends (Rancher Contacted, Negotiation,
+    // Awaiting Payment) hold the slot too — there's no INCR/DECR at those
+    // transitions. Counting only 'Intro Sent' was wrong (2026-06-02 audit):
+    // when a rancher progressed buyers PAST Intro Sent (real sales work),
+    // the cron read queryCount=N-1 and "fixed" airtableCount=N down to N-1
+    // → silently freed a held slot → matching/suggest then over-allocated
+    // that rancher. The 15-of-16 fix-every-run pattern was the drift cron
+    // destroying live capacity holds, not catching real drift.
     //
-    // NB: 'Intro Sent' is the ONLY status that consumes a capacity slot in
-    // the current model. 'Pending Approval' is pre-match noise + 'Rancher
-    // Contacted'/'Negotiation' graduate post-Intro-Sent (capacity stays
-    // claimed). Closed Won/Lost release the slot via DECR. So the active
-    // count is exactly the Intro Sent count by design.
+    // Pending Approval is intentionally excluded — those are pre-Intro-Sent
+    // and haven't fired the INCR. Closed Won/Lost are terminal post-DECR.
     let queryCount = 0;
     try {
       const escapedId = escapeAirtableValue(rancherId);
-      const formula = `AND(FIND("${escapedId}", ARRAYJOIN({Rancher})) > 0, {Status}="Intro Sent")`;
+      const formula = `AND(FIND("${escapedId}", ARRAYJOIN({Rancher})) > 0, OR({Status}="Intro Sent", {Status}="Rancher Contacted", {Status}="Negotiation", {Status}="Awaiting Payment"))`;
       const refs = (await getAllRecords(TABLES.REFERRALS, formula)) as any[];
       queryCount = refs.length;
     } catch (e: any) {
