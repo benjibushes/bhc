@@ -69,6 +69,10 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // Sent once per buyer w/ Notes-based dedup; should never hit cap but
   // whitelisted as belt-and-suspenders.
   'sendCleanupRecovery',
+  // Migration deadline countdown for rancher tier_v2 upgrade. 4 sends
+  // total per rancher (Day 7/4/2/1 of 14-day window). Revenue-critical
+  // operator notice; must not be capped.
+  'sendMigrationNudge',
 ]);
 
 /**

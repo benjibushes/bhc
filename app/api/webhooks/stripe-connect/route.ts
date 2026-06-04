@@ -364,6 +364,9 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   const shouldAutoFlip = isNowActive && subPaying && currentPricingModel !== 'tier_v2';
   if (shouldAutoFlip) {
     writeFields['Pricing Model'] = 'tier_v2';
+    // Mark migration funnel complete so the migration-deadline cron stops
+    // nudging + the /admin/migration tracker counts them as done.
+    writeFields['Migration Status'] = 'completed';
   }
 
   await updateRecord(TABLES.RANCHERS, rancher.id, writeFields);

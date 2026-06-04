@@ -116,6 +116,10 @@
     {
       "path": "/api/cron/synthetic-e2e",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/migration-deadline",
+      "schedule": "0 15 * * *"
     }
   ]
 }

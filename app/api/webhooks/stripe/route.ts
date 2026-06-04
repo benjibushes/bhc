@@ -1651,6 +1651,7 @@ async function handleTierSubscriptionUpsert(sub: any): Promise<void> {
       const pricingModel = String(currentRancher?.['Pricing Model'] || '').toLowerCase();
       if (connectStatus === 'active' && pricingModel !== 'tier_v2') {
         fields['Pricing Model'] = 'tier_v2';
+        fields['Migration Status'] = 'completed';
         didAutoFlip = true;
       }
     } catch (e: any) {
