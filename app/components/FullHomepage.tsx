@@ -107,6 +107,40 @@ export default function FullHomepage() {
               </a>
             </p>
           </div>
+
+          {/* ── 5-STEP FUNNEL PREVIEW ──────────────────────────────────────
+              Sets expectations BEFORE the buyer hits /access. Every stage is
+              numbered so the same indicator can appear in /access, /qualify,
+              /matched, and the intro email — buyer always knows where they
+              are. Reduces drop-off at each gate by making the path visible.
+             ───────────────────────────────────────────────────────────────── */}
+          <div className="mt-20 max-w-5xl mx-auto">
+            <p className="text-xs uppercase tracking-widest text-saddle text-center mb-6">How it works · 5 steps to stocked</p>
+            <ol className="grid grid-cols-1 sm:grid-cols-5 gap-4 md:gap-3">
+              {[
+                { n: '1', t: 'Apply', d: 'Tell us your state + cut size. Takes 90 seconds.' },
+                { n: '2', t: 'Qualify', d: 'Answer 4 questions to confirm your match.' },
+                { n: '3', t: 'Match', d: 'We route you to a verified rancher in your state.' },
+                { n: '4', t: 'Connect', d: 'Schedule a call or pay deposit on the platform.' },
+                { n: '5', t: 'Stock', d: 'Pick up at processing date. Freezer full.' },
+              ].map((step) => (
+                <li
+                  key={step.n}
+                  className="border border-dust bg-white p-4 md:p-5 text-left space-y-2"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-serif text-2xl md:text-3xl text-charcoal">{step.n}</span>
+                    <span className="text-xs uppercase tracking-widest text-saddle">Step</span>
+                  </div>
+                  <p className="font-serif text-lg text-charcoal">{step.t}</p>
+                  <p className="text-xs text-saddle leading-relaxed">{step.d}</p>
+                </li>
+              ))}
+            </ol>
+            <p className="text-center text-xs text-saddle mt-6">
+              No marketplace. No middleman markup. Direct relationship with the rancher who raised your beef.
+            </p>
+          </div>
         </Container>
       </section>
 

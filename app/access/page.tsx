@@ -599,20 +599,41 @@ function AccessPageContent() {
     ? `sms:?&body=${affiliateShareText}%20${encodeURIComponent(affiliateShareUrl)}`
     : '';
 
-  // ── Success screen (same as original) ────────────────────────────────────
+  // ── Success screen — gamified 5-step ladder ────────────────────────────
+  // Hot-intent signups w/ qualifyUrl never see this (redirected client-side
+  // before isSubmitted flips). This state shows for: no-rancher-state
+  // signups (waitlist) + low-intent signups awaiting welcome+RTB email
+  // qualify link.
   if (isSubmitted) {
     return (
-      <main className="min-h-screen py-24 bg-bone text-charcoal">
+      <main className="min-h-screen py-16 md:py-24 bg-bone text-charcoal">
         <Container>
-          <div className="max-w-2xl mx-auto text-center space-y-8">
-            <h1 className="font-serif text-4xl md:text-5xl lowercase">
-              you&apos;re in
-            </h1>
-            <Divider />
+          <div className="max-w-2xl mx-auto space-y-8">
+            {/* Progress: Step 1 done (Apply). */}
+            <div>
+              <div className="flex items-center justify-between text-xs uppercase tracking-widest text-saddle mb-2">
+                <span>Step 1 of 5 · Complete ✓</span>
+                <span>20% to stocked</span>
+              </div>
+              <div className="h-1.5 bg-dust overflow-hidden">
+                <div className="h-full bg-charcoal transition-all duration-700" style={{ width: '20%' }} />
+              </div>
+              <div className="grid grid-cols-5 gap-2 mt-2 text-[10px] uppercase tracking-wider text-saddle">
+                <span className="text-charcoal font-medium">✓ Apply</span>
+                <span className="text-charcoal/70">Qualify</span>
+                <span>Match</span>
+                <span>Connect</span>
+                <span>Stock</span>
+              </div>
+            </div>
 
-            <div className="space-y-3">
-              <p className="text-xl leading-relaxed">
-                your login link is on its way to{' '}
+            <div className="text-center space-y-3">
+              <div className="text-5xl">✓</div>
+              <h1 className="font-serif text-4xl md:text-5xl lowercase">
+                you&apos;re in
+              </h1>
+              <p className="text-lg text-saddle">
+                Step 2 of 5 is in your inbox — check{' '}
                 <strong className="text-charcoal break-all">{email}</strong>
               </p>
               <p className="text-sm text-saddle">
@@ -621,42 +642,53 @@ function AccessPageContent() {
               </p>
             </div>
 
-            <div className="space-y-3 text-left max-w-md mx-auto pt-4">
+            <Divider />
+
+            <div className="space-y-4 max-w-md mx-auto pt-2">
+              <p className="text-xs uppercase tracking-widest text-saddle text-center">What happens next</p>
               <div className="flex items-center gap-3 text-base">
-                <span className="w-6 h-6 bg-charcoal text-bone rounded-full flex items-center justify-center text-xs font-bold">
+                <span className="w-7 h-7 bg-charcoal text-bone rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0">
                   ✓
                 </span>
-                <span>application approved</span>
+                <span><strong>Application approved.</strong> You cleared Step 1.</span>
+              </div>
+              <div className="flex items-start gap-3 text-base text-charcoal">
+                <span className="w-7 h-7 bg-saddle text-bone rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">
+                  2
+                </span>
+                <span>
+                  <strong>4-question quiz</strong> in your inbox — one click opens the gamified gate. Takes 60 seconds. Unlocks your match.
+                </span>
               </div>
               <div className="flex items-start gap-3 text-base text-saddle">
-                <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
-                  2
+                <span className="w-7 h-7 border border-dust rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">
+                  3
                 </span>
                 <span>
                   {submittedRancherAvailable ? (
                     <>
-                      we&apos;ve got a verified rancher in{' '}
-                      <strong>{state}</strong>. check your inbox — one click
-                      confirms.
+                      <strong>Match locked.</strong> Verified rancher in{' '}
+                      <strong>{state}</strong> ready to receive you.
                     </>
                   ) : (
                     <>
-                      no verified rancher in <strong>{state}</strong> yet.
-                      you&apos;re on the list and will be first to hear when one
-                      goes live.
+                      <strong>Match pending.</strong> No verified rancher in{' '}
+                      <strong>{state}</strong> yet — you&apos;ll be first to hear when one goes live.
                     </>
                   )}
                 </span>
               </div>
-              <div className="flex items-start gap-3 text-base text-saddle/60">
-                <span className="w-6 h-6 border border-dust rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
-                  3
+              <div className="flex items-start gap-3 text-base text-saddle/70">
+                <span className="w-7 h-7 border border-dust rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">
+                  4
                 </span>
-                <span>
-                  {submittedRancherAvailable
-                    ? 'personal introduction email within 24-48 hours of your yes click'
-                    : 'monthly update on which states are about to launch'}
+                <span><strong>Connect.</strong> Schedule a 15-min call or pay deposit on the platform.</span>
+              </div>
+              <div className="flex items-start gap-3 text-base text-saddle/70">
+                <span className="w-7 h-7 border border-dust rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">
+                  5
                 </span>
+                <span><strong>Stock.</strong> Pick up at processing date. Freezer full.</span>
               </div>
             </div>
 
@@ -953,6 +985,28 @@ function AccessPageContent() {
 
             {/* ── Section D — Trimmed Quiz Form (5 fields) ────────────────── */}
             <div className="pt-8">
+              {/* 5-step funnel progress — Step 1 of 5 active.
+                  Mirrors the same visual indicator in homepage funnel preview,
+                  /qualify quiz progress bar, /matched celebration, intro
+                  email. Buyer sees they're 20% to stocked freezer before
+                  even clicking submit. Reduces drop-off at form gate. */}
+              <div className="mb-7">
+                <div className="flex items-center justify-between text-xs uppercase tracking-widest text-saddle mb-2">
+                  <span>Step 1 of 5 · Apply</span>
+                  <span>20% to stocked</span>
+                </div>
+                <div className="h-1.5 bg-dust overflow-hidden">
+                  <div className="h-full bg-charcoal" style={{ width: '20%' }} />
+                </div>
+                <div className="grid grid-cols-5 gap-2 mt-2 text-[10px] uppercase tracking-wider text-saddle">
+                  <span className="text-charcoal font-medium">Apply</span>
+                  <span>Qualify</span>
+                  <span>Match</span>
+                  <span>Connect</span>
+                  <span>Stock</span>
+                </div>
+              </div>
+
               <p className="text-sm text-saddle uppercase tracking-wider mb-6">
                 find your rancher
               </p>

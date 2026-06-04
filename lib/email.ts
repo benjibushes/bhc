@@ -688,8 +688,13 @@ export async function sendWelcomeAndReadyToBuy(data: {
       subject,
       headers: getUnsubscribeHeaders(data.email),
       html: `<!DOCTYPE html><html><head>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:18px 22px;margin:24px 0;font-family:Georgia,serif;font-size:18px;color:#0E0E0E}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:18px 22px;margin:24px 0;font-family:Georgia,serif;font-size:18px;color:#0E0E0E}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}.progress{margin:0 0 22px 0;font-family:'Courier New',monospace;font-size:12px;letter-spacing:2px;color:#6B4F3F;text-align:center}.progress-bar{display:inline-block;height:6px;background:#E5E2DC;width:60%;margin:6px 0;vertical-align:middle;overflow:hidden}.progress-fill{display:block;height:100%;background:#0E0E0E;width:40%}</style>
 </head><body><div class="container">
+  <div class="progress">
+    Step 2 of 5 · Qualify<br>
+    <span class="progress-bar"><span class="progress-fill"></span></span><br>
+    ✓ Apply &nbsp;·&nbsp; <strong style="color:#0E0E0E">Qualify</strong> &nbsp;·&nbsp; Match &nbsp;·&nbsp; Connect &nbsp;·&nbsp; Stock
+  </div>
   <h1>You're in, ${esc(first)}.</h1>
   <p>You applied to BuyHalfCow and I just approved you. Quick what-this-is: I personally connect families to a single verified rancher in their state for a quarter, half, or whole cow. No middleman. Direct relationship. Real beef.</p>
   ${ctaBlock}
@@ -1229,8 +1234,13 @@ export async function sendBuyerIntroNotification(data: {
         introEmailData._replyContext = { type: 'ref', recordId: data.referralId };
       }
       introEmailData.html = `<!DOCTYPE html><html><head>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.contact-box{background:#F4F1EC;border:1px solid #A7A29A;padding:20px 24px;margin:20px 0}.contact-box p{margin:6px 0;color:#0E0E0E}.cta{display:inline-block;padding:16px 32px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 20px}p{margin:14px 0;color:#6B4F3F}.contact-box{background:#F4F1EC;border:1px solid #A7A29A;padding:20px 24px;margin:20px 0}.contact-box p{margin:6px 0;color:#0E0E0E}.cta{display:inline-block;padding:16px 32px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin:20px 0}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:30px;padding-top:20px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}.progress{margin:0 0 22px 0;font-family:'Courier New',monospace;font-size:12px;letter-spacing:2px;color:#6B4F3F;text-align:center}.progress-bar{display:inline-block;height:6px;background:#E5E2DC;width:60%;margin:6px 0;vertical-align:middle;overflow:hidden}.progress-fill{display:block;height:100%;background:#0E0E0E;width:80%}</style>
 </head><body><div class="container">
+  <div class="progress">
+    Step 4 of 5 · Connect<br>
+    <span class="progress-bar"><span class="progress-fill"></span></span><br>
+    ✓ Apply &nbsp;·&nbsp; ✓ Qualify &nbsp;·&nbsp; ✓ Match &nbsp;·&nbsp; <strong style="color:#0E0E0E">Connect</strong> &nbsp;·&nbsp; Stock
+  </div>
   <h1>Your Rancher Introduction</h1>
   <p>Hi ${esc(data.firstName)},</p>
   ${readyBlock}

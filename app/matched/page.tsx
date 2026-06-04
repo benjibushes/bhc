@@ -126,15 +126,38 @@ export default async function MatchedPage({ searchParams }: Props) {
   return (
     <main className="min-h-screen bg-bone py-12 md:py-24">
       <Container>
-        <div className="max-w-2xl mx-auto bg-white border border-dust p-6 md:p-14 text-center">
-          <div className="text-5xl md:text-6xl mb-6" aria-hidden="true">🤝</div>
-          <h1 className="font-serif text-2xl md:text-4xl mb-4 text-charcoal">
-            You&rsquo;re matched with {rancherName}.
-          </h1>
-          <p className="text-base text-saddle mb-8 leading-relaxed">
-            Your YES went through. {rancherName} just got an email with your
-            name, state, and what you&rsquo;re looking for.
-          </p>
+        <div className="max-w-2xl mx-auto bg-white border border-dust p-6 md:p-14">
+          {/* 5-step progress: 4 of 5 complete. Final step = Stock (after pickup). */}
+          <div className="mb-8">
+            <div className="flex items-center justify-between text-xs uppercase tracking-widest text-saddle mb-2">
+              <span>Step 4 of 5 · Matched</span>
+              <span>80% to stocked</span>
+            </div>
+            <div className="h-1.5 bg-dust overflow-hidden">
+              <div className="h-full bg-charcoal transition-all duration-1000" style={{ width: '80%' }} />
+            </div>
+            <div className="grid grid-cols-5 gap-2 mt-2 text-[10px] uppercase tracking-wider text-saddle">
+              <span className="text-charcoal">✓ Apply</span>
+              <span className="text-charcoal">✓ Qualify</span>
+              <span className="text-charcoal">✓ Match</span>
+              <span className="text-charcoal font-medium">Connect</span>
+              <span>Stock</span>
+            </div>
+          </div>
+
+          <div className="text-center">
+            <div className="text-6xl md:text-7xl mb-6" aria-hidden="true">⭐</div>
+            <p className="text-xs uppercase tracking-widest text-saddle mb-2">
+              Match locked · Step 4 of 5
+            </p>
+            <h1 className="font-serif text-3xl md:text-5xl mb-4 text-charcoal">
+              You&rsquo;re matched with {rancherName}.
+            </h1>
+            <p className="text-base text-saddle mb-8 leading-relaxed">
+              Your YES went through. {rancherName} just got an email with your
+              name, state, and what you&rsquo;re looking for.
+            </p>
+          </div>
 
           <Divider />
 
