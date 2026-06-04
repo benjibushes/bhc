@@ -108,6 +108,14 @@
     {
       "path": "/api/cron/capacity-drift-check",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/deploy-drift",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/synthetic-e2e",
+      "schedule": "0 6 * * *"
     }
   ]
 }
