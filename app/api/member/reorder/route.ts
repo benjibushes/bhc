@@ -3,6 +3,7 @@ import { getRecordById, getAllRecords, escapeAirtableValue, TABLES } from '@/lib
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { funnelRecord } from '@/lib/funnelMetrics';
+import { checkOriginGuard } from '@/lib/csrfGuard';
 
 export const maxDuration = 30;
 
@@ -24,6 +25,8 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 // we look at the buyer's most recent Closed Won referral.
 export async function POST(request: Request) {
   try {
+    const originCheck = checkOriginGuard(request);
+    if (!originCheck.ok && originCheck.response) return originCheck.response;
     const session = await resolveBuyerSession(request);
     if (!session) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });

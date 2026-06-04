@@ -139,9 +139,27 @@ export default function QualifyPage({
   if (error && step < 4) {
     return (
       <main className="min-h-screen bg-bone flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white border border-dust p-7 text-center">
-          <h1 className="font-serif text-2xl text-charcoal mb-3">Something went sideways</h1>
-          <p className="text-saddle text-sm">{error}</p>
+        <div className="max-w-md w-full bg-white border border-dust p-7 md:p-8 text-center space-y-4">
+          <div className="text-4xl">🐂</div>
+          <p className="text-xs uppercase tracking-widest text-saddle">Match confirmation</p>
+          <h1 className="font-serif text-2xl text-charcoal">Looks like your invite link expired</h1>
+          <p className="text-sm text-saddle leading-relaxed">{error}</p>
+          <p className="text-sm text-saddle">
+            Easiest fix: start a fresh application below. Takes 30 seconds and you&apos;ll
+            get a new invite within a minute.
+          </p>
+          <div className="pt-2">
+            <a
+              href="/access"
+              className="inline-block px-7 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase tracking-widest text-xs"
+            >
+              Start your application →
+            </a>
+          </div>
+          <p className="text-xs text-dust pt-3 border-t border-dust">
+            Already applied? Check your inbox for the &ldquo;Yes — Ready to Buy&rdquo; email and click the
+            button inside it to land back here with a fresh link.
+          </p>
         </div>
       </main>
     );

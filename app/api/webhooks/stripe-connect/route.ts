@@ -346,6 +346,26 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   if (isNowActive && !alreadyCelebrated) {
     writeFields['Stripe Connect Connected At'] = new Date().toISOString();
   }
+
+  // ── AUTO-FLIP PRICING MODEL → tier_v2 (2026-06-04) ────────────────
+  // When Connect goes active AND the rancher's subscription is paying,
+  // they've completed every gate the legacy-upgrade endpoint requires.
+  // Auto-flip here so the rancher doesn't have to hunt down the dashboard
+  // banner + click "Switch to tier_v2" themselves. Mirrors the gate logic
+  // in app/api/rancher/legacy-upgrade/route.ts (Subscription Status in
+  // {active,trialing} + Connect status === 'active').
+  //
+  // Previously the dashboard banner was the only flip path → 0/16 ranchers
+  // were reaching tier_v2 in audit. With this auto-flip, finishing Stripe
+  // Connect is the trigger; no extra click needed.
+  const subscriptionStatus = String(rancher['Subscription Status'] || '').toLowerCase();
+  const subPaying = subscriptionStatus === 'active' || subscriptionStatus === 'trialing';
+  const currentPricingModel = String(rancher['Pricing Model'] || '').toLowerCase();
+  const shouldAutoFlip = isNowActive && subPaying && currentPricingModel !== 'tier_v2';
+  if (shouldAutoFlip) {
+    writeFields['Pricing Model'] = 'tier_v2';
+  }
+
   await updateRecord(TABLES.RANCHERS, rancher.id, writeFields);
 
   // Telegram celebration when Connect goes active for the first time
@@ -355,9 +375,14 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   if (isNowActive && !alreadyCelebrated) {
     try {
       const label = rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId;
+      const flipNote = shouldAutoFlip
+        ? `\n\n✨ Pricing Model auto-flipped to tier_v2 (sub paying + Connect active). Next buyer match will show Reserve-Your-Share deposit CTA.`
+        : !subPaying
+          ? `\n\n⏳ Subscription not yet active — Pricing Model stays legacy until tier paid. Rancher needs to pick a tier in /partner.`
+          : '';
       await sendTelegramMessage(
         TELEGRAM_ADMIN_CHAT_ID,
-        `🏦 STRIPE CONNECT ACTIVE — ${label} ready to receive deposits`,
+        `🏦 STRIPE CONNECT ACTIVE — ${label} ready to receive deposits${flipNote}`,
       );
     } catch (e: any) {
       console.warn('[stripe-connect webhook] telegram celebration failed:', e?.message);

@@ -1638,8 +1638,38 @@ async function handleTierSubscriptionUpsert(sub: any): Promise<void> {
     fields['Subscription Next Invoice At'] = nextInvoiceAt;
   }
 
+  // ── AUTO-FLIP PRICING MODEL → tier_v2 (2026-06-04) ────────────────
+  // Mirror of the gate in stripe-connect/syncRancherConnectStatus. If
+  // subscription is now active AND Connect was already active, this is
+  // the final step that activates tier_v2. Without this, the rancher
+  // had to find + click the dashboard banner to flip.
+  let didAutoFlip = false;
+  if (sub.status === 'active' || sub.status === 'trialing') {
+    try {
+      const currentRancher: any = await (await import('@/lib/airtable')).getRecordById(TABLES.RANCHERS, rancherRecordId);
+      const connectStatus = String(currentRancher?.['Stripe Connect Status'] || '').toLowerCase();
+      const pricingModel = String(currentRancher?.['Pricing Model'] || '').toLowerCase();
+      if (connectStatus === 'active' && pricingModel !== 'tier_v2') {
+        fields['Pricing Model'] = 'tier_v2';
+        didAutoFlip = true;
+      }
+    } catch (e: any) {
+      console.warn('[stripe webhook] tier sub auto-flip check failed:', e?.message);
+    }
+  }
+
   await updateRecord(TABLES.RANCHERS, rancherRecordId, fields);
-  console.log(`[stripe webhook] tier sub upsert: rancher ${rancherRecordId} → tier=${tierLabel}, status=${sub.status}`);
+  console.log(`[stripe webhook] tier sub upsert: rancher ${rancherRecordId} → tier=${tierLabel}, status=${sub.status}${didAutoFlip ? ' (auto-flipped Pricing Model → tier_v2)' : ''}`);
+
+  if (didAutoFlip) {
+    try {
+      const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `✨ <b>PRICING MODEL → tier_v2</b>\n\nRancher: ${rancherRecordId}\nTier: ${tierLabel}\nSub: ${sub.status}\nConnect: active\n\n<i>Next buyer match will show Reserve-Your-Share deposit CTA in intro email.</i>`,
+      );
+    } catch {}
+  }
 }
 
 // ============================================================================

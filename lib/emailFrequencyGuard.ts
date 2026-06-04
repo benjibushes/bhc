@@ -57,6 +57,18 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendInquiryAlertToAdmin',
   // Auth-critical: magic-link login. Capping this locks members out.
   'sendMagicLink',
+  // Revenue-critical: tier_v2 final invoice. Capping this would silently
+  // suppress the rancher's final-payment email to the buyer — money lost.
+  // Added 2026-06-04 after audit found this was missing.
+  'sendBuyerFinalInvoice',
+  // Post-signup customer-expected mail. Buyer just hit submit on /access,
+  // they're waiting on this. Caps in flow here would break the YES-click
+  // qualify-link flow entirely.
+  'sendWelcomeAndReadyToBuy',
+  // Stale-lead recovery (one-shot admin trigger for deploy-gap buyers).
+  // Sent once per buyer w/ Notes-based dedup; should never hit cap but
+  // whitelisted as belt-and-suspenders.
+  'sendCleanupRecovery',
 ]);
 
 /**

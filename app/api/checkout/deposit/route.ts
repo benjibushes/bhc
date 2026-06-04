@@ -15,6 +15,7 @@ import { createDepositCheckout } from '@/lib/stripeConnect';
 import { recordDeposit } from '@/lib/contracts/payments';
 import { tierFor, TIERS } from '@/lib/tiers';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { checkOriginGuard } from '@/lib/csrfGuard';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 export const dynamic = 'force-dynamic';
@@ -36,6 +37,12 @@ export async function POST(req: Request) {
   if (process.env.STRIPE_CONNECT_ENABLED !== 'true') {
     return NextResponse.json({ error: 'Stripe Connect not enabled' }, { status: 503 });
   }
+
+  // CSRF defense-in-depth — Origin allowlist on top of SameSite=lax cookie.
+  // Blocks malicious sites from auto-submitting forms that POST here with
+  // a logged-in buyer's cookie. Added 2026-06-04 audit fix.
+  const originCheck = checkOriginGuard(req);
+  if (!originCheck.ok && originCheck.response) return originCheck.response;
 
   const session = await resolveBuyerSession(req);
   if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });

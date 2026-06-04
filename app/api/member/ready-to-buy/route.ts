@@ -6,6 +6,7 @@ import { sendEmail } from '@/lib/email';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
+import { checkOriginGuard } from '@/lib/csrfGuard';
 
 export const maxDuration = 30;
 
@@ -23,6 +24,8 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 // a dedicated singleSelect/dateTime field later.
 export async function POST(request: Request) {
   try {
+    const originCheck = checkOriginGuard(request);
+    if (!originCheck.ok && originCheck.response) return originCheck.response;
     const session = await resolveBuyerSession(request);
     if (!session) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });

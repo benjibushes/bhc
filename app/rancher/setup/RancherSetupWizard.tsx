@@ -684,36 +684,66 @@ export default function RancherSetupWizard() {
   const ONBOARDING_VIDEO_ID =
     process.env.NEXT_PUBLIC_RANCHER_ONBOARDING_VIDEO_ID || '';
 
-  // Already signed? Skip wizard, jump them to dashboard / page preview.
+  // Already signed?
+  //
+  // TWO PATHS based on Pricing Model:
+  //
+  // (a) Pricing Model = 'tier_v2' → fully onboarded, render the "all set"
+  //     landing page. They can edit anything from the dashboard.
+  //
+  // (b) Pricing Model = 'legacy' (or empty) → they signed the original
+  //     agreement but haven't migrated to the platform-collected deposit
+  //     model. The standardize-funnel rollout (2026-06-03) requires every
+  //     rancher to (1) pick a subscription tier, (2) complete Stripe
+  //     Connect onboarding, (3) set per-tier deposits. Drop them into
+  //     Step 7 (TierPickStep) with a banner explaining the upgrade.
+  //
+  // Without this branch, every legacy rancher who clicks the v2 upgrade
+  // invite email lands in the "all set" dead-end and never reaches tier
+  // pick. Pre-2026-06-04 audit found 0/16 ranchers could complete upgrade.
   if (rancher.agreementSigned) {
-    return (
-      <Container>
-        <div className="py-24 max-w-xl mx-auto text-center space-y-5">
-          <p className="text-xs uppercase tracking-[0.2em] text-saddle">Already onboarded</p>
-          <h1 className="font-serif text-3xl text-charcoal">
-            {rancher.ranchName}, you’re all set.
-          </h1>
-          <p className="text-saddle">
-            Your agreement is signed and your page is live. Edit anything from
-            your rancher dashboard.
-          </p>
-          <div className="flex flex-wrap justify-center gap-3 pt-2">
-            <Link
-              href="/rancher"
-              className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
-            >
-              Open dashboard →
-            </Link>
-            <Link
-              href={`/ranchers/${rancher.slug}`}
-              className="inline-flex items-center gap-2 px-7 py-3.5 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
-            >
-              View public page →
-            </Link>
+    const pm = String(rancher['Pricing Model'] || '').toLowerCase();
+    const isLegacy = pm !== 'tier_v2';
+    if (isLegacy) {
+      // Jump straight into the upgrade flow once the wizard mounts.
+      // Effect runs after first paint so step state machine has a chance
+      // to compute initial step from localStorage / Stripe resume hooks
+      // first; we then overwrite with Step 7 if we're still on the
+      // intro step.
+      if (typeof window !== 'undefined' && step === 0) {
+        setTimeout(() => setStep(7 as any), 0);
+      }
+      // Fall through to the wizard render below (no early return).
+    } else {
+      return (
+        <Container>
+          <div className="py-24 max-w-xl mx-auto text-center space-y-5">
+            <p className="text-xs uppercase tracking-[0.2em] text-saddle">Already onboarded</p>
+            <h1 className="font-serif text-3xl text-charcoal">
+              {rancher.ranchName}, you’re all set.
+            </h1>
+            <p className="text-saddle">
+              Your agreement is signed and your page is live. Edit anything from
+              your rancher dashboard.
+            </p>
+            <div className="flex flex-wrap justify-center gap-3 pt-2">
+              <Link
+                href="/rancher"
+                className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+              >
+                Open dashboard →
+              </Link>
+              <Link
+                href={`/ranchers/${rancher.slug}`}
+                className="inline-flex items-center gap-2 px-7 py-3.5 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
+              >
+                View public page →
+              </Link>
+            </div>
           </div>
-        </div>
-      </Container>
-    );
+        </Container>
+      );
+    }
   }
 
   // Build the preview props from current form state — passed to LivePreview

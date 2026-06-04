@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { checkOriginGuard } from '@/lib/csrfGuard';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
@@ -24,6 +25,8 @@ function classifyIntent(score: number): string {
 
 export async function PATCH(request: Request) {
   try {
+    const originCheck = checkOriginGuard(request);
+    if (!originCheck.ok && originCheck.response) return originCheck.response;
     const session = await resolveBuyerSession(request);
     if (!session) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
