@@ -17,6 +17,7 @@
 
 import { useState, useEffect, use as usePromise } from 'react';
 import { useRouter } from 'next/navigation';
+import { CutBreakdown, type Tier as CutTier } from '@/app/components/CutBreakdown';
 
 const TIER_OPTIONS = [
   { value: 'Quarter', label: 'Quarter', sub: '~85 lbs · ~$1,000-$1,500' },
@@ -63,7 +64,19 @@ export default function QualifyPage({
     qualified: boolean;
     score: number;
     routingOk?: boolean;
-    rancher?: { name: string; state: string; slug: string } | null;
+    rancher?: {
+      name: string;
+      state: string;
+      slug: string;
+      city?: string;
+      logoUrl?: string;
+      tagline?: string;
+      aboutText?: string;
+      beefTypes?: string;
+      certifications?: string;
+      processingFacility?: string;
+      nextProcessingDate?: string;
+    } | null;
     referralId?: string | null;
     pricingModel?: string;
     depositAmount?: number | null;
@@ -328,8 +341,90 @@ export default function QualifyPage({
                   )}
                 </header>
 
+                {/* Rancher trust card — pulled from Airtable live. Renders
+                    photo + tagline + about + bona fides. Buyer sees WHO
+                    they're about to pay before clicking the deposit button. */}
+                {result.routingOk && result.rancher && (result.rancher.logoUrl || result.rancher.aboutText || result.rancher.tagline) && (
+                  <div className="mt-8 border border-dust bg-white p-5 md:p-6 text-left">
+                    <div className="flex items-start gap-4 flex-wrap">
+                      {result.rancher.logoUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={result.rancher.logoUrl}
+                          alt={result.rancher.name}
+                          className="w-20 h-20 rounded-full object-cover border border-dust flex-shrink-0"
+                        />
+                      )}
+                      <div className="flex-1 min-w-[200px]">
+                        <p className="text-xs uppercase tracking-widest text-saddle mb-1">
+                          Your matched rancher
+                        </p>
+                        <h2 className="font-serif text-2xl text-charcoal">
+                          {result.rancher.name}
+                        </h2>
+                        {(result.rancher.city || result.rancher.state) && (
+                          <p className="text-sm text-saddle">
+                            {[result.rancher.city, result.rancher.state].filter(Boolean).join(', ')}
+                          </p>
+                        )}
+                        {result.rancher.tagline && (
+                          <p className="text-sm text-charcoal mt-2 italic">&ldquo;{result.rancher.tagline}&rdquo;</p>
+                        )}
+                      </div>
+                    </div>
+                    {result.rancher.aboutText && (
+                      <p className="text-sm text-saddle mt-4 leading-relaxed line-clamp-3">
+                        {result.rancher.aboutText}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {result.rancher.beefTypes && (
+                        <span className="text-xs px-2 py-1 border border-dust bg-bone text-saddle">
+                          {result.rancher.beefTypes}
+                        </span>
+                      )}
+                      {result.rancher.certifications && (
+                        <span className="text-xs px-2 py-1 border border-dust bg-bone text-saddle">
+                          {result.rancher.certifications}
+                        </span>
+                      )}
+                      {result.rancher.processingFacility && (
+                        <span className="text-xs px-2 py-1 border border-dust bg-bone text-saddle">
+                          USDA · {result.rancher.processingFacility}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* What you actually get — concrete cut breakdown */}
+                {result.routingOk && (tier === 'Quarter' || tier === 'Half' || tier === 'Whole') && (
+                  <div className="mt-4">
+                    <CutBreakdown
+                      tier={tier as CutTier}
+                      totalCost={result.depositAmount ? result.depositAmount * 2 : undefined}
+                    />
+                  </div>
+                )}
+
                 {result.routingOk && result.rancher && (
-                  <div className="grid gap-4 mt-8">
+                  <div className="grid gap-4 mt-6">
+                    {/* Real scarcity badge — only shows if Next Processing
+                        Date is set on the rancher record. No fake numbers. */}
+                    {result.rancher.nextProcessingDate && (
+                      <div className="bg-amber-50 border border-amber-300 px-4 py-2.5 text-sm text-amber-900 text-center">
+                        🗓 Next processing date:{' '}
+                        <strong>
+                          {new Date(result.rancher.nextProcessingDate).toLocaleDateString(undefined, {
+                            month: 'long',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })}
+                        </strong>
+                        {' '}— lock your slot before {result.rancher.name.split(' ')[0]}&apos;s schedule fills.
+                      </div>
+                    )}
+
                     {result.pricingModel === 'tier_v2' && result.depositAmount && result.referralId ? (
                       <>
                         {/* PRIMARY CTA — Reserve Now (tier_v2 buyer purchases on platform) */}

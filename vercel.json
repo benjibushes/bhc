@@ -120,6 +120,10 @@
     {
       "path": "/api/cron/migration-deadline",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/qualified-no-action",
+      "schedule": "*/30 * * * *"
     }
   ]
 }

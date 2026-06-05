@@ -73,6 +73,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // total per rancher (Day 7/4/2/1 of 14-day window). Revenue-critical
   // operator notice; must not be capped.
   'sendMigrationNudge',
+  // Abandon-cart nudge for qualified buyers who didn't deposit within 4h.
+  // One-shot per buyer (Notes dedup), revenue-critical. The frequency cap
+  // would silently drop this nudge if the buyer already received their
+  // welcome + RTB + intro in the same week (which they always do — that's
+  // 3 emails already). Whitelisted to ensure recovery actually fires.
+  'sendQualifiedNoActionNudge',
 ]);
 
 /**

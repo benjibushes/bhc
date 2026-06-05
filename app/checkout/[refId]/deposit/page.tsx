@@ -8,6 +8,17 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { trackEvent } from '@/lib/analytics';
+import { CutBreakdown, type Tier } from '@/app/components/CutBreakdown';
+
+// Map deposit cut slug → CutBreakdown tier. Slug is lowercase from
+// Stripe Price metadata; tier is the capitalized human-readable label.
+function slugToTier(slug: string): Tier | null {
+  const s = (slug || '').toLowerCase();
+  if (s === 'quarter') return 'Quarter';
+  if (s === 'half') return 'Half';
+  if (s === 'whole') return 'Whole';
+  return null;
+}
 
 interface Cut { slug: string; label: string; price: number | null; lbs: string; }
 interface DepositInfo {
@@ -197,6 +208,20 @@ function DepositPageContent() {
             })}
           </div>
         </div>
+
+        {/* What you actually get — concrete cut breakdown + cost-per-serving
+            framing. Converts the deposit number from "expensive" into
+            "actually cheap per dinner." Drops when cut isn't quarter/half/whole
+            (e.g., custom cut sheets) — avoids fake numbers. */}
+        {(() => {
+          const tier = selectedCutData ? slugToTier(selectedCutData.slug) : null;
+          if (!tier) return null;
+          return (
+            <div className="mb-6">
+              <CutBreakdown tier={tier} totalCost={selectedCutData?.price || undefined} />
+            </div>
+          );
+        })()}
 
         {/* Before you pay */}
         <div className="border-t border-divider pt-6 mb-6">

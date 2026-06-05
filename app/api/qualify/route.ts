@@ -199,7 +199,8 @@ export async function POST(request: Request) {
           routingOk = true;
           suggestedRancher = j.suggestedRancher || null;
           referralId = j.referralId || null;
-          // Look up rancher's Pricing Model + deposit for the dual-path UI.
+          // Look up rancher's Pricing Model + deposit + trust signals for
+          // the dual-path UI + match-page rancher card.
           if (suggestedRancher?.id) {
             try {
               const rancher: any = await getRecordById(TABLES.RANCHERS, suggestedRancher.id);
@@ -212,6 +213,19 @@ export async function POST(request: Request) {
                   : tier === 'Whole' ? 'Whole Deposit'
                   : '';
                 if (depositField) depositAmount = Number(rancher?.[depositField]) || null;
+              }
+              // Surface rancher trust fields for the match-page card —
+              // pulled live from Airtable so /qualify always shows latest
+              // photo + bio + processing date without a stale cache.
+              if (suggestedRancher) {
+                suggestedRancher.logoUrl = rancher?.['Logo URL'] || '';
+                suggestedRancher.tagline = rancher?.['Tagline'] || '';
+                suggestedRancher.aboutText = rancher?.['About Text'] || '';
+                suggestedRancher.city = rancher?.['City'] || '';
+                suggestedRancher.beefTypes = rancher?.['Beef Types'] || '';
+                suggestedRancher.certifications = rancher?.['Certifications'] || '';
+                suggestedRancher.processingFacility = rancher?.['Processing Facility'] || '';
+                suggestedRancher.nextProcessingDate = rancher?.['Next Processing Date'] || '';
               }
             } catch (e: any) {
               console.warn('[/api/qualify] rancher lookup failed:', e?.message);
@@ -264,6 +278,14 @@ export async function POST(request: Request) {
           name: suggestedRancher.name,
           state: suggestedRancher.state,
           slug: suggestedRancher.slug || '',
+          city: suggestedRancher.city || '',
+          logoUrl: suggestedRancher.logoUrl || '',
+          tagline: suggestedRancher.tagline || '',
+          aboutText: suggestedRancher.aboutText || '',
+          beefTypes: suggestedRancher.beefTypes || '',
+          certifications: suggestedRancher.certifications || '',
+          processingFacility: suggestedRancher.processingFacility || '',
+          nextProcessingDate: suggestedRancher.nextProcessingDate || '',
         }
       : null,
     referralId,
