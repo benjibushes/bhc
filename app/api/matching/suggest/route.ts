@@ -59,9 +59,29 @@ export async function POST(request: Request) {
       // this flag. Capacity-bypass routing fires a Telegram alert so the
       // operator can see when a rancher is over-cap.
       warmupEngaged,
+      // Operator-override flag (2026-06-05 hardening): allows internal
+      // callers to explicitly bypass the strict Qualified-At gate, e.g.
+      // for admin manual reassignment or re-route after Closed Lost. MUST
+      // include a `reason` string that gets surfaced in Telegram + Notes.
+      // Without this flag, missing Qualified At returns 412.
+      operatorOverride,
+      operatorOverrideReason,
     } = body;
     const excludeIds = new Set<string>(Array.isArray(excludeRancherIds) ? excludeRancherIds : []);
     const isHotLead = !!warmupEngaged;
+    const isOperatorOverride = !!operatorOverride;
+
+    // ── EMERGENCY KILL SWITCH (2026-06-05) ──────────────────────────────
+    // env MATCHING_ENABLED=false → instant 503 for every caller. Single
+    // env flip = full routing freeze (matching, intro emails, downstream).
+    // Use during incidents OR when you need to quietly drain the queue
+    // before relaunching with new rules. Default true (matching live).
+    if (process.env.MATCHING_ENABLED === 'false') {
+      return NextResponse.json({
+        error: 'Matching engine paused — MATCHING_ENABLED=false',
+        retryable: true,
+      }, { status: 503 });
+    }
 
     if (!buyerState || !buyerId) {
       return NextResponse.json({ error: 'buyerState and buyerId are required' }, { status: 400 });
@@ -73,38 +93,69 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Unrecognized buyer state: ${buyerState}` }, { status: 400 });
     }
 
-    // ── QUALIFICATION TELEMETRY (2026-06-03) ────────────────────────────
-    // /api/qualify is the canonical buyer-initiated entry point. Anything
-    // else that calls matching/suggest is either an operator action (admin
-    // go-live, manual reassign) or a legacy code path that hasn't been
-    // updated to gate on Qualified At yet.
+    // ── STRICT QUALIFICATION GATE (2026-06-05 hardening) ────────────────
+    // /api/qualify is the SOLE buyer-initiated entry point that stamps
+    // Qualified At. Any other caller hitting matching/suggest with a buyer
+    // who hasn't completed the quiz is REJECTED with 412 unless they
+    // explicitly pass operatorOverride=true + operatorOverrideReason.
     //
-    // This block does NOT block — soft-log only. Telegram fires once per
-    // buyer-day so we see bypass volume without spam. Once telemetry shows
-    // no bypass for a stretch, flip to a hard 412 gate.
+    // Previous behavior was soft-warn only — that's what let the 2026-06-05
+    // incident through (179 healed buyers cascading through batch-approve
+    // → matching/suggest → nationwide fallback → 39 cross-state misroutes).
+    //
+    // Allowed paths through:
+    //   1. Quiz completed (Qualified At set, Score >= 75) — normal flow
+    //   2. operatorOverride=true + reason — admin explicit override (audit-logged)
+    //
+    // Buyer record lookup is mandatory — no buyerId resolution = 404.
+    let buyerRecForGate: any = null;
     try {
-      const buyerRecForGate: any = await getRecordById(TABLES.CONSUMERS, buyerId);
-      if (buyerRecForGate && !buyerRecForGate['Qualified At']) {
-        const buyerLabel =
-          buyerRecForGate['Full Name'] || buyerRecForGate['Email'] || buyerId;
-        console.warn(
-          `[matching/suggest] BYPASS WARNING — buyer ${buyerLabel} routed without Qualified At`,
-        );
-        // Best-effort Telegram telemetry. Doesn't block routing.
-        try {
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `⚠️ <b>QUALIFICATION BYPASS</b>\n\n` +
-              `Buyer: ${buyerLabel} (${buyerRecForGate['State'] || '?'})\n` +
-              `Called matching/suggest without first completing /qualify.\n\n` +
-              `<i>Likely caller: admin action, batch-approve, or a legacy member route. Not blocked.</i>`,
-          );
-        } catch {}
-      }
+      buyerRecForGate = await getRecordById(TABLES.CONSUMERS, buyerId);
     } catch (e: any) {
-      console.warn(
-        `[matching/suggest] qualification telemetry skipped: ${e?.message}`,
-      );
+      return NextResponse.json({
+        error: `Buyer record not found: ${buyerId}`,
+        detail: e?.message || 'lookup failed',
+      }, { status: 404 });
+    }
+    if (!buyerRecForGate) {
+      return NextResponse.json({ error: `Buyer record not found: ${buyerId}` }, { status: 404 });
+    }
+
+    const buyerLabel = buyerRecForGate['Full Name'] || buyerRecForGate['Email'] || buyerId;
+    const qualScore = Number(buyerRecForGate['Qualification Score'] || 0);
+    const hasQualified = !!buyerRecForGate['Qualified At'] && qualScore >= 75;
+    if (!hasQualified && !isOperatorOverride) {
+      // Loud Telegram so the operator sees every bypass attempt — even
+      // automated cron calls that try to bypass without override.
+      try {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🛑 <b>ROUTING BLOCKED — buyer not qualified</b>\n\n` +
+            `Buyer: ${buyerLabel} (${buyerRecForGate['State'] || '?'})\n` +
+            `Qualified At: ${buyerRecForGate['Qualified At'] || 'missing'}\n` +
+            `Score: ${qualScore}/100 (need ≥75)\n\n` +
+            `<i>Caller attempted matching/suggest without operatorOverride. 412 returned. Direct buyer to /qualify or pass operatorOverride={reason}.</i>`,
+        );
+      } catch {}
+      return NextResponse.json({
+        error: 'Buyer has not completed /qualify quiz — routing blocked',
+        buyer: buyerLabel,
+        qualifyUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/qualify`,
+        hint: 'Direct buyer to complete /qualify, OR pass operatorOverride=true + operatorOverrideReason for admin manual route.',
+      }, { status: 412 });
+    }
+
+    // Operator override path — log loud Telegram so every override is visible.
+    if (!hasQualified && isOperatorOverride) {
+      try {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `⚠️ <b>OPERATOR OVERRIDE — routing unqualified buyer</b>\n\n` +
+            `Buyer: ${buyerLabel} (${buyerRecForGate['State'] || '?'})\n` +
+            `Reason: ${operatorOverrideReason || '(not provided)'}\n\n` +
+            `<i>Quiz NOT completed; operatorOverride=true. Audit-logged.</i>`,
+        );
+      } catch {}
     }
 
     // ── Guard: skip if buyer already has an active referral ────────────────

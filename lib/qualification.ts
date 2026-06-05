@@ -122,31 +122,36 @@ export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: strin
     return { ok: false, reason: 'just exploring — buyer hasn\'t committed yet' };
   }
 
-  // CONSENT SIGNAL — three tiers, top-priority first.
-  // Quality over quantity: a buyer never reaches a rancher's inbox unless
-  // they actively pressed a button affirming they want this introduction.
+  // CONSENT SIGNAL — STRICT QUIZ-ONLY (2026-06-05 hardening).
   //
-  // (a) PRIMARY (2026-06-03): qualified via 4-question quiz at /qualify.
-  //     Strongest signal we have — buyer answered tier/timing/storage and
-  //     acknowledged the commitment. Score >=75 already filtered upstream.
-  //     All new buyers MUST go through this path.
+  // Previous behavior had legacy fallback signals (ready-to-buy /
+  // warmup-engaged) that pre-dated the /qualify quiz. Those fallbacks
+  // allowed 270+ pre-quiz buyers to be auto-routed by batch-approve, AND
+  // were the proximate cause of the 2026-06-05 incident where 179 healed
+  // buyers cascaded through batch-approve → matching/suggest → nationwide
+  // fallback → 39 cross-state misroutes to Ashcraft + Hartsock.
+  //
+  // Strict policy: ONLY the 4-question quiz signal qualifies for routing.
+  // Score >=75 is the only path. Buyer must answer tier/timing/storage and
+  // acknowledge commitment. No exceptions, no legacy fallbacks.
+  //
+  // Grandfather plan: pre-quiz buyers with old engagement signals are NOT
+  // silently routed — they get a fresh /qualify invite via the existing
+  // re-engagement nurture cron (sendCleanupRecovery + Welcome+RTB drip),
+  // which delivers a quiz JWT to re-onboard them through the gate.
   const qualScore = Number(buyer['Qualification Score'] || 0);
   if (buyer['Qualified At'] && qualScore >= 75) {
     return { ok: true, signal: 'qualified-quiz' };
   }
 
-  // (b) LEGACY (pre-2026-06-03): clicked YES on the old Ready-to-Buy email.
-  //     Grandfathered for buyers in DB before the quiz shipped. Once these
-  //     drain through close cycles, this fallback can be removed.
-  if (buyer['Ready to Buy']) return { ok: true, signal: 'ready-to-buy' };
-
-  // (c) LEGACY: clicked YES on a launch warmup before the CTA was renamed.
-  if (buyer['Warmup Engaged At']) return { ok: true, signal: 'warmup-engaged' };
-
-  // No path 4 by design. Fresh signups, regardless of intent score or form
-  // completeness, must complete /qualify before any rancher hears about them.
-  // Form completion alone is not enough — the quiz click is.
-  return { ok: false, reason: 'no qualification signal yet — buyer must complete /qualify quiz to be routed' };
+  // Missing quiz = REJECTED for routing. Buyer stays in nurture until they
+  // complete /qualify. No silent legacy bypass.
+  const reason = buyer['Qualified At']
+    ? `quiz incomplete — score ${qualScore}/100 below 75 threshold`
+    : buyer['Ready to Buy'] || buyer['Warmup Engaged At']
+      ? 'pre-quiz buyer — strict gate rejects legacy ready-to-buy/warmup signals; needs fresh /qualify completion'
+      : 'no qualification signal — buyer must complete /qualify quiz to be routed';
+  return { ok: false, reason };
 }
 
 /**

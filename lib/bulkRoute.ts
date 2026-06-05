@@ -76,6 +76,31 @@ export async function bulkRouteStateToRancher(opts: {
     `AND({State} = "${escapeAirtableValue(state)}", {Status} = "Approved")`
   );
 
+  // ── PRE-FIRE TELEGRAM (2026-06-05 hardening) ───────────────────────
+  // Loud alert BEFORE the loop fires so the operator sees the planned
+  // fan-out and can manually intervene before emails go out. Includes
+  // count + target + dry-run state. Fires even in dryRun so the path
+  // is verified during testing.
+  if (consumers.length > 5) {
+    try {
+      const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('./telegram');
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `📣 <b>BULKROUTE PRE-FIRE</b>\n\n` +
+          `About to route up to <b>${consumers.length}</b> buyers in ${state} → ${rancherName}\n` +
+          `Mode: ${dryRun ? '🧪 DRY RUN' : '🚀 LIVE'}\n\n` +
+          `<i>If this is unexpected, set MATCHING_ENABLED=false in Vercel env IMMEDIATELY to halt. Otherwise this proceeds.</i>`,
+      );
+    } catch {}
+  }
+
+  // Kill-switch check (2026-06-05): allows operator to halt mid-run by
+  // flipping env. Eval at top of every batch so a runaway iteration can
+  // be stopped between buyers.
+  if (process.env.MATCHING_ENABLED === 'false') {
+    return { ok: false, error: 'Matching engine paused via MATCHING_ENABLED=false', status: 503 };
+  }
+
   // 3. Find all existing referrals in the state
   const referrals: any[] = await getAllRecords(
     TABLES.REFERRALS,
@@ -137,11 +162,41 @@ export async function bulkRouteStateToRancher(opts: {
         continue;
       }
 
+      // ── CROSS-STATE ASSERTION (2026-06-05 hardening) ──────────────────
+      // Before ANY routing decision, verify the buyer's state actually
+      // matches the rancher's served states. This catches the failure
+      // mode where a multi-state rancher's Routing States gets out of
+      // sync with the cron's `state` parameter, OR where a Ships
+      // Nationwide rancher silently absorbs every cross-state buyer
+      // (the 2026-06-05 incident root cause).
+      //
+      // Skip cross-state mismatches with a loud Telegram alert — operator
+      // must explicitly fix the rancher's Routing States OR pass an
+      // explicit operatorOverride flag (not yet exposed in bulkRoute API).
+      const buyerStateNorm = String(buyerState || '').toUpperCase().trim();
+      const rancherServedStates = getRancherServedStates(rancher);
+      const stateAllowed = rancherServedStates.includes(buyerStateNorm) ||
+                           rancherServedStates.includes(state.toUpperCase());
+      if (!stateAllowed) {
+        summary.skipped_unqualified++;
+        const r = `cross-state mismatch — buyer in ${buyerStateNorm}, rancher serves ${rancherServedStates.join('/')}`;
+        summary.unqualified_reasons[r] = (summary.unqualified_reasons[r] || 0) + 1;
+        try {
+          const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('./telegram');
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `🚨 <b>BULKROUTE CROSS-STATE BLOCKED</b>\n\n` +
+              `Buyer: ${buyerName} (${buyerStateNorm})\n` +
+              `Rancher: ${rancherName} — serves ${rancherServedStates.join(', ')}\n\n` +
+              `<i>bulkRoute would have misrouted this buyer. Blocked + skipped. Check rancher's Routing States config.</i>`,
+          );
+        } catch {}
+        continue;
+      }
+
       // ── QUALIFICATION GATE ────────────────────────────────────────────
-      // Reject buyers who haven't explicitly opted in (no warmup engagement
-      // and not a fresh hot signup). This is what stops bulk routing from
-      // becoming spam — every routed buyer has either clicked YES on a warmup
-      // email OR signed up in the last 14 days with strong intent signals.
+      // Reject buyers who haven't completed /qualify quiz. Legacy fallbacks
+      // (Ready to Buy, Warmup Engaged At) removed 2026-06-05 — strict gate.
       const qual = isQualifiedForRouting(consumer);
       if (!qual.ok) {
         summary.skipped_unqualified++;

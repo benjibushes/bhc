@@ -116,6 +116,32 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       // Don't return yet — still need to retry waitlisted consumers below
     }
 
+    // ── PRE-FIRE TELEGRAM (2026-06-05 hardening) ──────────────────────
+    // Loud alert BEFORE the primary loop processes if the cohort is big.
+    // Operator sees the planned scope + can flip MATCHING_ENABLED=false
+    // to halt before emails go out. >10 pending = the "this might cascade"
+    // threshold.
+    if (pending.length > 10) {
+      try {
+        await sendTelegramUpdate(
+          `📣 <b>BATCH-APPROVE PRE-FIRE</b>\n\n` +
+            `About to process <b>${pending.length}</b> pending consumers.\n` +
+            `Each may trigger matching/suggest → rancher intro email.\n\n` +
+            `<i>If this is unexpected, set MATCHING_ENABLED=false in Vercel env NOW to halt. Otherwise this proceeds.</i>`,
+        );
+      } catch {}
+    }
+
+    // Kill-switch evaluated at loop entry. Lets operator halt mid-cron run.
+    if (process.env.MATCHING_ENABLED === 'false') {
+      await sendTelegramUpdate('⛔ batch-approve HALTED — MATCHING_ENABLED=false in env.');
+      return {
+        status: 'partial' as const,
+        recordsTouched: 0,
+        notes: 'halted via MATCHING_ENABLED=false kill switch',
+      };
+    }
+
     let approved = 0;
     let matched = 0;
     const errors: string[] = [];
