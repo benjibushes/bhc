@@ -577,51 +577,22 @@ export async function POST(request: Request) {
 
       topMatch = eligible.length > 0 ? eligible[0] : null;
 
-      // ── NATIONWIDE FALLBACK (2026-06-02) ────────────────────────────────
-      // RULE: if no in-state coverage (no primary-state rancher AND no
-      // admin-approved multi-state rancher serves this buyer's state),
-      // check for ranchers explicitly opted into nationwide shipping via
-      // `Ships Nationwide=true`. This is the ONLY mechanism for cross-state
-      // overflow — the field gates whether a rancher accepts any-state
-      // buyers. Admin toggles per-rancher in /admin/ranchers/[id] OR
-      // rancher self-opts in /rancher dashboard.
+      // ── NATIONWIDE FALLBACK — DISABLED 2026-06-05 ──────────────────────
+      // BPF-1 (2026-06-02) wired `Ships Nationwide=true` as a cross-state
+      // fallback when no in-state rancher matched. In prod this fired
+      // through the batch-approve cron and routed 39 cross-state buyers
+      // to Ashcraft (TX) and Hartsock (CO) within minutes — neither
+      // rancher expected or wanted the volume, and the buyers got a
+      // misrouted intro that contradicted their state.
       //
-      // Order of priority preserved:
-      //   1. In-state primary rancher (above sort)
-      //   2. Admin-approved multi-state rancher serving this state (above)
-      //   3. Ships Nationwide fallback (this block) ← only when 1+2 empty
-      //   4. State waitlist letter (below)
+      // Reverted to STATE-LOCAL ONLY policy. No nationwide auto-route.
+      // Buyers without an in-state rancher waitlist via the no-match
+      // short-circuit below. If/when a specific rancher needs explicit
+      // multi-state coverage, use `Admin Approved Multi-State` + populate
+      // `Routing States` (handled above) — that's the controlled path.
       //
-      // All other gates still apply (operational + capacity + tier + price
-      // + sub-cap). Nationwide ranchers don't bypass capacity — their cap
-      // protects them from drowning in cross-state demand.
-      if (!topMatch) {
-        const nationwideEligible = allRanchers.filter((r: any) => {
-          if (r['Ships Nationwide'] !== true) return false;
-          if (!isEligibleBase(r)) return false;
-          if (!isTierFit(r)) return false;
-          if (!passesFiveBarBeefPolicy(r)) return false;
-          return true;
-        }).filter(isPriceFit);
-
-        nationwideEligible.sort((a: any, b: any) => {
-          const aRefs = a['Current Active Referrals'] || 0;
-          const bRefs = b['Current Active Referrals'] || 0;
-          if (aRefs !== bRefs) return aRefs - bRefs;
-          const aDate = a['Last Assigned At'] ? new Date(a['Last Assigned At']).getTime() : 0;
-          const bDate = b['Last Assigned At'] ? new Date(b['Last Assigned At']).getTime() : 0;
-          if (aDate !== bDate) return aDate - bDate;
-          const aScore = a['Performance Score'] || 50;
-          const bScore = b['Performance Score'] || 50;
-          return bScore - aScore;
-        });
-
-        if (nationwideEligible.length > 0) {
-          topMatch = nationwideEligible[0];
-          matchType = 'nationwide';
-          console.log(`[match] Nationwide fallback fired: ${topMatch['Operator Name']} (${topMatch['State']}) -> buyer in ${normalizedBuyerState}`);
-        }
-      }
+      // The Ships Nationwide field is intentionally NOT read here. Flipped
+      // both Ashcraft and Hartsock to Ships Nationwide=false to be safe.
     }
 
     // ── NO-MATCH SHORT-CIRCUIT (2026-05-09 fix) ──
