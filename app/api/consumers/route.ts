@@ -451,56 +451,50 @@ export async function POST(request: Request) {
         const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
         const hasInStateRancher = hasOperationalRancherForState(allRanchers, state);
 
-        // ── QUALIFICATION GATE REDIRECT (2026-06-03) ─────────────────────
-        // Previously: high-intent signup → matching/suggest fires immediately
-        // → rancher gets intro before buyer even sees the welcome email.
+        // ── QUALIFICATION GATE REDIRECT (broadened 2026-06-05) ───────────
+        // ALL beef-buyer signups must clear /qualify before any rancher sees
+        // them. GUARD-2 enforces this at matching/suggest with a hard 412 if
+        // Qualified At is missing — meaning every routing path requires the
+        // quiz.
         //
-        // Now: ALL beef-buyer signups must clear /qualify before any rancher
-        // sees them. For high-intent signups w/ a state-matched rancher, mint
-        // a qualify JWT and return qualifyUrl in the response so /access can
-        // redirect the buyer directly to the gamified quiz. They never wait
-        // on email delivery. Low-intent signups still get the welcome+RTB
-        // email and reach /qualify via the YES click.
+        // Original gate (2026-06-03) only issued qualifyUrl for hot signups
+        // (intent>=60 + concrete tier/budget/timing). Result: 95.5% of leads
+        // (43 of 45 last 48h) skipped the redirect, got the welcome email
+        // instead, and never came back to take the quiz. The intent gate
+        // was double-gating — the quiz IS the qualifier.
         //
-        // No bypass: matching/suggest is no longer called here. /api/qualify
-        // is the SINGLE entry point that fires routing for buyer-initiated
-        // flows. Eliminates the lead-quality leak.
+        // Now: every in-state Beef Buyer + every rancher-page lead gets a
+        // qualifyUrl. /access redirects immediately. Out-of-state buyers
+        // (no operational rancher) still get the welcome email and reach
+        // /qualify via the YES click once a rancher comes online.
+        //
+        // Rancher-page leads are special: they signed up on a specific
+        // rancher's landing page, so we also pass them through quiz to
+        // collect quiz answers + Qualified At (required by GUARD-2). The
+        // backgroundTasks matching/suggest call for rancher-page leads is
+        // now suppressed when redirectToQualify=true — /api/qualify fires
+        // matching/suggest with the campaign param so the pinned rancher is
+        // preserved through the state-match cascade.
         let qualifyUrl: string | null = null;
         let redirectToQualify = false;
-        if (hasInStateRancher && consumerSegment === 'Beef Buyer' && !isRancherPageLead) {
-          const isJustExploring = /just exploring/i.test(budgetRange || '') ||
-            /just exploring/i.test(timing || '');
-          const isFutureTiming = /3-6 months/i.test(timing || '');
-          // Phone is REQUIRED at signup (2026-06-03), so the (intent>=80 || phone)
-          // ladder collapses to just intent>=60. Sub-60 intents stay on the
-          // welcome email path so the buyer self-selects via YES click.
-          const formIsQualified =
-            !!orderType && !!budgetRange &&
-            !/unsure|not sure/i.test(orderType) &&
-            !/unsure/i.test(budgetRange) &&
-            !isJustExploring &&
-            !isFutureTiming &&
-            serverIntentScore >= 60;
-
-          if (formIsQualified) {
-            const qualifyToken = jwt.sign(
-              { type: 'qualify-access', consumerId: record.id, email: email.trim().toLowerCase() },
-              JWT_SECRET,
-              { expiresIn: '24h' }
-            );
-            qualifyUrl = `${SITE_URL}/qualify/${encodeURIComponent(record.id)}?token=${encodeURIComponent(qualifyToken)}`;
-            qualifyUrlForResponse = qualifyUrl;
-            redirectToQualify = true;
-            // Mark Ready to Buy so the existing tooling treats this buyer as
-            // engaged (same as a YES click would). Warmup Engaged At gets
-            // stamped after they actually complete the quiz in /api/qualify.
-            try {
-              await updateRecord(TABLES.CONSUMERS, record.id, {
-                'Ready to Buy': true,
-              });
-            } catch (e: any) {
-              console.warn('[signup] Ready-to-Buy stamp failed:', e?.message);
-            }
+        if (consumerSegment === 'Beef Buyer' && (hasInStateRancher || isRancherPageLead)) {
+          const qualifyToken = jwt.sign(
+            { type: 'qualify-access', consumerId: record.id, email: email.trim().toLowerCase() },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+          );
+          qualifyUrl = `${SITE_URL}/qualify/${encodeURIComponent(record.id)}?token=${encodeURIComponent(qualifyToken)}`;
+          qualifyUrlForResponse = qualifyUrl;
+          redirectToQualify = true;
+          // Mark Ready to Buy so the existing tooling treats this buyer as
+          // engaged (same as a YES click would). Warmup Engaged At gets
+          // stamped after they actually complete the quiz in /api/qualify.
+          try {
+            await updateRecord(TABLES.CONSUMERS, record.id, {
+              'Ready to Buy': true,
+            });
+          } catch (e: any) {
+            console.warn('[signup] Ready-to-Buy stamp failed:', e?.message);
           }
         }
 
@@ -656,7 +650,13 @@ export async function POST(request: Request) {
       // info on that rancher's page — that IS an explicit signal of interest
       // in that specific rancher. Route them immediately so the rancher gets
       // the lead info in their inbox right away.
-      if ((campaign || '').startsWith('rancher-') && state) {
+      //
+      // LEAK-2 (2026-06-05): Skip this background matching call when the buyer
+      // is being redirected to /qualify. GUARD-2 412s the call without Qualified
+      // At, so it silently fails. /api/qualify will fire matching/suggest with
+      // the campaign param after the quiz so the pinned rancher is preserved
+      // through the cascade.
+      if (!qualifyUrlForResponse && (campaign || '').startsWith('rancher-') && state) {
         try {
           await fetch(
             `${SITE_URL}/api/matching/suggest`,
