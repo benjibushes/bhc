@@ -67,11 +67,18 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
   // Pull recent qualified buyers. Filter formula keeps the cron's Airtable
   // I/O bounded to a small window.
+  //
+  // `Deposit Paid At` field lives on Referrals, NOT Consumers — original CONV-4
+  // formula was invalid and the cron errored every 30min until this fix.
+  // Use Buyer Stage as the proxy: any non-closed buyer w/ Qualified At is a
+  // valid abandon-cart candidate. The per-referral lookup below additionally
+  // requires Status='Intro Sent', so referrals that already moved to Closed
+  // Won (deposit paid) won't trigger a nudge anyway.
   const formula = `AND(
     NOT({Qualified At} = BLANK()),
     {Qualified At} > '${cutoffStart}',
     {Qualified At} < '${cutoffEnd}',
-    {Deposit Paid At} = BLANK(),
+    {Buyer Stage} != 'CLOSED',
     {Unsubscribed} != TRUE(),
     {Bounced} != TRUE(),
     {Complained} != TRUE(),
