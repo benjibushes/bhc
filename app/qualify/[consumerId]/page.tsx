@@ -308,7 +308,7 @@ export default function QualifyPage({
           </section>
         )}
 
-        {/* STEP 4 — SCORE REVEAL */}
+        {/* STEP 4 — SCORE REVEAL + PRIMARY PURCHASE CTA */}
         {step === 4 && result && (
           <section className="space-y-6 text-center">
             {result.qualified ? (
@@ -317,49 +317,68 @@ export default function QualifyPage({
                 <header>
                   <p className="text-xs uppercase tracking-widest text-saddle mb-2">You scored {result.score}/100</p>
                   <h1 className="font-serif text-4xl text-charcoal">You&apos;re qualified.</h1>
-                  <p className="text-saddle mt-3 text-base max-w-md mx-auto">
-                    {result.routingOk && result.rancher
-                      ? `Matched with ${result.rancher.name} in ${result.rancher.state}. Choose how you want to connect:`
-                      : "We're holding your spot — the next rancher who opens up in your state gets you first."}
-                  </p>
+                  {result.routingOk && result.rancher ? (
+                    <p className="text-saddle mt-3 text-base max-w-md mx-auto">
+                      Matched with <strong className="text-charcoal">{result.rancher.name}</strong> in {result.rancher.state}.
+                    </p>
+                  ) : (
+                    <p className="text-saddle mt-3 text-base max-w-md mx-auto">
+                      We&apos;re holding your spot — the next rancher who opens up in your state gets you first.
+                    </p>
+                  )}
                 </header>
 
                 {result.routingOk && result.rancher && (
                   <div className="grid gap-4 mt-8">
-                    {/* Path A — Meet your rancher */}
-                    <button
-                      onClick={() => choosePath('rancher_meet')}
-                      disabled={!!pathChosen}
-                      className="border-2 border-charcoal bg-white hover:bg-bone p-6 text-left transition-all disabled:opacity-50"
-                    >
-                      <div className="flex items-start gap-4">
-                        <div className="text-3xl">📅</div>
-                        <div className="flex-1">
-                          <div className="font-serif text-xl text-charcoal">Meet your rancher</div>
-                          <div className="text-sm text-saddle mt-1">
-                            {result.rancher.name} will reach out — schedule a 15-min call, ask questions, lock in pricing.
+                    {result.pricingModel === 'tier_v2' && result.depositAmount && result.referralId ? (
+                      <>
+                        {/* PRIMARY CTA — Reserve Now (tier_v2 buyer purchases on platform) */}
+                        <button
+                          onClick={() => choosePath('direct_deposit')}
+                          disabled={!!pathChosen}
+                          className="border-4 border-charcoal bg-charcoal text-bone hover:bg-saddle hover:border-saddle p-7 text-left transition-all disabled:opacity-50 shadow-lg"
+                        >
+                          <div className="flex items-start gap-4">
+                            <div className="text-4xl">💳</div>
+                            <div className="flex-1">
+                              <p className="text-xs uppercase tracking-widest text-bone/70 mb-1">Recommended · Lock your slot</p>
+                              <div className="font-serif text-2xl mb-2">Reserve your share — ${result.depositAmount} deposit</div>
+                              <div className="text-sm text-bone/90 leading-relaxed">
+                                Pay now → slot locked for the next processing run → {result.rancher.name} invoices the balance when ready for pickup.
+                                <br />
+                                <strong>No deposit, no slot held.</strong> Spots fill first-come.
+                              </div>
+                            </div>
+                            <div className="font-medium text-2xl">→</div>
                           </div>
-                        </div>
-                        <div className="text-charcoal font-medium">→</div>
-                      </div>
-                    </button>
+                        </button>
 
-                    {/* Path B — Direct deposit (tier_v2 only) */}
-                    {result.pricingModel === 'tier_v2' && result.depositAmount && result.referralId && (
+                        {/* SECONDARY — Talk first */}
+                        <button
+                          onClick={() => choosePath('rancher_meet')}
+                          disabled={!!pathChosen}
+                          className="border border-dust bg-white hover:bg-bone p-4 text-center transition-all disabled:opacity-50 text-sm text-saddle hover:text-charcoal"
+                        >
+                          Not sure yet? Schedule a 15-min call with {result.rancher.name} first →
+                        </button>
+                      </>
+                    ) : (
+                      /* Legacy rancher — schedule call only path */
                       <button
-                        onClick={() => choosePath('direct_deposit')}
+                        onClick={() => choosePath('rancher_meet')}
                         disabled={!!pathChosen}
-                        className="border-2 border-charcoal bg-charcoal text-bone hover:bg-saddle hover:border-saddle p-6 text-left transition-all disabled:opacity-50"
+                        className="border-4 border-charcoal bg-charcoal text-bone hover:bg-saddle hover:border-saddle p-7 text-left transition-all disabled:opacity-50 shadow-lg"
                       >
                         <div className="flex items-start gap-4">
-                          <div className="text-3xl">💳</div>
+                          <div className="text-4xl">📅</div>
                           <div className="flex-1">
-                            <div className="font-serif text-xl">Reserve your share now</div>
-                            <div className="text-sm text-bone/90 mt-1">
-                              Skip the call — pay ${result.depositAmount} deposit, lock in your slot for the next processing run. Rancher invoices the balance after processing.
+                            <p className="text-xs uppercase tracking-widest text-bone/70 mb-1">Next step</p>
+                            <div className="font-serif text-2xl mb-2">Meet {result.rancher.name}</div>
+                            <div className="text-sm text-bone/90 leading-relaxed">
+                              Schedule a 15-min call OR they&apos;ll reach out via email/phone within 24h with pricing, processing date, and how to lock in your order.
                             </div>
                           </div>
-                          <div className="font-medium">→</div>
+                          <div className="font-medium text-2xl">→</div>
                         </div>
                       </button>
                     )}
