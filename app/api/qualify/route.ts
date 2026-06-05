@@ -166,6 +166,32 @@ export async function POST(request: Request) {
     });
   }
 
+  // CRITICAL ORDERING FIX (PERFECT-G, 2026-06-05): GUARD-2 reads Qualified At
+  // from Airtable inside matching/suggest. If we call matching/suggest BEFORE
+  // stamping Qualified At, GUARD-2 sees the stale (empty) value and 412s.
+  // Every quiz pass since GUARD-2 shipped (2026-06-05) silently failed
+  // to route. Synthetic E2E caught it.
+  //
+  // Write the routing-relevant fields NOW (Qualified At, Score, Answers, Order
+  // Type, Timing) so matching/suggest's gate sees the fresh state. Path +
+  // late-stage Updated At fields can land in a second write after matching.
+  try {
+    const earlyWrite: Record<string, any> = {
+      'Qualification Answers': consumerUpdates['Qualification Answers'],
+      'Qualification Score': consumerUpdates['Qualification Score'],
+      'Qualified At': consumerUpdates['Qualified At'],
+    };
+    if (consumerUpdates['Order Type']) earlyWrite['Order Type'] = consumerUpdates['Order Type'];
+    if (consumerUpdates['Timing']) earlyWrite['Timing'] = consumerUpdates['Timing'];
+    await updateRecord(TABLES.CONSUMERS, consumerId, earlyWrite);
+  } catch (e: any) {
+    console.error('[/api/qualify] pre-route consumer update failed:', e?.message);
+    // Fail early — without Qualified At in DB, matching/suggest will 412.
+    return NextResponse.json({
+      error: 'Could not save quiz answers. Please try again or reply to the email.',
+    }, { status: 500 });
+  }
+
   // PASSED — fire matching/suggest. Server-to-server call with internal secret.
   let suggestedRancher: any = null;
   let referralId: string | null = null;
@@ -249,12 +275,16 @@ export async function POST(request: Request) {
     }
   }
 
-  // Persist path + stage transition AFTER matching outcome is known.
-  consumerUpdates['Qualification Path'] = 'rancher_meet'; // default — client may flip to direct_deposit later
+  // Persist path AFTER matching outcome is known. Early write above already
+  // landed Qualified At + Score + Answers + Order Type + Timing; this second
+  // write only sets the late-stage Path field so the operator can see whether
+  // the buyer chose the deposit-first vs schedule-call path.
   try {
-    await updateRecord(TABLES.CONSUMERS, consumerId, consumerUpdates);
+    await updateRecord(TABLES.CONSUMERS, consumerId, {
+      'Qualification Path': 'rancher_meet', // default — client may flip to direct_deposit later
+    });
   } catch (e: any) {
-    console.error('[/api/qualify] consumer update failed:', e?.message);
+    console.error('[/api/qualify] path update failed:', e?.message);
   }
 
   try {
