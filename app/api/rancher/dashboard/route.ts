@@ -81,6 +81,10 @@ export async function GET(request: Request) {
       // (tier_v2 Stripe Connect flow).
       deposit_paid_at: r['Deposit Paid At'] || '',
       deposit_amount: Number(r['Deposit Amount'] || 0),
+      // NRD (2026-06-05): non-refundable lock cutoff. Set when rancher hits
+      // "Accept Slot" — POST /api/rancher/referrals/[id]/accept. Refund
+      // endpoint guards against post-accept refunds without operator override.
+      rancher_accepted_at: r['Rancher Accepted At'] || '',
       final_invoice_url: r['Final Invoice URL'] || '',
       final_invoice_sent_at: r['Final Invoice Sent At'] || '',
       final_invoice_amount: Number(r['Final Invoice Amount'] || 0),

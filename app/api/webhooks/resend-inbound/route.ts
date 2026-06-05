@@ -369,6 +369,31 @@ export async function POST(request: Request) {
         if (effectiveSenderType === 'rancher') {
           refUpdates['Last Rancher Activity At'] = now;
           refUpdates['Rancher Engaged Flag'] = true;
+          // NRD-6 (2026-06-05): rancher engagement after deposit lands ==
+          // implicit acceptance. Load the existing referral, and if Deposit
+          // Paid At is set AND Rancher Accepted At is blank, auto-stamp
+          // accepted now. Real-world rancher behavior: they read the intro
+          // email, reply with "great, looking forward to processing!" —
+          // that IS the commitment. The explicit Accept button covers the
+          // case where the rancher hasn't replied yet but is ready to lock.
+          try {
+            const { getRecordById, updateRecord, TABLES } = await import('@/lib/airtable');
+            const existingRef: any = await getRecordById(TABLES.REFERRALS, links.referralId);
+            if (existingRef?.['Deposit Paid At'] && !existingRef?.['Rancher Accepted At']) {
+              refUpdates['Rancher Accepted At'] = now;
+              refUpdates['Notes'] = `[NRD-auto-accept ${now.slice(0, 16)}] Rancher engaged via reply after deposit. Auto-stamped. ${String(existingRef['Notes'] || '')}`.slice(0, 2000);
+              // Fire-and-forget Telegram so operator sees the auto-accept.
+              try {
+                const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+                await sendTelegramMessage(
+                  TELEGRAM_ADMIN_CHAT_ID,
+                  `🔒 <b>AUTO-ACCEPT (NRD-6)</b>\n\nReferral: <code>${links.referralId}</code>\nRancher replied after deposit. Slot now locked non-refundable.`,
+                );
+              } catch {}
+            }
+          } catch (e: any) {
+            console.warn('[NRD-6 auto-accept] lookup failed:', e?.message);
+          }
         } else {
           refUpdates['Last Buyer Activity At'] = now;
         }

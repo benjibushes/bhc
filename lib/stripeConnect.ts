@@ -224,6 +224,12 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
           platformFeeCents: String(platformFeeCents),
           totalChargedCents: String(totalChargedCents),
           fulfillmentBalanceCents: String(fulfillmentBalanceCents),
+          // NRD policy (2026-06-05): refundable until rancher accepts the
+          // slot, then non-refundable. Tag the PaymentIntent so Stripe
+          // Dashboard refunds can surface the policy + so external auditors
+          // (chargeback responses, etc.) see the disclosure.
+          nonRefundablePolicy: 'rancher_accept',
+          nonRefundablePolicyVersion: 'NRD-2026-06-05',
         },
       },
       metadata: {
@@ -237,6 +243,8 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
         platformFeeCents: String(platformFeeCents),
         totalChargedCents: String(totalChargedCents),
         fulfillmentBalanceCents: String(fulfillmentBalanceCents),
+        nonRefundablePolicy: 'rancher_accept',
+        nonRefundablePolicyVersion: 'NRD-2026-06-05',
       },
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,

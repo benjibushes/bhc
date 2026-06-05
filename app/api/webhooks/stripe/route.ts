@@ -474,7 +474,8 @@ export async function POST(request: Request) {
             : '';
           await sendTelegramMessage(
             TELEGRAM_ADMIN_CHAT_ID,
-            `💰 DEPOSIT PAID — Rancher $${(depositCents / 100).toFixed(2)}${feePart}${balancePart} · ${tier} tier · ref=${referralId.slice(-6)}`,
+            `💰 DEPOSIT PAID — Rancher $${(depositCents / 100).toFixed(2)}${feePart}${balancePart} · ${tier} tier · ref=${referralId.slice(-6)}\n\n` +
+              `<i>NRD-7: Rancher needs to tap "Accept Slot" in dashboard to lock buyer in. Refundable until then.</i>`,
           );
         } catch (e: any) {
           console.warn('[stripe webhook] telegram deposit alert failed:', e?.message);

@@ -83,6 +83,57 @@ export async function POST(
   try { body = await request.json(); } catch { /* allow empty body */ }
   const reason: string | undefined = body?.reason;
   const refundAppFee: boolean = body?.refundApplicationFee !== false; // default true
+  // NRD-5 (2026-06-05): non-refundable lock override flag. Required when the
+  // payment's referral has Rancher Accepted At set. operator must supply
+  // nrdOverrideReason as well so the audit trail captures WHY a locked
+  // deposit was force-refunded (e.g., rancher cancelled, force majeure,
+  // chargeback prevention).
+  const nrdOverride: boolean = body?.nrdOverride === true;
+  const nrdOverrideReason: string | undefined = body?.nrdOverrideReason;
+
+  // NRD-5 gate: load the linked referral, check Rancher Accepted At, block
+  // unless explicit nrdOverride + reason. The reason flows into the audit
+  // log + Telegram alert so Ben can spot misuse.
+  try {
+    const refIds: string[] = (payment['Referral'] || []) as string[];
+    const refId = refIds[0];
+    if (refId) {
+      const ref: any = await getRecordById(TABLES.REFERRALS, refId);
+      const acceptedAt = ref?.['Rancher Accepted At'];
+      if (acceptedAt) {
+        if (!nrdOverride) {
+          return NextResponse.json(
+            {
+              error: 'Refund blocked — deposit is locked per NRD policy',
+              acceptedAt,
+              hint: 'Rancher already accepted this slot. Re-submit with nrdOverride=true AND nrdOverrideReason="<why>" to force-refund. Reason will be audit-logged.',
+            },
+            { status: 412 },
+          );
+        }
+        if (!nrdOverrideReason || nrdOverrideReason.trim().length < 6) {
+          return NextResponse.json(
+            { error: 'nrdOverrideReason required (min 6 chars) when force-refunding a locked deposit' },
+            { status: 400 },
+          );
+        }
+        // Loud Telegram so the override is visible in real time.
+        try {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `🚨 <b>NRD OVERRIDE REFUND</b>\n\n` +
+              `Payment: <code>${paymentId}</code>\n` +
+              `Referral: <code>${refId}</code>\n` +
+              `Slot accepted at: ${acceptedAt}\n` +
+              `Operator reason: ${nrdOverrideReason}\n\n` +
+              `<i>A locked deposit was force-refunded. Verify this was authorized.</i>`,
+          );
+        } catch {}
+      }
+    }
+  } catch (e: any) {
+    console.warn('[refund/NRD] gate check failed (fail-open):', e?.message);
+  }
 
   // Partial refund support — P0 audit fix (C-6). amountCents is optional;
   // absent → full refund (preserves prior behavior). Must be positive +

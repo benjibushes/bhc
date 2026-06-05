@@ -256,24 +256,28 @@ function DepositPageContent() {
             </div>
           </div>
 
-          {/* BHC Promise — platform-level trust floor (cold-chain + 7-day satisfaction + mediation).
-              Lives ABOVE the rancher's self-written policy so a "NO REFUNDS EVER" line doesn't tank
-              buyer trust right before the Continue-to-Stripe button. See docs/BHC-PROMISE.md. */}
+          {/* BHC Promise — platform-level trust floor. Updated 2026-06-05 NRD policy:
+              deposit is REFUNDABLE until rancher accepts your slot, then non-refundable.
+              Cold-chain guarantee + mediation stay regardless. */}
           <div className="border-l-4 border-sage-dark bg-white p-3 md:p-6 mb-3">
             <h2 className="font-serif text-lg uppercase tracking-widest text-sage-dark mb-3">
               <span aria-hidden="true">🛡️</span> BHC Promise
             </h2>
             <p className="text-sm text-charcoal leading-relaxed mb-4">
-              Beef arrives frozen and on time, or BHC refunds your deposit within 7 days — no questions asked, paid by BuyHalfCow.
+              Your deposit reserves your slot with {info.rancher.name}. It&rsquo;s fully refundable until they accept it — usually within 24–48 hours. Once they commit your processing slot, it becomes non-refundable.
             </p>
             <ul className="text-sm text-charcoal leading-relaxed space-y-2">
               <li className="flex gap-2">
                 <span className="text-sage-dark" aria-hidden="true">•</span>
-                <span><strong>Cold-chain guarantee:</strong> if your beef arrives thawed, it&apos;s free.</span>
+                <span><strong>Refundable window:</strong> change your mind before {info.rancher.name} accepts? Full refund, no questions.</span>
               </li>
               <li className="flex gap-2">
                 <span className="text-sage-dark" aria-hidden="true">•</span>
-                <span><strong>7-day satisfaction:</strong> not what you expected? Full deposit refund.</span>
+                <span><strong>Non-refundable once accepted:</strong> after they commit your slot, they&rsquo;ve set aside cuts of meat and locked in processing. You&rsquo;ll get a &ldquo;slot locked&rdquo; email the moment that happens.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-sage-dark" aria-hidden="true">•</span>
+                <span><strong>Cold-chain guarantee stays:</strong> if your beef arrives thawed or short, BHC makes you whole — even after acceptance.</span>
               </li>
               <li className="flex gap-2">
                 <span className="text-sage-dark" aria-hidden="true">•</span>

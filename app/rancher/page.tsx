@@ -115,6 +115,9 @@ interface Referral {
   // present = invoice already created (don't re-send unless explicit).
   deposit_paid_at?: string;
   deposit_amount?: number;
+  // NRD (2026-06-05): non-refundable lock cutoff. Stamped by /accept endpoint.
+  // When present, deposit is locked; refund endpoint requires admin override.
+  rancher_accepted_at?: string;
   final_invoice_url?: string;
   final_invoice_sent_at?: string;
   final_invoice_amount?: number;
@@ -297,6 +300,33 @@ export default function RancherDashboardPage() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setUpdateError(data.error || 'Failed to update status. Please try again.');
+      }
+      await fetchDashboard();
+    } catch {
+      setUpdateError('Network error. Please check your connection.');
+    } finally {
+      setUpdating(null);
+    }
+  };
+
+  // NRD-2 (2026-06-05): Rancher accepts the deposit-paid referral. Stamps
+  // Rancher Accepted At on the referral and locks the deposit to non-
+  // refundable (refund endpoint guards against post-accept refunds). Sends
+  // buyer "slot locked" confirmation email. Idempotent on the server.
+  const acceptReferral = async (referralId: string) => {
+    if (!confirm('Accept this slot? The buyer is then locked in — their deposit becomes non-refundable per BHC policy. Only do this when you can commit to processing their share.')) {
+      return;
+    }
+    setUpdating(referralId);
+    setUpdateError('');
+    try {
+      const res = await fetch(`/api/rancher/referrals/${referralId}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setUpdateError(data.error || 'Could not accept slot. Try again.');
       }
       await fetchDashboard();
     } catch {
@@ -1215,6 +1245,7 @@ export default function RancherDashboardPage() {
                         onPass={() => setPassModal(ref)}
                         onLost={() => handleMarkLost(ref)}
                         onSendFinal={() => openFinalInvoiceModal(ref)}
+                        onAccept={() => acceptReferral(ref.id)}
                         updating={updating}
                       />
                     ))}
@@ -1301,6 +1332,7 @@ export default function RancherDashboardPage() {
                         onPass={() => setPassModal(ref)}
                         onLost={() => handleMarkLost(ref)}
                         onSendFinal={() => openFinalInvoiceModal(ref)}
+                        onAccept={() => acceptReferral(ref.id)}
                         updating={updating}
                       />
                     ))}
@@ -2697,7 +2729,7 @@ function ResponseDeadline({ referral }: { referral: Referral }) {
   );
 }
 
-function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; updating: string | null }) {
+function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, onAccept, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; onAccept?: () => void; updating: string | null }) {
   // FINAL-5 (2026-05-31): show "Send Final Invoice" when deposit landed +
   // referral isn't yet Closed Won / Closed Lost / fully paid. Re-send label
   // if invoice already sent (final_invoice_url present).
@@ -2706,6 +2738,11 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
   const finalPaid = !!referral.final_paid_at;
   const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
   const showFinalInvoice = !!onSendFinal && depositPaid && !finalPaid && !isTerminal;
+  // NRD-2: Accept Slot button. Show when deposit landed AND not yet accepted
+  // AND not in a terminal state. Once accepted, the deposit is locked
+  // non-refundable per BHC policy.
+  const rancherAcceptedAt = referral.rancher_accepted_at || '';
+  const showAccept = !!onAccept && depositPaid && !rancherAcceptedAt && !isTerminal;
 
   return (
     <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -2719,6 +2756,11 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
           {depositPaid && (
             <span className="inline-block px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800" title={`Deposit of $${(referral.deposit_amount || 0).toFixed(2)} paid ${referral.deposit_paid_at || ''}`}>
               Deposit ${(referral.deposit_amount || 0).toFixed(0)} ✓
+            </span>
+          )}
+          {rancherAcceptedAt && (
+            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800" title={`Slot accepted ${rancherAcceptedAt}. Deposit non-refundable per BHC policy.`}>
+              🔒 Slot locked
             </span>
           )}
           {finalSent && !finalPaid && (
@@ -2736,6 +2778,16 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
             className="px-3 py-1.5 text-xs border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
             Contacted ✓
+          </button>
+        )}
+        {showAccept && (
+          <button
+            onClick={onAccept}
+            disabled={updating === referral.id}
+            className="px-3 py-1.5 text-xs bg-purple-700 text-white hover:bg-purple-800 transition-colors disabled:opacity-50"
+            title="Accept slot — buyer&apos;s deposit becomes non-refundable per BHC policy."
+          >
+            🔒 Accept Slot
           </button>
         )}
         {showFinalInvoice && (
@@ -2805,6 +2857,7 @@ function ReferralCard({
   onPass,
   onLost,
   onSendFinal,
+  onAccept,
   updating,
 }: {
   referral: Referral;
@@ -2813,6 +2866,7 @@ function ReferralCard({
   onPass: () => void;
   onLost: () => void;
   onSendFinal?: () => void;
+  onAccept?: () => void;
   updating: string | null;
 }) {
   // FINAL-5 (2026-05-31): see ReferralRow for parity logic + button intent.
@@ -2821,6 +2875,9 @@ function ReferralCard({
   const finalPaid = !!referral.final_paid_at;
   const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
   const showFinalInvoice = !!onSendFinal && depositPaid && !finalPaid && !isTerminal;
+  // NRD-2: Accept Slot button parity with ReferralRow.
+  const rancherAcceptedAt = referral.rancher_accepted_at || '';
+  const showAccept = !!onAccept && depositPaid && !rancherAcceptedAt && !isTerminal;
   return (
     <div className="p-6 border border-dust bg-white space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
@@ -2870,6 +2927,16 @@ function ReferralCard({
             className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
             {updating === referral.id ? 'Updating...' : 'In Negotiation'}
+          </button>
+        )}
+        {showAccept && (
+          <button
+            onClick={onAccept}
+            disabled={updating === referral.id}
+            className="px-4 py-2 text-sm bg-purple-700 text-white hover:bg-purple-800 transition-colors disabled:opacity-50"
+            title="Accept slot — buyer&apos;s deposit becomes non-refundable per BHC policy."
+          >
+            🔒 Accept Slot
           </button>
         )}
         {showFinalInvoice && (

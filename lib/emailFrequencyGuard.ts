@@ -79,6 +79,11 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // welcome + RTB + intro in the same week (which they always do — that's
   // 3 emails already). Whitelisted to ensure recovery actually fires.
   'sendQualifiedNoActionNudge',
+  // NRD-2 (2026-06-05): buyer "slot locked" confirmation when rancher
+  // accepts. Buyer-facing legal-significance email — deposit transitions
+  // to non-refundable so they must receive this. Capping = silent loss of
+  // the disclosure that protects BHC against future chargeback disputes.
+  'sendBuyerSlotLocked',
 ]);
 
 /**

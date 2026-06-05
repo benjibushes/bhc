@@ -1157,12 +1157,14 @@ export async function sendBuyerIntroNotification(data: {
       <a href="${data.depositMagicLinkUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Reserve your share — secure deposit &rarr;</a>
     </p>
     <p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;"><strong>No deposit, no slot held.</strong></p>
+    <p style="margin:10px 0 0 0;font-size:11px;color:#6B4F3F;text-align:center;line-height:1.5;">Refundable until ${esc(data.rancherName)} accepts your slot. Non-refundable after.<br>Cold-chain guarantee + BHC mediation always apply.</p>
   </div>`;
   } else if (hasAnyPayLink) {
     reserveBlock = `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
     <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Reserve Your Share Now</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — your deposit puts you on the books for the next available slot. Spots fill first-come, first-served.</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Tap any tier above to lock in your share. <strong>No deposit, no slot held.</strong></p>
+    <p style="margin:10px 0 0 0;font-size:11px;color:#6B4F3F;line-height:1.5;">Refundable until ${esc(data.rancherName)} accepts your slot. Non-refundable after.</p>
   </div>`;
   }
 
