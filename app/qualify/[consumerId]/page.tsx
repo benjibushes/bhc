@@ -46,10 +46,12 @@ export default function QualifyPage({
   searchParams,
 }: {
   params: Promise<{ consumerId: string }>;
-  searchParams: Promise<{ token?: string }>;
+  // `campaign` arrives when /access redirected a rancher-page lead to /qualify.
+  // Forwarded to POST /api/qualify so matching/suggest can pin the rancher.
+  searchParams: Promise<{ token?: string; campaign?: string }>;
 }) {
   const { consumerId } = usePromise(params);
-  const { token } = usePromise(searchParams);
+  const { token, campaign } = usePromise(searchParams);
   const router = useRouter();
 
   // Steps 0-3 = questions. Step 4 = score reveal. Step 5 = dual-path CTA.
@@ -110,6 +112,8 @@ export default function QualifyPage({
           token,
           consumerId,
           answers: { tier, timing, storage, ack },
+          // Preserve rancher-page-lead pinning through the quiz.
+          ...(campaign && campaign.startsWith('rancher-') ? { campaign } : {}),
         }),
       });
       const j = await res.json();

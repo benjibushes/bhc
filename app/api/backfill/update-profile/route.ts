@@ -61,9 +61,14 @@ export async function POST(request: Request) {
       ...(hasActiveReferral ? {} : { 'Referral Status': 'Unmatched' }),
     });
 
-    // Trigger matching engine
+    // Trigger matching engine — PERFECT-D gate: GUARD-2 412s without Qualified
+    // At. The /backfill/update-profile endpoint is admin/internal tooling so
+    // an operator override is the right escape hatch here. Skip + log instead
+    // of fire-and-fail when the buyer hasn't completed quiz.
     const buyerState = consumer['State'] || '';
-    if (buyerState) {
+    if (buyerState && !consumer['Qualified At']) {
+      console.log(`[backfill] skip matching/suggest for ${consumerId} — no Qualified At (run /qualify first or use operatorOverride)`);
+    } else if (buyerState) {
       try {
         const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
         await fetch(`${siteUrl}/api/matching/suggest`, {

@@ -76,7 +76,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { token, consumerId, answers } = body || {};
+  // `campaign` arrives from /qualify page URL ?campaign=rancher-<slug> when the
+  // buyer originally signed up on a specific rancher's landing page. PERFECT-A
+  // (2026-06-05): pass it through to matching/suggest so the rancher cascade
+  // pins the originally-selected rancher instead of falling back to generic
+  // state-match. Without this, a buyer clicking Rancher A's ad gets matched
+  // to Rancher B in the same state by Performance Score order.
+  const { token, consumerId, answers, campaign } = body || {};
   if (!token || !consumerId || !answers) {
     return NextResponse.json({ error: 'Missing token, consumerId, or answers' }, { status: 400 });
   }
@@ -191,6 +197,11 @@ export async function POST(request: Request) {
             `\n[QUIZ ${completedAt}] tier=${tier} timing=${timing} storage=${storage} ack=${ack} score=${score}/100`,
           // Hot-lead bypass — qualified buyer earned the over-cap allowance.
           warmupEngaged: true,
+          // PERFECT-A: propagate rancher-page-lead campaign so the matching
+          // cascade can pin the originally-clicked rancher.
+          ...(typeof campaign === 'string' && campaign.startsWith('rancher-')
+            ? { campaign }
+            : {}),
         }),
       });
       if (matchRes.ok) {

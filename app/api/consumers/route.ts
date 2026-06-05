@@ -483,7 +483,15 @@ export async function POST(request: Request) {
             JWT_SECRET,
             { expiresIn: '24h' }
           );
-          qualifyUrl = `${SITE_URL}/qualify/${encodeURIComponent(record.id)}?token=${encodeURIComponent(qualifyToken)}`;
+          // PERFECT-C: preserve campaign in URL for rancher-page leads so the
+          // quiz page can forward it back to /api/qualify → matching/suggest.
+          // Pins the originally-selected rancher through the cascade instead
+          // of letting Performance Score pick a different one in the same state.
+          const campaignQs =
+            isRancherPageLead && campaign
+              ? `&campaign=${encodeURIComponent(campaign)}`
+              : '';
+          qualifyUrl = `${SITE_URL}/qualify/${encodeURIComponent(record.id)}?token=${encodeURIComponent(qualifyToken)}${campaignQs}`;
           qualifyUrlForResponse = qualifyUrl;
           redirectToQualify = true;
           // Mark Ready to Buy so the existing tooling treats this buyer as

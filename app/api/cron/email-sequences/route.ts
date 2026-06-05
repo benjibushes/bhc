@@ -384,7 +384,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             continue;
           }
 
-          try {
+          // PERFECT-D (2026-06-05): GUARD-2 412s matching/suggest when Qualified
+          // At is blank. MATCH_NOW segment is computed from Ready to Buy=true,
+          // which can be set BEFORE the quiz (legacy data healed via auto-route
+          // bypass, etc.). Without this gate the auto-route silently 412s
+          // every cron run, the rescue email still fires, and the buyer
+          // churns. Skip routing + fall through to the operator-rescue path
+          // below so the buyer still gets a human touch.
+          const skipRoutingNotQualified = !consumer['Qualified At'];
+          if (skipRoutingNotQualified) {
+            console.log(`[match-now] skip routing — ${consumerId} (${email}) has no Qualified At`);
+          }
+          if (!skipRoutingNotQualified) try {
             const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
               method: 'POST',
               headers: {

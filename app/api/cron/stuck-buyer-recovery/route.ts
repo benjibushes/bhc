@@ -135,6 +135,23 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         continue;
       }
 
+      // PERFECT-D (2026-06-05): GUARD-2 412s matching/suggest if Qualified At
+      // is blank. Pre-quiz buyers stuck in WAITING/READY would silently 412
+      // here every cron run. Gate at this layer: if not yet qualified, skip
+      // the routing call + log so daily digest surfaces it. The LEAK-3
+      // backfill flow + new-lead quiz redirect handles get-to-quiz; this cron
+      // only re-routes ALREADY-qualified stranded buyers.
+      if (!c['Qualified At']) {
+        skipReasons['needs-quiz'] = (skipReasons['needs-quiz'] || 0) + 1;
+        // Stamp attempt so cooldown holds.
+        try {
+          await updateRecord(TABLES.CONSUMERS, c.id, {
+            'Last Match Attempt At': new Date().toISOString(),
+          });
+        } catch {}
+        continue;
+      }
+
       let matched = false;
       try {
         const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
