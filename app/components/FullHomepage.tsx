@@ -421,7 +421,7 @@ export default function FullHomepage() {
               </div>
               <div className="space-y-2">
                 <p className="font-medium">BHC Promise</p>
-                <p className="text-sm text-saddle">Cold-chain guarantee, 7-day satisfaction, and we mediate any dispute. <a href="/promise" className="underline hover:text-charcoal">Read the promise →</a></p>
+                <p className="text-sm text-saddle">Refundable until your rancher accepts. Cold-chain guarantee. We mediate any dispute. <a href="/promise" className="underline hover:text-charcoal">Read the promise →</a></p>
               </div>
               <div className="space-y-2">
                 <p className="font-medium">Real support</p>

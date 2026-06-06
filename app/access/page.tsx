@@ -965,18 +965,17 @@ function AccessPageContent() {
                 </div>
               )}
 
-              {/* BHC Promise — inline trust block, no separate page yet.
-                  Honest scope: 7-day satisfaction window + cold-chain
-                  commitment from the rancher + mediation by BHC. We do not
-                  manage cold-chain ourselves and we don't claim to. */}
+              {/* BHC Promise — inline trust block. NRD policy: refundable until
+                  rancher accepts, non-refundable after. Cold-chain + mediation
+                  always apply. We do not manage cold-chain ourselves. */}
               <div className="mt-8 border-l-2 border-charcoal pl-4 text-sm text-charcoal/85 leading-relaxed">
                 <p className="text-xs uppercase tracking-wider text-saddle font-semibold mb-1">
                   the bhc promise
                 </p>
                 <p>
-                  ranchers commit to cold-chain handoff. you get 7 days to
-                  flag anything wrong with your beef. if it goes sideways,
-                  ben mediates — direct, no script.
+                  your deposit reserves your slot. refundable until your rancher
+                  accepts (usually 24-48h), non-refundable after. cold-chain
+                  guarantee + ben mediates any dispute — direct, no script.
                 </p>
               </div>
             </div>

@@ -217,7 +217,7 @@ export default async function StartPage({
     },
     {
       q: 'how does it actually work?',
-      a: '(1) take the buyer quiz — we capture your state, household size, timing. (2) if a rancher serves your state, we route you within hours; if not, you go on the priority waitlist + we recruit. (3) the rancher emails you direct with pricing, processing date, delivery. (4) you talk one-on-one and confirm. (5) beef in your freezer in 2-4 weeks. no marketplace middleman — you pay the rancher direct, with a transparent service fee shown at checkout. BHC Promise (cold-chain + 7-day satisfaction + mediation) on every match.',
+      a: '(1) take the buyer quiz — we capture your state, household size, timing. (2) if a rancher serves your state, we route you within hours; if not, you go on the priority waitlist + we recruit. (3) the rancher emails you direct with pricing, processing date, delivery. (4) put down a deposit to reserve your slot — fully refundable until your rancher accepts it (typically 24-48h), non-refundable after. (5) beef in your freezer in 2-4 weeks. no marketplace middleman — you pay the rancher direct, with a transparent service fee shown at checkout. BHC Promise (refundable window + cold-chain guarantee + mediation) on every match.',
     },
     {
       q: "what if there's no rancher in my state yet?",

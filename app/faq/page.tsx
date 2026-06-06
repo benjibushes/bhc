@@ -65,12 +65,15 @@ const sections: Section[] = [
         a: (
           <>
             <p className="mb-3">
-              The BHC Promise covers you. Beef arrives frozen and on time, or we refund your deposit
-              within 7 days &mdash; no questions asked, paid by BuyHalfCow.
+              Your deposit reserves your slot with the rancher. It&rsquo;s fully refundable
+              until they accept it (usually within 24&ndash;48 hours). Once they commit your
+              processing slot, it becomes non-refundable. Cold-chain guarantee + BHC
+              mediation apply either way.
             </p>
             <ul className="list-disc list-outside ml-5 space-y-2 text-saddle">
-              <li><strong className="text-charcoal">Cold-chain failure:</strong> if it arrives thawed, full refund. Report within 24h of receipt with a photo.</li>
-              <li><strong className="text-charcoal">7-day satisfaction:</strong> not what you expected? Full deposit refund. We don&apos;t interrogate you.</li>
+              <li><strong className="text-charcoal">Refundable window:</strong> change your mind before your rancher accepts? Full refund.</li>
+              <li><strong className="text-charcoal">Non-refundable once accepted:</strong> after they commit your slot, they&rsquo;ve set aside cuts and locked in processing. You&rsquo;ll get a &ldquo;slot locked&rdquo; email the moment that happens.</li>
+              <li><strong className="text-charcoal">Cold-chain failure:</strong> if it arrives thawed or short, BHC makes you whole. Report within 24h of receipt with a photo.</li>
               <li><strong className="text-charcoal">Disputes:</strong> reply to your match thread or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a> &mdash; we mediate.</li>
             </ul>
             <p className="mt-3 text-saddle text-sm">

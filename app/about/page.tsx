@@ -114,10 +114,11 @@ export default function AboutPage() {
                 The BHC Promise
               </h2>
               <p>
-                Beef arrives frozen and on time, or BHC refunds your deposit within
-                7 days &mdash; no questions asked, paid by BuyHalfCow. Cold-chain
-                failure, satisfaction issues, anything in that window: we mediate
-                from your match thread.
+                Your deposit reserves your slot with the rancher. It&rsquo;s fully
+                refundable until they accept it (usually within 24&ndash;48 hours).
+                Once they commit your processing slot, it becomes non-refundable.
+                Cold-chain failure, missing cuts, dispute &mdash; BHC mediates from
+                your match thread either way.
               </p>
               <p className="text-saddle text-sm">
                 Read the full policy at <a href="/promise" className="underline hover:text-charcoal transition-colors">/promise</a>.
