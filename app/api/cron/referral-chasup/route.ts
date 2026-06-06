@@ -44,6 +44,36 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
         .map((c: any) => (c['Email'] || '').trim().toLowerCase())
     );
 
+    // CHASUP-FIX (2026-06-06): build a rancher-status lookup so we can skip
+    // chase-ups on referrals whose rancher is no longer Active. Without this
+    // we kept chasing buyers about Paused/Disabled ranchers (e.g., Matula
+    // pause earlier today). Net result: buyer churned, rancher silently
+    // billed for slot they couldn't honor, BHC reputation hit. Single fetch
+    // up front; lookup is in-memory below.
+    const rancherStatusById = new Map<string, string>();
+    try {
+      const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
+      for (const r of ranchers) {
+        const status = String(r['Active Status'] || '').toLowerCase();
+        rancherStatusById.set(r.id, status);
+      }
+    } catch (e: any) {
+      console.warn('[chasup] rancher status prefetch failed:', e?.message);
+    }
+    const isRancherPaused = (referral: any): boolean => {
+      const rancherIds: string[] =
+        (referral['Rancher'] as string[]) ||
+        (referral['Suggested Rancher'] as string[]) ||
+        [];
+      const rid = rancherIds[0];
+      if (!rid) return false;
+      const status = rancherStatusById.get(rid) || '';
+      // Treat anything that isn't explicit 'active' as paused for chasup
+      // purposes — covers Paused / Disabled / blank / typo states. Better to
+      // skip a chase that should fire than to fire one we shouldn't.
+      return status !== 'active';
+    };
+
     // Recency check — used by BOTH stale and maxed-out filters. Returns true
     // if the referral has any signal of real activity within window. The big
     // pipeline rewrite added Last Rancher/Buyer Activity At + Rancher Engaged
@@ -71,31 +101,74 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
         skipReasons['bounced-or-unsub'] = (skipReasons['bounced-or-unsub'] || 0) + 1;
         return false;
       }
+      // CHASUP-FIX: rancher Paused/Disabled → don't chase buyer about a
+      // rancher who can't fulfill. Operator gets a Telegram digest separately
+      // so reassignment surfaces above the silence.
+      if (isRancherPaused(r)) {
+        skipReasons['rancher-paused'] = (skipReasons['rancher-paused'] || 0) + 1;
+        return false;
+      }
       const chaseCount = r['Chase Count'] || 0;
       if (chaseCount >= MAX_CHASE_UPS) return false; // Already maxed out
-      if (recentlyActive(r, 5)) {
+      // CHASUP-FIX: status-aware staleness windows. The 5-day window over-
+      // chased Rancher Contacted referrals where the rancher had texted /
+      // called the buyer off-platform — BHC has no signal, so we kept firing.
+      //   Intro Sent     → 5d  (default; matching pre-fix behavior)
+      //   Rancher Contacted → 14d (rancher confirmed; give real runway)
+      const status = String(r['Status'] || '');
+      const windowDays =
+        status === 'Rancher Contacted' ? 14 : 5;
+      if (recentlyActive(r, windowDays)) {
         skipReasons['recentlyActive'] = (skipReasons['recentlyActive'] || 0) + 1;
-        return false; // Skip if rancher or buyer touched it recently
+        return false;
       }
-      return (Date.now() - new Date(lastActivity).getTime()) >= 5 * DAY_MS;
+      return (Date.now() - new Date(lastActivity).getTime()) >= windowDays * DAY_MS;
     });
 
     // ── Auto-close referrals that hit max chase-ups ──────────────────────────
+    //
+    // CHASUP-FIX (2026-06-06): DISABLED the legacy chase-count auto-close path.
+    // It was the primary source of "you're dropping leads the ranchers are
+    // working" — buyers who hit chase=3 got auto-Closed-Lost even when the
+    // rancher had real off-platform activity (texts / calls / DMs) that BHC
+    // couldn't see. The activity-aware 30-day disengaged close block below
+    // still handles genuine ghost cases.
+    //
+    // Surfaced cases instead get a Telegram operator alert so a human decides
+    // whether to reopen, reassign, or actually close.
     let autoClosed = 0;
-    const maxedOut = referrals.filter(r => {
+    const maxedOut: any[] = [];
+    const maxedOutForAlert = referrals.filter(r => {
       const chaseCount = r['Chase Count'] || 0;
       if (chaseCount < MAX_CHASE_UPS) return false;
       const lastActivity = r['Last Chased At'] || r['Intro Sent At'] || r['Approved At'];
       if (!lastActivity) return false;
-      // Never hard-close a referral the rancher confirmed is in talks, OR one
-      // with recent activity. The activity-aware close block below handles the
-      // 30-day disengaged path — this legacy chase-count path should not.
       if (recentlyActive(r, 7)) {
-        skipReasons['recentlyActive'] = (skipReasons['recentlyActive'] || 0) + 1;
+        skipReasons['recentlyActive-no-close'] = (skipReasons['recentlyActive-no-close'] || 0) + 1;
+        return false;
+      }
+      if (isRancherPaused(r)) {
+        skipReasons['paused-no-close'] = (skipReasons['paused-no-close'] || 0) + 1;
         return false;
       }
       return (Date.now() - new Date(lastActivity).getTime()) >= 5 * DAY_MS;
     });
+    if (maxedOutForAlert.length > 0) {
+      try {
+        const lines = maxedOutForAlert.slice(0, 10).map((r: any) =>
+          `• ${r['Buyer Name'] || r['Buyer Email'] || r.id} (${r['Suggested Rancher Name'] || '?'}) — chase=${r['Chase Count'] || 0}`,
+        );
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `⏸ <b>${maxedOutForAlert.length} referrals at chase=3 — operator review</b>\n\n` +
+            lines.join('\n') +
+            (maxedOutForAlert.length > 10 ? `\n…and ${maxedOutForAlert.length - 10} more` : '') +
+            `\n\n<i>Auto-close DISABLED — pick Reopen / Reassign / Close in /admin/referrals.</i>`,
+        );
+      } catch (e: any) {
+        console.warn('[chasup] maxed-out alert send failed:', e?.message);
+      }
+    }
 
     for (const referral of maxedOut) {
       try {

@@ -177,6 +177,104 @@ export default function ReferralsPage() {
     setActionLoading(null);
   };
 
+  // REOPEN — restore a Closed Lost referral. Backs /api/admin/referrals/[id]/revive.
+  // The revive endpoint clears Closed At + chase throttles and flips Status
+  // back to Pending Approval (default) so batch-approve treats it like fresh.
+  const handleReopen = async (id: string) => {
+    if (!confirm('Reopen this lead? Status will flip back to Pending Approval and the rancher will see it on their dashboard again.')) return;
+    setActionLoading(id);
+    try {
+      const res = await fetch(`/api/admin/referrals/${id}/revive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toStatus: 'Intro Sent' }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || 'revive failed');
+      toast.success('Lead reopened');
+      await fetchData();
+    } catch (e: any) {
+      toast.error(e?.message || 'Error reopening lead');
+    }
+    setActionLoading(null);
+  };
+
+  // ADJUST COMMISSION — manually set commission on a Closed Won referral.
+  // Common when the legacy rancher closed off-platform at a different price
+  // than originally captured. Backs /api/admin/referrals/[id]/adjust-commission.
+  const handleAdjustCommission = async (id: string, currentCommission: number) => {
+    const input = window.prompt(
+      `Adjust commission for this Closed Won deal.\n\nCurrent: $${currentCommission.toFixed(2)}\n\nNew commission ($):`,
+      currentCommission.toFixed(2),
+    );
+    if (input === null) return;
+    const num = Number(input);
+    if (!isFinite(num) || num < 0) {
+      toast.error('Commission must be a non-negative number');
+      return;
+    }
+    const reason = window.prompt('Reason for adjustment (audit log):', '') || '';
+    setActionLoading(id);
+    try {
+      const res = await fetch(`/api/admin/referrals/${id}/adjust-commission`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commissionDue: num, reason }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || 'adjust failed');
+      toast.success('Commission adjusted');
+      await fetchData();
+    } catch (e: any) {
+      toast.error(e?.message || 'Error adjusting commission');
+    }
+    setActionLoading(null);
+  };
+
+  // OFF-PLATFORM CLOSE — revive a Closed Lost referral and immediately close it
+  // as Closed Won w/ a sale amount. Common workflow: legacy rancher tells us
+  // they actually closed the buyer outside the platform and BHC should
+  // count it. Two-step under the hood (revive → close) so it composes with
+  // existing handlers.
+  const handleMarkOffPlatformWon = async (id: string) => {
+    const saleInput = window.prompt('Sale amount ($) for the off-platform close:', '');
+    if (saleInput === null) return;
+    const saleNum = Number(saleInput);
+    if (!isFinite(saleNum) || saleNum <= 0) {
+      toast.error('Sale must be a positive number');
+      return;
+    }
+    if (!confirm(`Reopen + mark Closed Won @ $${saleNum.toFixed(2)}? Commission will calc from the rancher's rate.`)) return;
+    setActionLoading(id);
+    try {
+      // Step 1: revive into Negotiation so the close handler accepts it.
+      const reviveRes = await fetch(`/api/admin/referrals/${id}/revive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toStatus: 'Negotiation' }),
+      });
+      if (!reviveRes.ok) {
+        const j = await reviveRes.json().catch(() => ({}));
+        throw new Error(j?.error || 'revive failed');
+      }
+      // Step 2: close as won w/ sale amount (uses /api/referrals/[id] PATCH path).
+      const closeRes = await fetch(`/api/referrals/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Closed Won', saleAmount: saleNum }),
+      });
+      if (!closeRes.ok) {
+        const j = await closeRes.json().catch(() => ({}));
+        throw new Error(j?.error || 'close-won failed');
+      }
+      toast.success('Reopened + marked Won');
+      await fetchData();
+    } catch (e: any) {
+      toast.error(e?.message || 'Error');
+    }
+    setActionLoading(null);
+  };
+
   const handleStatusChange = async (id: string, newStatus: string) => {
     if (newStatus === 'Closed Won') {
       setSaleModal({ referralId: id });
@@ -699,15 +797,46 @@ export default function ReferralsPage() {
                           <div className="text-sm space-y-1">
                             <p className="font-medium text-green-700">Sale: ${ref.sale_amount.toLocaleString()}</p>
                             <p className="text-[#6B4F3F]">Commission: ${ref.commission_due.toLocaleString()}</p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleCommissionPaid(ref.id, !ref.commission_paid)}
+                                className={`px-3 py-1 text-xs border ${
+                                  ref.commission_paid
+                                    ? 'bg-green-100 text-green-800 border-green-300'
+                                    : 'bg-yellow-100 text-yellow-800 border-yellow-300'
+                                }`}
+                              >
+                                {ref.commission_paid ? 'Paid' : 'Mark as Paid'}
+                              </button>
+                              <button
+                                onClick={() => handleAdjustCommission(ref.id, ref.commission_due)}
+                                disabled={actionLoading === ref.id}
+                                className="px-3 py-1 text-xs border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] disabled:opacity-50"
+                                title="Edit commission amount (audit-logged)"
+                              >
+                                ✎ Edit commission
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {ref.status === 'Closed Lost' && (
+                          <div className="flex flex-wrap gap-2 text-sm">
                             <button
-                              onClick={() => handleCommissionPaid(ref.id, !ref.commission_paid)}
-                              className={`px-3 py-1 text-xs border ${
-                                ref.commission_paid
-                                  ? 'bg-green-100 text-green-800 border-green-300'
-                                  : 'bg-yellow-100 text-yellow-800 border-yellow-300'
-                              }`}
+                              onClick={() => handleReopen(ref.id)}
+                              disabled={actionLoading === ref.id}
+                              className="px-3 py-1.5 border border-[#0E0E0E] text-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] disabled:opacity-50"
+                              title="Restore this lead to active and re-show it to the rancher"
                             >
-                              {ref.commission_paid ? 'Paid' : 'Mark as Paid'}
+                              ↺ Reopen
+                            </button>
+                            <button
+                              onClick={() => handleMarkOffPlatformWon(ref.id)}
+                              disabled={actionLoading === ref.id}
+                              className="px-3 py-1.5 bg-green-700 text-white hover:bg-green-800 disabled:opacity-50"
+                              title="Rancher closed off-platform — reopen + mark Closed Won with sale amount"
+                            >
+                              ✓ Mark Won (off-platform)
                             </button>
                           </div>
                         )}
