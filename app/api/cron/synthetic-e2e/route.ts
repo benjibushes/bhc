@@ -21,7 +21,8 @@
 // One green ping per day on success (so silence = real broken).
 
 import { NextResponse } from 'next/server';
-import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { getRecordById, deleteRecord, TABLES } from '@/lib/airtable';
+import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 
@@ -144,29 +145,47 @@ async function realHandler(_request: Request): Promise<E2EResult> {
     }
   }
 
-  // CLEANUP: mark synthetic records so they don't pollute analytics. Always
-  // run cleanup even on failure — orphan synthetic Consumers shouldn't pile up.
+  // CLEANUP (SYN-1 2026-06-05): hard-delete instead of just flag. Prior
+  // updateRecord(Status='Closed Lost') skipped the proper close path so
+  // the rancher's capacity INCR from matching/suggest was never DECR'd —
+  // synthetic runs silently drifted cap counters every day. New flow:
+  //   1. DECR the matched rancher's capacity counter atomically (Redis +
+  //      Airtable mirror sync). Mirrors what /api/referrals/[id] PATCH does
+  //      on Closed Lost.
+  //   2. DELETE the Referral row (no debris in admin/referrals UI).
+  //   3. DELETE the Consumer row (no debris in admin/funnel + no false
+  //      "qualified buyer not matched" signals on dashboards).
   let cleaned = 0;
-  if (consumerId) {
-    try {
-      await updateRecord(TABLES.CONSUMERS, consumerId, {
-        'Notes': `[SYNTHETIC E2E ${runId}] auto-test — do not contact. Failure: ${failure ? failure.step : 'none'}`,
-        'Buyer Stage': 'NURTURE',
-        // Don't unsubscribe — the suppression-list check on next signup would
-        // false-positive. Just notes + stage flip is enough for analytics filter.
-      });
-      cleaned++;
-    } catch {}
-  }
   if (referralId) {
     try {
-      await updateRecord(TABLES.REFERRALS, referralId, {
-        'Status': 'Closed Lost',
-        'Notes': `[SYNTHETIC E2E ${runId}] auto-test — closed immediately to free rancher capacity.`,
-        'Closed At': new Date().toISOString(),
-      });
+      // Pull rancher id off the referral so we can DECR the right counter.
+      const ref: any = await getRecordById(TABLES.REFERRALS, referralId);
+      const rancherIds: string[] =
+        (ref?.['Rancher'] as string[]) ||
+        (ref?.['Suggested Rancher'] as string[]) ||
+        [];
+      const rancherId = rancherIds[0];
+      if (rancherId) {
+        try {
+          const newCount = await decrementCapacity(rancherId);
+          await syncCapacityToAirtable(rancherId, newCount);
+        } catch (e: any) {
+          console.warn(`[synthetic-e2e cleanup] DECR failed for rancher ${rancherId}:`, e?.message);
+        }
+      }
+      await deleteRecord(TABLES.REFERRALS, referralId);
       cleaned++;
-    } catch {}
+    } catch (e: any) {
+      console.warn('[synthetic-e2e cleanup] referral delete failed:', e?.message);
+    }
+  }
+  if (consumerId) {
+    try {
+      await deleteRecord(TABLES.CONSUMERS, consumerId);
+      cleaned++;
+    } catch (e: any) {
+      console.warn('[synthetic-e2e cleanup] consumer delete failed:', e?.message);
+    }
   }
 
   // Report
