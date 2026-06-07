@@ -215,13 +215,16 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // Routing-segment counters (added 2026-05-22). Separate from the legacy
     // stage counters because these emails branch on Routing Segment (set
     // nightly by reclassify-buyers), not on Buyer Stage.
-    const segmentCounters = {
+    const segmentCounters: Record<string, number> = {
       match_now_rescue: 0,
       nudge_to_engage: 0,
       warm_lead_check: 0,
       no_budget_founder_pitch: 0,
       state_waitlist: 0,
       incomplete_profile: 0,
+      // LOCK-aware skip counter (2026-06-06): buyers w/ locked active
+      // referral elsewhere skipped to avoid double-routing.
+      match_now_locked_skip: 0,
     };
 
     for (const consumer of approved) {
@@ -268,6 +271,28 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         const buyerStateNorm = (consumer['State'] || '').toString().toUpperCase().slice(0, 2);
 
         if (segment === 'MATCH_NOW' && segmentCount < 1) {
+          // LOCK pre-check (2026-06-06): if buyer has a locked active
+          // referral (Rancher Contacted / Negotiation / Awaiting Payment)
+          // elsewhere, skip MATCH_NOW entirely. They're already in real
+          // conversation w/ a rancher — auto-routing them now overlaps
+          // leads + frustrates everyone. Operator can revisit via /admin.
+          try {
+            const { LOCKED_STATUSES } = await import('@/lib/referralLock');
+            const allRefsForLockCheck = (await getAllRecords(TABLES.REFERRALS)) as any[];
+            const hasLockedActive = allRefsForLockCheck.some((r: any) => {
+              const buyers = Array.isArray(r['Buyer']) ? r['Buyer'] : [];
+              if (!buyers.includes(consumerId)) return false;
+              return LOCKED_STATUSES.has(String(r['Status'] || ''));
+            });
+            if (hasLockedActive) {
+              console.log(`[match-now] LOCK skip — ${consumerId} (${email}) has a locked active referral elsewhere`);
+              segmentCounters.match_now_locked_skip = (segmentCounters.match_now_locked_skip || 0) + 1;
+              continue;
+            }
+          } catch (e: any) {
+            console.warn('[match-now LOCK check] failed:', e?.message);
+          }
+
           // AUTO-ROUTE: fire matching/suggest directly. If a rancher is
           // available the endpoint auto-stages a referral + fires intro
           // emails to both sides — no operator tap, zero gate. If no

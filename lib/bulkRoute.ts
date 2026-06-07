@@ -152,10 +152,13 @@ export async function bulkRouteStateToRancher(opts: {
 
       if (!buyerEmail) continue;
 
-      // If they already have an active Intro Sent referral, skip
+      // LOCK-aware skip (2026-06-06): if buyer has any active or locked
+      // referral (rancher engaged or deal in flight), don't double-route.
+      // Adds 'Awaiting Payment' to the existing skip list so deposit-paid
+      // buyers don't get a second intro mid-checkout.
       const myRefs = refsByEmail[buyerEmail] || [];
       const activeIntroSent = myRefs.find((r: any) =>
-        ['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Closed Won'].includes(r['Status'])
+        ['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Awaiting Payment', 'Closed Won'].includes(r['Status'])
       );
       if (activeIntroSent) {
         summary.skipped_already_intro_sent++;

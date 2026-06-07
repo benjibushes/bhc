@@ -607,6 +607,17 @@ export default function ReferralsPage() {
                           <span className={`px-2 py-0.5 text-xs border ${STATUS_COLORS[ref.status] || 'bg-gray-100'}`}>
                             {ref.status}
                           </span>
+                          {/* LOCK badge (2026-06-06): visual cue that this referral
+                              is locked to its rancher and no auto-path will touch it.
+                              Same set as lib/referralLock.ts LOCKED_STATUSES. */}
+                          {(['Rancher Contacted', 'Negotiation', 'Awaiting Payment'].includes(ref.status)) && (
+                            <span
+                              className="px-2 py-0.5 text-xs border bg-purple-100 text-purple-800 border-purple-300"
+                              title="LOCKED — rancher is working this lead. No auto-reassign or auto-close. Admin reassign requires unlockOverride."
+                            >
+                              🔒 Rancher Working
+                            </span>
+                          )}
                           {ref.intent_classification && (
                             <span className={`px-2 py-0.5 text-xs border ${
                               ref.intent_classification === 'High' ? 'bg-green-100 text-green-800 border-green-300' :

@@ -31,6 +31,10 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
 
   const skipReasons: Record<string, number> = {};
 
+  // Pre-filter to chase-eligible statuses ONLY. Awaiting Payment is locked
+  // (LOCK-2026-06-06 rule) — buyer is mid-deposit, chasing them would
+  // confuse the flow. Closed states never reach chasup. Negotiation
+  // intentionally excluded — rancher actively negotiating, never auto-chase.
   const referrals = await getAllRecords(
       TABLES.REFERRALS,
       'OR({Status} = "Intro Sent", {Status} = "Rancher Contacted")'

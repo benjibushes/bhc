@@ -22,7 +22,11 @@ export async function POST(
     if (__authResp) return __authResp;
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
-    const { newRancherId, reason } = body;
+    // LOCK-aware reassign (2026-06-06). When the referral is locked (rancher
+    // already in talks / negotiating / awaiting deposit) we require the
+    // operator to acknowledge they're stealing the lead from a working
+    // rancher. unlockOverride=true + unlockReason ≥6 chars.
+    const { newRancherId, reason, unlockOverride, unlockReason } = body;
 
     if (!newRancherId) {
       return NextResponse.json({ error: 'newRancherId required' }, { status: 400 });
@@ -31,6 +35,41 @@ export async function POST(
     const referral: any = await getRecordById(TABLES.REFERRALS, id);
     if (!referral) {
       return NextResponse.json({ error: 'Referral not found' }, { status: 404 });
+    }
+
+    const currentStatus = String(referral['Status'] || '');
+    const { isReferralLocked, lockNotice } = await import('@/lib/referralLock');
+    if (isReferralLocked(currentStatus)) {
+      if (!unlockOverride) {
+        return NextResponse.json(
+          {
+            error: 'Lead is LOCKED — rancher is actively working it.',
+            lockedAt: currentStatus,
+            hint:
+              'Re-submit w/ unlockOverride=true AND unlockReason="<why>" to override. Telegram + Notes audit-logged.',
+          },
+          { status: 412 },
+        );
+      }
+      if (!unlockReason || String(unlockReason).trim().length < 6) {
+        return NextResponse.json(
+          { error: 'unlockReason required (min 6 chars) when overriding a LOCK' },
+          { status: 400 },
+        );
+      }
+      // Loud Telegram so override misuse surfaces in real time.
+      try {
+        const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🚨 <b>LOCK OVERRIDE — admin reassign</b>\n\n` +
+            `Referral: <code>${id}</code>\n` +
+            `Buyer: ${referral['Buyer Name'] || referral['Buyer Email'] || '?'}\n` +
+            `Was status: ${currentStatus}\n` +
+            `Reason: ${unlockReason}\n\n` +
+            `<i>Working rancher just had their lead reassigned. Verify intentional.</i>`,
+        );
+      } catch {}
     }
 
     const oldRancherId = referral['Rancher']?.[0] || referral['Suggested Rancher']?.[0] || null;

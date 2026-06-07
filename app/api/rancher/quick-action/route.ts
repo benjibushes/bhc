@@ -224,6 +224,25 @@ async function applyAction(
       } catch {}
       return { ok: true, message: `Already "${currentStatus}". Buyer was already re-routed.` };
     }
+    // LOCK (2026-06-06): if the rancher has already engaged (Status =
+    // Rancher Contacted / Negotiation / Awaiting Payment) refuse the pass.
+    // Rancher already invested time + buyer is in real conversation — auto-
+    // routing them to a new rancher right now creates buyer confusion +
+    // wastes effort. The rancher has to explicitly mark Closed Lost w/ a
+    // reason via the dashboard if they actually want out, which kills the
+    // auto-reroute path on purpose (existing flow).
+    const { isReferralLocked, lockNotice } = await import('@/lib/referralLock');
+    if (isReferralLocked(currentStatus)) {
+      // Log notice for audit; return shape stays {ok, message} to match
+      // handler return type.
+      console.log(lockNotice(currentStatus, 'pass'));
+      return {
+        ok: false,
+        message:
+          `Can't auto-pass this lead — you've already engaged with the buyer (status: "${currentStatus}"). ` +
+          `Mark it Closed Lost from your dashboard with a reason if you actually want out.`,
+      };
+    }
     updates['Status'] = 'Closed Lost';
     updates['Closed At'] = new Date().toISOString();
     const existing = (referral['Notes'] || '').toString();

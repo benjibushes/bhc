@@ -37,11 +37,17 @@ import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 60;
 
+// LOCK-aware (2026-06-06): every status that means a rancher is engaged or
+// the buyer is in flight. Re-routing a buyer with one of these blocks would
+// overlap leads + frustrate both the working rancher and the buyer. Stays
+// in sync with lib/referralLock.ts LOCKED_STATUSES (plus the non-locked
+// Pending Approval / Intro Sent which are also "in motion").
 const ACTIVE_REFERRAL_STATUSES = [
   'Pending Approval',
   'Intro Sent',
   'Rancher Contacted',
   'Negotiation',
+  'Awaiting Payment',
 ];
 
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
