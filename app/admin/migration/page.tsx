@@ -95,6 +95,55 @@ export default function MigrationTrackerPage() {
     load();
   }
 
+  // HYBRID path — flip rancher to Legacy Connect (Stripe Connect + 10%
+  // commission, no monthly subscription). For ranchers who don't want
+  // Pasture/Ranch/Operator subscription but DO want on-platform deposits.
+  // Operator pastes the returned onboardingUrl into a text/email to the
+  // rancher. They complete Stripe Express → webhook flips Connect Status
+  // to 'active' → deposit checkout becomes live for them.
+  async function markLegacyConnect(id: string, name: string) {
+    const ok = confirm(
+      `Flag ${name} as LEGACY CONNECT?\n\n` +
+        `• Pricing Model → tier_v2 (Stripe Connect deposits, on-platform)\n` +
+        `• Tier → Legacy Connect (10% commission at deposit, no monthly fee)\n` +
+        `• Stripe Connect Account created if missing\n` +
+        `• You get a fresh onboarding URL to text/email them\n\n` +
+        `Reversible via Airtable. Proceed?`,
+    );
+    if (!ok) return;
+    let r: Response;
+    try {
+      r = await fetch(`/api/admin/ranchers/${id}/mark-legacy-connect`, { method: 'POST' });
+    } catch (e: any) {
+      alert(`Network error: ${e?.message || 'unknown'}`);
+      return;
+    }
+    let j: any = {};
+    try {
+      j = await r.json();
+    } catch {}
+    if (!r.ok) {
+      alert(`Failed (${r.status}): ${j?.error || (await r.text().catch(() => 'unknown'))}`);
+      return;
+    }
+    // Copy onboarding URL to clipboard for fast paste-to-rancher.
+    try {
+      if (j.onboardingUrl && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(j.onboardingUrl);
+      }
+    } catch {
+      /* clipboard write may fail under non-https contexts; URL still shown in alert */
+    }
+    alert(
+      `✓ ${j.ranchName || name} → Legacy Connect.\n\n` +
+        `Onboarding URL (copied to clipboard):\n${j.onboardingUrl}\n\n` +
+        `Account: ${j.connectAccountId}${j.accountCreated ? ' (NEW)' : ' (existing)'}\n` +
+        `Commission: 10% at deposit, no subscription.\n\n` +
+        `Paste the URL into a text/email so the rancher can finish Stripe Express. Once they finish, the deposit flow is live for them.`,
+    );
+    load();
+  }
+
   async function fireBulk() {
     if (!data) return;
     const notInvited = data.ranchers.filter((r) => r.migrationStatus === 'not_invited');
@@ -209,9 +258,18 @@ export default function MigrationTrackerPage() {
                     <td className="px-3 py-2 text-saddle text-xs">{r.callBookedAt ? new Date(r.callBookedAt).toLocaleDateString() : '—'}</td>
                     <td className="px-3 py-2">
                       {r.pricingModel !== 'tier_v2' && (
-                        <button onClick={() => fireSingle(r.id)} className="text-xs underline text-charcoal hover:text-saddle">
-                          {r.migrationStatus === 'not_invited' ? 'Send invite' : 'Re-send'}
-                        </button>
+                        <>
+                          <button onClick={() => fireSingle(r.id)} className="text-xs underline text-charcoal hover:text-saddle">
+                            {r.migrationStatus === 'not_invited' ? 'Send invite' : 'Re-send'}
+                          </button>
+                          <button
+                            onClick={() => markLegacyConnect(r.id, r.name)}
+                            className="text-xs underline text-charcoal hover:text-saddle ml-2"
+                            title="Flag as Legacy Connect (Stripe Connect deposits, 10% commission, no monthly subscription)"
+                          >
+                            🪢 Legacy Connect
+                          </button>
+                        </>
                       )}
                       <a href={`/admin/ranchers/${r.id}`} className="text-xs underline text-charcoal hover:text-saddle ml-2">View</a>
                     </td>

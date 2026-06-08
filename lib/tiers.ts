@@ -18,7 +18,13 @@
 //   Add-on Photo     : price_1Tb3K4GTWWNqassHvTC4w9KE
 //   Add-on Founder Letter : price_1Tb3KPGTWWNqassHdBaWY8Z8
 
-export type TierSlug = 'pasture' | 'ranch' | 'operator';
+// `legacy_connect` is the HYBRID path: Stripe Connect onboarded so deposits
+// route through the platform, but rancher keeps the legacy 10% commission
+// model (no monthly subscription, no Stripe Price). Use when a rancher
+// wants on-platform deposits without committing to Pasture/Ranch/Operator
+// monthly fees. Picked via /api/admin/ranchers/[id]/mark-legacy-connect
+// (operator-only — not exposed in the wizard).
+export type TierSlug = 'pasture' | 'ranch' | 'operator' | 'legacy_connect';
 
 export interface TierConfig {
   slug: TierSlug;
@@ -86,6 +92,27 @@ export const TIERS: Record<TierSlug, TierConfig> = {
       'First call on speaking + podcast opportunities when BHC books regen-ag media',
     ],
   },
+  legacy_connect: {
+    slug: 'legacy_connect',
+    label: 'Legacy Connect',
+    monthlyCents: 0,
+    commissionRate: 0.10, // 10% — same rate as the legacy invoice model, but
+                          // collected at deposit time via application_fee_amount
+                          // instead of post-close Stripe Invoice. No subscription.
+    stripePriceIdEnv: '', // intentionally empty — no Stripe Price; this tier
+                          // never creates a Subscription. Any caller that
+                          // depends on STRIPE_<TIER>_PRICE_ID must guard for
+                          // legacy_connect and skip subscription creation.
+    promise: 'Stripe Connect deposits, 10% per sale, no monthly fee',
+    perks: [
+      'Stripe Connect direct deposits land in your bank same-day',
+      '10% commission deducted automatically at deposit (application_fee_amount)',
+      'No monthly subscription, no minimum',
+      'BHC still handles every buyer qualification call + intro',
+      'Same buyer routing + dashboard as paid tiers',
+      'Upgrade to Pasture / Ranch / Operator anytime',
+    ],
+  },
 };
 
 // Add-ons (à la carte, any tier)
@@ -145,8 +172,15 @@ export function tierFor(rancher: any): TierSlug | null {
   const tierStr = (raw && typeof raw === 'object' && 'name' in raw)
     ? String(raw.name)
     : (raw ?? '');
-  const slug = String(tierStr).toLowerCase();
-  if (slug === 'pasture' || slug === 'ranch' || slug === 'operator') return slug as TierSlug;
+  const normalized = String(tierStr).toLowerCase().trim();
+  if (normalized === 'pasture' || normalized === 'ranch' || normalized === 'operator') {
+    return normalized as TierSlug;
+  }
+  // 'Legacy Connect' (Airtable display) → 'legacy_connect' (code slug).
+  // Accept both display variants in case of typo on operator side.
+  if (normalized === 'legacy connect' || normalized === 'legacy_connect') {
+    return 'legacy_connect';
+  }
   return null;
 }
 
