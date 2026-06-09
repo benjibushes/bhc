@@ -114,6 +114,22 @@ export default async function RancherPage(
     .replace(/^https?:\/\/(www\.)?cal\.com\//i, '')
     .replace(/^\/+/, '')
     .replace(/\/+$/, '');
+  // Tier drives Cal CTA routing. Operator tier ($500/mo, 0% commission)
+  // means BHC handles every sales call — buyers get Ben's sales Cal link
+  // instead of the rancher's slug. Singleselect can be string or {name}.
+  const rancherTierRaw: any = r['Tier'];
+  const rancherTierName =
+    rancherTierRaw && typeof rancherTierRaw === 'object' && 'name' in rancherTierRaw
+      ? String(rancherTierRaw.name)
+      : String(rancherTierRaw || '');
+  const isOperatorTier = rancherTierName.toLowerCase() === 'operator';
+  const benSalesCalUrl =
+    process.env.NEXT_PUBLIC_BEN_SALES_CAL_URL ||
+    'https://cal.com/ben-beauchman-1itnsg/sales';
+  const showCalCta = isOperatorTier || !!calComSlug;
+  const calCtaUrl = isOperatorTier
+    ? benSalesCalUrl
+    : `https://cal.com/${calComSlug}`;
   const googleReviewsUrl = r['Google Reviews URL'] || '';
   const facebookUrl = r['Facebook URL'] || '';
   const instagramUrl = r['Instagram URL'] || '';
@@ -554,24 +570,28 @@ export default async function RancherPage(
                 </Link>
               </p>
 
-              {calComSlug && (
+              {showCalCta && (
                 <div className="mt-8 border border-charcoal bg-bone p-6 md:p-7 text-center">
                   <p className="text-xs uppercase tracking-widest text-saddle mb-2">
                     Have questions before you buy?
                   </p>
                   <h3 className="font-serif text-2xl text-charcoal mb-3">
-                    Schedule a 15-min call with {operatorName ? operatorName.split(' ')[0] : 'the rancher'}
+                    {isOperatorTier
+                      ? `Schedule a 15-min call with Ben`
+                      : `Schedule a 15-min call with ${operatorName ? operatorName.split(' ')[0] : 'the rancher'}`}
                   </h3>
                   <p className="text-sm text-saddle mb-5 max-w-xl mx-auto">
-                    Walk through pricing, processing date, cut options, and delivery — direct with the rancher, no middleman. They set their availability, you pick a time.
+                    {isOperatorTier
+                      ? `${name} works with us under our Operator program — I (Ben, BuyHalfCow founder) personally walk every buyer through pricing, processing dates, cut options, and delivery. Pick a time and I'll have your slot reserved.`
+                      : `Walk through pricing, processing date, cut options, and delivery — direct with the rancher, no middleman. They set their availability, you pick a time.`}
                   </p>
                   <a
-                    href={`https://cal.com/${calComSlug}`}
+                    href={calCtaUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-block px-7 py-3.5 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase tracking-widest text-xs"
                   >
-                    Book your 15-min call →
+                    {isOperatorTier ? 'Book your call with Ben →' : 'Book your 15-min call →'}
                   </a>
                 </div>
               )}

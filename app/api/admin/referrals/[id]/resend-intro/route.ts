@@ -126,6 +126,12 @@ export async function POST(
           rancherSlug: rancher['Slug'] || '',
           depositMagicLinkUrl,
           calComSlug: rancher['Cal.com Slug'] || undefined,
+          rancherTier: (() => {
+            const raw: any = rancher['Tier'];
+            if (!raw) return undefined;
+            if (typeof raw === 'object' && 'name' in raw) return String(raw.name);
+            return String(raw);
+          })(),
         });
         buyerSent = true;
       } catch (e) {

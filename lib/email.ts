@@ -1095,6 +1095,11 @@ export async function sendBuyerIntroNotification(data: {
   // Rancher invites ben@buyhalfcow.com to their Cal.com event so Ben sees every
   // booking via the cal-webhook handler.
   calComSlug?: string;
+  // Rancher's subscription tier — drives Cal CTA routing.
+  // 'Operator' tier ($500/mo, 0% commission) means BHC handles every sales
+  // call for the rancher; the buyer's Cal CTA points at Ben's sales link
+  // instead of the rancher's. Pasture/Ranch/Legacy Connect → rancher's slug.
+  rancherTier?: string;
 }) {
   // Build pricing block when any tier is configured.
   const pricingRows: string[] = [];
@@ -1181,26 +1186,44 @@ export async function sendBuyerIntroNotification(data: {
     ${data.rancherPhone ? `<p>Phone: <a href="tel:${esc(data.rancherPhone)}" style="color:#0E0E0E;">${esc(data.rancherPhone)}</a></p>` : ''}
   </div>`;
 
-  // Cal.com booking CTA — buyer self-schedules a 15-min call w/ the rancher
-  // at a time the rancher set as available. Eliminates phone tag. Rancher
-  // invites ben@buyhalfcow.com to their event so Ben sees every booking via
-  // the cal-webhook handler. When slug is unset, falls back to the
-  // existing email/phone contact box.
+  // Cal.com booking CTA — branches on rancher tier:
+  //   - Operator tier ($500/mo, 0% commission): BHC handles every sales call.
+  //     CTA points at Ben's sales Cal URL (env: NEXT_PUBLIC_BEN_SALES_CAL_URL,
+  //     fallback https://cal.com/ben-beauchman-1itnsg/sales). Copy reframed
+  //     as "lock in your share with Ben" — the operator-service pitch.
+  //   - Pasture / Ranch / Legacy Connect / legacy: CTA points at rancher's
+  //     own Cal slug. Buyer self-schedules directly with the rancher.
+  //   - No slug + non-Operator: block hidden entirely.
   const normalizedCalSlug = (data.calComSlug || '')
     .trim()
     .replace(/^https?:\/\/(www\.)?cal\.com\//i, '')
     .replace(/^\/+/, '')
     .replace(/\/+$/, '');
-  const calBlock = normalizedCalSlug
-    ? `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
+  const tierLower = String(data.rancherTier || '').toLowerCase();
+  const isOperatorTier = tierLower === 'operator';
+  const benSalesCalUrl =
+    process.env.NEXT_PUBLIC_BEN_SALES_CAL_URL ||
+    'https://cal.com/ben-beauchman-1itnsg/sales';
+  let calBlock = '';
+  if (isOperatorTier) {
+    calBlock = `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
+    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Lock in your share &mdash; 15 min with Ben</p>
+    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} works with us under our Operator program &mdash; that means I (Ben, BuyHalfCow founder) personally walk every buyer through pricing, processing dates, cuts, and delivery. Pick a time and I'll have your slot reserved.</p>
+    <p style="margin:16px 0 4px 0;text-align:center;">
+      <a href="${benSalesCalUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Book your 15-min call with Ben &rarr;</a>
+    </p>
+    <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Same beef. Same rancher. I just make sure both sides show up prepared.</p>
+  </div>`;
+  } else if (normalizedCalSlug) {
+    calBlock = `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
     <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Schedule a 15-min intro call</p>
-    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Pick a time that works for both of you. ${esc(data.rancherName)} sets their availability — book a slot and they'll be expecting your call. No phone tag.</p>
+    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Pick a time that works for both of you. ${esc(data.rancherName)} sets their availability &mdash; book a slot and they'll be expecting your call. No phone tag.</p>
     <p style="margin:16px 0 4px 0;text-align:center;">
       <a href="https://cal.com/${esc(normalizedCalSlug)}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Book your 15-min call &rarr;</a>
     </p>
-    <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Ben (BuyHalfCow founder) is CC'd on every booking — we make sure both sides show up prepared.</p>
-  </div>`
-    : '';
+    <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Ben (BuyHalfCow founder) is CC'd on every booking &mdash; we make sure both sides show up prepared.</p>
+  </div>`;
+  }
 
   // Subject prefix when this buyer confirmed Ready-to-Buy. Tells the recipient
   // (and the rancher when they reply-all) this is a high-priority match that

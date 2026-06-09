@@ -1187,6 +1187,15 @@ export async function POST(request: Request) {
               // Rancher's Cal.com slug — drives the "Schedule 15-min call" CTA.
               // Falsy → email falls back to email/phone contact box only.
               calComSlug: topMatch['Cal.com Slug'] || undefined,
+              // Tier drives Cal CTA routing: 'Operator' routes buyers to Ben's
+              // sales Cal instead of the rancher's slug. Airtable singleSelect
+              // returns either a string or {name:string} object — handle both.
+              rancherTier: (() => {
+                const raw: any = topMatch['Tier'];
+                if (!raw) return undefined;
+                if (typeof raw === 'object' && 'name' in raw) return String(raw.name);
+                return String(raw);
+              })(),
             });
           } catch (e: any) {
             console.error('Buyer intro email failed:', e?.message);
