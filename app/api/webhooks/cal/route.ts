@@ -1,9 +1,17 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { getAllRecords, updateRecord, escapeAirtableValue } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorPreCallBrief } from '@/lib/email';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
+
+// Operator pre-call brief recipient. Falls back to BHC_OPERATOR_EMAIL env,
+// then ADMIN_EMAIL env. If neither set, brief is skipped (non-fatal).
+const OPERATOR_BRIEF_EMAIL =
+  process.env.BHC_OPERATOR_EMAIL ||
+  process.env.ADMIN_EMAIL ||
+  '';
 
 export const maxDuration = 60;
 
@@ -93,9 +101,205 @@ export async function POST(request: Request) {
     const attendeeEmail = attendees.length > 0
       ? (attendees[0].email || '').toString().trim().toLowerCase()
       : '';
+    const attendeeName = attendees.length > 0
+      ? (attendees[0].name || '').toString().trim()
+      : '';
 
     if (!attendeeEmail) {
       return NextResponse.json({ success: true, note: 'No attendee email found' });
+    }
+
+    // Hoisted up so the buyer-sales branch can include it in alerts.
+    const dateDisplay = startTime
+      ? new Date(startTime).toLocaleString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          timeZone: 'America/Denver',
+        })
+      : 'TBD';
+
+    // Event type detection — Cal.com payload exposes the event slug under
+    // multiple keys across versions. Try them all defensively. A slug
+    // containing 'sales' (or title pattern) means this is a BUYER booking
+    // Ben's sales-call event type — distinct from rancher migration calls.
+    const eventTypeSlug = String(
+      bookingPayload.eventType?.slug ||
+      bookingPayload.type ||
+      payload.payload?.eventType?.slug ||
+      ''
+    ).toLowerCase();
+    const eventTitle = String(bookingPayload.title || bookingPayload.eventType?.title || '').toLowerCase();
+    const isBuyerSalesCall =
+      eventTypeSlug.includes('sales') ||
+      /sales call|buyer.*call|reserve.*share/i.test(eventTitle);
+
+    // ── BUYER SALES CALL (Operator tier) ──────────────────────────────
+    // When eventType slug indicates sales call, look up the attendee in
+    // Consumers (not Ranchers) and fire the pre-call brief + distinct
+    // Telegram alert. Stamp Referral.Sales Call Booked At so we can
+    // measure sales-call → close conversion later.
+    if (isBuyerSalesCall) {
+      try {
+        // Find consumer by attendee email
+        const consumers = await getAllRecords(
+          TABLES.CONSUMERS,
+          `LOWER({Email}) = "${escapeAirtableValue(attendeeEmail)}"`
+        );
+        const consumer: any = consumers.length > 0 ? consumers[0] : null;
+
+        // Find active referral for this buyer (most-recent non-terminal)
+        let referral: any = null;
+        let rancher: any = null;
+        let referralIdFromMetadata = '';
+        try {
+          referralIdFromMetadata = String(bookingPayload.metadata?.referralId || '').trim();
+        } catch {}
+        if (referralIdFromMetadata) {
+          try {
+            referral = await getRecordById(TABLES.REFERRALS, referralIdFromMetadata);
+          } catch {
+            // metadata referralId stale/wrong — fall through to lookup-by-buyer
+          }
+        }
+        if (!referral && consumer) {
+          const consumerRefs = await getAllRecords(
+            TABLES.REFERRALS,
+            `AND(SEARCH("${consumer.id}", ARRAYJOIN({Buyer})), NOT(OR({Status}="Closed Won",{Status}="Closed Lost")))`
+          );
+          // Pick most-recent (Airtable returns no guaranteed order — sort by Intro Sent At desc)
+          referral = consumerRefs
+            .sort((a, b) => String(b['Intro Sent At'] || '').localeCompare(String(a['Intro Sent At'] || '')))[0]
+            || null;
+        }
+        if (referral) {
+          const rancherLinks: string[] = referral['Rancher'] || referral['Suggested Rancher'] || [];
+          if (rancherLinks[0]) {
+            try {
+              rancher = await getRecordById(TABLES.RANCHERS, rancherLinks[0]);
+            } catch {}
+          }
+        }
+
+        const buyerName = (consumer && (consumer['Full Name'] || consumer['Name'])) || attendeeName || attendeeEmail;
+        const rancherName = rancher
+          ? (rancher['Ranch Name'] || rancher['Operator Name'] || 'a rancher')
+          : 'unknown rancher';
+        const verb =
+          triggerEvent === 'BOOKING_CREATED' ? '📅 BUYER SALES CALL'
+          : triggerEvent === 'BOOKING_RESCHEDULED' ? '🔄 BUYER SALES CALL — rescheduled'
+          : triggerEvent === 'BOOKING_CANCELLED' ? '❌ BUYER SALES CALL — cancelled'
+          : triggerEvent === 'MEETING_ENDED' ? '✅ BUYER SALES CALL — ended'
+          : `📅 ${triggerEvent}`;
+        const meetingUrl = bookingPayload.metadata?.videoCallUrl || bookingPayload.location || '';
+
+        // Telegram alert (distinct from rancher migration emoji set)
+        try {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `${verb}\n\n` +
+              `👤 <b>Buyer:</b> ${buyerName} (${attendeeEmail})\n` +
+              `🤠 <b>Rancher:</b> ${rancherName}\n` +
+              `🗓 ${dateDisplay} MT\n` +
+              (referral ? `📎 Ref: ${referral.id} · ${referral['Status'] || '?'}` : '⚠️ No active referral matched — buyer may have booked off-funnel.') +
+              (meetingUrl ? `\n🔗 ${meetingUrl}` : '')
+          );
+        } catch (e: any) {
+          console.error('[cal webhook] buyer-sales Telegram failed:', e?.message);
+        }
+
+        // Stamp Referral.Sales Call Booked At on BOOKING_CREATED
+        if (triggerEvent === 'BOOKING_CREATED' && referral) {
+          try {
+            const reverse = buildAirtableUpdateReverse(TABLES.REFERRALS, referral.id, {
+              'Sales Call Booked At': referral['Sales Call Booked At'],
+            });
+            await updateRecord(TABLES.REFERRALS, referral.id, {
+              'Sales Call Booked At': new Date().toISOString(),
+            });
+            await logAuditEntry({
+              actor: 'cron',
+              tool: 'cal-webhook-buyer-sales-booked',
+              targetType: 'Referral',
+              targetId: referral.id,
+              args: { attendeeEmail, startTime, eventTypeSlug },
+              result: { stamped: 'Sales Call Booked At' },
+              reverseAction: reverse,
+            });
+          } catch (e: any) {
+            console.warn('[cal webhook] Sales Call Booked At stamp failed (field may not exist):', e?.message);
+          }
+        }
+        // Stamp Sales Call Completed At on MEETING_ENDED
+        if (triggerEvent === 'MEETING_ENDED' && referral) {
+          try {
+            await updateRecord(TABLES.REFERRALS, referral.id, {
+              'Sales Call Completed At': new Date().toISOString(),
+            });
+          } catch (e: any) {
+            console.warn('[cal webhook] Sales Call Completed At stamp failed:', e?.message);
+          }
+        }
+
+        // Fire pre-call brief to operator on BOOKING_CREATED
+        if (triggerEvent === 'BOOKING_CREATED' && OPERATOR_BRIEF_EMAIL && referral) {
+          try {
+            // Parse Consumer.Quiz Answers if present (JSON-encoded)
+            let quizAnswers: Record<string, string> = {};
+            try {
+              const raw = consumer?.['Quiz Answers'];
+              if (raw && typeof raw === 'string') {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') quizAnswers = parsed;
+              } else if (raw && typeof raw === 'object') {
+                quizAnswers = raw as Record<string, string>;
+              }
+            } catch {}
+            await sendOperatorPreCallBrief({
+              recipientEmail: OPERATOR_BRIEF_EMAIL,
+              buyerName: String(buyerName),
+              buyerEmail: attendeeEmail,
+              buyerPhone: consumer?.['Phone'] || undefined,
+              buyerState: consumer?.['State'] || undefined,
+              buyerCity: consumer?.['City'] || undefined,
+              callTime: startTime,
+              meetingUrl,
+              rancherName: String(rancherName),
+              rancherSlug: rancher?.['Slug'] || undefined,
+              rancherTier: (() => {
+                const t: any = rancher?.['Tier'];
+                if (!t) return undefined;
+                return typeof t === 'object' && 'name' in t ? String(t.name) : String(t);
+              })(),
+              quarterPrice: Number(rancher?.['Quarter Price']) || undefined,
+              halfPrice: Number(rancher?.['Half Price']) || undefined,
+              wholePrice: Number(rancher?.['Whole Price']) || undefined,
+              nextProcessingDate: rancher?.['Next Processing Date'] || undefined,
+              quizScore: Number(consumer?.['Quiz Score']) || undefined,
+              quizAnswers,
+              referralId: referral.id,
+              referralStatus: referral['Status'] || undefined,
+            });
+          } catch (e: any) {
+            console.error('[cal webhook] pre-call brief email failed:', e?.message);
+          }
+        }
+
+        return NextResponse.json({
+          success: true,
+          event: triggerEvent,
+          path: 'buyer-sales-call',
+          rancher: rancherName,
+          buyer: attendeeEmail,
+          referralId: referral?.id,
+        });
+      } catch (e: any) {
+        console.error('[cal webhook] buyer-sales branch error (falling through):', e?.message);
+        // Fall through to legacy rancher-attendee path below if this branch
+        // throws unexpectedly — prevents a buyer booking from black-holing.
+      }
     }
 
     let ranchers: any[] = [];
@@ -112,19 +316,6 @@ export async function POST(request: Request) {
     const rancherName = rancher
       ? (rancher['Operator Name'] || rancher['Ranch Name'] || attendeeEmail)
       : attendeeEmail;
-
-    // Hoisted up from below so the buyer↔rancher detection block (next) can
-    // include it in the Telegram alert without redeclaring.
-    const dateDisplay = startTime
-      ? new Date(startTime).toLocaleString('en-US', {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          timeZone: 'America/Denver',
-        })
-      : 'TBD';
 
     // ── BUYER ↔ RANCHER BOOKING DETECTION (2026-06-03) ──────────────────
     // When a buyer self-schedules a call via the rancher's Cal.com link from

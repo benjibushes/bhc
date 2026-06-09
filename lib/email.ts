@@ -1206,11 +1206,23 @@ export async function sendBuyerIntroNotification(data: {
     'https://cal.com/ben-beauchman-1itnsg/sales';
   let calBlock = '';
   if (isOperatorTier) {
+    // Pre-fill Cal.com booking page with buyer context so they don't re-type
+    // name/email. Cal.com accepts `name` + `email` as query params on most
+    // event-type pages. Add `metadata[referralId]` so the Cal webhook can
+    // match the booking back to the Referral on BOOKING_CREATED.
+    const prefillParams = new URLSearchParams();
+    if (data.firstName) prefillParams.set('name', data.firstName);
+    if (data.email) prefillParams.set('email', data.email);
+    if (data.referralId) prefillParams.set('metadata[referralId]', data.referralId);
+    const prefillQs = prefillParams.toString();
+    const benSalesUrlWithPrefill = prefillQs
+      ? `${benSalesCalUrl}${benSalesCalUrl.includes('?') ? '&' : '?'}${prefillQs}`
+      : benSalesCalUrl;
     calBlock = `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
     <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Lock in your share &mdash; 15 min with Ben</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} works with us under our Operator program &mdash; that means I (Ben, BuyHalfCow founder) personally walk every buyer through pricing, processing dates, cuts, and delivery. Pick a time and I'll have your slot reserved.</p>
     <p style="margin:16px 0 4px 0;text-align:center;">
-      <a href="${benSalesCalUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Book your 15-min call with Ben &rarr;</a>
+      <a href="${benSalesUrlWithPrefill}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Book your 15-min call with Ben &rarr;</a>
     </p>
     <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Same beef. Same rancher. I just make sure both sides show up prepared.</p>
   </div>`;
@@ -4501,6 +4513,116 @@ export async function sendRancherApplyAutoApproved(data: {
   <p>Got questions? Reply directly &mdash; this email lands in my inbox. I read every one.</p>
   <p style="margin-top:32px;">&mdash; Benjamin, BuyHalfCow</p>
   ${emailFooter(data.email)}
+</div></body></html>`,
+    }),
+  });
+}
+
+// =====================================================
+// OPERATOR PRE-CALL BRIEF — fires when a buyer books Ben's sales Cal
+// =====================================================
+//
+// Lands in Ben's inbox the moment a buyer books an Operator-tier sales
+// call. Includes buyer quiz answers, rancher snapshot, referral history,
+// auto-generated talking points. Cuts pre-call prep from "scroll Airtable
+// for 5 min" to "open email, scan 30 sec, dial in."
+export async function sendOperatorPreCallBrief(data: {
+  recipientEmail: string;            // Operator's email (Ben)
+  buyerName: string;
+  buyerEmail: string;
+  buyerPhone?: string;
+  buyerState?: string;
+  buyerCity?: string;
+  callTime?: string;                 // ISO or human-readable
+  meetingUrl?: string;
+  rancherName: string;
+  rancherSlug?: string;
+  rancherTier?: string;
+  quarterPrice?: number;
+  halfPrice?: number;
+  wholePrice?: number;
+  nextProcessingDate?: string;
+  quizScore?: number;
+  quizAnswers?: Record<string, string>;
+  referralId?: string;
+  referralStatus?: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.buyerName || 'buyer').split(' ')[0] || 'buyer';
+  const callTimeFmt = data.callTime
+    ? new Date(data.callTime).toLocaleString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: 'America/Denver',
+      }) + ' MT'
+    : 'TBD';
+  const subject = `Pre-call brief: ${first} (${data.buyerState || '?'}) ${String.fromCharCode(8596)} ${data.rancherName} - ${callTimeFmt}`;
+  const quizRows = data.quizAnswers
+    ? Object.entries(data.quizAnswers).map(
+        ([k, v]) =>
+          `<tr><td style="padding:6px 12px;border:1px solid #E5E2DC;font-weight:600;width:35%;">${esc(k)}</td><td style="padding:6px 12px;border:1px solid #E5E2DC;">${esc(String(v))}</td></tr>`
+      ).join('')
+    : '';
+  const pricingRows: string[] = [];
+  if (data.quarterPrice) pricingRows.push(`<tr><td style="padding:4px 12px;font-weight:600;">Quarter</td><td style="padding:4px 12px;">$${data.quarterPrice.toLocaleString()}</td></tr>`);
+  if (data.halfPrice) pricingRows.push(`<tr><td style="padding:4px 12px;font-weight:600;">Half</td><td style="padding:4px 12px;">$${data.halfPrice.toLocaleString()}</td></tr>`);
+  if (data.wholePrice) pricingRows.push(`<tr><td style="padding:4px 12px;font-weight:600;">Whole</td><td style="padding:4px 12px;">$${data.wholePrice.toLocaleString()}</td></tr>`);
+  const pricingBlock = pricingRows.length
+    ? `<table style="border-collapse:collapse;font-size:14px;margin:6px 0;">${pricingRows.join('')}</table>`
+    : '<p style="margin:6px 0;color:#6B4F3F;font-style:italic;">No pricing set on rancher record.</p>';
+
+  // Auto-generated talking points based on quiz answers + referral state
+  const talkingPoints: string[] = [];
+  const cutAnswer = data.quizAnswers?.['Cut'] || data.quizAnswers?.['cut'] || data.quizAnswers?.['Order Type'] || '';
+  const timingAnswer = data.quizAnswers?.['Timing'] || data.quizAnswers?.['timing'] || '';
+  if (cutAnswer) talkingPoints.push(`Buyer pre-selected: <strong>${esc(cutAnswer)}</strong> &mdash; anchor pricing convo around that tier.`);
+  if (timingAnswer && /within 30|asap/i.test(timingAnswer)) talkingPoints.push(`Urgency: <strong>${esc(timingAnswer)}</strong> &mdash; surface Next Processing Date (${esc(data.nextProcessingDate || 'TBD')}) early.`);
+  if (data.quizScore && data.quizScore >= 85) talkingPoints.push(`<strong>Quiz score ${data.quizScore}/100</strong> &mdash; high-intent. Move to deposit pitch fast.`);
+  else if (data.quizScore && data.quizScore < 75) talkingPoints.push(`Quiz score ${data.quizScore} (below 75 threshold) &mdash; re-verify timing + storage on the call.`);
+  if (!data.buyerPhone) talkingPoints.push(`No phone on file &mdash; pull it during the call so we can SMS the deposit link after.`);
+  if (data.referralStatus && /^Rancher Contacted|Negotiation/i.test(data.referralStatus)) talkingPoints.push(`Referral status: <strong>${esc(data.referralStatus)}</strong> &mdash; rancher already engaged. Don't undercut what they discussed.`);
+  if (!talkingPoints.length) talkingPoints.push('No specific signals &mdash; standard pitch: cut, timing, processing date, deposit, refund policy.');
+
+  return guardedSend({
+    templateName: 'sendOperatorPreCallBrief',
+    recipientEmail: data.recipientEmail,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.recipientEmail,
+      subject,
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#fff;margin:0;padding:18px}.container{max-width:680px;margin:0 auto}h1{font-family:Georgia,serif;font-size:20px;margin:0 0 12px;line-height:1.3}h2{font-family:Georgia,serif;font-size:15px;margin:18px 0 6px;text-transform:uppercase;letter-spacing:1px;color:#6B4F3F}p{margin:8px 0;color:#2A2A2A;font-size:14px}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:12px 16px;margin:10px 0;font-size:14px}.meta{font-size:13px;color:#6B4F3F}table{font-size:14px}ul{margin:6px 0;padding-left:22px}li{margin:6px 0;color:#2A2A2A;font-size:14px}.cta{display:inline-block;padding:10px 18px;background:#0E0E0E;color:#fff !important;text-decoration:none;font-size:12px;text-transform:uppercase;letter-spacing:1px;font-weight:600;margin:6px 4px 6px 0}</style>
+</head><body><div class="container">
+  <h1>Pre-call brief</h1>
+  <p class="meta"><strong>${callTimeFmt}</strong>${data.meetingUrl ? ` &middot; <a href="${data.meetingUrl}" style="color:#0E0E0E;">Meeting link</a>` : ''}</p>
+
+  <h2>Buyer</h2>
+  <div class="box">
+    <p style="margin:0;"><strong>${esc(data.buyerName)}</strong>${data.buyerState ? ` &middot; ${esc(data.buyerState)}` : ''}${data.buyerCity ? `, ${esc(data.buyerCity)}` : ''}</p>
+    <p style="margin:4px 0 0;font-size:13px;">${esc(data.buyerEmail)}${data.buyerPhone ? ` &middot; ${esc(data.buyerPhone)}` : ''}</p>
+    ${data.quizScore !== undefined ? `<p style="margin:4px 0 0;font-size:13px;"><strong>Quiz score:</strong> ${data.quizScore}/100</p>` : ''}
+  </div>
+  ${quizRows ? `<h2>Quiz answers</h2><table style="border-collapse:collapse;width:100%;">${quizRows}</table>` : ''}
+
+  <h2>Rancher</h2>
+  <div class="box">
+    <p style="margin:0;"><strong>${esc(data.rancherName)}</strong>${data.rancherTier ? ` &middot; ${esc(data.rancherTier)} tier` : ''}</p>
+    ${data.rancherSlug ? `<p style="margin:4px 0;font-size:13px;"><a href="${SITE_URL}/ranchers/${esc(data.rancherSlug)}" style="color:#0E0E0E;">Public page &rarr;</a></p>` : ''}
+    ${data.nextProcessingDate ? `<p style="margin:4px 0;font-size:13px;"><strong>Next processing:</strong> ${esc(data.nextProcessingDate)}</p>` : ''}
+  </div>
+  <h2>Pricing</h2>
+  ${pricingBlock}
+
+  <h2>Talking points</h2>
+  <ul>${talkingPoints.map(t => `<li>${t}</li>`).join('')}</ul>
+
+  ${data.referralId ? `<h2>Referral</h2><p class="meta">ID: <code>${esc(data.referralId)}</code> &middot; Status: <strong>${esc(data.referralStatus || '?')}</strong></p>
+  <p><a href="${SITE_URL}/admin/referrals" class="cta">Open in /admin/referrals &rarr;</a></p>` : ''}
+
+  <p class="meta" style="margin-top:24px;font-size:12px;">Auto-generated by Cal.com webhook on buyer booking. Internal only.</p>
 </div></body></html>`,
     }),
   });
