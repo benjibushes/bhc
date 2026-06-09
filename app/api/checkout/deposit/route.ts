@@ -178,8 +178,14 @@ export async function POST(req: Request) {
 
   const productLabel = `${CUT_LABELS[cutSize]} — ${rancher['Ranch Name'] || rancher['Operator Name']}`;
 
-  // Tier capitalization for Payments table
-  const tierCapitalized = (tier.charAt(0).toUpperCase() + tier.slice(1)) as 'Pasture' | 'Ranch' | 'Operator';
+  // Tier capitalization for Payments table.
+  // Hybrid path: 'legacy_connect' → 'Legacy Connect' (space, title case to match Airtable singleSelect choice).
+  // Standard tiers: pasture/ranch/operator → Pasture/Ranch/Operator.
+  const tierCapitalized = (
+    tier === 'legacy_connect'
+      ? 'Legacy Connect'
+      : (tier.charAt(0).toUpperCase() + tier.slice(1))
+  ) as 'Pasture' | 'Ranch' | 'Operator' | 'Legacy Connect';
 
   // BHC service fee is computed against the FULL sale price — not the
   // deposit. Rancher collects the fulfillment balance directly outside BHC,

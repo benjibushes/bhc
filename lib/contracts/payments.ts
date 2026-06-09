@@ -22,7 +22,7 @@ export interface CreateDepositInput {
   referralId: string;
   buyerId: string;
   rancherId: string;
-  tier: 'Pasture' | 'Ranch' | 'Operator';  // NEW — tier_v2 only
+  tier: 'Pasture' | 'Ranch' | 'Operator' | 'Legacy Connect';  // tier_v2 + hybrid (legacy_connect)
   amountCents: number;
   platformFeeCents: number;  // NEW — BHC's cut of the deposit
   stripePaymentIntentId: string;
