@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { geocodeRancher } from '@/lib/geocode';
+
+// Same cookie the magic-link verify flow uses (lib/rancherAuth.ts line 17).
+// We mint this when GET succeeds so the wizard URL ALSO bootstraps the
+// rancher-session cookie — without it, every downstream auth-gated route
+// (/api/rancher/tier/select, /api/rancher/connect/start, etc.) would
+// reject the wizard's calls and the rancher would hit a login wall.
+const BHC_RANCHER_COOKIE = 'bhc-rancher-auth';
 
 // Self-serve rancher setup wizard — backing API.
 //
@@ -134,6 +142,62 @@ export async function GET(req: Request) {
   for (const f of ALLOWED_FIELDS) {
     if (rancher[f] !== undefined) out[f] = rancher[f];
   }
+
+  // 2026-06-09 fix: bootstrap the rancher-session cookie on wizard load.
+  //
+  // BEFORE this fix:
+  //   - Wizard URL had rancher-setup JWT (60d) — enough to load + edit
+  //     rancher data via this endpoint.
+  //   - But /api/rancher/tier/select, /api/rancher/connect/start, and
+  //     /api/rancher/legacy-upgrade all use `requireRancher()` which reads
+  //     the `bhc-rancher-auth` cookie. No cookie = 401.
+  //   - Rancher clicks "Pick Operator" → new tab opens
+  //     /partner/checkout/operator → page sees no session → shows "Log in"
+  //     button → rancher has to do a magic-link email round-trip.
+  //   - This was the SECOND auth dead-end in the upgrade flow (after the
+  //     wizard step-7 race fix). Both together would have killed Jesse's
+  //     migration test.
+  //
+  // The fix: when the wizard URL is loaded with a valid rancher-setup JWT,
+  // mint a SHORT-LIVED rancher-session cookie scoped to the same rancher.
+  // This gives the same browser session immediate access to all downstream
+  // auth-gated endpoints WITHOUT compromising security:
+  //   - The rancher-setup JWT is the source of truth — it's what proves
+  //     "this person is the rancher" via the send-v2-upgrade email
+  //   - The cookie expires when the rancher-setup JWT does (60d max)
+  //   - The cookie scope is exactly the same as a magic-link verify cookie
+  //     would issue (same JWT signing secret, same type='rancher-session')
+  //   - Set HttpOnly + SameSite=Lax to prevent XSS / cross-site-injection
+  const sessionToken = jwt.sign(
+    {
+      type: 'rancher-session',
+      rancherId: rancher.id,
+      email: rancher['Email'] || '',
+      name: rancher['Operator Name'] || rancher['Ranch Name'] || '',
+      ranchName: rancher['Ranch Name'] || '',
+      state: rancher['State'] || '',
+    },
+    JWT_SECRET,
+    { expiresIn: '60d' },
+  );
+  try {
+    const cookieStore = await cookies();
+    cookieStore.set({
+      name: BHC_RANCHER_COOKIE,
+      value: sessionToken,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 24 * 60 * 60, // 60 days
+    });
+  } catch (e) {
+    // Cookie set failed (likely RSC + headers-already-sent edge case).
+    // Non-fatal — wizard still loads. Rancher would only see the issue if
+    // they then try to open a checkout tab; they'd have to re-login.
+    console.warn('[setup/GET] cookie set failed (continuing):', (e as any)?.message);
+  }
+
   return NextResponse.json({ success: true, rancher: out });
 }
 

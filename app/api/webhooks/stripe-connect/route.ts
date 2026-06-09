@@ -369,6 +369,27 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
     writeFields['Migration Status'] = 'completed';
   }
 
+  // 2026-06-09 fix: separate Migration Status='completed' branch for the
+  // case where Pricing Model was ALREADY flipped to tier_v2 by an upstream
+  // step (e.g. /api/rancher/tier/select stamps tier_v2 the moment it
+  // creates the Connect account, BEFORE Stripe Subscription/Connect
+  // webhooks fire). Without this, the auto-flip branch above no-ops
+  // (currentPricingModel === 'tier_v2' already) and Migration Status
+  // never advances to 'completed' — leaving the /admin/migration tracker
+  // showing the rancher as still in-progress forever.
+  if (
+    isNowActive &&
+    subPaying &&
+    currentPricingModel === 'tier_v2' &&
+    !shouldAutoFlip
+  ) {
+    const currentMigStatus = String(rancher['Migration Status'] || '').toLowerCase();
+    const incompleteStatuses = new Set(['', 'not_invited', 'invited', 'call_scheduled', 'upgrading']);
+    if (incompleteStatuses.has(currentMigStatus)) {
+      writeFields['Migration Status'] = 'completed';
+    }
+  }
+
   await updateRecord(TABLES.RANCHERS, rancher.id, writeFields);
 
   // Telegram celebration when Connect goes active for the first time

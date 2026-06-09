@@ -1668,10 +1668,27 @@ export default function RancherSetupWizard() {
               saveStep={saveStep}
               onBack={() => setStep(backTarget)}
               onContinue={() => {
-                // After fulfillment is saved, prime the signing token + jump to
-                // the signature step.
-                primeSigningToken();
-                setStep(5);
+                // After fulfillment is saved, branch on whether agreement is
+                // already signed. Critical for v2-migration test ranchers
+                // like Jesse Zimmerman where Agreement Signed=true was set
+                // BEFORE the wizard ran (legacy ranchers migrating to v2).
+                //
+                // Previously this unconditionally fired primeSigningToken
+                // + setStep(5), which trapped already-signed ranchers at the
+                // SignStep — sign-agreement returns 400 "already signed"
+                // and there's no escape hatch in the UI. The wizard would
+                // dead-end immediately after Stripe Connect + fulfillment.
+                //
+                // 2026-06-09 fix: detect signed state, mint /rancher as
+                // dashboardLink (rancher-session cookie set on wizard load
+                // authenticates them), jump straight to Step 6 (Done).
+                if (rancher.agreementSigned) {
+                  setDashboardLink('/rancher');
+                  setStep(6);
+                } else {
+                  primeSigningToken();
+                  setStep(5);
+                }
               }}
             />
           );
