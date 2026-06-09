@@ -1,10 +1,24 @@
 // lib/stripeConnect.ts
 //
-// Stage-3 Task 7 — Stripe Connect V2 helpers for rancher onboarding.
+// Stage-3 Task 7 — Stripe Connect V1 Express helpers for rancher onboarding.
 //
-// V2 unifies Express / Standard / Custom into a single account object
-// with configuration.{merchant,customer} capability blocks. NO top-level
-// `type:` field. See https://docs.stripe.com/api/v2/core/accounts/object
+// 2026-06-09 P0 fix: V2 Connect (v2/core/accounts) requires platform
+// approval from Stripe and is in preview — our platform account
+// (acct_1TSn5PGTWWNqassH) is NOT enrolled, so v2.core.accounts.create
+// returned permission-denied for every rancher. Switched the entire
+// onboarding surface to V1 Express which is GA + works on every Connect
+// platform from day one.
+//
+// V1 Express:
+//   - stripe.accounts.create({ type: 'express', ... }) returns acct_*
+//   - stripe.accountLinks.create({ account, type: 'account_onboarding' })
+//     returns a one-time hosted onboarding URL
+//   - stripe.accounts.retrieve(acct) returns charges_enabled / payouts_enabled
+//     / requirements.currently_due (the V1 source of truth)
+//
+// Buyer Direct Charges (createDepositCheckout below) already use V1
+// stripe.checkout.sessions.create with `stripeAccount` header, so the
+// V1 Express acct is plug-compatible — no other code change needed.
 //
 // Status reads are LIVE — never cache. The Ranchers.Stripe Connect Status
 // field is a UI hint that gets refreshed by the webhook (Task 6), not a
@@ -34,25 +48,22 @@ export interface CreateConnectAccountInput {
 
 export async function createConnectAccount(input: CreateConnectAccountInput): Promise<{ accountId: string }> {
   const stripe = getStripeClient();
-  const account = await (stripe.v2.core.accounts as any).create(
+  // V1 Express: hosted dashboard, hosted onboarding, full BHC control via
+  // application_fee_amount on direct charges. card_payments + transfers
+  // capabilities are the standard "accept money + receive payouts" pair.
+  const account = await stripe.accounts.create(
     {
-      display_name: input.displayName,
-      contact_email: input.email,
-      identity: { country: 'us' },
-      dashboard: 'full',  // V2 equivalent of legacy Express dashboard
-      defaults: {
-        responsibilities: {
-          fees_collector: 'stripe',
-          losses_collector: 'stripe',
-        },
+      type: 'express',
+      country: 'US',
+      email: input.email,
+      business_type: 'individual',
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
       },
-      configuration: {
-        customer: {},  // Enables as customer (for tier subscription billing)
-        merchant: {
-          capabilities: {
-            card_payments: { requested: true },  // Enables as merchant (buyer deposits)
-          },
-        },
+      business_profile: {
+        name: input.displayName,
+        product_description: 'Direct-to-consumer beef sales via BuyHalfCow marketplace',
       },
       metadata: { rancherId: input.rancherId },
     },
@@ -71,22 +82,14 @@ export interface OnboardingLinkInput {
 
 export async function createOnboardingLink(input: OnboardingLinkInput): Promise<{ url: string }> {
   const stripe = getStripeClient();
-  const link = await (stripe.v2.core.accountLinks as any).create(
-    {
-      account: input.accountId,
-      use_case: {
-        type: 'account_onboarding',
-        account_onboarding: {
-          configurations: ['merchant', 'customer'],
-          refresh_url: input.refreshUrl,
-          return_url: input.returnUrl,
-        },
-      },
-    },
-    {
-      idempotencyKey: `connect-link-${input.accountId}-${Date.now()}`,
-    },
-  );
+  // V1 accountLinks — single-use URL, 30-minute TTL. Frontend handles
+  // refresh_url callback when the link expires before user starts.
+  const link = await stripe.accountLinks.create({
+    account: input.accountId,
+    refresh_url: input.refreshUrl,
+    return_url: input.returnUrl,
+    type: 'account_onboarding',
+  });
   return { url: link.url };
 }
 
@@ -101,16 +104,25 @@ export interface ConnectStatusReadResult {
 
 export async function getConnectAccountStatus(accountId: string): Promise<ConnectStatusReadResult> {
   const stripe = getStripeClient();
-  const account = await (stripe.v2.core.accounts as any).retrieve(accountId, {
-    include: ['configuration.merchant', 'requirements'],
-  });
+  // V1 Express retrieve. charges_enabled + payouts_enabled are the
+  // canonical "this account can transact" flags. card_payments capability
+  // status mirrors charges_enabled for Express accounts; we surface the
+  // capability for parity with the V2-shape consumers.
+  const account = await stripe.accounts.retrieve(accountId);
   const cardPaymentsActive =
-    (account as any)?.configuration?.merchant?.capabilities?.card_payments?.status === 'active';
-  const reqStatus = (account as any)?.requirements?.summary?.minimum_deadline?.status ?? null;
-  const onboardingComplete = reqStatus !== 'currently_due' && reqStatus !== 'past_due';
+    (account.capabilities?.card_payments as any) === 'active' ||
+    Boolean(account.charges_enabled);
+  const currentlyDue = account.requirements?.currently_due || [];
+  const pastDue = account.requirements?.past_due || [];
+  const reqStatus = pastDue.length > 0
+    ? 'past_due'
+    : currentlyDue.length > 0
+      ? 'currently_due'
+      : 'satisfied';
+  const onboardingComplete = Boolean(account.charges_enabled && account.payouts_enabled);
   const status: ConnectAccountStatus =
     cardPaymentsActive && onboardingComplete ? 'active' :
-    reqStatus === 'past_due' ? 'restricted' :
+    pastDue.length > 0 ? 'restricted' :
     'onboarding';
   return { cardPaymentsActive, onboardingComplete, requirementsStatus: reqStatus, status };
 }
