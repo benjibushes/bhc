@@ -250,3 +250,220 @@ export async function callCalApi(opts: {
   if (!text) return null;
   try { return JSON.parse(text); } catch { return text; }
 }
+
+// ─── High-level helpers for the BHC flow ──────────────────────────────
+// These wrap callCalApi() with the specific shapes the rest of the app
+// uses. If Cal adds/changes payload shape, ONE function changes here,
+// not 12 call sites.
+
+export interface CalEventTypePayload {
+  lengthInMinutes: number;
+  title: string;
+  slug: string;
+  description?: string;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Create an event type on the rancher's Cal account. The BHC standard is
+ * to create two per rancher post-connect:
+ *
+ *   1. "intro-15" — 15-min buyer intro call. Default for non-Operator
+ *      tiers. Lands on the rancher's calendar.
+ *   2. "sales-30" — 30-min sales call. Reserved for Operator-tier
+ *      ranchers where Ben handles the call but the slot lives on the
+ *      rancher's calendar so the rancher sees it.
+ *
+ * Returns the created event type id — caller persists it on the Rancher
+ * row so the embed widget can render the right slot type later.
+ */
+export async function createEventTypeForRancher(opts: {
+  rancher: any;
+  payload: CalEventTypePayload;
+}): Promise<{ id: number; slug: string }> {
+  const result = await callCalApi({
+    rancher: opts.rancher,
+    method: 'POST',
+    path: '/event-types',
+    body: opts.payload,
+  });
+  // Cal v2 shape: { status: "success", data: { id, slug, ... } }
+  const data = result?.data || result;
+  if (!data?.id) {
+    throw new Error(`Cal createEventType returned no id: ${JSON.stringify(result)}`);
+  }
+  return { id: Number(data.id), slug: String(data.slug || opts.payload.slug) };
+}
+
+/**
+ * Update an existing event type on the rancher's Cal account.
+ * Use for syncing title/description/metadata changes from BHC UI.
+ */
+export async function updateEventType(opts: {
+  rancher: any;
+  eventTypeId: number;
+  patch: Partial<CalEventTypePayload>;
+}): Promise<any> {
+  return callCalApi({
+    rancher: opts.rancher,
+    method: 'PATCH',
+    path: `/event-types/${opts.eventTypeId}`,
+    body: opts.patch,
+  });
+}
+
+/**
+ * Delete an event type — used during disconnect cleanup OR if rancher
+ * manually nukes a slot type from BHC dashboard.
+ */
+export async function deleteEventType(opts: {
+  rancher: any;
+  eventTypeId: number;
+}): Promise<void> {
+  await callCalApi({
+    rancher: opts.rancher,
+    method: 'DELETE',
+    path: `/event-types/${opts.eventTypeId}`,
+  });
+}
+
+/**
+ * Register a Cal webhook on this rancher's account so BHC gets booking
+ * events (created/rescheduled/cancelled/meeting-ended) for any of their
+ * slots. The handler already lives at /api/webhooks/cal — this just
+ * subscribes the rancher's account to it.
+ *
+ * Returns the webhook id — persisted on Rancher row so we can delete it
+ * on disconnect (avoid orphan webhooks that fire-and-403 forever).
+ */
+export async function registerCalWebhook(opts: {
+  rancher: any;
+  subscriberUrl: string;
+  triggers?: Array<'BOOKING_CREATED' | 'BOOKING_RESCHEDULED' | 'BOOKING_CANCELLED' | 'MEETING_ENDED'>;
+  secret?: string;
+}): Promise<{ id: string }> {
+  const triggers = opts.triggers ?? [
+    'BOOKING_CREATED',
+    'BOOKING_RESCHEDULED',
+    'BOOKING_CANCELLED',
+    'MEETING_ENDED',
+  ];
+  const result = await callCalApi({
+    rancher: opts.rancher,
+    method: 'POST',
+    path: '/webhooks',
+    body: {
+      active: true,
+      subscriberUrl: opts.subscriberUrl,
+      triggers,
+      secret: opts.secret,
+      payloadTemplate: undefined,
+    },
+  });
+  const data = result?.data || result;
+  if (!data?.id) {
+    throw new Error(`Cal createWebhook returned no id: ${JSON.stringify(result)}`);
+  }
+  return { id: String(data.id) };
+}
+
+/**
+ * Delete a registered Cal webhook. Used during disconnect cleanup so we
+ * don't leave orphan webhooks firing into a rancher account that no
+ * longer authorizes us.
+ */
+export async function deleteCalWebhook(opts: {
+  rancher: any;
+  webhookId: string;
+}): Promise<void> {
+  await callCalApi({
+    rancher: opts.rancher,
+    method: 'DELETE',
+    path: `/webhooks/${opts.webhookId}`,
+  });
+}
+
+/**
+ * List a rancher's recent bookings. Used by the dashboard "Bookings"
+ * panel — pull live from Cal instead of relying on the webhook-mirror
+ * for the source of truth.
+ */
+export async function listCalBookings(opts: {
+  rancher: any;
+  status?: 'upcoming' | 'past' | 'cancelled';
+  take?: number;
+}): Promise<any[]> {
+  const params = new URLSearchParams();
+  if (opts.status) params.set('status', opts.status);
+  if (opts.take) params.set('take', String(opts.take));
+  const qs = params.toString();
+  const result = await callCalApi({
+    rancher: opts.rancher,
+    method: 'GET',
+    path: `/bookings${qs ? `?${qs}` : ''}`,
+  });
+  const data = result?.data?.bookings || result?.bookings || result?.data || [];
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Check whether the rancher's Cal connection is currently usable. Returns
+ * a structured result so the UI can render a precise state (connected /
+ * expired / disconnected / error). The dashboard CTA cascades on this.
+ */
+export async function getCalConnectionStatus(rancher: any): Promise<
+  | { state: 'connected'; expiresAt: string | null; calUserId: number | null; username: string | null }
+  | { state: 'expired'; expiresAt: string | null }
+  | { state: 'disconnected' }
+  | { state: 'error'; reason: string }
+> {
+  const accessToken = String(rancher?.['Cal OAuth Access Token'] || '');
+  const refreshToken = String(rancher?.['Cal OAuth Refresh Token'] || '');
+  if (!accessToken && !refreshToken) return { state: 'disconnected' };
+
+  const expiresAtRaw = String(rancher?.['Cal Token Expires At'] || '');
+  const expiresAt = expiresAtRaw || null;
+  const now = Date.now();
+  const expiresAtMs = expiresAt ? new Date(expiresAt).getTime() : 0;
+
+  if (expiresAt && expiresAtMs < now && !refreshToken) {
+    return { state: 'expired', expiresAt };
+  }
+
+  try {
+    // If we have a refresh token, callCalApi will silently refresh on
+    // 401 — so probing /me is a true connectivity test.
+    const me = await callCalApi({
+      rancher,
+      method: 'GET',
+      path: '/me',
+    });
+    const userData = me?.data?.user || me?.user || me?.data || me;
+    return {
+      state: 'connected',
+      expiresAt,
+      calUserId: typeof userData?.id === 'number' ? userData.id : null,
+      username: userData?.username || null,
+    };
+  } catch (e: any) {
+    return { state: 'error', reason: e?.message || 'unknown' };
+  }
+}
+
+/**
+ * Clear all Cal tokens + ids from a Rancher row. Used by /disconnect and
+ * by webhook handlers when Cal signals deauthorization. Doesn't delete
+ * the rancher's Cal account — just our tokens for it.
+ */
+export async function clearRancherCalTokens(rancherId: string): Promise<void> {
+  await updateRecord(TABLES.RANCHERS, rancherId, {
+    'Cal OAuth Access Token': '',
+    'Cal OAuth Refresh Token': '',
+    'Cal Token Expires At': '',
+    'Cal User ID': '',
+    'Cal Username': '',
+    'Cal Event Type Intro Id': '',
+    'Cal Event Type Sales Id': '',
+    'Cal Webhook Id': '',
+  });
+}
