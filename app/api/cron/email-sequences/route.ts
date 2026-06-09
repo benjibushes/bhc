@@ -777,6 +777,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
         if (shouldSend) {
           try {
+            // 2026-06-09 P1 fix (audit BUG #1): pass templateName + replyContext
+            // so guardedSend's suppression check + frequency cap + Email Sends
+            // audit log all fire. Without this, rancher reminders bypass every
+            // safety gate — could spam an unsubscribed rancher silently.
             await sendEmail({
               to: email,
               subject,
@@ -784,6 +788,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 ${bodyHtml}
                 <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, Founder<br>BuyHalfCow</p>
               </div>`,
+              templateName: `rancher_docs_reminder_${newStage}`,
+              _replyContext: { type: 'rnc', recordId: rancher.id },
             });
             await updateRecord(TABLES.RANCHERS, rancher.id, {
               'Rancher Sequence Stage': newStage,

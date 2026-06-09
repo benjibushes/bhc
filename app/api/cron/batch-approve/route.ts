@@ -255,8 +255,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                 await sendWaitlistEmail({ firstName, email, state: consumer['State'], loginUrl });
               }
             }
-          } catch (matchErr) {
+          } catch (matchErr: any) {
+            // 2026-06-09 P1 fix (audit BUG #2): matching/suggest failures
+            // were swallowed silently. Buyer stayed in Waitlisted forever,
+            // ops never noticed until a manual audit. Now: Telegram alert
+            // per-failure (debounced via errors array) so ops sees stuck
+            // cohorts immediately.
             console.error(`Matching error for consumer ${consumerId}:`, matchErr);
+            errors.push(`${consumer['Full Name'] || consumerId}: ${matchErr?.message || 'unknown'}`);
           }
         }
       } catch (err: any) {
