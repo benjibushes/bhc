@@ -92,8 +92,46 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
+  // 2026-06-09 P1 fix: idempotency. Cal retries on transient errors and
+  // can deliver the same event twice. Dedupe via Stripe Events table
+  // (same shape: Event Id + Event Type + Status + Received At). Each
+  // Cal booking has a unique `uid` (newer payload) or `id` (older);
+  // combined with triggerEvent we get a stable key.
+  const bookingId = String(
+    payload?.payload?.uid ||
+    payload?.payload?.id ||
+    payload?.uid ||
+    payload?.id ||
+    '',
+  );
+  const triggerEvent = payload.triggerEvent || '';
+  const dedupeKey = bookingId ? `cal:${triggerEvent}:${bookingId}` : '';
+  if (dedupeKey) {
+    try {
+      const safeKey = escapeAirtableValue(dedupeKey);
+      const existing: any[] = await getAllRecords(
+        'Stripe Events',
+        `{Event Id} = "${safeKey}"`,
+      );
+      if (existing.length > 0 && existing[0]['Status'] === 'processed') {
+        console.log(`[cal webhook] duplicate event ${dedupeKey} — skipping`);
+        return NextResponse.json({ ok: true, skipped: 'duplicate event' });
+      }
+      if (existing.length === 0) {
+        const { createRecord } = await import('@/lib/airtable');
+        await createRecord('Stripe Events', {
+          'Event Id': dedupeKey,
+          'Event Type': `cal.${triggerEvent}`,
+          'Received At': new Date().toISOString(),
+          'Status': 'received',
+        });
+      }
+    } catch (e: any) {
+      console.warn('[cal webhook] idempotency check failed (continuing):', e?.message);
+    }
+  }
+
   try {
-    const triggerEvent = payload.triggerEvent || '';
     const bookingPayload = payload.payload || {};
     const attendees = bookingPayload.attendees || [];
     const startTime = bookingPayload.startTime || '';
@@ -613,10 +651,37 @@ export async function POST(request: Request) {
       );
     }
 
+    // 2026-06-09 P1 fix: mark event 'processed' so dedupe gate fires on retry.
+    if (dedupeKey) {
+      try {
+        const safeKey = escapeAirtableValue(dedupeKey);
+        const evRows: any[] = await getAllRecords(
+          'Stripe Events',
+          `{Event Id} = "${safeKey}"`,
+        );
+        if (evRows[0]) {
+          await updateRecord('Stripe Events', evRows[0].id, {
+            'Status': 'processed',
+            'Processed At': new Date().toISOString(),
+          });
+        }
+      } catch (e: any) {
+        console.warn('[cal webhook] processed-flip failed:', e?.message);
+      }
+    }
     return NextResponse.json({ success: true, event: triggerEvent, rancher: rancherName });
   } catch (error: any) {
+    // 2026-06-09 P0 fix: was status 500. Cal retries exponentially on 500 →
+    // retry storm if handler has a transient bug. Return 200 + log error +
+    // Telegram alert so ops sees it without infinite-retry pressure.
     console.error('[cal webhook] handler error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    try {
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `⚠️ <b>CAL WEBHOOK ERROR</b>\n${error?.message || 'unknown'}\n<i>Returning 200 to prevent retry storm.</i>`,
+      );
+    } catch { /* best-effort */ }
+    return NextResponse.json({ error: error.message }, { status: 200 });
   }
 }
 

@@ -577,8 +577,10 @@ export async function POST(request: Request) {
       conversationId,
     });
   } catch (error: any) {
+    // 2026-06-09 P0 fix: was status 500. Resend retries on 500 → loop on
+    // transient bugs. Return 200 so retry pressure clears + log to ops.
     console.error('[resend-inbound] error:', error);
-    return NextResponse.json({ ok: false, error: error?.message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: error?.message }, { status: 200 });
   }
 }
 
