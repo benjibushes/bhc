@@ -1,28 +1,44 @@
 // lib/stripeConnect.ts
 //
-// Stage-3 Task 7 — Stripe Connect V1 Express helpers for rancher onboarding.
+// Stage-3 Task 7 — Stripe Connect V2 helpers for rancher onboarding.
 //
-// 2026-06-09 P0 fix: V2 Connect (v2/core/accounts) requires platform
-// approval from Stripe and is in preview — our platform account
-// (acct_1TSn5PGTWWNqassH) is NOT enrolled, so v2.core.accounts.create
-// returned permission-denied for every rancher. Switched the entire
-// onboarding surface to V1 Express which is GA + works on every Connect
-// platform from day one.
+// 2026-06-09 v3 (post-blueprint): implementation matches the Stripe
+// "Subscriptions and embedded payments" blueprint EXACTLY:
+//   - V2 /v2/core/accounts.create with `include` array, `identity.country` +
+//     `identity.business_details`, `dashboard: 'full'`,
+//     `defaults.responsibilities.{losses,fees}_collector = 'stripe'`
+//   - V2 /v2/core/account_links.create with use_case.account_onboarding
+//     and configurations: ['merchant', 'customer']
+//   - V2 /v2/core/accounts.retrieve with include for requirements +
+//     configuration.merchant capability status
 //
-// V1 Express:
-//   - stripe.accounts.create({ type: 'express', ... }) returns acct_*
-//   - stripe.accountLinks.create({ account, type: 'account_onboarding' })
-//     returns a one-time hosted onboarding URL
-//   - stripe.accounts.retrieve(acct) returns charges_enabled / payouts_enabled
-//     / requirements.currently_due (the V1 source of truth)
+// V2 unifies Express/Standard/Custom into one Account object with a
+// configuration block per role (merchant for accepting buyer payments,
+// customer for paying SaaS subscriptions). Same account = same KYC = same
+// dashboard for rancher.
 //
-// Buyer Direct Charges (createDepositCheckout below) already use V1
-// stripe.checkout.sessions.create with `stripeAccount` header, so the
-// V1 Express acct is plug-compatible — no other code change needed.
+// SUBSCRIPTION BILLING (lib/stripeSubscription.ts):
+//   Per blueprint, the rancher's monthly tier fee is auto-deducted from
+//   their Stripe Connect *balance* (incoming buyer payments) via a
+//   SetupIntent w/ payment_method_types=['stripe_balance']. NO card on
+//   file = lower churn = no involuntary cancels.
+//
+// BUYER DEPOSIT (createDepositCheckout below):
+//   Same as before — V1 checkout.sessions.create on the rancher's acct
+//   with application_fee_amount. V2 accounts are plug-compatible w/ V1
+//   direct charges since the Stripe-Account header takes acct_* of either
+//   type.
+//
+// PLATFORM REQUIREMENTS (one-time, in Stripe Dashboard):
+//   1. Connect platform-profile complete in sandbox (then enable live)
+//   2. V2 Connect API enrolled (request from Stripe support if not auto-on)
+//   3. `losses_collector=stripe` accepted on platform profile (so Stripe
+//      covers negative rancher balances, no reserve required on BHC)
 //
 // Status reads are LIVE — never cache. The Ranchers.Stripe Connect Status
-// field is a UI hint that gets refreshed by the webhook (Task 6), not a
-// source of truth.
+// field is a UI hint that gets refreshed by the webhook (V2 events:
+// v2.core.account[configuration.merchant].capability_status_updated +
+// v2.core.account[requirements].updated).
 
 import Stripe from 'stripe';
 
@@ -48,29 +64,57 @@ export interface CreateConnectAccountInput {
 
 export async function createConnectAccount(input: CreateConnectAccountInput): Promise<{ accountId: string }> {
   const stripe = getStripeClient();
-  // V1 Express: hosted dashboard, hosted onboarding, full BHC control via
-  // application_fee_amount on direct charges. card_payments + transfers
-  // capabilities are the standard "accept money + receive payouts" pair.
-  const account = await stripe.accounts.create(
-    {
-      type: 'express',
-      country: 'US',
-      email: input.email,
-      business_type: 'individual',
-      capabilities: {
-        card_payments: { requested: true },
-        transfers: { requested: true },
-      },
-      business_profile: {
-        name: input.displayName,
-        product_description: 'Direct-to-consumer beef sales via BuyHalfCow marketplace',
-      },
-      metadata: { rancherId: input.rancherId },
+  // Match Stripe blueprint "Subscriptions and embedded payments" exactly.
+  // `include` array forces Stripe to return the requested sub-resources on
+  // the create response so we have everything we need (capability statuses,
+  // requirements) without a second retrieve call.
+  //
+  // `losses_collector = 'stripe'` keeps BHC off the hook for rancher
+  // negative balances. Required platform-profile acknowledgement in Stripe
+  // Dashboard (one-time per environment).
+  //
+  // `dashboard = 'full'` gives the rancher access to the full Stripe
+  // dashboard — they manage their own bank acct + payout schedule + tax
+  // forms without us building proxy UI for any of it.
+  const params: any = {
+    display_name: input.displayName,
+    contact_email: input.email,
+    configuration: {
+      merchant: {},
+      customer: {},
     },
-    {
-      idempotencyKey: `connect-acct-${input.rancherId}`,
+    include: [
+      'configuration.merchant',
+      'configuration.recipient',
+      'identity',
+      'defaults',
+      'configuration.customer',
+    ],
+    identity: {
+      country: 'us',
+      business_details: {
+        // Placeholder — rancher will set real phone during KYC. Required
+        // by V2 even though we don't have it yet.
+        phone: '0000000000',
+      },
     },
-  );
+    dashboard: 'full',
+    defaults: {
+      responsibilities: {
+        losses_collector: 'stripe',
+        fees_collector: 'stripe',
+      },
+    },
+    metadata: { rancherId: input.rancherId },
+  };
+  // Sandbox-only: bypass TOS click for synthetic testing. Live mode
+  // requires the rancher to actually accept TOS during onboarding.
+  if (process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) {
+    params.configuration.merchant.simulate_accept_tos_obo = true;
+  }
+  const account = await (stripe.v2.core.accounts as any).create(params, {
+    idempotencyKey: `connect-acct-${input.rancherId}`,
+  });
   return { accountId: account.id };
 }
 
@@ -82,14 +126,24 @@ export interface OnboardingLinkInput {
 
 export async function createOnboardingLink(input: OnboardingLinkInput): Promise<{ url: string }> {
   const stripe = getStripeClient();
-  // V1 accountLinks — single-use URL, 30-minute TTL. Frontend handles
-  // refresh_url callback when the link expires before user starts.
-  const link = await stripe.accountLinks.create({
-    account: input.accountId,
-    refresh_url: input.refreshUrl,
-    return_url: input.returnUrl,
-    type: 'account_onboarding',
-  });
+  // V2 account_links — onboards both merchant (accept buyer payments) and
+  // customer (subscription billed from Connect balance) in one flow.
+  const link = await (stripe.v2.core.accountLinks as any).create(
+    {
+      account: input.accountId,
+      use_case: {
+        type: 'account_onboarding',
+        account_onboarding: {
+          configurations: ['merchant', 'customer'],
+          refresh_url: input.refreshUrl,
+          return_url: input.returnUrl,
+        },
+      },
+    },
+    {
+      idempotencyKey: `connect-link-${input.accountId}-${Date.now()}`,
+    },
+  );
   return { url: link.url };
 }
 
@@ -104,25 +158,21 @@ export interface ConnectStatusReadResult {
 
 export async function getConnectAccountStatus(accountId: string): Promise<ConnectStatusReadResult> {
   const stripe = getStripeClient();
-  // V1 Express retrieve. charges_enabled + payouts_enabled are the
-  // canonical "this account can transact" flags. card_payments capability
-  // status mirrors charges_enabled for Express accounts; we surface the
-  // capability for parity with the V2-shape consumers.
-  const account = await stripe.accounts.retrieve(accountId);
+  // V2 retrieve w/ include — Stripe returns the full configuration +
+  // requirements blocks needed to compute live status without a second
+  // round-trip. The legacy minimum_deadline field is the canonical
+  // requirements-status indicator on V2; capability_status_updated webhook
+  // events drive incremental refresh.
+  const account = await (stripe.v2.core.accounts as any).retrieve(accountId, {
+    include: ['configuration.merchant', 'requirements'],
+  });
   const cardPaymentsActive =
-    (account.capabilities?.card_payments as any) === 'active' ||
-    Boolean(account.charges_enabled);
-  const currentlyDue = account.requirements?.currently_due || [];
-  const pastDue = account.requirements?.past_due || [];
-  const reqStatus = pastDue.length > 0
-    ? 'past_due'
-    : currentlyDue.length > 0
-      ? 'currently_due'
-      : 'satisfied';
-  const onboardingComplete = Boolean(account.charges_enabled && account.payouts_enabled);
+    (account as any)?.configuration?.merchant?.capabilities?.card_payments?.status === 'active';
+  const reqStatus = (account as any)?.requirements?.summary?.minimum_deadline?.status ?? null;
+  const onboardingComplete = reqStatus !== 'currently_due' && reqStatus !== 'past_due';
   const status: ConnectAccountStatus =
     cardPaymentsActive && onboardingComplete ? 'active' :
-    pastDue.length > 0 ? 'restricted' :
+    reqStatus === 'past_due' ? 'restricted' :
     'onboarding';
   return { cardPaymentsActive, onboardingComplete, requirementsStatus: reqStatus, status };
 }
