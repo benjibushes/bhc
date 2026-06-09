@@ -24,6 +24,7 @@ import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
+import { addCalPrefill } from '@/lib/calPrefill';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 
@@ -48,9 +49,15 @@ interface NudgeEmailArgs {
   ranchName: string;
   daysLeft: number;
   setupUrl: string;
+  // Identity passed to Cal.com prefill so the rancher doesn't re-type
+  // name/email on the booking form. Falsy values are tolerated — Cal
+  // falls back to manual entry.
+  fullName?: string;
+  email?: string;
+  rancherId?: string;
 }
 
-function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl }: NudgeEmailArgs) {
+function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, fullName, email, rancherId }: NudgeEmailArgs) {
   const first = firstName || 'there';
   const urgency = daysLeft <= 1 ? 'tomorrow' : daysLeft <= 2 ? 'in 2 days' : `in ${daysLeft} days`;
   const subject =
@@ -66,7 +73,7 @@ function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl }: NudgeEmai
 </div>
 <p><strong>Want me to walk you through it on a 15-min call?</strong></p>
 <div style="text-align:center;margin:14px 0;">
-  <a href="${BEN_MIGRATION_CAL_URL}" style="display:inline-block;padding:12px 28px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
+  <a href="${addCalPrefill(BEN_MIGRATION_CAL_URL, { name: fullName, email, metadata: { rancherId } })}" style="display:inline-block;padding:12px 28px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
 </div>
 <p style="font-size:13px;color:#6B4F3F;">Reply to this email if you hit any snag — I'll respond same-day.</p>
 <p style="font-size:13px;color:#6B4F3F;">— Benjamin, BuyHalfCow</p>
@@ -139,7 +146,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
       // original email). 60-day expiry matches send-v2-upgrade.
       const token = jwt.sign({ type: 'rancher-setup', rancherId: id }, JWT_SECRET, { expiresIn: '60d' });
       const setupUrl = `${SITE_URL}/rancher/setup?token=${token}`;
-      const { subject, html } = buildNudgeEmail({ firstName, ranchName: name, daysLeft, setupUrl });
+      const { subject, html } = buildNudgeEmail({
+        firstName,
+        ranchName: name,
+        daysLeft,
+        setupUrl,
+        fullName: name,
+        email,
+        rancherId: id,
+      });
       try {
         const sendRes: any = await sendEmail({
           to: email,

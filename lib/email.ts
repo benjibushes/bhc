@@ -1227,11 +1227,23 @@ export async function sendBuyerIntroNotification(data: {
     <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Same beef. Same rancher. I just make sure both sides show up prepared.</p>
   </div>`;
   } else if (normalizedCalSlug) {
+    // Pre-fill the rancher's Cal.com booking form with the buyer's name +
+    // email + referralId so the buyer doesn't re-type. Webhook reads
+    // metadata[referralId] to link the booking back to the Referral row.
+    const rancherCalUrl = `https://cal.com/${normalizedCalSlug}`;
+    const rancherCalPrefillParams = new URLSearchParams();
+    if (data.firstName) rancherCalPrefillParams.set('name', data.firstName);
+    if (data.email) rancherCalPrefillParams.set('email', data.email);
+    if (data.referralId) rancherCalPrefillParams.set('metadata[referralId]', data.referralId);
+    const rancherCalQs = rancherCalPrefillParams.toString();
+    const rancherCalUrlWithPrefill = rancherCalQs
+      ? `${rancherCalUrl}?${rancherCalQs}`
+      : rancherCalUrl;
     calBlock = `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
     <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Schedule a 15-min intro call</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Pick a time that works for both of you. ${esc(data.rancherName)} sets their availability &mdash; book a slot and they'll be expecting your call. No phone tag.</p>
     <p style="margin:16px 0 4px 0;text-align:center;">
-      <a href="https://cal.com/${esc(normalizedCalSlug)}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Book your 15-min call &rarr;</a>
+      <a href="${rancherCalUrlWithPrefill}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Book your 15-min call &rarr;</a>
     </p>
     <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Ben (BuyHalfCow founder) is CC'd on every booking &mdash; we make sure both sides show up prepared.</p>
   </div>`;

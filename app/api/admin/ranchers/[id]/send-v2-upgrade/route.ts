@@ -2,6 +2,7 @@ import { NextResponse, NextRequest } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { addCalPrefill } from '@/lib/calPrefill';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 import { requireAdmin } from '@/lib/adminAuth';
@@ -136,7 +137,7 @@ export async function POST(
   <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6B4F3F;">Option B — book a 15-min walkthrough with me</p>
   <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Prefer to do it together so nothing falls through cracks? Grab a slot — I'll screen-share and walk you through every step. Bring your deposit/processing numbers + your bank info handy.</p>
   <div style="text-align:center;margin:16px 0 4px;">
-    <a href="${BEN_MIGRATION_CAL_URL}" style="display:inline-block;padding:14px 32px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
+    <a href="${addCalPrefill(BEN_MIGRATION_CAL_URL, { name, email, metadata: { rancherId: id } })}" style="display:inline-block;padding:14px 32px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
   </div>
 </div>
 
