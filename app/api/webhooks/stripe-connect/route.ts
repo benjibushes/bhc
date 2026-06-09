@@ -186,6 +186,14 @@ export async function POST(request: Request) {
       //     mutations and fires alongside the specific ones; subscribe to
       //     it as a belt-and-suspenders if a specific event lands somewhere
       //     unexpected.
+      // 2026-06-09: switched from V2 Connect to V1 Express. V1 fires
+      // `account.updated` whenever charges_enabled / payouts_enabled /
+      // requirements.currently_due / capabilities.card_payments change.
+      // `capability.updated` fires alongside for capability lifecycle.
+      // V2 cases retained as no-ops for forward-compat if platform ever
+      // moves to V2 — they simply won't fire on V1 Express accounts.
+      case 'account.updated':
+      case 'capability.updated':
       case 'v2.core.account[requirements].updated':
       case 'v2.core.account[configuration.merchant].capability_status_updated':
       case 'v2.core.account.updated': {
