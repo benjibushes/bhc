@@ -45,6 +45,13 @@ import Stripe from 'stripe';
 // Lazy Stripe client init — constructing at module load fails Vercel's
 // build-time page-data collection (env vars not available). Defer until
 // first runtime call.
+//
+// V2 Connect Accounts API is currently a *preview* feature on Stripe and
+// requires the `2025-09-30.preview` Stripe-Version header on every call.
+// Without it Stripe returns `not_found` with the hint: "In order to access
+// this preview feature, you must explicitly specify a .preview Stripe-Version
+// in your request header." We confirmed this empirically against the BHC
+// sandbox on 2026-06-09.
 let _stripeClient: Stripe | null = null;
 function getStripeClient(): Stripe {
   if (_stripeClient) return _stripeClient;
@@ -52,7 +59,9 @@ function getStripeClient(): Stripe {
   if (!apiKey) {
     throw new Error('STRIPE_SECRET_KEY environment variable is required');
   }
-  _stripeClient = new Stripe(apiKey);
+  _stripeClient = new Stripe(apiKey, {
+    apiVersion: '2025-09-30.preview' as any,
+  });
   return _stripeClient;
 }
 
@@ -107,11 +116,9 @@ export async function createConnectAccount(input: CreateConnectAccountInput): Pr
     },
     metadata: { rancherId: input.rancherId },
   };
-  // Sandbox-only: bypass TOS click for synthetic testing. Live mode
-  // requires the rancher to actually accept TOS during onboarding.
-  if (process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) {
-    params.configuration.merchant.simulate_accept_tos_obo = true;
-  }
+  // simulate_accept_tos_obo is documented in the Stripe Workbench blueprint
+  // but rejected by the live V2 API as Unknown field (verified 2026-06-09).
+  // Real rancher always goes through Stripe-hosted TOS — no bypass needed.
   const account = await (stripe.v2.core.accounts as any).create(params, {
     idempotencyKey: `connect-acct-${input.rancherId}`,
   });

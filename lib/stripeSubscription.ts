@@ -18,6 +18,10 @@ import { TIERS, TierSlug } from '@/lib/tiers';
 // Lazy Stripe client init — constructing at module load fails Vercel's
 // build-time page-data collection (env vars not available). Defer until
 // first runtime call.
+//
+// V2 `customer_account` param requires the `2025-09-30.preview` Stripe-Version
+// header — same preview API needed by lib/stripeConnect.ts. Without it the
+// subscription create call rejects `customer_account` as Unknown field.
 let _stripeClient: Stripe | null = null;
 function getStripeClient(): Stripe {
   if (_stripeClient) return _stripeClient;
@@ -25,7 +29,9 @@ function getStripeClient(): Stripe {
   if (!apiKey) {
     throw new Error('STRIPE_SECRET_KEY environment variable is required');
   }
-  _stripeClient = new Stripe(apiKey);
+  _stripeClient = new Stripe(apiKey, {
+    apiVersion: '2025-09-30.preview' as any,
+  });
   return _stripeClient;
 }
 
