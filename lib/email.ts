@@ -4422,3 +4422,63 @@ export async function sendBuyerFinalInvoice(data: {
     }),
   });
 }
+
+// =====================================================
+// RANCHER APPLY — AUTO-APPROVED WELCOME (Phase 1 frictionless funnel)
+// =====================================================
+//
+// Fires immediately after /api/apply submission for ranchers who pass the
+// auto-score gate. Carries the wizard URL so they can resume even after
+// closing the browser tab — solves the "I lost the link" problem.
+//
+// Tier hints are deliberate: get them imagining themselves on the platform
+// BEFORE they reach the tier picker. Reduces decision fatigue at Step 7.
+export async function sendRancherApplyAutoApproved(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+  wizardUrl: string;
+  score: number;
+  hotLead: boolean;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = (data.operatorName || 'there').split(' ')[0] || 'there';
+  const subject = `${first} — ${data.ranchName} is approved. Your setup link inside.`;
+  const hotLine = data.hotLead
+    ? `<p style="margin:14px 0;color:#0E0E0E;"><strong>You scored ${data.score}/9 — that puts ${esc(data.ranchName)} in our top-priority bucket.</strong> I&rsquo;ll be following up personally to make sure your first buyer match lands inside 30 days.</p>`
+    : '';
+  return guardedSend({
+    templateName: 'sendRancherApplyAutoApproved',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:28px;margin:0 0 18px;line-height:1.25}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 32px;background:#0E0E0E;color:#fff !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:18px 22px;margin:22px 0}.box ul{margin:6px 0;padding-left:22px}.box li{margin:8px 0;color:#2A2A2A}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>${esc(first)} &mdash; you&rsquo;re in.</h1>
+  <p>Approved. ${esc(data.ranchName)} is officially in the BuyHalfCow network.</p>
+  ${hotLine}
+  <p style="text-align:center;margin:28px 0;">
+    <a href="${data.wizardUrl}" class="cta">Finish setup &rarr;</a>
+  </p>
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Bookmark this email &mdash; the link is good for 60 days.</p>
+  <div class="box">
+    <p style="margin:0 0 6px;font-weight:700;font-family:Georgia,serif;font-size:15px;">5 minutes to live. Here&rsquo;s what&rsquo;s ahead:</p>
+    <ul>
+      <li><strong>Pick a tier</strong> &mdash; Pasture ($150/mo + 7%), Ranch ($350/mo + 3%), Operator ($500/mo + 0%). Operator is recommended if you want me running every sales call for you.</li>
+      <li><strong>Stripe Connect</strong> &mdash; 5-min KYC + bank connect. Buyers pay through the platform, money lands directly in your bank next day.</li>
+      <li><strong>Set your numbers</strong> &mdash; Quarter / Half / Whole prices + deposits + processing fees. You own these. Edit anytime.</li>
+      <li><strong>Page goes live</strong> &mdash; Your /ranchers/[your-name] page publishes the moment you sign. Buyers in your state start routing your way.</li>
+    </ul>
+  </div>
+  <p><strong>What to have ready before you start the wizard:</strong> bank routing number, EIN (or SSN for sole prop), and your phone in case Stripe asks for a driver license photo. Most ranchers finish in 12-15 minutes.</p>
+  <p>Got questions? Reply directly &mdash; this email lands in my inbox. I read every one.</p>
+  <p style="margin-top:32px;">&mdash; Benjamin, BuyHalfCow</p>
+  ${emailFooter(data.email)}
+</div></body></html>`,
+    }),
+  });
+}

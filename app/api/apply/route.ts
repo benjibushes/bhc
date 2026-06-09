@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { createRecord, getAllRecords, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendRancherApplyAutoApproved } from '@/lib/email';
 import { JWT_SECRET } from '@/lib/secrets';
 
 // POST /api/apply — public endpoint.
@@ -197,6 +198,23 @@ export async function POST(req: Request) {
     { expiresIn: '60d' }
   );
   const wizardUrl = `${SITE_URL}/rancher/setup?token=${wizardToken}`;
+
+  // Fire the auto-approval welcome email. Carries the wizard URL so the
+  // rancher can resume even after closing the browser tab. Non-fatal —
+  // log + continue if Resend hiccups (rancher still has URL in client
+  // response + Telegram alert lets Ben follow up manually).
+  try {
+    await sendRancherApplyAutoApproved({
+      operatorName: body.operatorName.trim(),
+      ranchName: body.ranchName.trim(),
+      email,
+      wizardUrl,
+      score,
+      hotLead: hot,
+    });
+  } catch (e: any) {
+    console.warn('[apply] auto-approved welcome email failed (non-fatal):', e?.message);
+  }
 
   // Telegram alert — tier the emoji + label so Ben can triage at a glance
   try {
