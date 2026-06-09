@@ -40,14 +40,21 @@ export async function POST(req: Request) {
   catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
   const tier = String(body.tier || '').toLowerCase() as TierSlug;
   if (!TIERS[tier]) {
-    return NextResponse.json({ error: 'Invalid tier — must be pasture, ranch, or operator' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'Invalid tier — must be pasture, ranch, operator, or legacy_connect' },
+      { status: 400 },
+    );
   }
 
   const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
   if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
 
-  // Refuse if subscription already active
-  if (rancher['Subscription Status'] === 'active' || rancher['Subscription Status'] === 'trialing') {
+  // Refuse if subscription already active. legacy_connect has no
+  // subscription so this gate doesn't apply.
+  if (
+    tier !== 'legacy_connect' &&
+    (rancher['Subscription Status'] === 'active' || rancher['Subscription Status'] === 'trialing')
+  ) {
     return NextResponse.json(
       { error: 'Subscription already active — use /api/rancher/tier/change to switch tiers' },
       { status: 409 },
@@ -81,7 +88,54 @@ export async function POST(req: Request) {
     }
   }
 
-  // Now create Checkout Session for the tier subscription
+  // 2026-06-09 hybrid path: legacy_connect skips Stripe Subscription
+  // creation entirely. The rancher pays NO monthly fee — they keep
+  // their 10% commission rate (from lib/tiers.ts TIERS.legacy_connect.
+  // commissionRate=0.10) but get Stripe Connect direct-deposit payouts.
+  //
+  // Persist Tier='Legacy Connect' + synthetic Subscription Status='active'
+  // so all downstream gates (matching engine, deposit route, /admin/migration
+  // tracker) treat them as a paying tier_v2 rancher even though no Stripe
+  // Subscription object exists.
+  //
+  // Typecast=true so Airtable auto-creates the 'Legacy Connect' singleSelect
+  // choice on first write if not present (we couldn't add it via Meta API
+  // earlier — meta endpoint rejected the choices PATCH).
+  if (tier === 'legacy_connect') {
+    try {
+      // updateRecord already retries with typecast=true internally
+      // (lib/airtable.ts:201) — Airtable creates the 'Legacy Connect'
+      // singleSelect choice automatically on first write.
+      await updateRecord(TABLES.RANCHERS, session.rancherId, {
+        'Tier': 'Legacy Connect',
+        'Pricing Model': 'tier_v2',
+        // Synthetic 'active' so isQualifiedForRouting + matching engine
+        // see legacy_connect ranchers as eligible. application_fee_amount
+        // is still computed from TIERS.legacy_connect.commissionRate (10%).
+        'Subscription Status': 'active',
+        // Mark the migration funnel mid-flight since legacy_connect has
+        // no subscription gate. Connect webhook refines to 'completed'
+        // once the bank is actually connected.
+        'Migration Status': 'upgrading',
+      });
+    } catch (e: any) {
+      console.error('[tier/select] legacy_connect persist failed:', e?.message);
+      return NextResponse.json(
+        { error: `Could not persist Legacy Connect tier: ${e?.message || 'unknown'}` },
+        { status: 500 },
+      );
+    }
+    // No Stripe Checkout URL to return — wizard reads `skipCheckout: true`
+    // and advances straight to Step 9 (Stripe Connect onboarding).
+    return NextResponse.json({
+      skipCheckout: true,
+      tier: 'legacy_connect',
+      nextStep: 'connect',
+      message: 'Legacy Connect selected — go connect your bank account.',
+    });
+  }
+
+  // Now create Checkout Session for the tier subscription (Pasture / Ranch / Operator)
   try {
     const { url } = await createTierCheckoutSession({
       rancherId: session.rancherId,

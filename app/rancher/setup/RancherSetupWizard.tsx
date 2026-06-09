@@ -78,12 +78,22 @@ type Rancher = {
 // Tier card data. Source of truth lives in lib/tiers.ts; mirrored here as
 // static copy so the wizard renders without an extra fetch. If lib/tiers.ts
 // changes, update these. The slugs MUST match TierSlug exactly.
+//
+// `mode` distinguishes how the card's CTA behaves:
+//   - 'checkout': opens /partner/checkout/[slug] for Stripe Subscription
+//     (Pasture/Ranch/Operator — all monthly recurring billing).
+//   - 'inline':   directly POSTs /api/rancher/tier/select with no
+//     subscription created. Used for Legacy Connect — Stripe Connect
+//     deposits + 10% commission per sale + NO monthly fee. The rancher
+//     never sees a Stripe Checkout for tier; they go straight from picking
+//     the card → bank connect.
 const TIER_CARDS: Array<{
-  slug: 'pasture' | 'ranch' | 'operator';
+  slug: 'pasture' | 'ranch' | 'operator' | 'legacy_connect';
   label: string;
   price: string;
   promise: string;
   perks: string[];
+  mode: 'checkout' | 'inline';
 }> = [
   {
     slug: 'pasture',
@@ -91,6 +101,7 @@ const TIER_CARDS: Array<{
     price: '$150/mo + 7%',
     promise: 'We send you buyers.',
     perks: ['Buyer matching for your states', 'Stripe Connect payouts', 'Lead inbox'],
+    mode: 'checkout',
   },
   {
     slug: 'ranch',
@@ -98,6 +109,7 @@ const TIER_CARDS: Array<{
     price: '$350/mo + 3%',
     promise: 'We send you buyers AND make sure they see you first.',
     perks: ['Priority placement', 'Featured ranch badge', 'Homepage rotation slot'],
+    mode: 'checkout',
   },
   {
     slug: 'operator',
@@ -105,18 +117,34 @@ const TIER_CARDS: Array<{
     price: '$500/mo + 0%',
     promise: 'We send you buyers, position you, and run your marketing.',
     perks: ['0% commission', 'Dedicated brand strategist', 'Monthly content + social cadence'],
+    mode: 'checkout',
+  },
+  {
+    slug: 'legacy_connect',
+    label: 'Legacy Connect',
+    price: '$0/mo + 10%',
+    promise: 'Keep your current 10% deal. Get on Stripe Connect for direct deposits.',
+    perks: [
+      'No monthly fee',
+      '10% commission per sale (deducted at deposit)',
+      'Stripe Connect direct-to-bank payouts',
+      'Same buyer routing as paid tiers',
+    ],
+    mode: 'inline',
   },
 ];
 
 // Pull tier slug from a Rancher record. Mirrors lib/tiers.ts tierFor() but
 // operates on the wizard's lighter `Rancher` shape (Airtable returns either
 // a string or {name} for singleSelect fields).
-function tierSlugFromRancher(r: Rancher | null): 'pasture' | 'ranch' | 'operator' | null {
+function tierSlugFromRancher(r: Rancher | null): 'pasture' | 'ranch' | 'operator' | 'legacy_connect' | null {
   if (!r) return null;
   const raw = r.Tier;
   const str = raw && typeof raw === 'object' && 'name' in raw ? String(raw.name) : String(raw || '');
   const slug = str.toLowerCase();
   if (slug === 'pasture' || slug === 'ranch' || slug === 'operator') return slug;
+  // 'Legacy Connect' (Airtable display) → 'legacy_connect' (code slug)
+  if (slug === 'legacy connect' || slug === 'legacy_connect') return 'legacy_connect';
   return null;
 }
 
@@ -2407,12 +2435,12 @@ function TierPickStep({
   onContinue,
 }: {
   token: string;
-  currentTier: 'pasture' | 'ranch' | 'operator' | null;
+  currentTier: 'pasture' | 'ranch' | 'operator' | 'legacy_connect' | null;
   subscriptionStatus: string;
   onBack: () => void;
   onContinue: (updated: Rancher | null) => void;
 }) {
-  const [polledTier, setPolledTier] = useState<'pasture' | 'ranch' | 'operator' | null>(currentTier);
+  const [polledTier, setPolledTier] = useState<'pasture' | 'ranch' | 'operator' | 'legacy_connect' | null>(currentTier);
   const [polledStatus, setPolledStatus] = useState<string>(subscriptionStatus);
   const [lastRancher, setLastRancher] = useState<Rancher | null>(null);
   const [checking, setChecking] = useState(false);
@@ -2483,7 +2511,7 @@ function TierPickStep({
         </p>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         {TIER_CARDS.map((card) => {
           const selected = polledTier === card.slug;
           const showCheckmark = selected && isActive;
@@ -2516,24 +2544,76 @@ function TierPickStep({
                   <li key={p}>{p}</li>
                 ))}
               </ul>
-              <a
-                href={`/partner/checkout/${card.slug}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`mt-auto text-center text-[11px] tracking-widest uppercase border px-3 py-2 transition-base ${
-                  showCheckmark
-                    ? 'border-sage text-sage-dark bg-bone-warm hover:bg-bone'
+              {card.mode === 'inline' ? (
+                // Legacy Connect: POST tier/select inline (no Stripe Checkout
+                // for subscription — the rancher picks 10% commission /
+                // no-monthly-fee path). On success the polling effect at line
+                // 2461-2477 detects the persisted Tier='Legacy Connect' +
+                // Subscription Status='active' and unlocks Continue.
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      setChecking(true);
+                      const res = await fetch('/api/rancher/tier/select', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tier: card.slug }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        alert(data?.error || `Could not select ${card.label}`);
+                        return;
+                      }
+                      // Refresh polled state so the Continue button enables
+                      // without waiting for the 4s tick.
+                      const fresh = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
+                      if (fresh.ok) {
+                        const fd = await fresh.json();
+                        if (fd?.rancher) {
+                          const r = fd.rancher as Rancher;
+                          setLastRancher(r);
+                          setPolledTier(tierSlugFromRancher(r));
+                          setPolledStatus(String(r['Subscription Status'] || ''));
+                        }
+                      }
+                    } catch (e: any) {
+                      alert(e?.message || 'Network error — please retry');
+                    } finally {
+                      setChecking(false);
+                    }
+                  }}
+                  disabled={checking || showCheckmark}
+                  className={`mt-auto text-center text-[11px] tracking-widest uppercase border px-3 py-2 transition-base ${
+                    showCheckmark
+                      ? 'border-sage text-sage-dark bg-bone-warm hover:bg-bone'
+                      : selected
+                      ? 'border-charcoal bg-charcoal text-bone hover:bg-divider'
+                      : 'border-charcoal text-charcoal hover:bg-charcoal hover:text-bone'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  {showCheckmark ? `On Legacy Connect ✓` : checking ? 'Setting up…' : `Pick ${card.label}`}
+                </button>
+              ) : (
+                <a
+                  href={`/partner/checkout/${card.slug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`mt-auto text-center text-[11px] tracking-widest uppercase border px-3 py-2 transition-base ${
+                    showCheckmark
+                      ? 'border-sage text-sage-dark bg-bone-warm hover:bg-bone'
+                      : selected
+                      ? 'border-charcoal bg-charcoal text-bone hover:bg-divider'
+                      : 'border-charcoal text-charcoal hover:bg-charcoal hover:text-bone'
+                  }`}
+                >
+                  {showCheckmark
+                    ? `Manage ${card.label} →`
                     : selected
-                    ? 'border-charcoal bg-charcoal text-bone hover:bg-divider'
-                    : 'border-charcoal text-charcoal hover:bg-charcoal hover:text-bone'
-                }`}
-              >
-                {showCheckmark
-                  ? `Manage ${card.label} →`
-                  : selected
-                  ? `Resume checkout →`
-                  : `Pick ${card.label}`}
-              </a>
+                    ? `Resume checkout →`
+                    : `Pick ${card.label}`}
+                </a>
+              )}
             </div>
           );
         })}
