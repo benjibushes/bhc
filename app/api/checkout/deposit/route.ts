@@ -196,7 +196,7 @@ export async function POST(req: Request) {
   const totalChargedCents = amountCents + platformFeeCents;
 
   // Create Stripe Checkout Session
-  let result: { url: string; paymentIntentId: string };
+  let result: { url: string; paymentIntentId: string; sessionId: string; connectAccountId: string };
   try {
     result = await createDepositCheckout({
       rancherConnectAccountId: connectAccountId,
@@ -232,7 +232,34 @@ export async function POST(req: Request) {
       stripePaymentIntentId: result.paymentIntentId,
     });
   } catch (e: any) {
-    console.error('[checkout/deposit] recordDeposit failed — aborting redirect to prevent orphan payment:', e);
+    console.error('[checkout/deposit] recordDeposit failed — expiring Stripe Session to prevent orphan payment:', e);
+    // 2026-06-09 fix: previously left Stripe Session live. Buyer could
+    // still complete checkout → succeeded PI with no Payments row →
+    // markDepositSucceeded silent no-op → money lands in rancher's
+    // Connect account with NO referral close + NO Telegram celebration.
+    // Expire the Session NOW so the buyer can't complete it.
+    try {
+      const { expireCheckoutSession } = await import('@/lib/stripeConnect');
+      await expireCheckoutSession({
+        sessionId: result.sessionId,
+        connectAccountId: result.connectAccountId,
+      });
+    } catch (expireErr: any) {
+      // Best-effort. Log loudly so operator can manually expire via Stripe Dashboard.
+      console.error(
+        '[checkout/deposit] CRITICAL: Stripe Session expire ALSO failed — orphan risk:',
+        expireErr?.message,
+        'sessionId:', result.sessionId,
+        'rancherId:', rancherId,
+      );
+      try {
+        const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🚨 <b>ORPHAN STRIPE SESSION</b>\n\nrecordDeposit + expireCheckoutSession both failed.\n\nSession id: <code>${result.sessionId}</code>\nRancher: ${rancherId}\nReferral: ${referralId}\n\n<i>Manually expire in Stripe Dashboard NOW or buyer can complete + cause silent succeeded PI with no Payments row.</i>`,
+        );
+      } catch {}
+    }
     return NextResponse.json({ error: 'Could not record deposit. Please try again.' }, { status: 500 });
   }
 

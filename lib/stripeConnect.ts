@@ -152,7 +152,7 @@ export interface CreateDepositCheckoutInput {
   cancelUrl: string;
 }
 
-export async function createDepositCheckout(input: CreateDepositCheckoutInput): Promise<{ url: string; paymentIntentId: string }> {
+export async function createDepositCheckout(input: CreateDepositCheckoutInput): Promise<{ url: string; paymentIntentId: string; sessionId: string; connectAccountId: string }> {
   const feeRate = TIERS[input.tier].commissionRate;  // 0.07 / 0.03 / 0
   // CRITICAL: commission is calculated on the FULL sale price, not on the
   // deposit. Rancher takes their full deposit upfront, BHC takes its full
@@ -248,8 +248,15 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       },
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
+      // 2026-06-09 fix: previously had `customer_update: { address: 'auto' }`
+      // alongside `customer_email` only. Stripe rejects `customer_update`
+      // when no `customer` parameter is set on the session (customer_email
+      // alone is insufficient — customer_update requires the customer object
+      // to already exist). Dropping customer_update lets automatic_tax still
+      // function (Stripe collects address during Checkout for tax calc).
+      // Without this fix EVERY tier_v2 buyer deposit attempt 400'd at the
+      // Stripe API layer, silently breaking the buyer-side checkout flow.
       automatic_tax: { enabled: true },
-      customer_update: { address: 'auto' },
     },
     {
       stripeAccount: input.rancherConnectAccountId,
@@ -263,7 +270,33 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
     // If either is missing the downstream Airtable + webhook lookup keys break.
     throw new Error(`Stripe Checkout Session returned incomplete fields (url=${!!url}, payment_intent=${!!paymentIntentId})`);
   }
-  return { url, paymentIntentId };
+  // 2026-06-09 fix: expose sessionId so caller can expire() the session if
+  // a downstream recordDeposit fails (otherwise orphan session = buyer
+  // completes → succeeded PI with no Payments row → webhook silent no-op).
+  return { url, paymentIntentId, sessionId: session.id, connectAccountId: input.rancherConnectAccountId };
+}
+
+/**
+ * Cancel a still-open Checkout Session. Used by /api/checkout/deposit when
+ * Airtable recordDeposit fails AFTER the Stripe Session was created — without
+ * this, the buyer could complete the Session and we'd have a succeeded
+ * PaymentIntent with no Payments row to match against. The webhook's
+ * markDepositSucceeded looks up by PI Id; missing row → silent no-op → money
+ * lands in rancher's Connect account with NO referral close, NO commission
+ * recorded, NO Telegram celebration.
+ *
+ * Must pass the connectAccountId because deposit sessions are created on the
+ * rancher's Connect account (stripeAccount header), and Stripe scopes session
+ * IDs per account. Calling expire without the account header throws 404.
+ */
+export async function expireCheckoutSession(opts: {
+  sessionId: string;
+  connectAccountId: string;
+}): Promise<void> {
+  const stripe = getStripeClient();
+  await stripe.checkout.sessions.expire(opts.sessionId, undefined, {
+    stripeAccount: opts.connectAccountId,
+  });
 }
 
 // ─── FINAL INVOICE (balance owed after deposit) ────────────────────────────

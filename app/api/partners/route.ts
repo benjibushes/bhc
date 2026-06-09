@@ -77,10 +77,42 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
       }
 
+      // Widened dedupe (2026-06-09): exact-email match only meant Jesse
+      // Zimmerman could open a 2nd record for Renick Valley Meats by using
+      // jesse@renickvalley.com while Jesse Gajewski's row used
+      // renickvalley@gmail.com. Now also match by phone OR by
+      // (Ranch Name + State) so a 2nd team member can't fork. Returns the
+      // matched record id in the error body so the operator can manually
+      // merge if needed.
       try {
-        const existing = await getAllRecords(TABLES.RANCHERS, `{Email} = "${escapeAirtableValue(email.trim().toLowerCase())}"`);
+        const normalizedEmail = email.trim().toLowerCase();
+        const normalizedPhone = (phone || '').replace(/\D/g, '');
+        const normalizedRanch = (ranchName || '').trim().toLowerCase();
+        const normalizedState = (normalizeState(state) || state || '').toUpperCase();
+        const dedupeClauses: string[] = [
+          `LOWER({Email})="${escapeAirtableValue(normalizedEmail)}"`,
+        ];
+        if (normalizedPhone.length >= 10) {
+          dedupeClauses.push(`REGEX_REPLACE({Phone},"[^0-9]","")="${normalizedPhone}"`);
+        }
+        if (normalizedRanch && normalizedState) {
+          dedupeClauses.push(
+            `AND(LOWER({Ranch Name})="${escapeAirtableValue(normalizedRanch)}",UPPER({State})="${normalizedState}")`,
+          );
+        }
+        const filter = `OR(${dedupeClauses.join(',')})`;
+        const existing = await getAllRecords(TABLES.RANCHERS, filter);
         if (existing.length > 0) {
-          return NextResponse.json({ error: 'This email is already registered. Check your inbox for your confirmation.' }, { status: 409 });
+          const match: any = existing[0];
+          return NextResponse.json(
+            {
+              error:
+                'This ranch is already in our system. Check your inbox for your confirmation OR email ben@buyhalfcow.com if you need access.',
+              existingId: match.id,
+              matchedBy: existing.length > 0 ? 'email|phone|ranch+state' : 'unknown',
+            },
+            { status: 409 },
+          );
         }
       } catch (e) {
         console.error('Error checking duplicate rancher:', e);
@@ -99,6 +131,11 @@ export async function POST(request: Request) {
         'Operation Details': operationDetails || '',
         'Acreage': parseInt(acreage) || 0,
         'Status': 'Pending',
+        // 2026-06-09 fix: was empty, causing wizard to misroute new ranchers
+        // into the legacy upgrade flow instead of the standard new-rancher
+        // path. /api/apply already sets this; /api/partners must match so
+        // every new rancher signup path defaults to the new payout model.
+        'Pricing Model': 'tier_v2',
       };
       if (referredBy) rancherFields['Referred By'] = referredBy;
 

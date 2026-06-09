@@ -205,6 +205,11 @@ export async function POST(req: Request) {
     'Self-Submit Drip Stage': 'welcome-sent',
     'Notes': composedNotes,
     'Public Map Hidden': false,
+    // 2026-06-09 fix: was empty, causing wizard to misroute self-submitted
+    // ranchers into the legacy upgrade flow. /api/apply + /api/partners
+    // both default to tier_v2 now — keep self-submit consistent so every
+    // new rancher signup path defaults to the new payout model.
+    'Pricing Model': 'tier_v2',
   };
   if (coords) {
     fields['Latitude'] = coords.lat;

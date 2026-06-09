@@ -56,7 +56,12 @@ export async function createTierCheckoutSession(input: TierCheckoutInput): Promi
       customer_update: { address: 'auto' },
     } as any,  // customer_account is V2 — types may lag in SDK 20.4.1
     {
-      idempotencyKey: `sub-${input.rancherId}-${input.tier}`,
+      // 2026-06-09 fix: was `sub-${rancherId}-${tier}` — if rancher cancels
+      // subscription and re-picks same tier, Stripe replays the old session
+      // URL which now points at a dead session. Append timestamp so each
+      // attempt gets a fresh session. The rancherId+tier prefix still allows
+      // safe retry of the SAME pick during a single attempt window.
+      idempotencyKey: `sub-${input.rancherId}-${input.tier}-${Date.now()}`,
     },
   );
   return { url: session.url || '' };
@@ -67,7 +72,15 @@ export async function changeSubscriptionTier(subscriptionId: string, newTier: Ti
   if (!newPriceId) throw new Error(`Missing env var: ${TIERS[newTier].stripePriceIdEnv}`);
   const stripe = getStripeClient();
   const sub = await stripe.subscriptions.retrieve(subscriptionId);
-  const itemId = sub.items.data[0].id;
+  // 2026-06-09 fix: was `sub.items.data[0].id` — crashes if items array
+  // empty (e.g. canceled mid-tier-change). Guard + throw clearer error.
+  const items = (sub as any)?.items?.data || [];
+  if (!items.length) {
+    throw new Error(
+      `Stripe subscription ${subscriptionId} has no items — cannot change tier on a canceled/empty subscription`,
+    );
+  }
+  const itemId = items[0].id;
   await stripe.subscriptions.update(subscriptionId, {
     items: [{ id: itemId, price: newPriceId }],
     proration_behavior: 'always_invoice',

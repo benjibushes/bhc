@@ -705,12 +705,21 @@ export default function RancherSetupWizard() {
     const pm = String(rancher['Pricing Model'] || '').toLowerCase();
     const isLegacy = pm !== 'tier_v2';
     if (isLegacy) {
-      // Jump straight into the upgrade flow once the wizard mounts.
-      // Effect runs after first paint so step state machine has a chance
-      // to compute initial step from localStorage / Stripe resume hooks
-      // first; we then overwrite with Step 7 if we're still on the
-      // intro step.
-      if (typeof window !== 'undefined' && step === 0) {
+      // 2026-06-09 fix: previously `if (step === 0) setTimeout(setStep(7))`
+      // — which had two races:
+      //   1. P1-2 localStorage step-restore (line 305-323) could fire
+      //      AFTER this setTimeout and overwrite our jump back to a saved
+      //      step (e.g. 3, the original new-rancher path).
+      //   2. If wizard mounted with step != 0 (e.g. Step 9 connect resume),
+      //      this branch never fired — silently dropping into the wrong
+      //      flow for ranchers who'd been previously partway through.
+      // Now jumps to Step 7 unconditionally on first detection of the
+      // legacy-needs-upgrade signal, regardless of current step. Once
+      // restoring guard fires, we're already on Step 7 so localStorage
+      // restore correctly no-ops.
+      if (typeof window !== 'undefined' && !didRestoreStep.current) {
+        // Mark restore-done so the localStorage effect doesn't fight us.
+        didRestoreStep.current = true;
         setTimeout(() => setStep(7 as any), 0);
       }
       // Fall through to the wizard render below (no early return).
