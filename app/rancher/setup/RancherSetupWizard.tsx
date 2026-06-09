@@ -732,7 +732,23 @@ export default function RancherSetupWizard() {
   if (rancher.agreementSigned) {
     const pm = String(rancher['Pricing Model'] || '').toLowerCase();
     const isLegacy = pm !== 'tier_v2';
-    if (isLegacy) {
+    // 2026-06-09 P0 fix: tier_v2 ranchers MID-FLOW (just picked Legacy
+    // Connect / Pasture / Ranch / Operator, haven't completed Stripe
+    // Connect onboarding yet) would hit this branch — agreementSigned
+    // true + pm = 'tier_v2' — and get dumped into the "all set" landing
+    // page BEFORE they could connect their bank account. Migration
+    // Status would freeze at 'upgrading' and the rancher would never
+    // see Step 9 (Connect bank).
+    //
+    // Now we ALSO require Stripe Connect to be Active before showing
+    // the "all set" page. If Connect is onboarding/pending/empty, fall
+    // through to the wizard render so Step 9 (StripeConnectStep) can
+    // collect the bank.
+    const connectStatus = String((rancher as any)['Stripe Connect Status'] || '').toLowerCase();
+    const connectAccountId = String((rancher as any)['Stripe Connect Account Id'] || '').trim();
+    const connectFullyActive = connectStatus === 'active';
+    const stillNeedsConnect = pm === 'tier_v2' && (!connectAccountId || !connectFullyActive);
+    if (isLegacy || stillNeedsConnect) {
       // 2026-06-09 fix: previously `if (step === 0) setTimeout(setStep(7))`
       // — which had two races:
       //   1. P1-2 localStorage step-restore (line 305-323) could fire
@@ -745,12 +761,14 @@ export default function RancherSetupWizard() {
       // legacy-needs-upgrade signal, regardless of current step. Once
       // restoring guard fires, we're already on Step 7 so localStorage
       // restore correctly no-ops.
-      if (typeof window !== 'undefined' && !didRestoreStep.current) {
+      if (isLegacy && typeof window !== 'undefined' && !didRestoreStep.current) {
         // Mark restore-done so the localStorage effect doesn't fight us.
         didRestoreStep.current = true;
         setTimeout(() => setStep(7 as any), 0);
       }
-      // Fall through to the wizard render below (no early return).
+      // Fall through to the wizard render below (no early return). For
+      // stillNeedsConnect path, the parent already setStep(9) before
+      // re-render, so we naturally land in StripeConnectStep.
     } else {
       return (
         <Container>
