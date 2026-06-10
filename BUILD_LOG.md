@@ -6,6 +6,42 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F4 — Composite lead score + desk sort — 2026-06-09
+
+**Status:** ✅ shipped, typecheck clean.
+
+**What:** Each quiz-complete buyer on `/admin/today/v2` now shows a composite 0-100 lead score (color-tiered badge). List is sorted hottest first. Hover badge → reasons (`fresh`, `phone`, `paid:meta`, etc).
+
+**Score formula (`lib/leadScore.ts`):**
+```
+score = quiz × 0.4
+      + intent × 0.3
+      + recency (0-20, decays over 24h)
+      + 5 if phone
+      + 5 if paid source
+```
+
+**Files touched:**
+- NEW: `lib/leadScore.ts` — pure helper, returns `{score, reasons[]}`
+- MOD: `app/api/admin/desk/route.ts` — import + apply in `formatBuyer` + sort `quizFormatted` desc
+- MOD: `app/admin/today/v2/DeskClient.tsx` — DeskBuyer interface adds leadScore/leadReasons; card renders color badge + reasons inline
+
+**Env vars:** none
+**Schema:** none (reads existing Qualification Score + Intent Score + Source/UTM Source fields)
+**Side effects:** 0 (read-only computation)
+**Telegram alerts:** none
+**Test cmd:**
+1. Visit `/admin/today/v2` after seeding 3 buyers w/ varied quiz scores
+2. Hottest buyer (high quiz + recent) at top with dark badge ≥70
+3. Cold buyer (no quiz, old) at bottom with grey badge <40
+4. Hover badge → reasons array displayed
+
+**Why this matters:** Ben sees 10-30 ready buyers daily. Sorting by composite score = highest-value call first → higher conversion per hour of his sales time.
+
+**Rollback:** `git revert <F4 commit sha>`
+
+---
+
 ## F3 — Funnel observability — 2026-06-09
 
 **Status:** ✅ shipped, typecheck clean.

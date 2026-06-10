@@ -35,6 +35,8 @@ interface DeskBuyer {
   quizScore: number;
   intentScore: number;
   qualifiedAt: string;
+  leadScore: number;
+  leadReasons: string[];
 }
 
 interface DeskReferral {
@@ -350,8 +352,22 @@ export default function DeskClient() {
                   className="border border-divider bg-white p-3 flex justify-between text-sm gap-3"
                 >
                   <span className="text-charcoal min-w-0 flex-1 truncate">
-                    <strong>{b.name}</strong> · {b.state || '?'} · quiz {b.quizScore} / intent{' '}
-                    {b.intentScore}
+                    <span
+                      className={`inline-block w-10 text-center font-mono text-xs mr-2 px-1 py-0.5 ${
+                        b.leadScore >= 70
+                          ? 'bg-charcoal text-bone'
+                          : b.leadScore >= 40
+                            ? 'bg-bone-warm text-charcoal border border-charcoal'
+                            : 'bg-bone text-saddle border border-divider'
+                      }`}
+                      title={b.leadReasons?.join(' · ') || ''}
+                    >
+                      {b.leadScore}
+                    </span>
+                    <strong>{b.name}</strong> · {b.state || '?'} · q{b.quizScore}/i{b.intentScore}
+                    {b.leadReasons?.length ? (
+                      <span className="text-xs text-saddle ml-2">[{b.leadReasons.join(' ')}]</span>
+                    ) : null}
                   </span>
                   <button
                     type="button"

@@ -7,6 +7,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
+import { computeLeadScore } from '@/lib/leadScore';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -61,9 +62,14 @@ export async function GET(req: Request) {
       ).catch(() => []),
     ]);
 
+  // F4 — composite lead score + sort quiz-complete by hottest first
+  const quizFormatted = quizComplete
+    .map(formatBuyer)
+    .sort((a, b) => b.leadScore - a.leadScore);
+
   return NextResponse.json({
     calls: calls.map(formatCall),
-    quizComplete: quizComplete.map(formatBuyer),
+    quizComplete: quizFormatted,
     depositPending: depositPending.map(formatReferral),
     slotsLocked: slotsLocked.map(formatReferral),
     closedToday: closedToday.map(formatReferral),
@@ -86,6 +92,7 @@ function formatCall(r: any) {
 }
 
 function formatBuyer(r: any) {
+  const { score, reasons } = computeLeadScore(r);
   return {
     id: r.id,
     name: r['Full Name'] || '?',
@@ -94,6 +101,8 @@ function formatBuyer(r: any) {
     quizScore: r['Qualification Score'] || 0,
     intentScore: r['Intent Score'] || 0,
     qualifiedAt: r['Qualified At'] || '',
+    leadScore: score,
+    leadReasons: reasons,
   };
 }
 

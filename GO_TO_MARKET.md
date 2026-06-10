@@ -81,6 +81,17 @@ See `BUILD_LOG.md`.
 - If `qualified→booked` drops, Cal flow has friction
 - If `booked→invoiced` drops, calls aren't closing → check call recordings (F11 incoming)
 
+## Lead score (F4)
+
+Each quiz-complete buyer card now shows a 0-100 composite lead score:
+- **Dark badge (≥70)**: call NOW
+- **Outline badge (40-69)**: queue today
+- **Grey badge (<40)**: low priority, drip email
+
+Inline tags show why: `quiz:85`, `fresh`, `phone`, `paid:meta`.
+
+List sorted hottest first. Top buyer = top revenue per hour of Ben's call time.
+
 ## Known limitations / next features
 
-F4 next: composite lead score on each Consumer card — sort desk by hottest lead first.
+F5 next: Resend open/click webhook → per-Consumer email engagement log (foundation for F13 desk surfacing).
