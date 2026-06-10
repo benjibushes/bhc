@@ -137,6 +137,29 @@ export async function POST(request: Request) {
         break;
       }
 
+      if (metaType === 'reservation_hold') {
+        // F7 — $49 reservation hold paid. Stamps Consumer record so
+        // Cal booking gate clears + intro emails branch on hold-paid.
+        try {
+          const consumerId = session.metadata?.consumer_id as string | undefined;
+          if (consumerId) {
+            const { updateRecord, TABLES } = await import('@/lib/airtable');
+            await updateRecord(TABLES.CONSUMERS, consumerId, {
+              'Reservation Hold Paid At': new Date().toISOString(),
+              'Reservation Hold Session Id': String(session.id || ''),
+            });
+            const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `💵 <b>Reservation hold paid</b>\n\n${session.metadata?.buyer_name || session.customer_email || consumerId} — $${((session.amount_total || 0) / 100).toFixed(0)}\n\nCal booking unlocked.`
+            ).catch(() => {});
+          }
+        } catch (err: any) {
+          console.error('[stripe webhook] reservation_hold handler failed:', err?.message);
+        }
+        break;
+      }
+
       // Unknown metadata.type — accept the webhook but no-op.
       break;
     }

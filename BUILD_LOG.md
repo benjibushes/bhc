@@ -6,6 +6,43 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F7 — $49 Reservation Hold stub + Cal book gate — 2026-06-09
+
+**Status:** ✅ shipped (feature-flag OFF by default), typecheck clean. Schema fields added live.
+
+**Decision B (locked):** "No deposit but we should be able to flip to deposit lock spot feature when needed" — built as feature-flag stub.
+
+**What:** Buyer hits "Book a Call" on `/qualify` → /api/qualify/[id]/reservation-hold → Stripe Checkout for $49 → Stripe webhook stamps Consumer record. When the flag is OFF (default), the endpoint returns 404 and Cal booking proceeds normally. When ON, helpers in `lib/reservationHold.ts` gate the booking.
+
+**Files touched:**
+- NEW: `lib/reservationHold.ts` — `isReservationHoldEnabled()`, `getHoldPriceCents()`, `createHoldCheckoutSession()`, `hasReservationHold()`
+- NEW: `app/api/qualify/[consumerId]/reservation-hold/route.ts` — POST creates Stripe Checkout, returns URL
+- MOD: `app/api/webhooks/stripe/route.ts` — new `metaType === 'reservation_hold'` branch stamps Consumer + Telegram alert
+
+**Schema (Airtable, added live):**
+
+`Consumers`:
+- `Reservation Hold Paid At` (dateTime) `fld42HABNS9J1VmEG`
+- `Reservation Hold Session Id` (singleLineText) `fldYlSOFK9l9X0Boc`
+- `Reservation Hold Refunded At` (dateTime) `fldWNLgVaALvXjcbR`
+
+**Env vars (new):**
+- `ENABLE_RESERVATION_HOLD` (default unset = off; set to `1` to flip on)
+- `RESERVATION_HOLD_PRICE_CENTS` (default 4900)
+
+**Side effects:** Stripe Checkout session creation + webhook stamps Consumer when paid + Telegram alert.
+**Telegram alerts:** `💵 Reservation hold paid — <name> — $X`
+
+**Test cmd (when flag flipped on):**
+1. Set `ENABLE_RESERVATION_HOLD=1` in Vercel env
+2. Visit `/qualify/<consumerId>` → call POST `/api/qualify/<id>/reservation-hold`
+3. Expect Stripe Checkout URL → complete with test card
+4. Verify Consumer `Reservation Hold Paid At` stamped + Telegram alert received
+
+**Rollback:** unset `ENABLE_RESERVATION_HOLD` (already off by default). Schema fields harmless.
+
+---
+
 ## F6 — Next-Best-Action widget — 2026-06-09
 
 **Status:** ✅ shipped, typecheck clean.
