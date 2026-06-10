@@ -52,7 +52,28 @@ export async function GET(request: Request) {
       .filter((r: any) => !r['Commission Paid'])
       .reduce((sum: number, r: any) => sum + (r['Commission Due'] || 0), 0);
 
-    const referralsList = myReferrals.map((r: any) => ({
+    // Parity with admin desk F12 — compute days-since-activity per referral
+    // so rancher cards can show rot badges. Source of truth: max of
+    // last activity timestamps (rancher, buyer, accept) + created.
+    const referralsList = myReferrals.map((r: any) => {
+      const candidates = [
+        r['Last Rancher Activity At'],
+        r['Last Buyer Activity At'],
+        r['Rancher Accepted At'],
+        r['Created At'],
+        r['Intro Sent At'],
+        r.createdTime,
+      ]
+        .filter(Boolean)
+        .map((s: any) => {
+          const t = new Date(String(s)).getTime();
+          return isNaN(t) ? 0 : t;
+        });
+      const lastActivityMs = candidates.length ? Math.max(...candidates) : 0;
+      const days_since_activity = lastActivityMs > 0
+        ? Math.floor((Date.now() - lastActivityMs) / (1000 * 60 * 60 * 24))
+        : null;
+      return {
       id: r.id,
       status: r['Status'] || '',
       buyer_name: r['Buyer Name'] || '',
@@ -70,6 +91,7 @@ export async function GET(request: Request) {
       closed_at: r['Closed At'] || '',
       last_rancher_activity_at: r['Last Rancher Activity At'] || '',
       last_buyer_activity_at: r['Last Buyer Activity At'] || '',
+      days_since_activity,
       rancher_engaged_flag: !!r['Rancher Engaged Flag'],
       stripe_invoice_url: r['Stripe Invoice URL'] || '',
       // Stage-3 Audit B4 — surface fulfillment status so the dashboard
@@ -91,7 +113,8 @@ export async function GET(request: Request) {
       final_paid_at: r['Final Paid At'] || '',
       total_sale_amount: Number(r['Total Sale Amount'] || 0),
       processing_date: r['Processing Date'] || '',
-    }));
+      };
+    });
 
     // Sort: active first, then by date
     referralsList.sort((a: any, b: any) => {

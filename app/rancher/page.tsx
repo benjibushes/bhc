@@ -102,6 +102,7 @@ interface Referral {
   closed_at: string;
   last_rancher_activity_at?: string;
   last_buyer_activity_at?: string;
+  days_since_activity?: number | null;
   rancher_engaged_flag?: boolean;
   stripe_invoice_url?: string;
   // Stage-3 Audit B4 — present (ISO timestamp) when rancher has confirmed
@@ -2888,6 +2889,7 @@ function ReferralCard({
             </span>
             <FreshnessIndicator referral={referral} />
             <ResponseDeadline referral={referral} />
+            <RancherRotBadge days={referral.days_since_activity ?? null} />
           </div>
           <h3 className="font-serif text-xl mt-2">{referral.buyer_name}</h3>
           <p className="text-sm text-dust">
@@ -3339,5 +3341,29 @@ function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
         </a>
       </div>
     </div>
+  );
+}
+
+// Rancher-dashboard parity w/ admin desk F12. Mirrors RotBadge from
+// app/admin/today/v2/DeskClient.tsx but with rancher voice (label
+// surfaces "stale" intent vs admin "rot").
+function RancherRotBadge({ days }: { days: number | null }) {
+  if (days === null || days === undefined) return null;
+  const tier =
+    days >= 14
+      ? 'bg-red-700 text-white'
+      : days >= 7
+        ? 'bg-saddle text-bone'
+        : days >= 3
+          ? 'bg-bone-warm text-charcoal border border-divider'
+          : 'bg-divider text-charcoal';
+  const label = days === 0 ? 'today' : days === 1 ? '1d' : `${days}d`;
+  return (
+    <span
+      title={`Last activity ${days} day${days === 1 ? '' : 's'} ago`}
+      className={`inline-block text-[10px] font-mono px-1 py-0.5 ${tier}`}
+    >
+      {label}
+    </span>
   );
 }
