@@ -198,6 +198,10 @@ export async function POST(request: Request) {
   let pricingModel = 'legacy';
   let depositAmount: number | null = null;
   let routingOk = false;
+  // R9 (2026-06-10): diagnostic surface for synthetic-e2e + manual debug.
+  // Captures matching/suggest HTTP status + body so the response answers
+  // "why no referralId?" instead of stranding the caller.
+  let matchDiag: { status: number | null; body: any } = { status: null, body: null };
 
   if (consumer['Email'] && consumer['State']) {
     try {
@@ -236,8 +240,17 @@ export async function POST(request: Request) {
           skipBuyerIntro: true,
         }),
       });
+      // R9 (2026-06-10): capture matching response shape on no-match
+      // path so synthetic-e2e cron + manual debugs surface WHY routing
+      // failed (no candidate / paused / 412 / no qualified-at race).
+      matchDiag.status = matchRes.status;
+      try {
+        matchDiag.body = await matchRes.json();
+      } catch {
+        matchDiag.body = { _parseError: true };
+      }
       if (matchRes.ok) {
-        const j = await matchRes.json();
+        const j = matchDiag.body;
         if (j.matchFound || j.alreadyActive) {
           routingOk = true;
           suggestedRancher = j.suggestedRancher || null;
@@ -280,6 +293,10 @@ export async function POST(request: Request) {
       console.error('[/api/qualify] matching/suggest call failed:', e?.message);
     }
   }
+
+  // R9 (2026-06-10): surface the matching outcome shape in response so
+  // synthetic-e2e + manual probes can see WHY no referralId was minted.
+  // routingOk/referralId already in response — add diagnostic field.
 
   // Persist path AFTER matching outcome is known. Early write above already
   // landed Qualified At + Score + Answers + Order Type + Timing; this second
@@ -392,6 +409,16 @@ export async function POST(request: Request) {
     referralId,
     pricingModel,
     depositAmount,
+    // R9 diagnostic — surfaces matching/suggest status + summary in the
+    // response. Synthetic-e2e + manual debugs use this to find WHY a
+    // qualified buyer didn't get a referralId.
+    matchDiag: {
+      status: matchDiag.status,
+      matchFound: matchDiag.body?.matchFound ?? null,
+      paused: matchDiag.body?.paused ?? null,
+      error: matchDiag.body?.error ?? null,
+      reason: matchDiag.body?.reason ?? null,
+    },
     // Client uses these to render the dual-path CTA. If routingOk + tier_v2 +
     // depositAmount → render Path B. Otherwise Path A only.
   });
