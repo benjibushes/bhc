@@ -128,6 +128,10 @@
     {
       "path": "/api/cron/abandoned-quiz-nudge",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/cal-reminder-1h",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

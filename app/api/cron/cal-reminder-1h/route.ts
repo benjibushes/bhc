@@ -1,0 +1,162 @@
+// app/api/cron/cal-reminder-1h/route.ts
+//
+// F18 — Send a reminder 1h before each booked Cal call.
+//
+// Why: industry no-show baseline is 18-25% on sales calls. A 1h reminder
+// drops it to 5-10%. At Ben's call volume + close rate, that's real $.
+//
+// Pulls Conversations rows where Type=cal_booking AND Start Time in the
+// next 55-70 min window. Dedup via Notes "[cal-reminder-1h]" stamp so
+// repeats inside the same hour don't double-fire.
+//
+// Channels:
+//   1. Email always (transactional)
+//   2. SMS gated by F9 ENABLE_SMS + SMS Opt-In on Consumer
+//
+// Schedule: every 10 min via vercel.json.
+
+import { NextResponse } from 'next/server';
+import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { sendEmail } from '@/lib/email';
+import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { withCronRun } from '@/lib/cronRun';
+
+export const maxDuration = 120;
+
+interface CronResult {
+  status: 'success' | 'partial' | 'error';
+  recordsTouched: number;
+  notes: string;
+}
+
+function esc(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function buildEmail(firstName: string, startTime: string, calLink: string) {
+  const first = firstName || 'there';
+  const when = startTime
+    ? new Date(startTime).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short',
+      })
+    : 'soon';
+  const subject = `${first}, our call starts in 1 hour`;
+  const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px;">
+<div style="max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A;">
+  <h1 style="font-family:Georgia,serif;font-size:22px;margin:0 0 16px;">Hey ${esc(first)} —</h1>
+  <p>Quick reminder: our call starts at <strong>${esc(when)}</strong>. About an hour from now.</p>
+  ${calLink ? `<p>Join link: <a href="${calLink}" style="color:#0E0E0E;">${esc(calLink)}</a></p>` : ''}
+  <p>I'll walk you through the rancher match, processing timeline, and what locking your slot looks like. Bring questions — that's the whole point.</p>
+  <p style="font-size:13px;color:#6B4F3F;">Need to reschedule? Reply to this email.<br>— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
+</div>
+</body></html>`;
+  return { subject, html };
+}
+
+async function realHandler(_request: Request): Promise<CronResult> {
+  const now = Date.now();
+  const earlyMs = now + 55 * 60 * 1000;
+  const lateMs = now + 70 * 60 * 1000;
+  const earlyIso = new Date(earlyMs).toISOString();
+  const lateIso = new Date(lateMs).toISOString();
+
+  // Pull bookings starting in the 55-70min window.
+  // Conversations holds Cal bookings per the cal webhook handler.
+  let bookings: any[] = [];
+  try {
+    bookings = await getAllRecords(
+      'Conversations',
+      `AND({Type}='cal_booking', IS_AFTER({Start Time}, '${earlyIso}'), IS_BEFORE({Start Time}, '${lateIso}'))`
+    ) as any[];
+  } catch (e: any) {
+    console.warn('[cal-reminder-1h] bookings query failed:', e?.message);
+    return { status: 'error', recordsTouched: 0, notes: e?.message };
+  }
+
+  if (bookings.length === 0) {
+    return { status: 'success', recordsTouched: 0, notes: 'no bookings in window' };
+  }
+
+  let touched = 0;
+  let skipped = 0;
+  for (const b of bookings) {
+    const notes = String(b['Notes'] || '');
+    if (notes.includes('[cal-reminder-1h]')) {
+      skipped++;
+      continue;
+    }
+    const attendeeEmail = String(b['Attendee Email'] || b['Buyer Email'] || '').toLowerCase().trim();
+    if (!attendeeEmail) {
+      skipped++;
+      continue;
+    }
+    const attendeeName = String(b['Attendee Name'] || b['Buyer Name'] || '').trim();
+    const firstName = attendeeName.split(' ')[0] || 'there';
+    const startTime = String(b['Start Time'] || '');
+    const calLink = String(b['Meeting URL'] || b['Cal Link'] || '');
+
+    try {
+      const { subject, html } = buildEmail(firstName, startTime, calLink);
+      await sendEmail({
+        to: attendeeEmail,
+        subject,
+        html,
+        templateName: 'sendCalReminder1h',
+      });
+    } catch (e: any) {
+      console.warn(`[cal-reminder-1h] email failed for ${attendeeEmail}:`, e?.message);
+    }
+
+    // F9 — SMS gated by feature flag + opt-in
+    try {
+      const consumerRows = await getAllRecords(
+        TABLES.CONSUMERS,
+        `LOWER({Email})="${attendeeEmail}"`
+      ) as any[];
+      const consumer = consumerRows[0];
+      if (consumer) {
+        const { fireSMSEvent } = await import('@/lib/smsEvents');
+        await fireSMSEvent({
+          type: 'cal_reminder',
+          consumer,
+          vars: { firstName },
+        });
+      }
+    } catch (e: any) {
+      console.warn(`[cal-reminder-1h] SMS lookup failed for ${attendeeEmail}:`, e?.message);
+    }
+
+    // Stamp dedup
+    try {
+      await updateRecord('Conversations', b.id, {
+        Notes: `[cal-reminder-1h ${new Date().toISOString().slice(0, 16)}] ${notes}`.slice(0, 2000),
+      });
+    } catch (e: any) {
+      console.warn(`[cal-reminder-1h] stamp failed for ${b.id}:`, e?.message);
+    }
+    touched++;
+  }
+
+  if (touched > 0) {
+    await sendTelegramMessage(
+      TELEGRAM_ADMIN_CHAT_ID,
+      `⏰ <b>Cal reminders sent (1h)</b>: ${touched} fired · ${skipped} skipped.`
+    ).catch(() => {});
+  }
+
+  return {
+    status: 'success',
+    recordsTouched: touched,
+    notes: `sent=${touched} skipped=${skipped}`,
+  };
+}
+
+export async function GET(request: Request) {
+  return withCronRun('cal-reminder-1h', realHandler)(request);
+}
