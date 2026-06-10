@@ -293,14 +293,13 @@ export async function POST(request: Request) {
     console.error('[/api/qualify] path update failed:', e?.message);
   }
 
-  // 2026-06-09 sales-floor pivot: fire Cal-invite email to the qualified
-  // buyer. Replaces the auto-intro email matching/suggest used to send
-  // (now suppressed via skipBuyerIntro flag above). Their primary CTA is
-  // booking a 15-min sales call with Ben — who matches + closes on the
-  // call. Score guard: only buyers w/ score >= 60 get the Cal invite, low
-  // scorers stay routed (no auto-intro, just READY) and Ben follows up
-  // from /admin/today v2.
-  if (score >= 60 && consumer['Email']) {
+  // 2026-06-09 sales-floor pivot: fire Cal-invite email ONLY for buyers
+  // matched to a tier_v2 rancher (Ben handles those sales calls). Legacy
+  // rancher buyers keep the original off-platform flow — matching/suggest
+  // already fired their rancher intro w/ contact info. Score guard: low
+  // scorers (<60) stay routed but no Cal invite — Ben follows up manually
+  // via /admin/today v2 if he wants to close them.
+  if (score >= 60 && consumer['Email'] && pricingModel === 'tier_v2') {
     try {
       const { sendQuizCompleteCalInvite } = await import('@/lib/emailMinimal');
       await sendQuizCompleteCalInvite({

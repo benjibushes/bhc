@@ -1161,13 +1161,13 @@ export async function POST(request: Request) {
           // the dashboard banner say "we just fired your intro" while the
           // buyer's inbox stays empty.
           //
-          // 2026-06-09 sales-floor pivot: when caller passes skipBuyerIntro
-          // (used by /api/qualify), suppress this email. Buyer instead gets
-          // the Cal-invite email from /api/qualify so their primary CTA is
-          // booking the sales call with Ben — not auto-contacting the
-          // rancher. Rancher still gets their intro so Ben's pre-call
-          // context is intact.
-          if (!body?.skipBuyerIntro) try {
+          // 2026-06-09 sales-floor pivot: skip the buyer intro ONLY when
+          // caller requested it AND the matched rancher is tier_v2 (Ben
+          // handles sales calls for upgraded ranchers only). Legacy rancher
+          // buyers always get the intro — they're handled off-platform.
+          const matchedRancherPm = String(topMatch['Pricing Model'] || 'legacy').toLowerCase();
+          const suppressBuyerIntro = !!body?.skipBuyerIntro && matchedRancherPm === 'tier_v2';
+          if (!suppressBuyerIntro) try {
             await sendBuyerIntroNotification({
               firstName: buyerFirstName,
               email: buyerEmail,
