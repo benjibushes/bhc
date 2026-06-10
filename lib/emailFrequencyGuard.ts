@@ -84,6 +84,14 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // to non-refundable so they must receive this. Capping = silent loss of
   // the disclosure that protects BHC against future chargeback disputes.
   'sendBuyerSlotLocked',
+  // Sales-floor pivot 2026-06-09: 4 new minimal-pipeline templates. All
+  // are 1:1 transactional triggered by buyer state changes (signup, quiz
+  // complete, sales-call close, rancher accept). Capping any of these
+  // breaks the buyer journey silently.
+  'buyer_signup_confirmation',
+  'quiz_complete_cal_invite',
+  'buyer_deposit_invoice',
+  'slot_locked_confirmation',
 ]);
 
 /**

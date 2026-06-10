@@ -228,6 +228,12 @@ export async function POST(request: Request) {
           ...(typeof campaign === 'string' && campaign.startsWith('rancher-')
             ? { campaign }
             : {}),
+          // 2026-06-09 sales-floor pivot: skip the buyer auto-intro from
+          // matching/suggest. Buyer's primary CTA becomes the Cal invite
+          // fired below — book a sales call w/ Ben, who closes on the call
+          // and triggers deposit. Rancher still gets their intro so Ben's
+          // pre-call context is loaded.
+          skipBuyerIntro: true,
         }),
       });
       if (matchRes.ok) {
@@ -285,6 +291,26 @@ export async function POST(request: Request) {
     });
   } catch (e: any) {
     console.error('[/api/qualify] path update failed:', e?.message);
+  }
+
+  // 2026-06-09 sales-floor pivot: fire Cal-invite email to the qualified
+  // buyer. Replaces the auto-intro email matching/suggest used to send
+  // (now suppressed via skipBuyerIntro flag above). Their primary CTA is
+  // booking a 15-min sales call with Ben — who matches + closes on the
+  // call. Score guard: only buyers w/ score >= 60 get the Cal invite, low
+  // scorers stay routed (no auto-intro, just READY) and Ben follows up
+  // from /admin/today v2.
+  if (score >= 60 && consumer['Email']) {
+    try {
+      const { sendQuizCompleteCalInvite } = await import('@/lib/emailMinimal');
+      await sendQuizCompleteCalInvite({
+        to: String(consumer['Email']),
+        firstName: String(consumer['Full Name'] || 'there').split(' ')[0],
+        score,
+      });
+    } catch (e: any) {
+      console.warn('[/api/qualify] cal invite fire failed:', e?.message);
+    }
   }
 
   try {

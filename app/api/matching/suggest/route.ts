@@ -1160,7 +1160,14 @@ export async function POST(request: Request) {
           // info in the dashboard email — a silent send failure here makes
           // the dashboard banner say "we just fired your intro" while the
           // buyer's inbox stays empty.
-          try {
+          //
+          // 2026-06-09 sales-floor pivot: when caller passes skipBuyerIntro
+          // (used by /api/qualify), suppress this email. Buyer instead gets
+          // the Cal-invite email from /api/qualify so their primary CTA is
+          // booking the sales call with Ben — not auto-contacting the
+          // rancher. Rancher still gets their intro so Ben's pre-call
+          // context is intact.
+          if (!body?.skipBuyerIntro) try {
             await sendBuyerIntroNotification({
               firstName: buyerFirstName,
               email: buyerEmail,
