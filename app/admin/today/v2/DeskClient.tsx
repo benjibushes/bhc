@@ -49,6 +49,16 @@ interface DeskReferral {
   closedAt: string;
 }
 
+interface NBAItem {
+  priority: 1 | 2 | 3;
+  type: 'call' | 'chase' | 'send' | 'recruit';
+  subject: string;
+  reason: string;
+  action: string;
+  entityType: 'consumer' | 'referral' | 'rancher' | 'cal';
+  entityId?: string;
+}
+
 interface DeskData {
   calls: any[];
   quizComplete: DeskBuyer[];
@@ -63,6 +73,7 @@ interface DeskData {
     lockedValueCents: number;
     closedTodayValueCents: number;
   };
+  nba?: NBAItem[];
 }
 
 interface ModalState {
@@ -222,6 +233,41 @@ export default function DeskClient() {
           <div className="border border-sage bg-bone-warm p-3 mb-4 text-sm text-sage-dark">
             ✓ {flash}
           </div>
+        )}
+
+        {/* F6 — Next Best Action */}
+        {desk.nba && desk.nba.length > 0 && (
+          <section className="mb-5 border-l-4 border-charcoal bg-bone-warm p-4 md:p-5">
+            <h2 className="font-serif text-lg text-charcoal mb-2">
+              Next Best Action
+              <span className="text-xs text-saddle ml-2">({desk.nba.length})</span>
+            </h2>
+            <ol className="space-y-1.5">
+              {desk.nba.map((n, i) => (
+                <li key={i} className="flex items-start gap-3 text-sm">
+                  <span
+                    className={`inline-block w-5 h-5 text-center text-[10px] leading-5 font-bold ${
+                      n.priority === 1
+                        ? 'bg-charcoal text-bone'
+                        : n.priority === 2
+                          ? 'bg-saddle text-bone'
+                          : 'bg-divider text-charcoal'
+                    }`}
+                  >
+                    {n.priority}
+                  </span>
+                  <span className="flex-1">
+                    <strong className="text-charcoal">{n.subject}</strong>
+                    <span className="text-saddle"> — {n.reason}</span>
+                    <span className="block text-xs text-charcoal mt-0.5">→ {n.action}</span>
+                  </span>
+                  <span className="text-[10px] uppercase tracking-widest text-saddle">
+                    {n.type}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
         )}
 
         {/* HERO closed-today number */}

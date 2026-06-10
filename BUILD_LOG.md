@@ -6,6 +6,39 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F6 — Next-Best-Action widget — 2026-06-09
+
+**Status:** ✅ shipped, typecheck clean.
+
+**What:** Top of `/admin/today/v2` now shows ranked top-8 actions Ben should take RIGHT NOW. Priority 1 (charcoal), 2 (saddle), 3 (divider). Each item: who, why now, suggested verb.
+
+**5 rules (ordered by revenue impact):**
+1. **P1 Cal call within 60 min** — prep + jump on call
+2. **P1 Hot quiz buyer (score ≥70)** — phone outreach, top 5
+3. **P2 Deposit pending** — chase rancher to accept slot
+4. **P3 Warm quiz buyer (40-69)** — drip Cal invite, top 3
+5. **P3 Slots locked** — verify processing date, top 3
+
+**Files touched:**
+- NEW: `lib/nextBestAction.ts` — pure helper `computeNBA(input) → NBAItem[]`
+- MOD: `app/api/admin/desk/route.ts` — compute NBA + include in response
+- MOD: `app/admin/today/v2/DeskClient.tsx` — NBAItem interface, ranked list section above hero
+
+**Env vars:** none
+**Schema:** none
+**Side effects:** 0 (read-only compute)
+**Telegram alerts:** none
+**Test cmd:**
+1. Visit `/admin/today/v2` — NBA section appears above Closed Today hero
+2. If quiz lead score ≥70, first item is "Call X" with score reason
+3. If Cal call in 30 min, P1 "prep + jump on call"
+
+**Why this matters:** Cognitive offload. Ben no longer scans 30 buyers + 5 calls + 10 pending. NBA = top 8 actions ranked by $.
+
+**Rollback:** `git revert <F6 commit sha>`
+
+---
+
 ## F5 — Resend open/click/delivered webhook → engagement log — 2026-06-09
 
 **Status:** ✅ shipped, typecheck clean. Schema fields added live.

@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { computeLeadScore } from '@/lib/leadScore';
+import { computeNBA } from '@/lib/nextBestAction';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -67,15 +68,28 @@ export async function GET(req: Request) {
     .map(formatBuyer)
     .sort((a, b) => b.leadScore - a.leadScore);
 
-  return NextResponse.json({
-    calls: calls.map(formatCall),
+  const callsFormatted = calls.map(formatCall);
+  const depositPendingFormatted = depositPending.map(formatReferral);
+  const slotsLockedFormatted = slotsLocked.map(formatReferral);
+
+  // F6 — Next Best Action
+  const nba = computeNBA({
+    calls: callsFormatted,
     quizComplete: quizFormatted,
-    depositPending: depositPending.map(formatReferral),
-    slotsLocked: slotsLocked.map(formatReferral),
+    depositPending: depositPendingFormatted,
+    slotsLocked: slotsLockedFormatted,
+  });
+
+  return NextResponse.json({
+    calls: callsFormatted,
+    quizComplete: quizFormatted,
+    depositPending: depositPendingFormatted,
+    slotsLocked: slotsLockedFormatted,
     closedToday: closedToday.map(formatReferral),
     waitlisted: groupByState(waitlisted),
     ranchersActive: ranchersActive.length,
     pipeline: computePipelineValue(quizComplete, depositPending, slotsLocked, closedToday),
+    nba,
   });
 }
 
