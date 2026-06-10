@@ -111,6 +111,71 @@ export async function POST(request: Request) {
       console.warn(`Resend delivery delayed for ${recipientEmail}`);
     }
 
+    // F5 — engagement events: opened / clicked / delivered
+    // Stamps Email Sends row + Consumer record for desk visibility (F13).
+    if (eventType === 'email.opened' || eventType === 'email.clicked' || eventType === 'email.delivered') {
+      try {
+        const now = new Date().toISOString();
+        // Find Consumer for this recipient
+        const consumers = await getAllRecords(
+          TABLES.CONSUMERS,
+          `{Email} = "${recipientEmail}"`
+        ) as any[];
+        for (const c of consumers) {
+          const updates: Record<string, any> = { 'Last Email Event At': now };
+          if (eventType === 'email.delivered') {
+            updates['Last Email Delivered At'] = now;
+          }
+          if (eventType === 'email.opened') {
+            updates['Last Email Opened At'] = now;
+            updates['Email Opens'] = Number(c['Email Opens'] || 0) + 1;
+          }
+          if (eventType === 'email.clicked') {
+            updates['Last Email Clicked At'] = now;
+            updates['Email Clicks'] = Number(c['Email Clicks'] || 0) + 1;
+          }
+          try {
+            await updateRecord(TABLES.CONSUMERS, c.id, updates);
+          } catch (e: any) {
+            // Schema may be missing these fields — non-fatal
+            console.warn('[resend] Consumer update skipped (schema?):', e?.message);
+          }
+        }
+
+        // Stamp latest Email Sends row for this recipient (within 7d)
+        try {
+          const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+          const sends = await getAllRecords(
+            TABLES.EMAIL_SENDS,
+            `AND({Recipient Email} = "${recipientEmail}", IS_AFTER({Sent At}, "${cutoff}"))`
+          ) as any[];
+          sends.sort((a, b) => String(b['Sent At'] || '').localeCompare(String(a['Sent At'] || '')));
+          const latest = sends[0];
+          if (latest) {
+            const updates: Record<string, any> = { 'Last Event At': now };
+            if (eventType === 'email.delivered') updates['Delivered At'] = now;
+            if (eventType === 'email.opened') {
+              updates['Opened At'] = latest['Opened At'] || now;
+              updates['Open Count'] = Number(latest['Open Count'] || 0) + 1;
+            }
+            if (eventType === 'email.clicked') {
+              updates['Clicked At'] = latest['Clicked At'] || now;
+              updates['Click Count'] = Number(latest['Click Count'] || 0) + 1;
+            }
+            try {
+              await updateRecord(TABLES.EMAIL_SENDS, latest.id, updates);
+            } catch (e: any) {
+              console.warn('[resend] Email Sends update skipped (schema?):', e?.message);
+            }
+          }
+        } catch (e: any) {
+          console.warn('[resend] Email Sends lookup failed:', e?.message);
+        }
+      } catch (e: any) {
+        console.warn('[resend] engagement processing failed:', e?.message);
+      }
+    }
+
     return NextResponse.json({ ok: true, processed: eventType });
   } catch (error: any) {
     console.error('Resend webhook error:', error);

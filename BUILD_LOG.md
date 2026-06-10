@@ -6,6 +6,53 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F5 — Resend open/click/delivered webhook → engagement log — 2026-06-09
+
+**Status:** ✅ shipped, typecheck clean. Schema fields added live.
+
+**What:** Existing `/api/webhooks/resend` handler now stamps engagement on Consumer + Email Sends row when Resend fires `email.opened`, `email.clicked`, `email.delivered`. Counters increment per event. Existing bounce/complaint logic preserved.
+
+**Files touched:**
+- MOD: `app/api/webhooks/resend/route.ts` — added 3 event-type branches. Looks up Consumer by recipient email + stamps Last Email Event/Delivered/Opened/Clicked + Email Opens / Email Clicks counters. Looks up latest Email Sends row (last 7d) for recipient + stamps Last Event/Delivered/Opened/Clicked + Open Count / Click Count.
+
+**Schema (Airtable, added live via MCP):**
+
+`Consumers`:
+- `Last Email Event At` (dateTime UTC) `fldS8El7uFK1rzM7D`
+- `Last Email Delivered At` (dateTime UTC) `fld1hcic4RNtCmpGK`
+- `Last Email Opened At` (dateTime UTC) `fld8fYoqaUcpGRhXz`
+- `Last Email Clicked At` (dateTime UTC) `fldRkaCMchDfMcLqw`
+- `Email Opens` (number, precision 0) `fldzeIINXeTf4jEnR`
+- `Email Clicks` (number, precision 0) `fldmGJI7w4EnnsK3O`
+
+`Email Sends`:
+- `Last Event At` (dateTime UTC) `fld9XoNJEJnRfX8qB`
+- `Delivered At` (dateTime UTC) `fldCwTcvZPOVUsAXP`
+- `Opened At` (dateTime UTC) `fldP1pJccbytb4Myk`
+- `Clicked At` (dateTime UTC) `fldpKpiLOacniDR5E`
+- `Open Count` (number, precision 0) `fld7shHNOwbTMR8GA`
+- `Click Count` (number, precision 0) `fldzK3Qq6jypF5zyJ`
+
+**Env vars:** `RESEND_WEBHOOK_SECRET` (already required for bounce/complaint signature verify)
+**Side effects:** Stamps Consumer + Email Sends row per delivery/open/click event
+**Telegram alerts:** unchanged (only fire on bounced/complained)
+**Failure mode:** schema writes wrapped in try/catch; missing fields = silent skip + console.warn
+
+**OPS — User must do this in Resend dashboard:**
+1. Settings → Webhooks → Edit existing endpoint
+2. Add subscribed events: `email.delivered`, `email.opened`, `email.clicked`
+3. Save. Resend starts firing within minutes.
+
+**Test cmd:**
+1. Send a synthetic Welcome email to your own address via prod
+2. Open the email → wait 30s → check Consumer record in Airtable → `Email Opens=1`, `Last Email Opened At` stamped
+3. Click any link → wait 30s → `Email Clicks=1`, `Last Email Clicked At` stamped
+4. Check Email Sends row for same recipient → `Open Count` + `Click Count` match
+
+**Rollback:** `git revert <F5 commit sha>` — schema fields can remain (unused, harmless).
+
+---
+
 ## F4 — Composite lead score + desk sort — 2026-06-09
 
 **Status:** ✅ shipped, typecheck clean.
