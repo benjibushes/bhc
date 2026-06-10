@@ -38,7 +38,7 @@ export async function sendBuyerSignupConfirmation(opts: {
           Start the quiz →
         </a>
       </p>
-      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'buyer_signup_confirmation',
   });
@@ -65,7 +65,7 @@ export async function sendQuizCompleteCalInvite(opts: {
           Book the call →
         </a>
       </p>
-      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'quiz_complete_cal_invite',
   });
@@ -105,7 +105,7 @@ export async function sendBuyerDepositInvoice(opts: {
         Refundable until ${escape(opts.rancherName)} accepts your slot. After they accept, deposit is non-refundable per our NRD policy.
         If the rancher declines, you get a full refund within 2 business days.
       </p>
-      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'buyer_deposit_invoice',
   });
@@ -127,7 +127,7 @@ export async function sendSlotLockedConfirmation(opts: {
       <p><strong>${escape(opts.rancherName)}</strong> accepted your reservation. Your beef will be processed on <strong>${escape(opts.processingDate)}</strong>.</p>
       <p>A few days before pickup, ${escape(opts.rancherName)} will send your final invoice for the balance — paid through BuyHalfCow, straight to them.</p>
       <p>See you at pickup.</p>
-      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'slot_locked_confirmation',
   });

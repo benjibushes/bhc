@@ -56,7 +56,10 @@ export default function FullHomepage() {
             </h1>
 
             <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle">
-              Direct from verified American ranchers. Quarter, half, or whole cow — the way local families have been doing it for generations. No marketplace markup. No algorithms.
+              Connecting every household to a ranch they trust. Direct from
+              verified American ranchers. Quarter, half, or whole cow — the
+              way local families have been doing it for generations. No
+              marketplace markup. No algorithms.
             </p>
 
             <LiveCounter />

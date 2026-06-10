@@ -345,6 +345,9 @@ export default async function FoundersPage({
               100 spots. {founding100PriceLabel} early bird.
             </h1>
             <Divider />
+            <p className="text-base md:text-lg italic text-charcoal/80 leading-relaxed">
+              Connecting every household to a ranch they trust.
+            </p>
             <p className="text-lg md:text-xl text-charcoal/85 leading-relaxed">
               I'm raising capital from the people who already believe in this
               and want a stake. Five tiers, no equity, no fundraising

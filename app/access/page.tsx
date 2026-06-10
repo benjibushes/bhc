@@ -1213,7 +1213,10 @@ function AccessPageContent() {
               </form>
             </div>
 
-            <div className="mt-12 text-center">
+            <div className="mt-12 text-center space-y-3">
+              <p className="text-xs italic text-saddle/80">
+                Connecting every household to a ranch they trust.
+              </p>
               <Link href="/" className="text-saddle hover:text-charcoal transition-colors">
                 &larr; back to home
               </Link>
