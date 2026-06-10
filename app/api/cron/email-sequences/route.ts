@@ -841,6 +841,18 @@ async function authedHandler(request: Request): Promise<Response> {
       }
     }
   }
+
+  // 2026-06-09 sales-floor pivot: drip pipeline killed in favor of Cal-as-funnel.
+  // Flag `EMAIL_SEQUENCES_ENABLED=true` re-enables (rollback path) if buyer
+  // conversion drops post-pivot. Cron remains scheduled in vercel.json so
+  // re-enabling doesn't require code change — just env flip + redeploy.
+  if (process.env.EMAIL_SEQUENCES_ENABLED !== 'true') {
+    return NextResponse.json({
+      ok: true,
+      skipped: 'EMAIL_SEQUENCES_ENABLED=false — drip paused per sales-floor pivot 2026-06-09',
+    });
+  }
+
   return withCronRun('email-sequences', realHandler)(request);
 }
 

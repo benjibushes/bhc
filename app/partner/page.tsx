@@ -270,16 +270,23 @@ function PartnerPageContent() {
     <main className="min-h-screen py-20 md:py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-2xl mx-auto space-y-10 md:space-y-12">
-          {/* Header */}
+          {/* Header — sales-floor pivot 2026-06-09: ranchers see this and
+              immediately understand they're getting sales infrastructure,
+              not a marketplace listing. */}
           <div className="text-center space-y-5 md:space-y-6">
             <h1 className="font-serif text-3xl md:text-5xl lowercase">
-              partner with buyhalfcow
+              modern sales infrastructure for dtc ranchers
             </h1>
             <Divider />
             <p className="text-base md:text-lg leading-relaxed text-saddle">
-              Every application is read by a human. We pick partners we'd
-              vouch for to our own families.
+              We bring buyers. You bring beef. Keep the payouts. Stop
+              chasing invoices, deposits, and customer support tickets.
             </p>
+            <ul className="text-left max-w-md mx-auto space-y-2 text-sm md:text-base text-charcoal/85">
+              <li>· Buyer deposits land in your Stripe Connect bank — same day.</li>
+              <li>· Flat commission, no invoicing, no chasing.</li>
+              <li>· Sales calls, qualification, intros — handled. You raise the cattle.</li>
+            </ul>
           </div>
 
           {/* Partner Type Selection */}

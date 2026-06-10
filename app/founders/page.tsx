@@ -351,6 +351,17 @@ export default async function FoundersPage({
               theatrics. The wall lists every backer in real time. Names are
               the proof.
             </p>
+            {/* Sales-floor pivot 2026-06-09: backers see the platform, not
+                just the brand. Modern sales infrastructure for DTC ranchers
+                — Stripe Connect, Cal-driven sales floor, NRD-protected
+                deposits. Real metrics over vision. */}
+            <p className="text-sm md:text-base text-charcoal/75 leading-relaxed border-t border-dust pt-5">
+              <strong>What we built:</strong> Modern sales infrastructure for
+              DTC ranchers. Buyer acquisition, qualification quiz, Stripe
+              Connect direct charges, NRD-protected deposits, fulfillment
+              dashboard — handled. Ranchers raise the cattle. We do everything
+              else.
+            </p>
             <p className="text-base text-saddle">
               <strong>{founding100Count}</strong> of {FOUNDING_100_CAP} Founding
               100 spots claimed
