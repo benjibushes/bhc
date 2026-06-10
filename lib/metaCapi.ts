@@ -26,7 +26,7 @@ const TEST_CODE = process.env.META_CAPI_TEST_CODE;
 const GRAPH_API_VERSION = 'v18.0';
 
 export interface CapiEvent {
-  event_name: 'Lead' | 'CompleteRegistration' | 'InitiateCheckout' | 'Purchase' | 'PageView';
+  event_name: 'Lead' | 'CompleteRegistration' | 'InitiateCheckout' | 'Purchase' | 'PageView' | 'Schedule';
   event_time: number; // unix seconds
   event_source_url?: string;
   event_id?: string;

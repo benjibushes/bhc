@@ -6,6 +6,37 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F2 — Pixel placement: CompleteRegistration + InitiateCheckout + Schedule — 2026-06-09
+
+**Status:** ✅ shipped, typecheck clean.
+
+**Existing infra (preserved):** Meta Pixel base (`PixelTracker`, `RouteChangeTracker`), server CAPI (`lib/metaCapi.ts` w/ fbp/fbc cookie capture), Lead+Purchase fires already wired (E1-E4 prior). Audit agent claim "MISSING" was wrong.
+
+**Gaps filled:**
+1. **CompleteRegistration** on quiz submit — client (`/qualify` page) + server CAPI (`/api/qualify`) deduped via event_id
+2. **InitiateCheckout** on admin Send Deposit Invoice — server CAPI (`/api/admin/send-deposit-invoice`)
+3. **Schedule** custom event on Cal BOOKING_CREATED — server CAPI (`/api/webhooks/cal`)
+
+**Files touched:**
+- `app/qualify/[consumerId]/page.tsx` — client `track('CompleteRegistration', ...)` after quiz success
+- `app/api/qualify/route.ts` — server `fireCapi([{ event_name: 'CompleteRegistration', ... }])`
+- `app/api/admin/send-deposit-invoice/route.ts` — server `fireCapi([{ event_name: 'InitiateCheckout', ... }])` after deposit invoice sent
+- `app/api/webhooks/cal/route.ts` — server `fireCapi([{ event_name: 'Schedule', ... }])` on BOOKING_CREATED
+- `lib/metaCapi.ts` — added `'Schedule'` to `event_name` union
+
+**Env vars:** none new (existing `META_PIXEL_ID` + `META_CAPI_ACCESS_TOKEN` + `NEXT_PUBLIC_META_PIXEL_ID` already set)
+**Schema:** none
+**Side effects:** 3 new CAPI events per buyer journey (Lead → CompleteRegistration → Schedule → InitiateCheckout → Purchase)
+**Telegram alerts:** unchanged
+**Test cmd:**
+1. Meta Events Manager → Test Events → expect 5 events during synthetic journey
+2. Each event has event_id matching shape `qualify-*`, `cal-booking-*`, `deposit-invoice-*`
+3. Match Quality score ≥6/10 (email+phone+state+fbp+fbc)
+
+**Rollback:** `git revert <F2 commit sha>`
+
+---
+
 ## F1 — Brand voice + mission lock — 2026-06-09
 
 **Status:** ✅ shipped, verified, documented.

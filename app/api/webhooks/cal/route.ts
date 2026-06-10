@@ -281,6 +281,36 @@ export async function POST(request: Request) {
           }
         }
 
+        // F2 — Meta CAPI Schedule custom event on BOOKING_CREATED. Tracks
+        // the funnel step ad → signup → quiz → BOOK_CAL → call → deposit.
+        // Without this, Meta optimizer has no signal for "qualified booked
+        // sales call." event_id = booking uid so retries dedup correctly.
+        if (triggerEvent === 'BOOKING_CREATED' && consumer && bookingId) {
+          try {
+            const { fireCapi, buildUserData } = await import('@/lib/metaCapi');
+            const consumerEmail = String(consumer['Email'] || attendeeEmail);
+            const userData = buildUserData({
+              email: consumerEmail,
+              phone: String(consumer['Phone'] || ''),
+              state: String(consumer['State'] || ''),
+              firstName: String(consumer['Full Name'] || '').split(' ')[0],
+            });
+            fireCapi([{
+              event_name: 'Schedule',
+              event_id: `cal-booking-${bookingId}`,
+              event_time: Math.floor(Date.now() / 1000),
+              action_source: 'system_generated',
+              user_data: userData,
+              custom_data: {
+                content_name: 'sales call',
+                content_type: 'booking',
+              },
+            }]);
+          } catch (e: any) {
+            console.warn('[cal webhook] CAPI Schedule fire failed:', e?.message);
+          }
+        }
+
         // Fire pre-call brief to operator on BOOKING_CREATED
         if (triggerEvent === 'BOOKING_CREATED' && OPERATOR_BRIEF_EMAIL && referral) {
           try {

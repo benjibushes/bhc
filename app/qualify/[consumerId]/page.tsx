@@ -124,6 +124,19 @@ export default function QualifyPage({
       }
       setResult(j);
       setStep(4);
+      // F2 — fire CompleteRegistration to Meta Pixel + dedupe w/ server CAPI.
+      // Critical signal for ad optimization: only qualified buyers reach this
+      // step. event_id ties client+server fires per Meta dedup spec.
+      try {
+        const { track } = await import('@/lib/track');
+        const eventId = `qualify-${consumerId}-${Date.now()}`;
+        track('CompleteRegistration', {
+          orderType: tier,
+          value: j.depositAmount || 0,
+          event_id: eventId,
+        });
+        // Also POST eventId back so server CAPI can dedup (next ship).
+      } catch { /* non-fatal */ }
     } catch (e: any) {
       setError(e?.message || 'Network error. Try again.');
     } finally {

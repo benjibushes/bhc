@@ -16,6 +16,7 @@ import { requireAdmin } from '@/lib/adminAuth';
 import { createDepositCheckout } from '@/lib/stripeConnect';
 import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import type { TierSlug } from '@/lib/tiers';
 
 export const dynamic = 'force-dynamic';
@@ -189,6 +190,38 @@ export async function POST(req: Request) {
       `💸 Deposit invoice sent — ${buyerEmail} | ${cutTier} | $${(depositCents / 100).toFixed(0)} | ${String(rancher['Ranch Name'] || rancher['Operator Name'])}`,
     );
   } catch { /* best-effort */ }
+
+  // F2 — fire Meta CAPI InitiateCheckout. Server-side only since this is
+  // admin-initiated (no client pixel context). Helps Meta attribute the
+  // ad → eventual Purchase when buyer pays the deposit link.
+  try {
+    const cookies = getMetaCookiesFromRequest(req);
+    const userData = buildUserData({
+      email: buyerEmail,
+      phone: String(buyer['Phone'] || ''),
+      state: String(buyer['State'] || ''),
+      firstName: buyerName.split(' ')[0],
+      lastName: buyerName.split(' ').slice(1).join(' '),
+      fbp: cookies.fbp,
+      fbc: cookies.fbc,
+    });
+    fireCapi([{
+      event_name: 'InitiateCheckout',
+      event_id: `deposit-invoice-${referralId}`,
+      event_time: Math.floor(Date.now() / 1000),
+      action_source: 'system_generated',
+      event_source_url: SITE_URL,
+      user_data: userData,
+      custom_data: {
+        currency: 'USD',
+        value: depositCents / 100,
+        content_name: productLabel,
+        content_type: cutTier,
+      },
+    }]);
+  } catch (e: any) {
+    console.warn('[send-deposit-invoice] CAPI fire failed:', e?.message);
+  }
 
   return NextResponse.json({
     ok: true,

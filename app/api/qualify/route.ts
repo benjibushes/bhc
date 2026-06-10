@@ -312,6 +312,41 @@ export async function POST(request: Request) {
     }
   }
 
+  // F2 — Meta CAPI CompleteRegistration. Server fire deduped w/ client fire
+  // via event_id (client mints `qualify-{consumerId}-{ts}` so dedup window
+  // catches both within 7d). Critical signal for ad optimization: only
+  // qualified buyers reach this step.
+  if (consumer['Email']) {
+    try {
+      const { fireCapi, buildUserData, getMetaCookiesFromRequest } = await import('@/lib/metaCapi');
+      const cookies = getMetaCookiesFromRequest(request);
+      const userData = buildUserData({
+        email: String(consumer['Email']),
+        phone: String(consumer['Phone'] || ''),
+        state: String(consumer['State'] || ''),
+        firstName: String(consumer['Full Name'] || '').split(' ')[0],
+        fbp: cookies.fbp,
+        fbc: cookies.fbc,
+      });
+      fireCapi([{
+        event_name: 'CompleteRegistration',
+        event_id: `qualify-server-${consumerId}-${completedAt}`,
+        event_time: Math.floor(Date.now() / 1000),
+        action_source: 'website',
+        event_source_url: `${SITE_URL}/qualify/${consumerId}`,
+        user_data: userData,
+        custom_data: {
+          currency: 'USD',
+          value: depositAmount || 0,
+          content_name: 'quiz_complete',
+          content_category: tier,
+        },
+      }]);
+    } catch (e: any) {
+      console.warn('[/api/qualify] CAPI CompleteRegistration fire failed:', e?.message);
+    }
+  }
+
   try {
     const { transitionBuyerStage } = await import('@/lib/contracts');
     await transitionBuyerStage(

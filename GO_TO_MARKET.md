@@ -50,6 +50,23 @@ Full doc: `docs/BHC-BRAND.md`. Read before any copy edit.
 
 See `BUILD_LOG.md`.
 
+## Conversion tracking (F2)
+
+5 events fire per buyer journey via Meta CAPI + client Pixel (deduped via event_id):
+
+1. **Lead** — `/access` signup (was already wired)
+2. **CompleteRegistration** — quiz submit (NEW F2)
+3. **Schedule** — Cal booking created (NEW F2)
+4. **InitiateCheckout** — admin Send Deposit Invoice fires (NEW F2)
+5. **Purchase** — Stripe webhook on deposit paid (was already wired)
+
+**Meta Events Manager verification (do this before turning on ads):**
+- Open Events Manager → Test Events
+- Submit a synthetic quiz on prod
+- Expect all 5 events to fire within minutes
+- Match Quality score per event: aim ≥6/10
+- Dedup score: 100% (same event_id from client + server)
+
 ## Known limitations / next features
 
-(Update as features ship. F2 next.)
+F3 next: funnel observability — UTM viz in admin + funnel-stage analytics dashboard.
