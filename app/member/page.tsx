@@ -120,6 +120,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
   const [data, setData] = useState<{
     memberState: string;
     memberSegment: string;
+    affiliateCode?: string;
     hasOrderDetails: boolean;
     stateRanchers: Rancher[];
     otherRanchers: Rancher[];
@@ -502,6 +503,37 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   <p className="text-sm text-dust">
                     You&apos;ll receive an email when a match is found.
                   </p>
+                </div>
+              )}
+
+              {/* F17 — Affiliate code surface for Closed Won buyers (auto-enrolled per I-9) */}
+              {data?.affiliateCode && (
+                <div className="p-6 border-2 border-charcoal bg-bone-warm space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs uppercase tracking-widest text-saddle">Refer a friend, earn $</span>
+                  </div>
+                  <h3 className="font-serif text-xl text-charcoal">Your affiliate link</h3>
+                  <p className="text-sm text-saddle leading-relaxed">
+                    Share this link. When a friend completes a quarter/half/whole, you earn a commission. Track all of it on your affiliate dashboard.
+                  </p>
+                  <div className="bg-white border border-dust p-3 font-mono text-xs text-charcoal break-all select-all">
+                    https://www.buyhalfcow.com/?ref={data.affiliateCode}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href="/affiliate"
+                      className="inline-block px-5 py-2 bg-charcoal text-bone hover:bg-saddle text-xs uppercase tracking-widest font-semibold"
+                    >
+                      Open affiliate dashboard →
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(`https://www.buyhalfcow.com/?ref=${data.affiliateCode}`)}
+                      className="inline-block px-5 py-2 border border-charcoal text-charcoal hover:bg-bone text-xs uppercase tracking-widest font-semibold"
+                    >
+                      Copy link
+                    </button>
+                  </div>
                 </div>
               )}
 

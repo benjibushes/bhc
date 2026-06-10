@@ -22,13 +22,14 @@ export async function GET(request: Request) {
     // /api/warmup/engage didn't include state, which made the dashboard
     // show "0 ranchers" even after a successful match. Defense-in-depth
     // so any future token shape change can't strand the buyer.
+    let memberConsumer: any = null;
     if (memberId) {
       try {
         const { getRecordById } = await import('@/lib/airtable');
-        const consumer: any = await getRecordById(TABLES.CONSUMERS, memberId);
-        memberSegment = consumer['Segment'] || '';
-        memberOrderType = consumer['Order Type'] || '';
-        if (!memberState && consumer['State']) memberState = String(consumer['State']);
+        memberConsumer = await getRecordById(TABLES.CONSUMERS, memberId);
+        memberSegment = memberConsumer['Segment'] || '';
+        memberOrderType = memberConsumer['Order Type'] || '';
+        if (!memberState && memberConsumer['State']) memberState = String(memberConsumer['State']);
       } catch {
         // Non-fatal, segment will be empty
       }
@@ -112,9 +113,14 @@ export async function GET(request: Request) {
       };
     });
 
+    // F17 — surface affiliate code on member portal so Closed Won
+    // buyers (auto-enrolled per I-9) can refer friends + earn.
+    const affiliateCode = String((memberConsumer as any)?.['Affiliate Code'] || '');
+
     return NextResponse.json({
       memberState,
       memberSegment,
+      affiliateCode,
       hasOrderDetails: !!memberOrderType,
       stateRanchers,
       otherRanchers,
