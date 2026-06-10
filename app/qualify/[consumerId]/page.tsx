@@ -167,32 +167,7 @@ export default function QualifyPage({
   }
 
   if (error && step < 4) {
-    return (
-      <main className="min-h-screen bg-bone flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white border border-dust p-7 md:p-8 text-center space-y-4">
-          <div className="text-4xl">🐂</div>
-          <p className="text-xs uppercase tracking-widest text-saddle">Match confirmation</p>
-          <h1 className="font-serif text-2xl text-charcoal">Looks like your invite link expired</h1>
-          <p className="text-sm text-saddle leading-relaxed">{error}</p>
-          <p className="text-sm text-saddle">
-            Easiest fix: start a fresh application below. Takes 30 seconds and you&apos;ll
-            get a new invite within a minute.
-          </p>
-          <div className="pt-2">
-            <a
-              href="/access"
-              className="inline-block px-7 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase tracking-widest text-xs"
-            >
-              Start your application →
-            </a>
-          </div>
-          <p className="text-xs text-dust pt-3 border-t border-dust">
-            Already applied? Check your inbox for the &ldquo;Yes — Ready to Buy&rdquo; email and click the
-            button inside it to land back here with a fresh link.
-          </p>
-        </div>
-      </main>
-    );
+    return <ExpiredLinkRecovery error={error} />;
   }
 
   return (
@@ -558,6 +533,78 @@ export default function QualifyPage({
         {error && step >= 4 && (
           <p className="text-sm text-red-600 mt-4 text-center">{error}</p>
         )}
+      </div>
+    </main>
+  );
+}
+
+// F10 — Stale JWT recovery. Buyer hits expired link; offer inline
+// "send me a fresh link" form instead of forcing them back to /access.
+function ExpiredLinkRecovery({ error }: { error: string }) {
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  async function handleResend(e: React.FormEvent) {
+    e.preventDefault();
+    if (!recoveryEmail || sending) return;
+    setSending(true);
+    try {
+      await fetch('/api/qualify/resend-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: recoveryEmail.toLowerCase().trim() }),
+      });
+      setSent(true);
+    } catch {
+      setSent(true); // privacy: always show same success UI
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-bone flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-white border border-dust p-7 md:p-8 text-center space-y-4">
+        <div className="text-4xl">🐂</div>
+        <p className="text-xs uppercase tracking-widest text-saddle">Match confirmation</p>
+        <h1 className="font-serif text-2xl text-charcoal">Looks like your invite link expired</h1>
+        <p className="text-sm text-saddle leading-relaxed">{error}</p>
+
+        {!sent ? (
+          <form onSubmit={handleResend} className="space-y-2 pt-2 text-left">
+            <label className="block text-xs uppercase tracking-widest text-saddle">
+              Already applied? Send a fresh link:
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                required
+                placeholder="your@email.com"
+                value={recoveryEmail}
+                onChange={(e) => setRecoveryEmail(e.target.value)}
+                className="flex-1 border border-dust px-3 py-2 text-sm"
+                disabled={sending}
+              />
+              <button
+                type="submit"
+                disabled={sending || !recoveryEmail}
+                className="px-4 py-2 bg-charcoal text-bone uppercase tracking-widest text-[11px] font-medium disabled:opacity-30"
+              >
+                {sending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <p className="text-sm text-charcoal pt-2">
+            ✓ If we have you on file, a fresh quiz link is heading to {' '}
+            <strong>{recoveryEmail}</strong> now. Check your inbox (and spam).
+          </p>
+        )}
+
+        <p className="text-xs text-dust pt-3 border-t border-dust">
+          New here? <a href="/access" className="underline text-charcoal">Start a fresh application →</a>
+        </p>
       </div>
     </main>
   );

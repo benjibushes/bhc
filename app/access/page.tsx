@@ -421,14 +421,27 @@ function AccessPageContent() {
     // Phone REQUIRED (2026-06-03). Matched ranchers need a callback channel —
     // email-only buyers ghost ~50% of the time. Block the submit here so the
     // 400 from /api/consumers is never reached for missing-phone signups.
-    if (!phone.trim()) {
-      setError('phone number is required so your rancher can reach you.');
-      return;
-    }
-    const phoneDigits = phone.replace(/\D/g, '');
-    if (phoneDigits.length < 10) {
-      setError('please enter a valid phone number (at least 10 digits).');
-      return;
+    //
+    // F10: env override `NEXT_PUBLIC_REQUIRE_PHONE=0` flips phone to optional,
+    // for A/B testing top-of-funnel conversion lift.
+    const phoneRequired = process.env.NEXT_PUBLIC_REQUIRE_PHONE !== '0';
+    if (phoneRequired) {
+      if (!phone.trim()) {
+        setError('phone number is required so your rancher can reach you.');
+        return;
+      }
+      const phoneDigits = phone.replace(/\D/g, '');
+      if (phoneDigits.length < 10) {
+        setError('please enter a valid phone number (at least 10 digits).');
+        return;
+      }
+    } else if (phone.trim()) {
+      // Optional but if provided, still validate format.
+      const phoneDigits = phone.replace(/\D/g, '');
+      if (phoneDigits.length < 10) {
+        setError('please enter a valid phone number (at least 10 digits).');
+        return;
+      }
     }
 
     // Intent score — simplified for 5-field form.

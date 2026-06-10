@@ -6,6 +6,40 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F10 — Funnel friction polish — 2026-06-09
+
+**Status:** ✅ shipped, typecheck clean.
+
+**3 polishes:**
+
+### 10A — Phone-optional env toggle
+- MOD: `app/access/page.tsx:419-449` — phone required only when `NEXT_PUBLIC_REQUIRE_PHONE !== '0'`. When `'0'`, blank phone is OK; if provided, format still validated.
+- Use case: A/B test top-of-funnel conversion lift without redeploy.
+
+### 10B — Stale JWT recovery inline form
+- NEW: `app/api/qualify/resend-link/route.ts` — POST {email} → looks up Consumer by email (case-insensitive) → emails fresh qualify URL (no JWT, just record-id path). Always returns ok=true to prevent email enumeration.
+- MOD: `app/qualify/[consumerId]/page.tsx` — extracted error UI into new `ExpiredLinkRecovery` component. Inline "send me a fresh link" form replaces the "go back to /access" CTA. Privacy-preserving success message.
+
+### 10C — Abandoned-quiz nudge cron
+- NEW: `app/api/cron/abandoned-quiz-nudge/route.ts` — hourly cron. Window: Consumers `Status=Approved` AND `Qualified At` empty AND created 1-72h ago AND has Email AND not Unsubscribed/Bounced. Dedup via Notes `[abandoned-quiz-nudge YYYY-MM-DD]`. Telegram volume alert on each run with touched count.
+- MOD: `vercel.json` — registered cron at `0 * * * *`.
+
+**Env vars (new):**
+- `NEXT_PUBLIC_REQUIRE_PHONE` (default '1' = required; set to `'0'` to make optional)
+
+**Side effects:**
+- Hourly cron sends abandonment emails (0-N per run)
+- Resend-link POST fires fresh quiz email per request
+
+**Test cmd:**
+- 10A: set `NEXT_PUBLIC_REQUIRE_PHONE=0` → /access form accepts blank phone
+- 10B: visit /qualify/invalid-id → see "send fresh link" form → submit email → expect quiz email
+- 10C: trigger `/api/cron/abandoned-quiz-nudge` manually → check Cron Runs row
+
+**Rollback:** revert files. `vercel.json` cron registration safe to leave.
+
+---
+
 ## F9 — SMS event stubs (feature-flagged) — 2026-06-09
 
 **Status:** ✅ shipped (feature-flag OFF by default), typecheck clean.

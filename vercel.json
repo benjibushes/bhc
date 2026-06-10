@@ -124,6 +124,10 @@
     {
       "path": "/api/cron/qualified-no-action",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/abandoned-quiz-nudge",
+      "schedule": "0 * * * *"
     }
   ]
 }
