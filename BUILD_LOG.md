@@ -6,6 +6,37 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F8 — $497 White Glove Onboarding upsell — 2026-06-09
+
+**Status:** ✅ shipped (feature-flag OFF by default), typecheck clean. Schema fields added live.
+
+**Decision D (locked):** "$497 optional" — bundle Stripe Checkout for ranchers who want Ben to personally handle first 3 buyer matches.
+
+**What:** Rancher POSTs to `/api/rancher/white-glove` → Stripe Checkout for $497 → webhook stamps Ranchers record. Auth via existing `requireRancher`. When `ENABLE_WHITE_GLOVE!=1`, endpoint 404s.
+
+**Files touched:**
+- NEW: `lib/whiteGlove.ts` — feature flag + `createWhiteGloveCheckoutSession` + `hasWhiteGlove`
+- NEW: `app/api/rancher/white-glove/route.ts` — POST returns Stripe URL
+- MOD: `app/api/webhooks/stripe/route.ts` — `metaType === 'white_glove'` branch stamps Rancher + Telegram alert
+
+**Schema (Ranchers, added live):**
+- `White Glove Paid At` (dateTime) `fld1aov1bRy65re4I`
+- `White Glove Session Id` (singleLineText) `fldFhFhW4vdp4FbR2`
+
+**Env vars (new):**
+- `ENABLE_WHITE_GLOVE` (default unset = off)
+- `WHITE_GLOVE_PRICE_CENTS` (default 49700)
+
+**Side effects:** Stripe Checkout creation + webhook stamps Rancher + Telegram alert when paid.
+**Telegram alerts:** `🧤 White Glove sold — <ranch> — $X`
+
+**Wizard integration (deferred):**
+Wizard sign-step UI surface left out — flag still off. When user flips ON in env, follow-up commit adds opt-in checkbox + Stripe redirect on wizard Step 4.
+
+**Rollback:** unset env (already off).
+
+---
+
 ## F7 — $49 Reservation Hold stub + Cal book gate — 2026-06-09
 
 **Status:** ✅ shipped (feature-flag OFF by default), typecheck clean. Schema fields added live.
