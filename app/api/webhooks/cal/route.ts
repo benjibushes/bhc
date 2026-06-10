@@ -314,10 +314,12 @@ export async function POST(request: Request) {
         // Fire pre-call brief to operator on BOOKING_CREATED
         if (triggerEvent === 'BOOKING_CREATED' && OPERATOR_BRIEF_EMAIL && referral) {
           try {
-            // Parse Consumer.Quiz Answers if present (JSON-encoded)
+            // Parse Consumer.Qualification Answers if present (JSON-encoded)
+            // R6 (2026-06-10): schema field is `Qualification Answers` not
+            // `Quiz Answers`. Read both for backward compat.
             let quizAnswers: Record<string, string> = {};
             try {
-              const raw = consumer?.['Quiz Answers'];
+              const raw = consumer?.['Qualification Answers'] ?? consumer?.['Quiz Answers'];
               if (raw && typeof raw === 'string') {
                 const parsed = JSON.parse(raw);
                 if (parsed && typeof parsed === 'object') quizAnswers = parsed;
@@ -345,7 +347,7 @@ export async function POST(request: Request) {
               halfPrice: Number(rancher?.['Half Price']) || undefined,
               wholePrice: Number(rancher?.['Whole Price']) || undefined,
               nextProcessingDate: rancher?.['Next Processing Date'] || undefined,
-              quizScore: Number(consumer?.['Quiz Score']) || undefined,
+              quizScore: Number(consumer?.['Qualification Score'] ?? consumer?.['Quiz Score']) || undefined,
               quizAnswers,
               referralId: referral.id,
               referralStatus: referral['Status'] || undefined,
@@ -440,20 +442,23 @@ export async function POST(request: Request) {
         // Stamp Conversations table so the booking shows up in the activity
         // feed for that rancher+buyer pair. Non-fatal — if the table or
         // fields don't match yet, just continue.
+        // R4 (2026-06-10): Conversations schema is for inbound email
+        // threads, NOT cal bookings. Use Timestamp/Direction/From/To/
+        // Subject/Body which all exist on the table. `Direction` valid
+        // choices are likely `inbound`/`outbound` — use `outbound` to
+        // represent a system-generated booking event.
         try {
           const { createRecord } = await import('@/lib/airtable');
           await createRecord(TABLES.CONVERSATIONS, {
-            'Channel': 'Cal.com',
-            'Direction': 'system',
-            'Sender Email': organizerEmail,
-            'Recipient Email': attendeeEmail,
+            'Timestamp': new Date().toISOString(),
+            'Direction': 'outbound',
+            'From': organizerEmail,
+            'To': attendeeEmail,
             'Subject': `${verb} — ${eventTitle}`,
             'Body': `Booking ${triggerEvent} at ${dateDisplay}.${meetingUrl ? ` Meeting: ${meetingUrl}` : ''}`,
-            'Sent At': new Date().toISOString(),
+            'Sender Type': 'system',
           });
         } catch (e: any) {
-          // Conversations schema may not include these exact field names —
-          // OK to swallow. Telegram is the primary signal.
           console.warn('[cal webhook] buyer-rancher Conversations log skipped:', e?.message);
         }
         return NextResponse.json({

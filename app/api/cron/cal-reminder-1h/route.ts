@@ -66,13 +66,16 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const earlyIso = new Date(earlyMs).toISOString();
   const lateIso = new Date(lateMs).toISOString();
 
-  // Pull bookings starting in the 55-70min window.
-  // Conversations holds Cal bookings per the cal webhook handler.
+  // R5 (2026-06-10): Cal bookings are stamped on Referrals.Sales Call
+  // Booked At by the cal webhook (app/api/webhooks/cal/route.ts:253).
+  // Conversations is for inbound email threads, NOT cal bookings, so
+  // querying it for `Type='cal_booking'` always returned 0 rows and
+  // errored on schema-unknown fields. Query Referrals instead.
   let bookings: any[] = [];
   try {
     bookings = await getAllRecords(
-      'Conversations',
-      `AND({Type}='cal_booking', IS_AFTER({Start Time}, '${earlyIso}'), IS_BEFORE({Start Time}, '${lateIso}'))`
+      TABLES.REFERRALS,
+      `AND(IS_AFTER({Sales Call Booked At}, '${earlyIso}'), IS_BEFORE({Sales Call Booked At}, '${lateIso}'))`
     ) as any[];
   } catch (e: any) {
     console.warn('[cal-reminder-1h] bookings query failed:', e?.message);
@@ -91,15 +94,20 @@ async function realHandler(_request: Request): Promise<CronResult> {
       skipped++;
       continue;
     }
-    const attendeeEmail = String(b['Attendee Email'] || b['Buyer Email'] || '').toLowerCase().trim();
+    const attendeeEmail = String(b['Buyer Email'] || '').toLowerCase().trim();
     if (!attendeeEmail) {
       skipped++;
       continue;
     }
-    const attendeeName = String(b['Attendee Name'] || b['Buyer Name'] || '').trim();
+    const attendeeName = String(b['Buyer Name'] || '').trim();
     const firstName = attendeeName.split(' ')[0] || 'there';
-    const startTime = String(b['Start Time'] || '');
-    const calLink = String(b['Meeting URL'] || b['Cal Link'] || '');
+    // Referral.Sales Call Booked At = when the booking was created, not
+    // the call start time. We don't currently store the start time on
+    // Referrals (it was only known to the cal webhook). Use the booked-at
+    // timestamp + 1h as a reasonable approximation — the email body shows
+    // "starts in 1 hour" which is true regardless of the exact slot.
+    const startTime = String(b['Sales Call Booked At'] || '');
+    const calLink = ''; // not stored on Referral; user can find via email
 
     try {
       const { subject, html } = buildEmail(firstName, startTime, calLink);
@@ -132,9 +140,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
       console.warn(`[cal-reminder-1h] SMS lookup failed for ${attendeeEmail}:`, e?.message);
     }
 
-    // Stamp dedup
+    // Stamp dedup on Referral.Notes
     try {
-      await updateRecord('Conversations', b.id, {
+      await updateRecord(TABLES.REFERRALS, b.id, {
         Notes: `[cal-reminder-1h ${new Date().toISOString().slice(0, 16)}] ${notes}`.slice(0, 2000),
       });
     } catch (e: any) {

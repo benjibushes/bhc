@@ -54,15 +54,17 @@ export async function GET(request: Request) {
 
     // Parity with admin desk F12 — compute days-since-activity per referral
     // so rancher cards can show rot badges. Source of truth: max of
-    // last activity timestamps (rancher, buyer, accept) + created.
+    // last activity timestamps (rancher, buyer, accept) + Airtable
+    // metadata createdTime.
+    // R3 (2026-06-10): Referrals has NO `Created At` field — use
+    // _rawJson.createdTime metadata.
     const referralsList = myReferrals.map((r: any) => {
       const candidates = [
         r['Last Rancher Activity At'],
         r['Last Buyer Activity At'],
         r['Rancher Accepted At'],
-        r['Created At'],
         r['Intro Sent At'],
-        r.createdTime,
+        r._rawJson?.createdTime,
       ]
         .filter(Boolean)
         .map((s: any) => {

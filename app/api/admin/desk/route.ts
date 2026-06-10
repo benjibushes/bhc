@@ -22,14 +22,15 @@ export async function GET(req: Request) {
   const todayIso = today.toISOString().slice(0, 10);
   const tomorrowIso = tomorrow.toISOString().slice(0, 10);
 
-  // Conversations table holds Cal bookings (per the cal webhook handler).
-  // Fall back to empty list if the table or filter format isn't supported —
-  // we don't want a single missing table to break the whole desk.
+  // R5 (2026-06-10): Cal bookings are stamped on Referrals.Sales Call
+  // Booked At by the cal webhook. Prior implementation queried
+  // Conversations.Type='cal_booking' — that field doesn't exist on
+  // Conversations, so calls was always empty.
   let calls: any[] = [];
   try {
     calls = await getAllRecords(
-      'Conversations',
-      `AND({Type}='cal_booking',IS_AFTER({Start Time},'${todayIso}'),IS_BEFORE({Start Time},'${tomorrowIso}'))`,
+      TABLES.REFERRALS,
+      `AND(IS_AFTER({Sales Call Booked At},'${todayIso}'),IS_BEFORE({Sales Call Booked At},'${tomorrowIso}'))`,
     );
   } catch {
     calls = [];
@@ -105,13 +106,16 @@ export async function GET(req: Request) {
 // Parses "State: XX" out of structured Notes (best signal until schema
 // adds a clean column). Returns the same shape as the retail rows so
 // the NBA engine + UI can stay consistent.
+// R2 (2026-06-10): Inquiries schema fields are `Created` (date) +
+// `Last Activity At` (dateTime, added today). Airtable metadata
+// `createdTime` is the only universal fallback when both are empty.
 function formatWholesale(i: any) {
   const notes = String(i['Notes'] || i['Message'] || '');
   const stateMatch = notes.match(/^State:\s*(.+)$/m);
   const businessMatch = notes.match(/^Business:\s*(.+)$/m);
   const businessTypeMatch = notes.match(/^Business Type:\s*(.+)$/m);
   const volumeMatch = notes.match(/^Monthly Volume:\s*(.+)$/m);
-  const lastActivity = i['Last Activity At'] || i['Created At'] || i['Created Time'] || '';
+  const lastActivity = i['Last Activity At'] || i['Created'] || i._rawJson?.createdTime || '';
   const ageDays = lastActivity
     ? Math.floor((Date.now() - new Date(String(lastActivity)).getTime()) / (1000 * 60 * 60 * 24))
     : null;
@@ -129,15 +133,17 @@ function formatWholesale(i: any) {
   };
 }
 
+// R5 (2026-06-10): now reads Referral rows (Sales Call Booked At within
+// the day window) — not Conversations rows.
 function formatCall(r: any) {
   return {
     id: r.id,
-    startTime: r['Start Time'] || '',
-    buyerName: r['Attendee Name'] || r['Buyer Name'] || '?',
-    buyerEmail: r['Attendee Email'] || r['Buyer Email'] || '?',
-    rancherName: r['Rancher Name'] || '',
-    state: r['State'] || '',
-    quizScore: r['Quiz Score'] || null,
+    startTime: r['Sales Call Booked At'] || '',
+    buyerName: r['Buyer Name'] || '?',
+    buyerEmail: r['Buyer Email'] || '?',
+    rancherName: r['Suggested Rancher Name'] || '',
+    state: r['Buyer State'] || '',
+    quizScore: null, // Referral row doesn't carry quiz score
   };
 }
 
@@ -168,14 +174,17 @@ function formatBuyer(r: any) {
 function formatReferral(r: any) {
   // F12 — Deal-rot indicator. Compute days since the most recent activity.
   // "Last activity" = max of (Last Rancher Activity At, Last Buyer Activity At,
-  // Rancher Accepted At, Created At). The bigger this is, the colder the deal.
+  // Rancher Accepted At, Intro Sent At, createdTime). The bigger this is, the
+  // colder the deal.
+  // R3 (2026-06-10): Referrals has NO `Created At` field. The only universal
+  // creation timestamp is Airtable metadata `createdTime` exposed on _rawJson.
   const now = Date.now();
   const candidates = [
     r['Last Rancher Activity At'],
     r['Last Buyer Activity At'],
     r['Rancher Accepted At'],
-    r['Created At'],
-    r['Created Time'],
+    r['Intro Sent At'],
+    r._rawJson?.createdTime,
   ]
     .filter(Boolean)
     .map((s: any) => {
