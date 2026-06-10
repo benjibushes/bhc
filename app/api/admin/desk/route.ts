@@ -107,6 +107,11 @@ function formatCall(r: any) {
 
 function formatBuyer(r: any) {
   const { score, reasons } = computeLeadScore(r);
+  // F13 — email engagement (F5 webhook stamps these)
+  const emailOpens = Number(r['Email Opens'] || 0);
+  const emailClicks = Number(r['Email Clicks'] || 0);
+  const lastOpenedAt = r['Last Email Opened At'] || '';
+  const lastClickedAt = r['Last Email Clicked At'] || '';
   return {
     id: r.id,
     name: r['Full Name'] || '?',
@@ -117,6 +122,10 @@ function formatBuyer(r: any) {
     qualifiedAt: r['Qualified At'] || '',
     leadScore: score,
     leadReasons: reasons,
+    emailOpens,
+    emailClicks,
+    lastOpenedAt,
+    lastClickedAt,
   };
 }
 

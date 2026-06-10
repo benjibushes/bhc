@@ -6,6 +6,29 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F13 — Email open/click badge on desk cards — 2026-06-09
+
+**Status:** ✅ shipped, typecheck clean. Final feature of the 13-block.
+
+**What:** Each quiz-complete buyer card on `/admin/today/v2` now shows a `📧 Xo/Yc` badge (opens / clicks). Hover for last-event ages. Sage tint if any clicks; bone-warm if opens-only. Hidden when both 0.
+
+**Files touched:**
+- MOD: `app/api/admin/desk/route.ts` — `formatBuyer` returns `emailOpens`, `emailClicks`, `lastOpenedAt`, `lastClickedAt` (sourced from F5's Resend-stamped Consumer fields)
+- MOD: `app/admin/today/v2/DeskClient.tsx` — `DeskBuyer` type adds 4 optional fields; NEW `EmailEngageBadge` helper rendered inline on quiz-complete cards
+
+**Schema:** none new (uses F5 fields `Email Opens`, `Email Clicks`, `Last Email Opened At`, `Last Email Clicked At`)
+**Side effects:** 0
+**Test cmd:**
+1. F5 webhook delivers an open event for a buyer with quiz complete
+2. Visit `/admin/today/v2` → that buyer's row now shows `📧 1o/0c` badge
+3. Hover → tooltip "1 open, last 3m ago"
+
+**Why this matters:** Ben can instantly see which buyers ENGAGED with the recent intro email vs. which never opened. Combined with the lead score (F4) — opens + clicks = ready to call.
+
+**Rollback:** revert files.
+
+---
+
 ## F12 — Deal-rot indicator + stage advance — 2026-06-09
 
 **Status:** ✅ shipped, typecheck clean.

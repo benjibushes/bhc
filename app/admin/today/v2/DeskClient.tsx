@@ -37,6 +37,10 @@ interface DeskBuyer {
   qualifiedAt: string;
   leadScore: number;
   leadReasons: string[];
+  emailOpens?: number;
+  emailClicks?: number;
+  lastOpenedAt?: string;
+  lastClickedAt?: string;
 }
 
 interface DeskReferral {
@@ -416,6 +420,12 @@ export default function DeskClient() {
                     {b.leadReasons?.length ? (
                       <span className="text-xs text-saddle ml-2">[{b.leadReasons.join(' ')}]</span>
                     ) : null}
+                    <EmailEngageBadge
+                      opens={b.emailOpens || 0}
+                      clicks={b.emailClicks || 0}
+                      lastOpenedAt={b.lastOpenedAt}
+                      lastClickedAt={b.lastClickedAt}
+                    />
                   </span>
                   <button
                     type="button"
@@ -598,6 +608,47 @@ function RotBadge({ days }: { days: number | null }) {
       className={`inline-block text-[10px] font-mono px-1 py-0.5 mr-2 ${tier}`}
     >
       {label}
+    </span>
+  );
+}
+
+// F13 — Email engagement badge. Inline next to lead score on buyer cards.
+function EmailEngageBadge({
+  opens,
+  clicks,
+  lastOpenedAt,
+  lastClickedAt,
+}: {
+  opens: number;
+  clicks: number;
+  lastOpenedAt?: string;
+  lastClickedAt?: string;
+}) {
+  if (!opens && !clicks) return null;
+  function fmtAge(iso?: string) {
+    if (!iso) return '';
+    const ms = Date.now() - new Date(iso).getTime();
+    if (isNaN(ms) || ms < 0) return '';
+    const hrs = Math.floor(ms / (1000 * 60 * 60));
+    if (hrs < 1) return 'just now';
+    if (hrs < 24) return `${hrs}h`;
+    return `${Math.floor(hrs / 24)}d`;
+  }
+  const title = [
+    opens ? `${opens} open${opens === 1 ? '' : 's'}, last ${fmtAge(lastOpenedAt)} ago` : '',
+    clicks ? `${clicks} click${clicks === 1 ? '' : 's'}, last ${fmtAge(lastClickedAt)} ago` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const hot = clicks > 0;
+  return (
+    <span
+      title={title}
+      className={`inline-block ml-2 text-[10px] font-mono px-1 ${
+        hot ? 'bg-sage text-charcoal' : 'bg-bone-warm text-saddle'
+      }`}
+    >
+      📧 {opens}o/{clicks}c
     </span>
   );
 }
