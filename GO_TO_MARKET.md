@@ -67,6 +67,20 @@ See `BUILD_LOG.md`.
 - Match Quality score per event: aim ≥6/10
 - Dedup score: 100% (same event_id from client + server)
 
+## Funnel observability (F3)
+
+`/admin/today/v2` now shows a 30-day funnel:
+- **Stage tiles**: signup, qualified, booked, invoiced, locked, closed
+- **Conversion strip**: % between each pair + overall signup→closed
+- **Per-source table**: top 10 UTM sources sorted by signup volume
+
+**Endpoint:** `GET /api/admin/funnel-conversion?since=7d|30d|90d|all`
+
+**Use it:**
+- After a paid-ad push, watch the bySource table — which UTM Source closed?
+- If `qualified→booked` drops, Cal flow has friction
+- If `booked→invoiced` drops, calls aren't closing → check call recordings (F11 incoming)
+
 ## Known limitations / next features
 
-F3 next: funnel observability — UTM viz in admin + funnel-stage analytics dashboard.
+F4 next: composite lead score on each Consumer card — sort desk by hottest lead first.

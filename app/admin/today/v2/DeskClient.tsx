@@ -70,9 +70,33 @@ interface ModalState {
   buyerState: string;
 }
 
+interface FunnelData {
+  since: string;
+  totals: { signup: number; qualified: number; booked: number; invoiced: number; locked: number; closed: number };
+  conv: {
+    signup_to_qualified: number;
+    qualified_to_booked: number;
+    booked_to_invoiced: number;
+    invoiced_to_locked: number;
+    locked_to_closed: number;
+    signup_to_closed: number;
+  };
+  bySource: Array<{
+    source: string;
+    signup: number;
+    qualified: number;
+    booked: number;
+    invoiced: number;
+    locked: number;
+    closed: number;
+    conv: { signup_to_closed: number };
+  }>;
+}
+
 export default function DeskClient() {
   const [desk, setDesk] = useState<DeskData | null>(null);
   const [bookings, setBookings] = useState<CalBooking[]>([]);
+  const [funnel, setFunnel] = useState<FunnelData | null>(null);
   const [calError, setCalError] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -86,9 +110,10 @@ export default function DeskClient() {
 
   const tick = useCallback(async () => {
     try {
-      const [deskRes, calRes] = await Promise.all([
+      const [deskRes, calRes, funnelRes] = await Promise.all([
         fetch('/api/admin/desk', { credentials: 'include' }),
         fetch('/api/admin/cal/bookings', { credentials: 'include' }),
+        fetch('/api/admin/funnel-conversion?since=30d', { credentials: 'include' }),
       ]);
       if (deskRes.ok) {
         const d = (await deskRes.json()) as DeskData;
@@ -103,6 +128,10 @@ export default function DeskClient() {
         setCalError(c.error || '');
       } else {
         setCalError(`Cal ${calRes.status}`);
+      }
+      if (funnelRes.ok) {
+        const f = (await funnelRes.json()) as FunnelData;
+        setFunnel(f);
       }
     } catch (e: any) {
       setError(e?.message || 'fetch failed');
@@ -397,6 +426,58 @@ export default function DeskClient() {
                 </li>
               ))}
             </ul>
+          </section>
+        )}
+
+        {/* FUNNEL · F3 */}
+        {funnel && (
+          <section className="mb-8">
+            <h2 className="font-serif text-xl text-charcoal mb-3">
+              Funnel · last 30d
+            </h2>
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-3">
+              {(['signup', 'qualified', 'booked', 'invoiced', 'locked', 'closed'] as const).map((stage) => (
+                <div key={stage} className="border border-divider bg-white p-3 text-sm">
+                  <div className="text-xs uppercase tracking-wide text-saddle">{stage}</div>
+                  <div className="text-2xl font-serif text-charcoal">{funnel.totals[stage]}</div>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-saddle mb-3">
+              signup→qualified {funnel.conv.signup_to_qualified}% · qualified→booked {funnel.conv.qualified_to_booked}% · booked→invoiced {funnel.conv.booked_to_invoiced}% · invoiced→locked {funnel.conv.invoiced_to_locked}% · locked→closed {funnel.conv.locked_to_closed}% · <strong>signup→closed {funnel.conv.signup_to_closed}%</strong>
+            </div>
+            {funnel.bySource.length > 0 && (
+              <div className="border border-divider bg-white">
+                <table className="w-full text-xs">
+                  <thead className="bg-bone">
+                    <tr>
+                      <th className="text-left p-2">source</th>
+                      <th className="text-right p-2">signup</th>
+                      <th className="text-right p-2">qual</th>
+                      <th className="text-right p-2">booked</th>
+                      <th className="text-right p-2">inv</th>
+                      <th className="text-right p-2">locked</th>
+                      <th className="text-right p-2">closed</th>
+                      <th className="text-right p-2">s→c %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {funnel.bySource.slice(0, 10).map((s) => (
+                      <tr key={s.source} className="border-t border-divider">
+                        <td className="p-2 font-mono">{s.source}</td>
+                        <td className="text-right p-2">{s.signup}</td>
+                        <td className="text-right p-2">{s.qualified}</td>
+                        <td className="text-right p-2">{s.booked}</td>
+                        <td className="text-right p-2">{s.invoiced}</td>
+                        <td className="text-right p-2">{s.locked}</td>
+                        <td className="text-right p-2">{s.closed}</td>
+                        <td className="text-right p-2">{s.conv.signup_to_closed}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         )}
 

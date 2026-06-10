@@ -6,6 +6,32 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F3 — Funnel observability — 2026-06-09
+
+**Status:** ✅ shipped, typecheck clean.
+
+**What:** state-snapshot funnel viz on `/admin/today/v2`. 6 stages (signup → qualified → booked → invoiced → locked → closed). Conversion rates between stages. Per-UTM-source breakdown (top 10).
+
+**Files touched:**
+- NEW: `app/api/admin/funnel-conversion/route.ts` — GET endpoint. Reads Consumers + Referrals, computes totals + conv + bySource. Window param: `?since=7d|30d|90d|all` (default 30d).
+- MOD: `app/admin/today/v2/DeskClient.tsx` — added FunnelData interface, useState, tick() fetch, Funnel section between Waitlist and footer.
+
+**Env vars:** none
+**Schema:** none (reads existing Consumers + Referrals fields)
+**Side effects:** 0 (read-only endpoint)
+**Telegram alerts:** none
+**Test cmd:**
+1. Visit `/admin/today/v2` — Funnel section renders below Waitlist
+2. Stage tiles show 30d totals
+3. Per-source table sorted by signup desc (top 10)
+4. Hit `/api/admin/funnel-conversion?since=7d` directly → JSON shape `{totals, conv, bySource}`
+
+**Why this matters:** Ben can now see exact funnel drop-offs by acquisition channel without opening Airtable. Cuts paid-ad attribution loop time from "I don't know which UTM converts" → real-time card on his desk.
+
+**Rollback:** `git revert <F3 commit sha>`
+
+---
+
 ## F2 — Pixel placement: CompleteRegistration + InitiateCheckout + Schedule — 2026-06-09
 
 **Status:** ✅ shipped, typecheck clean.
