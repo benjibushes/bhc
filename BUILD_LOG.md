@@ -6,6 +6,42 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F11 — Click-to-call + Whisper transcription — 2026-06-09
+
+**Status:** ✅ shipped (feature-flag OFF default), typecheck clean. Schema fields added live.
+
+**What:** Ben can initiate a Twilio call from `/admin/today/v2` Consumer cards. Twilio dials Ben first, then buyer (conference). Both legs auto-recorded. On call complete, recording URL POSTed to webhook → Groq Whisper transcribes → new Conversations row stamped.
+
+**Files touched:**
+- NEW: `lib/clickToCall.ts` — feature flag + `initiateCall` (creates Twilio call w/ TwiML) + `transcribeRecording` (Groq Whisper)
+- NEW: `app/api/admin/click-to-call/route.ts` — POST {consumerId} → triggers call
+- NEW: `app/api/webhooks/twilio-recording/route.ts` — Twilio recording-complete webhook handler
+
+**Schema (Conversations, added live):**
+- `Recording URL` (url) `fldihuoU2V4yshDNr`
+- `Transcript` (multilineText) `fldlV8wzV4zoMurru`
+- `Call Duration Seconds` (number) `fldOf6nTuRmfg4q1E`
+- `Call Sid` (singleLineText) `fldoeI73orCBBGtdq`
+
+**Env vars (new):**
+- `ENABLE_CLICK_TO_CALL` (default unset = off)
+- `BHC_OPERATOR_PHONE` (Ben's E.164 phone)
+- `GROQ_API_KEY` (for Whisper) — already used elsewhere
+- `TWILIO_*` — existing
+
+**Side effects when flag on:** Twilio call charges + Groq Whisper API charges (cheap) + 1 Conversations row per call.
+**Telegram alerts:** `📞 Call recorded — duration + transcript preview`
+**Twilio dashboard setup required:**
+- Phone number with Voice enabled
+- Recording callback URL: `https://buyhalfcow.com/api/webhooks/twilio-recording`
+- StatusCallback URL: `https://buyhalfcow.com/api/webhooks/twilio-call-status` (TODO build)
+
+**UI wiring:** Desk button still TODO (helper + endpoints ready). Wire on next desk pass.
+
+**Rollback:** unset `ENABLE_CLICK_TO_CALL`.
+
+---
+
 ## F10 — Funnel friction polish — 2026-06-09
 
 **Status:** ✅ shipped, typecheck clean.
