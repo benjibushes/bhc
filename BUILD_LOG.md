@@ -6,6 +6,65 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## S1-S10 — Money-path + funnel-leak fixes — 2026-06-10
+
+**Status:** ✅ shipped, typecheck clean. Bottom funnel was DEAD on tier_v2 path.
+
+**Trigger:** User: "make sure everything end to end from top of funnel to bottom of funnel is working and converting." 4 parallel audit agents found CRITICAL money-path bugs.
+
+### Audit findings
+
+🚨 **Bottom funnel dead:**
+- Stripe webhook fired `recordClose({outcome:'won'})` on deposit pay → Status=Closed Won immediately. Skipped rancher accept + final invoice entirely. NRD policy unenforced. No tier_v2 deal could ever reach final invoice.
+- `Deposit Amount` + `Deposit Paid At` never written. Downstream gates 409.
+- Rancher accept endpoint required Deposit Paid At → permanent 409.
+- Send final invoice gate required Deposit Paid + Deposit Amount → 400.
+
+🚨 **CAPI dedup broken:**
+- Client: `qualify-{id}-{ms}` (Date.now()). Server: `qualify-server-{id}-{ISO}`. Different event_ids → no dedup → Meta CompleteRegistration counted twice per qualified buyer.
+
+🚨 **Chase crons matched 0 records:**
+- abandoned-quiz-nudge: filter used `{Created Time}` field reference. That's Airtable METADATA, not a field. Cron fired 12x/day touching 0 records. 139 stranded buyers got no chase.
+
+🚨 **Data integrity:**
+- Renick Valley duplicate (Zimmerman 6/9 + Gajewski 5/9). Zimmerman = re-signup of same business by different operator. Gajewski has 5 active referrals + live page.
+- Gajewski capacity drift: showed 0, actually 5.
+
+### Fixes
+
+**S1** — `app/api/webhooks/stripe/route.ts`: replace `recordClose(won)` with direct `updateRecord` → Status='Awaiting Payment', Deposit Amount, Deposit Paid At. Closed Won transition stays on final_invoice handler.
+
+**S2** — `app/api/admin/send-deposit-invoice/route.ts`: stamp Deposit Amount + Total Sale Amount on Referral.
+
+**S3** — `app/api/rancher/referrals/[id]/accept/route.ts`: fallback gate on Status='Awaiting Payment'. Stamp Status='Slot Locked' on accept.
+
+**S4** — `app/api/rancher/referrals/[id]/send-final-invoice/route.ts`: relax precondition (Deposit Paid At OR Awaiting Payment/Slot Locked). Drop dead `Deposit Paid` field reference.
+
+**S5** — `app/qualify/[consumerId]/page.tsx` + `app/api/qualify/route.ts`: client mints `qualify-{id}-{ms}` event_id, POSTs in body. Server uses client-minted id (fallback to legacy mint for old clients). Meta dedupes client Pixel + server CAPI now.
+
+**S6** — `app/api/webhooks/cal/route.ts` buyer-sales-call branch: added Conversations log with Timestamp/Direction/From/To/Subject/Body/Sender Type. R4 fix had only landed in buyer↔rancher branch.
+
+**S7** — `app/api/cron/abandoned-quiz-nudge/route.ts`: `{Created Time}` → `CREATED_TIME()` function. Cron will touch the 139 stranded buyers within 60 min.
+
+**S8** — `app/api/cron/qualified-no-action/route.ts`: `>` / `<` string compare → `IS_AFTER` / `IS_BEFORE` for safer dateTime semantics.
+
+**S9** — Airtable MCP: `rec3K0LsDGQKONNnb` (Zimmerman) Active Status → Paused with audit Notes. `recsUxUMrEY4fNtp4` (Gajewski) Current Active Referrals: 0 → 5.
+
+**S10** — Schema added live: Referrals.Final Invoice Payment Intent ID (singleLineText) + Referrals.Processing Fee (currency).
+
+**Files touched:** 9
+**Schema deltas:** 2 fields
+**Data mutations:** 2 rancher row updates
+
+**Verification window (next 60 min):**
+1. abandoned-quiz-nudge — Records Touched > 0 (was 0 every run)
+2. qualified-no-action — IS_AFTER syntax confirmed
+3. Next deposit-pay PI succeeded webhook — Status flips to Awaiting Payment NOT Closed Won
+4. Next /qualify submit — server uses client-minted event_id (check Notes or response payload)
+5. Cal booking after deploy — Conversations row created in buyer-sales path
+
+---
+
 ## R1-R9 — Schema gap audit + 9 fixes — 2026-06-10
 
 **Status:** ✅ shipped (R1-R6 + R9). R7+R8 closed as PREMISE FALSIFIED. R10 surfaced for operator.
