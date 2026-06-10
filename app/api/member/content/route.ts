@@ -100,6 +100,15 @@ export async function GET(request: Request) {
         sale_amount: r['Sale Amount'] || 0,
         closed_at: r['Closed At'] || '',
         created_at: r['Created At'] || '',
+        // F16 — engagement loop fields surfaced on /member status branches
+        deposit_amount: Number(r['Deposit Amount'] || 0),
+        deposit_paid_at: r['Deposit Paid At'] || '',
+        rancher_accepted_at: r['Rancher Accepted At'] || '',
+        final_invoice_url: r['Final Invoice URL'] || '',
+        final_paid_at: r['Final Paid At'] || '',
+        stripe_invoice_url: r['Stripe Invoice URL'] || '',
+        fulfillment_confirmed_at: r['Fulfillment Confirmed At'] || '',
+        processing_date: r['Processing Date'] || '',
       };
     });
 

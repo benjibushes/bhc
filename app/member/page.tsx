@@ -69,6 +69,15 @@ interface MemberReferral {
   sale_amount?: number;
   closed_at?: string;
   created_at: string;
+  // F16 — engagement loop expansion
+  deposit_amount?: number;
+  deposit_paid_at?: string;
+  rancher_accepted_at?: string;
+  final_invoice_url?: string;
+  final_paid_at?: string;
+  stripe_invoice_url?: string;
+  fulfillment_confirmed_at?: string;
+  processing_date?: string;
 }
 
 type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
@@ -78,7 +87,9 @@ const statusLabels: Record<string, { label: string; style: string }> = {
   'Waitlisted': { label: 'Waitlisted — No Rancher Yet', style: 'bg-orange-100 text-orange-800' },
   'Intro Sent': { label: 'Rancher Introduced', style: 'bg-blue-100 text-blue-800' },
   'In Progress': { label: 'In Progress', style: 'bg-purple-100 text-purple-800' },
-  'Closed Won': { label: 'Completed', style: 'bg-green-100 text-green-800' },
+  'Awaiting Payment': { label: 'Deposit Invoice Ready', style: 'bg-amber-100 text-amber-900' },
+  'Slot Locked': { label: 'Slot Locked', style: 'bg-emerald-100 text-emerald-800' },
+  'Closed Won': { label: 'Beef Delivered', style: 'bg-green-100 text-green-800' },
   'Closed Lost': { label: 'Closed', style: 'bg-gray-100 text-gray-600' },
   'Rejected': { label: 'No Match Available', style: 'bg-red-100 text-red-800' },
 };
@@ -388,6 +399,95 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                                 )}
                               </div>
                             )}
+                          </div>
+                        )}
+
+                        {/* F16 — engagement branches: Awaiting Payment / Slot Locked / Closed Won */}
+                        {ref.status === 'Awaiting Payment' && (
+                          <div className="mt-3 space-y-3 text-sm text-saddle">
+                            <p className="text-charcoal font-medium">
+                              Your deposit invoice is ready. Lock your slot at {ref.rancher_name}:
+                            </p>
+                            {ref.stripe_invoice_url ? (
+                              <a
+                                href={ref.stripe_invoice_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-block px-5 py-2 bg-charcoal text-bone hover:bg-saddle text-xs uppercase tracking-widest font-semibold"
+                              >
+                                Pay deposit → {ref.deposit_amount ? `$${ref.deposit_amount}` : ''}
+                              </a>
+                            ) : (
+                              <p className="text-xs text-dust">Check your email for the Stripe link.</p>
+                            )}
+                            <p className="text-xs text-dust">
+                              Once paid, your rancher confirms the slot. Deposit becomes non-refundable at that point.
+                            </p>
+                          </div>
+                        )}
+
+                        {ref.status === 'Slot Locked' && (
+                          <div className="mt-3 space-y-2 text-sm text-saddle">
+                            <p className="text-charcoal font-medium">
+                              🔒 Slot locked at {ref.rancher_name}.
+                            </p>
+                            {ref.processing_date ? (
+                              <p>
+                                <span className="text-dust">Processing date:</span>{' '}
+                                <strong className="text-charcoal">
+                                  {new Date(ref.processing_date).toLocaleDateString()}
+                                </strong>
+                              </p>
+                            ) : (
+                              <p>Your rancher will confirm the processing date soon.</p>
+                            )}
+                            {ref.rancher_accepted_at && (
+                              <p className="text-xs text-dust">
+                                Rancher accepted {new Date(ref.rancher_accepted_at).toLocaleDateString()}.
+                                Per BHC promise, your deposit is now locked toward this slot.
+                              </p>
+                            )}
+                            {ref.final_invoice_url && !ref.final_paid_at && (
+                              <p className="pt-2">
+                                <a
+                                  href={ref.final_invoice_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-block px-5 py-2 bg-charcoal text-bone hover:bg-saddle text-xs uppercase tracking-widest font-semibold"
+                                >
+                                  Pay final invoice →
+                                </a>
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {ref.status === 'Closed Won' && (
+                          <div className="mt-3 space-y-3 text-sm">
+                            <p className="text-charcoal font-medium">
+                              ✓ Your beef has been delivered.
+                            </p>
+                            {ref.sale_amount ? (
+                              <p className="text-saddle text-xs">
+                                Final amount: <strong>${ref.sale_amount.toLocaleString()}</strong>
+                              </p>
+                            ) : null}
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              <Link
+                                href="/access"
+                                className="inline-block px-4 py-2 border border-charcoal bg-charcoal text-bone hover:bg-saddle text-xs uppercase tracking-widest font-semibold"
+                              >
+                                Re-order →
+                              </Link>
+                              {ref.rancher_slug && (
+                                <Link
+                                  href={`/r/${ref.rancher_slug}#review`}
+                                  className="inline-block px-4 py-2 border border-charcoal text-charcoal hover:bg-bone-warm text-xs uppercase tracking-widest font-semibold"
+                                >
+                                  Leave a review →
+                                </Link>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
