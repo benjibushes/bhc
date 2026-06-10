@@ -45,6 +45,13 @@ interface NBAInput {
     buyerEmail: string;
     rancherName: string;
   }>;
+  wholesale?: Array<{
+    id: string;
+    businessName: string;
+    state: string;
+    status: string;
+    daysSinceActivity: number | null;
+  }>;
 }
 
 export function computeNBA(input: NBAInput): NBAItem[] {
@@ -131,6 +138,32 @@ export function computeNBA(input: NBAInput): NBAItem[] {
       entityType: 'referral',
       entityId: r.id,
     });
+  }
+
+  // 6) Wholesale inquiries — Status=New is highest priority (no outreach yet);
+  //    then any wholesale lead stale >7 days.
+  for (const w of (input.wholesale || []).slice(0, 5)) {
+    if (w.status === 'New') {
+      items.push({
+        priority: 2,
+        type: 'send',
+        subject: `${w.businessName} (${w.state || '?'})`,
+        reason: 'Wholesale inquiry, no outreach yet',
+        action: 'Send intro + quote within 24h',
+        entityType: 'consumer',
+        entityId: w.id,
+      });
+    } else if ((w.daysSinceActivity ?? 0) >= 7) {
+      items.push({
+        priority: 3,
+        type: 'chase',
+        subject: `${w.businessName} (${w.state || '?'})`,
+        reason: `Wholesale ${w.status}, ${w.daysSinceActivity}d cold`,
+        action: 'Re-engage or close-lost',
+        entityType: 'consumer',
+        entityId: w.id,
+      });
+    }
   }
 
   // Sort by priority then return top 8

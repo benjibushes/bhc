@@ -35,7 +35,7 @@ export async function GET(req: Request) {
     calls = [];
   }
 
-  const [quizComplete, depositPending, slotsLocked, closedToday, waitlisted, ranchersActive] =
+  const [quizComplete, depositPending, slotsLocked, closedToday, waitlisted, ranchersActive, wholesaleInquiries] =
     await Promise.all([
       getAllRecords(
         TABLES.CONSUMERS,
@@ -61,6 +61,10 @@ export async function GET(req: Request) {
         TABLES.RANCHERS,
         `AND({Active Status}='Active',{Agreement Signed}=TRUE())`,
       ).catch(() => []),
+      getAllRecords(
+        TABLES.INQUIRIES,
+        `AND({Interest Type}='Wholesale',NOT({Status}='Closed Won'),NOT({Status}='Closed Lost'))`,
+      ).catch(() => []),
     ]);
 
   // F4 — composite lead score + sort quiz-complete by hottest first
@@ -72,12 +76,15 @@ export async function GET(req: Request) {
   const depositPendingFormatted = depositPending.map(formatReferral);
   const slotsLockedFormatted = slotsLocked.map(formatReferral);
 
+  const wholesaleFormatted = (wholesaleInquiries as any[]).map(formatWholesale);
+
   // F6 — Next Best Action
   const nba = computeNBA({
     calls: callsFormatted,
     quizComplete: quizFormatted,
     depositPending: depositPendingFormatted,
     slotsLocked: slotsLockedFormatted,
+    wholesale: wholesaleFormatted,
   });
 
   return NextResponse.json({
@@ -88,9 +95,38 @@ export async function GET(req: Request) {
     closedToday: closedToday.map(formatReferral),
     waitlisted: groupByState(waitlisted),
     ranchersActive: ranchersActive.length,
+    wholesale: wholesaleFormatted,
     pipeline: computePipelineValue(quizComplete, depositPending, slotsLocked, closedToday),
     nba,
   });
+}
+
+// F15 — wholesale inquiries surface on v2 desk.
+// Parses "State: XX" out of structured Notes (best signal until schema
+// adds a clean column). Returns the same shape as the retail rows so
+// the NBA engine + UI can stay consistent.
+function formatWholesale(i: any) {
+  const notes = String(i['Notes'] || i['Message'] || '');
+  const stateMatch = notes.match(/^State:\s*(.+)$/m);
+  const businessMatch = notes.match(/^Business:\s*(.+)$/m);
+  const businessTypeMatch = notes.match(/^Business Type:\s*(.+)$/m);
+  const volumeMatch = notes.match(/^Monthly Volume:\s*(.+)$/m);
+  const lastActivity = i['Last Activity At'] || i['Created At'] || i['Created Time'] || '';
+  const ageDays = lastActivity
+    ? Math.floor((Date.now() - new Date(String(lastActivity)).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  return {
+    id: i.id,
+    businessName: businessMatch?.[1]?.trim() || i['Ranch Name'] || i['Consumer Name'] || '?',
+    businessType: businessTypeMatch?.[1]?.trim() || '',
+    contactName: i['Consumer Name'] || '',
+    email: i['Consumer Email'] || '',
+    phone: i['Consumer Phone'] || '',
+    state: stateMatch?.[1]?.trim() || '',
+    monthlyVolume: volumeMatch?.[1]?.trim() || '',
+    status: String(i['Status'] || 'New'),
+    daysSinceActivity: ageDays,
+  };
 }
 
 function formatCall(r: any) {

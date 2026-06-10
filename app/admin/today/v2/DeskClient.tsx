@@ -65,6 +65,19 @@ interface NBAItem {
   entityId?: string;
 }
 
+interface DeskWholesale {
+  id: string;
+  businessName: string;
+  businessType: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  state: string;
+  monthlyVolume: string;
+  status: string;
+  daysSinceActivity: number | null;
+}
+
 interface DeskData {
   calls: any[];
   quizComplete: DeskBuyer[];
@@ -73,6 +86,7 @@ interface DeskData {
   closedToday: DeskReferral[];
   waitlisted: { state: string; count: number }[];
   ranchersActive: number;
+  wholesale?: DeskWholesale[];
   pipeline: {
     quizPotential: number;
     pendingValueCents: number;
@@ -458,6 +472,51 @@ export default function DeskClient() {
                   </span>
                   <span className="text-saddle whitespace-nowrap">{fmtUsd(r.depositAmount)}</span>
                   <AdvanceStageButton id={r.id} from="Awaiting Payment" onSuccess={tick} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {/* F15 — WHOLESALE INQUIRIES */}
+        {desk.wholesale && desk.wholesale.length > 0 && (
+          <section className="mb-8">
+            <h2 className="font-serif text-xl text-charcoal mb-3">
+              Wholesale · awaiting outreach
+              <span className="text-xs text-saddle ml-2">({desk.wholesale.length})</span>
+            </h2>
+            <ul className="space-y-1">
+              {desk.wholesale.map((w) => (
+                <li
+                  key={w.id}
+                  className="border border-divider bg-white p-3 flex justify-between text-sm gap-3"
+                >
+                  <span className="text-charcoal min-w-0 flex-1">
+                    <RotBadge days={w.daysSinceActivity ?? null} />
+                    <strong>{w.businessName}</strong>
+                    {w.businessType ? ` · ${w.businessType}` : ''}
+                    {w.state ? ` · ${w.state}` : ''}
+                    {w.monthlyVolume ? (
+                      <span className="text-xs text-saddle ml-2">vol: {w.monthlyVolume}</span>
+                    ) : null}
+                    <span
+                      className={`inline-block ml-2 text-[10px] uppercase tracking-widest px-1 ${
+                        w.status === 'New'
+                          ? 'bg-charcoal text-bone'
+                          : 'bg-bone-warm text-saddle border border-divider'
+                      }`}
+                    >
+                      {w.status}
+                    </span>
+                  </span>
+                  {w.email ? (
+                    <a
+                      href={`mailto:${w.email.toLowerCase()}?subject=Wholesale%20quote%20from%20BuyHalfCow`}
+                      className="text-[11px] uppercase tracking-widest text-charcoal underline underline-offset-2 whitespace-nowrap"
+                    >
+                      Reply
+                    </a>
+                  ) : null}
                 </li>
               ))}
             </ul>
