@@ -583,6 +583,18 @@ export async function POST(request: Request) {
       await sendConsumerConfirmation({ firstName, email, state });
     }
 
+    // F9 — signup SMS (gated by ENABLE_SMS feature flag, default OFF)
+    try {
+      const { fireSMSEvent } = await import('@/lib/smsEvents');
+      await fireSMSEvent({
+        type: 'signup',
+        consumer: record.fields,
+        vars: { firstName },
+      });
+    } catch (e: any) {
+      console.warn('[/api/consumers] signup SMS fire failed:', e?.message);
+    }
+
     // ── RESPOND TO BUYER IMMEDIATELY — everything below runs without blocking ──
     // Fire-and-forget: admin notifications, Telegram, and matching engine
     // These can take 5-10 seconds combined and don't affect the buyer's experience

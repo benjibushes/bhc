@@ -158,6 +158,28 @@ export async function POST(
       }
     }
 
+    // F9 — SMS (gated by ENABLE_SMS feature flag, default OFF)
+    try {
+      const { getAllRecords } = await import('@/lib/airtable');
+      const buyerLink = Array.isArray(referral['Buyer']) ? referral['Buyer'][0] : null;
+      let buyerRecord: any = null;
+      if (buyerLink) {
+        const { getRecord: getRec } = await import('@/lib/airtable');
+        buyerRecord = await getRec(TABLES.CONSUMERS, buyerLink).catch(() => null);
+      } else if (buyerEmail) {
+        const list = await getAllRecords(TABLES.CONSUMERS, `{Email}="${buyerEmail.toLowerCase()}"`) as any[];
+        buyerRecord = list[0] || null;
+      }
+      const { fireSMSEvent } = await import('@/lib/smsEvents');
+      await fireSMSEvent({
+        type: 'slot_locked',
+        consumer: buyerRecord,
+        vars: { firstName, ranchName },
+      });
+    } catch (e: any) {
+      console.warn('[NRD-accept] SMS fire failed:', e?.message);
+    }
+
     // Operator visibility.
     try {
       await sendTelegramMessage(

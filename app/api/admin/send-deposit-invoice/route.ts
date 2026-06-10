@@ -223,6 +223,21 @@ export async function POST(req: Request) {
     console.warn('[send-deposit-invoice] CAPI fire failed:', e?.message);
   }
 
+  // F9 — SMS event (gated by ENABLE_SMS feature flag, default OFF)
+  try {
+    const { fireSMSEvent } = await import('@/lib/smsEvents');
+    await fireSMSEvent({
+      type: 'deposit_invoice',
+      consumer: buyer,
+      vars: {
+        firstName: buyerName.split(' ')[0],
+        ranchName: productLabel.split(' from ').pop() || 'your ranch',
+      },
+    });
+  } catch (e: any) {
+    console.warn('[send-deposit-invoice] SMS fire failed:', e?.message);
+  }
+
   return NextResponse.json({
     ok: true,
     referralId,

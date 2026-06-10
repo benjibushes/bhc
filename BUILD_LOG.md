@@ -6,6 +6,50 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F9 — SMS event stubs (feature-flagged) — 2026-06-09
+
+**Status:** ✅ shipped (feature-flag OFF by default), typecheck clean.
+
+**User constraint:** "I dont have twlio setup yet" — every SMS event is a feature-flagged stub. No sends until both:
+- `ENABLE_SMS=1` env var set, AND
+- Twilio creds (`TWILIO_ACCOUNT_SID`/`AUTH_TOKEN`/`FROM_NUMBER`) set
+
+**What:** `lib/smsEvents.ts` exposes `fireSMSEvent({type, consumer, vars})`. 7 type templates (signup, quiz_invite, cal_reminder, deposit_invoice, slot_locked, refund, fulfillment) each compiled into a 160-char TCPA-compliant body. Wraps existing `sendSMSToConsumer` which enforces SMS Opt-In + Unsubscribed gates.
+
+**Wired call sites (3 of 7 — others left as helper-ready):**
+- `app/api/consumers/route.ts` — signup → `fireSMSEvent('signup')`
+- `app/api/admin/send-deposit-invoice/route.ts` — invoice fire → `fireSMSEvent('deposit_invoice')`
+- `app/api/rancher/referrals/[id]/accept/route.ts` — slot lock → `fireSMSEvent('slot_locked')`
+
+**Files touched:**
+- NEW: `lib/smsEvents.ts` — templates + dispatcher
+- MOD: 3 routes wire `fireSMSEvent` (always non-blocking try/catch)
+
+**Env vars (new):**
+- `ENABLE_SMS` (default unset = off; flip to `1` when ready)
+
+**Schema:** none new (existing `SMS Opt-In` + `Unsubscribed` on Consumers reused)
+**Side effects when flag on:** 1 SMS per gated event (when both opt-ins true + valid phone)
+**Telegram alerts:** none
+**Test cmd:**
+1. Flip `ENABLE_SMS=1` in Vercel env
+2. Set Twilio env vars
+3. Stamp a synthetic Consumer with `SMS Opt-In=true` + valid phone
+4. Trigger a signup → SMS arrives in 5-10s
+5. Verify body matches template, no opt-out (Twilio STOP keyword handled by Twilio)
+
+**Remaining 4 events (not yet wired):**
+- quiz_invite — would go in `/api/qualify` or a new abandoned-cart cron
+- cal_reminder — new cron `cal-reminder-1h` (1h before each booked call)
+- refund — `/api/admin/refund-deposit` after successful Stripe refund
+- fulfillment — `/api/rancher/referrals/[id]/send-final-invoice` after payment
+
+Wire these when business logic finalizes (call helper from each site).
+
+**Rollback:** leave `ENABLE_SMS` unset (default).
+
+---
+
 ## F8 — $497 White Glove Onboarding upsell — 2026-06-09
 
 **Status:** ✅ shipped (feature-flag OFF by default), typecheck clean. Schema fields added live.
