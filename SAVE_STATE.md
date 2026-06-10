@@ -1,122 +1,135 @@
-# Save State — 2026-06-09
+# SAVE STATE — 2026-06-10
 
-## Where we are
+HEAD: `2b40635` GO_TO_MARKET: final consolidation across F1-F13
 
-**Prod sha:** `dc1dfa8` (latest) / `980ef2c` (last code commit, was prod at save time)
+## What just shipped (F1-F13 war-ready funnel block)
 
-## What's shipped this session
+Per-feature receipts: `BUILD_LOG.md`. Daily ops: `GO_TO_MARKET.md`.
 
-1. **V2 Stripe Connect live + onboarding works** — restricted key rotated w/ V2 perms
-2. **Wizard tier_v2 mid-flow gate fixed** — no more "Already Onboarded" dump
-3. **Cal.com OAuth + Atoms integration cherry-picked** — 5 endpoints + Provider/Panel UI
-4. **Webhook bulletproofing** — Cal+Resend return 200 (no retry storms), Cal idempotency via Stripe Events table
-5. **Sales-floor pivot:**
-   - `/admin/today/v2` — single login screen, auto-refreshes 30s
-   - 4-template minimal email pipeline (`lib/emailMinimal.ts`)
-   - `EMAIL_SEQUENCES_ENABLED=false` — drip paused
-   - `/partner` + `/founders` — infrastructure positioning copy
-6. **Cron silent-fail fixes** — rancher reminders guardedSend, batch-approve match errors surface
-7. **Quiz → Cal invite (tier_v2 only)** — Ben handles upgraded ranchers' calls; legacy stays off-platform
+13 commits + 1 doc commit. All typecheck clean. All pushed to main.
 
-## Resume HERE next session
+| Feature | Status | Flag |
+|---|---|---|
+| F1 brand voice + mission lock | ✅ live | n/a |
+| F2 Meta CAPI placement (5 events) | ✅ live | n/a |
+| F3 funnel observability | ✅ live | n/a |
+| F4 composite lead score | ✅ live | n/a |
+| F5 Resend open/click webhook | ✅ live | needs Resend subscription |
+| F6 Next-Best-Action widget | ✅ live | n/a |
+| F7 $49 reservation hold | ✅ shipped, OFF | `ENABLE_RESERVATION_HOLD` |
+| F8 $497 white glove | ✅ shipped, OFF | `ENABLE_WHITE_GLOVE` |
+| F9 SMS event stubs | ✅ shipped, OFF | `ENABLE_SMS` |
+| F10 friction polish | ✅ live | `NEXT_PUBLIC_REQUIRE_PHONE` (A/B) |
+| F11 click-to-call + Whisper | ✅ shipped, OFF | `ENABLE_CLICK_TO_CALL` |
+| F12 deal-rot + stage advance | ✅ live | n/a |
+| F13 email engage badges | ✅ live | needs F5 data flowing |
 
-### Pending: mass onboarding batch
+## Schema added live (via Airtable MCP)
 
-14 legacy ranchers ready to invite. Side-effect inventory complete in last response.
+**Consumers (9):**
+- `Email Opens`, `Email Clicks`, `Last Email Event/Delivered/Opened/Clicked At`
+- `Reservation Hold Paid At` / `Session Id` / `Refunded At`
 
-**Skip list:**
-- `rec3K0LsDGQKONNnb` Jesse Zimmerman — already invited (has URL)
-- `recsUxUMrEY4fNtp4` Jesse Gajewski — dupe of Renick Valley
-- Possibly skip `recBkfqjMQ2txI8AM` Frank Fitzpatrick / 5 Bar Beef (verify Active Status)
-- Possibly skip `recYCVL85vofeqXAd` Beckie Elway (verify state)
+**Ranchers (2):**
+- `White Glove Paid At` / `Session Id`
 
-**Invite roster (14 if no extra skips):**
+**Email Sends (6):**
+- `Last Event At`, `Delivered/Opened/Clicked At`, `Open Count`, `Click Count`
+
+**Conversations (4):**
+- `Recording URL`, `Transcript`, `Call Duration Seconds`, `Call Sid`
+
+## NEXT — pick up here
+
+### Verify ship (do before anything)
+1. `curl https://www.buyhalfcow.com/api/health | jq .` — SHA should be `2b40635`
+2. Synthetic E2E on prod — `/access` → `/qualify` → desk shows buyer with lead score badge
+3. Meta Events Manager Test Events — 5 events fire deduped, Match Quality ≥6/10
+
+### User-side ops (must do, can't automate)
+- Resend dashboard → Webhooks → existing endpoint → add events: `email.delivered`, `email.opened`, `email.clicked`. Until this, F5/F13 surfaces empty
+- Decide on flag flips (none required, but $49 hold is strongest revenue lever)
+- When Twilio ready: set `TWILIO_*` + `BHC_OPERATOR_PHONE` + flip `ENABLE_SMS=1` + `ENABLE_CLICK_TO_CALL=1`
+
+### Then biggest product gaps after F13
+- **Rancher dashboard parity** — F12 stage advance works on admin, rancher UI still old
+- **Wholesale + B2B closed-loop** — `/wholesale` lands in Airtable but no auto-routing
+- **Buyer member portal** — `/member` bare-bones, no engagement loop after qualified
+
+## Outstanding pre-F1 tasks (not new, still pending)
+
+- Task #6 Phase E: Merge to main + prod verify + post-merge 3-pass
+- Task #67 Wave 3 — G1-G5 backend hardening
+- Task #74 Wave 4 — H1-H6 backend polish
+
+## Files touched in this block
+
 ```
-recYCVL85vofeqXAd  Beckie Elway        MT  Foodstead
-rec2yADvi1fODSrfj  Russell Gift        OK  Gift Farms LLC
-rec2ni15F7NXtY9Ij  Matt & Kelsey Owens NE  Champion Valley Farm
-recCdCcZZdruSfG5E  Jason Flowers       NC  JC's Ranch
-recNKfctgHlrWZwdB  Trinity Smith       OK  Rafter S7 Farms
-recUpqF6yUAULpbPG  John & Kellie Ashcraft TX  Ashcraft Beef
-recVTmaMqVw191TQv  Eli Melton          TN  2M Cattle Co.
-recWznuhFgcQQ14R4  Ace Hartsock        CO  The High Lonesome Ranch
-recawSbn7dhszHQl5  Joseph & Jamie Hewitson CO All Natural Homestead Beef
-recfIOyVL4hEQfSJ6  Matt Hirschi        UT  Brimstone Beef
-recnLbRqHQsnepv3j  Kristi Carrier      ME  Rocky Ridge Livestock LLC
-rect0t5KrJLaWdEpd  Linda Anspach       OR  DD Ranch
-recy4vT2788bxLTkD  Katie Hunter        MO  Silverline Cattle Co
-recBkfqjMQ2txI8AM  Frank Fitzpatrick   CA  5 Bar Beef (verify first)
+NEW
+  lib/leadScore.ts            (F4)
+  lib/nextBestAction.ts       (F6)
+  lib/reservationHold.ts      (F7)
+  lib/whiteGlove.ts           (F8)
+  lib/smsEvents.ts            (F9)
+  lib/clickToCall.ts          (F11)
+  app/api/admin/funnel-conversion/route.ts          (F3)
+  app/api/qualify/[id]/reservation-hold/route.ts    (F7)
+  app/api/rancher/white-glove/route.ts              (F8)
+  app/api/qualify/resend-link/route.ts              (F10)
+  app/api/cron/abandoned-quiz-nudge/route.ts        (F10)
+  app/api/admin/click-to-call/route.ts              (F11)
+  app/api/webhooks/twilio-recording/route.ts        (F11)
+  app/api/admin/referrals/[id]/stage/route.ts       (F12)
+  docs/BHC-BRAND.md           (F1)
+  BUILD_LOG.md
+  GO_TO_MARKET.md
+  SAVE_STATE.md (this file)
+
+MOD
+  app/components/FullHomepage.tsx                   (F1)
+  app/founders/page.tsx                             (F1)
+  app/access/page.tsx                               (F1 + F10)
+  lib/emailMinimal.ts                               (F1)
+  app/qualify/[consumerId]/page.tsx                 (F2 + F10)
+  app/api/qualify/route.ts                          (F2)
+  app/api/admin/send-deposit-invoice/route.ts       (F2 + F9)
+  app/api/webhooks/cal/route.ts                     (F2)
+  lib/metaCapi.ts                                   (F2)
+  app/api/webhooks/resend/route.ts                  (F5)
+  app/api/admin/desk/route.ts                       (F3 + F4 + F6 + F12 + F13)
+  app/admin/today/v2/DeskClient.tsx                 (F3 + F4 + F6 + F12 + F13)
+  app/api/webhooks/stripe/route.ts                  (F7 + F8)
+  app/api/rancher/referrals/[id]/accept/route.ts    (F9)
+  app/api/consumers/route.ts                        (F9)
+  vercel.json                                       (F10 cron registration)
 ```
 
-### How to fire the batch (when ready)
+## Commit list (newest first)
 
-Endpoint: `POST /api/admin/ranchers/[id]/send-v2-upgrade`
-
-Loop in admin-auth bash:
-```bash
-for ID in <rancher-ids>; do
-  curl -sS -X POST "https://www.buyhalfcow.com/api/admin/ranchers/$ID/send-v2-upgrade" \
-    -H "Cookie: bhc-admin-auth=<token>" \
-    -H "Content-Type: application/json" -d '{}'
-  sleep 6
-done
 ```
-
-Each fires: upgrade-invite email + Telegram alert + Migration Status='invited' + Migration Deadline=+14d.
-
-### Buyer-side polish remaining (B1-B4, low priority)
-
-- **B1** `lib/email.ts:417-445` — gate intro email pricing table on `pricingModel === 'tier_v2'`
-- **B2** `app/api/qualify/route.ts:244` — also check `Stripe Connect Status === 'active'` before offering deposit
-- **B3** `app/api/matching/suggest/route.ts:157-170` — direct-match path mirror deposit info
-- **B4** `app/checkout/[refId]/deposit/page.tsx:267` — add "If rancher declines, full refund within 2 business days" copy
-
-These bite only after first tier_v2 buyer matches, so 24-48h window to ship while ranchers KYC.
-
-### Phase 1.5 — admin deposit-picker modal
-
-`/admin/today/v2` Send Deposit button currently opens `/admin/send-deposit?buyer=...&state=...` in a new tab. That route doesn't exist yet. Build:
-- Rancher dropdown (filtered to tier_v2 + Active + state match)
-- Cut tier picker (Quarter / Half / Whole)
-- Confirm → POST `/api/admin/send-deposit-invoice` w/ {buyerId, rancherId, tier}
-- Endpoint exists in plan but not yet built (`app/api/admin/send-deposit-invoice/route.ts`)
-
-## Key env state (Vercel prod)
-
-- `STRIPE_SECRET_KEY` = `rk_live_...RGi9RkXY` (V2 Connect perms)
-- `EMAIL_SEQUENCES_ENABLED` = `false` (drip paused)
-- `CAL_OAUTH_CLIENT_ID` + `CAL_OAUTH_CLIENT_SECRET` set
-- `BHC_OPERATOR_CAL_URL` = `https://cal.com/ben-beauchman-1itnsg/sales` (default fallback)
-
-## Synthetic test rancher
-
-`recBVR538JW2ZfTuX` E2E Test Jesse — in `tier_v2` + `onboarding` Connect state. Reset to baseline w/:
-```bash
-curl -sS -X PATCH "https://api.airtable.com/v0/appgLT4z009iwAfhs/Ranchers/recBVR538JW2ZfTuX" \
-  -H "Authorization: Bearer $AT_KEY" -H "Content-Type: application/json" \
-  -d '{"fields":{"Tier":"","Subscription Status":"","Stripe Connect Status":"","Stripe Connect Account Id":"","Stripe Subscription Id":"","Pricing Model":"legacy","Migration Status":"invited"},"typecast":true}'
+2b40635 GO_TO_MARKET: final consolidation across F1-F13
+ddc7506 F13: Email open/click badges on desk buyer cards
+65c06aa F12: Deal-rot badges + stage-advance on desk
+48bb53f F11: Click-to-call + Whisper transcribe (feature-flag OFF default)
+9efaa15 F10: Funnel friction polish — phone toggle + JWT recovery + abandoned cron
+b9e770e F9: SMS event stubs (feature-flag OFF default)
+5b38553 F8: $497 White Glove Onboarding stub (feature-flag OFF default)
+2bf5053 F7: $49 Reservation Hold stub (feature-flag OFF default)
+aa587fe F6: Next-Best-Action widget on desk
+75cf135 F5: Resend open/click/delivered → engagement log
+87e524f F4: Composite lead score + desk sort
+194963a F3: Funnel observability — desk card with stages + UTM source breakdown
+d5c6b0c feat(F2): pixel placement — CompleteRegistration + Schedule + InitiateCheckout
+26cca7d feat(F1): brand voice + mission lock across all surfaces
+0704399 spec: war-ready funnel + sales floor v1 design — 6 decisions locked, 13 features, 4 phases
 ```
-
-## What WORKS end-to-end (verified live)
-
-- Wizard URL → tier picker (4 cards) → Legacy Connect click → V2 acct creates → Connect bank URL → Stripe Express onboarding
-- Quiz → matching/suggest → tier_v2 buyer gets Cal invite, legacy buyer gets normal intro
-- `/admin/today/v2` loads, auto-refreshes, shows pipeline cards
-- Webhook handlers idempotent + signature-verified
-- Commission-invoices cron skips tier_v2 ranchers (no double-charge)
-
-## Risk gaps to know
-
-- Phase 1.5 modal stub → manual Send Deposit Invoice route not built yet (Ben can fire via curl in meantime)
-- B1-B4 buyer-side polish unshipped → only matters after first matched tier_v2 buyer
-- Rancher dashboard Stripe Connect status section — verify renders cleanly when rancher first lands post-KYC
 
 ## Resume command
 
-When picking back up:
+```bash
+cd "/Users/benji.bushes/BHC/untitled folder/bhc"
+git log --oneline -5
+cat SAVE_STATE.md
 ```
-read SAVE_STATE.md
-verify prod sha: curl https://www.buyhalfcow.com/api/version
-git pull
-proceed w/ mass onboarding batch (skip Jesse Z + dupes)
-```
+
+Then pick from "NEXT" section above.
