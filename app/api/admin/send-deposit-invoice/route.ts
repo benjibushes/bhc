@@ -96,6 +96,10 @@ export async function POST(req: Request) {
     TABLES.REFERRALS,
     `AND(LOWER({Buyer Email})="${safeEmail}",FIND("${rancherId}",ARRAYJOIN({Rancher},","))>0)`,
   );
+  // S2 (2026-06-10): write Deposit Amount + Total Sale Amount on the
+  // Referral when we know them. Without these, downstream gates
+  // (rancher accept, send-final-invoice) silently 409.
+  const fullSaleAmount = fullSaleDollars;
   let referralId = '';
   if (existingReferrals.length > 0) {
     referralId = existingReferrals[0].id;
@@ -104,6 +108,8 @@ export async function POST(req: Request) {
       await updateRecord(TABLES.REFERRALS, referralId, {
         'Status': 'Awaiting Payment',
         'Order Type': cutTier,
+        'Deposit Amount': depositDollars,
+        'Total Sale Amount': fullSaleAmount > 0 ? fullSaleAmount : depositDollars,
       });
     } catch (e: any) {
       console.warn('[send-deposit-invoice] referral update failed:', e?.message);
@@ -118,6 +124,8 @@ export async function POST(req: Request) {
       'Order Type': cutTier,
       'Approval Status': 'admin-approved',
       'Match Type': 'Local',
+      'Deposit Amount': depositDollars,
+      'Total Sale Amount': fullSaleAmount > 0 ? fullSaleAmount : depositDollars,
     });
     referralId = (created as any).id;
   }

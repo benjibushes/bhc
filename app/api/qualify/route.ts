@@ -82,7 +82,10 @@ export async function POST(request: Request) {
   // pins the originally-selected rancher instead of falling back to generic
   // state-match. Without this, a buyer clicking Rancher A's ad gets matched
   // to Rancher B in the same state by Performance Score order.
-  const { token, consumerId, answers, campaign } = body || {};
+  // S5 (2026-06-10): eventId comes from CLIENT so server CAPI + client Pixel
+  // share the same event_id for Meta dedup. Falls back to server-mint if
+  // client didn't send (older clients).
+  const { token, consumerId, answers, campaign, eventId: clientEventId } = body || {};
   if (!token || !consumerId || !answers) {
     return NextResponse.json({ error: 'Missing token, consumerId, or answers' }, { status: 400 });
   }
@@ -345,9 +348,12 @@ export async function POST(request: Request) {
         fbp: cookies.fbp,
         fbc: cookies.fbc,
       });
+      // S5 (2026-06-10): use client-minted event_id when present so Meta
+      // dedupes the two fires within the 7-day window.
+      const serverEventId = clientEventId || `qualify-server-${consumerId}-${completedAt}`;
       fireCapi([{
         event_name: 'CompleteRegistration',
-        event_id: `qualify-server-${consumerId}-${completedAt}`,
+        event_id: serverEventId,
         event_time: Math.floor(Date.now() / 1000),
         action_source: 'website',
         event_source_url: `${SITE_URL}/qualify/${consumerId}`,

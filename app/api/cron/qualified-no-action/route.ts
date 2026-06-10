@@ -74,10 +74,14 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // valid abandon-cart candidate. The per-referral lookup below additionally
   // requires Status='Intro Sent', so referrals that already moved to Closed
   // Won (deposit paid) won't trigger a nudge anyway.
+  // S8 (2026-06-10): use IS_AFTER / IS_BEFORE for dateTime comparison —
+  // string > / < on dateTime fields is unreliable across Airtable versions.
+  // qualified-no-action's 0 matches is partially explained by the 4h window
+  // being tight (qualified buyers are quickly routed if rancher available).
   const formula = `AND(
     NOT({Qualified At} = BLANK()),
-    {Qualified At} > '${cutoffStart}',
-    {Qualified At} < '${cutoffEnd}',
+    IS_AFTER({Qualified At}, '${cutoffStart}'),
+    IS_BEFORE({Qualified At}, '${cutoffEnd}'),
     {Buyer Stage} != 'CLOSED',
     {Unsubscribed} != TRUE(),
     {Bounced} != TRUE(),

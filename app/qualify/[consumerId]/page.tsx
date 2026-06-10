@@ -105,6 +105,11 @@ export default function QualifyPage({
     setSubmitting(true);
     setError('');
     try {
+      // S5 (2026-06-10): mint event_id on the CLIENT so client Pixel + server
+      // CAPI fire with the SAME event_id and Meta can dedupe. Previously the
+      // server minted its own `qualify-server-{id}-{ISO}` → no dedup → Meta
+      // counted CompleteRegistration twice per qualified buyer.
+      const eventId = `qualify-${consumerId}-${Date.now()}`;
       const res = await fetch('/api/qualify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -112,6 +117,7 @@ export default function QualifyPage({
           token,
           consumerId,
           answers: { tier, timing, storage, ack },
+          eventId,
           // Preserve rancher-page-lead pinning through the quiz.
           ...(campaign && campaign.startsWith('rancher-') ? { campaign } : {}),
         }),
@@ -129,13 +135,11 @@ export default function QualifyPage({
       // step. event_id ties client+server fires per Meta dedup spec.
       try {
         const { track } = await import('@/lib/track');
-        const eventId = `qualify-${consumerId}-${Date.now()}`;
         track('CompleteRegistration', {
           orderType: tier,
           value: j.depositAmount || 0,
           event_id: eventId,
         });
-        // Also POST eventId back so server CAPI can dedup (next ship).
       } catch { /* non-fatal */ }
     } catch (e: any) {
       setError(e?.message || 'Network error. Try again.');

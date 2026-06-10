@@ -414,15 +414,22 @@ export async function POST(request: Request) {
         // Flip Payments row pending → succeeded (idempotent — no-op on retry).
         await markDepositSucceeded(pi.id);
 
-        // Flip Referral → Closed Won. Sale Amount = depositCents (the rancher's
-        // self-selected deposit, NOT the buyer's total charge which includes
-        // BHC service fee). Keeps rancher analytics + commission math clean.
-        await recordClose({
-          referralId,
-          rancherId,
-          outcome: 'won',
-          saleAmount: depositCents / 100,
-        });
+        // S1 (2026-06-10): NRD policy — deposit pay flips Referral to
+        // `Awaiting Payment`, NOT Closed Won. Rancher must tap Accept
+        // Slot before the deposit becomes non-refundable. Closed Won
+        // fires on the FINAL invoice settlement path above.
+        // Stamps Deposit Amount + Deposit Paid At so downstream gates
+        // (rancher accept, send-final-invoice) can proceed.
+        try {
+          await updateRecord(TABLES.REFERRALS, referralId, {
+            'Status': 'Awaiting Payment',
+            'Deposit Amount': depositCents / 100,
+            'Deposit Paid At': new Date().toISOString(),
+            'Last Buyer Activity At': new Date().toISOString(),
+          });
+        } catch (e: any) {
+          console.error('[stripe webhook] deposit referral stamp failed:', e?.message);
+        }
 
         // ── Funnel event — deposit_paid (largest LTV event on platform) ──
         // P0 audit fix: brand-partner + founder flows BOTH fire funnel +

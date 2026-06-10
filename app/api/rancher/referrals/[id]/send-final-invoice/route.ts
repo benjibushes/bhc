@@ -123,8 +123,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'This referral does not belong to you' }, { status: 403 });
   }
 
-  // Preconditions on referral state
-  const depositPaid = !!referral['Deposit Paid'] || !!referral['Deposit Paid At'];
+  // Preconditions on referral state.
+  // S4 (2026-06-10): also accept on Status='Slot Locked' (post-rancher-
+  // accept) since the only way to get there is via deposit pay → accept.
+  // S4: `Deposit Paid` boolean field doesn't exist; rely on Deposit Paid At
+  // OR the status fallback for historical referrals.
+  const referralStatus = String(referral['Status'] || '');
+  const depositPaid = !!referral['Deposit Paid At']
+    || referralStatus === 'Awaiting Payment'
+    || referralStatus === 'Slot Locked';
   if (!depositPaid) {
     return NextResponse.json(
       { error: 'Deposit must be paid before sending final invoice. Wait for buyer to complete deposit checkout.' },

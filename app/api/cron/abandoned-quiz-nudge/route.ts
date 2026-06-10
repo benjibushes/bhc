@@ -60,11 +60,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
   const candidates = await getAllRecords(
     TABLES.CONSUMERS,
+    // S7 (2026-06-10): `{Created Time}` is Airtable metadata, NOT a field.
+    // Filter formula must use `CREATED_TIME()` function. Schema has `Created`
+    // (date) but it's only populated on signup form — use CREATED_TIME() for
+    // reliability across all signup paths.
     `AND(
       {Status}="Approved",
       {Qualified At}="",
-      IS_AFTER({Created Time}, "${cutoffEarly}"),
-      IS_BEFORE({Created Time}, "${cutoffLate}"),
+      IS_AFTER(CREATED_TIME(), "${cutoffEarly}"),
+      IS_BEFORE(CREATED_TIME(), "${cutoffLate}"),
       NOT({Email}=""),
       {Unsubscribed}!=1,
       {Bounced}!=1

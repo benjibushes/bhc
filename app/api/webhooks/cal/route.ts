@@ -357,6 +357,24 @@ export async function POST(request: Request) {
           }
         }
 
+        // S6 (2026-06-10): log buyer-sales-call booking to Conversations
+        // (parity w/ R4 buyer↔rancher branch). Activity feed on rancher
+        // pages + Ben's desk see every cal booking that goes through.
+        try {
+          const { createRecord: createConv } = await import('@/lib/airtable');
+          await createConv(TABLES.CONVERSATIONS, {
+            'Timestamp': new Date().toISOString(),
+            'Direction': 'outbound',
+            'From': 'cal.com',
+            'To': attendeeEmail,
+            'Subject': `Sales call ${triggerEvent} — ${eventTitle}`,
+            'Body': `${triggerEvent} at ${dateDisplay}.${meetingUrl ? ` Meeting: ${meetingUrl}` : ''} Referral: ${referral?.id || 'none'}.`,
+            'Sender Type': 'system',
+          });
+        } catch (e: any) {
+          console.warn('[cal webhook] buyer-sales Conversations log skipped:', e?.message);
+        }
+
         return NextResponse.json({
           success: true,
           event: triggerEvent,

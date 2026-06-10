@@ -96,8 +96,13 @@ export async function POST(
     // Gate: only accept once a deposit actually exists. Without this a rancher
     // could lock a buyer in before any money changed hands — destroying the
     // refund-window protection from the buyer side.
+    // S3 (2026-06-10): Accept on EITHER Deposit Paid At OR Status='Awaiting
+    // Payment' (legacy path that didn't stamp Deposit Paid At). The Stripe
+    // webhook fix (S1) now stamps Deposit Paid At, but historic referrals
+    // already in Awaiting Payment need a fallback.
     const depositPaidAt = referral['Deposit Paid At'];
-    if (!depositPaidAt) {
+    const referralStatus = String(referral['Status'] || '');
+    if (!depositPaidAt && referralStatus !== 'Awaiting Payment') {
       return NextResponse.json(
         {
           error: 'Cannot accept yet — buyer has not paid deposit',
@@ -120,10 +125,13 @@ export async function POST(
     const nowIso = new Date().toISOString();
 
     // Stamp the record. Append to Notes so the audit trail is on the row.
+    // S3 (2026-06-10): also flip Status to `Slot Locked` so downstream
+    // gates (admin desk pipeline, /member buyer page) see the right state.
     try {
       const existingNotes = String(referral['Notes'] || '');
       await updateRecord(TABLES.REFERRALS, id, {
         'Rancher Accepted At': nowIso,
+        'Status': 'Slot Locked',
         'Notes':
           `[NRD-accept ${nowIso.slice(0, 16)}] ${rancherName} confirmed processing slot. ${existingNotes}`.slice(
             0,
