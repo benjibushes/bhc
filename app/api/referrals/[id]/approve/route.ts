@@ -133,7 +133,10 @@ export async function PATCH(
           </body>
           </html>
         `,
-      });
+        // T3 (2026-06-10): tag templateName so cap whitelist applies.
+        // Rancher manual-approve intro is revenue-critical.
+        templateName: 'sendReferralApprovedIntro',
+      } as any);
       } catch (emailErr) {
         console.error(`Failed to send intro email to ${rancherEmail}:`, emailErr);
       }

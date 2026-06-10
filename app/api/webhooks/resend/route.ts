@@ -31,10 +31,34 @@ export async function POST(request: Request) {
       });
       if (!verify.ok) {
         console.warn('[resend] signature rejected:', verify.reason);
+        // T5 (2026-06-10): Telegram alert on Svix sig fail. Lost bounce/
+        // complaint visibility = suppression list breaks = sender rep tanks.
+        try {
+          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+          await sendOperatorSignal({
+            urgency: 'loud',
+            kind: 'system-error',
+            summary: 'Resend webhook SIGNATURE FAIL',
+            detail: `${verify.reason || 'unknown'} — bounce/complaint events dropping. Verify RESEND_WEBHOOK_SECRET in Vercel matches Resend dashboard.`,
+            dedupeKey: 'resend-sig-fail',
+            dedupeWindowMs: 5 * 60 * 1000,
+          });
+        } catch {}
         return NextResponse.json({ ok: false, error: 'invalid signature' }, { status: 401 });
       }
     } else if (process.env.NODE_ENV === 'production') {
       console.error('[resend] RESEND_WEBHOOK_SECRET unset in prod — refusing all requests');
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: 'Resend webhook secret UNSET in prod',
+          detail: 'All Resend events being rejected. Set RESEND_WEBHOOK_SECRET in Vercel env.',
+          dedupeKey: 'resend-secret-missing',
+          dedupeWindowMs: 60 * 60 * 1000,
+        });
+      } catch {}
       return NextResponse.json({ ok: false, error: 'webhook secret not configured' }, { status: 401 });
     }
     const body = JSON.parse(rawBody);

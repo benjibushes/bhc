@@ -74,6 +74,20 @@ export async function createRecord(tableName: string, fields: any) {
       const unknownField = msg.match(/Unknown field name: "([^"]+)"/);
       if (unknownField && attempt < maxRetries) {
         console.warn(`Airtable: stripping unknown field "${unknownField[1]}" from ${tableName}`);
+        // T4 (2026-06-10): Telegram alert on silent-strip — the 2026-05-06
+        // chaos pattern. Throttled per (table, field) so a single bad ship
+        // doesn't flood Ben.
+        try {
+          const { sendOperatorSignal } = await import('./operatorSignal');
+          await sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'system-error',
+            summary: `Airtable strip ${tableName}.${unknownField[1]}`,
+            detail: `Code wrote a field that doesn't exist on the table. Silent-strip retry succeeded but the data is LOST. Add the field via Airtable MCP or remove the write.`,
+            dedupeKey: `airtable-strip:${tableName}:${unknownField[1]}`,
+            dedupeWindowMs: 24 * 60 * 60 * 1000, // 1 alert per (table,field) per day
+          });
+        } catch {}
         delete currentFields[unknownField[1]];
         continue;
       }
@@ -85,6 +99,17 @@ export async function createRecord(tableName: string, fields: any) {
         const badKey = Object.keys(currentFields).find(k => String(currentFields[k]) === badValue);
         if (badKey) {
           console.warn(`Airtable: stripping field "${badKey}" with invalid select value from ${tableName}`);
+          try {
+            const { sendOperatorSignal } = await import('./operatorSignal');
+            await sendOperatorSignal({
+              urgency: 'normal',
+              kind: 'system-error',
+              summary: `Airtable bad-choice strip ${tableName}.${badKey}`,
+              detail: `Wrote value "${badValue}" but it's not a valid singleSelect option. Add the choice to the field or fix the write.`,
+              dedupeKey: `airtable-badchoice:${tableName}:${badKey}:${badValue}`,
+              dedupeWindowMs: 24 * 60 * 60 * 1000,
+            });
+          } catch {}
           delete currentFields[badKey];
           continue;
         }
@@ -224,6 +249,17 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
       const unknownField = msg.match(/Unknown field name: "([^"]+)"/);
       if (unknownField && attempt < maxRetries) {
         console.warn(`Airtable: stripping unknown field "${unknownField[1]}" from ${tableName} update`);
+        try {
+          const { sendOperatorSignal } = await import('./operatorSignal');
+          await sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'system-error',
+            summary: `Airtable strip ${tableName}.${unknownField[1]} (update)`,
+            detail: `updateRecord wrote a field that doesn't exist. Data lost. Fix: add field via MCP or remove the write.`,
+            dedupeKey: `airtable-strip-update:${tableName}:${unknownField[1]}`,
+            dedupeWindowMs: 24 * 60 * 60 * 1000,
+          });
+        } catch {}
         delete currentFields[unknownField[1]];
         continue;
       }
@@ -231,6 +267,17 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
       const badValueField = msg.match(/Field "([^"]+)" cannot accept/);
       if (badValueField && attempt < maxRetries) {
         console.warn(`Airtable: stripping incompatible field "${badValueField[1]}" from ${tableName} update`);
+        try {
+          const { sendOperatorSignal } = await import('./operatorSignal');
+          await sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'system-error',
+            summary: `Airtable type-mismatch ${tableName}.${badValueField[1]}`,
+            detail: `Wrote wrong type to field. Strip + retry succeeded but data is lost.`,
+            dedupeKey: `airtable-type:${tableName}:${badValueField[1]}`,
+            dedupeWindowMs: 24 * 60 * 60 * 1000,
+          });
+        } catch {}
         delete currentFields[badValueField[1]];
         continue;
       }

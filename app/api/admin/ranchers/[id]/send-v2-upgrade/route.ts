@@ -159,6 +159,10 @@ export async function POST(
         to: email,
         subject,
         html,
+        // T2 (2026-06-10): tag templateName so frequency-cap whitelist
+        // bypasses the 3/wk cap. Migration invite is revenue-critical
+        // (closes legacy → tier_v2 transition).
+        templateName: 'sendV2UpgradeInvite',
         // Tag Reply-To so the rancher's reply lands in the inbound webhook
         // + Conversations table for tracking who has questions vs who acts.
         _replyContext: { type: 'rnc', recordId: id },

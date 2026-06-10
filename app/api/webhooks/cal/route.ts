@@ -173,6 +173,60 @@ export async function POST(request: Request) {
     const isBuyerSalesCall =
       eventTypeSlug.includes('sales') ||
       /sales call|buyer.*call|reserve.*share/i.test(eventTitle);
+    // M2 (2026-06-10): rancher migration call detection. Ben's `/15min`
+    // event type is the migration onboarding slot. Used to transition
+    // Rancher.Migration Status from invited → call_scheduled (BOOKING_
+    // CREATED) and → call_completed (MEETING_ENDED).
+    const isMigrationCall =
+      eventTypeSlug.includes('15min') ||
+      eventTypeSlug.includes('migration') ||
+      /migration|upgrade.*call|tier.*v2/i.test(eventTitle);
+
+    // ── RANCHER MIGRATION CALL (legacy → tier_v2) ─────────────────────
+    // M2 (2026-06-10): when a legacy rancher books Ben's `/15min` slot,
+    // transition Migration Status forward so the migration-deadline
+    // cron sees the right state and stops nudging.
+    if (isMigrationCall && !isBuyerSalesCall) {
+      try {
+        const migMeetingUrl = String(
+          bookingPayload.metadata?.videoCallUrl || bookingPayload.location || ''
+        );
+        const ranchers = await getAllRecords(
+          TABLES.RANCHERS,
+          `LOWER({Email}) = "${escapeAirtableValue(attendeeEmail)}"`
+        ) as any[];
+        const rancher = ranchers[0];
+        if (rancher) {
+          if (triggerEvent === 'BOOKING_CREATED' || triggerEvent === 'BOOKING_RESCHEDULED') {
+            await updateRecord(TABLES.RANCHERS, rancher.id, {
+              'Migration Status': 'call_scheduled',
+              'Migration Call Booked At': new Date().toISOString(),
+            }).catch((e: any) => console.warn('[cal webhook] migration booked stamp failed:', e?.message));
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `📅 <b>Migration call booked</b>\n\n${rancher['Operator Name'] || rancher['Ranch Name']} (${rancher['State'] || '?'}) booked Ben's /15min migration slot @ ${dateDisplay}.${migMeetingUrl ? `\n🔗 ${migMeetingUrl}` : ''}`
+            ).catch(() => {});
+          } else if (triggerEvent === 'MEETING_ENDED') {
+            await updateRecord(TABLES.RANCHERS, rancher.id, {
+              'Migration Call Completed At': new Date().toISOString(),
+            }).catch((e: any) => console.warn('[cal webhook] migration completed stamp failed:', e?.message));
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `✅ <b>Migration call ended</b>\n\n${rancher['Operator Name'] || rancher['Ranch Name']} — next step: Stripe Connect + wizard step 4 (tier_v2 deposits live).`
+            ).catch(() => {});
+          }
+          return NextResponse.json({
+            success: true,
+            event: triggerEvent,
+            path: 'rancher-migration-call',
+            rancher: rancher['Operator Name'] || rancher['Ranch Name'],
+          });
+        }
+      } catch (e: any) {
+        console.warn('[cal webhook] migration branch error:', e?.message);
+        // Fall through to next branch
+      }
+    }
 
     // ── BUYER SALES CALL (Operator tier) ──────────────────────────────
     // When eventType slug indicates sales call, look up the attendee in

@@ -85,9 +85,20 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
   // Only legacy ranchers with an invite already sent. Other statuses (not_invited,
   // completed, paused_overdue) are out of scope for this cron.
+  // M1 (2026-06-10): EXCLUDE Active Status='Paused' rows. Renick Valley
+  // Zimmerman (rec3K0LsDGQKONNnb) is paused as a known duplicate of
+  // Gajewski. Without this filter, the cron would email Day 7/4/2/1
+  // nudges to jesse@renickvalley.com and auto-pause again on Day 14.
   const inFlight = ranchers.filter((r) => {
     const pm = String(r['Pricing Model'] || '').toLowerCase();
     const ms = String(r['Migration Status'] || '');
+    const activeStatusObj: any = r['Active Status'];
+    const activeStatus = String(
+      typeof activeStatusObj === 'object' && activeStatusObj?.name
+        ? activeStatusObj.name
+        : activeStatusObj || ''
+    );
+    if (activeStatus === 'Paused') return false;
     return pm !== 'tier_v2' && ['invited', 'call_scheduled', 'upgrading'].includes(ms);
   });
 

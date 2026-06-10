@@ -92,7 +92,33 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'quiz_complete_cal_invite',
   'buyer_deposit_invoice',
   'slot_locked_confirmation',
+  // T1 (2026-06-10): templates that were silently dropping at cap.
+  // cron/cal-reminder-1h sends 1h-before-call notice — buyer typically
+  // already got 3 emails (welcome+intro+cal-invite) this week.
+  'sendCalReminder1h',
+  // F10 abandon-quiz nudge for buyers who signed up but never quizzed.
+  // Same cap collision as above.
+  'sendAbandonedQuizNudge',
+  // F10 expired-link recovery (POST /api/qualify/resend-link).
+  'sendQuizResendLink',
+  // T2 (2026-06-10): v2-upgrade invite for 14 legacy ranchers; rancher
+  // got their migration nudge + agreement emails this same week.
+  'sendV2UpgradeInvite',
+  // Customer-expected /access submit confirmation. Rare to hit cap
+  // (first interaction) but whitelisted for safety.
+  'sendConsumerConfirmation',
+  // T3 (2026-06-10): rancher intro after manual referral approval.
+  // Manual-approve path bypassed cap; whitelist makes it consistent.
+  'sendReferralApprovedIntro',
 ]);
+
+// T1 (2026-06-10): dynamic-name templates whose names contain a stage
+// or timestamp variable (e.g. `rancher_docs_reminder_${stage}`). Each
+// fires exactly once per stage transition + Notes dedup, so cap is
+// noise. Match by prefix.
+export const TRANSACTIONAL_WHITELIST_PREFIXES: readonly string[] = [
+  'rancher_docs_reminder_',
+];
 
 /**
  * Per-process memoization to avoid hammering Airtable with the same
@@ -148,6 +174,10 @@ export async function checkFrequencyCap(
 
   // Transactional whitelist — bypass the rolling 7-day cap.
   if (TRANSACTIONAL_WHITELIST.has(templateName)) {
+    return { ok: true, weekCount: 0, cap };
+  }
+  // Prefix match (e.g. `rancher_docs_reminder_${stage}`).
+  if (TRANSACTIONAL_WHITELIST_PREFIXES.some((p) => templateName.startsWith(p))) {
     return { ok: true, weekCount: 0, cap };
   }
 
@@ -254,5 +284,6 @@ export async function logEmailSend(input: {
  * lookup for transactional templates (perf).
  */
 export function isTransactionalTemplate(templateName: string): boolean {
-  return TRANSACTIONAL_WHITELIST.has(templateName);
+  if (TRANSACTIONAL_WHITELIST.has(templateName)) return true;
+  return TRANSACTIONAL_WHITELIST_PREFIXES.some((p) => templateName.startsWith(p));
 }

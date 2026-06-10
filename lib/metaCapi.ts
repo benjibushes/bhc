@@ -129,8 +129,35 @@ export async function fireCapi(events: CapiEvent[]): Promise<void> {
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       console.error(`[meta-capi] fire failed ${res.status}:`, text.slice(0, 500));
+      // T6 (2026-06-10): Telegram alert on CAPI fire fail. Throttled
+      // 1h per event_name so we surface dedup-break / token rot
+      // without flooding during a Meta API incident. Names + status
+      // get bucketed in dedupeKey.
+      const firstEventName = events[0]?.event_name || 'unknown';
+      try {
+        const { sendOperatorSignal } = await import('./operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'normal',
+          kind: 'system-error',
+          summary: `Meta CAPI ${firstEventName} fire ${res.status}`,
+          detail: text.slice(0, 300) || 'no body',
+          dedupeKey: `meta-capi-fail:${firstEventName}:${res.status}`,
+          dedupeWindowMs: 60 * 60 * 1000,
+        });
+      } catch {}
     }
-  } catch (e) {
+  } catch (e: any) {
     console.error('[meta-capi] error:', e);
+    try {
+      const { sendOperatorSignal } = await import('./operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'system-error',
+        summary: 'Meta CAPI exception',
+        detail: String(e?.message || e).slice(0, 300),
+        dedupeKey: 'meta-capi-exception',
+        dedupeWindowMs: 60 * 60 * 1000,
+      });
+    } catch {}
   }
 }

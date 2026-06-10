@@ -58,6 +58,21 @@ export async function POST(request: Request) {
     event = getStripe().webhooks.constructEvent(body, sig, WEBHOOK_SECRET);
   } catch (err: any) {
     console.error('Stripe webhook signature verification failed:', err.message);
+    // T5 (2026-06-10): Telegram alert on signature failure. If Stripe
+    // rotates the webhook secret or the env var drifts, EVERY money
+    // event silently 400s. 1 alert per 5 min so a real attack doesn't
+    // flood Ben, but a misconfig surfaces in minutes.
+    try {
+      const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'system-error',
+        summary: 'Stripe webhook SIGNATURE FAIL',
+        detail: `${err.message?.slice(0, 200) || 'unknown'} — money events dropping. Verify STRIPE_WEBHOOK_SECRET in Vercel matches Stripe Dashboard.`,
+        dedupeKey: 'stripe-sig-fail',
+        dedupeWindowMs: 5 * 60 * 1000,
+      });
+    } catch {}
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
   }
 
