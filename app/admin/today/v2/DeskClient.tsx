@@ -47,6 +47,8 @@ interface DeskReferral {
   depositAmount: number;
   state: string;
   closedAt: string;
+  status?: string;
+  daysSinceActivity?: number | null;
 }
 
 interface NBAItem {
@@ -438,12 +440,14 @@ export default function DeskClient() {
               {desk.depositPending.map((r) => (
                 <li
                   key={r.id}
-                  className="border border-divider bg-bone-warm p-3 flex justify-between text-sm"
+                  className="border border-divider bg-bone-warm p-3 flex justify-between text-sm gap-3"
                 >
-                  <span className="text-charcoal">
+                  <span className="text-charcoal min-w-0 flex-1 truncate">
+                    <RotBadge days={r.daysSinceActivity ?? null} />
                     {r.buyerEmail} → <strong>{r.rancherName}</strong> · {r.state}
                   </span>
-                  <span className="text-saddle">{fmtUsd(r.depositAmount)}</span>
+                  <span className="text-saddle whitespace-nowrap">{fmtUsd(r.depositAmount)}</span>
+                  <AdvanceStageButton id={r.id} from="Awaiting Payment" onSuccess={tick} />
                 </li>
               ))}
             </ul>
@@ -575,5 +579,76 @@ function Tile({
       <div className="font-serif text-2xl text-charcoal mt-1">{value}</div>
       <div className="text-xs text-saddle mt-1">{sub}</div>
     </div>
+  );
+}
+
+// F12 — Deal-rot badge. Compact age tag inline on pipeline cards.
+function RotBadge({ days }: { days: number | null }) {
+  if (days === null || days === undefined) return null;
+  const tier =
+    days >= 7
+      ? 'bg-red-700 text-white'
+      : days >= 3
+        ? 'bg-saddle text-bone'
+        : 'bg-divider text-charcoal';
+  const label = days === 0 ? 'today' : days === 1 ? '1d' : `${days}d`;
+  return (
+    <span
+      title={`Last activity ${days} day${days === 1 ? '' : 's'} ago`}
+      className={`inline-block text-[10px] font-mono px-1 py-0.5 mr-2 ${tier}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+// F12 — Inline stage-advance button. Validated server-side.
+function AdvanceStageButton({
+  id,
+  from,
+  onSuccess,
+}: {
+  id: string;
+  from: string;
+  onSuccess: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  // Next-step map mirrors the server-side ALLOWED transitions.
+  const NEXT: Record<string, string> = {
+    'Intro Sent': 'Awaiting Payment',
+    'Awaiting Payment': 'Slot Locked',
+    'Slot Locked': 'Closed Won',
+  };
+  const target = NEXT[from];
+  if (!target) return null;
+  async function advance() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/referrals/${id}/stage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: target }),
+      });
+      if (res.ok) onSuccess();
+      else {
+        const j = await res.json().catch(() => ({}));
+        alert(`Advance failed: ${j.error || res.status}`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={advance}
+      disabled={busy}
+      title={`Advance to ${target}`}
+      className="text-[10px] uppercase tracking-widest text-charcoal underline underline-offset-2 whitespace-nowrap disabled:opacity-30"
+    >
+      {busy ? '…' : `→ ${target.split(' ').slice(-1)}`}
+    </button>
   );
 }

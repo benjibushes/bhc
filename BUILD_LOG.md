@@ -6,6 +6,36 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## F12 — Deal-rot indicator + stage advance — 2026-06-09
+
+**Status:** ✅ shipped, typecheck clean.
+
+**What:**
+- **Rot badge** on deposit-pending pipeline cards — `0` (today, grey), `1-2d` (grey), `3-6d` (saddle), `7d+` (red). Computed server-side as `max(last activity timestamps) → days since`.
+- **Stage advance button** per pipeline card — server-validated transitions only. Replaces what would have been a drag-drop UX (simpler, less visual noise).
+
+**Files touched:**
+- MOD: `app/api/admin/desk/route.ts` — `formatReferral` adds `daysSinceActivity` + `status`
+- NEW: `app/api/admin/referrals/[id]/stage/route.ts` — POST {status} validates `ALLOWED` map, transitions, Telegram alert
+- MOD: `app/admin/today/v2/DeskClient.tsx` — DeskReferral type adds fields, new `RotBadge` + `AdvanceStageButton` helpers wired on deposit-pending list
+
+**Allowed transitions (`/api/admin/referrals/[id]/stage`):**
+- `Intro Sent` → `Awaiting Payment` | `Closed Lost`
+- `Awaiting Payment` → `Slot Locked` | `Closed Lost`
+- `Slot Locked` → `Closed Won` | `Closed Lost`
+- `Closed Lost` → `Intro Sent` (revive)
+
+**Side effects:** Stage advance fires Telegram alert + updates Referral Status field. Existing Status-flip triggers in matching/contracts not duplicated here.
+
+**Test cmd:**
+1. Visit `/admin/today/v2` — pending deposits show rot badge + `→ Locked` button
+2. Click button → status flips → Telegram alert "Stage advanced"
+3. Bad transition returns 422
+
+**Rollback:** revert files. Endpoint is stateless.
+
+---
+
 ## F11 — Click-to-call + Whisper transcription — 2026-06-09
 
 **Status:** ✅ shipped (feature-flag OFF default), typecheck clean. Schema fields added live.

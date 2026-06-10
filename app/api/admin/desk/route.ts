@@ -121,6 +121,27 @@ function formatBuyer(r: any) {
 }
 
 function formatReferral(r: any) {
+  // F12 — Deal-rot indicator. Compute days since the most recent activity.
+  // "Last activity" = max of (Last Rancher Activity At, Last Buyer Activity At,
+  // Rancher Accepted At, Created At). The bigger this is, the colder the deal.
+  const now = Date.now();
+  const candidates = [
+    r['Last Rancher Activity At'],
+    r['Last Buyer Activity At'],
+    r['Rancher Accepted At'],
+    r['Created At'],
+    r['Created Time'],
+  ]
+    .filter(Boolean)
+    .map((s: any) => {
+      const t = new Date(String(s)).getTime();
+      return isNaN(t) ? 0 : t;
+    });
+  const lastActivityMs = candidates.length ? Math.max(...candidates) : 0;
+  const daysSinceActivity = lastActivityMs > 0
+    ? Math.floor((now - lastActivityMs) / (1000 * 60 * 60 * 24))
+    : null;
+
   return {
     id: r.id,
     buyerEmail: r['Buyer Email'] || '?',
@@ -129,6 +150,8 @@ function formatReferral(r: any) {
     depositAmount: r['Deposit Amount'] || 0,
     state: r['Buyer State'] || '',
     closedAt: r['Closed At'] || '',
+    status: r['Status'] || '',
+    daysSinceActivity,
   };
 }
 
