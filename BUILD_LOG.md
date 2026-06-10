@@ -6,6 +6,54 @@ Per-feature build record. Append-only. Latest at top.
 
 ---
 
+## R1-R9 — Schema gap audit + 9 fixes — 2026-06-10
+
+**Status:** ✅ shipped (R1-R6 + R9). R7+R8 closed as PREMISE FALSIFIED. R10 surfaced for operator.
+
+**Trigger:** User report "lots of errors, lots of table mismatches and reads writes and failing crons. We need to update everything."
+
+**Root cause:** Multiple ships (F11/F18/FINAL-7 etc.) wrote field names to Airtable that didn't exist in live schema. `lib/airtable.ts` silent-strip retry hid the gap. 4 parallel audit agents converged on the same finding.
+
+### R1 — Schema: 12 missing fields added live via Airtable MCP
+**Inquiries:** `Last Activity At` (dateTime)
+**Referrals:** `Deposit Amount`, `Deposit Paid At`, `Final Invoice URL`, `Final Invoice Sent At`, `Final Invoice Amount`, `Final Paid At`, `Final Paid Amount`, `Total Sale Amount`, `Processing Date`, `Sales Call Booked At`, `Sales Call Completed At`
+**Cron Runs:** `Errors` (number) — prevents future audits misreading Records Touched
+
+### R2 — F15 wholesale formatWholesale
+`app/api/admin/desk/route.ts`: Inquiries field is `Created`, not `Created At`/`Created Time`. Fallback `_rawJson.createdTime`.
+
+### R3 — F12 Referral rot createdTime metadata
+`app/api/admin/desk/route.ts` + `app/api/rancher/dashboard/route.ts`: Referrals has no `Created At` field. Use Airtable metadata.
+
+### R4 — Cal webhook Conversations write field names
+`app/api/webhooks/cal/route.ts:445-460`: rewrite to use existing Timestamp/Direction/From/To/Subject/Body/Sender Type.
+
+### R5 — F18 cal-reminder-1h cron + admin desk calls
+Pivot from Conversations `Type='cal_booking'` (never existed) to Referrals `Sales Call Booked At` (now exists). Fixes 16/24h errors.
+
+### R6 — Cal webhook Quiz Score → Qualification Score
+`app/api/webhooks/cal/route.ts`: pre-call brief reads correct schema field with legacy fallback.
+
+### R7 — PREMISE FALSIFIED
+"139 stranded buyers" is documented design: `Status='Approved'` = membership/access, `Qualified At` = routing gate. Pre-quiz nurture by `qualified-no-action` + `abandoned-quiz-nudge` crons. Not a regression.
+
+### R8 — PREMISE FALSIFIED
+"68 errors" was a misread: `Records Touched=68`, `Duration ms=94363`, Notes says `errors=0`. Last 11 runs all `errors=0`. Added Cron Runs `Errors` column to prevent re-occurrence.
+
+### R9 — /api/qualify exposes matchDiag
+Synthetic-e2e fails opaquely. Captured matching/suggest status + matchFound/paused/error/reason in response. Tomorrow's failure tells us exact gate. Phase 2 fix locks in based on data.
+
+### R10 — Surfaced to operator
+Renick Valley has 2 rows: Jesse Gajewski (May, Live, has Slug) + Jesse Zimmerman (June 9, Active, no Slug, Migration=invited). Per bhc-mutation-guardrails Rule 2, dup decision needs operator instruction.
+
+**Files touched:** `app/api/admin/desk/route.ts`, `app/api/rancher/dashboard/route.ts`, `app/api/webhooks/cal/route.ts`, `app/api/cron/cal-reminder-1h/route.ts`, `app/api/qualify/route.ts`.
+
+**Schema deltas:** 12 fields + 1 Cron Runs Errors column.
+
+**Side effects:** writes that were silent-stripped now land. FINAL-7 tier_v2 deposit + final invoice flow starts persisting properly.
+
+---
+
 ## F13 — Email open/click badge on desk cards — 2026-06-09
 
 **Status:** ✅ shipped, typecheck clean. Final feature of the 13-block.
