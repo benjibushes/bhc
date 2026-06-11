@@ -144,6 +144,42 @@ export default function MigrationTrackerPage() {
     load();
   }
 
+  // Force a LIVE Stripe read of the rancher's Connect account + persist the
+  // true status. Use when Connect Status is stuck at 'onboarding' despite the
+  // rancher having finished Stripe KYC — the account.updated webhook can miss
+  // the canonical row (e.g. it fired before a dup-merge, as with Renick Valley
+  // 2026-06-10). Flips to 'active' the moment Stripe confirms charges enabled,
+  // which makes the deposit checkout go live.
+  async function resyncConnect(id: string, name: string) {
+    let r: Response;
+    try {
+      r = await fetch(`/api/admin/ranchers/${id}/resync-connect`, { method: 'POST' });
+    } catch (e: any) {
+      alert(`Network error: ${e?.message || 'unknown'}`);
+      return;
+    }
+    let j: any = {};
+    try {
+      j = await r.json();
+    } catch {}
+    if (!r.ok) {
+      alert(`Resync failed (${r.status}): ${j?.error || 'unknown'}`);
+      return;
+    }
+    alert(
+      j.depositReady
+        ? `✅ ${j.ranchName || name} is ACTIVE — deposits flow now.\n\n` +
+            `Connect status: ${j.status}\n` +
+            `Migration: ${j.migrationCompleted ? 'marked completed' : 'unchanged'}\n` +
+            `${j.changed ? '(status was just updated)' : '(already active)'}`
+        : `${j.ranchName || name} live Stripe status: ${j.status}\n\n` +
+            `requirements: ${j.requirementsStatus || 'n/a'}\n` +
+            `card_payments: ${j.cardPaymentsActive ? 'active' : 'inactive'}\n\n` +
+            `Rancher must finish Stripe Connect onboarding before deposits unlock.`,
+    );
+    load();
+  }
+
   async function fireBulk() {
     if (!data) return;
     const notInvited = data.ranchers.filter((r) => r.migrationStatus === 'not_invited');
@@ -253,7 +289,15 @@ export default function MigrationTrackerPage() {
                       {r.pricingModel === 'tier_v2' ? '—' : r.daysLeft === null ? '—' : r.daysLeft <= 0 ? <span className="text-red-700 font-medium">OVERDUE</span> : `${r.daysLeft}d`}
                     </td>
                     <td className="px-3 py-2 text-saddle">{r.subscriptionStatus || '—'}</td>
-                    <td className="px-3 py-2 text-saddle">{r.connectStatus || '—'}</td>
+                    <td className="px-3 py-2">
+                      {r.connectStatus === 'active' ? (
+                        <span className="text-xs px-2 py-0.5 border bg-green-100 text-green-900 border-green-600">● active</span>
+                      ) : r.connectStatus === 'onboarding' || r.connectStatus === 'restricted' ? (
+                        <span className="text-xs px-2 py-0.5 border bg-amber-100 text-amber-900 border-amber-600">○ {r.connectStatus}</span>
+                      ) : (
+                        <span className="text-saddle">{r.connectStatus || '—'}</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-saddle text-xs">{r.inviteSentAt ? new Date(r.inviteSentAt).toLocaleDateString() : '—'}</td>
                     <td className="px-3 py-2 text-saddle text-xs">{r.callBookedAt ? new Date(r.callBookedAt).toLocaleDateString() : '—'}</td>
                     <td className="px-3 py-2">
@@ -270,6 +314,15 @@ export default function MigrationTrackerPage() {
                             🪢 Legacy Connect
                           </button>
                         </>
+                      )}
+                      {r.connectStatus && r.connectStatus !== 'active' && r.connectStatus !== 'not_connected' && (
+                        <button
+                          onClick={() => resyncConnect(r.id, r.name)}
+                          className="text-xs underline text-blue-800 hover:text-blue-600 ml-2"
+                          title="Force a live Stripe read + persist true Connect status. Unsticks 'onboarding' after the rancher has finished Stripe KYC."
+                        >
+                          🔄 Resync
+                        </button>
                       )}
                       <a href={`/admin/ranchers/${r.id}`} className="text-xs underline text-charcoal hover:text-saddle ml-2">View</a>
                     </td>
