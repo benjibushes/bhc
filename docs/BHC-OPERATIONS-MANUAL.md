@@ -1,5 +1,11 @@
 # BuyHalfCow Operations Manual
 
+> ⚠️ **For the current top-down picture, read [`BHC-PLATFORM-MAP.md`](BHC-PLATFORM-MAP.md) first.**
+> That doc is kept in sync with the code (tier_v2 deposits, 33 crons, the migration wave,
+> the money model). This manual (dated 2026-05-27) predates the tier_v2 deposit launch and
+> is retained for its long-form operator narrative — treat the Platform Map as authoritative
+> where they differ.
+
 **Version:** 2026-05-27
 **Purpose:** Top-down view of every email, onboarding flow, customer journey, funnel, and piece of infrastructure that runs BHC. Hand this to a new operator and they can run the business without rewriting a single line of code.
 

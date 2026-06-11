@@ -2,6 +2,8 @@
 
 Private network connecting serious beef buyers with verified American ranchers. Not a marketplace — a curated, relationship-based sourcing platform with manual approval, intent-based segmentation, and commission tracking.
 
+> 📍 **Start here for the top-down picture:** [`docs/BHC-PLATFORM-MAP.md`](docs/BHC-PLATFORM-MAP.md) — the single source of truth for service offerings, the money model, the rancher onboarding funnel, the customer funnel, and every cron/webhook/email that executes. Kept current with the code.
+
 ## Tech Stack
 
 - **Framework:** Next.js 16 (App Router) + TypeScript
