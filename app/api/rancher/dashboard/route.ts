@@ -64,7 +64,7 @@ export async function GET(request: Request) {
         r['Last Buyer Activity At'],
         r['Rancher Accepted At'],
         r['Intro Sent At'],
-        r._rawJson?.createdTime,
+        r._createdTime,
       ]
         .filter(Boolean)
         .map((s: any) => {
@@ -88,7 +88,7 @@ export async function GET(request: Request) {
       sale_amount: r['Sale Amount'] || 0,
       commission_due: r['Commission Due'] || 0,
       commission_paid: r['Commission Paid'] || false,
-      created_at: r['Created At'] || r.createdTime || '',
+      created_at: r['Created At'] || r._createdTime || '',
       intro_sent_at: r['Intro Sent At'] || '',
       closed_at: r['Closed At'] || '',
       last_rancher_activity_at: r['Last Rancher Activity At'] || '',

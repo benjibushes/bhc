@@ -2735,7 +2735,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
   // referral isn't yet Closed Won / Closed Lost / fully paid. Re-send label
   // if invoice already sent (final_invoice_url present).
   const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
-  const finalSent = !!referral.final_invoice_url;
+  const finalSent = !!referral.final_invoice_sent_at || !!referral.final_invoice_url;
   const finalPaid = !!referral.final_paid_at;
   const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
   const showFinalInvoice = !!onSendFinal && depositPaid && !finalPaid && !isTerminal;
@@ -2747,7 +2747,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
 
   return (
     <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-      <div>
+      <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
             {referral.status}
@@ -2872,7 +2872,7 @@ function ReferralCard({
 }) {
   // FINAL-5 (2026-05-31): see ReferralRow for parity logic + button intent.
   const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
-  const finalSent = !!referral.final_invoice_url;
+  const finalSent = !!referral.final_invoice_sent_at || !!referral.final_invoice_url;
   const finalPaid = !!referral.final_paid_at;
   const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
   const showFinalInvoice = !!onSendFinal && depositPaid && !finalPaid && !isTerminal;
