@@ -2252,7 +2252,7 @@ export default function RancherDashboardPage() {
       {/* Mark Lost Modal — Audit #17 (2026-05-28) replaces window.prompt */}
       {lostModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-bone p-8 max-w-md w-full space-y-6">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
               <h2 className="font-serif text-2xl">Mark Closed Lost</h2>
               <button onClick={() => { setLostModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle">×</button>
@@ -2323,7 +2323,7 @@ export default function RancherDashboardPage() {
           since commission was already collected at deposit time). */}
       {finalInvoiceModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-bone p-8 max-w-md w-full space-y-6">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
               <h2 className="font-serif text-2xl">Send Final Invoice</h2>
               <button onClick={closeFinalInvoiceModal} className="text-2xl leading-none hover:text-saddle">×</button>
@@ -2466,7 +2466,7 @@ export default function RancherDashboardPage() {
       {/* Close Deal Modal */}
       {closeModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-bone p-8 max-w-md w-full space-y-6">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
               <h2 className="font-serif text-2xl">Close Deal</h2>
               <button onClick={() => setCloseModal(null)} className="text-2xl leading-none hover:text-saddle">×</button>
@@ -2586,7 +2586,7 @@ export default function RancherDashboardPage() {
       {/* Pass on Lead Modal — captures structured reason + auto-rematches buyer */}
       {passModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-bone p-8 max-w-md w-full space-y-6">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
               <h2 className="font-serif text-2xl">Pass on Lead</h2>
               <button onClick={closePassModal} className="text-2xl leading-none hover:text-saddle">×</button>
