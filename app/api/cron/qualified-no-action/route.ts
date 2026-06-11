@@ -83,6 +83,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
     IS_AFTER({Qualified At}, '${cutoffStart}'),
     IS_BEFORE({Qualified At}, '${cutoffEnd}'),
     {Buyer Stage} != 'CLOSED',
+    {Buyer Stage} != 'MATCHED',
     {Unsubscribed} != TRUE(),
     {Bounced} != TRUE(),
     {Complained} != TRUE(),

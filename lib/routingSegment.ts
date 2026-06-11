@@ -79,6 +79,16 @@ export function classifyBuyer(
   // Terminal states — short-circuit immediately.
   const stage = readEnumOrString(buyer['Buyer Stage']);
   if (stage === 'CLOSED') return 'TERMINAL';
+  // Actively transacting with a rancher (matched / deposit in flight / slot
+  // locked / won) → the rancher + operator are handling them directly. Never
+  // put them in a marketing-nurture segment. Mirrors the CLOSED sink. If a
+  // deal dies, Closed Lost restores Buyer Stage to READY (auto-restore), which
+  // re-admits the buyer to nurture on the next nightly reclassify.
+  if (stage === 'MATCHED') return 'TERMINAL';
+  const refStatusNow = readEnumOrString(buyer['Referral Status']);
+  if (refStatusNow === 'Awaiting Payment' || refStatusNow === 'Slot Locked' || refStatusNow === 'Closed Won') {
+    return 'TERMINAL';
+  }
   if (buyer['Unsubscribed'] === true) return 'UNQUALIFIED_NURTURE';
   if (readEnumOrString(buyer['Buyer Health']) === 'Non-Responsive') {
     return 'UNQUALIFIED_NURTURE';

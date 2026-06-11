@@ -66,6 +66,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       const stopReason =
         verification === 'Verified'
           ? 'verified'
+          : (r['Unsubscribed'] || r['Bounced'] || r['Complained'])
+          ? 'opted-out'
           : ['Paused', 'Non-Compliant'].includes(active)
           ? `active:${active}`
           : onboarding && !['', 'pre-onboarding'].includes(onboarding)

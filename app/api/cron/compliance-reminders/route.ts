@@ -45,6 +45,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
 
     if (!email) continue;
+    // Respect email opt-out / hard bounces (CAN-SPAM + deliverability). A
+    // rancher who unsubscribed, bounced, or complained must never get the
+    // monthly compliance report — even though it's mission-critical ops mail.
+    if (rancher['Unsubscribed'] || rancher['Bounced'] || rancher['Complained']) continue;
 
     // Throttle: skip if we sent compliance to this rancher in the past 25 days.
     // Field is new — graceful fallback if Airtable doesn't have it yet.
