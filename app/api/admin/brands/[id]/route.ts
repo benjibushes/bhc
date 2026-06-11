@@ -28,8 +28,10 @@ export async function PATCH(
     if (body.email) fields['Email'] = body.email;
     if (body.phone !== undefined) fields['Phone'] = body.phone;
     if (body.website !== undefined) fields['Website'] = body.website;
-    if (body.productType || body.productCategory) fields['Product Type'] = body.productType || body.productCategory;
-    if (body.discountOffered !== undefined || body.proposedDiscount !== undefined) fields['Discount Offered (%)'] = body.discountOffered ?? body.proposedDiscount;
+    // Final-sweep fix (2026-06-10): schema names are `Product Category` +
+    // `Proposed Discount`. Old names silently stripped on admin edits.
+    if (body.productType || body.productCategory) fields['Product Category'] = body.productType || body.productCategory;
+    if (body.discountOffered !== undefined || body.proposedDiscount !== undefined) fields['Proposed Discount'] = body.discountOffered ?? body.proposedDiscount;
     if (body.promotionDetails || body.partnershipGoals) fields['Partnership Goals'] = body.promotionDetails || body.partnershipGoals;
 
     const updatedRecord = await updateRecord(TABLES.BRANDS, id, fields);

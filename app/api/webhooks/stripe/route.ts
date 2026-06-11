@@ -1454,9 +1454,13 @@ async function handleFounderCheckoutCompleted(session: any, metaType: string) {
 // ============================================================================
 async function markSubscriptionCancelled(subscriptionId: string) {
   if (!subscriptionId) return;
+  // Final-sweep fix (2026-06-10): Consumers field is `Stripe Subscription ID`
+  // (capital ID) — the lowercase-d formula 422'd the whole query, so founder
+  // churn was never marked cancelled. Brands uses `Stripe Subscription Id`
+  // (lowercase d) — that table's queries stay as-is.
   const matches = await getAllRecords(
     TABLES.CONSUMERS,
-    `{Stripe Subscription Id} = "${escapeAirtableValue(subscriptionId)}"`
+    `{Stripe Subscription ID} = "${escapeAirtableValue(subscriptionId)}"`
   );
   if (matches.length === 0) return;
   const row: any = matches[0];
@@ -1493,7 +1497,7 @@ async function alertInvoicePaymentFailed(invoice: any) {
       try {
         const matches = await getAllRecords(
           TABLES.CONSUMERS,
-          `{Stripe Subscription Id} = "${escapeAirtableValue(invoice.subscription)}"`
+          `{Stripe Subscription ID} = "${escapeAirtableValue(invoice.subscription)}"`
         );
         if (matches.length > 0) {
           tier = ((matches[0] as any)['Founder Tier'] as string) || tier;
@@ -1515,7 +1519,7 @@ async function alertInvoicePaymentFailed(invoice: any) {
     try {
       const matches = await getAllRecords(
         TABLES.CONSUMERS,
-        `{Stripe Subscription Id} = "${escapeAirtableValue(invoice.subscription)}"`
+        `{Stripe Subscription ID} = "${escapeAirtableValue(invoice.subscription)}"`
       );
       if (matches.length > 0) {
         await updateRecord(TABLES.CONSUMERS, (matches[0] as any).id, {

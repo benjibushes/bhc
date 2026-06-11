@@ -667,9 +667,14 @@ async function upsertConsumerFromDM(args: {
       'Notes': args.noteEntry,
     };
     if (args.state) fields['State'] = args.state;
-    if (args.utmSource) fields['utm_source'] = args.utmSource;
-    if (args.utmCampaign) fields['utm_campaign'] = args.utmCampaign;
-    if (args.fbclid) fields['fbclid'] = args.fbclid;
+    // Final-sweep fix (2026-06-10): Consumers has no utm_source/utm_campaign/
+    // fbclid columns — those writes were silently stripped, losing IG-DM ad
+    // attribution. Schema's catch-all is `UTM Parameters` (same as /access).
+    const utmParts: string[] = [];
+    if (args.utmSource) utmParts.push(`utm_source=${args.utmSource}`);
+    if (args.utmCampaign) utmParts.push(`utm_campaign=${args.utmCampaign}`);
+    if (args.fbclid) utmParts.push(`fbclid=${args.fbclid}`);
+    if (utmParts.length) fields['UTM Parameters'] = utmParts.join('&');
     await createRecord(TABLES.CONSUMERS, fields);
   } catch (e: any) {
     console.error('[manychat webhook] consumer upsert failed:', e?.message);

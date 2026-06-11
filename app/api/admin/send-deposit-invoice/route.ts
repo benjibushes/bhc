@@ -164,7 +164,10 @@ export async function POST(req: Request) {
       'Buyer Email': buyerEmail,
       'Rancher': [rancherId],
       'Referral': [referralId],
-      'Stripe PaymentIntent Id': session.paymentIntentId,
+      // Final-sweep fix (2026-06-10): schema field is `Stripe Payment Intent Id`
+      // (spaced). The unspaced name was silent-stripped → markDepositSucceeded
+      // could never find the Payments row for admin-invoiced deposits.
+      'Stripe Payment Intent Id': session.paymentIntentId,
       'Stripe Connect Account Id': session.connectAccountId,
       'Stripe Checkout Session Id': session.sessionId,
       'Amount Cents': depositCents,

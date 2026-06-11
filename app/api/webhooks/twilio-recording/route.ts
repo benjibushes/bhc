@@ -29,8 +29,15 @@ export async function POST(req: Request) {
     const transcript = await transcribeRecording(recordingUrl);
 
     try {
+      // Final-sweep fix (2026-06-10): Conversations has no `Type` field —
+      // identify recordings via Subject + Sender Type instead. Recording
+      // URL / Transcript / Call Duration Seconds / Call Sid all exist
+      // (added via MCP during F11).
       await createRecord(TABLES.CONVERSATIONS, {
-        Type: 'cal_recording',
+        'Timestamp': new Date().toISOString(),
+        'Direction': 'outbound',
+        'Subject': `Call recording — ${callSid}`,
+        'Sender Type': 'system',
         'Call Sid': callSid,
         'Recording URL': recordingUrl,
         'Call Duration Seconds': duration,

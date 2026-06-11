@@ -25,7 +25,8 @@ export async function PATCH(
     if (body.state) fields['State'] = body.state;
     if (body.propertyLocation !== undefined) fields['Property Location'] = body.propertyLocation;
     if (body.county !== undefined) fields['County'] = body.county;
-    if (body.price !== undefined || body.askingPrice !== undefined) fields['Asking Price'] = body.askingPrice || body.price;
+    // Final-sweep fix (2026-06-10): schema field is `Price`.
+    if (body.price !== undefined || body.askingPrice !== undefined) fields['Price'] = body.askingPrice || body.price;
     if (body.description !== undefined) fields['Description'] = body.description;
 
     const updatedRecord = await updateRecord(TABLES.LAND_DEALS, id, fields);

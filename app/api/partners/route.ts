@@ -263,8 +263,11 @@ export async function POST(request: Request) {
         'Email': email,
         'Phone': phone || '',
         'Website': website || '',
-        'Product Type': productType,
-        'Discount Offered (%)': discountOffered ? parseInt(discountOffered) : 0,
+        // Final-sweep fix (2026-06-10): schema fields are `Product Category` +
+        // `Proposed Discount` — old names were silent-stripped on every brand
+        // application, losing both values.
+        'Product Category': productType,
+        'Proposed Discount': discountOffered ? parseInt(discountOffered) : 0,
         'Partnership Goals': promotionDetails || '',
         'Featured': false,
         'Status': 'Pending',
@@ -341,7 +344,9 @@ export async function POST(request: Request) {
         'Acreage': parseInt(acreage) || 0,
         'State': normalizeState(state) || state,
         'Property Location': propertyLocation || '',
-        'Asking Price': askingPrice || '',
+        // Final-sweep fix (2026-06-10): schema field is `Price` — `Asking
+        // Price` was stripped, so every land deal lost its price.
+        'Price': askingPrice || '',
         'Description': description || '',
         'Zoning': zoning || '',
         'Utilities': utilities || '',
