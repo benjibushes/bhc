@@ -307,9 +307,14 @@ export async function POST(request: Request) {
           try {
             const reverse = buildAirtableUpdateReverse(TABLES.REFERRALS, referral.id, {
               'Sales Call Booked At': referral['Sales Call Booked At'],
+              'Sales Call Start At': referral['Sales Call Start At'],
             });
             await updateRecord(TABLES.REFERRALS, referral.id, {
               'Sales Call Booked At': new Date().toISOString(),
+              // Real call START datetime from the Cal payload. cal-reminder-1h
+              // windows on THIS (not booked-at) so the 1-hour reminder fires at
+              // the right time and never for a slot that already passed.
+              ...(startTime ? { 'Sales Call Start At': startTime } : {}),
             });
             await logAuditEntry({
               actor: 'cron',
@@ -317,7 +322,7 @@ export async function POST(request: Request) {
               targetType: 'Referral',
               targetId: referral.id,
               args: { attendeeEmail, startTime, eventTypeSlug },
-              result: { stamped: 'Sales Call Booked At' },
+              result: { stamped: 'Sales Call Booked At + Start At' },
               reverseAction: reverse,
             });
           } catch (e: any) {

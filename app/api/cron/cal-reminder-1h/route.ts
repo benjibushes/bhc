@@ -73,9 +73,14 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // errored on schema-unknown fields. Query Referrals instead.
   let bookings: any[] = [];
   try {
+    // Window on the REAL call start time (Sales Call Start At), stamped by the
+    // cal webhook on BOOKING_CREATED — NOT Sales Call Booked At (which is the
+    // booking-creation timestamp and is always in the past, so a future window
+    // never matched it → this cron sent nothing). Exclude calls already
+    // completed so a finished call never gets a "starts in 1 hour" reminder.
     bookings = await getAllRecords(
       TABLES.REFERRALS,
-      `AND(IS_AFTER({Sales Call Booked At}, '${earlyIso}'), IS_BEFORE({Sales Call Booked At}, '${lateIso}'))`
+      `AND(IS_AFTER({Sales Call Start At}, '${earlyIso}'), IS_BEFORE({Sales Call Start At}, '${lateIso}'), {Sales Call Completed At} = BLANK())`
     ) as any[];
   } catch (e: any) {
     console.warn('[cal-reminder-1h] bookings query failed:', e?.message);
@@ -94,6 +99,12 @@ async function realHandler(_request: Request): Promise<CronResult> {
       skipped++;
       continue;
     }
+    // Defense-in-depth on top of the Completed At = BLANK() query filter:
+    // never remind about a call that already happened.
+    if (b['Sales Call Completed At']) {
+      skipped++;
+      continue;
+    }
     const attendeeEmail = String(b['Buyer Email'] || '').toLowerCase().trim();
     if (!attendeeEmail) {
       skipped++;
@@ -101,12 +112,10 @@ async function realHandler(_request: Request): Promise<CronResult> {
     }
     const attendeeName = String(b['Buyer Name'] || '').trim();
     const firstName = attendeeName.split(' ')[0] || 'there';
-    // Referral.Sales Call Booked At = when the booking was created, not
-    // the call start time. We don't currently store the start time on
-    // Referrals (it was only known to the cal webhook). Use the booked-at
-    // timestamp + 1h as a reasonable approximation — the email body shows
-    // "starts in 1 hour" which is true regardless of the exact slot.
-    const startTime = String(b['Sales Call Booked At'] || '');
+    // Real call start datetime, stamped by the cal webhook on BOOKING_CREATED.
+    // The query above windows on it for [now+55m, now+70m], so the buyer's call
+    // genuinely starts in ~1 hour and the email's displayed time is correct.
+    const startTime = String(b['Sales Call Start At'] || '');
     const calLink = ''; // not stored on Referral; user can find via email
 
     try {
