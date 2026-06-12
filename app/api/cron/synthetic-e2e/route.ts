@@ -67,7 +67,13 @@ async function realHandler(_request: Request): Promise<E2EResult> {
         phone: syntheticPhone,
         state: syntheticState,
         orderType: 'Half',
-        budgetRange: '$2000-$2500',
+        // Unbounded budget so the price-fit gate is never the variable — this
+        // smoke test exists to catch PLUMBING breaks (signup→qualify→match→
+        // intro), not to test affordability. With a bounded bracket the test
+        // false-fails the moment the test rancher's Half price rises above the
+        // bracket ceiling (Foodstead raised Half to $2999 on ~06-06, which is
+        // above the old $2000-2500 ceiling×1.10=$2750 → 6 days of false RED).
+        budgetRange: '$5000+',
         timing: 'Within 30 days',
         interestBeef: true,
         intentScore: 95,
