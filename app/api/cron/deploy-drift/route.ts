@@ -26,9 +26,18 @@ import { withCronRun } from '@/lib/cronRun';
 export const maxDuration = 60;
 
 const PROD_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
-const REPO_OWNER = 'benjibushes';
-const REPO_NAME = 'bhc';
+const REPO_OWNER = process.env.DEPLOY_DRIFT_REPO_OWNER || 'benjibushes';
+const REPO_NAME = process.env.DEPLOY_DRIFT_REPO_NAME || 'bhc';
 const BRANCH = 'main';
+// Optional GitHub token. Unauthenticated GitHub API is 60 req/hr per IP and
+// Vercel's shared egress IPs blow through it → 403. A token raises the limit
+// to 5000/hr and unlocks private-repo refs. Set GITHUB_TOKEN to silence the 403.
+const GH_TOKEN = process.env.GITHUB_TOKEN || process.env.DEPLOY_DRIFT_GITHUB_TOKEN || '';
+function ghHeaders(): Record<string, string> {
+  const h: Record<string, string> = { 'cache-control': 'no-cache', 'User-Agent': 'bhc-deploy-drift-cron' };
+  if (GH_TOKEN) h['Authorization'] = `Bearer ${GH_TOKEN}`;
+  return h;
+}
 
 interface DriftResult {
   status: 'success' | 'partial' | 'error';
@@ -77,17 +86,22 @@ async function realHandler(_request: Request): Promise<DriftResult> {
     // GitHub public API — no auth needed for public repo refs.
     const r = await fetch(
       `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/commits/${BRANCH}`,
-      { cache: 'no-store', headers: { 'cache-control': 'no-cache', 'User-Agent': 'bhc-deploy-drift-cron' } },
+      { cache: 'no-store', headers: ghHeaders() },
     );
     if (!r.ok) throw new Error(`GitHub returned ${r.status}`);
     const j = await r.json();
     headSha = String(j.sha || '');
     headCommitDate = String(j.commit?.committer?.date || '');
   } catch (e: any) {
+    // GitHub API flakiness (403 rate-limit on shared Vercel IPs, transient
+    // network, private repo without a token) is NOT a prod problem — do NOT
+    // fire a loud CRON ERROR for it. Return success so withCronRun stays quiet;
+    // only real drift (prod behind HEAD) pages. Set GITHUB_TOKEN to kill the 403.
+    console.warn('[deploy-drift] GitHub HEAD fetch skipped:', e?.message);
     return {
-      status: 'error',
+      status: 'success',
       recordsTouched: 0,
-      notes: `GitHub HEAD fetch failed: ${e?.message || 'unknown'}`,
+      notes: `GitHub HEAD fetch skipped (no alarm): ${e?.message || 'unknown'}`,
     };
   }
 

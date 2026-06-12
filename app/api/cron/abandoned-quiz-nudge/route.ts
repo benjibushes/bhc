@@ -12,10 +12,12 @@
 // Schedule: hourly. Conservative — better to miss a buyer than spam.
 
 import { NextResponse } from 'next/server';
+import jwt from 'jsonwebtoken';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
+import { JWT_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 120;
 
@@ -86,10 +88,6 @@ async function realHandler(_request: Request): Promise<CronResult> {
       skipped++;
       continue;
     }
-    // Need a qualifyUrl token. Use the same id-based path the consumers
-    // route stamps — fall back to /qualify (no token) and let the page
-    // recover by email lookup.
-    const quizUrl = `${SITE_URL}/qualify/${c.id}`;
     const firstName = String(c['Full Name'] || '').split(' ')[0] || 'there';
     const state = String(c['State'] || 'your state');
     const email = String(c['Email'] || '').toLowerCase();
@@ -97,6 +95,16 @@ async function realHandler(_request: Request): Promise<CronResult> {
       skipped++;
       continue;
     }
+    // Mint a fresh 14-day qualify-access JWT so the quiz POST authorizes.
+    // Without a token, /api/qualify rejects the submit — the nudged buyer
+    // fills the quiz, taps "finish," and nothing happens (dead-end link).
+    // Mirrors app/api/admin/cleanup-stale-leads recovery-email minting.
+    const quizToken = jwt.sign(
+      { type: 'qualify-access', consumerId: c.id, email },
+      JWT_SECRET,
+      { expiresIn: '14d' },
+    );
+    const quizUrl = `${SITE_URL}/qualify/${encodeURIComponent(c.id)}?token=${encodeURIComponent(quizToken)}`;
     try {
       const { subject, html } = buildEmail(firstName, quizUrl, state);
       await sendEmail({

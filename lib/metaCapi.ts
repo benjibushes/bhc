@@ -120,11 +120,16 @@ export async function fireCapi(events: CapiEvent[]): Promise<void> {
     if (TEST_CODE) body.test_event_code = TEST_CODE;
 
     const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${PIXEL_ID}/events?access_token=${ACCESS_TOKEN}`;
+    // 6s timeout — a hung connection to graph.facebook.com must not pin a
+    // serverless function (and the abort lands in the silenced network catch).
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+      signal: ctrl.signal,
+    }).finally(() => clearTimeout(timer));
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -147,17 +152,12 @@ export async function fireCapi(events: CapiEvent[]): Promise<void> {
       } catch {}
     }
   } catch (e: any) {
-    console.error('[meta-capi] error:', e);
-    try {
-      const { sendOperatorSignal } = await import('./operatorSignal');
-      await sendOperatorSignal({
-        urgency: 'normal',
-        kind: 'system-error',
-        summary: 'Meta CAPI exception',
-        detail: String(e?.message || e).slice(0, 300),
-        dedupeKey: 'meta-capi-exception',
-        dedupeWindowMs: 60 * 60 * 1000,
-      });
-    } catch {}
+    // Network-level failure (DNS, timeout/abort, ECONNRESET) reaching
+    // graph.facebook.com. CAPI is fire-and-forget ad attribution — a dropped
+    // pixel event does NOT affect the buyer, the money, or any flow. Do NOT
+    // page the operator for transient network blips; log only. Real config
+    // problems (token rot, bad pixel) surface as a !res.ok HTTP status above,
+    // which still alerts (throttled 1h).
+    console.error('[meta-capi] network error (no alarm):', e?.message || e);
   }
 }

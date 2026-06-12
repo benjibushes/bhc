@@ -31,7 +31,7 @@
 //     (Phase 0 task — coming next ship)
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, TABLES } from '@/lib/airtable';
+import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
@@ -45,7 +45,12 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 // windows so 7 days is the earliest "did it close yet?" makes sense.
 const MIN_DAYS_SINCE_INTRO = 7;
 // Days between check-in cards for the same referral. Don't spam Ben.
-const CHECK_COOLDOWN_DAYS = 7;
+// 14 (was 7) — weekly nagging on un-actioned referrals was the #1 noise source.
+const CHECK_COOLDOWN_DAYS = 14;
+// Past this many days since intro, a referral still stuck pre-close is dead
+// (real beef pickup runs 3-6 weeks; if it hasn't progressed by 5 weeks it
+// won't). Auto-mute instead of nagging forever — referral-chasup auto-closes.
+const MAX_DAYS_SINCE_INTRO = 35;
 // Per-run cap so we don't dump 50 cards into Telegram at once.
 const MAX_CARDS_PER_RUN = 15;
 
@@ -93,10 +98,24 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
     let posted = 0;
     let failed = 0;
+    let muted = 0;
     const skippedReasons: string[] = [];
 
     for (const ref of targets) {
       try {
+        // Give-up gate: past the realistic close window, stop asking forever.
+        // Stamp the far-future sentinel (same value the manual "Stop asking"
+        // mute uses) so this referral never resurfaces a card.
+        const introAt0 = ref['Intro Sent At'] || ref['Approved At'];
+        const daysSince0 = Math.floor((now - new Date(introAt0).getTime()) / DAY_MS);
+        if (daysSince0 > MAX_DAYS_SINCE_INTRO) {
+          try {
+            await updateRecord(TABLES.REFERRALS, ref.id, { 'Close Check Sent At': '2099-12-31T00:00:00Z' });
+            muted++;
+          } catch { /* leave for next run */ }
+          continue;
+        }
+
         // Resolve rancher name LIVE (don't trust the stale Suggested Rancher Name cache).
         const rancherLinks = ref['Rancher'] || ref['Suggested Rancher'] || [];
         const rancherId = Array.isArray(rancherLinks) ? rancherLinks[0] : null;
@@ -140,7 +159,6 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         // field-missing failure aborts the visible side effect. Prior order
         // sent the card first then attempted stamp; if stamp failed, every
         // subsequent cron run re-posted the same card forever.
-        const { updateRecord } = await import('@/lib/airtable');
         let throttleStamped = false;
         try {
           await updateRecord(TABLES.REFERRALS, ref.id, {
@@ -178,6 +196,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     }
 
     // Summary message at the end so Ben sees one line about what just happened.
+    // Only message when there's something to act on (cards posted). Silent runs
+    // — including pure auto-mute sweeps — don't ping.
     if (posted > 0) {
       try {
         await sendTelegramMessage(
@@ -185,6 +205,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           `📊 <b>Close detector swept</b>\n\n` +
           `Posted ${posted} check-in card${posted === 1 ? '' : 's'}\n` +
           `Stale referrals scanned: ${candidates.length}\n` +
+          (muted > 0 ? `Auto-muted (dead >${MAX_DAYS_SINCE_INTRO}d): ${muted}\n` : '') +
           `Failed: ${failed}` +
           (skippedReasons.length ? `\n\n⚠️ ${skippedReasons[0]}` : '')
         );
@@ -194,7 +215,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     return {
       status: failed > 0 ? 'partial' : 'success',
       recordsTouched: posted,
-      notes: `posted=${posted} failed=${failed} candidates=${candidates.length}${skippedReasons.length ? ` warn=${skippedReasons[0].slice(0, 80)}` : ''}`,
+      notes: `posted=${posted} muted=${muted} failed=${failed} candidates=${candidates.length}${skippedReasons.length ? ` warn=${skippedReasons[0].slice(0, 80)}` : ''}`,
     };
   }
 }
