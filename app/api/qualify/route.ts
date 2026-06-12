@@ -277,6 +277,11 @@ export async function POST(request: Request) {
               // pulled live from Airtable so /qualify always shows latest
               // photo + bio + processing date without a stale cache.
               if (suggestedRancher) {
+                // Legacy-funnel branch: when the matched rancher runs their own
+                // sales calls (funnel 1), the result page embeds THEIR Cal
+                // event instead of the operator's. tier_v2 ranchers always get
+                // the operator (Ben) booker — he runs every v2 sales call.
+                suggestedRancher.calComSlug = String(rancher?.['Cal.com Slug'] || '');
                 suggestedRancher.logoUrl = rancher?.['Logo URL'] || '';
                 suggestedRancher.tagline = rancher?.['Tagline'] || '';
                 suggestedRancher.aboutText = rancher?.['About Text'] || '';
@@ -402,6 +407,7 @@ export async function POST(request: Request) {
           name: suggestedRancher.name,
           state: suggestedRancher.state,
           slug: suggestedRancher.slug || '',
+          calComSlug: suggestedRancher.calComSlug || '',
           city: suggestedRancher.city || '',
           logoUrl: suggestedRancher.logoUrl || '',
           tagline: suggestedRancher.tagline || '',

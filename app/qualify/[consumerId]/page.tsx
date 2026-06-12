@@ -71,6 +71,7 @@ export default function QualifyPage({
       name: string;
       state: string;
       slug: string;
+      calComSlug?: string;
       city?: string;
       logoUrl?: string;
       tagline?: string;
@@ -430,8 +431,11 @@ export default function QualifyPage({
                         <div className="text-4xl">✅</div>
                         <div className="font-serif text-2xl text-charcoal">You&apos;re booked!</div>
                         <p className="text-sm text-saddle max-w-md mx-auto leading-relaxed">
-                          Check your email for the calendar invite. Ben will hop on the call to confirm your cut,
-                          lock your processing date, and walk you through {result.rancher.name}. No payment until you&apos;re ready.
+                          Check your email for the calendar invite.{' '}
+                          {result.pricingModel === 'tier_v2'
+                            ? <>Ben will hop on the call to confirm your cut, lock your processing date, and walk you through {result.rancher.name}.</>
+                            : <>{result.rancher.name.split(' ')[0]} will walk you through cuts, pricing, and processing dates on the call.</>}
+                          {' '}No payment until you&apos;re ready.
                         </p>
                         <button
                           onClick={() => router.push('/member?qualified=true')}
@@ -440,9 +444,11 @@ export default function QualifyPage({
                           Go to my dashboard →
                         </button>
                       </div>
-                    ) : (
+                    ) : result.pricingModel === 'tier_v2' ? (
                       <>
-                        {/* PRIMARY — book the operator sales call INLINE (buyer never leaves the site) */}
+                        {/* FUNNEL 2 (tier_v2): operator-led sales. Book BEN's call inline —
+                            he closes on the call, then fires the deposit invoice from the
+                            admin desk. Deposit stays available as a skip-the-call secondary. */}
                         <div className="text-left space-y-2">
                           <p className="text-xs uppercase tracking-widest text-saddle">Next step · about 2 minutes</p>
                           <h3 className="font-serif text-2xl text-charcoal">Book your call — pick a time below</h3>
@@ -460,9 +466,7 @@ export default function QualifyPage({
                             try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
                           }}
                         />
-
-                        {/* SECONDARY — self-serve instant reserve (tier_v2 ranchers only) */}
-                        {result.pricingModel === 'tier_v2' && result.depositAmount && result.referralId && (
+                        {result.depositAmount && result.referralId && (
                           <button
                             onClick={() => choosePath('direct_deposit')}
                             disabled={!!pathChosen}
@@ -472,6 +476,49 @@ export default function QualifyPage({
                           </button>
                         )}
                       </>
+                    ) : result.rancher.calComSlug ? (
+                      <>
+                        {/* FUNNEL 1 (legacy, rancher has own Cal): routing as it has been —
+                            buyer books the RANCHER's call inline. Rancher runs their own
+                            sale; BHC invoices commission post-close. */}
+                        <div className="text-left space-y-2">
+                          <p className="text-xs uppercase tracking-widest text-saddle">Next step · about 2 minutes</p>
+                          <h3 className="font-serif text-2xl text-charcoal">Book your call with {result.rancher.name.split(' ')[0]}</h3>
+                          <p className="text-sm text-saddle leading-relaxed">
+                            Pick a time below — talk cuts, pricing, and processing dates directly with the ranch. No payment now.
+                          </p>
+                        </div>
+                        <CalInlineBooker
+                          calLink={result.rancher.calComSlug}
+                          name={result.buyerName}
+                          email={result.buyerEmail}
+                          referralId={result.referralId}
+                          onBooked={() => {
+                            setBooked(true);
+                            try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+                          }}
+                        />
+                      </>
+                    ) : (
+                      /* FUNNEL 1 (legacy, no Cal slug): classic intro path — rancher
+                         already got the intro email and reaches out directly. */
+                      <button
+                        onClick={() => choosePath('rancher_meet')}
+                        disabled={!!pathChosen}
+                        className="border-4 border-charcoal bg-charcoal text-bone hover:bg-saddle hover:border-saddle p-7 text-left transition-all disabled:opacity-50 shadow-lg"
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className="text-4xl">📅</div>
+                          <div className="flex-1">
+                            <p className="text-xs uppercase tracking-widest text-bone/70 mb-1">Next step</p>
+                            <div className="font-serif text-2xl mb-2">Meet {result.rancher.name}</div>
+                            <div className="text-sm text-bone/90 leading-relaxed">
+                              They&apos;ll reach out via email/phone within 24h with pricing, processing dates, and how to lock in your order.
+                            </div>
+                          </div>
+                          <div className="font-medium text-2xl">→</div>
+                        </div>
+                      </button>
                     )}
                   </div>
                 )}

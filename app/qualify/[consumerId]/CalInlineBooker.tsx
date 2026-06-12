@@ -17,21 +17,27 @@
 
 import { useEffect, useRef } from 'react';
 
-// Operator sales-call event. Override via env without a redeploy if the slug
-// ever changes. Matches lib/emailMinimal.ts BHC_OPERATOR_CAL_URL default.
-const CAL_LINK =
+// Operator sales-call event — the default when no calLink is passed. Override
+// via env without a redeploy if the slug ever changes. Matches
+// lib/emailMinimal.ts BHC_OPERATOR_CAL_URL default.
+const OPERATOR_CAL_LINK =
   process.env.NEXT_PUBLIC_BHC_OPERATOR_CAL_LINK || 'ben-beauchman-1itnsg/sales';
 const NS = 'salescall';
 const MOUNT_ID = 'bhc-cal-inline-booker';
 
 interface Props {
+  // Cal event to embed, e.g. 'some-rancher/30min'. Defaults to the operator
+  // sales call. The dual-funnel branch passes the matched LEGACY rancher's
+  // own event here so funnel-1 buyers book the rancher, not the operator.
+  calLink?: string;
   name?: string;
   email?: string;
   referralId?: string | null;
   onBooked?: () => void;
 }
 
-export default function CalInlineBooker({ name, email, referralId, onBooked }: Props) {
+export default function CalInlineBooker({ calLink, name, email, referralId, onBooked }: Props) {
+  const resolvedCalLink = calLink || OPERATOR_CAL_LINK;
   const initialized = useRef(false);
 
   useEffect(() => {
@@ -81,7 +87,7 @@ export default function CalInlineBooker({ name, email, referralId, onBooked }: P
 
     Cal.ns[NS]('inline', {
       elementOrSelector: `#${MOUNT_ID}`,
-      calLink: CAL_LINK,
+      calLink: resolvedCalLink,
       layout: 'month_view',
       config,
     });
@@ -98,7 +104,7 @@ export default function CalInlineBooker({ name, email, referralId, onBooked }: P
         callback: () => onBooked(),
       });
     }
-  }, [name, email, referralId, onBooked]);
+  }, [resolvedCalLink, name, email, referralId, onBooked]);
 
   return (
     <div
