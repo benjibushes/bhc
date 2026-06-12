@@ -34,14 +34,18 @@ export async function GET(req: Request) {
   const daysBack = since === '7d' ? 7 : since === '90d' ? 90 : since === 'all' ? 9999 : 30;
   const cutoff = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
 
+  // Fix 6 — neither Consumers nor Referrals has a `Created Time`/`Created At`
+  // FIELD; filtering on them 422'd, .catch(()=>[]) swallowed it, and the
+  // whole panel rendered zeros. Airtable's CREATED_TIME() formula function
+  // reads record metadata instead.
   const [consumers, referrals] = await Promise.all([
     getAllRecords(
       TABLES.CONSUMERS,
-      since === 'all' ? '{Status}="Approved"' : `AND({Status}="Approved",IS_AFTER({Created Time},'${cutoff}'))`,
+      since === 'all' ? '{Status}="Approved"' : `AND({Status}="Approved",IS_AFTER(CREATED_TIME(),'${cutoff}'))`,
     ).catch(() => []),
     getAllRecords(
       TABLES.REFERRALS,
-      since === 'all' ? '' : `IS_AFTER({Created At},'${cutoff}')`,
+      since === 'all' ? '' : `IS_AFTER(CREATED_TIME(),'${cutoff}')`,
     ).catch(() => []),
   ]);
 

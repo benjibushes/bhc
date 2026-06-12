@@ -39,6 +39,9 @@ interface NBAInput {
     buyerEmail: string;
     rancherName: string;
     state?: string;
+    // Fix 1 — Status='Awaiting Payment' covers BOTH invoice-out-unpaid and
+    // deposit-paid-awaiting-rancher; only this timestamp distinguishes.
+    depositPaidAt?: string;
   }>;
   slotsLocked: Array<{
     id: string;
@@ -58,7 +61,10 @@ export function computeNBA(input: NBAInput): NBAItem[] {
   const items: NBAItem[] = [];
   const now = Date.now();
 
-  // 1) Cal calls starting within 60 min — prep + show up
+  // 1) Cal calls starting within 60 min — prep + show up.
+  //    Fix 5: startTime is fed from `Sales Call Start At` (real call time);
+  //    it used to be `Sales Call Booked At`, so this rule could never fire
+  //    unless the booking was *created* within the hour.
   for (const c of input.calls) {
     if (!c.startTime) continue;
     const startMs = new Date(c.startTime).getTime();
@@ -95,17 +101,30 @@ export function computeNBA(input: NBAInput): NBAItem[] {
     });
   }
 
-  // 3) Deposit pending > 24h with no rancher accept — chase rancher
+  // 3) Awaiting Payment rows — Fix 1 split: deposit paid → chase the
+  //    rancher; invoice still unpaid → chase the buyer.
   for (const r of input.depositPending) {
-    items.push({
-      priority: 2,
-      type: 'chase',
-      subject: `${r.buyerEmail} → ${r.rancherName}`,
-      reason: 'Awaiting rancher accept (Stripe deposit paid)',
-      action: 'Telegram rancher — confirm slot or refund',
-      entityType: 'referral',
-      entityId: r.id,
-    });
+    if (r.depositPaidAt) {
+      items.push({
+        priority: 2,
+        type: 'chase',
+        subject: `${r.buyerEmail} → ${r.rancherName}`,
+        reason: 'Stripe deposit paid — awaiting rancher accept',
+        action: 'Telegram rancher — confirm slot or refund',
+        entityType: 'referral',
+        entityId: r.id,
+      });
+    } else {
+      items.push({
+        priority: 2,
+        type: 'chase',
+        subject: `${r.buyerEmail} → ${r.rancherName}`,
+        reason: 'Deposit invoice sent — buyer has not paid',
+        action: 'Chase buyer — resend checkout link',
+        entityType: 'referral',
+        entityId: r.id,
+      });
+    }
   }
 
   // 4) Mid-warm buyers (score 40-69) — drip + qualify

@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
+import { getAllRecords, TABLES, escapeAirtableValue } from '@/lib/airtable';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -47,15 +48,46 @@ export async function GET(req: Request) {
     }
     const json = await res.json();
     const data = json?.data?.bookings || json?.bookings || json?.data || [];
-    return NextResponse.json({ bookings: data.map(formatBooking) });
+
+    // Fix 7 — buyer dossier: one batched Consumers lookup by attendee email
+    // so call cards carry quiz score + answers + lead score + phone + state.
+    // Lookup failure degrades to plain booking rows (never blocks the feed).
+    const emails = [
+      ...new Set(
+        (data as any[])
+          .map((b) =>
+            String((b.attendees || b.attendeesList || [])[0]?.email || '')
+              .trim()
+              .toLowerCase(),
+          )
+          .filter(Boolean),
+      ),
+    ];
+    let consumerByEmail = new Map<string, any>();
+    if (emails.length > 0) {
+      const consumers = await getAllRecords(
+        TABLES.CONSUMERS,
+        `OR(${emails.map((e) => `LOWER({Email})="${escapeAirtableValue(e)}"`).join(',')})`,
+      ).catch(() => [] as any[]);
+      consumerByEmail = new Map(
+        (consumers as any[]).map((c) => [String(c['Email'] || '').trim().toLowerCase(), c] as [string, any]),
+      );
+    }
+
+    return NextResponse.json({
+      bookings: (data as any[]).map((b) => formatBooking(b, consumerByEmail)),
+    });
   } catch (e: any) {
     return NextResponse.json({ bookings: [], error: e?.message || 'fetch failed' });
   }
 }
 
-function formatBooking(b: any) {
+function formatBooking(b: any, consumerByEmail?: Map<string, any>) {
   const attendees = b.attendees || b.attendeesList || [];
   const firstAttendee = attendees[0] || {};
+  // Fix 7 — joined Consumer row (undefined for non-buyer attendees)
+  const email = String(firstAttendee.email || '').trim().toLowerCase();
+  const c = email ? consumerByEmail?.get(email) : undefined;
   return {
     id: String(b.id || b.uid || ''),
     uid: String(b.uid || b.id || ''),
@@ -71,5 +103,12 @@ function formatBooking(b: any) {
     rescheduleUrl: String(b.rescheduleUrl || b.absoluteRescheduleUrl || ''),
     cancelUrl: String(b.cancelUrl || b.absoluteCancelUrl || ''),
     metadata: b.metadata || {},
+    // Fix 7 — buyer dossier from the Consumers join
+    consumerId: c?.id ? String(c.id) : '',
+    qualificationScore: c && c['Qualification Score'] != null ? Number(c['Qualification Score']) : null,
+    qualificationAnswers: String(c?.['Qualification Answers'] || ''),
+    leadScore: c && c['Lead Score'] != null ? Number(c['Lead Score']) : null,
+    phone: String(c?.['Phone'] || ''),
+    state: String(c?.['State'] || ''),
   };
 }

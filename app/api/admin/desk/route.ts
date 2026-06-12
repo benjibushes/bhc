@@ -5,7 +5,7 @@
 // rancher pulse in one round-trip. Frontend polls every 30s.
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, TABLES } from '@/lib/airtable';
+import { getAllRecords, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { computeLeadScore } from '@/lib/leadScore';
 import { computeNBA } from '@/lib/nextBestAction';
@@ -22,21 +22,33 @@ export async function GET(req: Request) {
   const todayIso = today.toISOString().slice(0, 10);
   const tomorrowIso = tomorrow.toISOString().slice(0, 10);
 
-  // R5 (2026-06-10): Cal bookings are stamped on Referrals.Sales Call
-  // Booked At by the cal webhook. Prior implementation queried
-  // Conversations.Type='cal_booking' — that field doesn't exist on
-  // Conversations, so calls was always empty.
+  // R5 (2026-06-10): Cal bookings are stamped on Referrals by the cal
+  // webhook. Prior implementation queried Conversations.Type='cal_booking' —
+  // that field doesn't exist on Conversations, so calls was always empty.
+  // Fix 5 (2026-06-11): window on `Sales Call Start At` (when the call
+  // actually happens), not `Sales Call Booked At` (when the booking was
+  // created) — a call booked yesterday for 2pm today never showed up.
   let calls: any[] = [];
   try {
     calls = await getAllRecords(
       TABLES.REFERRALS,
-      `AND(IS_AFTER({Sales Call Booked At},'${todayIso}'),IS_BEFORE({Sales Call Booked At},'${tomorrowIso}'))`,
+      `AND(IS_AFTER({Sales Call Start At},'${todayIso}'),IS_BEFORE({Sales Call Start At},'${tomorrowIso}'))`,
     );
   } catch {
     calls = [];
   }
 
-  const [quizComplete, depositPending, slotsLocked, closedToday, waitlisted, ranchersActive, wholesaleInquiries] =
+  // Fix 5/7 — dossier join: pull the Consumer rows behind today's calls in
+  // one batched OR() lookup so call cards carry quiz score + phone.
+  const callEmails = [
+    ...new Set(
+      calls
+        .map((r: any) => String(r['Buyer Email'] || '').trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+
+  const [quizComplete, depositPending, slotsLocked, closedToday, waitlisted, ranchersActive, wholesaleInquiries, callDoneNoInvoice, callBuyers] =
     await Promise.all([
       getAllRecords(
         TABLES.CONSUMERS,
@@ -66,6 +78,20 @@ export async function GET(req: Request) {
         TABLES.INQUIRIES,
         `AND({Interest Type}='Wholesale',NOT({Status}='Closed Won'),NOT({Status}='Closed Lost'))`,
       ).catch(() => []),
+      // Fix 2 — "Ben closed on the call but forgot the invoice" net: the
+      // call is marked completed but the referral never advanced into the
+      // money stages.
+      getAllRecords(
+        TABLES.REFERRALS,
+        `AND(NOT({Sales Call Completed At}=''),{Status}!='Awaiting Payment',{Status}!='Slot Locked',{Status}!='Closed Won',{Status}!='Closed Lost')`,
+      ).catch(() => []),
+      // Fix 5/7 — Consumers behind today's calls (quiz score + phone)
+      callEmails.length > 0
+        ? getAllRecords(
+            TABLES.CONSUMERS,
+            `OR(${callEmails.map((e) => `LOWER({Email})="${escapeAirtableValue(e)}"`).join(',')})`,
+          ).catch(() => [])
+        : Promise.resolve([] as any[]),
     ]);
 
   // F4 — composite lead score + sort quiz-complete by hottest first
@@ -73,9 +99,17 @@ export async function GET(req: Request) {
     .map(formatBuyer)
     .sort((a, b) => b.leadScore - a.leadScore);
 
-  const callsFormatted = calls.map(formatCall);
+  const buyerByEmail = new Map<string, any>(
+    (callBuyers as any[]).map((c) => [String(c['Email'] || '').trim().toLowerCase(), c] as [string, any]),
+  );
+  // Fix 5 — ordered by actual start time so the desk reads top-to-bottom
+  // like Ben's day.
+  const callsFormatted = calls
+    .map((r: any) => formatCall(r, buyerByEmail.get(String(r['Buyer Email'] || '').trim().toLowerCase())))
+    .sort((a, b) => String(a.startTime).localeCompare(String(b.startTime)));
   const depositPendingFormatted = depositPending.map(formatReferral);
   const slotsLockedFormatted = slotsLocked.map(formatReferral);
+  const callDoneNoInvoiceFormatted = (callDoneNoInvoice as any[]).map(formatReferral);
 
   const wholesaleFormatted = (wholesaleInquiries as any[]).map(formatWholesale);
 
@@ -93,6 +127,7 @@ export async function GET(req: Request) {
     quizComplete: quizFormatted,
     depositPending: depositPendingFormatted,
     slotsLocked: slotsLockedFormatted,
+    callDoneNoInvoice: callDoneNoInvoiceFormatted,
     closedToday: closedToday.map(formatReferral),
     waitlisted: groupByState(waitlisted),
     ranchersActive: ranchersActive.length,
@@ -133,17 +168,21 @@ function formatWholesale(i: any) {
   };
 }
 
-// R5 (2026-06-10): now reads Referral rows (Sales Call Booked At within
-// the day window) — not Conversations rows.
-function formatCall(r: any) {
+// R5 (2026-06-10): now reads Referral rows — not Conversations rows.
+// Fix 5 (2026-06-11): startTime is `Sales Call Start At` (real call time),
+// not `Sales Call Booked At` (booking-creation time) — the NBA "call in
+// ≤60min" rule needs the actual start to fire. `c` is the joined Consumer
+// row (fix 7 dossier) for quiz score + phone fallback.
+function formatCall(r: any, c?: any) {
   return {
     id: r.id,
-    startTime: r['Sales Call Booked At'] || '',
+    startTime: r['Sales Call Start At'] || '',
     buyerName: r['Buyer Name'] || '?',
     buyerEmail: r['Buyer Email'] || '?',
+    buyerPhone: r['Buyer Phone'] || c?.['Phone'] || '',
     rancherName: r['Suggested Rancher Name'] || '',
-    state: r['Buyer State'] || '',
-    quizScore: null, // Referral row doesn't carry quiz score
+    state: r['Buyer State'] || c?.['State'] || '',
+    quizScore: c && c['Qualification Score'] != null ? Number(c['Qualification Score']) : null,
   };
 }
 
@@ -199,12 +238,24 @@ function formatReferral(r: any) {
   return {
     id: r.id,
     buyerEmail: r['Buyer Email'] || '?',
+    buyerName: r['Buyer Name'] || '',
+    buyerPhone: r['Buyer Phone'] || '',
     rancherName: Array.isArray(r['Rancher']) ? '(linked)' : (r['Rancher Name'] || '?'),
     saleAmount: r['Sale Amount'] || 0,
-    depositAmount: r['Deposit Amount'] || 0,
+    // Fix 4 — Airtable money fields are stored in DOLLARS. Convert ×100
+    // here so every client fmtUsd (÷100) stays consistent.
+    depositAmountCents: Math.round(Number(r['Deposit Amount'] || 0) * 100),
+    totalSaleAmountCents: Math.round(Number(r['Total Sale Amount'] || 0) * 100),
+    finalInvoiceAmountCents: Math.round(Number(r['Final Invoice Amount'] || 0) * 100),
     state: r['Buyer State'] || '',
     closedAt: r['Closed At'] || '',
     status: r['Status'] || '',
+    // Fix 1/2/3 — stage timestamps. Stripe keeps Status='Awaiting Payment'
+    // after the deposit is PAID; only these distinguish the true stage.
+    depositPaidAt: r['Deposit Paid At'] || '',
+    rancherAcceptedAt: r['Rancher Accepted At'] || '',
+    finalInvoiceSentAt: r['Final Invoice Sent At'] || '',
+    salesCallCompletedAt: r['Sales Call Completed At'] || '',
     daysSinceActivity,
   };
 }
@@ -222,10 +273,17 @@ function groupByState(buyers: any[]) {
 
 function computePipelineValue(quiz: any[], pending: any[], locked: any[], closed: any[]) {
   const AVG_SALE = 2000; // half cow avg in dollars
+  // Fix 4 — `Deposit Amount` / `Total Sale Amount` are DOLLARS in Airtable;
+  // multiply ×100 so the *Cents names are honest (pendingValueCents was
+  // understating 100x). `Sale Amount` stays empty until Closed Won for
+  // tier_v2, so locked value falls back to `Total Sale Amount`.
   return {
     quizPotential: quiz.length * AVG_SALE,
-    pendingValueCents: pending.reduce((s, r) => s + Number(r['Deposit Amount'] || 0), 0),
-    lockedValueCents: locked.reduce((s, r) => s + Number(r['Sale Amount'] || 0) * 100, 0),
+    pendingValueCents: pending.reduce((s, r) => s + Number(r['Deposit Amount'] || 0) * 100, 0),
+    lockedValueCents: locked.reduce(
+      (s, r) => s + Number(r['Sale Amount'] || r['Total Sale Amount'] || 0) * 100,
+      0,
+    ),
     closedTodayValueCents: closed.reduce((s, r) => s + Number(r['Sale Amount'] || 0) * 100, 0),
   };
 }

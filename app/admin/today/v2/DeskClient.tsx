@@ -3,10 +3,13 @@
 // Sales-floor desk v3 — closed-loop sales console.
 //
 // Renders:
+//  - Call done — no invoice net (fix 2: closed on the call, forgot the invoice)
 //  - Hero pipeline cards (quiz-complete count, deposit-pending $, locked $, closed today $)
-//  - Cal bookings (next 7 days) inline w/ Join + Send Invoice + quiz-score chip
+//  - Today's calls (fix 5: Referrals windowed on Sales Call Start At)
+//  - Cal bookings (next 7 days) inline w/ Join + Send Invoice + buyer dossier (fix 7)
 //  - Quiz-complete awaiting outreach
-//  - Deposit pending — w/ "Open buyer flow" inline
+//  - Awaiting Payment split (fix 1): invoice unpaid → chase buyer; deposit paid → nudge rancher
+//  - Slot Locked fulfillment watch w/ final-invoice state (fix 3)
 //  - Closed today celebration tape
 //  - Waitlisted-by-state
 //  - Inline SendDepositModal for closing a buyer post-call
@@ -25,6 +28,25 @@ interface CalBooking {
   attendeeName: string;
   attendeeEmail: string;
   meetingUrl: string;
+  // Fix 7 — buyer dossier joined from Consumers by attendee email
+  consumerId?: string;
+  qualificationScore?: number | null;
+  qualificationAnswers?: string;
+  leadScore?: number | null;
+  phone?: string;
+  state?: string;
+}
+
+// Fix 5 — Referral rows windowed on Sales Call Start At (today)
+interface DeskCall {
+  id: string;
+  startTime: string;
+  buyerName: string;
+  buyerEmail: string;
+  buyerPhone?: string;
+  rancherName?: string;
+  state?: string;
+  quizScore?: number | null;
 }
 
 interface DeskBuyer {
@@ -46,12 +68,22 @@ interface DeskBuyer {
 interface DeskReferral {
   id: string;
   buyerEmail: string;
+  buyerName?: string;
+  buyerPhone?: string;
   rancherName: string;
   saleAmount: number;
-  depositAmount: number;
+  // Fix 4 — API converts Airtable dollars → cents; fmtUsd (÷100) stays honest
+  depositAmountCents: number;
+  totalSaleAmountCents?: number;
+  finalInvoiceAmountCents?: number;
   state: string;
   closedAt: string;
   status?: string;
+  // Fix 1/2/3 — stage timestamps; Status alone can't tell paid from unpaid
+  depositPaidAt?: string;
+  rancherAcceptedAt?: string;
+  finalInvoiceSentAt?: string;
+  salesCallCompletedAt?: string;
   daysSinceActivity?: number | null;
 }
 
@@ -79,10 +111,12 @@ interface DeskWholesale {
 }
 
 interface DeskData {
-  calls: any[];
+  calls: DeskCall[];
   quizComplete: DeskBuyer[];
   depositPending: DeskReferral[];
   slotsLocked: DeskReferral[];
+  // Fix 2 — call completed but referral never reached the money stages
+  callDoneNoInvoice?: DeskReferral[];
   closedToday: DeskReferral[];
   waitlisted: { state: string; count: number }[];
   ranchersActive: number;
@@ -223,6 +257,21 @@ export default function DeskClient() {
     return `in ${Math.round(hrs / 24)}d`;
   };
 
+  // Fix 1 — Stripe keeps Status='Awaiting Payment' after the deposit is
+  // PAID; only `Deposit Paid At` distinguishes. Split the bucket so
+  // chase-the-buyer and nudge-the-rancher never hide behind each other.
+  const invoiceUnpaid = desk.depositPending.filter((r) => !r.depositPaidAt);
+  const depositPaidWaiting = desk.depositPending.filter(
+    (r) => !!r.depositPaidAt && !r.rancherAcceptedAt,
+  );
+  const callDone = desk.callDoneNoInvoice || [];
+  // Fix 5 — Referral rows carry no meeting URL; cross-reference the Cal
+  // feed by attendee email for a join link when one exists.
+  const joinUrlFor = (email: string) =>
+    bookings.find(
+      (b) => b.attendeeEmail?.toLowerCase() === email.toLowerCase() && b.meetingUrl,
+    )?.meetingUrl || '';
+
   return (
     <main className="min-h-screen bg-bone">
       <div className="max-w-6xl mx-auto p-6 md:p-8">
@@ -290,6 +339,49 @@ export default function DeskClient() {
           </section>
         )}
 
+        {/* Fix 2 — CALL DONE, NO INVOICE. Ben closed on the call but never
+            sent the deposit invoice. Top-priority net: every row here is a
+            verbal yes with zero paper behind it. */}
+        {callDone.length > 0 && (
+          <section className="mb-5 border-l-4 border-rust bg-bone-warm p-4 md:p-5">
+            <h2 className="font-serif text-lg text-charcoal mb-2">
+              Call done — send the invoice
+              <span className="text-xs text-saddle ml-2">({callDone.length})</span>
+            </h2>
+            <ul className="space-y-1.5">
+              {callDone.map((r) => (
+                <li
+                  key={r.id}
+                  className="border border-divider bg-white p-3 flex justify-between items-center text-sm gap-3"
+                >
+                  <span className="text-charcoal min-w-0 flex-1 truncate">
+                    <strong>{r.buyerName || r.buyerEmail}</strong>
+                    {r.buyerPhone ? ` · ${r.buyerPhone}` : ''} · {r.state || '?'}
+                    {r.salesCallCompletedAt ? (
+                      <span className="text-xs text-saddle ml-2">
+                        call done {fmtTimeUntil(r.salesCallCompletedAt)}
+                      </span>
+                    ) : null}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openModal(
+                        r.buyerEmail.toLowerCase(),
+                        r.buyerName || r.buyerEmail,
+                        r.state,
+                      )
+                    }
+                    className="px-3 py-2 bg-charcoal text-bone text-[11px] uppercase tracking-widest hover:bg-divider transition-base whitespace-nowrap"
+                  >
+                    Send Invoice
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {/* HERO closed-today number */}
         <section className="border border-charcoal bg-charcoal text-bone p-5 md:p-7 mb-5">
           <p className="text-[11px] uppercase tracking-widest opacity-70">Closed today</p>
@@ -333,6 +425,66 @@ export default function DeskClient() {
           />
         </section>
 
+        {/* Fix 5 — 📞 TODAY'S CALLS. Referrals windowed on Sales Call Start
+            At, ordered by start time. Was fetched but never rendered. */}
+        {desk.calls.length > 0 && (
+          <section className="mb-8">
+            <h2 className="font-serif text-xl text-charcoal mb-3">
+              📞 Today&apos;s calls{' '}
+              <span className="text-xs text-saddle">({desk.calls.length})</span>
+            </h2>
+            <ul className="space-y-2">
+              {desk.calls.map((c) => {
+                const joinUrl = c.buyerEmail ? joinUrlFor(c.buyerEmail) : '';
+                return (
+                  <li
+                    key={c.id}
+                    className="border border-divider bg-white p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <strong className="text-charcoal text-sm">
+                          {c.startTime
+                            ? new Date(c.startTime).toLocaleTimeString(undefined, {
+                                hour: 'numeric',
+                                minute: '2-digit',
+                              })
+                            : 'TBD'}
+                        </strong>
+                        <span className="text-charcoal text-sm">{c.buyerName}</span>
+                        {typeof c.quizScore === 'number' && (
+                          <span className="inline-block text-[10px] font-mono px-1 py-0.5 bg-bone-warm text-charcoal border border-divider">
+                            ⭐ {c.quizScore}
+                          </span>
+                        )}
+                        <span className="text-[10px] uppercase tracking-widest text-saddle">
+                          {fmtTimeUntil(c.startTime)}
+                        </span>
+                      </div>
+                      <div className="text-xs text-saddle truncate">
+                        {c.buyerEmail}
+                        {c.buyerPhone ? ` · ${c.buyerPhone}` : ''}
+                        {c.state ? ` · ${c.state}` : ''}
+                        {c.rancherName ? ` · → ${c.rancherName}` : ''}
+                      </div>
+                    </div>
+                    {joinUrl && (
+                      <a
+                        href={joinUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-2 border border-charcoal text-charcoal text-[11px] uppercase tracking-widest hover:bg-charcoal hover:text-bone transition-base whitespace-nowrap"
+                      >
+                        Join →
+                      </a>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
         {/* CAL BOOKINGS */}
         <section className="mb-8">
           <h2 className="font-serif text-xl text-charcoal mb-3">
@@ -359,12 +511,27 @@ export default function DeskClient() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <strong className="text-charcoal text-sm">{b.attendeeName || 'Unknown'}</strong>
+                      {/* Fix 7 — quiz-score chip from the Consumers join */}
+                      {typeof b.qualificationScore === 'number' && (
+                        <span
+                          className="inline-block text-[10px] font-mono px-1 py-0.5 bg-bone-warm text-charcoal border border-divider"
+                          title={
+                            typeof b.leadScore === 'number'
+                              ? `Quiz ${b.qualificationScore} · lead score ${b.leadScore}`
+                              : `Quiz score ${b.qualificationScore}`
+                          }
+                        >
+                          ⭐ {b.qualificationScore}
+                        </span>
+                      )}
                       <span className="text-[10px] uppercase tracking-widest text-saddle">
                         {fmtTimeUntil(b.startTime)}
                       </span>
                     </div>
                     <div className="text-xs text-saddle truncate">
-                      {b.attendeeEmail} · {b.title} ·{' '}
+                      {b.attendeeEmail}
+                      {b.phone ? ` · ${b.phone}` : ''}
+                      {b.state ? ` · ${b.state}` : ''} · {b.title} ·{' '}
                       {b.startTime
                         ? new Date(b.startTime).toLocaleString(undefined, {
                             month: 'short',
@@ -374,6 +541,17 @@ export default function DeskClient() {
                           })
                         : 'TBD'}
                     </div>
+                    {/* Fix 7 — expandable raw quiz answers for call prep */}
+                    {b.qualificationAnswers ? (
+                      <details className="mt-1">
+                        <summary className="text-[11px] uppercase tracking-widest text-saddle cursor-pointer">
+                          Quiz answers
+                        </summary>
+                        <pre className="text-xs text-charcoal whitespace-pre-wrap mt-1 bg-bone-warm border border-divider p-2">
+                          {b.qualificationAnswers}
+                        </pre>
+                      </details>
+                    ) : null}
                   </div>
                   <div className="flex gap-2 flex-wrap">
                     {b.meetingUrl && (
@@ -389,7 +567,10 @@ export default function DeskClient() {
                     <button
                       type="button"
                       onClick={() =>
-                        openModal(b.attendeeEmail.toLowerCase(), b.attendeeName, '')
+                        // Fix 7 — pass the buyer's real state (from the
+                        // Consumers join) so the rancher dropdown filters
+                        // to in-state first.
+                        openModal(b.attendeeEmail.toLowerCase(), b.attendeeName, b.state || '')
                       }
                       className="px-3 py-2 bg-charcoal text-bone text-[11px] uppercase tracking-widest hover:bg-divider transition-base"
                     >
@@ -454,26 +635,105 @@ export default function DeskClient() {
           )}
         </section>
 
-        {/* DEPOSITS PENDING — RANCHER ACCEPT WATCH */}
-        {desk.depositPending.length > 0 && (
+        {/* Fix 1 — 💸 INVOICE SENT, MONEY NOT IN. Status='Awaiting Payment'
+            w/ Deposit Paid At blank: the buyer is the blocker. */}
+        {invoiceUnpaid.length > 0 && (
           <section className="mb-8">
             <h2 className="font-serif text-xl text-charcoal mb-3">
-              Awaiting rancher accept ({desk.depositPending.length})
+              💸 Invoice sent — buyer hasn&apos;t paid ({invoiceUnpaid.length})
             </h2>
             <ul className="space-y-1">
-              {desk.depositPending.map((r) => (
+              {invoiceUnpaid.map((r) => (
                 <li
                   key={r.id}
-                  className="border border-divider bg-bone-warm p-3 flex justify-between text-sm gap-3"
+                  className="border border-divider bg-bone-warm p-3 flex justify-between items-center text-sm gap-3"
                 >
                   <span className="text-charcoal min-w-0 flex-1 truncate">
                     <RotBadge days={r.daysSinceActivity ?? null} />
                     {r.buyerEmail} → <strong>{r.rancherName}</strong> · {r.state}
                   </span>
-                  <span className="text-saddle whitespace-nowrap">{fmtUsd(r.depositAmount)}</span>
+                  <span className="text-saddle whitespace-nowrap">{fmtUsd(r.depositAmountCents)}</span>
+                  <a
+                    href={`mailto:${r.buyerEmail.toLowerCase()}?subject=Your%20BuyHalfCow%20deposit%20invoice`}
+                    className="text-[11px] uppercase tracking-widest text-charcoal underline underline-offset-2 whitespace-nowrap"
+                  >
+                    Chase buyer
+                  </a>
                   <AdvanceStageButton id={r.id} from="Awaiting Payment" onSuccess={tick} />
                 </li>
               ))}
+            </ul>
+          </section>
+        )}
+
+        {/* Fix 1 — 🔒 DEPOSIT PAID, RANCHER QUIET. Deposit Paid At set,
+            Rancher Accepted At blank: the rancher is the blocker. */}
+        {depositPaidWaiting.length > 0 && (
+          <section className="mb-8">
+            <h2 className="font-serif text-xl text-charcoal mb-3">
+              🔒 Deposit paid — waiting on rancher accept ({depositPaidWaiting.length})
+            </h2>
+            <ul className="space-y-1">
+              {depositPaidWaiting.map((r) => (
+                <li
+                  key={r.id}
+                  className="border border-divider bg-bone-warm p-3 flex justify-between items-center text-sm gap-3"
+                >
+                  <span className="text-charcoal min-w-0 flex-1 truncate">
+                    <RotBadge days={r.daysSinceActivity ?? null} />
+                    {r.buyerEmail} → <strong>{r.rancherName}</strong> · {r.state}
+                    <span className="text-xs text-saddle ml-2">nudge rancher</span>
+                  </span>
+                  <span className="text-saddle whitespace-nowrap">{fmtUsd(r.depositAmountCents)}</span>
+                  <AdvanceStageButton id={r.id} from="Awaiting Payment" onSuccess={tick} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {/* Fix 3 — SLOT LOCKED FULFILLMENT WATCH. Was a count-only tile;
+            each row now shows accept age + final-invoice state. */}
+        {desk.slotsLocked.length > 0 && (
+          <section className="mb-8">
+            <h2 className="font-serif text-xl text-charcoal mb-3">
+              Slot Locked — fulfillment in motion ({desk.slotsLocked.length})
+            </h2>
+            <ul className="space-y-1">
+              {desk.slotsLocked.map((r) => {
+                const acceptDays = r.rancherAcceptedAt
+                  ? Math.floor(
+                      (Date.now() - new Date(r.rancherAcceptedAt).getTime()) / 86400000,
+                    )
+                  : null;
+                return (
+                  <li
+                    key={r.id}
+                    className="border border-divider bg-white p-3 flex flex-col md:flex-row md:items-center md:justify-between text-sm gap-2"
+                  >
+                    <span className="text-charcoal min-w-0 flex-1 truncate">
+                      {r.buyerEmail} → <strong>{r.rancherName}</strong> · {r.state}
+                      {acceptDays !== null && (
+                        <span className="text-xs text-saddle ml-2">
+                          accepted {acceptDays === 0 ? 'today' : `${acceptDays}d ago`}
+                        </span>
+                      )}
+                    </span>
+                    <span className="flex items-center gap-2 whitespace-nowrap">
+                      {r.finalInvoiceSentAt ? (
+                        <span className="inline-block text-[10px] uppercase tracking-widest px-1 py-0.5 bg-sage text-charcoal">
+                          Final invoice sent ✓ {fmtUsd(r.finalInvoiceAmountCents || 0)}
+                        </span>
+                      ) : (
+                        <span className="inline-block text-[10px] uppercase tracking-widest px-1 py-0.5 bg-bone-warm text-saddle border border-divider">
+                          no final invoice yet — nudge rancher
+                        </span>
+                      )}
+                      <AdvanceStageButton id={r.id} from="Slot Locked" onSuccess={tick} />
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}
