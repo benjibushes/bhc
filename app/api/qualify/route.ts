@@ -415,6 +415,11 @@ export async function POST(request: Request) {
     referralId,
     pricingModel,
     depositAmount,
+    // Buyer identity for the inline Cal booker prefill on the result page —
+    // makes the cal-webhook → referral link bulletproof (it matches the
+    // booking back to the buyer by attendee email).
+    buyerName: consumer['Full Name'] || '',
+    buyerEmail: consumer['Email'] || '',
     // R9 diagnostic — surfaces matching/suggest status + summary in the
     // response. Synthetic-e2e + manual debugs use this to find WHY a
     // qualified buyer didn't get a referralId.

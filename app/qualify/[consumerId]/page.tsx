@@ -18,6 +18,7 @@
 import { useState, useEffect, use as usePromise } from 'react';
 import { useRouter } from 'next/navigation';
 import { CutBreakdown, type Tier as CutTier } from '@/app/components/CutBreakdown';
+import CalInlineBooker from './CalInlineBooker';
 
 const TIER_OPTIONS = [
   { value: 'Quarter', label: 'Quarter', sub: '~85 lbs · ~$1,000-$1,500' },
@@ -82,9 +83,12 @@ export default function QualifyPage({
     referralId?: string | null;
     pricingModel?: string;
     depositAmount?: number | null;
+    buyerName?: string;
+    buyerEmail?: string;
     message?: string;
   } | null>(null);
   const [pathChosen, setPathChosen] = useState<'rancher_meet' | 'direct_deposit' | null>(null);
+  const [booked, setBooked] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -421,57 +425,53 @@ export default function QualifyPage({
                       </div>
                     )}
 
-                    {result.pricingModel === 'tier_v2' && result.depositAmount && result.referralId ? (
-                      <>
-                        {/* PRIMARY CTA — Reserve Now (tier_v2 buyer purchases on platform) */}
+                    {booked ? (
+                      <div className="border-4 border-green-700 bg-green-50 p-7 text-center space-y-3">
+                        <div className="text-4xl">✅</div>
+                        <div className="font-serif text-2xl text-charcoal">You&apos;re booked!</div>
+                        <p className="text-sm text-saddle max-w-md mx-auto leading-relaxed">
+                          Check your email for the calendar invite. Ben will hop on the call to confirm your cut,
+                          lock your processing date, and walk you through {result.rancher.name}. No payment until you&apos;re ready.
+                        </p>
                         <button
-                          onClick={() => choosePath('direct_deposit')}
-                          disabled={!!pathChosen}
-                          className="border-4 border-charcoal bg-charcoal text-bone hover:bg-saddle hover:border-saddle p-7 text-left transition-all disabled:opacity-50 shadow-lg"
+                          onClick={() => router.push('/member?qualified=true')}
+                          className="mt-2 inline-block px-7 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase tracking-widest text-xs"
                         >
-                          <div className="flex items-start gap-4">
-                            <div className="text-4xl">💳</div>
-                            <div className="flex-1">
-                              <p className="text-xs uppercase tracking-widest text-bone/70 mb-1">Recommended · Lock your slot</p>
-                              <div className="font-serif text-2xl mb-2">Reserve your share — ${result.depositAmount} deposit</div>
-                              <div className="text-sm text-bone/90 leading-relaxed">
-                                Pay now → slot locked for the next processing run → {result.rancher.name} invoices the balance when ready for pickup.
-                                <br />
-                                <strong>No deposit, no slot held.</strong> Spots fill first-come.
-                              </div>
-                            </div>
-                            <div className="font-medium text-2xl">→</div>
-                          </div>
+                          Go to my dashboard →
                         </button>
-
-                        {/* SECONDARY — Talk first */}
-                        <button
-                          onClick={() => choosePath('rancher_meet')}
-                          disabled={!!pathChosen}
-                          className="border border-dust bg-white hover:bg-bone p-4 text-center transition-all disabled:opacity-50 text-sm text-saddle hover:text-charcoal"
-                        >
-                          Not sure yet? Schedule a 15-min call with {result.rancher.name} first →
-                        </button>
-                      </>
+                      </div>
                     ) : (
-                      /* Legacy rancher — schedule call only path */
-                      <button
-                        onClick={() => choosePath('rancher_meet')}
-                        disabled={!!pathChosen}
-                        className="border-4 border-charcoal bg-charcoal text-bone hover:bg-saddle hover:border-saddle p-7 text-left transition-all disabled:opacity-50 shadow-lg"
-                      >
-                        <div className="flex items-start gap-4">
-                          <div className="text-4xl">📅</div>
-                          <div className="flex-1">
-                            <p className="text-xs uppercase tracking-widest text-bone/70 mb-1">Next step</p>
-                            <div className="font-serif text-2xl mb-2">Meet {result.rancher.name}</div>
-                            <div className="text-sm text-bone/90 leading-relaxed">
-                              Schedule a 15-min call OR they&apos;ll reach out via email/phone within 24h with pricing, processing date, and how to lock in your order.
-                            </div>
-                          </div>
-                          <div className="font-medium text-2xl">→</div>
+                      <>
+                        {/* PRIMARY — book the operator sales call INLINE (buyer never leaves the site) */}
+                        <div className="text-left space-y-2">
+                          <p className="text-xs uppercase tracking-widest text-saddle">Next step · about 2 minutes</p>
+                          <h3 className="font-serif text-2xl text-charcoal">Book your call — pick a time below</h3>
+                          <p className="text-sm text-saddle leading-relaxed">
+                            Quick call with Ben to confirm your cut, lock your processing date, and answer anything
+                            about {result.rancher.name}. No payment now.
+                          </p>
                         </div>
-                      </button>
+                        <CalInlineBooker
+                          name={result.buyerName}
+                          email={result.buyerEmail}
+                          referralId={result.referralId}
+                          onBooked={() => {
+                            setBooked(true);
+                            try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+                          }}
+                        />
+
+                        {/* SECONDARY — self-serve instant reserve (tier_v2 ranchers only) */}
+                        {result.pricingModel === 'tier_v2' && result.depositAmount && result.referralId && (
+                          <button
+                            onClick={() => choosePath('direct_deposit')}
+                            disabled={!!pathChosen}
+                            className="border border-dust bg-white hover:bg-bone p-4 text-center transition-all disabled:opacity-50 text-sm text-saddle hover:text-charcoal w-full"
+                          >
+                            Rather skip the call? Lock your slot instantly with a ${result.depositAmount} deposit →
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
