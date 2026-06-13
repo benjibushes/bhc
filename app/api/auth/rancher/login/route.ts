@@ -46,17 +46,43 @@ export async function POST(request: Request) {
     // got nothing. Now everything trimmed/compared in memory.
     const all = await getAllRecords(TABLES.RANCHERS) as any[];
     const splitRe = /[\s,;\n]+/;
-    let rancher: any = all.find((r) => {
+    // Shared most-recently-active tiebreak (latest of: Last Assigned At,
+    // Agreement Signed At, Docs Sent At, _createdTime). Used for BOTH the
+    // direct-Email and Team-Emails branches so a lingering duplicate row
+    // resolves deterministically to the canonical (most-recently-active) one
+    // — and to the SAME row the dedupe guard in lib/airtable.ts converges on.
+    const recencyMs = (r: any): number => {
+      const candidates = [
+        r['Last Assigned At'],
+        r['Agreement Signed At'],
+        r['Docs Sent At'],
+        r._createdTime,
+      ].map((d) => (d ? new Date(d).getTime() : 0));
+      return Math.max(...candidates, 0);
+    };
+
+    // Direct {Email} match. Previously first-match-wins via .find() — if a
+    // duplicate email still existed, login could land on the WRONG row (and
+    // Connect onboarding then attached to the wrong rancher). Collect ALL
+    // direct matches and pick the most-recently-active, same as Team Emails.
+    let rancher: any;
+    const emailMatches: any[] = all.filter((r) => {
       const stored = String(r['Email'] || '').trim().toLowerCase().replace(/\s+/g, '');
       return stored && stored === normalizedEmail;
     });
+    if (emailMatches.length === 1) {
+      rancher = emailMatches[0];
+    } else if (emailMatches.length > 1) {
+      emailMatches.sort((a, b) => recencyMs(b) - recencyMs(a));
+      rancher = emailMatches[0];
+      console.log(`[rancher-login] multi-email-match email=${normalizedEmail} → picked ${rancher.id} of ${emailMatches.length} candidates`);
+    }
 
     if (!rancher) {
       // Collect ALL matching ranchers — a consultant / spouse / hired help
       // may legitimately be on multiple Team Emails lists. Earlier behavior
       // was first-match-wins which silently logged them into the wrong
-      // dashboard. Pick the most-recently-active one (latest of:
-      // Last Assigned At, Agreement Signed At, Docs Sent At, _createdTime).
+      // dashboard. Pick the most-recently-active one.
       const teamMatches: any[] = [];
       for (const r of all) {
         const teamRaw = String(r['Team Emails'] || '').toLowerCase();
@@ -67,15 +93,6 @@ export async function POST(request: Request) {
       if (teamMatches.length === 1) {
         rancher = teamMatches[0];
       } else if (teamMatches.length > 1) {
-        const recencyMs = (r: any): number => {
-          const candidates = [
-            r['Last Assigned At'],
-            r['Agreement Signed At'],
-            r['Docs Sent At'],
-            r._createdTime,
-          ].map((d) => (d ? new Date(d).getTime() : 0));
-          return Math.max(...candidates, 0);
-        };
         teamMatches.sort((a, b) => recencyMs(b) - recencyMs(a));
         rancher = teamMatches[0];
         console.log(`[rancher-login] multi-team-match email=${normalizedEmail} → picked ${rancher.id} of ${teamMatches.length} candidates`);

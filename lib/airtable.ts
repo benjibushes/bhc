@@ -343,6 +343,123 @@ export async function getRancherBySlug(slug: string) {
   }
 }
 
+// ── Duplicate-rancher guard ─────────────────────────────────────────────
+// Single chokepoint for "does a Ranchers row already exist for this rancher?"
+// Root cause of the "3 Jesses" incident: every signup path
+// (/api/apply, /api/prospects/self-submit, /api/partners) ran its OWN ad-hoc
+// dedupe with a DIFFERENT normalizer + DIFFERENT match set, so the same human
+// could open multiple rows by varying email / using a team email / a different
+// ranch-name casing. Routing all three through this one helper makes them
+// normalize + match IDENTICALLY.
+//
+// Match order (case-insensitive, in-memory over the cached full list):
+//   1. Email          — SAME normalizer as app/api/auth/rancher/login/route.ts
+//                       (trim().toLowerCase().replace(/\s+/g,'')) so a row
+//                       login can reach is a row we dedupe against.
+//   2. Team Emails     — split on /[\s,;\n]+/, normalized; covers the
+//                       consultant/spouse/hired-help case no path checked before.
+//   3. Phone           — digits-only (opts.phone), >=10 digits.
+//   4. Ranch + State   — case-insensitive (opts.ranchName + opts.state).
+//
+// CRITICAL: an empty/absent email NEVER participates in the email or
+// team-email match — otherwise two rows that both happen to have a blank Email
+// would "match" each other and collapse. Empty-email callers fall straight
+// through to phone / ranch+state (or create).
+//
+// When createIfMissing !== false and nothing matched → creates the row.
+// When createIfMissing === false → pure lookup, returns {record:null,...}.
+//
+// Returns the matched record in the SAME shape getAllRecords yields (fields
+// flattened at top level + id + _createdTime); the created record in the shape
+// createRecord yields (raw Airtable record exposing .id). Both expose `.id`.
+const _normalizeEmail = (raw: any): string =>
+  String(raw || '').trim().toLowerCase().replace(/\s+/g, '');
+
+const _rancherRecencyMs = (r: any): number => {
+  const candidates = [
+    r['Last Assigned At'],
+    r['Agreement Signed At'],
+    r['Docs Sent At'],
+    r._createdTime,
+  ].map((d) => (d ? new Date(d).getTime() : 0));
+  return Math.max(...candidates, 0);
+};
+
+// Pick the canonical row when several match in the same tier: most-recently
+// active wins. Mirrors the tiebreak in the rancher-login Team Emails branch so
+// dedupe + login resolve to the SAME row even if a duplicate still exists.
+function _pickCanonical(matches: any[]): any {
+  if (matches.length <= 1) return matches[0];
+  return [...matches].sort((a, b) => _rancherRecencyMs(b) - _rancherRecencyMs(a))[0];
+}
+
+export async function findOrCreateRancherByEmail(
+  email: string,
+  fields: Record<string, any>,
+  opts?: { phone?: string; ranchName?: string; state?: string; createIfMissing?: boolean },
+): Promise<{
+  record: any;
+  created: boolean;
+  matchedBy: 'email' | 'team' | 'phone' | 'ranch+state' | null;
+}> {
+  const normalizedEmail = _normalizeEmail(email);
+  const all = (await getAllRecords(TABLES.RANCHERS)) as any[];
+  const splitRe = /[\s,;\n]+/;
+
+  // 1 + 2: email-based matches — SKIPPED ENTIRELY when there's no email, so we
+  // never collapse two blank-email rows together.
+  if (normalizedEmail) {
+    const emailMatches = all.filter(
+      (r) => _normalizeEmail(r['Email']) === normalizedEmail,
+    );
+    if (emailMatches.length) {
+      return { record: _pickCanonical(emailMatches), created: false, matchedBy: 'email' };
+    }
+
+    const teamMatches = all.filter((r) => {
+      const teamRaw = String(r['Team Emails'] || '').toLowerCase();
+      if (!teamRaw) return false;
+      const list = teamRaw.split(splitRe).map((s) => s.trim()).filter(Boolean);
+      return list.includes(normalizedEmail);
+    });
+    if (teamMatches.length) {
+      return { record: _pickCanonical(teamMatches), created: false, matchedBy: 'team' };
+    }
+  }
+
+  // 3: phone — digits-only, only meaningful with >=10 digits.
+  const normalizedPhone = (opts?.phone || '').replace(/\D/g, '');
+  if (normalizedPhone.length >= 10) {
+    const phoneMatches = all.filter(
+      (r) => String(r['Phone'] || '').replace(/\D/g, '') === normalizedPhone,
+    );
+    if (phoneMatches.length) {
+      return { record: _pickCanonical(phoneMatches), created: false, matchedBy: 'phone' };
+    }
+  }
+
+  // 4: ranch name + state — case-insensitive on both.
+  const normalizedRanch = (opts?.ranchName || '').trim().toLowerCase();
+  const normalizedState = (opts?.state || '').trim().toLowerCase();
+  if (normalizedRanch && normalizedState) {
+    const rsMatches = all.filter(
+      (r) =>
+        String(r['Ranch Name'] || '').trim().toLowerCase() === normalizedRanch &&
+        String(r['State'] || '').trim().toLowerCase() === normalizedState,
+    );
+    if (rsMatches.length) {
+      return { record: _pickCanonical(rsMatches), created: false, matchedBy: 'ranch+state' };
+    }
+  }
+
+  // No match.
+  if (opts?.createIfMissing === false) {
+    return { record: null, created: false, matchedBy: null };
+  }
+  const created = await createRecord(TABLES.RANCHERS, fields);
+  return { record: created, created: true, matchedBy: null };
+}
+
 // Get a single rancher by slug INCLUDING Prospect records (Page Live=false).
 // Used by the public landing page when the slug points to a Prospect that
 // hasn't been claimed yet. Filters out hidden / removed records so opted-out

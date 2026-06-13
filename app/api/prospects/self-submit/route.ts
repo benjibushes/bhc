@@ -3,6 +3,7 @@ import {
   createRecord,
   getAllRecords,
   escapeAirtableValue,
+  findOrCreateRancherByEmail,
   TABLES,
 } from '@/lib/airtable';
 import {
@@ -135,7 +136,49 @@ export async function POST(req: Request) {
     }
   }
 
-  // ── Dedupe ──
+  // ── Dedupe pre-check: rancher email (primary signal) ──
+  // The "3 Jesses" root cause: someone re-submits the same rancher under an
+  // email that already exists (or a team email), but with a slightly different
+  // ranch-name casing, so the ranch+state check below misses and a 2nd row is
+  // born. Check the email FIRST, through the shared guard, so it normalizes
+  // identically to /apply, /partners, and login.
+  //
+  // Lookup-only (createIfMissing:false) and NO phone/ranch/state opts passed —
+  // so ONLY the email + team-email tiers can fire here. That keeps two rules
+  // intact:
+  //   • Community submits (rancherEmail optional/absent) → helper skips the
+  //     email match entirely for an empty email and returns matchedBy:null, so
+  //     they fall through to the ranch+state check below. They are NEVER
+  //     blocked by this branch, and two empty-email prospects never collapse.
+  //   • Ranch+state / website stays the SECONDARY signal in the block below.
+  if (rancherEmail) {
+    try {
+      const { record: emailDup, matchedBy } = await findOrCreateRancherByEmail(
+        rancherEmail,
+        {},
+        { createIfMissing: false },
+      );
+      if (emailDup && (matchedBy === 'email' || matchedBy === 'team')) {
+        const status = (emailDup['Verification Status'] || '').toString();
+        return NextResponse.json(
+          {
+            success: true,
+            dedupe: true,
+            existingStatus: status,
+            message:
+              status === 'Verified'
+                ? `${ranchName} is already a verified BuyHalfCow partner.`
+                : `${ranchName} is already on the map — we'll reach out.`,
+          },
+          { status: 200 },
+        );
+      }
+    } catch (e) {
+      console.error('[self-submit] email dedupe pre-check failed (continuing):', e);
+    }
+  }
+
+  // ── Dedupe (secondary): website host + (ranch name + state) ──
   const websiteHost = website ? hostOf(website) : '';
   const safeRanch = escapeAirtableValue(ranchName);
   const safeState = escapeAirtableValue(state);

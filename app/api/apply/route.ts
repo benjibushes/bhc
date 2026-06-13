@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
-import { createRecord, getAllRecords, TABLES } from '@/lib/airtable';
+import { findOrCreateRancherByEmail } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendRancherApplyAutoApproved } from '@/lib/email';
 import { JWT_SECRET } from '@/lib/secrets';
@@ -130,30 +130,6 @@ export async function POST(req: Request) {
 
   const email = body.email.trim().toLowerCase();
 
-  // Dedupe by email — if a rancher already exists with this email, return
-  // their existing wizard URL instead of creating a duplicate.
-  try {
-    const existing = (await getAllRecords(TABLES.RANCHERS)) as any[];
-    const match = existing.find(
-      (r) => String(r['Email'] || '').trim().toLowerCase() === email
-    );
-    if (match) {
-      const existingToken = jwt.sign(
-        { type: 'rancher-setup', rancherId: match.id },
-        JWT_SECRET,
-        { expiresIn: '60d' }
-      );
-      return NextResponse.json({
-        ok: true,
-        existing: true,
-        wizardUrl: `${SITE_URL}/rancher/setup?token=${existingToken}`,
-        manualReview: false,
-      });
-    }
-  } catch (e: any) {
-    console.warn('[apply] dedupe lookup failed (continuing):', e?.message);
-  }
-
   // Build qualification + Notes payload
   const hot = isHotLead(body);
   const manualReview = needsManualReview(body);
@@ -181,23 +157,48 @@ export async function POST(req: Request) {
     .filter(Boolean)
     .join('\n');
 
-  // Create Airtable record. Default Pricing Model to 'tier_v2' for new
-  // ranchers — gets them on the deposit-direct path. Ben can downgrade
-  // to legacy during review if needed.
+  // Find-or-create through the shared duplicate-rancher guard. Default
+  // Pricing Model to 'tier_v2' for new ranchers — gets them on the
+  // deposit-direct path. Ben can downgrade to legacy during review if needed.
+  //
+  // Dedupe now goes beyond the old email-only check: the helper also matches
+  // Team Emails, phone, and (Ranch Name + State) so a 2nd team member or a
+  // re-submit under a different email can't fork a new "Jesse" row. On a
+  // match we return the EXISTING rancher's wizard URL instead of duplicating.
   let rancherId: string;
   try {
-    const created = await createRecord(TABLES.RANCHERS, {
-      'Operator Name': body.operatorName.trim(),
-      'Ranch Name': body.ranchName.trim(),
-      Email: email,
-      Phone: body.phone?.trim() || '',
-      City: body.city?.trim() || '',
-      State: body.state,
-      Status: 'Pending',
-      'Pricing Model': 'tier_v2',
-      'Operation Details': opDetails,
-    });
-    rancherId = (created as any).id;
+    const { record, created } = await findOrCreateRancherByEmail(
+      email,
+      {
+        'Operator Name': body.operatorName.trim(),
+        'Ranch Name': body.ranchName.trim(),
+        Email: email,
+        Phone: body.phone?.trim() || '',
+        City: body.city?.trim() || '',
+        State: body.state,
+        Status: 'Pending',
+        'Pricing Model': 'tier_v2',
+        'Operation Details': opDetails,
+      },
+      { phone: body.phone?.trim(), ranchName: body.ranchName.trim(), state: body.state },
+    );
+
+    if (!created) {
+      // Existing rancher — hand back their existing wizard URL, don't dupe.
+      const existingToken = jwt.sign(
+        { type: 'rancher-setup', rancherId: record.id },
+        JWT_SECRET,
+        { expiresIn: '60d' }
+      );
+      return NextResponse.json({
+        ok: true,
+        existing: true,
+        wizardUrl: `${SITE_URL}/rancher/setup?token=${existingToken}`,
+        manualReview: false,
+      });
+    }
+
+    rancherId = record.id;
   } catch (e: any) {
     console.error('[apply] Airtable create failed:', e?.message);
     return NextResponse.json(

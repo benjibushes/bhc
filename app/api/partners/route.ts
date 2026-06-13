@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createRecord, getAllRecords, escapeAirtableValue } from '@/lib/airtable';
+import { createRecord, getAllRecords, escapeAirtableValue, findOrCreateRancherByEmail } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
 import { sendTelegramPartnerAlert } from '@/lib/telegram';
@@ -85,32 +85,31 @@ export async function POST(request: Request) {
       // (Ranch Name + State) so a 2nd team member can't fork. Returns the
       // matched record id in the error body so the operator can manually
       // merge if needed.
+      //
+      // 2026-06-13: routed through the shared findOrCreateRancherByEmail guard
+      // (lookup mode) so /apply, /prospects/self-submit, /partners, and login
+      // all normalize + match identically. This branch additionally gains a
+      // Team Emails match (a teammate already listed on the canonical row no
+      // longer forks a 2nd row). Behavior preserved: still returns 409 on any
+      // match. matchedBy now reports the exact signal that fired.
       try {
-        const normalizedEmail = email.trim().toLowerCase();
-        const normalizedPhone = (phone || '').replace(/\D/g, '');
-        const normalizedRanch = (ranchName || '').trim().toLowerCase();
-        const normalizedState = (normalizeState(state) || state || '').toUpperCase();
-        const dedupeClauses: string[] = [
-          `LOWER({Email})="${escapeAirtableValue(normalizedEmail)}"`,
-        ];
-        if (normalizedPhone.length >= 10) {
-          dedupeClauses.push(`REGEX_REPLACE({Phone},"[^0-9]","")="${normalizedPhone}"`);
-        }
-        if (normalizedRanch && normalizedState) {
-          dedupeClauses.push(
-            `AND(LOWER({Ranch Name})="${escapeAirtableValue(normalizedRanch)}",UPPER({State})="${normalizedState}")`,
-          );
-        }
-        const filter = `OR(${dedupeClauses.join(',')})`;
-        const existing = await getAllRecords(TABLES.RANCHERS, filter);
-        if (existing.length > 0) {
-          const match: any = existing[0];
+        const { record: match, matchedBy } = await findOrCreateRancherByEmail(
+          email,
+          {},
+          {
+            phone: phone || undefined,
+            ranchName: ranchName || undefined,
+            state: normalizeState(state) || state || undefined,
+            createIfMissing: false,
+          },
+        );
+        if (match) {
           return NextResponse.json(
             {
               error:
                 'This ranch is already in our system. Check your inbox for your confirmation OR email ben@buyhalfcow.com if you need access.',
               existingId: match.id,
-              matchedBy: existing.length > 0 ? 'email|phone|ranch+state' : 'unknown',
+              matchedBy: matchedBy || 'unknown',
             },
             { status: 409 },
           );
