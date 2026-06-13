@@ -122,6 +122,10 @@
       "schedule": "0 15 * * *"
     },
     {
+      "path": "/api/cron/rancher-reactivation",
+      "schedule": "0 16 * * 1-5"
+    },
+    {
       "path": "/api/cron/qualified-no-action",
       "schedule": "*/30 * * * *"
     },
