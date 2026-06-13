@@ -65,6 +65,10 @@ export const EXCLUDE_RANCHER_IDS: ReadonlySet<string> = new Set<string>([
   'recj1xWIDMaooGxFQ', // Left Hand Cattle (Onboarding = Call Scheduled)
   // ── Duplicate ─────────────────────────────────────────────────────
   'rec3K0LsDGQKONNnb', // duplicate Renick
+  // ── Agreement-signed → Ben sends personally (don't auto-blast a signed ranch) ──
+  'rec9SDcDugHTLsGLQ', // Cheyenne Ridge Cattle (CO)
+  'recBWv3FUBAHFrt8W', // Lily Hill Farm (GA)
+  'recdMkD7LvdzRYAhq', // Hubbard's Farm (VT)
 ]);
 
 // Onboarding Status values that qualify a legacy rancher as Tier A (warm):
