@@ -23,7 +23,7 @@
     },
     {
       "path": "/api/cron/rancher-followup",
-      "schedule": "0 15 * * *"
+      "schedule": "10 15 * * *"
     },
     {
       "path": "/api/cron/email-sequences",
@@ -110,6 +110,10 @@
       "schedule": "0 12 * * *"
     },
     {
+      "path": "/api/cron/capacity-liberator",
+      "schedule": "30 12 * * *"
+    },
+    {
       "path": "/api/cron/deploy-drift",
       "schedule": "*/30 * * * *"
     },
@@ -123,11 +127,11 @@
     },
     {
       "path": "/api/cron/rancher-reactivation",
-      "schedule": "0 16 * * 1-5"
+      "schedule": "30 15 * * 1-5"
     },
     {
       "path": "/api/cron/qualified-no-action",
-      "schedule": "*/30 * * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron/abandoned-quiz-nudge",
@@ -139,7 +143,7 @@
     },
     {
       "path": "/api/cron/daily-health-digest",
-      "schedule": "0 15 * * *"
+      "schedule": "5 15 * * *"
     }
   ]
 }

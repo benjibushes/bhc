@@ -140,6 +140,22 @@ async function realHandler(_request: Request): Promise<CronResult> {
   };
 }
 
-export async function GET(request: Request) {
+async function authedHandler(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      const { searchParams } = new URL(request.url);
+      if (searchParams.get('secret') !== cronSecret) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+    }
+  }
   return withCronRun('abandoned-quiz-nudge', realHandler)(request);
 }
+
+export const GET = authedHandler;
+export const POST = authedHandler;
