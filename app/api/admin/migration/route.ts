@@ -26,6 +26,7 @@ interface MigrationRancher {
   callBookedAt: string;
   subscriptionStatus: string;
   connectStatus: string;
+  connectAccountId: string;
   activeStatus: string;
 }
 
@@ -59,6 +60,7 @@ export async function GET(request: NextRequest) {
       callBookedAt: r['Migration Call Booked At'] || '',
       subscriptionStatus: String(r['Subscription Status'] || ''),
       connectStatus: String(r['Stripe Connect Status'] || ''),
+      connectAccountId: String(r['Stripe Connect Account Id'] || ''),
       activeStatus: String(r['Active Status'] || ''),
     };
   });

@@ -78,6 +78,19 @@ async function isAdminAuthed(request: NextRequest): Promise<boolean> {
     const headerPw = request.headers.get('x-admin-password');
     if (headerPw && safeEqual(headerPw, adminPw)) return true;
   }
+  // Internal self-call fallback for /api/admin/* ONLY: x-internal-secret header.
+  // P0 fix (2026-06-13): the migration Bulk-Invite handler does a server-to-
+  // server fetch to /api/admin/ranchers/[id]/send-v2-upgrade with this header
+  // (matches the auth shape those route handlers already accept). Middleware
+  // previously rejected it → every bulk send 401'd. Gate hard: only when
+  // INTERNAL_API_SECRET is set AND non-empty, and constant-time compared so an
+  // empty/unset secret can never bypass. Scoped to /api/admin/* — the merch
+  // vanity + affiliate + UI paths must not pick this up.
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (internalSecret && request.nextUrl.pathname.startsWith('/api/admin/')) {
+    const headerSecret = request.headers.get('x-internal-secret');
+    if (headerSecret && safeEqual(headerSecret, internalSecret)) return true;
+  }
   return false;
 }
 

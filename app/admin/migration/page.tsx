@@ -20,6 +20,7 @@ interface MigrationRancher {
   callBookedAt: string;
   subscriptionStatus: string;
   connectStatus: string;
+  connectAccountId: string;
   activeStatus: string;
 }
 
@@ -315,15 +316,22 @@ export default function MigrationTrackerPage() {
                           </button>
                         </>
                       )}
-                      {r.connectStatus && r.connectStatus !== 'active' && r.connectStatus !== 'not_connected' && (
-                        <button
-                          onClick={() => resyncConnect(r.id, r.name)}
-                          className="text-xs underline text-saddle hover:text-saddle ml-2"
-                          title="Force a live Stripe read + persist true Connect status. Unsticks 'onboarding' after the rancher has finished Stripe KYC."
-                        >
-                          🔄 Resync
-                        </button>
-                      )}
+                      {/* Show Resync whenever a Connect account exists (even
+                          with a blank status — fix 2026-06-13) OR there's a
+                          recoverable status, as long as it isn't already
+                          active. Hidden only when truly not-connected: no
+                          account id AND no/empty/not_connected status. */}
+                      {r.connectStatus !== 'active' &&
+                        (r.connectAccountId ||
+                          (r.connectStatus && r.connectStatus !== 'not_connected')) && (
+                          <button
+                            onClick={() => resyncConnect(r.id, r.name)}
+                            className="text-xs underline text-saddle hover:text-saddle ml-2"
+                            title="Force a live Stripe read + persist true Connect status. Unsticks 'onboarding' after the rancher has finished Stripe KYC."
+                          >
+                            🔄 Resync
+                          </button>
+                        )}
                       <a href={`/admin/ranchers/${r.id}`} className="text-xs underline text-charcoal hover:text-saddle ml-2">View</a>
                     </td>
                   </tr>

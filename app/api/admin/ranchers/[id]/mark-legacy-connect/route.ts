@@ -128,7 +128,10 @@ export async function POST(
     // ── Mint fresh Stripe Connect Express onboarding link ──
     let onboardingUrl: string;
     try {
-      const returnUrl = `${SITE_URL}/rancher/billing?onboarding=done`;
+      // Public, session-free confirmation page. Cold-link visitors finishing
+      // Stripe Express have no rancher session, so /rancher/billing rendered
+      // "Not authenticated" here (fix 2026-06-13). /rancher/connected is public.
+      const returnUrl = `${SITE_URL}/rancher/connected?onboarding=done`;
       const refreshUrl = `${SITE_URL}/api/rancher/connect/start`;
       const { url } = await createOnboardingLink({
         accountId,
