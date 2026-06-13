@@ -60,7 +60,9 @@ export async function GET(request: Request) {
       if (name) {
         campaignMap.set(name, {
           campaignName: name,
-          emailsSent: parseInt(c['Recipients Count'] || '0'),
+          // Field is `Recipients` (not `Recipients Count`) — the prior name
+          // never existed in the Campaigns schema, so emailsSent was always 0.
+          emailsSent: parseInt(c['Recipients'] || '0'),
           signUps: 0,
           inquiries: 0,
           sales: 0,

@@ -27,6 +27,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { group: 'MONEY', icon: '💳', label: 'Payments', href: '/admin/payments' },
   { group: 'MONEY', icon: '✔️', label: 'Compliance', href: '/admin/compliance' },
   { group: 'GROWTH', icon: '📢', label: 'Broadcast', href: '/admin/broadcast' },
+  { group: 'GROWTH', icon: '📣', label: 'Campaigns', href: '/admin/campaigns' },
   { group: 'GROWTH', icon: '🤝', label: 'Affiliates', href: '/admin/affiliates' },
   { group: 'GROWTH', icon: '📊', label: 'Analytics', href: '/admin/analytics' },
   { group: 'GROWTH', icon: '🪜', label: 'Funnel', href: '/admin/funnel' },

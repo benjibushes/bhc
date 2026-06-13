@@ -406,6 +406,13 @@ async function guardedSend(opts: {
   recipientConsumerId?: string;
   subject: string;
   send: () => Promise<unknown>;
+  /**
+   * Optional campaign name, threaded through to the Email Sends `Campaign`
+   * field via logEmailSend. Defaults to undefined so every existing caller
+   * is unaffected — only campaign-aware senders (broadcast, reactivation)
+   * pass it.
+   */
+  campaign?: string;
 }): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
   const gate = await checkFrequencyCap(opts.recipientEmail, opts.templateName);
   if (!gate.ok) {
@@ -416,6 +423,7 @@ async function guardedSend(opts: {
       subject: opts.subject,
       status: 'suppressed',
       suppressionReason: gate.reason || 'unknown',
+      campaign: opts.campaign,
     });
     return { success: false, suppressed: true, reason: gate.reason };
   }
@@ -434,6 +442,7 @@ async function guardedSend(opts: {
       subject: opts.subject,
       status: isSuppressed ? 'suppressed' : 'sent',
       suppressionReason: isSuppressed ? 'unsubscribed-bounced-or-complained' : undefined,
+      campaign: opts.campaign,
     });
     if (isSuppressed) {
       return { success: false, suppressed: true, reason: 'unsubscribed-bounced-or-complained' };
@@ -1397,6 +1406,8 @@ export async function sendRancherReactivationWarm(data: {
   ranchName: string;
   state?: string;
   email: string;
+  /** Optional campaign name — threaded to Email Sends.Campaign for console attribution. */
+  campaign?: string;
 }) {
   const first = (data.firstName || '').trim() || 'there';
   const subject = `still want buyers from us, ${first}?`;
@@ -1406,6 +1417,7 @@ export async function sendRancherReactivationWarm(data: {
     templateName: 'sendRancherReactivationWarm',
     recipientEmail: data.email,
     subject,
+    campaign: data.campaign,
     send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
@@ -1458,6 +1470,8 @@ export async function sendRancherReactivationCold(data: {
   firstName: string;
   ranchName: string;
   email: string;
+  /** Optional campaign name — threaded to Email Sends.Campaign for console attribution. */
+  campaign?: string;
 }) {
   const first = (data.firstName || '').trim() || 'there';
   const subject = 'closing your BuyHalfCow listing unless…';
@@ -1467,6 +1481,7 @@ export async function sendRancherReactivationCold(data: {
     templateName: 'sendRancherReactivationCold',
     recipientEmail: data.email,
     subject,
+    campaign: data.campaign,
     send: () => resend.emails.send({
       from: getFromEmail(),
       to: data.email,
@@ -2551,6 +2566,7 @@ export async function sendBroadcastEmail(data: {
     templateName: 'sendBroadcastEmail',
     recipientEmail: data.to,
     subject: data.subject,
+    campaign: data.campaignName,
     send: () => {
       if (data.htmlBody) {
         // P0 audit fix (C-5): sanitize operator-supplied HTML before Resend.

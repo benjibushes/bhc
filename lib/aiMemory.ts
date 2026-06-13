@@ -9,7 +9,10 @@
 
 import { getAllRecords, createRecord, updateRecord, escapeAirtableValue, TABLES } from './airtable';
 
-const MEMORY_RECORD_NAME = '__ai_memory__';
+// Exported so read surfaces (e.g. the campaign console at
+// /api/admin/campaigns) can filter this KV row out of the Campaigns list —
+// it's a memory-store hack riding the Campaigns table, not a real campaign.
+export const MEMORY_RECORD_NAME = '__ai_memory__';
 const MAX_MEMORIES = 40;
 
 let cachedRecord: { id: string; lines: string[] } | null = null;

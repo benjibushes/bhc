@@ -19,7 +19,7 @@
 // dryRun=true does NOT send, stamp, or log anything — it only segments and
 // reports who WOULD be sent (used by the admin "Preview" button + any test).
 
-import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, createRecord, updateRecord, TABLES } from '@/lib/airtable';
 import {
   sendRancherReactivationWarm,
   sendRancherReactivationCold,
@@ -71,9 +71,12 @@ export interface RunReactivationSendResult {
   firstTouchQueue: ReactivationRancher[];
 }
 
-/** Send one campaign email by tier. Mirrors the cron's original sendByTier. */
+/** Send one campaign email by tier. Mirrors the cron's original sendByTier.
+ *  `campaign` (when set) is threaded to Email Sends.Campaign so the console
+ *  can attribute engagement back to the reactivation Campaigns row. */
 async function sendByTier(
   r: ReactivationRancher,
+  campaign?: string,
 ): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
   if (r.tier === 'A') {
     return sendRancherReactivationWarm({
@@ -81,12 +84,14 @@ async function sendByTier(
       ranchName: r.ranchName,
       state: r.state,
       email: r.email,
+      campaign,
     });
   }
   return sendRancherReactivationCold({
     firstName: r.firstName,
     ranchName: r.ranchName,
     email: r.email,
+    campaign,
   });
 }
 
@@ -144,6 +149,34 @@ export async function runReactivationSend(
   let sent = 0;
   const failures: string[] = [];
 
+  // ── Campaigns lifecycle (REAL sends only) ───────────────────────────
+  // Mirror the broadcast route (app/api/admin/broadcast/route.ts:171-264):
+  // reserve a Campaigns row at Status='Sending' BEFORE the loop, finalize
+  // it at the end. This is what surfaces the reactivation send in the
+  // campaign console. The campaign NAME is threaded into each email send
+  // (Email Sends.Campaign) so engagement ties back to this row.
+  //
+  // One row per send invocation (the daily cron at cap 8 writes one row per
+  // tick — keeps it simple and the console shows each wave distinctly).
+  // Reservation failure is non-fatal: we still send (the audit log + per-
+  // rancher stamps remain the source of truth for what went out).
+  const campaignName = `Rancher Reactivation ${now.toISOString().slice(0, 10)}`;
+  let reservedCampaignId: string | null = null;
+  try {
+    const reserved: any = await createRecord(TABLES.CAMPAIGNS, {
+      'Campaign Name': campaignName,
+      'Audience': 'ranchers-reactivation',
+      'Sent At': now.toISOString(),
+      'Recipients': firstTouchQueue.length,
+      'Status': 'Sending',
+      'Sent': 0,
+      'Failed': 0,
+    });
+    reservedCampaignId = reserved?.id || null;
+  } catch (e: any) {
+    console.warn('[reactivation] campaign reservation skipped:', e?.message);
+  }
+
   // Stamp Airtable after a successful (non-suppressed) send. nextTouchCount is
   // the value to write (first touch → 1). Identical to the cron's stampSend.
   async function stampSend(r: ReactivationRancher, nextTouchCount: number): Promise<void> {
@@ -176,7 +209,7 @@ export async function runReactivationSend(
   // ── FIRST TOUCHES (capped, Tier A first) ────────────────────────────
   for (const r of firstTouchQueue) {
     try {
-      const res = await sendByTier(r);
+      const res = await sendByTier(r, campaignName);
       if (res?.suppressed) {
         failures.push(`${r.ranchName}: send suppressed — ${res.reason || 'unknown'}`);
         continue;
@@ -189,6 +222,24 @@ export async function runReactivationSend(
       sent++;
     } catch (e: any) {
       failures.push(`${r.ranchName}: send failed — ${e?.message || 'unknown'}`);
+    }
+  }
+
+  // ── Finalize the reserved Campaigns row ─────────────────────────────
+  // Mirror the broadcast route: 'Partial' if any queued send failed/was
+  // suppressed, else 'Sent'. failures.length == queued - sent.
+  if (reservedCampaignId) {
+    const failedCount = failures.length;
+    const finalStatus = failedCount > 0 ? 'Partial' : 'Sent';
+    try {
+      await updateRecord(TABLES.CAMPAIGNS, reservedCampaignId, {
+        'Status': finalStatus,
+        'Sent': sent,
+        'Failed': failedCount,
+        'Sent At': now.toISOString(),
+      });
+    } catch (e: any) {
+      console.warn('[reactivation] campaign finalize failed (non-fatal):', e?.message);
     }
   }
 

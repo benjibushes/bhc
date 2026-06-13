@@ -229,6 +229,13 @@ export async function logEmailSend(input: {
   subject: string;
   status: 'sent' | 'suppressed' | 'bounced' | 'complained';
   suppressionReason?: string;
+  /**
+   * Optional campaign name. When present, written to the Email Sends
+   * `Campaign` field so the campaign console can tie engagement
+   * (delivered/opened/clicked) back to the originating Campaigns row.
+   * Left unset for transactional/one-off sends — backward-compatible.
+   */
+  campaign?: string;
 }): Promise<void> {
   try {
     const fields: any = {
@@ -243,6 +250,9 @@ export async function logEmailSend(input: {
     }
     if (input.recipientConsumerId) {
       fields['Recipient Consumer'] = [input.recipientConsumerId];
+    }
+    if (input.campaign) {
+      fields['Campaign'] = input.campaign;
     }
     await createRecord(TABLES.EMAIL_SENDS, fields);
   } catch (e: any) {

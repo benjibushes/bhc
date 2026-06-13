@@ -18,6 +18,18 @@ function sleep(ms: number) {
 async function getRecipients(audienceType: string, selectedStates?: string[]) {
   let recipients: Array<{ email: string; name: string }> = [];
 
+  // CRITICAL: filter out anyone who unsubscribed or hard-bounced/complained.
+  // Sending to them again is a CAN-SPAM violation AND tanks sender reputation.
+  // This MUST match the cron path's isMailable (app/api/cron/send-scheduled/route.ts) —
+  // the immediate-send path previously skipped this filter, so an operator hitting
+  // "Send now" could blast unsubscribed addresses the scheduled path would have spared.
+  const isMailable = (record: any): boolean => {
+    if (record['Unsubscribed'] === true) return false;
+    if (record['Bounced'] === true) return false;
+    if (record['Complained'] === true) return false;
+    return true;
+  };
+
   if (audienceType === 'consumers' || audienceType === 'consumers-by-state' || audienceType === 'consumers-beef' || audienceType === 'consumers-community') {
     const consumers = await getAllRecords(TABLES.CONSUMERS);
     let filtered = consumers;
@@ -28,12 +40,13 @@ async function getRecipients(audienceType: string, selectedStates?: string[]) {
     } else if (audienceType === 'consumers-community') {
       filtered = consumers.filter((c: any) => !c['Segment'] || c['Segment'] === 'Community');
     }
+    filtered = filtered.filter(isMailable);
     recipients = filtered.map((c: any) => ({
       email: (c['Email'] || '').trim().toLowerCase(),
       name: c['Full Name'] || 'Member',
     })).filter((r) => r.email);
   } else if (audienceType === 'ranchers') {
-    const ranchers = await getAllRecords(TABLES.RANCHERS);
+    const ranchers = (await getAllRecords(TABLES.RANCHERS)).filter(isMailable);
     recipients = ranchers.map((r: any) => ({
       email: (r['Email'] || '').trim().toLowerCase(),
       name: r['Operator Name'] || 'Rancher',
