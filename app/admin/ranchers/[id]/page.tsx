@@ -198,30 +198,30 @@ export default function AdminRancherDetailPage() {
     setForm(prev => ({ ...prev, [key]: value }));
   }
 
-  if (loading) return <AdminAuthGuard><div className="min-h-screen bg-[#F4F1EC] flex items-center justify-center"><p>Loading...</p></div></AdminAuthGuard>;
-  if (error) return <AdminAuthGuard><div className="min-h-screen bg-[#F4F1EC] flex items-center justify-center"><p className="text-red-600">{error}</p></div></AdminAuthGuard>;
+  if (loading) return <AdminAuthGuard><div className="min-h-screen bg-bone flex items-center justify-center"><p>Loading...</p></div></AdminAuthGuard>;
+  if (error) return <AdminAuthGuard><div className="min-h-screen bg-bone flex items-center justify-center"><p className="text-weathered">{error}</p></div></AdminAuthGuard>;
 
   const siteUrl = typeof window !== 'undefined' ? window.location.origin : '';
 
   return (
     <AdminAuthGuard>
-      <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E] py-10">
+      <main className="min-h-screen bg-bone text-charcoal py-10">
         <Container>
           <div className="max-w-4xl mx-auto space-y-8">
             {/* Header */}
             <div className="flex items-center justify-between">
               <div>
-                <button onClick={() => router.push('/admin')} className="text-sm text-[#6B4F3F] hover:underline mb-2 block">
+                <button onClick={() => router.push('/admin')} className="text-sm text-saddle hover:underline mb-2 block">
                   &larr; Back to Admin
                 </button>
                 <h1 className="font-[family-name:var(--font-playfair)] text-3xl">
                   {rancher.ranch_name || rancher.operator_name}
                 </h1>
-                <p className="text-[#6B4F3F]">{rancher.operator_name} &middot; {rancher.email} &middot; {rancher.state}</p>
+                <p className="text-saddle">{rancher.operator_name} &middot; {rancher.email} &middot; {rancher.state}</p>
               </div>
               <div className="flex gap-2">
                 {form.slug && (
-                  <a href={`/ranchers/${form.slug}`} target="_blank" className="px-4 py-2 text-sm border border-[#A7A29A] hover:bg-white">
+                  <a href={`/ranchers/${form.slug}`} target="_blank" className="px-4 py-2 text-sm border border-dust hover:bg-white">
                     Preview Page &rarr;
                   </a>
                 )}
@@ -233,7 +233,7 @@ export default function AdminRancherDetailPage() {
                     const data = await res.json();
                     window.open(data.redirectTo || '/rancher', '_blank');
                   }}
-                  className="px-4 py-2 text-sm border border-[#0E0E0E] bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]"
+                  className="px-4 py-2 text-sm border border-charcoal bg-charcoal text-bone hover:bg-divider"
                   title="Opens /rancher in a new tab logged in as this rancher. Telegram alert fires."
                 >
                   🕵️ View Dashboard as Rancher
@@ -251,7 +251,7 @@ export default function AdminRancherDetailPage() {
                       }
                       alert(`✓ Upgrade invite sent to ${rancher.email}`);
                     }}
-                    className="px-4 py-2 text-sm border border-[#C99A2E] bg-[#FFF6E0] text-[#0E0E0E] hover:bg-[#FFE9B0]"
+                    className="px-4 py-2 text-sm border border-amber-dark bg-amber/15 text-charcoal hover:bg-amber/30"
                     title="Sends the rancher a 5-min wizard link to pick a tier, complete Stripe Connect, and start collecting deposits via the platform. Currently shows because Pricing Model is not tier_v2."
                   >
                     🚀 Send V2 Upgrade Invite
@@ -260,7 +260,7 @@ export default function AdminRancherDetailPage() {
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="px-6 py-2 text-sm bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] disabled:opacity-50"
+                  className="px-6 py-2 text-sm bg-charcoal text-bone hover:bg-divider disabled:opacity-50"
                 >
                   {saving ? 'Saving...' : saved ? 'Saved!' : 'Save All Changes'}
                 </button>
@@ -268,11 +268,11 @@ export default function AdminRancherDetailPage() {
             </div>
 
             {/* Status bar */}
-            <div className="flex flex-wrap gap-3 p-4 border border-[#A7A29A] bg-white">
+            <div className="flex flex-wrap gap-3 p-4 border border-dust bg-white">
               <div>
-                <label className="text-xs text-[#A7A29A] block">Onboarding</label>
+                <label className="text-xs text-dust block">Onboarding</label>
                 <select value={form.onboarding_status} onChange={e => updateForm('onboarding_status', e.target.value)}
-                  className="px-2 py-1 border border-[#A7A29A] text-sm bg-[#F4F1EC]">
+                  className="px-2 py-1 border border-dust text-sm bg-bone">
                   <option value="">Not Started</option>
                   <option value="Call Scheduled">Call Scheduled</option>
                   <option value="Call Complete">Call Complete</option>
@@ -284,9 +284,9 @@ export default function AdminRancherDetailPage() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-[#A7A29A] block">Active Status</label>
+                <label className="text-xs text-dust block">Active Status</label>
                 <select value={form.active_status} onChange={e => updateForm('active_status', e.target.value)}
-                  className="px-2 py-1 border border-[#A7A29A] text-sm bg-[#F4F1EC]">
+                  className="px-2 py-1 border border-dust text-sm bg-bone">
                   <option value="">Pending</option>
                   <option value="Active">Active</option>
                   <option value="At Capacity">At Capacity</option>
@@ -307,120 +307,120 @@ export default function AdminRancherDetailPage() {
             </div>
 
             {/* Page Identity */}
-            <section className="p-6 border border-[#A7A29A] bg-white space-y-4">
+            <section className="p-6 border border-dust bg-white space-y-4">
               <h2 className="font-[family-name:var(--font-playfair)] text-xl">Page Identity</h2>
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Slug (URL path)</label>
+                  <label className="text-xs text-dust block mb-1">Slug (URL path)</label>
                   <div className="flex items-center gap-1">
-                    <span className="text-sm text-[#A7A29A]">/ranchers/</span>
+                    <span className="text-sm text-dust">/ranchers/</span>
                     <input value={form.slug} onChange={e => updateForm('slug', e.target.value)}
-                      className="flex-1 px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="ranch-name" />
+                      className="flex-1 px-3 py-2 border border-dust text-sm bg-bone" placeholder="ranch-name" />
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Tagline</label>
+                  <label className="text-xs text-dust block mb-1">Tagline</label>
                   <input value={form.tagline} onChange={e => updateForm('tagline', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Premium grass-fed beef..." />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="Premium grass-fed beef..." />
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Logo URL</label>
+                  <label className="text-xs text-dust block mb-1">Logo URL</label>
                   <input value={form.logo_url} onChange={e => updateForm('logo_url', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="https://..." />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="https://..." />
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Video URL (YouTube/Vimeo)</label>
+                  <label className="text-xs text-dust block mb-1">Video URL (YouTube/Vimeo)</label>
                   <input value={form.video_url} onChange={e => updateForm('video_url', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="https://youtube.com/..." />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="https://youtube.com/..." />
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">States Served</label>
+                  <label className="text-xs text-dust block mb-1">States Served</label>
                   <input value={form.states_served} onChange={e => updateForm('states_served', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="CO, WY, MT" />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="CO, WY, MT" />
                 </div>
               </div>
               <div>
-                <label className="text-xs text-[#A7A29A] block mb-1">About Text</label>
+                <label className="text-xs text-dust block mb-1">About Text</label>
                 <textarea value={form.about_text} onChange={e => updateForm('about_text', e.target.value)}
-                  rows={5} className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Tell the ranch's story..." />
+                  rows={5} className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="Tell the ranch's story..." />
               </div>
               <div>
-                <label className="text-xs text-[#A7A29A] block mb-1">Custom Notes (displayed on page)</label>
+                <label className="text-xs text-dust block mb-1">Custom Notes (displayed on page)</label>
                 <textarea value={form.custom_notes} onChange={e => updateForm('custom_notes', e.target.value)}
-                  rows={3} className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Special notes for buyers..." />
+                  rows={3} className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="Special notes for buyers..." />
               </div>
             </section>
 
             {/* Pricing */}
-            <section className="p-6 border border-[#A7A29A] bg-white space-y-4">
+            <section className="p-6 border border-dust bg-white space-y-4">
               <h2 className="font-[family-name:var(--font-playfair)] text-xl">Pricing & Payment Links</h2>
               {['quarter', 'half', 'whole'].map(tier => (
                 <div key={tier} className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="text-xs text-[#A7A29A] block mb-1">{tier.charAt(0).toUpperCase() + tier.slice(1)} Price ($)</label>
+                    <label className="text-xs text-dust block mb-1">{tier.charAt(0).toUpperCase() + tier.slice(1)} Price ($)</label>
                     <input value={(form as any)[`${tier}_price`]} onChange={e => updateForm(`${tier}_price`, e.target.value)}
-                      type="number" className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="0" />
+                      type="number" className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="0" />
                   </div>
                   <div>
-                    <label className="text-xs text-[#A7A29A] block mb-1">{tier.charAt(0).toUpperCase() + tier.slice(1)} lbs</label>
+                    <label className="text-xs text-dust block mb-1">{tier.charAt(0).toUpperCase() + tier.slice(1)} lbs</label>
                     <input value={(form as any)[`${tier}_lbs`]} onChange={e => updateForm(`${tier}_lbs`, e.target.value)}
-                      className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="100-120 lbs" />
+                      className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="100-120 lbs" />
                   </div>
                   <div>
-                    <label className="text-xs text-[#A7A29A] block mb-1">{tier.charAt(0).toUpperCase() + tier.slice(1)} Payment Link</label>
+                    <label className="text-xs text-dust block mb-1">{tier.charAt(0).toUpperCase() + tier.slice(1)} Payment Link</label>
                     <input value={(form as any)[`${tier}_payment_link`]} onChange={e => updateForm(`${tier}_payment_link`, e.target.value)}
-                      className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="https://..." />
+                      className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="https://..." />
                   </div>
                 </div>
               ))}
-              <div className="grid md:grid-cols-2 gap-3 pt-2 border-t border-[#A7A29A]/30">
+              <div className="grid md:grid-cols-2 gap-3 pt-2 border-t border-dust/30">
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Next Processing Date</label>
+                  <label className="text-xs text-dust block mb-1">Next Processing Date</label>
                   <input value={form.next_processing_date} onChange={e => updateForm('next_processing_date', e.target.value)}
-                    type="date" className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" />
+                    type="date" className="w-full px-3 py-2 border border-dust text-sm bg-bone" />
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Reserve Link</label>
+                  <label className="text-xs text-dust block mb-1">Reserve Link</label>
                   <input value={form.reserve_link} onChange={e => updateForm('reserve_link', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="https://..." />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="https://..." />
                 </div>
               </div>
             </section>
 
             {/* Testimonials */}
-            <section className="p-6 border border-[#A7A29A] bg-white space-y-4">
+            <section className="p-6 border border-dust bg-white space-y-4">
               <h2 className="font-[family-name:var(--font-playfair)] text-xl">Customer Testimonials ({testimonials.length})</h2>
               {testimonials.map((t, i) => (
-                <div key={i} className="p-3 border border-[#A7A29A]/50 flex justify-between items-start">
+                <div key={i} className="p-3 border border-dust/50 flex justify-between items-start">
                   <div>
                     <p className="text-sm italic">&ldquo;{t.quote}&rdquo;</p>
-                    <p className="text-xs text-[#6B4F3F] mt-1">— {t.name}{t.location ? `, ${t.location}` : ''}</p>
+                    <p className="text-xs text-saddle mt-1">— {t.name}{t.location ? `, ${t.location}` : ''}</p>
                   </div>
-                  <button onClick={() => removeTestimonial(i)} className="text-red-500 text-xs hover:underline ml-2">Remove</button>
+                  <button onClick={() => removeTestimonial(i)} className="text-weathered text-xs hover:underline ml-2">Remove</button>
                 </div>
               ))}
               <div className="grid md:grid-cols-3 gap-2">
                 <input value={newTestimonial.name} onChange={e => setNewTestimonial({ ...newTestimonial, name: e.target.value })}
-                  className="px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Customer name" />
+                  className="px-3 py-2 border border-dust text-sm bg-bone" placeholder="Customer name" />
                 <input value={newTestimonial.location || ''} onChange={e => setNewTestimonial({ ...newTestimonial, location: e.target.value })}
-                  className="px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Location (optional)" />
-                <button onClick={addTestimonial} className="px-3 py-2 text-sm bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]">
+                  className="px-3 py-2 border border-dust text-sm bg-bone" placeholder="Location (optional)" />
+                <button onClick={addTestimonial} className="px-3 py-2 text-sm bg-charcoal text-bone hover:bg-divider">
                   + Add
                 </button>
               </div>
               <textarea value={newTestimonial.quote} onChange={e => setNewTestimonial({ ...newTestimonial, quote: e.target.value })}
-                rows={2} className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Their testimonial quote..." />
+                rows={2} className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="Their testimonial quote..." />
             </section>
 
             {/* Gallery Photos */}
-            <section className="p-6 border border-[#A7A29A] bg-white space-y-4">
+            <section className="p-6 border border-dust bg-white space-y-4">
               <h2 className="font-[family-name:var(--font-playfair)] text-xl">Gallery Photos ({galleryPhotos.length})</h2>
               <div className="grid grid-cols-3 md:grid-cols-4 gap-2">
                 {galleryPhotos.map((url, i) => (
                   <div key={i} className="relative group">
-                    <img src={url} alt={`Photo ${i + 1}`} className="w-full aspect-square object-cover border border-[#A7A29A]" />
+                    <img src={url} alt={`Photo ${i + 1}`} className="w-full aspect-square object-cover border border-dust" />
                     <button onClick={() => removeGalleryPhoto(i)}
-                      className="absolute top-1 right-1 bg-red-600 text-white text-xs px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      className="absolute top-1 right-1 bg-weathered text-white text-xs px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                       X
                     </button>
                   </div>
@@ -428,79 +428,79 @@ export default function AdminRancherDetailPage() {
               </div>
               <div className="flex gap-2">
                 <input value={newPhotoUrl} onChange={e => setNewPhotoUrl(e.target.value)}
-                  className="flex-1 px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Image URL (https://...)" />
-                <button onClick={addGalleryPhoto} className="px-4 py-2 text-sm bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]">
+                  className="flex-1 px-3 py-2 border border-dust text-sm bg-bone" placeholder="Image URL (https://...)" />
+                <button onClick={addGalleryPhoto} className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-divider">
                   + Add Photo
                 </button>
               </div>
             </section>
 
             {/* Custom Products */}
-            <section className="p-6 border border-[#A7A29A] bg-white space-y-4">
+            <section className="p-6 border border-dust bg-white space-y-4">
               <h2 className="font-[family-name:var(--font-playfair)] text-xl">Custom Products ({customProducts.length})</h2>
-              <p className="text-xs text-[#A7A29A]">Add additional products beyond quarter/half/whole beef (e.g. sampler boxes, jerky, bones).</p>
+              <p className="text-xs text-dust">Add additional products beyond quarter/half/whole beef (e.g. sampler boxes, jerky, bones).</p>
               {customProducts.map((p, i) => (
-                <div key={i} className="p-3 border border-[#A7A29A]/50 flex justify-between items-start">
+                <div key={i} className="p-3 border border-dust/50 flex justify-between items-start">
                   <div>
                     <p className="text-sm font-medium">{p.name} — ${p.price}</p>
-                    {p.description && <p className="text-xs text-[#6B4F3F] mt-0.5">{p.description}</p>}
-                    {p.link && <p className="text-xs text-[#A7A29A] mt-0.5 truncate max-w-md">{p.link}</p>}
+                    {p.description && <p className="text-xs text-saddle mt-0.5">{p.description}</p>}
+                    {p.link && <p className="text-xs text-dust mt-0.5 truncate max-w-md">{p.link}</p>}
                   </div>
-                  <button onClick={() => removeCustomProduct(i)} className="text-red-500 text-xs hover:underline ml-2">Remove</button>
+                  <button onClick={() => removeCustomProduct(i)} className="text-weathered text-xs hover:underline ml-2">Remove</button>
                 </div>
               ))}
               <div className="grid md:grid-cols-2 gap-2">
                 <input value={newProduct.name} onChange={e => setNewProduct({ ...newProduct, name: e.target.value })}
-                  className="px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Product name" />
+                  className="px-3 py-2 border border-dust text-sm bg-bone" placeholder="Product name" />
                 <input value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: e.target.value })}
-                  type="number" className="px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Price ($)" />
+                  type="number" className="px-3 py-2 border border-dust text-sm bg-bone" placeholder="Price ($)" />
               </div>
               <input value={newProduct.description} onChange={e => setNewProduct({ ...newProduct, description: e.target.value })}
-                className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Short description (e.g. 10 lbs of mixed cuts)" />
+                className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="Short description (e.g. 10 lbs of mixed cuts)" />
               <div className="flex gap-2">
                 <input value={newProduct.link} onChange={e => setNewProduct({ ...newProduct, link: e.target.value })}
-                  className="flex-1 px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Payment link (https://...)" />
-                <button onClick={addCustomProduct} className="px-4 py-2 text-sm bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A]">
+                  className="flex-1 px-3 py-2 border border-dust text-sm bg-bone" placeholder="Payment link (https://...)" />
+                <button onClick={addCustomProduct} className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-divider">
                   + Add Product
                 </button>
               </div>
             </section>
 
             {/* Social & Verification */}
-            <section className="p-6 border border-[#A7A29A] bg-white space-y-4">
+            <section className="p-6 border border-dust bg-white space-y-4">
               <h2 className="font-[family-name:var(--font-playfair)] text-xl">Social Proof & Verification</h2>
               <div className="grid md:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Google Reviews URL</label>
+                  <label className="text-xs text-dust block mb-1">Google Reviews URL</label>
                   <input value={form.google_reviews_url} onChange={e => updateForm('google_reviews_url', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="https://..." />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="https://..." />
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Facebook URL</label>
+                  <label className="text-xs text-dust block mb-1">Facebook URL</label>
                   <input value={form.facebook_url} onChange={e => updateForm('facebook_url', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="https://facebook.com/..." />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="https://facebook.com/..." />
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Instagram URL</label>
+                  <label className="text-xs text-dust block mb-1">Instagram URL</label>
                   <input value={form.instagram_url} onChange={e => updateForm('instagram_url', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="https://instagram.com/..." />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="https://instagram.com/..." />
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Processing Facility (USDA)</label>
+                  <label className="text-xs text-dust block mb-1">Processing Facility (USDA)</label>
                   <input value={form.processing_facility} onChange={e => updateForm('processing_facility', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Facility name" />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="Facility name" />
                 </div>
               </div>
-              <div className="grid md:grid-cols-3 gap-4 pt-4 border-t border-[#A7A29A]/30">
+              <div className="grid md:grid-cols-3 gap-4 pt-4 border-t border-dust/30">
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Verification Method</label>
+                  <label className="text-xs text-dust block mb-1">Verification Method</label>
                   <input value={form.verification_method} onChange={e => updateForm('verification_method', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="e.g. Testimonials, Photos" />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="e.g. Testimonials, Photos" />
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Verification Status</label>
+                  <label className="text-xs text-dust block mb-1">Verification Status</label>
                   <select value={form.verification_status} onChange={e => updateForm('verification_status', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]">
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone">
                     <option value="">Not Started</option>
                     <option value="Pending">Pending</option>
                     <option value="Verified">Verified</option>
@@ -508,22 +508,22 @@ export default function AdminRancherDetailPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-[#A7A29A] block mb-1">Verification Notes</label>
+                  <label className="text-xs text-dust block mb-1">Verification Notes</label>
                   <input value={form.verification_notes} onChange={e => updateForm('verification_notes', e.target.value)}
-                    className="w-full px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC]" placeholder="Internal notes..." />
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="Internal notes..." />
                 </div>
               </div>
             </section>
 
             {/* Bottom save */}
             <div className="flex justify-between items-center pt-4">
-              <button onClick={() => router.push('/admin')} className="text-sm text-[#6B4F3F] hover:underline">
+              <button onClick={() => router.push('/admin')} className="text-sm text-saddle hover:underline">
                 &larr; Back to Admin
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-8 py-3 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] disabled:opacity-50"
+                className="px-8 py-3 bg-charcoal text-bone hover:bg-divider disabled:opacity-50"
               >
                 {saving ? 'Saving...' : saved ? 'Saved!' : 'Save All Changes'}
               </button>

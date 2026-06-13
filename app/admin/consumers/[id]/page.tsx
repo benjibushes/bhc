@@ -181,10 +181,10 @@ export default function ConsumerDetailPage() {
   }
 
   const intentColor = consumer.intent_classification === 'High'
-    ? 'bg-green-100 text-green-800 border-green-300'
+    ? 'bg-sage/15 text-sage-dark border-sage/40'
     : consumer.intent_classification === 'Medium'
-    ? 'bg-yellow-100 text-yellow-800 border-yellow-300'
-    : 'bg-gray-100 text-gray-600 border-gray-300';
+    ? 'bg-amber/15 text-amber-dark border-amber/60'
+    : 'bg-bone-deep text-saddle border-dust';
 
   return (
     <AdminAuthGuard>
@@ -202,7 +202,7 @@ export default function ConsumerDetailPage() {
               </div>
               <div className="flex items-center gap-2">
                 {consumer.segment && (
-                  <span className={`px-3 py-1 text-sm font-medium border ${consumer.segment === 'Beef Buyer' ? 'bg-red-100 text-red-800 border-red-300' : 'bg-blue-100 text-blue-800 border-blue-300'}`}>
+                  <span className={`px-3 py-1 text-sm font-medium border ${consumer.segment === 'Beef Buyer' ? 'bg-weathered/15 text-weathered border-weathered/40' : 'bg-dust/25 text-saddle border-dust'}`}>
                     {consumer.segment}
                   </span>
                 )}
@@ -238,7 +238,7 @@ export default function ConsumerDetailPage() {
                   {consumer.phone && (
                     <button
                       onClick={() => { logCall(); window.open(`tel:${consumer.phone}`); }}
-                      className="px-4 py-2 text-sm bg-green-700 text-white hover:bg-green-800"
+                      className="px-4 py-2 text-sm bg-sage-dark text-white hover:bg-sage-dark"
                     >
                       Call & Log
                     </button>
@@ -301,26 +301,26 @@ export default function ConsumerDetailPage() {
                 <button
                   onClick={makeAffiliate}
                   disabled={makingAffiliate}
-                  className="px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors disabled:opacity-50"
+                  className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
                 >
                   {makingAffiliate ? 'Creating...' : '🤝 Make Affiliate'}
                 </button>
                 <button
                   onClick={sendMerch}
                   disabled={sendingMerch || merchSent}
-                  className="px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors disabled:opacity-50"
+                  className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
                 >
                   {sendingMerch ? 'Sending...' : merchSent ? 'Sent!' : '👕 Send Merch Email'}
                 </button>
               </div>
               {affiliateResult && (
-                <div className="p-4 bg-green-50 border border-green-200 text-sm space-y-1">
-                  <p className="font-medium text-green-800">{affiliateResult.message}</p>
-                  <p className="text-green-700">Code: <code className="font-mono font-bold">{affiliateResult.code}</code></p>
+                <div className="p-4 bg-sage/10 border border-sage/30 text-sm space-y-1">
+                  <p className="font-medium text-sage-dark">{affiliateResult.message}</p>
+                  <p className="text-sage-dark">Code: <code className="font-mono font-bold">{affiliateResult.code}</code></p>
                   {affiliateResult.buyerLink && (
-                    <p className="text-green-700 break-all">Buyer link: <span className="font-mono text-xs">{affiliateResult.buyerLink}</span></p>
+                    <p className="text-sage-dark break-all">Buyer link: <span className="font-mono text-xs">{affiliateResult.buyerLink}</span></p>
                   )}
-                  <p className="text-xs text-green-600">Welcome email sent to {consumer?.email}</p>
+                  <p className="text-xs text-sage">Welcome email sent to {consumer?.email}</p>
                 </div>
               )}
             </div>
@@ -333,7 +333,7 @@ export default function ConsumerDetailPage() {
                   {consumer.sequence_stage && (
                     <div>
                       <span className="text-saddle">Sequence Stage:</span>
-                      <span className="ml-2 px-2 py-0.5 bg-blue-50 border border-blue-200 text-blue-800 font-medium">
+                      <span className="ml-2 px-2 py-0.5 bg-dust/15 border border-dust text-saddle font-medium">
                         {consumer.sequence_stage}
                       </span>
                     </div>
@@ -360,7 +360,7 @@ export default function ConsumerDetailPage() {
                 {consumer.ai_recommended_action && (
                   <div>
                     <p className="text-sm font-medium text-saddle mb-1">AI Recommended Action</p>
-                    <p className="text-sm bg-yellow-50 p-3 border-l-2 border-yellow-400 text-yellow-800">{consumer.ai_recommended_action}</p>
+                    <p className="text-sm bg-amber/10 p-3 border-l-2 border-amber/60 text-amber-dark">{consumer.ai_recommended_action}</p>
                   </div>
                 )}
                 {consumer.ai_email_draft && (
@@ -378,7 +378,7 @@ export default function ConsumerDetailPage() {
                         const body = encodeURIComponent(consumer.ai_email_draft);
                         window.open(`mailto:${consumer.email}?subject=${subject}&body=${body}`);
                       }}
-                      className="mt-2 px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                      className="mt-2 px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
                     >
                       Open in Mail Client
                     </button>
@@ -404,7 +404,7 @@ export default function ConsumerDetailPage() {
                 >
                   {saving ? 'Saving...' : 'Save Notes'}
                 </button>
-                {saveSuccess && <span className="text-sm text-green-700">Saved!</span>}
+                {saveSuccess && <span className="text-sm text-sage-dark">Saved!</span>}
               </div>
             </div>
           </div>

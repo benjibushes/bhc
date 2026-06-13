@@ -26,12 +26,12 @@ export default function MemberLoginPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Something went wrong');
+        throw new Error(data.error || 'Could not send your login link - the server did not accept the request. Check the email and try again.');
       }
 
       setSent(true);
     } catch (err: any) {
-      setError(err.message || 'Something went wrong. Please try again.');
+      setError(err.message || 'Could not send your login link - the server did not respond. Try again in a minute.');
     } finally {
       setSending(false);
     }

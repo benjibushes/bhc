@@ -10,9 +10,10 @@ export default function Error({
   return (
     <main className="min-h-screen py-24 bg-bone text-charcoal flex items-center justify-center">
       <div className="max-w-md mx-auto text-center space-y-6 px-6">
-        <h1 className="font-serif text-4xl">Something went wrong</h1>
+        <h1 className="font-serif text-4xl">Something broke on our end</h1>
         <p className="text-saddle">
-          We hit an unexpected error. Please try again or contact support if it persists.
+          The page hit an unexpected error - it&apos;s logged on our side. Try again,
+          or email hello@buyhalfcow.com if it keeps happening.
         </p>
         <div className="flex gap-4 justify-center pt-4">
           <button

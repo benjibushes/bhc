@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
+import { toast } from '@/lib/toast';
 
 interface Payment {
   id: string;
@@ -60,17 +61,17 @@ function shortTs(ts: string): string {
 function statusPill(status: string): { label: string; cls: string } {
   switch (status) {
     case 'succeeded':
-      return { label: 'Succeeded', cls: 'bg-green-100 text-green-900' };
+      return { label: 'Succeeded', cls: 'bg-sage/15 text-sage-dark' };
     case 'pending':
-      return { label: 'Pending', cls: 'bg-amber-100 text-amber-900' };
+      return { label: 'Pending', cls: 'bg-amber/15 text-amber-dark' };
     case 'refunded':
-      return { label: 'Refunded', cls: 'bg-gray-200 text-gray-700' };
+      return { label: 'Refunded', cls: 'bg-dust/40 text-saddle' };
     case 'failed':
-      return { label: 'Failed', cls: 'bg-red-100 text-red-900' };
+      return { label: 'Failed', cls: 'bg-weathered/15 text-weathered' };
     case 'paid':
-      return { label: 'Paid', cls: 'bg-green-100 text-green-900' };
+      return { label: 'Paid', cls: 'bg-sage/15 text-sage-dark' };
     default:
-      return { label: status || '—', cls: 'bg-gray-100 text-gray-700' };
+      return { label: status || '—', cls: 'bg-bone-deep text-saddle' };
   }
 }
 
@@ -178,10 +179,11 @@ function AdminPaymentsContent() {
       if (res.ok) {
         await loadData();
         setModal(null);
-        window.alert(
-          `Refund ${data?.refundId || ''} ${data?.status || 'created'} — ${dollars(data?.amount ?? amountCents)} refunded${
+        toast.success(
+          `Refund ${data?.status || 'created'}`,
+          `${dollars(data?.amount ?? amountCents)} refunded${
             data?.partial ? `, ${dollars(data?.remainingCents ?? 0)} remaining` : ''
-          }.`,
+          }${data?.refundId ? ` · ${data.refundId}` : ''}`,
         );
       } else {
         setModal({ ...modal, busy: false, error: data?.error || 'unknown error' });
@@ -204,7 +206,7 @@ function AdminPaymentsContent() {
 
       {loading && <p className="py-6 text-saddle">Loading…</p>}
       {error && (
-        <div className="my-4 p-4 bg-red-50 border-l-4 border-red-600 text-sm text-red-900">{error}</div>
+        <div className="my-4 p-4 bg-weathered/10 border-l-4 border-weathered text-sm text-weathered">{error}</div>
       )}
 
       {!loading && !error && (
@@ -255,7 +257,7 @@ function AdminPaymentsContent() {
                                 type="button"
                                 onClick={() => openRefundModal(p)}
                                 disabled={refundingId === p.id}
-                                className="px-3 py-1 text-xs font-semibold uppercase tracking-widest border border-red-600 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                                className="px-3 py-1 text-xs font-semibold uppercase tracking-widest border border-weathered text-weathered hover:bg-weathered/10 disabled:opacity-50"
                               >
                                 {refundingId === p.id ? 'Refunding…' : 'Refund'}
                               </button>

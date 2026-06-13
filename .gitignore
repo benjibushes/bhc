@@ -42,3 +42,4 @@ next-env.d.ts
 
 # Local one-off operational scripts (not for production code path)
 /scripts/
+.env*.local

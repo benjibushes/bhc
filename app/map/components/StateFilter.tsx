@@ -11,11 +11,11 @@ export default function StateFilter({
 }) {
   return (
     <label className="text-sm flex items-center gap-2">
-      <span className="text-[#6B4F3F]">State</span>
+      <span className="text-saddle">State</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="px-3 py-2 border border-[#A7A29A] text-sm bg-[#F4F1EC] text-[#0E0E0E]"
+        className="px-3 py-2 border border-dust text-sm bg-bone text-charcoal"
       >
         <option value="">All states</option>
         {options.map((s) => (

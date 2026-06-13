@@ -6,7 +6,7 @@
 // mount + wholesale_submit_success on success.
 
 import { useEffect, useState } from 'react';
-import { trackEvent } from '@/lib/analytics';
+import { trackEvent, metaEventId } from '@/lib/analytics';
 import { US_STATES } from '@/lib/states';
 
 const BUSINESS_TYPES = [
@@ -128,7 +128,7 @@ export default function WholesaleForm() {
         state,
         businessType,
         monthlyVolume,
-        ...(recordId ? { event_id: recordId } : {}),
+        ...(recordId ? { event_id: metaEventId(recordId) } : {}),
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'something went wrong';

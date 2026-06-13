@@ -51,12 +51,12 @@ function VerifyContent() {
   };
 
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E] flex items-center justify-center">
+    <main className="min-h-screen py-24 bg-bone text-charcoal flex items-center justify-center">
       <Container>
         <div className="max-w-md mx-auto text-center space-y-6">
           {status === 'verifying' && (
             <>
-              <div className="inline-block w-8 h-8 border-4 border-[#0E0E0E] border-t-transparent rounded-full animate-spin" />
+              <div className="inline-block w-8 h-8 border-4 border-charcoal border-t-transparent rounded-full animate-spin" />
               <h1 className="font-serif text-3xl">Logging you in...</h1>
             </>
           )}
@@ -65,18 +65,18 @@ function VerifyContent() {
             <>
               <div className="text-5xl">&#10003;</div>
               <h1 className="font-serif text-3xl">You&apos;re logged in</h1>
-              <p className="text-[#6B4F3F]">Redirecting to your dashboard...</p>
+              <p className="text-saddle">Redirecting to your dashboard...</p>
             </>
           )}
 
           {status === 'error' && (
             <>
               <h1 className="font-serif text-3xl">Login Failed</h1>
-              <p className="text-[#8C2F2F]">{error}</p>
+              <p className="text-weathered">{error}</p>
               <div className="pt-4">
                 <Link
                   href="/affiliate/login"
-                  className="inline-block px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors font-medium tracking-wider uppercase text-sm"
+                  className="inline-block px-6 py-3 bg-charcoal text-bone hover:bg-divider transition-colors font-medium tracking-wider uppercase text-sm"
                 >
                   Request New Link
                 </Link>
@@ -92,10 +92,10 @@ function VerifyContent() {
 export default function AffiliateVerifyPage() {
   return (
     <Suspense fallback={
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E] flex items-center justify-center">
+      <main className="min-h-screen py-24 bg-bone text-charcoal flex items-center justify-center">
         <Container>
           <div className="text-center">
-            <div className="inline-block w-8 h-8 border-4 border-[#0E0E0E] border-t-transparent rounded-full animate-spin" />
+            <div className="inline-block w-8 h-8 border-4 border-charcoal border-t-transparent rounded-full animate-spin" />
           </div>
         </Container>
       </main>

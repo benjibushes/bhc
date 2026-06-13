@@ -83,15 +83,15 @@ interface MemberReferral {
 type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
 
 const statusLabels: Record<string, { label: string; style: string }> = {
-  'Pending Approval': { label: 'Being Matched', style: 'bg-yellow-100 text-yellow-800' },
-  'Waitlisted': { label: 'Waitlisted — No Rancher Yet', style: 'bg-orange-100 text-orange-800' },
-  'Intro Sent': { label: 'Rancher Introduced', style: 'bg-blue-100 text-blue-800' },
-  'In Progress': { label: 'In Progress', style: 'bg-purple-100 text-purple-800' },
-  'Awaiting Payment': { label: 'Deposit Invoice Ready', style: 'bg-amber-100 text-amber-900' },
-  'Slot Locked': { label: 'Slot Locked', style: 'bg-emerald-100 text-emerald-800' },
-  'Closed Won': { label: 'Beef Delivered', style: 'bg-green-100 text-green-800' },
-  'Closed Lost': { label: 'Closed', style: 'bg-gray-100 text-gray-600' },
-  'Rejected': { label: 'No Match Available', style: 'bg-red-100 text-red-800' },
+  'Pending Approval': { label: 'Being Matched', style: 'bg-amber/20 text-amber-dark' },
+  'Waitlisted': { label: 'Waitlisted — No Rancher Yet', style: 'bg-rust/10 text-rust-dark' },
+  'Intro Sent': { label: 'Rancher Introduced', style: 'bg-charcoal/10 text-charcoal' },
+  'In Progress': { label: 'In Progress', style: 'bg-charcoal/10 text-charcoal' },
+  'Awaiting Payment': { label: 'Deposit Invoice Ready', style: 'bg-amber/20 text-amber-dark' },
+  'Slot Locked': { label: 'Slot Locked', style: 'bg-sage/15 text-sage-dark' },
+  'Closed Won': { label: 'Beef Delivered', style: 'bg-sage/15 text-sage-dark' },
+  'Closed Lost': { label: 'Closed', style: 'bg-dust/20 text-saddle' },
+  'Rejected': { label: 'No Match Available', style: 'bg-weathered/10 text-weathered' },
 };
 
 function MemberDashboard({ member }: { member: { id: string; name: string; email: string; state: string } }) {
@@ -346,7 +346,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
               {data?.memberReferrals && data.memberReferrals.length > 0 ? (
                 <div className="space-y-4">
                   {data.memberReferrals.map((ref) => {
-                    const statusInfo = statusLabels[ref.status] || { label: ref.status, style: 'bg-gray-100 text-gray-600' };
+                    const statusInfo = statusLabels[ref.status] || { label: ref.status, style: 'bg-dust/20 text-saddle' };
                     return (
                       <div key={ref.id} className="p-6 border border-dust bg-white">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -587,9 +587,9 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
               )}
 
               {upgradeSuccess && (
-                <div className="p-6 border-2 border-green-600 bg-green-50 text-center">
-                  <p className="font-serif text-xl text-green-800">You&apos;re on the list!</p>
-                  <p className="text-sm text-green-700 mt-2">We&apos;re matching you with a rancher in {data?.memberState || 'your area'}. You&apos;ll hear from us soon.</p>
+                <div className="p-6 border-2 border-sage-dark bg-sage/10 text-center">
+                  <p className="font-serif text-xl text-sage-dark">You&apos;re on the list!</p>
+                  <p className="text-sm text-sage-dark mt-2">We&apos;re matching you with a rancher in {data?.memberState || 'your area'}. You&apos;ll hear from us soon.</p>
                 </div>
               )}
 
@@ -824,7 +824,7 @@ function PastOrdersSection({
                 </button>
               </div>
               {result && (
-                <div className={`p-3 text-sm ${result.ok ? 'border border-green-700 bg-green-50 text-green-900' : 'border border-[#8C2F2F] text-[#8C2F2F]'}`}>
+                <div className={`p-3 text-sm ${result.ok ? 'border border-sage-dark bg-sage/10 text-sage-dark' : 'border border-weathered text-weathered'}`}>
                   {result.message}
                 </div>
               )}
@@ -860,9 +860,9 @@ function ReadyToBuyButton({ hasMatch }: { hasMatch: boolean }) {
 
   if (state === 'sent') {
     return (
-      <div className="p-5 border-2 border-green-700 bg-green-50 text-center space-y-1">
-        <p className="font-serif text-xl text-green-800">We're on it.</p>
-        <p className="text-sm text-green-900">
+      <div className="p-5 border-2 border-sage-dark bg-sage/10 text-center space-y-1">
+        <p className="font-serif text-xl text-sage-dark">We're on it.</p>
+        <p className="text-sm text-sage-dark">
           {matchName
             ? `${matchName} has been notified you're ready. Expect to hear from them within 24-48 hours.`
             : "Benjamin got the signal and will reach out personally this week."}

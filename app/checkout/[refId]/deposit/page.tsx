@@ -7,7 +7,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { trackEvent } from '@/lib/analytics';
+import { trackEvent, metaEventId } from '@/lib/analytics';
 import { CutBreakdown, type Tier } from '@/app/components/CutBreakdown';
 
 // Map deposit cut slug → CutBreakdown tier. Slug is lowercase from
@@ -72,7 +72,7 @@ function DepositPageContent() {
     depositInitiatedFired.current = true;
     trackEvent('deposit_initiated', {
       refId,
-      event_id: refId,
+      event_id: metaEventId(refId),
     });
   }, [refId]);
 

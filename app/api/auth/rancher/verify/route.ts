@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     // let them log in so they can resume themselves.
     const activeStatus = (rancher['Active Status'] || '').toLowerCase();
     if (activeStatus === 'non-compliant') {
-      return NextResponse.json({ error: 'Your account has been deactivated for compliance reasons. Contact support@buyhalfcow.com.' }, { status: 403 });
+      return NextResponse.json({ error: 'Your account has been deactivated for compliance reasons. Contact hello@buyhalfcow.com.' }, { status: 403 });
     }
 
     // Re-validate token's email claim against current record. If the

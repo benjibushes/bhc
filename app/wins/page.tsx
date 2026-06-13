@@ -78,7 +78,7 @@ async function fetchWins(): Promise<{
       if (!rancher) return null;
       // Buyer privacy — first initial of name only.
       const buyerName = (ref['Buyer Name'] || '').toString().trim();
-      const initial = buyerName ? `${buyerName[0]}.${buyerName.split(' ')[1]?.[0] || ''}` : '?';
+      const initial = buyerName ? `${buyerName[0]}.` : '?';
       const reviewText = String(ref['Buyer Review'] || '').trim();
       const reviewRatingRaw = ref['Buyer Rating'];
       const reviewRating =

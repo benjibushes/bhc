@@ -64,9 +64,9 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
   if (isSuccess) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-        <div className="bg-[#F4F1EC] p-8 max-w-md w-full">
-          <h2 className="font-[family-name:var(--font-serif)] text-2xl mb-4">Inquiry Received!</h2>
-          <p className="text-[#6B4F3F]">
+        <div className="bg-bone p-8 max-w-md w-full">
+          <h2 className="font-serif text-2xl mb-4">Inquiry Received!</h2>
+          <p className="text-saddle">
             Your inquiry about {rancher.ranch_name} has been received. We&apos;ll review it and connect you with the rancher shortly.
           </p>
         </div>
@@ -76,19 +76,19 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-[#F4F1EC] p-8 max-w-2xl w-full my-8">
+      <div className="bg-bone p-8 max-w-2xl w-full my-8">
         <div className="flex justify-between items-start mb-6">
           <div>
-            <h2 className="font-[family-name:var(--font-serif)] text-2xl mb-2">
+            <h2 className="font-serif text-2xl mb-2">
               Contact {rancher.ranch_name}
             </h2>
-            <p className="text-sm text-[#6B4F3F]">
+            <p className="text-sm text-saddle">
               Operator: {rancher.operator_name} • {rancher.state}
             </p>
           </div>
           <button
             onClick={onClose}
-            className="text-2xl leading-none hover:text-[#6B4F3F] transition-colors"
+            className="text-2xl leading-none hover:text-saddle transition-colors"
             aria-label="Close"
           >
             ×
@@ -125,12 +125,12 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
 
           <div className="space-y-2">
             <label className="block text-sm font-medium">
-              What are you interested in? <span className="text-[#8C2F2F]">*</span>
+              What are you interested in? <span className="text-weathered">*</span>
             </label>
             <select
               value={formData.interestType}
               onChange={(e) => setFormData({ ...formData, interestType: e.target.value })}
-              className="w-full px-4 py-3 border border-[#A7A29A] bg-[#F4F1EC] text-[#0E0E0E] focus:outline-none focus:border-[#0E0E0E] transition-colors"
+              className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
               required
             >
               <option value="half_cow">Half Cow</option>
@@ -151,7 +151,7 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
           />
 
           {error && (
-            <div className="p-4 bg-[#8C2F2F] bg-opacity-10 border border-[#8C2F2F] text-[#8C2F2F]">
+            <div className="p-4 bg-weathered bg-opacity-10 border border-weathered text-weathered">
               {error}
             </div>
           )}
@@ -160,20 +160,20 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-6 py-3 border border-[#0E0E0E] text-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors duration-300 font-medium tracking-wide uppercase text-sm"
+              className="flex-1 px-6 py-3 border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors duration-300 font-medium tracking-wide uppercase text-sm"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex-1 px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors duration-300 font-medium tracking-wide uppercase text-sm border border-[#0E0E0E] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 px-6 py-3 bg-charcoal text-bone hover:bg-divider transition-colors duration-300 font-medium tracking-wide uppercase text-sm border border-charcoal disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting ? 'Sending...' : 'Send Inquiry'}
             </button>
           </div>
 
-          <p className="text-xs text-[#6B4F3F] text-center">
+          <p className="text-xs text-saddle text-center">
             The rancher will receive your contact information and reply directly to your email.
           </p>
         </form>

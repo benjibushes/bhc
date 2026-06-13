@@ -301,6 +301,7 @@ export default function RancherDashboardPage() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setUpdateError(data.error || 'Failed to update status. Please try again.');
+        return; // nothing changed server-side — keep current view, no refetch
       }
       await fetchDashboard();
     } catch {
@@ -571,6 +572,20 @@ export default function RancherDashboardPage() {
       setUpdateError(`Listed sale ($${total}) must exceed ${label} ($${subtract}). Balance must be > $0.`);
       return;
     }
+    // Processing date must parse and not be in the past (24h grace absorbs
+    // the UTC-midnight parse of date-only strings, so "today" passes).
+    const processingDateRaw = finalInvoiceProcessingDate.trim();
+    if (processingDateRaw) {
+      const parsedDate = new Date(processingDateRaw);
+      if (isNaN(parsedDate.getTime())) {
+        setUpdateError('Processing date is not a recognizable date. Use YYYY-MM-DD.');
+        return;
+      }
+      if (parsedDate.getTime() < Date.now() - 24 * 60 * 60 * 1000) {
+        setUpdateError('Processing date is in the past. Double-check the date before sending.');
+        return;
+      }
+    }
     setFinalInvoiceSubmitting(true);
     setUpdateError('');
     try {
@@ -681,7 +696,7 @@ export default function RancherDashboardPage() {
         setGoLiveRequested(true);
       } else {
         const data = await res.json().catch(() => ({}));
-        setUpdateError(data.error || 'Go-live request failed. Try again or email support@buyhalfcow.com.');
+        setUpdateError(data.error || 'Go-live request failed. Try again or email hello@buyhalfcow.com.');
       }
     } catch {
       setUpdateError('Network error — check your connection and try again.');
@@ -761,18 +776,22 @@ export default function RancherDashboardPage() {
           {(() => {
             const missingCuts: string[] = [];
             const specialty = (rancherInfo.tierSpecialty || []) as string[];
+            // Legacy ranchers predate Tier Specialty — empty/undefined means no
+            // cut restriction, and the deposit endpoint 409s any unpriced cut
+            // regardless of specialty. Alarm on all three cuts for them.
+            const alarmCuts = specialty.length > 0 ? specialty : ['Quarter', 'Half', 'Whole'];
             const priceMissing = (v: string | number | undefined): boolean => {
               if (v === undefined || v === null || v === '') return true;
               const n = Number(v);
               return !isFinite(n) || n <= 0;
             };
-            if (specialty.includes('Quarter') && priceMissing(rancherInfo.quarterPrice)) {
+            if (alarmCuts.includes('Quarter') && priceMissing(rancherInfo.quarterPrice)) {
               missingCuts.push('Quarter');
             }
-            if (specialty.includes('Half') && priceMissing(rancherInfo.halfPrice)) {
+            if (alarmCuts.includes('Half') && priceMissing(rancherInfo.halfPrice)) {
               missingCuts.push('Half');
             }
-            if (specialty.includes('Whole') && priceMissing(rancherInfo.wholePrice)) {
+            if (alarmCuts.includes('Whole') && priceMissing(rancherInfo.wholePrice)) {
               missingCuts.push('Whole');
             }
             if (missingCuts.length === 0) return null;
@@ -1188,13 +1207,13 @@ export default function RancherDashboardPage() {
                           <button
                             onClick={handleUpdateCapacity}
                             disabled={capacitySaving}
-                            className="px-4 py-2 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+                            className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
                           >
                             {capacitySaving ? '...' : 'Save'}
                           </button>
                           <button
                             onClick={() => setEditingCapacity(false)}
-                            className="px-3 py-2 text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
+                            className="px-3 py-2 min-h-[44px] text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
                           >
                             Cancel
                           </button>
@@ -2216,7 +2235,7 @@ export default function RancherDashboardPage() {
 
               {/* Save button */}
               {pageError && (
-                <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">{pageError}</div>
+                <div className="p-3 border border-weathered text-weathered text-sm">{pageError}</div>
               )}
               {pageSaved && (
                 <div className="p-3 border border-green-600 text-green-700 bg-green-50 text-sm">Changes saved! {rancherInfo.slug && <span>Your page: <a href={`/ranchers/${rancherInfo.slug}`} target="_blank" className="underline">/ranchers/{rancherInfo.slug}</a></span>}</div>
@@ -2241,7 +2260,7 @@ export default function RancherDashboardPage() {
           <Divider />
 
           <div className="text-center text-sm text-dust space-y-2">
-            <p>Questions? Email <a href="mailto:support@buyhalfcow.com" className="text-charcoal hover:text-saddle transition-colors">support@buyhalfcow.com</a></p>
+            <p>Questions? Email <a href="mailto:hello@buyhalfcow.com" className="text-charcoal hover:text-saddle transition-colors">hello@buyhalfcow.com</a></p>
             <Link href="/" className="text-saddle hover:text-charcoal transition-colors">
               &larr; Back to home
             </Link>
@@ -2292,7 +2311,7 @@ export default function RancherDashboardPage() {
             </div>
 
             {updateError && (
-              <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+              <div className="p-3 border border-weathered text-weathered text-sm">
                 {updateError}
               </div>
             )}
@@ -2431,7 +2450,7 @@ export default function RancherDashboardPage() {
                 </div>
 
                 {updateError && (
-                  <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">{updateError}</div>
+                  <div className="p-3 border border-weathered text-weathered text-sm">{updateError}</div>
                 )}
 
                 <div className="flex gap-3">
@@ -2509,7 +2528,7 @@ export default function RancherDashboardPage() {
                         ceiling at $25k in lib/stripe-commission.ts; this UI warning
                         catches it before submit and disables the confirm button. */}
                     {closeForm.saleAmount && parseFloat(closeForm.saleAmount) > 25000 && (
-                      <p className="text-xs text-[#8C2F2F] mt-1 font-medium">
+                      <p className="text-xs text-weathered mt-1 font-medium">
                         Sale amount exceeds $25,000 ceiling. Likely typo — double-check the agreed price. If genuinely above $25k, contact support to manually create the invoice.
                       </p>
                     )}
@@ -2555,7 +2574,7 @@ export default function RancherDashboardPage() {
             </div>
 
             {updateError && (
-              <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+              <div className="p-3 border border-weathered text-weathered text-sm">
                 {updateError}
               </div>
             )}
@@ -2626,7 +2645,7 @@ export default function RancherDashboardPage() {
                 </div>
 
                 {updateError && (
-                  <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+                  <div className="p-3 border border-weathered text-weathered text-sm">
                     {updateError}
                   </div>
                 )}
@@ -2663,7 +2682,7 @@ export default function RancherDashboardPage() {
                   </div>
                 )}
                 {passResult.rematchOutcome === 'error' && (
-                  <div className="p-4 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+                  <div className="p-4 border border-weathered text-weathered text-sm">
                     Re-match failed — Benjamin was alerted and will reassign manually.
                   </div>
                 )}

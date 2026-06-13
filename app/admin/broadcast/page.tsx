@@ -20,7 +20,7 @@ export default function BroadcastEmailPage() {
   return (
     <Suspense fallback={
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container><p className="text-center">Loading...</p></Container>
         </main>
       </AdminAuthGuard>
@@ -216,7 +216,7 @@ function BroadcastEmailInner() {
   if (loading) {
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container>
             <p className="text-center">Loading...</p>
           </Container>
@@ -229,20 +229,20 @@ function BroadcastEmailInner() {
     const isScheduled = successData?.scheduled;
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container>
             <div className="max-w-2xl mx-auto text-center space-y-6">
               <div className="text-6xl">{isScheduled ? '⏱' : '✓'}</div>
               <h1 className="font-[family-name:var(--font-serif)] text-4xl">
                 {isScheduled ? 'Campaign Scheduled' : 'Email Sent Successfully'}
               </h1>
-              <p className="text-lg text-[#6B4F3F]">
+              <p className="text-lg text-saddle">
                 {isScheduled
                   ? `Your campaign will be sent at ${new Date(successData.scheduledFor).toLocaleString()}.`
                   : `Your broadcast email has been sent to ${successData?.recipientCount || recipientCount} recipients.`
                 }
               </p>
-              <div className="p-6 border border-[#A7A29A] bg-white space-y-2">
+              <div className="p-6 border border-dust bg-white space-y-2">
                 <p><strong>Campaign:</strong> {campaignName}</p>
                 <p><strong>Subject:</strong> {subject}</p>
                 <p><strong>Recipients:</strong> {successData?.recipientCount || recipientCount}</p>
@@ -251,7 +251,7 @@ function BroadcastEmailInner() {
               <div className="flex gap-4 justify-center pt-6">
                 <Link 
                   href="/admin/analytics" 
-                  className="px-6 py-3 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                  className="px-6 py-3 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
                 >
                   View Analytics
                 </Link>
@@ -271,7 +271,7 @@ function BroadcastEmailInner() {
                     setHtmlBody('');
                     setShowHtmlPreview(false);
                   }}
-                  className="px-6 py-3 border border-[#A7A29A] hover:bg-[#A7A29A] transition-colors"
+                  className="px-6 py-3 border border-dust hover:bg-dust transition-colors"
                 >
                   Send Another
                 </button>
@@ -285,7 +285,7 @@ function BroadcastEmailInner() {
 
   return (
     <AdminAuthGuard>
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="max-w-4xl mx-auto space-y-8">
             {/* Header */}
@@ -294,13 +294,13 @@ function BroadcastEmailInner() {
                 <h1 className="font-[family-name:var(--font-serif)] text-4xl mb-2">
                   Broadcast Email
                 </h1>
-                <p className="text-[#6B4F3F]">
+                <p className="text-saddle">
                   Send tracked email campaigns to your audience
                 </p>
               </div>
               <Link 
                 href="/admin" 
-                className="px-4 py-2 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                className="px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
               >
                 ← Back to Admin
               </Link>
@@ -313,17 +313,17 @@ function BroadcastEmailInner() {
               {/* Campaign Name */}
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Campaign Name <span className="text-[#8C2F2F]">*</span>
+                  Campaign Name <span className="text-weathered">*</span>
                 </label>
                 <input
                   type="text"
                   value={campaignName}
                   onChange={(e) => setCampaignName(e.target.value)}
                   placeholder="e.g., january-texas-beef"
-                  className="w-full px-4 py-3 border border-[#A7A29A] bg-white focus:outline-none focus:border-[#0E0E0E]"
+                  className="w-full px-4 py-3 border border-dust bg-white focus:outline-none focus:border-charcoal"
                   required
                 />
-                <p className="text-sm text-[#6B4F3F] mt-1">
+                <p className="text-sm text-saddle mt-1">
                   Used for tracking - use lowercase with dashes, no spaces
                 </p>
               </div>
@@ -331,14 +331,14 @@ function BroadcastEmailInner() {
               {/* Subject */}
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Subject Line <span className="text-[#8C2F2F]">*</span>
+                  Subject Line <span className="text-weathered">*</span>
                 </label>
                 <input
                   type="text"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                   placeholder="e.g., New Texas Rancher Available - Half Cows Ready Now"
-                  className="w-full px-4 py-3 border border-[#A7A29A] bg-white focus:outline-none focus:border-[#0E0E0E]"
+                  className="w-full px-4 py-3 border border-dust bg-white focus:outline-none focus:border-charcoal"
                   required
                 />
               </div>
@@ -347,20 +347,20 @@ function BroadcastEmailInner() {
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <label className="block text-sm font-medium">
-                    Message <span className="text-[#8C2F2F]">*</span>
+                    Message <span className="text-weathered">*</span>
                   </label>
-                  <div className="flex border border-[#A7A29A] overflow-hidden text-sm">
+                  <div className="flex border border-dust overflow-hidden text-sm">
                     <button
                       type="button"
                       onClick={() => setHtmlMode(false)}
-                      className={`px-4 py-1.5 transition-colors ${!htmlMode ? 'bg-[#0E0E0E] text-[#F4F1EC]' : 'bg-white hover:bg-[#F4F1EC]'}`}
+                      className={`px-4 py-1.5 transition-colors ${!htmlMode ? 'bg-charcoal text-bone' : 'bg-white hover:bg-bone'}`}
                     >
                       Plain Text
                     </button>
                     <button
                       type="button"
                       onClick={() => setHtmlMode(true)}
-                      className={`px-4 py-1.5 transition-colors ${htmlMode ? 'bg-[#0E0E0E] text-[#F4F1EC]' : 'bg-white hover:bg-[#F4F1EC]'}`}
+                      className={`px-4 py-1.5 transition-colors ${htmlMode ? 'bg-charcoal text-bone' : 'bg-white hover:bg-bone'}`}
                     >
                       Custom HTML
                     </button>
@@ -373,7 +373,7 @@ function BroadcastEmailInner() {
                     onChange={(e) => setMessage(e.target.value)}
                     placeholder="Write your message here... (supports line breaks)"
                     rows={10}
-                    className="w-full px-4 py-3 border border-[#A7A29A] bg-white focus:outline-none focus:border-[#0E0E0E]"
+                    className="w-full px-4 py-3 border border-dust bg-white focus:outline-none focus:border-charcoal"
                   />
                 ) : (
                   <div className="space-y-3">
@@ -382,18 +382,18 @@ function BroadcastEmailInner() {
                       onChange={(e) => setHtmlBody(e.target.value)}
                       placeholder="Paste your full HTML email here..."
                       rows={16}
-                      className="w-full px-4 py-3 border border-[#A7A29A] bg-white focus:outline-none focus:border-[#0E0E0E] font-mono text-sm"
+                      className="w-full px-4 py-3 border border-dust bg-white focus:outline-none focus:border-charcoal font-mono text-sm"
                     />
                     <button
                       type="button"
                       onClick={() => setShowHtmlPreview(!showHtmlPreview)}
-                      className="text-sm underline text-[#6B4F3F]"
+                      className="text-sm underline text-saddle"
                     >
                       {showHtmlPreview ? 'Hide Preview' : 'Show Preview'}
                     </button>
                     {showHtmlPreview && htmlBody && (
-                      <div className="border border-[#A7A29A]">
-                        <p className="text-xs text-[#6B4F3F] px-3 py-1 bg-[#F4F1EC] border-b border-[#A7A29A]">Email Preview</p>
+                      <div className="border border-dust">
+                        <p className="text-xs text-saddle px-3 py-1 bg-bone border-b border-dust">Email Preview</p>
                         <iframe
                           srcDoc={htmlBody}
                           className="w-full"
@@ -408,7 +408,7 @@ function BroadcastEmailInner() {
 
               {/* CTA Button (plain text mode only) */}
               {!htmlMode && (
-              <div className="border border-[#A7A29A] p-6 bg-white">
+              <div className="border border-dust p-6 bg-white">
                 <div className="flex items-center gap-3 mb-4">
                   <input
                     type="checkbox"
@@ -428,14 +428,14 @@ function BroadcastEmailInner() {
                       value={ctaText}
                       onChange={(e) => setCtaText(e.target.value)}
                       placeholder="Button text"
-                      className="w-full px-4 py-2 border border-[#A7A29A] bg-white focus:outline-none focus:border-[#0E0E0E]"
+                      className="w-full px-4 py-2 border border-dust bg-white focus:outline-none focus:border-charcoal"
                     />
                     <input
                       type="text"
                       value={ctaLink}
                       onChange={(e) => setCtaLink(e.target.value)}
                       placeholder="/member or full URL"
-                      className="w-full px-4 py-2 border border-[#A7A29A] bg-white focus:outline-none focus:border-[#0E0E0E]"
+                      className="w-full px-4 py-2 border border-dust bg-white focus:outline-none focus:border-charcoal"
                     />
                   </div>
                 )}
@@ -447,11 +447,11 @@ function BroadcastEmailInner() {
               {/* Audience Selection */}
               <div>
                 <label className="block text-sm font-medium mb-4">
-                  Select Audience <span className="text-[#8C2F2F]">*</span>
+                  Select Audience <span className="text-weathered">*</span>
                 </label>
                 
                 <div className="space-y-3">
-                  <label className="flex items-center gap-3 p-4 border border-[#A7A29A] cursor-pointer hover:bg-white">
+                  <label className="flex items-center gap-3 p-4 border border-dust cursor-pointer hover:bg-white">
                     <input
                       type="radio"
                       name="audience"
@@ -463,7 +463,7 @@ function BroadcastEmailInner() {
                     <span>All Consumers ({stats?.allConsumers || 0})</span>
                   </label>
 
-                  <label className="flex items-center gap-3 p-4 border border-[#A7A29A] cursor-pointer hover:bg-white">
+                  <label className="flex items-center gap-3 p-4 border border-dust cursor-pointer hover:bg-white">
                     <input
                       type="radio"
                       name="audience"
@@ -475,7 +475,7 @@ function BroadcastEmailInner() {
                     <span>Beef Buyers Only ({stats?.beefBuyers || 0})</span>
                   </label>
 
-                  <label className="flex items-center gap-3 p-4 border border-[#A7A29A] cursor-pointer hover:bg-white">
+                  <label className="flex items-center gap-3 p-4 border border-dust cursor-pointer hover:bg-white">
                     <input
                       type="radio"
                       name="audience"
@@ -487,7 +487,7 @@ function BroadcastEmailInner() {
                     <span>Community Only ({stats?.community || 0})</span>
                   </label>
 
-                  <label className="flex items-center gap-3 p-4 border border-[#A7A29A] cursor-pointer hover:bg-white">
+                  <label className="flex items-center gap-3 p-4 border border-dust cursor-pointer hover:bg-white">
                     <input
                       type="radio"
                       name="audience"
@@ -500,7 +500,7 @@ function BroadcastEmailInner() {
                   </label>
 
                   {audienceType === 'consumers-by-state' && (
-                    <div className="ml-8 p-4 border border-[#A7A29A] bg-white">
+                    <div className="ml-8 p-4 border border-dust bg-white">
                       <p className="text-sm mb-3">Select states:</p>
                       <div className="grid grid-cols-4 md:grid-cols-6 gap-2">
                         {US_STATES.map(state => (
@@ -518,7 +518,7 @@ function BroadcastEmailInner() {
                     </div>
                   )}
 
-                  <label className="flex items-center gap-3 p-4 border border-[#A7A29A] cursor-pointer hover:bg-white">
+                  <label className="flex items-center gap-3 p-4 border border-dust cursor-pointer hover:bg-white">
                     <input
                       type="radio"
                       name="audience"
@@ -533,7 +533,7 @@ function BroadcastEmailInner() {
               </div>
 
               {/* Send Timing */}
-              <div className="border border-[#A7A29A] p-6 bg-white space-y-4">
+              <div className="border border-dust p-6 bg-white space-y-4">
                 <label className="block text-sm font-medium mb-2">When to Send</label>
                 <div className="flex gap-4">
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -560,35 +560,35 @@ function BroadcastEmailInner() {
                 {sendMode === 'scheduled' && (
                   <div className="flex gap-4 items-end">
                     <div className="flex-1">
-                      <label className="block text-xs text-[#6B4F3F] mb-1">Date</label>
+                      <label className="block text-xs text-saddle mb-1">Date</label>
                       <input
                         type="date"
                         value={scheduledDate}
                         onChange={(e) => setScheduledDate(e.target.value)}
                         min={new Date().toISOString().split('T')[0]}
-                        className="w-full px-4 py-2 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
+                        className="w-full px-4 py-2 border border-dust bg-bone text-sm"
                       />
                     </div>
                     <div className="flex-1">
-                      <label className="block text-xs text-[#6B4F3F] mb-1">Time</label>
+                      <label className="block text-xs text-saddle mb-1">Time</label>
                       <input
                         type="time"
                         value={scheduledTime}
                         onChange={(e) => setScheduledTime(e.target.value)}
-                        className="w-full px-4 py-2 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
+                        className="w-full px-4 py-2 border border-dust bg-bone text-sm"
                       />
                     </div>
                   </div>
                 )}
                 {sendMode === 'scheduled' && (
-                  <p className="text-xs text-[#6B4F3F]">
+                  <p className="text-xs text-saddle">
                     Campaigns are checked every 5 minutes. Time is in your browser&apos;s timezone.
                   </p>
                 )}
               </div>
 
               {/* Recipient Count */}
-              <div className="p-6 border border-[#0E0E0E] bg-white">
+              <div className="p-6 border border-charcoal bg-white">
                 <div className="flex justify-between items-center">
                   <span className="text-lg">Recipients:</span>
                   <span className="text-3xl font-[family-name:var(--font-serif)]">{recipientCount}</span>
@@ -597,7 +597,7 @@ function BroadcastEmailInner() {
 
               {/* Preview Panel */}
               {previewData && (
-                <div className="border-2 border-[#0E0E0E] bg-white p-6 space-y-4">
+                <div className="border-2 border-charcoal bg-white p-6 space-y-4">
                   <h3 className="font-[family-name:var(--font-serif)] text-xl">Preview</h3>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div><strong>Campaign:</strong> {previewData.campaignName}</div>
@@ -607,28 +607,28 @@ function BroadcastEmailInner() {
                   {typeof previewData.spamScore === 'number' && (
                     <div className={`p-3 border ${
                       previewData.spamBlocked
-                        ? 'border-[#8C2F2F] bg-[#FAF2F2]'
+                        ? 'border-weathered bg-weathered/10'
                         : previewData.spamScore >= 25
-                        ? 'border-[#C99A2E] bg-[#FAF6EC]'
-                        : 'border-[#A7A29A] bg-[#F4F1EC]'
+                        ? 'border-amber-dark bg-amber/10'
+                        : 'border-dust bg-bone'
                     }`}>
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm font-medium">Spam Score</span>
                         <span className={`text-lg font-[family-name:var(--font-serif)] ${
-                          previewData.spamBlocked ? 'text-[#8C2F2F]' : 'text-[#0E0E0E]'
+                          previewData.spamBlocked ? 'text-weathered' : 'text-charcoal'
                         }`}>
                           {previewData.spamScore}/100 {previewData.spamBlocked && '(BLOCKED)'}
                         </span>
                       </div>
                       {previewData.spamViolations?.length > 0 && (
-                        <ul className="text-xs text-[#6B4F3F] space-y-0.5 mt-2">
+                        <ul className="text-xs text-saddle space-y-0.5 mt-2">
                           {previewData.spamViolations.map((v: string, i: number) => (
                             <li key={i}>• {v}</li>
                           ))}
                         </ul>
                       )}
                       {previewData.spamBlocked && (
-                        <p className="text-xs text-[#8C2F2F] mt-2">
+                        <p className="text-xs text-weathered mt-2">
                           Score ≥ 50 — send blocked. Edit subject/body to lower score.
                         </p>
                       )}
@@ -637,12 +637,12 @@ function BroadcastEmailInner() {
                   {previewData.sampleRecipients?.length > 0 && (
                     <div>
                       <p className="text-sm font-medium mb-2">Sample recipients:</p>
-                      <div className="text-sm text-[#6B4F3F] space-y-1">
+                      <div className="text-sm text-saddle space-y-1">
                         {previewData.sampleRecipients.map((r: any, i: number) => (
                           <div key={i}>{r.name} — {r.email}</div>
                         ))}
                         {previewData.recipientCount > 10 && (
-                          <div className="text-[#A7A29A]">...and {previewData.recipientCount - 10} more</div>
+                          <div className="text-dust">...and {previewData.recipientCount - 10} more</div>
                         )}
                       </div>
                     </div>
@@ -652,7 +652,7 @@ function BroadcastEmailInner() {
                       type="button"
                       onClick={handleSend}
                       disabled={sending || previewData.spamBlocked}
-                      className="flex-1 px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase font-semibold tracking-wider"
+                      className="flex-1 px-6 py-4 bg-charcoal text-bone hover:bg-divider transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase font-semibold tracking-wider"
                     >
                       {sending
                         ? (sendMode === 'scheduled' ? 'Scheduling...' : 'Sending...')
@@ -667,26 +667,26 @@ function BroadcastEmailInner() {
                       type="button"
                       onClick={() => setPreviewData(null)}
                       disabled={sending}
-                      className="px-6 py-4 border border-[#A7A29A] hover:bg-[#A7A29A] transition-colors"
+                      className="px-6 py-4 border border-dust hover:bg-dust transition-colors"
                     >
                       Edit
                     </button>
                   </div>
                   {sending && sendMode === 'now' && (
-                    <div className="mt-4 p-4 border-2 border-[#8C2F2F] bg-[#FAF2F2]">
-                      <p className="text-sm font-medium text-[#8C2F2F] mb-2">
+                    <div className="mt-4 p-4 border-2 border-weathered bg-weathered/10">
+                      <p className="text-sm font-medium text-weathered mb-2">
                         Broadcast in progress — emergency kill-switch available.
                       </p>
                       <button
                         type="button"
                         onClick={handleAbort}
                         disabled={aborting}
-                        className="w-full px-6 py-3 bg-[#8C2F2F] text-[#F4F1EC] hover:bg-[#6e1f1f] transition-colors disabled:opacity-50 uppercase font-semibold tracking-wider"
+                        className="w-full px-6 py-3 bg-weathered text-bone hover:opacity-90 transition-colors disabled:opacity-50 uppercase font-semibold tracking-wider"
                       >
                         {aborting ? 'Aborting...' : 'ABORT BROADCAST'}
                       </button>
                       {abortToast && (
-                        <p className="text-xs text-[#0E0E0E] mt-2">{abortToast}</p>
+                        <p className="text-xs text-charcoal mt-2">{abortToast}</p>
                       )}
                     </div>
                   )}
@@ -695,7 +695,7 @@ function BroadcastEmailInner() {
 
               {/* Error Message */}
               {error && (
-                <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F]">
+                <div className="p-4 border border-weathered bg-transparent text-weathered">
                   {error}
                 </div>
               )}
@@ -705,7 +705,7 @@ function BroadcastEmailInner() {
                 <button
                   type="submit"
                   disabled={previewing || sending || recipientCount === 0}
-                  className="w-full px-6 py-4 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase font-semibold tracking-wider"
+                  className="w-full px-6 py-4 bg-charcoal text-bone hover:bg-divider transition-colors disabled:opacity-50 disabled:cursor-not-allowed uppercase font-semibold tracking-wider"
                 >
                   {previewing ? 'Loading Preview...' : `Preview — ${recipientCount} Recipients`}
                 </button>

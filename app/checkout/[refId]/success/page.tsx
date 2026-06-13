@@ -5,7 +5,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { trackEvent } from '@/lib/analytics';
+import { trackEvent, metaEventId } from '@/lib/analytics';
 
 interface Info {
   rancher: { name: string; ranchName: string };
@@ -44,7 +44,7 @@ function DepositSuccessContent() {
     trackEvent('deposit_completed', {
       refId,
       sessionId: sessionId || '',
-      event_id: refId,
+      event_id: metaEventId(refId),
     });
   }, [refId, sessionId]);
 

@@ -4,6 +4,7 @@ import { createRecord, getAllRecords, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendRancherApplyAutoApproved } from '@/lib/email';
 import { JWT_SECRET } from '@/lib/secrets';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 // POST /api/apply — public endpoint.
 //
@@ -81,6 +82,22 @@ function isValidEmail(s: string): boolean {
 }
 
 export async function POST(req: Request) {
+  const ip = getRequestIp(req);
+  const rlMin = await rateLimit(`apply:${ip}`, { requests: 3, window: '1m' });
+  if (!rlMin.ok) {
+    return NextResponse.json(
+      { error: 'Too many applications from this network — wait a minute and try again.' },
+      { status: 429 }
+    );
+  }
+  const rlHour = await rateLimit(`apply-hr:${ip}`, { requests: 10, window: '1h' });
+  if (!rlHour.ok) {
+    return NextResponse.json(
+      { error: 'Too many applications from this network in the past hour. Email ben@buyhalfcow.com if this is wrong.' },
+      { status: 429 }
+    );
+  }
+
   let body: ApplyBody = {};
   try {
     body = (await req.json()) as ApplyBody;

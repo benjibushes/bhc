@@ -45,24 +45,24 @@ export default function RemoveForm({
 
   if (done) {
     return (
-      <div className="space-y-4 p-6 border border-[#A7A29A] bg-white">
-        <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+      <div className="space-y-4 p-6 border border-dust bg-white">
+        <h2 className="font-serif text-2xl">
           Done. {ranchName} is off the list.
         </h2>
-        <p className="text-sm text-[#0E0E0E]/80 leading-relaxed">
+        <p className="text-sm text-charcoal/80 leading-relaxed">
           The listing is hidden from the discover map immediately and the
           public page returns a 404. Search engines will drop the page on
           their next crawl.
         </p>
-        <p className="text-sm text-[#0E0E0E]/80 leading-relaxed">
+        <p className="text-sm text-charcoal/80 leading-relaxed">
           If this was a mistake, reply to my email and I&rsquo;ll fix it. Same if
           you ever want back on — I&rsquo;ll set the listing back up exactly how
           you want it.
         </p>
-        <p className="text-sm text-[#6B4F3F]">— Ben</p>
+        <p className="text-sm text-saddle">— Ben</p>
         <Link
           href="/"
-          className="inline-block mt-2 text-sm underline text-[#A7A29A] hover:text-[#0E0E0E]"
+          className="inline-block mt-2 text-sm underline text-dust hover:text-charcoal"
         >
           BuyHalfCow home
         </Link>
@@ -74,31 +74,31 @@ export default function RemoveForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label className="block text-sm font-medium mb-1">
-          Your email <span className="text-[#A7A29A]">(optional)</span>
+          Your email <span className="text-dust">(optional)</span>
         </label>
         <input
           type="email"
           value={contactEmail}
           onChange={(e) => setContactEmail(e.target.value)}
           placeholder="so I can confirm if needed"
-          className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm focus:outline-none focus:border-[#0E0E0E] transition-colors"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
         />
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">
-          Reason <span className="text-[#A7A29A]">(optional)</span>
+          Reason <span className="text-dust">(optional)</span>
         </label>
         <textarea
           rows={3}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           placeholder="Helps me improve the discovery process. Not required."
-          className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm focus:outline-none focus:border-[#0E0E0E] transition-colors resize-vertical"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors resize-vertical"
         />
       </div>
 
       {error && (
-        <div className="p-4 bg-[#8C2F2F]/10 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+        <div className="p-4 bg-weathered/10 border border-weathered text-weathered text-sm">
           {error}
         </div>
       )}
@@ -106,7 +106,7 @@ export default function RemoveForm({
       <button
         type="submit"
         disabled={submitting}
-        className="w-full py-4 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium tracking-wide hover:bg-[#6B4F3F] transition-colors disabled:opacity-50"
+        className="w-full py-4 bg-charcoal text-bone text-sm font-medium tracking-wide hover:bg-saddle transition-colors disabled:opacity-50"
       >
         {submitting ? 'Removing…' : `Remove ${ranchName} from BuyHalfCow`}
       </button>

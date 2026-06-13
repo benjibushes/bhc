@@ -17,6 +17,7 @@ import { tierFor, TIERS } from '@/lib/tiers';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { checkOriginGuard } from '@/lib/csrfGuard';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
+import { metaEventId } from '@/lib/analytics';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -133,7 +134,7 @@ export async function POST(req: Request) {
   if (subscriptionStatus === 'past_due' || subscriptionStatus === 'unpaid' || subscriptionStatus === 'canceled') {
     return NextResponse.json(
       {
-        error: `Rancher subscription is ${subscriptionStatus} — checkout temporarily unavailable. Please contact support@buyhalfcow.com.`,
+        error: `Rancher subscription is ${subscriptionStatus} — checkout temporarily unavailable. Please contact hello@buyhalfcow.com.`,
       },
       { status: 409 }
     );
@@ -285,7 +286,7 @@ export async function POST(req: Request) {
     fireCapi([{
       event_name: 'InitiateCheckout',
       event_time: Math.floor(Date.now() / 1000),
-      event_id: referralId,
+      event_id: metaEventId(referralId),
       action_source: 'website',
       user_data: buildUserData({
         email: buyerEmail,

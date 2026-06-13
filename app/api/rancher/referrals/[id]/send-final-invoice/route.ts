@@ -107,6 +107,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
+  // Processing date sanity — must parse, and not be in the past. Loose input
+  // is allowed ("June 20"), but a typo'd past year would email the buyer a
+  // pickup date that already happened. 24h grace absorbs the UTC-midnight
+  // parse of date-only strings so "today" never rejects for a MT rancher.
+  if (body.processingDate) {
+    const parsed = new Date(body.processingDate);
+    if (isNaN(parsed.getTime())) {
+      return NextResponse.json(
+        { error: 'Processing date is not a recognizable date. Use YYYY-MM-DD.' },
+        { status: 400 },
+      );
+    }
+    if (parsed.getTime() < Date.now() - 24 * 60 * 60 * 1000) {
+      return NextResponse.json(
+        { error: 'Processing date is in the past. Double-check the date before sending the invoice.' },
+        { status: 400 },
+      );
+    }
+  }
+
   // Load referral + verify ownership
   let referral: any;
   try {

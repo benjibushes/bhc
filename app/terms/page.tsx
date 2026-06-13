@@ -21,21 +21,21 @@ export const metadata = {
 
 export default function TermsPage() {
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-3xl mx-auto space-y-8">
-          <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
+          <h1 className="font-serif text-4xl md:text-5xl">
             Terms of Service
           </h1>
           
-          <p className="text-sm text-[#6B4F3F]">
+          <p className="text-sm text-saddle">
             Last Updated: January 27, 2026
           </p>
 
           <a
             href="/docs/BHC_Customer_TOS.docx"
             download
-            className="inline-block px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+            className="inline-block px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
           >
             Download Full Terms (DOCX)
           </a>
@@ -44,7 +44,7 @@ export default function TermsPage() {
 
           <div className="space-y-8 leading-relaxed">
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 1. Acceptance of Terms
               </h2>
               <p>
@@ -58,7 +58,7 @@ export default function TermsPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 2. Membership & Access
               </h2>
               <p>
@@ -76,7 +76,7 @@ export default function TermsPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 3. Partner Requirements
               </h2>
               <p>
@@ -94,7 +94,7 @@ export default function TermsPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 4. Transactions & Commissions
               </h2>
               <p>
@@ -115,7 +115,7 @@ export default function TermsPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 5. Content & Conduct
               </h2>
               <p>
@@ -134,7 +134,7 @@ export default function TermsPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 6. Disclaimers & Limitation of Liability
               </h2>
               <p>
@@ -153,7 +153,7 @@ export default function TermsPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 7. Termination
               </h2>
               <p>
@@ -164,7 +164,7 @@ export default function TermsPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 8. Changes to Terms
               </h2>
               <p>
@@ -175,7 +175,7 @@ export default function TermsPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 9. Governing Law
               </h2>
               <p>
@@ -185,14 +185,14 @@ export default function TermsPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 10. Contact
               </h2>
               <p>
                 For questions about these Terms of Service, please contact us at:
               </p>
               <p>
-                <a href="mailto:legal@buyhalfcow.com" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+                <a href="mailto:legal@buyhalfcow.com" className="text-charcoal hover:text-saddle transition-colors">
                   legal@buyhalfcow.com
                 </a>
               </p>
@@ -202,11 +202,11 @@ export default function TermsPage() {
           <Divider />
 
           <div className="text-center space-y-4">
-            <Link href="/privacy" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/privacy" className="text-charcoal hover:text-saddle transition-colors">
               Privacy Policy →
             </Link>
             <br />
-            <Link href="/" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/" className="text-charcoal hover:text-saddle transition-colors">
               ← Back to home
             </Link>
           </div>

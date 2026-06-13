@@ -75,9 +75,9 @@ export default function AdminAffiliatesPage() {
   if (loading) {
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container>
-            <p className="text-lg text-[#6B4F3F] text-center">Loading...</p>
+            <p className="text-lg text-saddle text-center">Loading...</p>
           </Container>
         </main>
       </AdminAuthGuard>
@@ -86,7 +86,7 @@ export default function AdminAffiliatesPage() {
 
   return (
     <AdminAuthGuard>
-      <main className="min-h-screen py-12 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-12 bg-bone text-charcoal">
         <Container>
           <div className="space-y-8">
             <div className="flex flex-wrap justify-between items-start gap-4">
@@ -94,13 +94,13 @@ export default function AdminAffiliatesPage() {
                 <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl">
                   Affiliates
                 </h1>
-                <p className="text-sm text-[#6B4F3F] mt-2">
+                <p className="text-sm text-saddle mt-2">
                   Invite-only brand promoters. Create affiliates and send them their links.
                 </p>
               </div>
               <Link
                 href="/admin"
-                className="px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
               >
                 &larr; Back
               </Link>
@@ -108,7 +108,7 @@ export default function AdminAffiliatesPage() {
 
             <Divider />
 
-            <div className="p-6 border border-[#A7A29A] bg-white space-y-4">
+            <div className="p-6 border border-dust bg-white space-y-4">
               <h3 className="font-[family-name:var(--font-serif)] text-xl">Create Affiliate</h3>
               <form onSubmit={handleCreate} className="grid gap-4 md:grid-cols-4">
                 <div>
@@ -119,7 +119,7 @@ export default function AdminAffiliatesPage() {
                     onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                     placeholder="Jane Doe"
                     required
-                    className="w-full px-4 py-2 border border-[#A7A29A] bg-[#F4F1EC]"
+                    className="w-full px-4 py-2 border border-dust bg-bone"
                   />
                 </div>
                 <div>
@@ -130,7 +130,7 @@ export default function AdminAffiliatesPage() {
                     onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                     placeholder="jane@example.com"
                     required
-                    className="w-full px-4 py-2 border border-[#A7A29A] bg-[#F4F1EC]"
+                    className="w-full px-4 py-2 border border-dust bg-bone"
                   />
                 </div>
                 <div>
@@ -141,33 +141,33 @@ export default function AdminAffiliatesPage() {
                     onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))}
                     placeholder="jane-d"
                     required
-                    className="w-full px-4 py-2 border border-[#A7A29A] bg-[#F4F1EC]"
+                    className="w-full px-4 py-2 border border-dust bg-bone"
                   />
                 </div>
                 <div className="flex items-end">
                   <button
                     type="submit"
                     disabled={creating}
-                    className="px-6 py-2 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium hover:bg-[#2A2A2A] disabled:opacity-50"
+                    className="px-6 py-2 bg-charcoal text-bone text-sm font-medium hover:bg-divider disabled:opacity-50"
                   >
                     {creating ? 'Creating...' : 'Create'}
                   </button>
                 </div>
               </form>
               {error && (
-                <p className="text-sm text-[#8C2F2F]">{error}</p>
+                <p className="text-sm text-weathered">{error}</p>
               )}
             </div>
 
-            <div className="p-6 border border-[#A7A29A] bg-white">
+            <div className="p-6 border border-dust bg-white">
               <h3 className="font-[family-name:var(--font-serif)] text-xl mb-4">Affiliate List</h3>
               {affiliates.length === 0 ? (
-                <p className="text-[#6B4F3F]">No affiliates yet. Create one above.</p>
+                <p className="text-saddle">No affiliates yet. Create one above.</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-[#A7A29A]">
+                      <tr className="border-b border-dust">
                         <th className="text-left py-2">Name</th>
                         <th className="text-left py-2">Email</th>
                         <th className="text-left py-2">Code</th>
@@ -178,14 +178,14 @@ export default function AdminAffiliatesPage() {
                     </thead>
                     <tbody>
                       {affiliates.map((a) => (
-                        <tr key={a.id} className="border-b border-[#A7A29A]/50">
+                        <tr key={a.id} className="border-b border-dust/50">
                           <td className="py-3">{a.name}</td>
                           <td className="py-3">{a.email}</td>
                           <td className="py-3">
-                            <code className="bg-[#F4F1EC] px-2 py-0.5">{a.code}</code>
+                            <code className="bg-bone px-2 py-0.5">{a.code}</code>
                           </td>
                           <td className="py-3">{a.status}</td>
-                          <td className="py-3 text-[#6B4F3F]">
+                          <td className="py-3 text-saddle">
                             {a.created_at ? new Date(a.created_at).toLocaleDateString() : '—'}
                           </td>
                           <td className="py-3">
@@ -193,7 +193,7 @@ export default function AdminAffiliatesPage() {
                               type="button"
                               onClick={() => handleSendInvite(a.id)}
                               disabled={sending === a.id}
-                              className="text-[#6B4F3F] hover:text-[#0E0E0E] text-sm disabled:opacity-50"
+                              className="text-saddle hover:text-charcoal text-sm disabled:opacity-50"
                             >
                               {sending === a.id ? 'Sending...' : 'Send invite'}
                             </button>

@@ -112,9 +112,10 @@ totals: rancher $1,800, BHC $200 (= exactly 10% of $2,000).
 - **Founders / Founding Herd** (`/founders`): Founding 100 = $1,000 one-time × 100 spots
   (early-bird flips to $1,500); Title Founder = $15,000 × 10 spots; recurring backer tiers
   Steward $75/mo, Outlaw $25/mo, Herd $9/mo.
-- **Brand-partner listings** — ⚠️ **two prices live in code** (see §6): a $299 one-time constant
-  (`lib/stripe.ts`) vs. the live `/brand-partners` subscription tiers (Spotlight $99/mo, Featured
-  $499/mo, Founding $1,500–$2,500). The per-month tiers are what the live page charges.
+- **Brand-partner listings** — the live `/brand-partners` subscription tiers: Spotlight $99/mo,
+  Featured $499/mo, Founding $1,500–$2,500/3mo (Stripe Price IDs in env, `STRIPE_BRAND_PRICE_*`,
+  via `GET /api/checkout/brand`). The old $299 one-time listing constant + flow was removed
+  2026-06-12 (see §6) — it was a separate dead product, not a duplicate price.
 - **Marketing retainers** = the Operator tier + add-ons (no separate SKU).
 - **Merch** — Shopify-hosted (prices not in this repo).
 - **Funnel upsells (feature-flagged OFF):** $49 Reservation Hold, $497 White Glove Onboarding.
@@ -295,8 +296,15 @@ Standalone BHC revenue (no rancher):
 
 ## 6. Known drift & flags (be honest about these)
 
-1. **Brand-partner pricing conflict** — `$299` one-time constant (`lib/stripe.ts`) vs the live
-   `$99/$499/mo + $1,500–$2,500` subscription tiers (`/brand-partners`). Pick one and delete the other.
+1. **Brand-partner pricing — RESOLVED 2026-06-12.** The `$299` one-time listing was a separate dead
+   product, not a duplicate price for the subscription tiers. Decommissioned: removed the
+   `BRAND_LISTING_PRICE_*` constants (`lib/stripe.ts`), `POST /api/brands/checkout`, the
+   `/brand/payment` + `/brand/payment/success` pages, the admin approval→payment-email branch,
+   and `sendBrandApprovalWithPayment`. Live pricing = the `/brand-partners` subscription tiers
+   ($99/$499/mo + $1,500–$2,500/3mo) via `GET /api/checkout/brand` (Stripe Price IDs in env).
+   ⚠️ Inert leftover: the `brand-listing` case + `handleBrandListingCompleted` in the Stripe
+   webhook are now unreachable (nothing emits `metadata.type='brand-listing'`) — safe to prune
+   in a separate, webhook-focused pass.
 2. **`email-sequences` is disabled** — the whole buyer nurture drip is off by design (sales-floor
    pivot). When you turn it on, the `classifyBuyer` fix (transacting buyers → no nurture) is what
    keeps it from emailing someone mid-deposit. Verify before flipping `EMAIL_SEQUENCES_ENABLED`.

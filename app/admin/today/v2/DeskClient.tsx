@@ -16,6 +16,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import SendDepositModal from './SendDepositModal';
+import { toast } from '@/lib/toast';
 
 interface CalBooking {
   id: string;
@@ -916,7 +917,7 @@ function RotBadge({ days }: { days: number | null }) {
   if (days === null || days === undefined) return null;
   const tier =
     days >= 7
-      ? 'bg-red-700 text-white'
+      ? 'bg-weathered text-white'
       : days >= 3
         ? 'bg-saddle text-bone'
         : 'bg-divider text-charcoal';
@@ -1004,7 +1005,7 @@ function AdvanceStageButton({
       if (res.ok) onSuccess();
       else {
         const j = await res.json().catch(() => ({}));
-        alert(`Advance failed: ${j.error || res.status}`);
+        toast.error('Advance failed', j.error || `HTTP ${res.status}`);
       }
     } finally {
       setBusy(false);

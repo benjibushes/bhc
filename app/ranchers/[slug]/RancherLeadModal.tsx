@@ -176,15 +176,15 @@ export default function RancherLeadModal({ slug, rancherName, quarter, half, who
       {/* Lead Capture Modal */}
       {selectedTier && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#F4F1EC] max-w-md w-full p-8 space-y-6">
+          <div className="bg-bone max-w-md w-full p-8 space-y-6">
             <div>
-              <p className="text-xs uppercase tracking-widest text-[#6B4F3F] mb-2">
+              <p className="text-xs uppercase tracking-widest text-saddle mb-2">
                 {rancherName} — {tierLabel} Share
               </p>
-              <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 Almost There
               </h2>
-              <p className="text-sm text-[#6B4F3F] mt-1">
+              <p className="text-sm text-saddle mt-1">
                 Enter your details and we&apos;ll connect you with {rancherName} to complete your order.
               </p>
             </div>
@@ -196,7 +196,7 @@ export default function RancherLeadModal({ slug, rancherName, quarter, half, who
                 required
                 value={form.fullName}
                 onChange={e => setForm(f => ({ ...f, fullName: e.target.value }))}
-                className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm"
+                className="w-full px-4 py-3 border border-dust bg-white text-sm"
               />
               <input
                 type="email"
@@ -204,40 +204,40 @@ export default function RancherLeadModal({ slug, rancherName, quarter, half, who
                 required
                 value={form.email}
                 onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm"
+                className="w-full px-4 py-3 border border-dust bg-white text-sm"
               />
               <input
                 type="tel"
                 placeholder="Phone (optional)"
                 value={form.phone}
                 onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm"
+                className="w-full px-4 py-3 border border-dust bg-white text-sm"
               />
               <select
                 required
                 value={form.state}
                 onChange={e => setForm(f => ({ ...f, state: e.target.value }))}
-                className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm"
+                className="w-full px-4 py-3 border border-dust bg-white text-sm"
               >
                 <option value="">Select Your State</option>
                 {US_STATES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
 
               {error && (
-                <p className="text-sm text-[#8C2F2F]">{error}</p>
+                <p className="text-sm text-weathered">{error}</p>
               )}
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-4 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium tracking-wide hover:bg-[#6B4F3F] transition-colors disabled:opacity-50"
+                className="w-full py-4 bg-charcoal text-bone text-sm font-medium tracking-wide hover:bg-saddle transition-colors disabled:opacity-50"
               >
                 {loading ? 'Connecting...' : 'Continue to Payment →'}
               </button>
               <button
                 type="button"
                 onClick={() => setSelectedTier(null)}
-                className="w-full text-center text-xs text-[#A7A29A] hover:text-[#0E0E0E]"
+                className="w-full text-center text-xs text-dust hover:text-charcoal"
               >
                 Cancel
               </button>
@@ -266,18 +266,18 @@ function PricingCard({
     <div
       className={`flex flex-col p-6 border ${
         highlighted
-          ? 'border-[#6B4F3F] bg-[#6B4F3F] text-[#F4F1EC]'
-          : 'border-[#A7A29A] bg-white text-[#0E0E0E]'
+          ? 'border-saddle bg-saddle text-bone'
+          : 'border-dust bg-white text-charcoal'
       }`}
     >
-      <p className={`text-xs uppercase tracking-widest mb-3 ${highlighted ? 'text-[#F4F1EC]/70' : 'text-[#A7A29A]'}`}>
+      <p className={`text-xs uppercase tracking-widest mb-3 ${highlighted ? 'text-bone/70' : 'text-dust'}`}>
         {label}
       </p>
-      <p className="font-[family-name:var(--font-playfair)] text-4xl font-bold mb-1">
+      <p className="font-serif text-4xl font-bold mb-1">
         ${price.toLocaleString()}
       </p>
       {lbs && (
-        <p className={`text-sm mb-6 ${highlighted ? 'text-[#F4F1EC]/80' : 'text-[#A7A29A]'}`}>
+        <p className={`text-sm mb-6 ${highlighted ? 'text-bone/80' : 'text-dust'}`}>
           {lbs} of beef
         </p>
       )}
@@ -286,8 +286,8 @@ function PricingCard({
           onClick={onClick}
           className={`block w-full text-center py-3 text-sm font-medium tracking-wide transition-colors ${
             highlighted
-              ? 'bg-[#F4F1EC] text-[#6B4F3F] hover:bg-white'
-              : 'bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]'
+              ? 'bg-bone text-saddle hover:bg-white'
+              : 'bg-charcoal text-bone hover:bg-saddle'
           }`}
         >
           Buy {label} →

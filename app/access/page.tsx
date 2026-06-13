@@ -135,6 +135,25 @@ function validateEmail(email: string): boolean {
   return !throwaway.includes(domain);
 }
 
+// Common fat-finger domains → the domain the buyer almost certainly meant.
+// A typo'd email kills the whole funnel (qualify link + welcome email bounce),
+// so we surface a one-tap "did you mean" instead of letting it through.
+const DOMAIN_TYPO_MAP: Record<string, string> = {
+  'gmial.com': 'gmail.com', 'gamil.com': 'gmail.com', 'gmal.com': 'gmail.com',
+  'gmaill.com': 'gmail.com', 'gmail.co': 'gmail.com', 'gmail.con': 'gmail.com',
+  'hotmal.com': 'hotmail.com', 'hotmial.com': 'hotmail.com', 'hotmail.co': 'hotmail.com',
+  'yaho.com': 'yahoo.com', 'yahooo.com': 'yahoo.com', 'yahoo.co': 'yahoo.com',
+  'outlok.com': 'outlook.com', 'outloo.com': 'outlook.com', 'outlook.co': 'outlook.com',
+  'iclod.com': 'icloud.com', 'icoud.com': 'icloud.com', 'icloud.co': 'icloud.com',
+};
+
+function suggestEmailFix(email: string): string | null {
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return null;
+  const fixed = DOMAIN_TYPO_MAP[domain.toLowerCase()];
+  return fixed ? `${local}@${fixed}` : null;
+}
+
 function validateName(name: string): boolean {
   const trimmed = name.trim();
   if (trimmed.length < 2 || trimmed.length > 100) return false;
@@ -162,6 +181,16 @@ function AccessPageContent() {
   const [error, setError] = useState('');
   const [formLoadedAt] = useState(Date.now());
   const [emailTouched, setEmailTouched] = useState(false);
+  const [emailSuggestion, setEmailSuggestion] = useState<string | null>(null);
+  // Resend-quiz-link state on the success card (the #1 post-signup dead end
+  // is "email never arrived" — give them a button, not just a mailto).
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+
+  // Phone requirement follows the A/B env flag EVERYWHERE — label, native
+  // `required` attr, and JS validation. Previously the attr + label were
+  // hardcoded required, so flipping NEXT_PUBLIC_REQUIRE_PHONE=0 silently
+  // did nothing (browser still blocked the submit).
+  const phoneRequired = process.env.NEXT_PUBLIC_REQUIRE_PHONE !== '0';
 
   // ── Affiliate signup state (thank-you card) ──────────────────────────────
   const [affiliateBusy, setAffiliateBusy] = useState(false);
@@ -198,6 +227,10 @@ function AccessPageContent() {
     whole_price: number | null;
   }
   const [realRanchers, setRealRanchers] = useState<PublicRancher[]>([]);
+  // States with at least one Page-Live rancher (home state + states served).
+  // Drives the instant "✓ a rancher serves your state" feedback under the
+  // state select. Empty set = data unavailable → show nothing, claim nothing.
+  const [coveredStates, setCoveredStates] = useState<Set<string>>(new Set());
 
   // ── Campaign tracking ─────────────────────────────────────────────────────
   const [campaignData, setCampaignData] = useState({
@@ -337,6 +370,18 @@ function AccessPageContent() {
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data && Array.isArray(data.ranchers) && data.ranchers.length > 0) {
+          // Coverage set — home state + every 2-letter code in states_served.
+          // Proxy for "will this buyer match": the authoritative gate runs
+          // server-side at matching time; this only powers the inline hint.
+          const covered = new Set<string>();
+          for (const r of data.ranchers as PublicRancher[] & { states_served?: string }[]) {
+            const home = String((r as any).state || '').trim().toUpperCase();
+            if (/^[A-Z]{2}$/.test(home)) covered.add(home);
+            const served = String((r as any).states_served || '').toUpperCase();
+            for (const m of served.match(/\b[A-Z]{2}\b/g) || []) covered.add(m);
+          }
+          setCoveredStates(covered);
+
           // Fisher-Yates shuffle truncated to 3
           const arr = [...data.ranchers] as PublicRancher[];
           for (let i = arr.length - 1; i > 0; i--) {
@@ -373,6 +418,7 @@ function AccessPageContent() {
   const [abandonedCaptured, setAbandonedCaptured] = useState(false);
   const handleEmailBlur = () => {
     if (!email) return;
+    setEmailSuggestion(suggestEmailFix(email.trim()));
     if (!validateEmail(email)) return;
     // G5 — fire quiz_step_completed once when email is first validated on blur.
     // This is the highest-signal step (real email = real lead).
@@ -389,12 +435,16 @@ function AccessPageContent() {
 
   // ── Form validity ─────────────────────────────────────────────────────────
   const emailValid = validateEmail(email);
-  const isValid =
-    validateName(firstName) &&
-    emailValid &&
-    state !== '' &&
-    householdSize !== '' &&
-    timing !== '';
+
+  // Focus + scroll the field that blocked the submit, so the error isn't a
+  // mystery box. Native `required` handles empties; this covers format errors.
+  const focusField = (id: string) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
@@ -412,10 +462,12 @@ function AccessPageContent() {
 
     if (!validateName(firstName)) {
       setError('please enter a valid first name.');
+      focusField('firstName');
       return;
     }
     if (!emailValid) {
       setError('please enter a valid email address.');
+      focusField('email');
       return;
     }
     // Phone REQUIRED (2026-06-03). Matched ranchers need a callback channel —
@@ -423,16 +475,18 @@ function AccessPageContent() {
     // 400 from /api/consumers is never reached for missing-phone signups.
     //
     // F10: env override `NEXT_PUBLIC_REQUIRE_PHONE=0` flips phone to optional,
-    // for A/B testing top-of-funnel conversion lift.
-    const phoneRequired = process.env.NEXT_PUBLIC_REQUIRE_PHONE !== '0';
+    // for A/B testing top-of-funnel conversion lift (component-scope const —
+    // also drives the label + native required attr).
     if (phoneRequired) {
       if (!phone.trim()) {
         setError('phone number is required so your rancher can reach you.');
+        focusField('phone');
         return;
       }
       const phoneDigits = phone.replace(/\D/g, '');
       if (phoneDigits.length < 10) {
         setError('please enter a valid phone number (at least 10 digits).');
+        focusField('phone');
         return;
       }
     } else if (phone.trim()) {
@@ -440,6 +494,7 @@ function AccessPageContent() {
       const phoneDigits = phone.replace(/\D/g, '');
       if (phoneDigits.length < 10) {
         setError('please enter a valid phone number (at least 10 digits).');
+        focusField('phone');
         return;
       }
     }
@@ -476,6 +531,9 @@ function AccessPageContent() {
           // (TCPA — Twilio sends gated on both).
           phone: phone.trim(),
           smsOptIn: smsOptIn && phone.trim().length > 0,
+          // Honeypot travels with the payload so the server-side gate in
+          // /api/consumers sees it (humans always send empty string).
+          website,
           orderType: '',
           budgetRange: '',
           notes: '',
@@ -599,6 +657,25 @@ function AccessPageContent() {
       window.setTimeout(() => setAffiliateCopied(false), 2000);
     } catch {
       // Fallback: select-into-prompt would be jarring on mobile; just ignore.
+    }
+  };
+
+  // Resend the Step-2 quiz link from the success card. Endpoint always
+  // returns ok (email-enumeration safe), so "sent" here means "if that email
+  // is on file, the link is on its way" — copy matches.
+  const handleResendQuizLink = async () => {
+    if (resendState === 'sending' || resendState === 'sent') return;
+    setResendState('sending');
+    try {
+      const res = await fetch('/api/qualify/resend-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setResendState(res.ok && data?.ok !== false ? 'sent' : 'error');
+    } catch {
+      setResendState('error');
     }
   };
 
@@ -799,15 +876,33 @@ function AccessPageContent() {
               )}
             </div>
 
-            <div className="pt-4 text-sm text-saddle">
-              email not showing up?{' '}
-              <a
-                href="mailto:hello@buyhalfcow.com"
-                className="text-charcoal underline underline-offset-2 hover:text-saddle"
-              >
-                email hello@buyhalfcow.com
-              </a>{' '}
-              and we&apos;ll resend it.
+            <div className="pt-4 text-sm text-saddle space-y-2">
+              <p>
+                email not showing up after a few minutes?{' '}
+                {resendState === 'sent' ? (
+                  <span className="text-sage-dark">
+                    ✓ fresh link sent to <strong className="text-charcoal">{email}</strong> — give it a minute
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleResendQuizLink}
+                    disabled={resendState === 'sending'}
+                    className="text-charcoal underline underline-offset-2 hover:text-saddle disabled:opacity-50"
+                  >
+                    {resendState === 'sending' ? 'resending…' : 'resend my quiz link'}
+                  </button>
+                )}
+              </p>
+              {resendState === 'error' && (
+                <p className="text-xs text-weathered">
+                  resend hit a snag — email{' '}
+                  <a href="mailto:hello@buyhalfcow.com" className="underline underline-offset-2">
+                    hello@buyhalfcow.com
+                  </a>{' '}
+                  and we&apos;ll sort it.
+                </p>
+              )}
             </div>
 
             <div className="pt-4">
@@ -858,7 +953,7 @@ function AccessPageContent() {
 
             {/* G15 — Rancher hero overlay when ?rancher=<slug> */}
             {rancherHero && (
-              <div className="bg-amber-50 border border-amber-200 rounded-sm p-4 mb-8 text-center">
+              <div className="bg-amber/10 border border-amber/30 rounded-sm p-4 mb-8 text-center">
                 <p className="text-saddle text-lg font-semibold">
                   you're matching with <span className="text-charcoal font-serif">{rancherHero.name}</span>
                 </p>
@@ -872,27 +967,292 @@ function AccessPageContent() {
               marketplace middleman, transparent fee shown at checkout.
             </p>
 
-            {/* ── Section B — Explainer Video Slot ──────────────────────────
-                Renders YouTube embed when NEXT_PUBLIC_ACCESS_VIDEO_ID is set.
-                Otherwise hidden entirely — no placeholder copy visible to
-                paid traffic. Mobile: 9:16 portrait. Desktop: 16:9 landscape. */}
-            {process.env.NEXT_PUBLIC_ACCESS_VIDEO_ID && (
-              <div className="aspect-[9/16] sm:aspect-video bg-charcoal mb-10 relative overflow-hidden rounded-sm">
-                <iframe
-                  src={`https://www.youtube.com/embed/${process.env.NEXT_PUBLIC_ACCESS_VIDEO_ID}?rel=0&modestbranding=1`}
-                  title="BuyHalfCow — 90-second explainer"
-                  className="absolute inset-0 w-full h-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  referrerPolicy="strict-origin-when-cross-origin"
-                  allowFullScreen
-                />
+            {/* ── Section B — Quiz Form (FIRST — this page's only job) ──────
+                CRO Phase 3 (2026-06-12): form moved directly under the hero.
+                It used to sit below the video + stats + testimonials + ranch
+                cards — two screens of proof before the ask. High-intent
+                visitors (ads, /start, /r links) now hit the form immediately;
+                skeptics scroll to the proof below and the mobile sticky CTA
+                brings them back up. */}
+            <div className="pt-2">
+              {/* 5-step funnel progress — Step 1 of 5 active.
+                  Mirrors the same visual indicator in homepage funnel preview,
+                  /qualify quiz progress bar, /matched celebration, intro
+                  email. Buyer sees they're 20% to stocked freezer before
+                  even clicking submit. Reduces drop-off at form gate. */}
+              <div className="mb-7">
+                <div className="flex items-center justify-between text-xs uppercase tracking-widest text-saddle mb-2">
+                  <span>Step 1 of 5 · Apply</span>
+                  <span>20% to stocked</span>
+                </div>
+                <div className="h-1.5 bg-dust overflow-hidden">
+                  <div className="h-full bg-charcoal" style={{ width: '20%' }} />
+                </div>
+                <div className="grid grid-cols-5 gap-2 mt-2 text-[10px] uppercase tracking-wider text-saddle">
+                  <span className="text-charcoal font-medium">Apply</span>
+                  <span>Qualify</span>
+                  <span>Match</span>
+                  <span>Connect</span>
+                  <span>Stock</span>
+                </div>
               </div>
-            )}
 
-            {/* ── Section C — Social Proof Block ──────────────────────────── */}
+              <p className="text-sm text-saddle uppercase tracking-wider mb-6">
+                find your rancher
+              </p>
+
+              <form ref={formRef} onSubmit={handleSubmit} className="space-y-5">
+                {/* Honeypot — hidden from real users */}
+                <div
+                  className="absolute opacity-0 h-0 overflow-hidden"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                >
+                  <input
+                    type="text"
+                    name="website"
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
+                    tabIndex={-1}
+                    autoComplete="off"
+                  />
+                </div>
+
+                {/* 1. State — first field. Lowest-friction answer, and the
+                    instant coverage feedback below it is the strongest
+                    motivation moment on the page ("a rancher serves TX"). */}
+                <div>
+                  <label
+                    htmlFor="state"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    state
+                  </label>
+                  <select
+                    id="state"
+                    required
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+                    value={state}
+                    onChange={(e) => {
+                      setState(e.target.value);
+                      if (e.target.value) fireQuizStep('state');
+                    }}
+                  >
+                    {US_STATES.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                  {/* Coverage hint — honest two-state outcome, only when the
+                      Page-Live set actually loaded (never claim from a guess). */}
+                  {state && coveredStates.size > 0 && (
+                    coveredStates.has(state) ? (
+                      <p className="mt-1.5 text-sm text-sage-dark">
+                        ✓ a verified rancher serves {state} — finish below and we make the intro within hours
+                      </p>
+                    ) : (
+                      <p className="mt-1.5 text-sm text-saddle">
+                        no {state} rancher live yet — you&apos;ll join the priority waitlist and hear first when one is
+                      </p>
+                    )
+                  )}
+                </div>
+
+                {/* 2. Email — second so the abandoned-app capture on blur
+                    catches everyone who gets even two fields in. Was field 5;
+                    partial fills were lost. */}
+                <div>
+                  <label
+                    htmlFor="email"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    email
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    required
+                    autoComplete="email"
+                    className={`w-full border px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal ${
+                      emailTouched && !emailValid
+                        ? 'border-weathered'
+                        : 'border-charcoal/30'
+                    }`}
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (emailSuggestion) setEmailSuggestion(null);
+                    }}
+                    onBlur={() => {
+                      setEmailTouched(true);
+                      handleEmailBlur();
+                    }}
+                  />
+                  {emailSuggestion && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmail(emailSuggestion);
+                        setEmailSuggestion(null);
+                        setEmailTouched(true);
+                      }}
+                      className="mt-1 text-xs text-charcoal underline underline-offset-2 hover:text-saddle"
+                    >
+                      did you mean <strong>{emailSuggestion}</strong>?
+                    </button>
+                  )}
+                  {emailTouched && !emailValid && email.length > 0 && (
+                    <p className="mt-1 text-xs text-weathered">
+                      enter a valid email address
+                    </p>
+                  )}
+                </div>
+
+                {/* 3. First name */}
+                <div>
+                  <label
+                    htmlFor="firstName"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    first name
+                  </label>
+                  <input
+                    id="firstName"
+                    type="text"
+                    required
+                    autoComplete="given-name"
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                  />
+                </div>
+
+                {/* 4. Household size */}
+                <div>
+                  <label
+                    htmlFor="householdSize"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    household size
+                  </label>
+                  <select
+                    id="householdSize"
+                    required
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+                    value={householdSize}
+                    onChange={(e) => {
+                      setHouseholdSize(e.target.value);
+                      if (e.target.value) fireQuizStep('householdSize');
+                    }}
+                  >
+                    <option value="">how many you feeding?</option>
+                    <option value="1-2">1–2 people</option>
+                    <option value="3-5">3–5 people</option>
+                    <option value="6+">6+ people</option>
+                  </select>
+                </div>
+
+                {/* 5. Timing */}
+                <div>
+                  <label
+                    htmlFor="timing"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    when do you want beef?
+                  </label>
+                  <select
+                    id="timing"
+                    required
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
+                    value={timing}
+                    onChange={(e) => {
+                      setTiming(e.target.value);
+                      if (e.target.value) fireQuizStep('timing');
+                    }}
+                  >
+                    <option value="">pick a timeline</option>
+                    <option value="now">now (within 30 days)</option>
+                    <option value="1-3 months">1–3 months</option>
+                    <option value="Just exploring">just exploring</option>
+                  </select>
+                </div>
+
+                {/* 6. Phone + SMS opt-in. F-3 audit: TCPA explicit opt-in
+                    required before any Twilio send. Without checkbox checked,
+                    no SMS will ever fire regardless of phone presence.
+                    Required-ness follows NEXT_PUBLIC_REQUIRE_PHONE — label,
+                    native attr, and JS validation all read the same flag. */}
+                <div>
+                  <label
+                    htmlFor="phone"
+                    className="block text-sm text-charcoal mb-1"
+                  >
+                    phone{' '}
+                    <span className="text-saddle">
+                      {phoneRequired ? '(required so your rancher can reach you)' : '(optional — helps your rancher reach you faster)'}
+                    </span>
+                  </label>
+                  <input
+                    id="phone"
+                    type="tel"
+                    autoComplete="tel"
+                    placeholder="555-555-5555"
+                    required={phoneRequired}
+                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+
+                {phone.trim().length > 0 && (
+                  <label className="flex items-start gap-2 text-sm text-saddle cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={smsOptIn}
+                      onChange={(e) => setSmsOptIn(e.target.checked)}
+                      className="mt-1"
+                    />
+                    <span>
+                      SMS updates ok &mdash; we&apos;ll text you when your rancher reaches out. Reply STOP to opt out anytime. Standard rates apply.
+                    </span>
+                  </label>
+                )}
+
+                {error && (
+                  <div className="p-4 border border-weathered bg-transparent text-weathered text-sm">
+                    {error}
+                  </div>
+                )}
+
+                {/* Always-enabled submit (except mid-flight). A disabled
+                    button gives zero feedback on WHAT is missing — native
+                    required bubbles + the focusField() format errors point at
+                    the exact field instead. */}
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full bg-charcoal text-bone font-semibold uppercase tracking-wider text-sm py-4 min-h-[52px] hover:bg-charcoal/80 disabled:opacity-40 transition-opacity"
+                >
+                  {isSubmitting ? 'matching…' : 'find my rancher'}
+                </button>
+
+                <p className="text-xs text-saddle text-center">
+                  no spam. no cold calls. we intro you directly to your rancher.
+                </p>
+              </form>
+            </div>
+
+            <div className="my-12">
+              <Divider />
+            </div>
+
+            {/* ── Section C — Social Proof (below the form — for skeptics who
+                scroll; the mobile sticky CTA brings them back to the form) ── */}
             <div className="mb-12">
-              {/* Stat counters */}
-              <div className="grid grid-cols-3 gap-4 mb-8">
+              {/* Stat counters. "0 deals closed this month" is anti-proof —
+                  the third cell hides until the count is real. */}
+              <div className={`grid ${stats.thisMonthClosedWon > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-4 mb-8`}>
                 <div className="text-center">
                   <div className="font-serif text-2xl sm:text-3xl text-charcoal">
                     {stats.ranchersActive}
@@ -909,14 +1269,16 @@ function AccessPageContent() {
                     families in pipeline
                   </div>
                 </div>
-                <div className="text-center">
-                  <div className="font-serif text-2xl sm:text-3xl text-charcoal">
-                    {stats.thisMonthClosedWon}
+                {stats.thisMonthClosedWon > 0 && (
+                  <div className="text-center">
+                    <div className="font-serif text-2xl sm:text-3xl text-charcoal">
+                      {stats.thisMonthClosedWon}
+                    </div>
+                    <div className="text-xs sm:text-sm text-saddle mt-1">
+                      deals closed this month
+                    </div>
                   </div>
-                  <div className="text-xs sm:text-sm text-saddle mt-1">
-                    deals closed this month
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Testimonials — REAL Closed Won quotes only. Row hides when
@@ -993,238 +1355,20 @@ function AccessPageContent() {
               </div>
             </div>
 
-            <Divider />
-
-            {/* ── Section D — Trimmed Quiz Form (5 fields) ────────────────── */}
-            <div className="pt-8">
-              {/* 5-step funnel progress — Step 1 of 5 active.
-                  Mirrors the same visual indicator in homepage funnel preview,
-                  /qualify quiz progress bar, /matched celebration, intro
-                  email. Buyer sees they're 20% to stocked freezer before
-                  even clicking submit. Reduces drop-off at form gate. */}
-              <div className="mb-7">
-                <div className="flex items-center justify-between text-xs uppercase tracking-widest text-saddle mb-2">
-                  <span>Step 1 of 5 · Apply</span>
-                  <span>20% to stocked</span>
-                </div>
-                <div className="h-1.5 bg-dust overflow-hidden">
-                  <div className="h-full bg-charcoal" style={{ width: '20%' }} />
-                </div>
-                <div className="grid grid-cols-5 gap-2 mt-2 text-[10px] uppercase tracking-wider text-saddle">
-                  <span className="text-charcoal font-medium">Apply</span>
-                  <span>Qualify</span>
-                  <span>Match</span>
-                  <span>Connect</span>
-                  <span>Stock</span>
-                </div>
+            {/* ── Explainer Video Slot — below proof. Renders YouTube embed
+                when NEXT_PUBLIC_ACCESS_VIDEO_ID is set; hidden otherwise. */}
+            {process.env.NEXT_PUBLIC_ACCESS_VIDEO_ID && (
+              <div className="aspect-[9/16] sm:aspect-video bg-charcoal mb-10 relative overflow-hidden rounded-sm">
+                <iframe
+                  src={`https://www.youtube.com/embed/${process.env.NEXT_PUBLIC_ACCESS_VIDEO_ID}?rel=0&modestbranding=1`}
+                  title="BuyHalfCow — 90-second explainer"
+                  className="absolute inset-0 w-full h-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allowFullScreen
+                />
               </div>
-
-              <p className="text-sm text-saddle uppercase tracking-wider mb-6">
-                find your rancher
-              </p>
-
-              <form ref={formRef} onSubmit={handleSubmit} className="space-y-5">
-                {/* Honeypot — hidden from real users */}
-                <div
-                  className="absolute opacity-0 h-0 overflow-hidden"
-                  aria-hidden="true"
-                  tabIndex={-1}
-                >
-                  <input
-                    type="text"
-                    name="website"
-                    value={website}
-                    onChange={(e) => setWebsite(e.target.value)}
-                    tabIndex={-1}
-                    autoComplete="off"
-                  />
-                </div>
-
-                {/* 1. First name */}
-                <div>
-                  <label
-                    htmlFor="firstName"
-                    className="block text-sm text-charcoal mb-1"
-                  >
-                    first name
-                  </label>
-                  <input
-                    id="firstName"
-                    type="text"
-                    required
-                    autoComplete="given-name"
-                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                  />
-                </div>
-
-                {/* 2. State */}
-                <div>
-                  <label
-                    htmlFor="state"
-                    className="block text-sm text-charcoal mb-1"
-                  >
-                    state
-                  </label>
-                  <select
-                    id="state"
-                    required
-                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
-                    value={state}
-                    onChange={(e) => {
-                      setState(e.target.value);
-                      if (e.target.value) fireQuizStep('state');
-                    }}
-                  >
-                    {US_STATES.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 3. Household size */}
-                <div>
-                  <label
-                    htmlFor="householdSize"
-                    className="block text-sm text-charcoal mb-1"
-                  >
-                    household size
-                  </label>
-                  <select
-                    id="householdSize"
-                    required
-                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
-                    value={householdSize}
-                    onChange={(e) => {
-                      setHouseholdSize(e.target.value);
-                      if (e.target.value) fireQuizStep('householdSize');
-                    }}
-                  >
-                    <option value="">how many you feeding?</option>
-                    <option value="1-2">1–2 people</option>
-                    <option value="3-5">3–5 people</option>
-                    <option value="6+">6+ people</option>
-                  </select>
-                </div>
-
-                {/* 4. Timing */}
-                <div>
-                  <label
-                    htmlFor="timing"
-                    className="block text-sm text-charcoal mb-1"
-                  >
-                    when do you want beef?
-                  </label>
-                  <select
-                    id="timing"
-                    required
-                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal appearance-none"
-                    value={timing}
-                    onChange={(e) => {
-                      setTiming(e.target.value);
-                      if (e.target.value) fireQuizStep('timing');
-                    }}
-                  >
-                    <option value="">pick a timeline</option>
-                    <option value="now">now (within 30 days)</option>
-                    <option value="1-3 months">1–3 months</option>
-                    <option value="Just exploring">just exploring</option>
-                  </select>
-                </div>
-
-                {/* 5. Email */}
-                <div>
-                  <label
-                    htmlFor="email"
-                    className="block text-sm text-charcoal mb-1"
-                  >
-                    email
-                  </label>
-                  <input
-                    id="email"
-                    type="email"
-                    required
-                    autoComplete="email"
-                    className={`w-full border px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal ${
-                      emailTouched && !emailValid
-                        ? 'border-weathered'
-                        : 'border-charcoal/30'
-                    }`}
-                    value={email}
-                    onChange={(e) => {
-                      setEmail(e.target.value);
-                      if (emailTouched) return; // validation shows on blur
-                    }}
-                    onBlur={() => {
-                      setEmailTouched(true);
-                      handleEmailBlur();
-                    }}
-                  />
-                  {emailTouched && !emailValid && email.length > 0 && (
-                    <p className="mt-1 text-xs text-weathered">
-                      enter a valid email address
-                    </p>
-                  )}
-                </div>
-
-                {/* 6. Phone (optional) + SMS opt-in. F-3 audit: TCPA explicit
-                    opt-in required before any Twilio send. Without checkbox
-                    checked, no SMS will ever fire regardless of phone presence. */}
-                <div>
-                  <label
-                    htmlFor="phone"
-                    className="block text-sm text-charcoal mb-1"
-                  >
-                    phone <span className="text-saddle">(required so your rancher can reach you)</span>
-                  </label>
-                  <input
-                    id="phone"
-                    type="tel"
-                    autoComplete="tel"
-                    placeholder="555-555-5555"
-                    required
-                    className="w-full border border-charcoal/30 px-4 py-3 min-h-[44px] bg-bone text-charcoal focus:outline-none focus:border-charcoal"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-                </div>
-
-                {phone.trim().length > 0 && (
-                  <label className="flex items-start gap-2 text-sm text-saddle cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={smsOptIn}
-                      onChange={(e) => setSmsOptIn(e.target.checked)}
-                      className="mt-1"
-                    />
-                    <span>
-                      SMS updates ok &mdash; we&apos;ll text you when your rancher reaches out. Reply STOP to opt out anytime. Standard rates apply.
-                    </span>
-                  </label>
-                )}
-
-                {error && (
-                  <div className="p-4 border border-weathered bg-transparent text-weathered text-sm">
-                    {error}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={!isValid || isSubmitting}
-                  className="w-full bg-charcoal text-bone font-semibold uppercase tracking-wider text-sm py-4 min-h-[52px] hover:bg-charcoal/80 disabled:opacity-40 transition-opacity"
-                >
-                  {isSubmitting ? 'matching…' : 'find my rancher'}
-                </button>
-
-                <p className="text-xs text-saddle text-center">
-                  no spam. no cold calls. we intro you directly to your rancher.
-                </p>
-              </form>
-            </div>
+            )}
 
             <div className="mt-12 text-center space-y-3">
               <p className="text-xs italic text-saddle/80">

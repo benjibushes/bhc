@@ -95,11 +95,11 @@ export default function RancherContactPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen bg-bone text-charcoal">
         <section className="py-20">
           <Container>
             <div className="max-w-2xl mx-auto text-center">
-              <p className="text-[#A7A29A]">Loading...</p>
+              <p className="text-dust">Loading...</p>
             </div>
           </Container>
         </section>
@@ -109,19 +109,19 @@ export default function RancherContactPage() {
 
   if (notFound || !rancher) {
     return (
-      <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen bg-bone text-charcoal">
         <section className="py-20">
           <Container>
             <div className="max-w-2xl mx-auto text-center space-y-6">
-              <h1 className="font-[family-name:var(--font-playfair)] text-3xl">
+              <h1 className="font-serif text-3xl">
                 Rancher Not Found
               </h1>
-              <p className="text-[#6B4F3F]">
+              <p className="text-saddle">
                 This rancher page doesn&apos;t exist or is no longer active.
               </p>
               <Link
                 href="/ranchers"
-                className="inline-block px-8 py-3 border border-[#6B4F3F] text-[#6B4F3F] text-sm tracking-wide hover:bg-[#6B4F3F] hover:text-[#F4F1EC] transition-colors"
+                className="inline-block px-8 py-3 border border-saddle text-saddle text-sm tracking-wide hover:bg-saddle hover:text-bone transition-colors"
               >
                 Browse All Ranchers
               </Link>
@@ -134,7 +134,7 @@ export default function RancherContactPage() {
 
   if (success) {
     return (
-      <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen bg-bone text-charcoal">
         <section className="py-20">
           <Container>
             <div className="max-w-2xl mx-auto text-center space-y-6">
@@ -148,25 +148,25 @@ export default function RancherContactPage() {
                     className="object-contain max-h-24"
                   />
                 ) : (
-                  <div className="w-20 h-20 border border-[#A7A29A] flex items-center justify-center">
-                    <span className="font-[family-name:var(--font-playfair)] text-3xl text-[#A7A29A]">
+                  <div className="w-20 h-20 border border-dust flex items-center justify-center">
+                    <span className="font-serif text-3xl text-dust">
                       {rancher.name.charAt(0)}
                     </span>
                   </div>
                 )}
               </div>
-              <h1 className="font-[family-name:var(--font-playfair)] text-3xl">
+              <h1 className="font-serif text-3xl">
                 Message Sent!
               </h1>
-              <p className="text-[#6B4F3F] text-lg">
+              <p className="text-saddle text-lg">
                 {rancher.name} will get back to you shortly.
               </p>
-              <p className="text-sm text-[#A7A29A]">
+              <p className="text-sm text-dust">
                 We&apos;ve also sent a copy to BuyHalfCow so we can follow up if needed.
               </p>
               <Link
                 href={`/ranchers/${slug}`}
-                className="inline-block px-8 py-3 border border-[#6B4F3F] text-[#6B4F3F] text-sm tracking-wide hover:bg-[#6B4F3F] hover:text-[#F4F1EC] transition-colors"
+                className="inline-block px-8 py-3 border border-saddle text-saddle text-sm tracking-wide hover:bg-saddle hover:text-bone transition-colors"
               >
                 Back to {rancher.name}
               </Link>
@@ -178,10 +178,10 @@ export default function RancherContactPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen bg-bone text-charcoal">
 
       {/* Hero */}
-      <section className="py-16 border-b border-[#2A2A2A]/10">
+      <section className="py-16 border-b border-divider/10">
         <Container>
           <div className="max-w-2xl mx-auto flex flex-col items-center gap-6 text-center">
             {rancher.logoUrl ? (
@@ -193,24 +193,24 @@ export default function RancherContactPage() {
                 className="object-contain max-h-28"
               />
             ) : (
-              <div className="w-24 h-24 border border-[#A7A29A] flex items-center justify-center">
-                <span className="font-[family-name:var(--font-playfair)] text-4xl text-[#A7A29A]">
+              <div className="w-24 h-24 border border-dust flex items-center justify-center">
+                <span className="font-serif text-4xl text-dust">
                   {rancher.name.charAt(0)}
                 </span>
               </div>
             )}
             <div className="space-y-2">
-              <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+              <p className="text-xs uppercase tracking-widest text-saddle">
                 Contact
               </p>
-              <h1 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl">
+              <h1 className="font-serif text-3xl md:text-4xl">
                 {rancher.name}
               </h1>
               {rancher.tagline && (
-                <p className="text-[#6B4F3F]">{rancher.tagline}</p>
+                <p className="text-saddle">{rancher.tagline}</p>
               )}
               {rancher.state && (
-                <span className="inline-block text-xs border border-[#A7A29A] px-3 py-1 text-[#6B4F3F]">
+                <span className="inline-block text-xs border border-dust px-3 py-1 text-saddle">
                   {rancher.state}
                 </span>
               )}
@@ -224,10 +224,10 @@ export default function RancherContactPage() {
         <Container>
           <div className="max-w-lg mx-auto space-y-8">
             <div className="text-center space-y-2">
-              <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 Send a Message
               </h2>
-              <p className="text-sm text-[#A7A29A]">
+              <p className="text-sm text-dust">
                 Your message goes directly to {rancher.name}. They&apos;ll reply to your email.
               </p>
             </div>
@@ -235,7 +235,7 @@ export default function RancherContactPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  Your Name <span className="text-[#8C2F2F]">*</span>
+                  Your Name <span className="text-weathered">*</span>
                 </label>
                 <input
                   type="text"
@@ -243,13 +243,13 @@ export default function RancherContactPage() {
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="Full Name"
-                  className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm focus:outline-none focus:border-[#0E0E0E] transition-colors"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  Email Address <span className="text-[#8C2F2F]">*</span>
+                  Email Address <span className="text-weathered">*</span>
                 </label>
                 <input
                   type="email"
@@ -257,38 +257,38 @@ export default function RancherContactPage() {
                   value={form.email}
                   onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                   placeholder="you@example.com"
-                  className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm focus:outline-none focus:border-[#0E0E0E] transition-colors"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  Phone <span className="text-[#A7A29A]">(optional)</span>
+                  Phone <span className="text-dust">(optional)</span>
                 </label>
                 <input
                   type="tel"
                   value={form.phone}
                   onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
                   placeholder="(555) 555-5555"
-                  className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm focus:outline-none focus:border-[#0E0E0E] transition-colors"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  Message <span className="text-[#8C2F2F]">*</span>
+                  Message <span className="text-weathered">*</span>
                 </label>
                 <textarea
                   required
                   rows={5}
                   value={form.message}
                   onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
-                  className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm focus:outline-none focus:border-[#0E0E0E] transition-colors resize-vertical"
+                  className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors resize-vertical"
                 />
               </div>
 
               {error && (
-                <div className="p-4 bg-[#8C2F2F]/10 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+                <div className="p-4 bg-weathered/10 border border-weathered text-weathered text-sm">
                   {error}
                 </div>
               )}
@@ -296,12 +296,12 @@ export default function RancherContactPage() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full py-4 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium tracking-wide hover:bg-[#6B4F3F] transition-colors disabled:opacity-50"
+                className="w-full py-4 bg-charcoal text-bone text-sm font-medium tracking-wide hover:bg-saddle transition-colors disabled:opacity-50"
               >
                 {submitting ? 'Sending...' : 'Send Message'}
               </button>
 
-              <p className="text-xs text-[#A7A29A] text-center">
+              <p className="text-xs text-dust text-center">
                 Your contact information is shared with {rancher.name} so they can reply directly. BuyHalfCow receives a copy for quality assurance.
               </p>
             </form>
@@ -310,13 +310,13 @@ export default function RancherContactPage() {
       </section>
 
       {/* Footer Nav */}
-      <div className="border-t border-[#2A2A2A]/10 py-10">
+      <div className="border-t border-divider/10 py-10">
         <Container>
-          <div className="max-w-4xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-[#A7A29A]">
-            <Link href={`/ranchers/${slug}`} className="hover:text-[#0E0E0E] transition-colors">
+          <div className="max-w-4xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-dust">
+            <Link href={`/ranchers/${slug}`} className="hover:text-charcoal transition-colors">
               &larr; Back to {rancher.name}
             </Link>
-            <Link href="/" className="hover:text-[#0E0E0E] transition-colors">
+            <Link href="/" className="hover:text-charcoal transition-colors">
               BuyHalfCow
             </Link>
           </div>

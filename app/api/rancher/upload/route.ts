@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
 
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json({
-      error: 'Upload service not configured. Email support@buyhalfcow.com — we will fix it ASAP.',
+      error: 'Upload service not configured. Email hello@buyhalfcow.com — we will fix it ASAP.',
       detail: 'BLOB_READ_WRITE_TOKEN env var missing on server',
     }, { status: 503 });
   }

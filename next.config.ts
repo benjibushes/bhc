@@ -2,14 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: {
-    remotePatterns: [
-      // Airtable CDN (where user-uploaded images are stored)
-      { protocol: 'https', hostname: 'dl.airtable.com' },
-      { protocol: 'https', hostname: 'v5.airtableusercontent.com' },
-      // Normalized user upload sources (Dropbox, Google Drive)
-      { protocol: 'https', hostname: 'drive.google.com' },
-      { protocol: 'https', hostname: 'www.dropbox.com' },
-    ],
+    // Rancher logos + gallery photos are pasted from wherever the ranch
+    // already hosts them (Squarespace, Wix, Shopify, their own domain...).
+    // A hostname outside this list crashes the whole page for buyers, so
+    // allow any https host rather than maintain a forever-growing whitelist.
+    remotePatterns: [{ protocol: 'https', hostname: '**' }],
   },
 };
 

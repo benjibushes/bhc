@@ -23,8 +23,8 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 // webhook with metadata.type = 'founder-subscription' | 'founder-lifetime' and
 // metadata.tier = 'herd-monthly' | etc.
 //
-// Mirrors app/api/brands/checkout/route.ts MINUS JWT (this is open; the page
-// is the gate, and the cap query is the safety net).
+// Open endpoint (no JWT): the /founders page is the gate and the cap query is
+// the safety net. (Historically mirrored the now-removed brand-listing checkout.)
 export async function POST(request: Request) {
   try {
     let parsedBody: any;

@@ -22,7 +22,7 @@ export default function Checkbox({
         checked={checked}
         onChange={onChange}
         required={required}
-        className="mt-1 mr-3 w-4 h-4 border-[#A7A29A] text-[#0E0E0E] focus:ring-0"
+        className="mt-1 mr-3 w-4 h-4 border-dust text-charcoal focus:ring-0"
       />
       <label htmlFor={name} className="text-sm leading-relaxed cursor-pointer">
         {label}

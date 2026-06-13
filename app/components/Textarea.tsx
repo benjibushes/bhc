@@ -20,7 +20,7 @@ export default function Textarea({
   return (
     <div className="space-y-2">
       <label htmlFor={name} className="block text-sm font-medium">
-        {label} {required && <span className="text-[#8C2F2F]">*</span>}
+        {label} {required && <span className="text-weathered">*</span>}
       </label>
       <textarea
         id={name}
@@ -30,7 +30,7 @@ export default function Textarea({
         onChange={onChange}
         placeholder={placeholder}
         rows={rows}
-        className="w-full px-4 py-3 border border-[#A7A29A] bg-[#F4F1EC] text-[#0E0E0E] focus:outline-none focus:border-[#0E0E0E] transition-colors resize-y"
+        className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors resize-y"
       />
     </div>
   );

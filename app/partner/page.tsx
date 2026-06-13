@@ -10,7 +10,7 @@ import Checkbox from '../components/Checkbox';
 import Textarea from '../components/Textarea';
 import Button from '../components/Button';
 import Link from 'next/link';
-import { trackEvent } from '@/lib/analytics';
+import { trackEvent, metaEventId } from '@/lib/analytics';
 
 type PartnerType = 'rancher' | 'brand' | 'land' | '';
 
@@ -195,7 +195,7 @@ function PartnerPageContent() {
       try {
         trackEvent('partner_submit_success', {
           partnerType,
-          ...(data?.partner?.id ? { event_id: data.partner.id } : {}),
+          ...(data?.partner?.id ? { event_id: metaEventId(data.partner.id) } : {}),
         });
       } catch {}
     } catch (err) {
@@ -235,8 +235,8 @@ function PartnerPageContent() {
                   </a>
                   <p className="text-sm text-bone/70">
                     Can't find a time? Email{' '}
-                    <a href="mailto:support@buyhalfcow.com" className="underline underline-offset-2">
-                      support@buyhalfcow.com
+                    <a href="mailto:hello@buyhalfcow.com" className="underline underline-offset-2">
+                      hello@buyhalfcow.com
                     </a>
                   </p>
                 </div>

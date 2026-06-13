@@ -45,24 +45,24 @@ export default function ClaimForm({
 
   if (done) {
     return (
-      <div className="space-y-4 p-6 border border-[#A7A29A] bg-white">
-        <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+      <div className="space-y-4 p-6 border border-dust bg-white">
+        <h2 className="font-serif text-2xl">
           Check your email.
         </h2>
         {done.manualReview ? (
-          <p className="text-sm text-[#0E0E0E]/80 leading-relaxed">
+          <p className="text-sm text-charcoal/80 leading-relaxed">
             We didn&rsquo;t have an email on file for {ranchName}, so I&rsquo;ll review
             this one personally before activating the link. Expect a reply
             from me within 24 hours — usually faster.
           </p>
         ) : (
-          <p className="text-sm text-[#0E0E0E]/80 leading-relaxed">
+          <p className="text-sm text-charcoal/80 leading-relaxed">
             I sent the magic link to{' '}
             <strong>{done.sentTo}</strong> (the email we already had on file
             for {ranchName}). Click it and you&rsquo;re queued for onboarding.
           </p>
         )}
-        <p className="text-sm text-[#6B4F3F]">— Ben</p>
+        <p className="text-sm text-saddle">— Ben</p>
       </div>
     );
   }
@@ -71,7 +71,7 @@ export default function ClaimForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label className="block text-sm font-medium mb-1">
-          Your name <span className="text-[#8C2F2F]">*</span>
+          Your name <span className="text-weathered">*</span>
         </label>
         <input
           type="text"
@@ -79,12 +79,12 @@ export default function ClaimForm({
           value={operatorName}
           onChange={(e) => setOperatorName(e.target.value)}
           placeholder="e.g. Cathryn Kerns"
-          className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm focus:outline-none focus:border-[#0E0E0E] transition-colors"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
         />
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">
-          Email <span className="text-[#8C2F2F]">*</span>
+          Email <span className="text-weathered">*</span>
         </label>
         <input
           type="email"
@@ -92,24 +92,24 @@ export default function ClaimForm({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
-          className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm focus:outline-none focus:border-[#0E0E0E] transition-colors"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
         />
       </div>
       <div>
         <label className="block text-sm font-medium mb-1">
-          Phone <span className="text-[#A7A29A]">(optional)</span>
+          Phone <span className="text-dust">(optional)</span>
         </label>
         <input
           type="tel"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           placeholder="(555) 555-5555"
-          className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm focus:outline-none focus:border-[#0E0E0E] transition-colors"
+          className="w-full px-4 py-3 border border-dust bg-white text-sm focus:outline-none focus:border-charcoal transition-colors"
         />
       </div>
 
       {error && (
-        <div className="p-4 bg-[#8C2F2F]/10 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+        <div className="p-4 bg-weathered/10 border border-weathered text-weathered text-sm">
           {error}
         </div>
       )}
@@ -117,7 +117,7 @@ export default function ClaimForm({
       <button
         type="submit"
         disabled={submitting}
-        className="w-full py-4 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium tracking-wide hover:bg-[#6B4F3F] transition-colors disabled:opacity-50"
+        className="w-full py-4 bg-charcoal text-bone text-sm font-medium tracking-wide hover:bg-saddle transition-colors disabled:opacity-50"
       >
         {submitting ? 'Sending magic link…' : 'Send me the magic link'}
       </button>

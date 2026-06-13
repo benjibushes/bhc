@@ -47,10 +47,10 @@ function UnsubscribeContent() {
       if (res.ok) {
         setSubmitted(true);
       } else {
-        alert('Something went wrong. Please try again or email support@buyhalfcow.com');
+        alert('Could not process the unsubscribe - the server did not respond. Try again, or email hello@buyhalfcow.com.');
       }
     } catch {
-      alert('Something went wrong. Please try again or email support@buyhalfcow.com');
+      alert('Could not process the unsubscribe - the server did not respond. Try again, or email hello@buyhalfcow.com.');
     } finally {
       setLoading(false);
     }
@@ -96,8 +96,8 @@ function UnsubscribeContent() {
               </p>
               <p className="text-saddle text-sm">
                 If this was a mistake, reply{' '}
-                <a href="mailto:hi@buyhalfcow.com" className="text-charcoal hover:underline transition-base">
-                  hi@buyhalfcow.com
+                <a href="mailto:hello@buyhalfcow.com" className="text-charcoal hover:underline transition-base">
+                  hello@buyhalfcow.com
                 </a>{' '}
                 and we&apos;ll add you back.
               </p>

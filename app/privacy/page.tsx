@@ -21,14 +21,14 @@ export const metadata = {
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-3xl mx-auto space-y-8">
-          <h1 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl">
+          <h1 className="font-serif text-4xl md:text-5xl">
             Privacy Policy
           </h1>
           
-          <p className="text-sm text-[#6B4F3F]">
+          <p className="text-sm text-saddle">
             Last Updated: January 27, 2026
           </p>
 
@@ -41,7 +41,7 @@ export default function PrivacyPage() {
             </p>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 1. Information We Collect
               </h2>
               <p>
@@ -61,7 +61,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 2. How We Use Your Information
               </h2>
               <p>We use the information we collect to:</p>
@@ -76,7 +76,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 3. Information Sharing
               </h2>
               <p>
@@ -101,7 +101,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 4. Data Security
               </h2>
               <p>
@@ -112,7 +112,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 5. Your Rights
               </h2>
               <p>You have the right to:</p>
@@ -126,7 +126,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 6. Cookies & Tracking
               </h2>
               <p>
@@ -137,7 +137,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 7. Data Retention
               </h2>
               <p>
@@ -147,7 +147,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 8. Children's Privacy
               </h2>
               <p>
@@ -157,7 +157,7 @@ export default function PrivacyPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 9. Changes to This Policy
               </h2>
               <p>
@@ -167,14 +167,14 @@ export default function PrivacyPage() {
             </section>
 
             <section className="space-y-4">
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl">
+              <h2 className="font-serif text-2xl">
                 10. Contact Us
               </h2>
               <p>
                 For questions about this Privacy Policy or to exercise your privacy rights, contact us at:
               </p>
               <p>
-                <a href="mailto:privacy@buyhalfcow.com" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+                <a href="mailto:privacy@buyhalfcow.com" className="text-charcoal hover:text-saddle transition-colors">
                   privacy@buyhalfcow.com
                 </a>
               </p>
@@ -184,11 +184,11 @@ export default function PrivacyPage() {
           <Divider />
 
           <div className="text-center space-y-4">
-            <Link href="/terms" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/terms" className="text-charcoal hover:text-saddle transition-colors">
               Terms of Service →
             </Link>
             <br />
-            <Link href="/" className="text-[#0E0E0E] hover:text-[#6B4F3F] transition-colors">
+            <Link href="/" className="text-charcoal hover:text-saddle transition-colors">
               ← Back to home
             </Link>
           </div>

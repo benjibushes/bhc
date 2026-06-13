@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getRecordById, createRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 30;
 
@@ -17,6 +18,22 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const ip = getRequestIp(request);
+    const rlMin = await rateLimit(`land-inq:${ip}`, { requests: 3, window: '1m' });
+    if (!rlMin.ok) {
+      return NextResponse.json(
+        { error: 'Too many inquiries from this network — wait a minute and try again.' },
+        { status: 429 }
+      );
+    }
+    const rlHour = await rateLimit(`land-inq-hr:${ip}`, { requests: 10, window: '1h' });
+    if (!rlHour.ok) {
+      return NextResponse.json(
+        { error: 'Too many inquiries from this network in the past hour. Email ben@buyhalfcow.com if this is wrong.' },
+        { status: 429 }
+      );
+    }
+
     const { id: dealId } = await params;
     const body = await request.json().catch(() => ({}));
     const { name, email, phone, message } = body || {};

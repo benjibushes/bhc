@@ -137,7 +137,7 @@ export default async function RanchersPage() {
                       className="group block border border-dust bg-white hover:border-saddle transition-colors"
                     >
                       {/* Logo / Image area */}
-                      <div className="h-40 bg-bone flex items-center justify-center overflow-hidden">
+                      <div className="h-28 sm:h-40 bg-bone flex items-center justify-center overflow-hidden">
                         {logoUrl ? (
                           <Image
                             src={logoUrl}

@@ -200,21 +200,21 @@ export default function RancherOrderForm({
       {/* Modal */}
       {selectedTier && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#F4F1EC] max-w-md w-full p-8 space-y-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-bone max-w-md w-full p-8 space-y-6 max-h-[90vh] overflow-y-auto">
             {success ? (
               <div className="space-y-4">
-                <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+                <p className="text-xs uppercase tracking-widest text-saddle">
                   Order request sent
                 </p>
-                <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+                <h2 className="font-serif text-2xl">
                   You&rsquo;re connected with {success.rancherName}.
                 </h2>
-                <p className="text-sm text-[#0E0E0E] leading-relaxed">
+                <p className="text-sm text-charcoal leading-relaxed">
                   We just emailed {success.rancherName} your <strong>{tierLabel}</strong>{' '}
                   request. They typically reply within {success.expectedHours} hours to
                   confirm timing, processing date, and payment details.
                 </p>
-                <p className="text-sm text-[#6B4F3F]">
+                <p className="text-sm text-saddle">
                   Check your inbox — confirmation is on its way. Replies from{' '}
                   {success.rancherName} land directly with you.
                 </p>
@@ -232,7 +232,7 @@ export default function RancherOrderForm({
                       message: '',
                     });
                   }}
-                  className="w-full py-3 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium tracking-wide uppercase hover:bg-[#6B4F3F] transition-colors"
+                  className="w-full py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase hover:bg-saddle transition-colors"
                 >
                   Done
                 </button>
@@ -240,13 +240,13 @@ export default function RancherOrderForm({
             ) : (
               <>
                 <div>
-                  <p className="text-xs uppercase tracking-widest text-[#6B4F3F] mb-2">
+                  <p className="text-xs uppercase tracking-widest text-saddle mb-2">
                     {ranchName} — {tierLabel} Share
                   </p>
-                  <h2 className="font-[family-name:var(--font-playfair)] text-2xl">
+                  <h2 className="font-serif text-2xl">
                     {session ? 'Send your order request' : 'Connect with the rancher'}
                   </h2>
-                  <p className="text-sm text-[#6B4F3F] mt-1">
+                  <p className="text-sm text-saddle mt-1">
                     {session
                       ? `${rancherName} will reach out within 48h to confirm details.`
                       : `Drop your details and ${rancherName} will reach back out within 48h.`}
@@ -262,7 +262,7 @@ export default function RancherOrderForm({
                         required
                         value={form.fullName}
                         onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
-                        className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm"
+                        className="w-full px-4 py-3 border border-dust bg-white text-sm"
                       />
                       <input
                         type="email"
@@ -270,20 +270,20 @@ export default function RancherOrderForm({
                         required
                         value={form.email}
                         onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                        className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm"
+                        className="w-full px-4 py-3 border border-dust bg-white text-sm"
                       />
                       <input
                         type="tel"
                         placeholder="Phone (optional)"
                         value={form.phone}
                         onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                        className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm"
+                        className="w-full px-4 py-3 border border-dust bg-white text-sm"
                       />
                       <div className="grid grid-cols-2 gap-3">
                         <select
                           value={form.state}
                           onChange={(e) => setForm((f) => ({ ...f, state: e.target.value }))}
-                          className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm"
+                          className="w-full px-4 py-3 border border-dust bg-white text-sm"
                         >
                           <option value="">State (optional)</option>
                           {US_STATES.map((s) => (
@@ -302,19 +302,19 @@ export default function RancherOrderForm({
                           onChange={(e) =>
                             setForm((f) => ({ ...f, zip: e.target.value.replace(/\D/g, '').slice(0, 5) }))
                           }
-                          className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm"
+                          className="w-full px-4 py-3 border border-dust bg-white text-sm"
                         />
                       </div>
                     </>
                   )}
 
                   {session && (
-                    <div className="bg-white p-3 border border-[#A7A29A] text-sm">
-                      <p className="text-[#6B4F3F] text-xs uppercase tracking-widest mb-1">
+                    <div className="bg-white p-3 border border-dust text-sm">
+                      <p className="text-saddle text-xs uppercase tracking-widest mb-1">
                         Sending as
                       </p>
                       <p className="font-medium">{session.name || session.email}</p>
-                      <p className="text-[#6B4F3F]">{session.email}</p>
+                      <p className="text-saddle">{session.email}</p>
                     </div>
                   )}
 
@@ -327,28 +327,28 @@ export default function RancherOrderForm({
                     value={form.message}
                     onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
                     rows={3}
-                    className="w-full px-4 py-3 border border-[#A7A29A] bg-white text-sm resize-none"
+                    className="w-full px-4 py-3 border border-dust bg-white text-sm resize-none"
                   />
 
                   {error && (
-                    <p className="text-sm text-[#8C2F2F]">{error}</p>
+                    <p className="text-sm text-weathered">{error}</p>
                   )}
 
                   <button
                     type="submit"
                     disabled={loading || sessionLoading}
-                    className="w-full py-4 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium tracking-wide uppercase hover:bg-[#6B4F3F] transition-colors disabled:opacity-50"
+                    className="w-full py-4 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase hover:bg-saddle transition-colors disabled:opacity-50"
                   >
                     {loading ? 'Sending…' : `Send order request →`}
                   </button>
                   <button
                     type="button"
                     onClick={() => setSelectedTier(null)}
-                    className="w-full text-center text-xs text-[#A7A29A] hover:text-[#0E0E0E]"
+                    className="w-full text-center text-xs text-dust hover:text-charcoal"
                   >
                     Cancel
                   </button>
-                  <p className="text-[10px] text-[#A7A29A] text-center leading-relaxed">
+                  <p className="text-[10px] text-dust text-center leading-relaxed">
                     No payment now. {rancherName} confirms timing + arranges payment directly.
                   </p>
                 </form>
@@ -378,22 +378,22 @@ function PricingCard({
     <div
       className={`flex flex-col p-6 border ${
         highlighted
-          ? 'border-[#6B4F3F] bg-[#6B4F3F] text-[#F4F1EC]'
-          : 'border-[#A7A29A] bg-white text-[#0E0E0E]'
+          ? 'border-saddle bg-saddle text-bone'
+          : 'border-dust bg-white text-charcoal'
       }`}
     >
       <p
         className={`text-xs uppercase tracking-widest mb-3 ${
-          highlighted ? 'text-[#F4F1EC]/70' : 'text-[#A7A29A]'
+          highlighted ? 'text-bone/70' : 'text-dust'
         }`}
       >
         {label}
       </p>
-      <p className="font-[family-name:var(--font-playfair)] text-4xl font-bold mb-1">
+      <p className="font-serif text-4xl font-bold mb-1">
         ${price.toLocaleString()}
       </p>
       {lbs && (
-        <p className={`text-sm mb-6 ${highlighted ? 'text-[#F4F1EC]/80' : 'text-[#A7A29A]'}`}>
+        <p className={`text-sm mb-6 ${highlighted ? 'text-bone/80' : 'text-dust'}`}>
           {lbs} of beef
         </p>
       )}
@@ -402,8 +402,8 @@ function PricingCard({
           onClick={onClick}
           className={`block w-full text-center py-3 text-sm font-medium tracking-wide transition-colors ${
             highlighted
-              ? 'bg-[#F4F1EC] text-[#6B4F3F] hover:bg-white'
-              : 'bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#6B4F3F]'
+              ? 'bg-bone text-saddle hover:bg-white'
+              : 'bg-charcoal text-bone hover:bg-saddle'
           }`}
         >
           Request {label} →

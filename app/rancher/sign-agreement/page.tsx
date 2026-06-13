@@ -125,7 +125,7 @@ function SignAgreementInner() {
               <ResendAgreementForm />
             </div>
             <p className="text-xs text-dust">
-              Still stuck? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>.
+              Still stuck? Email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a>.
             </p>
           </div>
         </Container>
@@ -159,7 +159,7 @@ function SignAgreementInner() {
               </Link>
             )}
             <p className="text-sm text-dust">
-              Questions? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
+              Questions? Email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a>
             </p>
           </div>
         </Container>
@@ -192,7 +192,7 @@ function SignAgreementInner() {
               Not redirecting? <a href={dashboardLink || '/rancher/login'} className="underline text-saddle">Click here to go to your dashboard</a>
             </p>
             <p className="text-xs text-dust">
-              Questions? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a>
+              Questions? Email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a>
             </p>
           </div>
         </Container>
@@ -362,7 +362,7 @@ function SignAgreementInner() {
           </form>
 
           <p className="text-center text-xs text-dust">
-            Questions before signing? Email <a href="mailto:support@buyhalfcow.com" className="underline">support@buyhalfcow.com</a> or reply to your onboarding email.
+            Questions before signing? Email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a> or reply to your onboarding email.
           </p>
         </div>
       </Container>
@@ -389,20 +389,20 @@ function ResendAgreementForm() {
       const data = await res.json();
       if (!res.ok) {
         setStatus('error');
-        setMessage(data.error || 'Failed to resend. Contact support@buyhalfcow.com.');
+        setMessage(data.error || 'Failed to resend. Contact hello@buyhalfcow.com.');
         return;
       }
       setStatus('sent');
       setMessage(data.message || 'Check your inbox for a fresh signing link.');
     } catch (err: any) {
       setStatus('error');
-      setMessage(err?.message || 'Network error — try again or email support@buyhalfcow.com.');
+      setMessage(err?.message || 'Network error — try again or email hello@buyhalfcow.com.');
     }
   };
 
   if (status === 'sent') {
     return (
-      <div className="text-sm text-charcoal bg-[#F4F1EC] border border-dust p-3">
+      <div className="text-sm text-charcoal bg-bone border border-dust p-3">
         ✓ {message}
       </div>
     );

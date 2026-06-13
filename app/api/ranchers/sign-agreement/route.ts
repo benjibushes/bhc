@@ -29,7 +29,7 @@ export async function GET(request: Request) {
 
     const decoded = verifySigningToken(token);
     if (!decoded) {
-      return NextResponse.json({ error: 'Invalid or expired signing link. Please contact support@buyhalfcow.com.' }, { status: 401 });
+      return NextResponse.json({ error: 'Invalid or expired signing link. Please contact hello@buyhalfcow.com.' }, { status: 401 });
     }
 
     const rancher: any = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
@@ -85,7 +85,7 @@ export async function POST(request: Request) {
 
     const decoded = verifySigningToken(token);
     if (!decoded) {
-      return NextResponse.json({ error: 'Invalid or expired signing link. Please contact support@buyhalfcow.com.' }, { status: 401 });
+      return NextResponse.json({ error: 'Invalid or expired signing link. Please contact hello@buyhalfcow.com.' }, { status: 401 });
     }
 
     const rancher: any = await getRecordById(TABLES.RANCHERS, decoded.rancherId);

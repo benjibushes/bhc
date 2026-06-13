@@ -36,23 +36,23 @@ export default async function RemovePage({
   const state = (rancher['State'] || '') as string;
 
   return (
-    <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
-      <section className="py-16 border-b border-[#2A2A2A]/10">
+    <main className="min-h-screen bg-bone text-charcoal">
+      <section className="py-16 border-b border-divider/10">
         <Container>
           <div className="max-w-2xl mx-auto space-y-3">
-            <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+            <p className="text-xs uppercase tracking-widest text-saddle">
               Remove listing
             </p>
-            <h1 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl">
+            <h1 className="font-serif text-3xl md:text-4xl">
               Remove {name}{state ? ` (${state})` : ''}
             </h1>
-            <p className="text-[#0E0E0E]/80 leading-relaxed">
+            <p className="text-charcoal/80 leading-relaxed">
               We built this listing from public information about
               direct-to-consumer ranchers. If you don&rsquo;t want to be on this
               list, hit the button below and the listing comes off the map and
               stops being indexed within minutes.
             </p>
-            <p className="text-sm text-[#6B4F3F]">
+            <p className="text-sm text-saddle">
               No verification needed — we honor opt-outs immediately. Ben gets
               an alert and will reach out personally if you want to talk.
             </p>
@@ -70,12 +70,12 @@ export default async function RemovePage({
 
       <section className="pb-20">
         <Container>
-          <div className="max-w-md mx-auto text-xs text-[#A7A29A] space-y-2">
+          <div className="max-w-md mx-auto text-xs text-dust space-y-2">
             <p>
               Changed your mind? The{' '}
               <Link
                 href={`/ranchers/${slug}/claim`}
-                className="underline hover:text-[#0E0E0E]"
+                className="underline hover:text-charcoal"
               >
                 claim flow
               </Link>{' '}

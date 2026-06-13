@@ -11,7 +11,3 @@ export function getStripe(): Stripe {
   }
   return _stripe;
 }
-
-// Brand listing fee — configurable via env
-export const BRAND_LISTING_PRICE_CENTS = parseInt(process.env.BRAND_LISTING_PRICE_CENTS || '29900'); // $299 default
-export const BRAND_LISTING_PRICE_LABEL = `$${(BRAND_LISTING_PRICE_CENTS / 100).toFixed(0)}`;

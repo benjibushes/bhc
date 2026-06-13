@@ -45,33 +45,33 @@ export default async function ClaimPage({
   // Confirmed-from-magic-link state — separate page.
   if (confirmed) {
     return (
-      <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen bg-bone text-charcoal">
         <section className="py-20">
           <Container>
             <div className="max-w-xl mx-auto text-center space-y-6">
-              <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+              <p className="text-xs uppercase tracking-widest text-saddle">
                 Claim confirmed
               </p>
-              <h1 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl">
+              <h1 className="font-serif text-3xl md:text-4xl">
                 Got it. Welcome aboard.
               </h1>
-              <p className="text-[#0E0E0E]/80 leading-relaxed">
+              <p className="text-charcoal/80 leading-relaxed">
                 {name} is now queued for the BuyHalfCow onboarding flow. I&rsquo;ll
                 reach out personally within the next 24–48 hours to book a quick
                 call, walk through the agreement, and get you set up to take
                 orders.
               </p>
-              <p className="text-sm text-[#6B4F3F]">
+              <p className="text-sm text-saddle">
                 Until then your listing stays as a prospect on the map — no
                 pricing, no payments — so nobody mistakes it for an active
                 partner. The moment you&rsquo;re live, the badge flips to verified
                 and your page goes hot.
               </p>
-              <p className="text-sm text-[#A7A29A]">— Ben</p>
+              <p className="text-sm text-dust">— Ben</p>
               <div className="pt-4">
                 <Link
                   href={`/ranchers/${slug}`}
-                  className="inline-block px-8 py-3 border border-[#6B4F3F] text-[#6B4F3F] text-sm tracking-wide hover:bg-[#6B4F3F] hover:text-[#F4F1EC] transition-colors"
+                  className="inline-block px-8 py-3 border border-saddle text-saddle text-sm tracking-wide hover:bg-saddle hover:text-bone transition-colors"
                 >
                   Back to your listing
                 </Link>
@@ -86,21 +86,21 @@ export default async function ClaimPage({
   // Already-verified rancher hit this page by mistake — redirect them.
   if (!isProspect) {
     return (
-      <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen bg-bone text-charcoal">
         <section className="py-20">
           <Container>
             <div className="max-w-xl mx-auto text-center space-y-6">
-              <h1 className="font-[family-name:var(--font-playfair)] text-3xl">
+              <h1 className="font-serif text-3xl">
                 {name} is already verified.
               </h1>
-              <p className="text-[#0E0E0E]/80">
+              <p className="text-charcoal/80">
                 This listing is already live on BuyHalfCow. If you need to
                 update something, log into your rancher dashboard or reach out
                 directly.
               </p>
               <Link
                 href={`/ranchers/${slug}`}
-                className="inline-block px-8 py-3 border border-[#6B4F3F] text-[#6B4F3F] text-sm tracking-wide hover:bg-[#6B4F3F] hover:text-[#F4F1EC] transition-colors"
+                className="inline-block px-8 py-3 border border-saddle text-saddle text-sm tracking-wide hover:bg-saddle hover:text-bone transition-colors"
               >
                 View listing
               </Link>
@@ -112,17 +112,17 @@ export default async function ClaimPage({
   }
 
   return (
-    <main className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
-      <section className="py-16 border-b border-[#2A2A2A]/10">
+    <main className="min-h-screen bg-bone text-charcoal">
+      <section className="py-16 border-b border-divider/10">
         <Container>
           <div className="max-w-2xl mx-auto space-y-3">
-            <p className="text-xs uppercase tracking-widest text-[#6B4F3F]">
+            <p className="text-xs uppercase tracking-widest text-saddle">
               Claim listing
             </p>
-            <h1 className="font-[family-name:var(--font-playfair)] text-3xl md:text-4xl">
+            <h1 className="font-serif text-3xl md:text-4xl">
               Are you {name}?
             </h1>
-            <p className="text-[#0E0E0E]/80 leading-relaxed">
+            <p className="text-charcoal/80 leading-relaxed">
               Hey — Ben here. I built this page from public information so
               families looking for direct-to-consumer beef
               {state ? ` in ${state}` : ''} could find you. If you operate {name},
@@ -130,11 +130,11 @@ export default async function ClaimPage({
               click it, I&rsquo;ll reach out to walk you through the onboarding —
               quick call, simple agreement, and your listing goes live.
             </p>
-            <p className="text-sm text-[#6B4F3F]">
+            <p className="text-sm text-saddle">
               No pressure. If you&rsquo;d rather not be on this list at all, use the
               <Link
                 href={`/ranchers/${slug}/remove`}
-                className="underline ml-1 hover:text-[#0E0E0E]"
+                className="underline ml-1 hover:text-charcoal"
               >
                 remove me
               </Link>{' '}
@@ -154,10 +154,10 @@ export default async function ClaimPage({
 
       <section className="pb-20">
         <Container>
-          <div className="max-w-md mx-auto text-xs text-[#A7A29A] space-y-2">
+          <div className="max-w-md mx-auto text-xs text-dust space-y-2">
             <p>
               Current claim status:{' '}
-              <span className="text-[#6B4F3F]">{claimStatus}</span>
+              <span className="text-saddle">{claimStatus}</span>
             </p>
             <p>
               Your contact info goes only to Ben (founder). We don&rsquo;t share

@@ -52,33 +52,60 @@ export async function POST(request: Request) {
     //   1. Explicit rancherId from request body
     //   2. previousReferralId → look up its rancher
     //   3. Buyer's most-recent Closed Won → that rancher
+    //
+    // Paths 1 + 2 take caller-supplied ids, and the downstream matching call
+    // (campaign=rancher-{slug}) bypasses the soft capacity cap — so BOTH must
+    // be proven to belong to THIS buyer's own order history. Otherwise any
+    // logged-in member could enumerate rancher/referral ids and route
+    // themselves to an arbitrary rancher cap-free.
     let rancherId: string | null = null;
+
+    // Buyer's own Closed Won history — ownership source of truth for paths 1+3.
+    let myClosedWon: any[] = [];
+    try {
+      myClosedWon = await getAllRecords(
+        TABLES.REFERRALS,
+        `AND({Buyer Email} = "${escapeAirtableValue((memberEmail || '').toLowerCase())}", {Status} = "Closed Won")`
+      ) as any[];
+    } catch (e) {
+      console.error('Reorder: closed-won lookup error:', e);
+    }
+    const myRancherIds = new Set<string>(
+      myClosedWon.flatMap((r: any) => {
+        const links = r['Rancher'] || r['Suggested Rancher'] || [];
+        return Array.isArray(links) ? links : [];
+      })
+    );
+
     if (explicitRancherId) {
+      if (!myRancherIds.has(explicitRancherId)) {
+        return NextResponse.json({
+          error: 'No previous order with this rancher found on your account.',
+        }, { status: 403 });
+      }
       rancherId = explicitRancherId;
     } else if (previousReferralId) {
       try {
         const ref: any = await getRecordById(TABLES.REFERRALS, previousReferralId);
+        const refEmail = String(ref?.['Buyer Email'] || '').trim().toLowerCase();
+        if (refEmail !== (memberEmail || '').trim().toLowerCase()) {
+          return NextResponse.json({
+            error: 'That order does not belong to this account.',
+          }, { status: 403 });
+        }
         const links = ref?.['Rancher'] || ref?.['Suggested Rancher'] || [];
         rancherId = Array.isArray(links) ? links[0] : null;
       } catch (e) {
         console.error('Reorder: previous referral lookup error:', e);
       }
     } else {
-      try {
-        const myReferrals = await getAllRecords(
-          TABLES.REFERRALS,
-          `AND({Buyer Email} = "${escapeAirtableValue((memberEmail || '').toLowerCase())}", {Status} = "Closed Won")`
-        ) as any[];
-        const sorted = myReferrals.sort((a, b) => {
-          const at = new Date(a['Closed At'] || 0).getTime();
-          const bt = new Date(b['Closed At'] || 0).getTime();
-          return bt - at;
-        });
-        const links = sorted[0]?.['Rancher'] || sorted[0]?.['Suggested Rancher'] || [];
-        rancherId = Array.isArray(links) ? links[0] : null;
-      } catch (e) {
-        console.error('Reorder: closed-won lookup error:', e);
-      }
+      const sorted = myClosedWon.sort((a, b) => {
+        const at = new Date(a['Closed At'] || 0).getTime();
+        const bt = new Date(b['Closed At'] || 0).getTime();
+        return bt - at;
+      });
+      const links = sorted[0]?.['Rancher'] || sorted[0]?.['Suggested Rancher'] || [];
+      rancherId = Array.isArray(links) ? links[0] : null;
     }
 
     if (!rancherId) {

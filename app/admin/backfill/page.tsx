@@ -84,8 +84,8 @@ export default function BackfillPage() {
   if (loading) {
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
-          <Container><p className="text-lg text-[#6B4F3F] text-center">Loading...</p></Container>
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
+          <Container><p className="text-lg text-saddle text-center">Loading...</p></Container>
         </main>
       </AdminAuthGuard>
     );
@@ -93,15 +93,15 @@ export default function BackfillPage() {
 
   return (
     <AdminAuthGuard>
-      <main className="min-h-screen py-12 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-12 bg-bone text-charcoal">
         <Container>
           <div className="space-y-8">
             <div className="flex flex-wrap justify-between items-start gap-4">
               <div>
                 <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl">Backfill Campaign</h1>
-                <p className="text-sm text-[#6B4F3F] mt-2">Capture intent from existing leads</p>
+                <p className="text-sm text-saddle mt-2">Capture intent from existing leads</p>
               </div>
-              <Link href="/admin" className="px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors">
+              <Link href="/admin" className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors">
                 &larr; Back
               </Link>
             </div>
@@ -110,32 +110,32 @@ export default function BackfillPage() {
 
             {/* Stats */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="p-4 border border-[#A7A29A] text-center">
+              <div className="p-4 border border-dust text-center">
                 <div className="font-[family-name:var(--font-serif)] text-3xl">{consumers.length}</div>
-                <div className="text-xs text-[#6B4F3F]">Total Leads</div>
+                <div className="text-xs text-saddle">Total Leads</div>
               </div>
-              <div className="p-4 border border-red-300 bg-red-50 text-center">
-                <div className="font-[family-name:var(--font-serif)] text-3xl text-red-700">{needsBackfill.length}</div>
-                <div className="text-xs text-red-700 font-medium">Missing Intent Data</div>
+              <div className="p-4 border border-weathered/40 bg-weathered/10 text-center">
+                <div className="font-[family-name:var(--font-serif)] text-3xl text-weathered">{needsBackfill.length}</div>
+                <div className="text-xs text-weathered font-medium">Missing Intent Data</div>
               </div>
-              <div className="p-4 border border-blue-300 bg-blue-50 text-center">
-                <div className="font-[family-name:var(--font-serif)] text-3xl text-blue-700">{emailSent.length}</div>
-                <div className="text-xs text-blue-700">Emails Sent</div>
+              <div className="p-4 border border-dust bg-dust/15 text-center">
+                <div className="font-[family-name:var(--font-serif)] text-3xl text-saddle">{emailSent.length}</div>
+                <div className="text-xs text-saddle">Emails Sent</div>
               </div>
-              <div className="p-4 border border-green-300 bg-green-50 text-center">
-                <div className="font-[family-name:var(--font-serif)] text-3xl text-green-700">{responded}</div>
-                <div className="text-xs text-green-700">Responses</div>
+              <div className="p-4 border border-sage/40 bg-sage/10 text-center">
+                <div className="font-[family-name:var(--font-serif)] text-3xl text-sage-dark">{responded}</div>
+                <div className="text-xs text-sage-dark">Responses</div>
               </div>
-              <div className="p-4 border border-[#A7A29A] text-center">
+              <div className="p-4 border border-dust text-center">
                 <div className="font-[family-name:var(--font-serif)] text-3xl">{conversionRate}%</div>
-                <div className="text-xs text-[#6B4F3F]">Conversion Rate</div>
+                <div className="text-xs text-saddle">Conversion Rate</div>
               </div>
             </div>
 
             {/* Actions */}
-            <div className="p-6 border border-[#A7A29A] bg-white space-y-4">
+            <div className="p-6 border border-dust bg-white space-y-4">
               <h3 className="font-[family-name:var(--font-serif)] text-xl">Send Backfill Campaign</h3>
-              <p className="text-sm text-[#6B4F3F]">
+              <p className="text-sm text-saddle">
                 Send personalized emails with secure update links to leads missing intent data.
                 Emails are sent at ~1/second to avoid spam flags.
               </p>
@@ -147,27 +147,27 @@ export default function BackfillPage() {
                     type="number"
                     value={batchSize}
                     onChange={(e) => setBatchSize(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="px-4 py-2 border border-[#A7A29A] bg-[#F4F1EC] w-24"
+                    className="px-4 py-2 border border-dust bg-bone w-24"
                   />
                 </div>
                 <button
                   onClick={sendCampaign}
                   disabled={sending || needsBackfill.length === 0}
-                  className="px-6 py-2 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium hover:bg-[#2A2A2A] disabled:opacity-50"
+                  className="px-6 py-2 bg-charcoal text-bone text-sm font-medium hover:bg-divider disabled:opacity-50"
                 >
                   {sending ? 'Sending...' : `Send to ${Math.min(batchSize, needsBackfill.length)} Leads`}
                 </button>
                 <button
                   onClick={generateLinks}
                   disabled={generating || needsBackfill.length === 0}
-                  className="px-6 py-2 border border-[#0E0E0E] text-sm font-medium hover:bg-[#0E0E0E] hover:text-[#F4F1EC] disabled:opacity-50"
+                  className="px-6 py-2 border border-charcoal text-sm font-medium hover:bg-charcoal hover:text-bone disabled:opacity-50"
                 >
                   {generating ? 'Generating...' : 'Generate CSV Links'}
                 </button>
                 {csv && (
                   <button
                     onClick={downloadCsv}
-                    className="px-6 py-2 border border-green-600 text-green-700 text-sm font-medium hover:bg-green-50"
+                    className="px-6 py-2 border border-sage text-sage-dark text-sm font-medium hover:bg-sage/10"
                   >
                     Download CSV
                   </button>
@@ -175,7 +175,7 @@ export default function BackfillPage() {
               </div>
 
               {lastResult && (
-                <div className="mt-4 p-4 bg-[#F4F1EC] text-sm">
+                <div className="mt-4 p-4 bg-bone text-sm">
                   <p><strong>Last Action:</strong></p>
                   {lastResult.sentCount !== undefined && (
                     <p>Emails sent: {lastResult.sentCount} | Remaining: {lastResult.remaining}</p>
@@ -188,21 +188,21 @@ export default function BackfillPage() {
             </div>
 
             {/* Email Preview */}
-            <div className="p-6 border border-[#A7A29A] bg-white space-y-4">
+            <div className="p-6 border border-dust bg-white space-y-4">
               <h3 className="font-[family-name:var(--font-serif)] text-xl">Email Preview</h3>
-              <div className="p-4 bg-[#F4F1EC] border border-[#A7A29A] text-sm space-y-2">
+              <div className="p-4 bg-bone border border-dust text-sm space-y-2">
                 <p><strong>Subject:</strong> Quick Update: Help Us Match You With Ranchers</p>
                 <Divider />
                 <p>Hi [First Name],</p>
                 <p>You signed up for BuyHalfCow access in [State]!</p>
                 <p>We&apos;re now matching buyers with verified ranchers in your area. To speed up your match, update your preferences:</p>
                 <p className="text-center py-4">
-                  <span className="px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium">
+                  <span className="px-6 py-3 bg-charcoal text-bone text-sm font-medium">
                     UPDATE YOUR PREFERENCES
                   </span>
                 </p>
                 <p>Takes 30 seconds. You&apos;ll hear from us within 48 hours.</p>
-                <p className="text-xs text-[#A7A29A]">— Benjamin, Founder, BuyHalfCow</p>
+                <p className="text-xs text-dust">— Benjamin, Founder, BuyHalfCow</p>
               </div>
             </div>
           </div>

@@ -30,34 +30,34 @@ function HealthDashboard() {
     fetchData();
   }, []);
 
-  if (loading) return <main className="min-h-screen p-8 bg-[#F4F1EC]"><div>Loading…</div></main>;
-  if (err) return <main className="min-h-screen p-8 bg-[#F4F1EC]"><div className="text-red-700">Error: {err}</div></main>;
+  if (loading) return <main className="min-h-screen p-8 bg-bone"><div>Loading…</div></main>;
+  if (err) return <main className="min-h-screen p-8 bg-bone"><div className="text-weathered">Error: {err}</div></main>;
   if (!data) return null;
 
   const Card = ({ title, value, sub, tone }: { title: string; value: any; sub?: string; tone?: 'good' | 'warn' | 'bad' }) => (
     <div className={`p-4 border-2 ${
-      tone === 'bad' ? 'border-red-700 bg-red-50' :
-      tone === 'warn' ? 'border-amber-600 bg-amber-50' :
-      tone === 'good' ? 'border-green-700 bg-green-50' :
-      'border-[#A7A29A] bg-white'
+      tone === 'bad' ? 'border-weathered bg-weathered/10' :
+      tone === 'warn' ? 'border-amber-dark bg-amber/10' :
+      tone === 'good' ? 'border-sage-dark bg-sage/10' :
+      'border-dust bg-white'
     }`}>
-      <p className="text-xs uppercase tracking-wider text-[#6B4F3F]">{title}</p>
+      <p className="text-xs uppercase tracking-wider text-saddle">{title}</p>
       <p className="font-serif text-3xl mt-1">{value}</p>
-      {sub ? <p className="text-xs text-[#6B4F3F] mt-1">{sub}</p> : null}
+      {sub ? <p className="text-xs text-saddle mt-1">{sub}</p> : null}
     </div>
   );
 
   return (
-    <main className="min-h-screen p-8 bg-[#F4F1EC] text-[#0E0E0E]">
+    <main className="min-h-screen p-8 bg-bone text-charcoal">
       <div className="max-w-7xl mx-auto space-y-8">
         <div className="flex justify-between items-center">
           <h1 className="font-serif text-3xl">System Health</h1>
           <div className="flex gap-3">
-            <button onClick={fetchData} className="px-4 py-2 text-sm border border-[#A7A29A] hover:bg-[#A7A29A] hover:text-white">↻ Refresh</button>
-            <Link href="/admin" className="px-4 py-2 text-sm border border-[#0E0E0E] bg-[#0E0E0E] text-[#F4F1EC]">← Admin</Link>
+            <button onClick={fetchData} className="px-4 py-2 text-sm border border-dust hover:bg-dust hover:text-white">↻ Refresh</button>
+            <Link href="/admin" className="px-4 py-2 text-sm border border-charcoal bg-charcoal text-bone">← Admin</Link>
           </div>
         </div>
-        <p className="text-xs text-[#6B4F3F]">Snapshot: {new Date(data.generated_at).toLocaleString()}</p>
+        <p className="text-xs text-saddle">Snapshot: {new Date(data.generated_at).toLocaleString()}</p>
 
         {/* Revenue */}
         <section>
@@ -82,18 +82,18 @@ function HealthDashboard() {
             <Card title="Multi-state approved" value={data.ranchers.multistate_approved} />
           </div>
           {data.ranchers.stuck_signed_details?.length > 0 && (
-            <div className="p-4 border-2 border-red-700 bg-red-50">
-              <p className="text-xs uppercase tracking-wider text-red-900 mb-2">STUCK — Agreement Signed, Page not Live</p>
+            <div className="p-4 border-2 border-weathered bg-weathered/10">
+              <p className="text-xs uppercase tracking-wider text-weathered mb-2">STUCK — Agreement Signed, Page not Live</p>
               <table className="w-full text-xs">
-                <thead><tr className="text-left text-[#6B4F3F]"><th className="pr-3">Rancher</th><th className="pr-3">Onboarding</th><th className="pr-3">Slug</th><th className="pr-3">About</th><th className="pr-3">Payment</th><th></th></tr></thead>
+                <thead><tr className="text-left text-saddle"><th className="pr-3">Rancher</th><th className="pr-3">Onboarding</th><th className="pr-3">Slug</th><th className="pr-3">About</th><th className="pr-3">Payment</th><th></th></tr></thead>
                 <tbody>
                   {data.ranchers.stuck_signed_details.map((r: any) => (
-                    <tr key={r.id} className="border-t border-red-200">
+                    <tr key={r.id} className="border-t border-weathered/30">
                       <td className="py-1 pr-3 font-medium">{r.name}</td>
                       <td className="py-1 pr-3">{r.onboarding}</td>
-                      <td className="py-1 pr-3">{r.slug ? '✓' : <span className="text-red-700">✗</span>}</td>
-                      <td className="py-1 pr-3">{r.about ? '✓' : <span className="text-red-700">✗</span>}</td>
-                      <td className="py-1 pr-3">{r.payment ? '✓' : <span className="text-red-700">✗</span>}</td>
+                      <td className="py-1 pr-3">{r.slug ? '✓' : <span className="text-weathered">✗</span>}</td>
+                      <td className="py-1 pr-3">{r.about ? '✓' : <span className="text-weathered">✗</span>}</td>
+                      <td className="py-1 pr-3">{r.payment ? '✓' : <span className="text-weathered">✗</span>}</td>
                       <td className="py-1"><Link href={`/admin/ranchers/${r.id}`} className="underline">edit →</Link></td>
                     </tr>
                   ))}
@@ -103,7 +103,7 @@ function HealthDashboard() {
           )}
           <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
             {Object.entries(data.ranchers.by_onboarding).map(([k, v]: any) => (
-              <div key={k} className="px-3 py-2 border border-[#A7A29A] bg-white"><span className="text-[#6B4F3F]">{k}:</span> <strong>{v}</strong></div>
+              <div key={k} className="px-3 py-2 border border-dust bg-white"><span className="text-saddle">{k}:</span> <strong>{v}</strong></div>
             ))}
           </div>
         </section>
@@ -125,7 +125,7 @@ function HealthDashboard() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-left text-[#6B4F3F] border-b border-[#A7A29A]/40">
+                <tr className="text-left text-saddle border-b border-dust/40">
                   <th className="pr-3 py-1">Name</th>
                   <th className="pr-3 py-1">Last Run</th>
                   <th className="pr-3 py-1">Status</th>
@@ -138,11 +138,11 @@ function HealthDashboard() {
                 {Object.entries(data.crons || {})
                   .sort((a: any, b: any) => (b[1].lastRun > a[1].lastRun ? 1 : -1))
                   .map(([name, c]: any) => (
-                    <tr key={name} className="border-t border-[#A7A29A]/30">
+                    <tr key={name} className="border-t border-dust/30">
                       <td className="py-1 pr-3 font-mono">{name}</td>
                       <td className="py-1 pr-3">{c.lastRun ? new Date(c.lastRun).toLocaleString() : '(never)'}</td>
                       <td className="py-1 pr-3">
-                        <span className={c.status === 'success' ? 'text-green-700' : c.status === 'error' ? 'text-red-700' : c.status === 'maintenance-blocked' ? 'text-amber-700' : ''}>
+                        <span className={c.status === 'success' ? 'text-sage-dark' : c.status === 'error' ? 'text-weathered' : c.status === 'maintenance-blocked' ? 'text-amber-dark' : ''}>
                           {c.status || '(unknown)'}
                         </span>
                       </td>
@@ -159,15 +159,15 @@ function HealthDashboard() {
         {/* Coverage gap */}
         <section>
           <h2 className="font-serif text-xl mb-3">Coverage Gap (Untapped Demand)</h2>
-          <p className="text-sm text-[#6B4F3F] mb-3">
+          <p className="text-sm text-saddle mb-3">
             Live states: <strong>{data.coverage.live_states.length}</strong> ({data.coverage.live_states.join(', ')})
             · <strong>{data.coverage.total_uncovered_buyers}</strong> buyers approved in uncovered states.
           </p>
           <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-10 gap-2 text-sm">
             {data.coverage.uncovered_demand.slice(0, 20).map((u: any) => (
-              <div key={u.state} className="px-3 py-2 border border-amber-400 bg-amber-50 text-center">
+              <div key={u.state} className="px-3 py-2 border border-amber/60 bg-amber/10 text-center">
                 <p className="font-bold">{u.state}</p>
-                <p className="text-xs text-[#6B4F3F]">{u.buyers} buyers</p>
+                <p className="text-xs text-saddle">{u.buyers} buyers</p>
               </div>
             ))}
           </div>
@@ -178,7 +178,7 @@ function HealthDashboard() {
           <h2 className="font-serif text-xl mb-3">Referrals by Status</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
             {Object.entries(data.referrals.by_status).map(([k, v]: any) => (
-              <div key={k} className="px-3 py-2 border border-[#A7A29A] bg-white"><span className="text-[#6B4F3F]">{k}:</span> <strong>{v}</strong></div>
+              <div key={k} className="px-3 py-2 border border-dust bg-white"><span className="text-saddle">{k}:</span> <strong>{v}</strong></div>
             ))}
           </div>
         </section>

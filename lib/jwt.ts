@@ -35,7 +35,6 @@
 //   - app/api/auth/affiliate/session/route.ts        (affiliate session cookie)
 //   - app/api/affiliate/dashboard/route.ts           (affiliate session cookie)
 //   - app/api/buyer-pulse/route.ts                   (one-click pulse link)
-//   - app/api/brands/checkout/route.ts               (brand partner checkout)
 //   - app/api/unsubscribe/route.ts                   (unsubscribe token, x2)
 //   - app/api/backfill/validate-token/route.ts       (backfill flow)
 //   - app/api/backfill/update-profile/route.ts       (backfill flow)

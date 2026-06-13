@@ -77,7 +77,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            'No Commission Rate locked on your account. Contact support@buyhalfcow.com to set this before confirming payment.',
+            'No Commission Rate locked on your account. Contact hello@buyhalfcow.com to set this before confirming payment.',
         },
         { status: 400 },
       );

@@ -16,6 +16,7 @@ import { markDepositSucceeded, markDepositRefunded, markDepositDisputed, PAYMENT
 import { recordClose } from '@/lib/contracts/rancher';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData } from '@/lib/metaCapi';
+import { metaEventId } from '@/lib/analytics';
 import { logAuditEntry } from '@/lib/auditLog';
 
 // Airtable table name for Stripe Events (Task 24 idempotency log)
@@ -108,20 +109,6 @@ export async function POST(request: Request) {
     case 'checkout.session.completed': {
       const session = event.data.object as any;
       const metaType = session.metadata?.type;
-
-      if (metaType === 'brand-listing') {
-        // ── BRAND LISTING (Stage 1) ──
-        // CRITICAL: do NOT return early — must reach end-of-handler idempotency
-        // flip. Wrap in try/catch + break so processed-flip always fires.
-        try {
-          await handleBrandListingCompleted(session);
-        } catch (err: any) {
-          console.error('[stripe webhook] brand-listing handler failed:', err?.message);
-          await flipStripeEventFailed(event.id, err?.message);
-          return NextResponse.json({ received: true, error: 'logged' });
-        }
-        break;
-      }
 
       if (metaType === 'founder-subscription' || metaType === 'founder-lifetime') {
         // ── FOUNDING HERD (Project 3) ──
@@ -517,7 +504,7 @@ export async function POST(request: Request) {
         fireCapi([{
           event_name: 'Purchase',
           event_time: Math.floor(Date.now() / 1000),
-          event_id: referralId,
+          event_id: metaEventId(referralId),
           action_source: 'system_generated',
           user_data: buildUserData(buyerForCapi),
           custom_data: {
@@ -998,56 +985,6 @@ export async function POST(request: Request) {
     }
   } catch (e: any) {
     console.warn('[stripe webhook] idempotency processed-flip failed:', e?.message);
-  }
-
-  return NextResponse.json({ received: true });
-}
-
-// ============================================================================
-// Brand listing handler — the original Stage 1 flow, isolated unchanged.
-// ============================================================================
-async function handleBrandListingCompleted(session: any) {
-  const { brandId, brandName } = session.metadata || {};
-  if (!brandId) return NextResponse.json({ received: true });
-
-  try {
-    await updateRecord(TABLES.BRANDS, brandId, {
-      'Payment Status': 'Paid',
-      'Featured': true,
-      'Stripe Session ID': session.id,
-      'Paid At': new Date().toISOString(),
-      'Amount Paid': (session.amount_total || 0) / 100,
-    });
-
-    if (session.customer_email) {
-      await sendBrandListingConfirmation({
-        brandName: brandName || 'Your Brand',
-        email: session.customer_email,
-        amountPaid: `$${((session.amount_total || 0) / 100).toFixed(0)}`,
-      });
-    }
-
-    try {
-      const { sendTelegramUpdate } = await import('@/lib/telegram');
-      await sendTelegramUpdate(
-        `💰 <b>Brand Payment Received</b>\n\n` +
-          `🏷️ <b>${brandName}</b>\n` +
-          `📧 ${session.customer_email}\n` +
-          `💵 $${((session.amount_total || 0) / 100).toFixed(0)}\n\n` +
-          `✅ Brand is now LIVE and featured to all members.`
-      );
-    } catch (e) {
-      console.error('Telegram brand payment notification error:', e);
-    }
-
-    console.log(`Brand ${brandId} payment completed — now featured`);
-  } catch (error) {
-    // Audit finding 2026-05-20 #6: previously returned 500 → Stripe retries
-    // 3× → triple founder welcomes + triple Telegram alerts. Now: log the
-    // error + return 200 so Stripe stops. Idempotency on session_id (see
-    // handleFounderCheckoutCompleted) catches any future retries.
-    console.error('Error processing brand payment webhook (returning 200 to stop retries):', error);
-    return NextResponse.json({ received: true, error: 'logged' });
   }
 
   return NextResponse.json({ received: true });

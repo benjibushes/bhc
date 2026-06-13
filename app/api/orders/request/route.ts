@@ -11,6 +11,7 @@ import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
 // Order request endpoint — buyer fills inline form on rancher landing page.
 // No external redirect to rancher's website. We capture the request, link
@@ -128,6 +129,19 @@ export async function POST(req: Request) {
   }
   if (!rancher) {
     return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
+  }
+  // Operational gate — same canonical rule as matching engine, reorder, and
+  // warmup. Without it, a paused/past_due rancher's page still accepted
+  // orders: referral created, capacity bumped, emails fired, rancher never
+  // responds — a ghost lead the buyer interprets as BHC being broken.
+  if (!isRancherOperationalForBuyers(rancher)) {
+    return NextResponse.json(
+      {
+        error: 'This rancher is not taking orders right now. Take the 90-second quiz and we will match you with an active rancher in your state.',
+        fallbackToMatch: true,
+      },
+      { status: 409 }
+    );
   }
   const rancherName =
     (rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher').toString();

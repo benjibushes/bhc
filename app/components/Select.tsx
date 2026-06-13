@@ -21,7 +21,7 @@ export default function Select({
     <div className="space-y-2">
       {label && (
         <label htmlFor={name} className="block text-sm font-medium">
-          {label} {required && <span className="text-[#8C2F2F]">*</span>}
+          {label} {required && <span className="text-weathered">*</span>}
         </label>
       )}
       <select
@@ -30,7 +30,7 @@ export default function Select({
         required={required}
         value={value}
         onChange={onChange}
-        className="w-full px-4 py-3 border border-[#A7A29A] bg-[#F4F1EC] text-[#0E0E0E] focus:outline-none focus:border-[#0E0E0E] transition-colors"
+        className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
       >
         {options ? (
           options.map(option => (

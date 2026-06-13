@@ -63,7 +63,7 @@ export default async function AffiliateLandingPage({
   const cards = [
     {
       key: 'beef-buyer',
-      title: 'Get half a cow for my family',
+      title: 'Get a half cow for my family',
       sub: 'Direct from a rancher near you. Local pickup, delivery, or cold-chain ship. We match you in days, not months.',
       href: `/access${refQs}`,
       cta: 'Start as a buyer',

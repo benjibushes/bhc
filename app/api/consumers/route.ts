@@ -85,6 +85,14 @@ export async function POST(request: Request) {
     } catch {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
+
+    // Honeypot — /access renders a hidden `website` field. Real users never
+    // fill it; bots that POST it get a fake success so they don't adapt.
+    // Client drops these silently too, but server-side is the real gate.
+    if (typeof body.website === 'string' && body.website.trim().length > 0) {
+      return NextResponse.json({ success: true, consumer: null, rancherAvailable: false });
+    }
+
     const {
       fullName, email, phone, smsOptIn, state,
       orderType: orderTypeRaw, budgetRange: budgetRangeRaw, timing, notes,
@@ -742,6 +750,6 @@ export async function POST(request: Request) {
     // Airtable IDs, API token hints, internal table names, etc.). Full
     // error is in server logs for debugging.
     console.error('API error creating consumer:', error);
-    return NextResponse.json({ error: 'Could not complete signup. Please try again or email support@buyhalfcow.com.' }, { status: 500 });
+    return NextResponse.json({ error: 'Could not complete signup. Please try again or email hello@buyhalfcow.com.' }, { status: 500 });
   }
 }

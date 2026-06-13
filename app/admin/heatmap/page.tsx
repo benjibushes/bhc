@@ -85,18 +85,18 @@ export default function HeatmapPage() {
   };
 
   const getRowColor = (data: StateData) => {
-    if (data.rancherCount === 0 && data.buyerCount > 0) return 'bg-red-50 border-red-200';
-    if (data.utilizationPercent > 80) return 'bg-yellow-50 border-yellow-200';
-    if (data.rancherCount > 0 && data.utilizationPercent < 80) return 'bg-green-50 border-green-200';
-    return 'border-[#A7A29A]';
+    if (data.rancherCount === 0 && data.buyerCount > 0) return 'bg-weathered/10 border-weathered/30';
+    if (data.utilizationPercent > 80) return 'bg-amber/10 border-amber/30';
+    if (data.rancherCount > 0 && data.utilizationPercent < 80) return 'bg-sage/10 border-sage/30';
+    return 'border-dust';
   };
 
   if (loading) {
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container>
-            <p className="text-lg text-[#6B4F3F] text-center">Loading heatmap...</p>
+            <p className="text-lg text-saddle text-center">Loading heatmap...</p>
           </Container>
         </main>
       </AdminAuthGuard>
@@ -110,7 +110,7 @@ export default function HeatmapPage() {
 
   return (
     <AdminAuthGuard>
-      <main className="min-h-screen py-12 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-12 bg-bone text-charcoal">
         <Container>
           <div className="space-y-8">
             <div className="flex flex-wrap justify-between items-start gap-4">
@@ -118,11 +118,11 @@ export default function HeatmapPage() {
                 <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl">
                   State Coverage Heatmap
                 </h1>
-                <p className="text-sm text-[#6B4F3F] mt-2">Supply vs demand by state</p>
+                <p className="text-sm text-saddle mt-2">Supply vs demand by state</p>
               </div>
               <Link
                 href="/admin"
-                className="px-4 py-2 text-sm border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
               >
                 &larr; Back to Dashboard
               </Link>
@@ -132,34 +132,34 @@ export default function HeatmapPage() {
 
             {/* Summary */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="p-4 border border-[#A7A29A] text-center">
+              <div className="p-4 border border-dust text-center">
                 <div className="font-[family-name:var(--font-serif)] text-3xl">{stateData.length}</div>
-                <div className="text-xs text-[#6B4F3F]">States Active</div>
+                <div className="text-xs text-saddle">States Active</div>
               </div>
-              <div className="p-4 border border-[#A7A29A] text-center">
+              <div className="p-4 border border-dust text-center">
                 <div className="font-[family-name:var(--font-serif)] text-3xl">{totalBuyers}</div>
-                <div className="text-xs text-[#6B4F3F]">Total Buyers</div>
+                <div className="text-xs text-saddle">Total Buyers</div>
               </div>
-              <div className="p-4 border border-red-300 bg-red-50 text-center">
-                <div className="font-[family-name:var(--font-serif)] text-3xl text-red-700">{statesWithNoRanchers.length}</div>
-                <div className="text-xs text-red-700 font-medium">States Without Ranchers</div>
+              <div className="p-4 border border-weathered/40 bg-weathered/10 text-center">
+                <div className="font-[family-name:var(--font-serif)] text-3xl text-weathered">{statesWithNoRanchers.length}</div>
+                <div className="text-xs text-weathered font-medium">States Without Ranchers</div>
               </div>
-              <div className="p-4 border border-yellow-300 bg-yellow-50 text-center">
-                <div className="font-[family-name:var(--font-serif)] text-3xl text-yellow-700">{statesAtCapacity.length}</div>
-                <div className="text-xs text-yellow-700 font-medium">States Near Capacity</div>
+              <div className="p-4 border border-amber/60 bg-amber/10 text-center">
+                <div className="font-[family-name:var(--font-serif)] text-3xl text-amber-dark">{statesAtCapacity.length}</div>
+                <div className="text-xs text-amber-dark font-medium">States Near Capacity</div>
               </div>
             </div>
 
             {/* Legend */}
             <div className="flex flex-wrap gap-4 text-sm">
               <span className="flex items-center gap-2">
-                <span className="w-4 h-4 bg-red-100 border border-red-300 inline-block"></span> No ranchers (needs recruitment)
+                <span className="w-4 h-4 bg-weathered/15 border border-weathered/40 inline-block"></span> No ranchers (needs recruitment)
               </span>
               <span className="flex items-center gap-2">
-                <span className="w-4 h-4 bg-yellow-100 border border-yellow-300 inline-block"></span> Near capacity (&gt;80%)
+                <span className="w-4 h-4 bg-amber/15 border border-amber/60 inline-block"></span> Near capacity (&gt;80%)
               </span>
               <span className="flex items-center gap-2">
-                <span className="w-4 h-4 bg-green-100 border border-green-300 inline-block"></span> Capacity available
+                <span className="w-4 h-4 bg-sage/15 border border-sage/40 inline-block"></span> Capacity available
               </span>
             </div>
 
@@ -167,7 +167,7 @@ export default function HeatmapPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-[#0E0E0E] text-[#F4F1EC]">
+                  <tr className="bg-charcoal text-bone">
                     <th className="px-4 py-3 text-left">State</th>
                     <th className="px-4 py-3 text-right">Buyers</th>
                     <th className="px-4 py-3 text-right">Ranchers</th>
@@ -185,18 +185,18 @@ export default function HeatmapPage() {
                       <td className="px-4 py-3 text-right">{d.rancherCount}</td>
                       <td className="px-4 py-3 text-right font-medium">
                         {d.unmatchedBuyers > 0 ? (
-                          <span className="text-red-700">{d.unmatchedBuyers}</span>
+                          <span className="text-weathered">{d.unmatchedBuyers}</span>
                         ) : (
-                          <span className="text-green-700">0</span>
+                          <span className="text-sage-dark">0</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">{d.activeReferrals}</td>
                       <td className="px-4 py-3 text-right">{d.totalCapacity}</td>
                       <td className="px-4 py-3 text-right">
                         <span className={`px-2 py-0.5 text-xs ${
-                          d.utilizationPercent >= 80 ? 'bg-yellow-200 text-yellow-800' :
-                          d.utilizationPercent > 0 ? 'bg-green-200 text-green-800' :
-                          'bg-gray-200 text-gray-600'
+                          d.utilizationPercent >= 80 ? 'bg-amber/25 text-amber-dark' :
+                          d.utilizationPercent > 0 ? 'bg-sage/20 text-sage-dark' :
+                          'bg-dust/40 text-saddle'
                         }`}>
                           {d.utilizationPercent}%
                         </span>
@@ -209,16 +209,16 @@ export default function HeatmapPage() {
 
             {/* Priority Recruitment */}
             {statesWithNoRanchers.length > 0 && (
-              <div className="p-6 border-2 border-red-300 bg-red-50 space-y-3">
-                <h3 className="font-[family-name:var(--font-serif)] text-xl text-red-800">
+              <div className="p-6 border-2 border-weathered/40 bg-weathered/10 space-y-3">
+                <h3 className="font-[family-name:var(--font-serif)] text-xl text-weathered">
                   Priority Recruitment Needed
                 </h3>
-                <p className="text-sm text-red-700">
+                <p className="text-sm text-weathered">
                   These states have buyers but no ranchers:
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {statesWithNoRanchers.map(d => (
-                    <span key={d.state} className="px-3 py-1 bg-red-200 text-red-800 text-sm font-medium">
+                    <span key={d.state} className="px-3 py-1 bg-weathered/20 text-weathered text-sm font-medium">
                       {d.state} ({d.buyerCount} buyers)
                     </span>
                   ))}

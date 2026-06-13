@@ -194,7 +194,7 @@ async function applyAction(
       return {
         ok: false,
         message:
-          'No Commission Rate locked on your account. Please contact support@buyhalfcow.com before closing deals via email.',
+          'No Commission Rate locked on your account. Please contact hello@buyhalfcow.com before closing deals via email.',
       };
     }
     updates['Status'] = 'Closed Won';

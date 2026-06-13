@@ -1,13 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { updateRecord, deleteRecord, getRecordById } from '@/lib/airtable';
+import { updateRecord, deleteRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendBrandApprovalWithPayment } from '@/lib/email';
-import { BRAND_LISTING_PRICE_LABEL } from '@/lib/stripe';
-import jwt from 'jsonwebtoken';
 import { requireAdmin } from '@/lib/adminAuth';
-
-import { JWT_SECRET } from '@/lib/secrets';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 export async function PATCH(
   request: NextRequest,
@@ -36,42 +30,11 @@ export async function PATCH(
 
     const updatedRecord = await updateRecord(TABLES.BRANDS, id, fields);
 
-    // When brand is approved, send payment link email (don't feature until paid)
-    if (body.status === 'Approved') {
-      try {
-        const brand: any = await getRecordById(TABLES.BRANDS, id);
-        const brandEmail = brand['Email'];
-        const brandName = brand['Brand Name'] || '';
-        const contactName = brand['Contact Name'] || '';
-
-        if (brandEmail && brand['Payment Status'] !== 'Paid') {
-          // Generate a payment token (30 day expiry)
-          const paymentToken = jwt.sign(
-            { type: 'brand-payment', brandId: id, email: brandEmail, brandName },
-            JWT_SECRET,
-            { expiresIn: '30d' }
-          );
-          const paymentUrl = `${SITE_URL}/brand/payment?token=${paymentToken}`;
-
-          // Ensure brand is NOT featured until payment completes
-          await updateRecord(TABLES.BRANDS, id, {
-            'Featured': false,
-            'Payment Status': 'Pending',
-          });
-
-          await sendBrandApprovalWithPayment({
-            brandName,
-            contactName,
-            email: brandEmail,
-            paymentUrl,
-            listingPrice: BRAND_LISTING_PRICE_LABEL,
-          });
-        }
-      } catch (emailError) {
-        console.error('Error sending brand payment email:', emailError);
-        // Don't fail the approval if email fails
-      }
-    }
+    // NOTE (2026-06-12): brand approval no longer fires a one-time listing
+    // payment email. The $299 one-time brand-listing product was decommissioned
+    // in favor of the self-serve /brand-partners subscription tiers. Approving a
+    // brand now only updates the record; partners pay via Stripe Checkout
+    // subscription, and the brand-partner-tier webhook handles go-live/featuring.
 
     return NextResponse.json(updatedRecord);
   } catch (error: any) {

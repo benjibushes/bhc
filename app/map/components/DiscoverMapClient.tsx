@@ -14,8 +14,8 @@ import type { MapPin } from '../page';
 const DiscoverMap = dynamic(() => import('./DiscoverMap'), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-[600px] flex items-center justify-center bg-[#FAF8F4] border border-[#A7A29A]">
-      <p className="text-sm text-[#A7A29A]">Loading map…</p>
+    <div className="w-full h-[600px] flex items-center justify-center bg-[#FAF8F4] border border-dust">
+      <p className="text-sm text-dust">Loading map…</p>
     </div>
   ),
 });

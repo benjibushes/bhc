@@ -32,6 +32,30 @@ declare global {
   }
 }
 
+/**
+ * Meta Pixel ↔ CAPI dedup convention (E-3 audit) — THE one place it's defined.
+ *
+ * Meta dedups by (event_name, event_id). The client Pixel fire and the server
+ * CAPI fire MUST send byte-identical event_ids or Meta sees two events and
+ * every conversion double-counts. The convention:
+ *
+ *   event_id = the RAW Airtable record id of the event's subject.
+ *   No prefixes. No suffixes. Not wrapped, not namespaced.
+ *
+ * (referralId for deposit InitiateCheckout/Purchase, consumer record id for
+ * quiz Leads, partner/wholesale record id for form-submit Leads.) The same
+ * record id can anchor multiple events safely because event_name differs.
+ *
+ * Prefixed ids (`deposit-invoice-${id}`, `cal-booking-${id}`) are ONLY legal
+ * for server-only events that have no client Pixel pair to dedup against.
+ *
+ * Route both surfaces through this helper so the convention can't drift —
+ * a prefix added on one side is exactly the bug E-3 fixed.
+ */
+export function metaEventId(recordId: string): string {
+  return recordId;
+}
+
 export type AnalyticsEventName =
   | 'access_view'
   | 'access_quiz_submit'

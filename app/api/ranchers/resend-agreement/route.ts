@@ -89,7 +89,7 @@ export async function POST(request: Request) {
     });
 
     if (!emailResult.success) {
-      return NextResponse.json({ error: 'Failed to send link. Contact support@buyhalfcow.com.' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to send link. Contact hello@buyhalfcow.com.' }, { status: 500 });
     }
 
     await sendTelegramUpdate(

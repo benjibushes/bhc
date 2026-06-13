@@ -44,14 +44,14 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E] flex items-center justify-center">
+    <main className="min-h-screen py-24 bg-bone text-charcoal flex items-center justify-center">
       <Container>
         <div className="max-w-md mx-auto">
           <div className="text-center space-y-6 mb-12">
             <h1 className="font-[family-name:var(--font-serif)] text-4xl">
               Admin Login
             </h1>
-            <p className="text-[#6B4F3F]">
+            <p className="text-saddle">
               Enter your password to access the admin dashboard
             </p>
           </div>
@@ -67,7 +67,7 @@ export default function AdminLoginPage() {
             />
 
             {error && (
-              <div className="p-4 border border-[#8C2F2F] bg-transparent text-[#8C2F2F] text-sm">
+              <div className="p-4 border border-weathered bg-transparent text-weathered text-sm">
                 {error}
               </div>
             )}
@@ -78,7 +78,7 @@ export default function AdminLoginPage() {
           </form>
 
           <div className="mt-12 text-center">
-            <a href="/" className="text-[#6B4F3F] hover:text-[#0E0E0E] transition-colors text-sm">
+            <a href="/" className="text-saddle hover:text-charcoal transition-colors text-sm">
               ← Back to home
             </a>
           </div>

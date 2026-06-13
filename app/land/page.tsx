@@ -191,7 +191,7 @@ function InquiryModal({ deal, onClose }: { deal: LandDeal; onClose: () => void }
       if (res.ok && data.success) {
         setState('sent');
       } else {
-        setErrorMsg(data.error || 'Something went wrong');
+        setErrorMsg(data.error || 'Could not send your inquiry - the server did not accept it. Try again, or email hello@buyhalfcow.com.');
         setState('error');
       }
     } catch {
@@ -212,7 +212,7 @@ function InquiryModal({ deal, onClose }: { deal: LandDeal; onClose: () => void }
 
         {state === 'sent' ? (
           <div className="space-y-4 text-center">
-            <p className="font-serif text-xl text-green-800">Inquiry sent.</p>
+            <p className="font-serif text-xl text-sage-dark">Inquiry sent.</p>
             <p className="text-sm text-saddle">
               We forwarded your message to {deal.sellerName}. They typically respond within 1-3 business days. Check your inbox for a confirmation.
             </p>
@@ -274,7 +274,7 @@ function InquiryModal({ deal, onClose }: { deal: LandDeal; onClose: () => void }
             </div>
 
             {state === 'error' && errorMsg && (
-              <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">{errorMsg}</div>
+              <div className="p-3 border border-weathered text-weathered text-sm">{errorMsg}</div>
             )}
 
             <div className="flex gap-3 pt-2">

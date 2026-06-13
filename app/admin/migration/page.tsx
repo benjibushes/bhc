@@ -39,21 +39,21 @@ interface MigrationData {
 }
 
 function statusBadge(status: string, pricingModel: string) {
-  if (pricingModel === 'tier_v2') return { label: '✓ tier_v2', color: 'bg-green-100 text-green-900 border-green-600' };
+  if (pricingModel === 'tier_v2') return { label: '✓ tier_v2', color: 'bg-sage/15 text-sage-dark border-sage' };
   switch (status) {
     case 'completed':
-      return { label: '✓ Completed', color: 'bg-green-100 text-green-900 border-green-600' };
+      return { label: '✓ Completed', color: 'bg-sage/15 text-sage-dark border-sage' };
     case 'upgrading':
-      return { label: '⏳ Upgrading', color: 'bg-blue-100 text-blue-900 border-blue-600' };
+      return { label: '⏳ Upgrading', color: 'bg-dust/25 text-saddle border-charcoal' };
     case 'call_scheduled':
-      return { label: '📅 Call Booked', color: 'bg-purple-100 text-purple-900 border-purple-600' };
+      return { label: '📅 Call Booked', color: 'bg-saddle/15 text-saddle border-saddle' };
     case 'invited':
-      return { label: '📧 Invited', color: 'bg-yellow-100 text-yellow-900 border-yellow-600' };
+      return { label: '📧 Invited', color: 'bg-amber/15 text-amber-dark border-amber-dark' };
     case 'paused_overdue':
-      return { label: '⏸ Paused — Overdue', color: 'bg-red-100 text-red-900 border-red-600' };
+      return { label: '⏸ Paused — Overdue', color: 'bg-weathered/15 text-weathered border-weathered' };
     case 'not_invited':
     default:
-      return { label: '— Not Invited', color: 'bg-gray-100 text-gray-700 border-gray-400' };
+      return { label: '— Not Invited', color: 'bg-bone-deep text-saddle border-dust' };
   }
 }
 
@@ -203,7 +203,7 @@ export default function MigrationTrackerPage() {
   }
 
   if (loading) return <main className="p-8 text-saddle">Loading migration funnel…</main>;
-  if (error || !data) return <main className="p-8 text-red-700">Error: {error || 'No data'}</main>;
+  if (error || !data) return <main className="p-8 text-weathered">Error: {error || 'No data'}</main>;
 
   return (
     <main className="min-h-screen bg-bone py-8 px-4 md:px-8">
@@ -279,21 +279,21 @@ export default function MigrationTrackerPage() {
                 const badge = statusBadge(r.migrationStatus, r.pricingModel);
                 const atRisk = r.daysLeft !== null && r.daysLeft >= 0 && r.daysLeft <= 3 && r.pricingModel !== 'tier_v2';
                 return (
-                  <tr key={r.id} className={`border-b border-dust ${atRisk ? 'bg-yellow-50' : ''}`}>
+                  <tr key={r.id} className={`border-b border-dust ${atRisk ? 'bg-amber/10' : ''}`}>
                     <td className="px-3 py-2 font-medium text-charcoal">{r.name}</td>
                     <td className="px-3 py-2 text-saddle">{r.state}</td>
                     <td className="px-3 py-2">
                       <span className={`inline-block text-xs px-2 py-1 border ${badge.color}`}>{badge.label}</span>
                     </td>
                     <td className="px-3 py-2 text-saddle">
-                      {r.pricingModel === 'tier_v2' ? '—' : r.daysLeft === null ? '—' : r.daysLeft <= 0 ? <span className="text-red-700 font-medium">OVERDUE</span> : `${r.daysLeft}d`}
+                      {r.pricingModel === 'tier_v2' ? '—' : r.daysLeft === null ? '—' : r.daysLeft <= 0 ? <span className="text-weathered font-medium">OVERDUE</span> : `${r.daysLeft}d`}
                     </td>
                     <td className="px-3 py-2 text-saddle">{r.subscriptionStatus || '—'}</td>
                     <td className="px-3 py-2">
                       {r.connectStatus === 'active' ? (
-                        <span className="text-xs px-2 py-0.5 border bg-green-100 text-green-900 border-green-600">● active</span>
+                        <span className="text-xs px-2 py-0.5 border bg-sage/15 text-sage-dark border-sage">● active</span>
                       ) : r.connectStatus === 'onboarding' || r.connectStatus === 'restricted' ? (
-                        <span className="text-xs px-2 py-0.5 border bg-amber-100 text-amber-900 border-amber-600">○ {r.connectStatus}</span>
+                        <span className="text-xs px-2 py-0.5 border bg-amber/15 text-amber-dark border-amber-dark">○ {r.connectStatus}</span>
                       ) : (
                         <span className="text-saddle">{r.connectStatus || '—'}</span>
                       )}
@@ -318,7 +318,7 @@ export default function MigrationTrackerPage() {
                       {r.connectStatus && r.connectStatus !== 'active' && r.connectStatus !== 'not_connected' && (
                         <button
                           onClick={() => resyncConnect(r.id, r.name)}
-                          className="text-xs underline text-blue-800 hover:text-blue-600 ml-2"
+                          className="text-xs underline text-saddle hover:text-saddle ml-2"
                           title="Force a live Stripe read + persist true Connect status. Unsticks 'onboarding' after the rancher has finished Stripe KYC."
                         >
                           🔄 Resync

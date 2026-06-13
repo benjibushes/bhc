@@ -37,8 +37,6 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendProspectClaimMagicLink',
   // Customer-expected order confirmation after wholesale checkout.
   'sendWholesaleConfirmation',
-  // Customer-expected approval + payment link — blocks revenue if suppressed.
-  'sendBrandApprovalWithPayment',
   // Customer-expected confirmation that their brand listing is live.
   'sendBrandListingConfirmation',
   // Customer-expected payment failure notice — must reach the brand to retry.

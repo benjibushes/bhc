@@ -20,7 +20,7 @@ export default function ContactRancherButton({ rancher }: ContactRancherButtonPr
     <>
       <button
         onClick={() => setIsModalOpen(true)}
-        className="w-full px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors duration-300 font-medium tracking-wide uppercase text-sm border border-[#0E0E0E]"
+        className="w-full px-6 py-3 bg-charcoal text-bone hover:bg-divider transition-colors duration-300 font-medium tracking-wide uppercase text-sm border border-charcoal"
       >
         Contact This Rancher
       </button>

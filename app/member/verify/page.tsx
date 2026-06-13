@@ -48,7 +48,7 @@ function VerifyContent() {
       }, 1500);
     } catch (err: any) {
       setStatus('error');
-      setError(err.message || 'Something went wrong. Please request a new login link.');
+      setError(err.message || 'Could not verify your login link - it may have expired or already been used. Request a fresh one from the login page.');
     }
   };
 

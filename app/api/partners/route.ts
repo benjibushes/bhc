@@ -8,6 +8,7 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 import { normalizeState } from '@/lib/states';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
+import { metaEventId } from '@/lib/analytics';
 
 export const maxDuration = 60;
 
@@ -441,7 +442,7 @@ export async function POST(request: Request) {
         event_name: 'Lead',
         event_time: Math.floor(Date.now() / 1000),
         event_source_url: `${SITE_URL}/partner`,
-        event_id: record.id,
+        event_id: metaEventId(record.id),
         action_source: 'website',
         user_data: buildUserData({
           email: partnerEmailNorm,

@@ -105,7 +105,7 @@ export default function AnalyticsPage() {
   if (loading) {
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container>
             <p className="text-center">Loading analytics...</p>
           </Container>
@@ -117,7 +117,7 @@ export default function AnalyticsPage() {
   if (!data) {
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container>
             <p className="text-center">Failed to load analytics.</p>
           </Container>
@@ -128,7 +128,7 @@ export default function AnalyticsPage() {
 
   return (
     <AdminAuthGuard>
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="space-y-8">
             {/* Header */}
@@ -137,18 +137,18 @@ export default function AnalyticsPage() {
                 <h1 className="font-[family-name:var(--font-serif)] text-4xl mb-2">
                   Analytics & Attribution
                 </h1>
-                <p className="text-[#6B4F3F]">
+                <p className="text-saddle">
                   Track campaign performance and revenue · <strong>{data.filter?.label || SINCE_LABELS[sinceFilter]}</strong>
                 </p>
               </div>
               <div className="flex gap-2 items-center">
                 {/* P1 audit D-5: date range selector */}
-                <label className="text-sm text-[#6B4F3F] flex items-center gap-2">
+                <label className="text-sm text-saddle flex items-center gap-2">
                   Range:
                   <select
                     value={sinceFilter}
                     onChange={(e) => setSinceFilter(e.target.value as SinceFilter)}
-                    className="px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC] text-sm"
+                    className="px-3 py-2 border border-dust bg-bone text-sm"
                   >
                     <option value="7">{SINCE_LABELS['7']}</option>
                     <option value="30">{SINCE_LABELS['30']}</option>
@@ -158,7 +158,7 @@ export default function AnalyticsPage() {
                 </label>
                 <Link
                   href="/admin"
-                  className="px-4 py-2 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                  className="px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
                 >
                   ← Back to Admin
                 </Link>
@@ -167,7 +167,7 @@ export default function AnalyticsPage() {
                     await fetch('/api/admin/auth', { method: 'DELETE' });
                     window.location.href = '/admin/login';
                   }}
-                  className="px-4 py-2 text-sm border border-[#8C2F2F] text-[#8C2F2F] hover:bg-[#8C2F2F] hover:text-white transition-colors"
+                  className="px-4 py-2 text-sm border border-weathered text-weathered hover:bg-weathered hover:text-white transition-colors"
                 >
                   Logout
                 </button>
@@ -182,38 +182,38 @@ export default function AnalyticsPage() {
                 Performance Overview
               </h2>
               <div className="grid md:grid-cols-3 lg:grid-cols-6 gap-4">
-                <div className="p-6 border border-[#A7A29A] bg-white">
-                  <div className="text-sm text-[#6B4F3F] mb-1">Total Consumers</div>
+                <div className="p-6 border border-dust bg-white">
+                  <div className="text-sm text-saddle mb-1">Total Consumers</div>
                   <div className="text-3xl font-[family-name:var(--font-serif)]">
                     {data.overview.totalConsumers}
                   </div>
                 </div>
-                <div className="p-6 border border-[#A7A29A] bg-white">
-                  <div className="text-sm text-[#6B4F3F] mb-1">Total Inquiries</div>
+                <div className="p-6 border border-dust bg-white">
+                  <div className="text-sm text-saddle mb-1">Total Inquiries</div>
                   <div className="text-3xl font-[family-name:var(--font-serif)]">
                     {data.overview.totalInquiries}
                   </div>
                 </div>
-                <div className="p-6 border border-[#A7A29A] bg-white">
-                  <div className="text-sm text-[#6B4F3F] mb-1">Sales Closed</div>
+                <div className="p-6 border border-dust bg-white">
+                  <div className="text-sm text-saddle mb-1">Sales Closed</div>
                   <div className="text-3xl font-[family-name:var(--font-serif)]">
                     {data.overview.totalSales}
                   </div>
                 </div>
-                <div className="p-6 border border-[#0E0E0E] bg-white">
-                  <div className="text-sm text-[#6B4F3F] mb-1">Total Revenue</div>
+                <div className="p-6 border border-charcoal bg-white">
+                  <div className="text-sm text-saddle mb-1">Total Revenue</div>
                   <div className="text-2xl font-[family-name:var(--font-serif)]">
                     {formatCurrency(data.overview.totalRevenue)}
                   </div>
                 </div>
-                <div className="p-6 border border-[#0E0E0E] bg-white">
-                  <div className="text-sm text-[#6B4F3F] mb-1">Your Commission</div>
+                <div className="p-6 border border-charcoal bg-white">
+                  <div className="text-sm text-saddle mb-1">Your Commission</div>
                   <div className="text-2xl font-[family-name:var(--font-serif)]">
                     {formatCurrency(data.overview.totalCommission)}
                   </div>
                 </div>
-                <div className="p-6 border border-[#A7A29A] bg-white">
-                  <div className="text-sm text-[#6B4F3F] mb-1">Conversion Rate</div>
+                <div className="p-6 border border-dust bg-white">
+                  <div className="text-sm text-saddle mb-1">Conversion Rate</div>
                   <div className="text-3xl font-[family-name:var(--font-serif)]">
                     {formatPercent(data.overview.conversionRate)}
                   </div>
@@ -229,14 +229,14 @@ export default function AnalyticsPage() {
                 Campaign Performance
               </h2>
               {data.campaigns.length === 0 ? (
-                <div className="p-8 border border-[#A7A29A] bg-white text-center text-[#6B4F3F]">
+                <div className="p-8 border border-dust bg-white text-center text-saddle">
                   No campaign data yet. Send your first broadcast email to start tracking!
                 </div>
               ) : (
-                <div className="overflow-x-auto border border-[#A7A29A]">
+                <div className="overflow-x-auto border border-dust">
                   <table className="w-full bg-white">
                     <thead>
-                      <tr className="border-b border-[#A7A29A] bg-[#F4F1EC]">
+                      <tr className="border-b border-dust bg-bone">
                         <th className="text-left p-4 font-medium">Campaign</th>
                         <th className="text-right p-4 font-medium">Emails</th>
                         <th className="text-right p-4 font-medium">Sign-ups</th>
@@ -254,7 +254,7 @@ export default function AnalyticsPage() {
                           : 0;
                         
                         return (
-                          <tr key={idx} className="border-b border-[#A7A29A] hover:bg-[#F4F1EC]">
+                          <tr key={idx} className="border-b border-dust hover:bg-bone">
                             <td className="p-4 font-medium">{campaign.campaignName}</td>
                             <td className="p-4 text-right">{campaign.emailsSent}</td>
                             <td className="p-4 text-right">{campaign.signUps}</td>
@@ -262,7 +262,7 @@ export default function AnalyticsPage() {
                             <td className="p-4 text-right">{campaign.sales}</td>
                             <td className="p-4 text-right">{formatCurrency(campaign.totalRevenue)}</td>
                             <td className="p-4 text-right font-semibold">{formatCurrency(campaign.totalCommission)}</td>
-                            <td className="p-4 text-right text-sm text-[#6B4F3F]">
+                            <td className="p-4 text-right text-sm text-saddle">
                               {formatCurrency(roi)}/email
                             </td>
                           </tr>
@@ -281,19 +281,19 @@ export default function AnalyticsPage() {
               <h2 className="font-[family-name:var(--font-serif)] text-2xl mb-2">
                 Source Attribution
               </h2>
-              <p className="text-sm text-[#6B4F3F] mb-4">
+              <p className="text-sm text-saddle mb-4">
                 Funnel by Consumer Source — organic vs rancher-page vs partner-XXX vs exit-intent.
                 Closest signal to per-channel CAC w/o paid-ad spend integration.
               </p>
               {!data.sourceBreakdown || data.sourceBreakdown.length === 0 ? (
-                <div className="p-8 border border-[#A7A29A] bg-white text-center text-[#6B4F3F]">
+                <div className="p-8 border border-dust bg-white text-center text-saddle">
                   No source data in this range.
                 </div>
               ) : (
-                <div className="overflow-x-auto border border-[#A7A29A]">
+                <div className="overflow-x-auto border border-dust">
                   <table className="w-full bg-white">
                     <thead>
-                      <tr className="border-b border-[#A7A29A] bg-[#F4F1EC]">
+                      <tr className="border-b border-dust bg-bone">
                         <th className="text-left p-4 font-medium">Source</th>
                         <th className="text-right p-4 font-medium">Signups</th>
                         <th className="text-right p-4 font-medium">Matches</th>
@@ -306,13 +306,13 @@ export default function AnalyticsPage() {
                       {data.sourceBreakdown.map((s, idx) => {
                         const convRate = s.signups > 0 ? s.closes / s.signups : 0;
                         return (
-                          <tr key={idx} className="border-b border-[#A7A29A] hover:bg-[#F4F1EC]">
+                          <tr key={idx} className="border-b border-dust hover:bg-bone">
                             <td className="p-4 font-medium">{s.source}</td>
                             <td className="p-4 text-right">{s.signups}</td>
                             <td className="p-4 text-right">{s.matches}</td>
                             <td className="p-4 text-right">{s.closes}</td>
                             <td className="p-4 text-right font-semibold">{formatCurrency(s.commissionDue)}</td>
-                            <td className="p-4 text-right text-sm text-[#6B4F3F]">{formatPercent(convRate)}</td>
+                            <td className="p-4 text-right text-sm text-saddle">{formatPercent(convRate)}</td>
                           </tr>
                         );
                       })}
@@ -330,17 +330,17 @@ export default function AnalyticsPage() {
                 Recent Activity
               </h2>
               {data.recentActivity.length === 0 ? (
-                <div className="p-8 border border-[#A7A29A] bg-white text-center text-[#6B4F3F]">
+                <div className="p-8 border border-dust bg-white text-center text-saddle">
                   No recent activity.
                 </div>
               ) : (
                 <div className="space-y-3">
                   {data.recentActivity.map((activity, idx) => {
                     const icon = activity.type === 'signup' ? '👤' : activity.type === 'inquiry' ? '📧' : '💰';
-                    const bgColor = activity.type === 'sale' ? 'bg-[#0E0E0E] text-white' : 'bg-white';
+                    const bgColor = activity.type === 'sale' ? 'bg-charcoal text-white' : 'bg-white';
                     
                     return (
-                      <div key={idx} className={`p-4 border border-[#A7A29A] ${bgColor}`}>
+                      <div key={idx} className={`p-4 border border-dust ${bgColor}`}>
                         <div className="flex items-start justify-between">
                           <div className="flex items-start gap-3">
                             <span className="text-2xl">{icon}</span>
@@ -350,10 +350,10 @@ export default function AnalyticsPage() {
                                 {activity.type === 'inquiry' && `New Inquiry: ${activity.name}`}
                                 {activity.type === 'sale' && `Sale Completed: ${activity.name}`}
                               </div>
-                              <div className={`text-sm ${activity.type === 'sale' ? 'text-gray-300' : 'text-[#6B4F3F]'}`}>
+                              <div className={`text-sm ${activity.type === 'sale' ? 'text-dust/60' : 'text-saddle'}`}>
                                 {activity.details}
                               </div>
-                              <div className={`text-xs mt-1 ${activity.type === 'sale' ? 'text-gray-400' : 'text-[#A7A29A]'}`}>
+                              <div className={`text-xs mt-1 ${activity.type === 'sale' ? 'text-dust' : 'text-dust'}`}>
                                 Source: {activity.source || 'organic'}
                               </div>
                             </div>
@@ -364,7 +364,7 @@ export default function AnalyticsPage() {
                                 {formatCurrency(activity.amount)}
                               </div>
                             )}
-                            <div className={`text-xs ${activity.type === 'sale' ? 'text-gray-400' : 'text-[#A7A29A]'}`}>
+                            <div className={`text-xs ${activity.type === 'sale' ? 'text-dust' : 'text-dust'}`}>
                               {formatDate(activity.date)}
                             </div>
                           </div>
@@ -385,21 +385,21 @@ export default function AnalyticsPage() {
                     Referral Pipeline
                   </h2>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                    <div className="p-4 border border-[#A7A29A] bg-white text-center">
+                    <div className="p-4 border border-dust bg-white text-center">
                       <div className="text-2xl font-[family-name:var(--font-serif)]">{(data as any).referralStats.total}</div>
-                      <div className="text-xs text-[#6B4F3F]">Total Referrals</div>
+                      <div className="text-xs text-saddle">Total Referrals</div>
                     </div>
-                    <div className="p-4 border border-yellow-300 bg-yellow-50 text-center">
-                      <div className="text-2xl font-[family-name:var(--font-serif)] text-yellow-700">{(data as any).referralStats.pending}</div>
-                      <div className="text-xs text-yellow-700">Pending Approval</div>
+                    <div className="p-4 border border-amber/60 bg-amber/10 text-center">
+                      <div className="text-2xl font-[family-name:var(--font-serif)] text-amber-dark">{(data as any).referralStats.pending}</div>
+                      <div className="text-xs text-amber-dark">Pending Approval</div>
                     </div>
-                    <div className="p-4 border border-green-300 bg-green-50 text-center">
-                      <div className="text-2xl font-[family-name:var(--font-serif)] text-green-700">{(data as any).referralStats.closedWon}</div>
-                      <div className="text-xs text-green-700">Closed Won</div>
+                    <div className="p-4 border border-sage/40 bg-sage/10 text-center">
+                      <div className="text-2xl font-[family-name:var(--font-serif)] text-sage-dark">{(data as any).referralStats.closedWon}</div>
+                      <div className="text-xs text-sage-dark">Closed Won</div>
                     </div>
-                    <div className="p-4 border border-[#A7A29A] bg-white text-center">
+                    <div className="p-4 border border-dust bg-white text-center">
                       <div className="text-2xl font-[family-name:var(--font-serif)]">{(data as any).referralStats.avgDaysToClose}d</div>
-                      <div className="text-xs text-[#6B4F3F]">Avg Days to Close</div>
+                      <div className="text-xs text-saddle">Avg Days to Close</div>
                     </div>
                   </div>
 
@@ -408,7 +408,7 @@ export default function AnalyticsPage() {
                       <h3 className="text-lg font-medium mb-3">Revenue by State</h3>
                       <div className="space-y-2">
                         {(data as any).referralStats.revenueByState.slice(0, 10).map((s: any) => (
-                          <div key={s.state} className="flex items-center justify-between p-3 border border-[#A7A29A] bg-white">
+                          <div key={s.state} className="flex items-center justify-between p-3 border border-dust bg-white">
                             <span className="font-medium">{s.state}</span>
                             <span className="font-[family-name:var(--font-serif)]">{formatCurrency(s.revenue)}</span>
                           </div>
@@ -420,21 +420,21 @@ export default function AnalyticsPage() {
                   <div>
                     <h3 className="text-lg font-medium mb-3">Intent Score Correlation</h3>
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="p-4 border border-green-300 bg-green-50">
-                        <div className="text-sm text-green-700 font-medium">High Intent</div>
-                        <div className="text-2xl font-[family-name:var(--font-serif)] text-green-800">
+                      <div className="p-4 border border-sage/40 bg-sage/10">
+                        <div className="text-sm text-sage-dark font-medium">High Intent</div>
+                        <div className="text-2xl font-[family-name:var(--font-serif)] text-sage-dark">
                           {((data as any).referralStats.intentCorrelation.high.rate * 100).toFixed(0)}%
                         </div>
-                        <div className="text-xs text-green-700">
+                        <div className="text-xs text-sage-dark">
                           {(data as any).referralStats.intentCorrelation.high.closed}/{(data as any).referralStats.intentCorrelation.high.total} closed
                         </div>
                       </div>
-                      <div className="p-4 border border-yellow-300 bg-yellow-50">
-                        <div className="text-sm text-yellow-700 font-medium">Medium Intent</div>
-                        <div className="text-2xl font-[family-name:var(--font-serif)] text-yellow-800">
+                      <div className="p-4 border border-amber/60 bg-amber/10">
+                        <div className="text-sm text-amber-dark font-medium">Medium Intent</div>
+                        <div className="text-2xl font-[family-name:var(--font-serif)] text-amber-dark">
                           {((data as any).referralStats.intentCorrelation.medium.rate * 100).toFixed(0)}%
                         </div>
-                        <div className="text-xs text-yellow-700">
+                        <div className="text-xs text-amber-dark">
                           {(data as any).referralStats.intentCorrelation.medium.closed}/{(data as any).referralStats.intentCorrelation.medium.total} closed
                         </div>
                       </div>
@@ -449,25 +449,25 @@ export default function AnalyticsPage() {
               <div className="flex flex-wrap gap-4 justify-center">
                 <Link
                   href="/admin/referrals"
-                  className="px-6 py-3 bg-[#0E0E0E] text-[#F4F1EC] hover:bg-[#2A2A2A] transition-colors"
+                  className="px-6 py-3 bg-charcoal text-bone hover:bg-divider transition-colors"
                 >
                   Referral Queue
                 </Link>
                 <Link
                   href="/admin/commissions"
-                  className="px-6 py-3 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                  className="px-6 py-3 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
                 >
                   Commission Ledger
                 </Link>
                 <Link
                   href="/admin/heatmap"
-                  className="px-6 py-3 border border-[#A7A29A] hover:bg-[#A7A29A] transition-colors"
+                  className="px-6 py-3 border border-dust hover:bg-dust transition-colors"
                 >
                   State Heatmap
                 </Link>
                 <Link
                   href="/admin/broadcast"
-                  className="px-6 py-3 border border-[#A7A29A] hover:bg-[#A7A29A] transition-colors"
+                  className="px-6 py-3 border border-dust hover:bg-dust transition-colors"
                 >
                   Broadcast Email
                 </Link>

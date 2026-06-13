@@ -189,7 +189,7 @@ export default function QualifyPage({
               <span>Step {step + 1} of {totalSteps}</span>
               <span>{progress}% qualified</span>
             </div>
-            <div className="h-2 bg-dust/50 overflow-hidden">
+            <div className="h-1.5 bg-dust overflow-hidden">
               <div
                 className="h-full bg-charcoal transition-all duration-500"
                 style={{ width: `${progress}%` }}

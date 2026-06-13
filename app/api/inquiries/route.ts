@@ -2,11 +2,28 @@ import { NextResponse } from 'next/server';
 import { createRecord, getAllRecords, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendInquiryToRancher, sendInquiryAlertToAdmin } from '@/lib/email';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
   try {
+    const ip = getRequestIp(request);
+    const rlMin = await rateLimit(`inquiry:${ip}`, { requests: 3, window: '1m' });
+    if (!rlMin.ok) {
+      return NextResponse.json(
+        { error: 'Too many inquiries from this network — wait a minute and try again.' },
+        { status: 429 }
+      );
+    }
+    const rlHour = await rateLimit(`inquiry-hr:${ip}`, { requests: 10, window: '1h' });
+    if (!rlHour.ok) {
+      return NextResponse.json(
+        { error: 'Too many inquiries from this network in the past hour. Email ben@buyhalfcow.com if this is wrong.' },
+        { status: 429 }
+      );
+    }
+
     let body: any;
     try {
       body = await request.json();

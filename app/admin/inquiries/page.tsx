@@ -233,20 +233,20 @@ export default function AdminInquiriesPage() {
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
-      case 'pending': return 'bg-yellow-600';
-      case 'approved': return 'bg-green-600';
-      case 'rejected': return 'bg-[#8C2F2F]';
-      case 'sent': return 'bg-[#A7A29A]';
-      case 'replied': return 'bg-[#6B4F3F]';
-      case 'sale_completed': return 'bg-[#0E0E0E]';
-      case 'no_sale': return 'bg-[#8C2F2F]';
+      case 'pending': return 'bg-amber-dark';
+      case 'approved': return 'bg-sage';
+      case 'rejected': return 'bg-weathered';
+      case 'sent': return 'bg-dust';
+      case 'replied': return 'bg-saddle';
+      case 'sale_completed': return 'bg-charcoal';
+      case 'no_sale': return 'bg-weathered';
       // Wholesale statuses
-      case 'new': return 'bg-yellow-600';
-      case 'routed': return 'bg-[#6B4F3F]';
-      case 'quoted': return 'bg-blue-600';
-      case 'closed won': return 'bg-green-600';
-      case 'closed lost': return 'bg-[#8C2F2F]';
-      default: return 'bg-[#A7A29A]';
+      case 'new': return 'bg-amber-dark';
+      case 'routed': return 'bg-saddle';
+      case 'quoted': return 'bg-charcoal';
+      case 'closed won': return 'bg-sage';
+      case 'closed lost': return 'bg-weathered';
+      default: return 'bg-dust';
     }
   };
 
@@ -285,7 +285,7 @@ export default function AdminInquiriesPage() {
   if (loading) {
     return (
       <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+        <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container>
             <p className="text-center">Loading inquiries...</p>
           </Container>
@@ -296,7 +296,7 @@ export default function AdminInquiriesPage() {
 
   return (
     <AdminAuthGuard>
-      <main className="min-h-screen py-24 bg-[#F4F1EC] text-[#0E0E0E]">
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="space-y-8">
           {/* Header */}
@@ -305,14 +305,14 @@ export default function AdminInquiriesPage() {
               <h1 className="font-[family-name:var(--font-serif)] text-4xl mb-2">
                 Inquiry Management
               </h1>
-              <p className="text-[#6B4F3F]">
+              <p className="text-saddle">
                 Track member inquiries and commission revenue
               </p>
             </div>
             <div className="flex gap-2">
               <Link 
                 href="/admin" 
-                className="px-4 py-2 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors"
+                className="px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
               >
                 ← Back to Admin
               </Link>
@@ -321,7 +321,7 @@ export default function AdminInquiriesPage() {
                   await fetch('/api/admin/auth', { method: 'DELETE' });
                   window.location.href = '/admin/login';
                 }}
-                className="px-4 py-2 text-sm border border-[#8C2F2F] text-[#8C2F2F] hover:bg-[#8C2F2F] hover:text-white transition-colors"
+                className="px-4 py-2 text-sm border border-weathered text-weathered hover:bg-weathered hover:text-white transition-colors"
               >
                 Logout
               </button>
@@ -332,27 +332,27 @@ export default function AdminInquiriesPage() {
 
           {/* Commission Summary */}
           <div className="grid md:grid-cols-4 gap-4">
-            <div className="p-6 border border-[#A7A29A] bg-white">
-              <div className="text-sm text-[#6B4F3F] mb-1">Total Inquiries</div>
+            <div className="p-6 border border-dust bg-white">
+              <div className="text-sm text-saddle mb-1">Total Inquiries</div>
               <div className="text-3xl font-[family-name:var(--font-serif)]">
                 {inquiries.length}
               </div>
             </div>
-            <div className="p-6 border border-[#A7A29A] bg-white">
-              <div className="text-sm text-[#6B4F3F] mb-1">Completed Sales</div>
+            <div className="p-6 border border-dust bg-white">
+              <div className="text-sm text-saddle mb-1">Completed Sales</div>
               <div className="text-3xl font-[family-name:var(--font-serif)]">
                 {completedSales.length}
               </div>
             </div>
-            <div className="p-6 border border-[#A7A29A] bg-white">
-              <div className="text-sm text-[#6B4F3F] mb-1">Total Commission</div>
+            <div className="p-6 border border-dust bg-white">
+              <div className="text-sm text-saddle mb-1">Total Commission</div>
               <div className="text-3xl font-[family-name:var(--font-serif)]">
                 ${totalCommission.toFixed(2)}
               </div>
             </div>
-            <div className="p-6 border border-[#A7A29A] bg-white">
-              <div className="text-sm text-[#6B4F3F] mb-1">Unpaid Commission</div>
-              <div className="text-3xl font-[family-name:var(--font-serif)] text-[#8C2F2F]">
+            <div className="p-6 border border-dust bg-white">
+              <div className="text-sm text-saddle mb-1">Unpaid Commission</div>
+              <div className="text-3xl font-[family-name:var(--font-serif)] text-weathered">
                 ${unpaidCommission.toFixed(2)}
               </div>
             </div>
@@ -363,12 +363,12 @@ export default function AdminInquiriesPage() {
           {/* Inquiries List */}
           <div className="space-y-4">
             {inquiries.length === 0 ? (
-              <div className="p-12 border border-[#A7A29A] text-center">
-                <p className="text-[#6B4F3F]">No inquiries yet.</p>
+              <div className="p-12 border border-dust text-center">
+                <p className="text-saddle">No inquiries yet.</p>
               </div>
             ) : (
               inquiries.map((inquiry) => (
-                <div key={inquiry.id} className="p-6 border border-[#A7A29A] bg-white space-y-4">
+                <div key={inquiry.id} className="p-6 border border-dust bg-white space-y-4">
                   {editingId === inquiry.id ? (
                     // Edit Mode
                     <div className="space-y-4">
@@ -377,20 +377,20 @@ export default function AdminInquiriesPage() {
                           <h3 className="font-[family-name:var(--font-serif)] text-xl">
                             {inquiry.consumer_name} → {inquiry.ranchers.ranch_name}
                           </h3>
-                          <p className="text-sm text-[#6B4F3F]">
+                          <p className="text-sm text-saddle">
                             {formatDate(inquiry.created_at)} • ID: {inquiry.id.slice(0, 8)}
                           </p>
                         </div>
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleUpdate(inquiry.id)}
-                            className="px-4 py-2 bg-[#0E0E0E] text-[#F4F1EC] text-sm"
+                            className="px-4 py-2 bg-charcoal text-bone text-sm"
                           >
                             Save
                           </button>
                           <button
                             onClick={() => setEditingId(null)}
-                            className="px-4 py-2 border border-[#A7A29A] text-sm"
+                            className="px-4 py-2 border border-dust text-sm"
                           >
                             Cancel
                           </button>
@@ -403,7 +403,7 @@ export default function AdminInquiriesPage() {
                           <select
                             value={editData.status}
                             onChange={(e) => setEditData({ ...editData, status: e.target.value })}
-                            className="w-full px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC]"
+                            className="w-full px-3 py-2 border border-dust bg-bone"
                           >
                             {inquiry.interest_type === 'Wholesale' ? (
                               <>
@@ -432,7 +432,7 @@ export default function AdminInquiriesPage() {
                             step="0.01"
                             value={editData.sale_amount}
                             onChange={(e) => setEditData({ ...editData, sale_amount: e.target.value })}
-                            className="w-full px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC]"
+                            className="w-full px-3 py-2 border border-dust bg-bone"
                             placeholder="0.00"
                           />
                         </div>
@@ -452,7 +452,7 @@ export default function AdminInquiriesPage() {
                           <textarea
                             value={editData.notes}
                             onChange={(e) => setEditData({ ...editData, notes: e.target.value })}
-                            className="w-full px-3 py-2 border border-[#A7A29A] bg-[#F4F1EC]"
+                            className="w-full px-3 py-2 border border-dust bg-bone"
                             rows={3}
                             placeholder="Internal notes..."
                           />
@@ -469,7 +469,7 @@ export default function AdminInquiriesPage() {
                               {inquiry.interest_type === 'Wholesale' ? (
                                 <>
                                   {inquiry.business_name || inquiry.consumer_name}
-                                  <span className="ml-2 text-sm text-[#6B4F3F] font-normal">
+                                  <span className="ml-2 text-sm text-saddle font-normal">
                                     ({inquiry.consumer_name})
                                   </span>
                                 </>
@@ -477,16 +477,16 @@ export default function AdminInquiriesPage() {
                                 <>{inquiry.consumer_name} → {inquiry.ranchers.ranch_name}</>
                               )}
                             </h3>
-                            <span className={`px-3 py-1 text-[#F4F1EC] text-xs uppercase ${getStatusColor(inquiry.status)}`}>
+                            <span className={`px-3 py-1 text-bone text-xs uppercase ${getStatusColor(inquiry.status)}`}>
                               {inquiry.status.replace('_', ' ')}
                             </span>
                             {inquiry.interest_type === 'Wholesale' && (
-                              <span className="px-2 py-0.5 bg-[#0E0E0E] text-[#F4F1EC] text-[10px] uppercase tracking-wider">
+                              <span className="px-2 py-0.5 bg-charcoal text-bone text-[10px] uppercase tracking-wider">
                                 B2B
                               </span>
                             )}
                           </div>
-                          <p className="text-sm text-[#6B4F3F]">
+                          <p className="text-sm text-saddle">
                             {formatDate(inquiry.created_at)} • {interestLabels[inquiry.interest_type] || inquiry.interest_type}
                             {inquiry.buyer_state ? ` • ${inquiry.buyer_state}` : ''}
                           </p>
@@ -505,7 +505,7 @@ export default function AdminInquiriesPage() {
                                     setMatchSelected(inquiry.matched_ranchers?.map((m) => m.id) || []);
                                   }}
                                   disabled={rowBusy === inquiry.id}
-                                  className="px-4 py-2 bg-[#6B4F3F] text-[#F4F1EC] hover:bg-[#0E0E0E] transition-colors text-sm font-medium disabled:opacity-50"
+                                  className="px-4 py-2 bg-saddle text-bone hover:bg-charcoal transition-colors text-sm font-medium disabled:opacity-50"
                                 >
                                   {matchingId === inquiry.id ? 'Cancel match' : 'Match ranchers'}
                                 </button>
@@ -514,7 +514,7 @@ export default function AdminInquiriesPage() {
                                 <button
                                   onClick={() => handleWholesaleTransition(inquiry.id, 'Quoted')}
                                   disabled={rowBusy === inquiry.id}
-                                  className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50"
+                                  className="px-4 py-2 bg-charcoal text-white hover:bg-divider transition-colors text-sm font-medium disabled:opacity-50"
                                 >
                                   Mark Quoted
                                 </button>
@@ -524,14 +524,14 @@ export default function AdminInquiriesPage() {
                                   <button
                                     onClick={() => handleMarkClosedWon(inquiry.id)}
                                     disabled={rowBusy === inquiry.id}
-                                    className="px-4 py-2 bg-green-600 text-white hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50"
+                                    className="px-4 py-2 bg-sage text-white hover:bg-sage-dark transition-colors text-sm font-medium disabled:opacity-50"
                                   >
                                     Closed Won
                                   </button>
                                   <button
                                     onClick={() => handleMarkClosedLost(inquiry.id)}
                                     disabled={rowBusy === inquiry.id}
-                                    className="px-4 py-2 bg-[#8C2F2F] text-white hover:bg-red-800 transition-colors text-sm font-medium disabled:opacity-50"
+                                    className="px-4 py-2 bg-weathered text-white hover:opacity-90 transition-colors text-sm font-medium disabled:opacity-50"
                                   >
                                     Closed Lost
                                   </button>
@@ -544,13 +544,13 @@ export default function AdminInquiriesPage() {
                             <>
                               <button
                                 onClick={() => handleApprove(inquiry.id)}
-                                className="px-4 py-2 bg-green-600 text-white hover:bg-green-700 transition-colors text-sm font-medium"
+                                className="px-4 py-2 bg-sage text-white hover:bg-sage-dark transition-colors text-sm font-medium"
                               >
                                 ✓ Approve
                               </button>
                               <button
                                 onClick={() => handleReject(inquiry.id)}
-                                className="px-4 py-2 bg-[#8C2F2F] text-white hover:bg-red-800 transition-colors text-sm font-medium"
+                                className="px-4 py-2 bg-weathered text-white hover:opacity-90 transition-colors text-sm font-medium"
                               >
                                 ✗ Reject
                               </button>
@@ -558,7 +558,7 @@ export default function AdminInquiriesPage() {
                           )}
                           <button
                             onClick={() => handleEdit(inquiry)}
-                            className="px-4 py-2 border border-[#0E0E0E] hover:bg-[#0E0E0E] hover:text-[#F4F1EC] transition-colors text-sm"
+                            className="px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors text-sm"
                           >
                             Edit
                           </button>
@@ -569,25 +569,25 @@ export default function AdminInquiriesPage() {
 
                       <div className="grid md:grid-cols-2 gap-6">
                         <div>
-                          <h4 className="text-sm font-medium text-[#6B4F3F] mb-2">
+                          <h4 className="text-sm font-medium text-saddle mb-2">
                             {inquiry.interest_type === 'Wholesale' ? 'Buyer Contact' : 'Consumer'}
                           </h4>
                           <p className="text-sm">{inquiry.consumer_name}</p>
-                          <p className="text-sm text-[#6B4F3F]">{inquiry.consumer_email}</p>
-                          <p className="text-sm text-[#6B4F3F]">{inquiry.consumer_phone}</p>
+                          <p className="text-sm text-saddle">{inquiry.consumer_email}</p>
+                          <p className="text-sm text-saddle">{inquiry.consumer_phone}</p>
                         </div>
                         {inquiry.interest_type === 'Wholesale' ? (
                           <div>
-                            <h4 className="text-sm font-medium text-[#6B4F3F] mb-2">
+                            <h4 className="text-sm font-medium text-saddle mb-2">
                               Matched Ranchers ({inquiry.matched_ranchers?.length || 0})
                             </h4>
                             {!inquiry.matched_ranchers || inquiry.matched_ranchers.length === 0 ? (
-                              <p className="text-sm italic text-[#A7A29A]">No ranchers matched yet.</p>
+                              <p className="text-sm italic text-dust">No ranchers matched yet.</p>
                             ) : (
                               <ul className="space-y-1">
                                 {inquiry.matched_ranchers.map((m) => (
                                   <li key={m.id} className="text-sm">
-                                    {m.ranch_name || '(no name)'} — {m.operator_name} <span className="text-[#6B4F3F]">({m.state})</span>
+                                    {m.ranch_name || '(no name)'} — {m.operator_name} <span className="text-saddle">({m.state})</span>
                                   </li>
                                 ))}
                               </ul>
@@ -595,10 +595,10 @@ export default function AdminInquiriesPage() {
                           </div>
                         ) : (
                           <div>
-                            <h4 className="text-sm font-medium text-[#6B4F3F] mb-2">Rancher</h4>
+                            <h4 className="text-sm font-medium text-saddle mb-2">Rancher</h4>
                             <p className="text-sm">{inquiry.ranchers.ranch_name}</p>
-                            <p className="text-sm text-[#6B4F3F]">{inquiry.ranchers.operator_name}</p>
-                            <p className="text-sm text-[#6B4F3F]">{inquiry.ranchers.email}</p>
+                            <p className="text-sm text-saddle">{inquiry.ranchers.operator_name}</p>
+                            <p className="text-sm text-saddle">{inquiry.ranchers.email}</p>
                           </div>
                         )}
                       </div>
@@ -636,32 +636,32 @@ export default function AdminInquiriesPage() {
                         />
                       )}
 
-                      <div className="bg-[#F4F1EC] p-4 border-l-4 border-[#6B4F3F]">
+                      <div className="bg-bone p-4 border-l-4 border-saddle">
                         <p className="text-sm leading-relaxed whitespace-pre-line">{inquiry.message}</p>
                       </div>
 
                       {inquiry.sale_amount && (
-                        <div className="flex items-center justify-between p-4 bg-[#F4F1EC]">
+                        <div className="flex items-center justify-between p-4 bg-bone">
                           <div>
-                            <span className="text-sm text-[#6B4F3F]">Sale Amount:</span>{' '}
+                            <span className="text-sm text-saddle">Sale Amount:</span>{' '}
                             <span className="font-medium">${inquiry.sale_amount.toFixed(2)}</span>
                           </div>
                           <div>
-                            <span className="text-sm text-[#6B4F3F]">Commission (10%):</span>{' '}
+                            <span className="text-sm text-saddle">Commission (10%):</span>{' '}
                             <span className="font-medium">${inquiry.commission_amount?.toFixed(2)}</span>
                           </div>
                           <div>
                             {inquiry.commission_paid ? (
-                              <span className="px-3 py-1 bg-[#0E0E0E] text-[#F4F1EC] text-xs">PAID</span>
+                              <span className="px-3 py-1 bg-charcoal text-bone text-xs">PAID</span>
                             ) : (
-                              <span className="px-3 py-1 bg-[#8C2F2F] text-[#F4F1EC] text-xs">UNPAID</span>
+                              <span className="px-3 py-1 bg-weathered text-bone text-xs">UNPAID</span>
                             )}
                           </div>
                         </div>
                       )}
 
                       {inquiry.notes && (
-                        <div className="text-sm text-[#6B4F3F] italic">
+                        <div className="text-sm text-saddle italic">
                           <strong>Notes:</strong> {inquiry.notes}
                         </div>
                       )}
@@ -704,12 +704,12 @@ function WholesaleMatchDrawer({
     : ranchers.filter((r) => (r.state || '').toUpperCase() === buyerState);
 
   return (
-    <div className="p-4 border border-[#6B4F3F] bg-white space-y-3">
+    <div className="p-4 border border-saddle bg-white space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-medium">
           Pick up to 3 ranchers to route this wholesale buyer to
         </h4>
-        <label className="text-xs flex items-center gap-2 text-[#6B4F3F]">
+        <label className="text-xs flex items-center gap-2 text-saddle">
           <input
             type="checkbox"
             checked={showAll}
@@ -719,21 +719,21 @@ function WholesaleMatchDrawer({
         </label>
       </div>
       {buyerState && (
-        <p className="text-xs text-[#6B4F3F]">
+        <p className="text-xs text-saddle">
           Filtering by buyer state: <strong>{buyerState}</strong>
           {filtered.length === 0 && ' — no ranchers in this state. Toggle "Show all" to pick from anywhere.'}
         </p>
       )}
-      <div className="max-h-64 overflow-y-auto border border-[#A7A29A]">
+      <div className="max-h-64 overflow-y-auto border border-dust">
         {filtered.length === 0 ? (
-          <p className="p-3 text-sm italic text-[#A7A29A]">No ranchers to show.</p>
+          <p className="p-3 text-sm italic text-dust">No ranchers to show.</p>
         ) : (
-          <ul className="divide-y divide-[#F4F1EC]">
+          <ul className="divide-y divide-bone">
             {filtered.map((r) => {
               const checked = selected.includes(r.id);
               const disabled = !checked && selected.length >= 3;
               return (
-                <li key={r.id} className="flex items-center gap-2 p-2 hover:bg-[#F4F1EC]">
+                <li key={r.id} className="flex items-center gap-2 p-2 hover:bg-bone">
                   <input
                     type="checkbox"
                     checked={checked}
@@ -742,9 +742,9 @@ function WholesaleMatchDrawer({
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm truncate">
-                      {r.ranch_name || '(unnamed)'} <span className="text-[#6B4F3F]">— {r.operator_name}</span>
+                      {r.ranch_name || '(unnamed)'} <span className="text-saddle">— {r.operator_name}</span>
                     </p>
-                    <p className="text-xs text-[#A7A29A]">{r.state}</p>
+                    <p className="text-xs text-dust">{r.state}</p>
                   </div>
                 </li>
               );
@@ -753,11 +753,11 @@ function WholesaleMatchDrawer({
         )}
       </div>
       <div className="flex justify-between items-center">
-        <p className="text-xs text-[#6B4F3F]">{selected.length}/3 picked</p>
+        <p className="text-xs text-saddle">{selected.length}/3 picked</p>
         <button
           onClick={onSubmit}
           disabled={busy || selected.length === 0}
-          className="px-4 py-2 bg-[#0E0E0E] text-[#F4F1EC] text-sm font-medium disabled:opacity-50"
+          className="px-4 py-2 bg-charcoal text-bone text-sm font-medium disabled:opacity-50"
         >
           {busy ? 'Routing…' : `Route to ${selected.length || '0'} rancher${selected.length === 1 ? '' : 's'}`}
         </button>

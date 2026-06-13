@@ -5,21 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Toaster } from 'sonner';
 import CommandPalette from './CommandPalette';
-
-const NAV: { label: string; href: string; icon: string; group: string }[] = [
-  { group: 'PIPELINE', icon: '🏠', label: 'Today', href: '/admin/today' },
-  { group: 'PIPELINE', icon: '📨', label: 'Referrals', href: '/admin/referrals' },
-  { group: 'PIPELINE', icon: '📋', label: 'Full Dashboard', href: '/admin' },
-  { group: 'OPS', icon: '💰', label: 'Commissions', href: '/admin/commissions' },
-  { group: 'OPS', icon: '📢', label: 'Broadcast', href: '/admin/broadcast' },
-  { group: 'OPS', icon: '✔️', label: 'Compliance', href: '/admin/compliance' },
-  { group: 'OPS', icon: '🤝', label: 'Affiliates', href: '/admin/affiliates' },
-  { group: 'INSIGHT', icon: '📊', label: 'Analytics', href: '/admin/analytics' },
-  { group: 'INSIGHT', icon: '🪜', label: 'Funnel', href: '/admin/funnel' },
-  { group: 'INSIGHT', icon: '🗺', label: 'Heatmap', href: '/admin/heatmap' },
-  { group: 'INSIGHT', icon: '📬', label: 'Inquiries', href: '/admin/inquiries' },
-  { group: 'INSIGHT', icon: '🗃', label: 'Backfill', href: '/admin/backfill' },
-];
+import { ADMIN_NAV, ADMIN_NAV_GROUPS, activeNavHref } from './nav';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -69,35 +55,35 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (authed === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F4F1EC]">
-        <div className="w-8 h-8 border-4 border-[#0E0E0E] border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-bone">
+        <div className="w-8 h-8 border-4 border-charcoal border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   if (!authed) return null;
 
-  const groups = Array.from(new Set(NAV.map((n) => n.group)));
+  const activeHref = activeNavHref(pathname);
 
   return (
-    <div className="min-h-screen bg-[#F4F1EC] text-[#0E0E0E]">
+    <div className="min-h-screen bg-bone text-charcoal">
       {/* Mobile top bar */}
-      <div className="lg:hidden sticky top-0 z-40 flex items-center justify-between bg-white border-b border-[#A7A29A] px-4 py-3">
+      <div className="lg:hidden sticky top-0 z-40 flex items-center justify-between bg-white border-b border-dust px-4 py-3">
         <button
           onClick={() => setSidebarOpen(true)}
           className="p-2 -ml-2"
           aria-label="Open navigation"
         >
-          <span className="block w-5 h-0.5 bg-[#0E0E0E] mb-1" />
-          <span className="block w-5 h-0.5 bg-[#0E0E0E] mb-1" />
-          <span className="block w-5 h-0.5 bg-[#0E0E0E]" />
+          <span className="block w-5 h-0.5 bg-charcoal mb-1" />
+          <span className="block w-5 h-0.5 bg-charcoal mb-1" />
+          <span className="block w-5 h-0.5 bg-charcoal" />
         </button>
-        <Link href="/admin/today" className="font-[family-name:var(--font-serif)] text-lg">
+        <Link href="/admin/today/v2" className="font-[family-name:var(--font-serif)] text-lg">
           BuyHalfCow · Admin
         </Link>
         <button
           onClick={() => (document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true })))}
-          className="text-xs text-[#6B4F3F]"
+          className="text-xs text-saddle"
           aria-label="Search"
         >
           🔍
@@ -109,38 +95,35 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <aside
           className={`${
             sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          } fixed lg:sticky lg:top-0 lg:translate-x-0 z-50 inset-y-0 left-0 w-64 bg-white border-r border-[#A7A29A] h-screen overflow-y-auto transition-transform lg:transition-none`}
+          } fixed lg:sticky lg:top-0 lg:translate-x-0 z-50 inset-y-0 left-0 w-64 bg-white border-r border-dust h-screen overflow-y-auto transition-transform lg:transition-none`}
         >
-          <div className="p-5 border-b border-[#A7A29A]">
+          <div className="p-5 border-b border-dust">
             <Link
-              href="/admin/today"
+              href="/admin/today/v2"
               className="block font-[family-name:var(--font-serif)] text-xl"
               onClick={() => setSidebarOpen(false)}
             >
               BuyHalfCow
             </Link>
-            <p className="text-xs text-[#6B4F3F] mt-0.5">Admin</p>
+            <p className="text-xs text-saddle mt-0.5">Admin</p>
             <button
               onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
-              className="mt-3 w-full flex items-center justify-between px-3 py-2 text-sm border border-[#A7A29A] hover:border-[#0E0E0E] bg-[#F4F1EC]"
+              className="mt-3 w-full flex items-center justify-between px-3 py-2 text-sm border border-dust hover:border-charcoal bg-bone"
             >
-              <span className="text-[#6B4F3F]">Search…</span>
-              <kbd className="text-xs text-[#A7A29A] font-mono">⌘K</kbd>
+              <span className="text-saddle">Search…</span>
+              <kbd className="text-xs text-dust font-mono">⌘K</kbd>
             </button>
           </div>
 
           <nav className="p-3 space-y-5">
-            {groups.map((g) => (
+            {ADMIN_NAV_GROUPS.map((g) => (
               <div key={g}>
-                <p className="text-[10px] font-semibold text-[#A7A29A] tracking-widest px-2 mb-1">
+                <p className="text-[10px] font-semibold text-dust tracking-widest px-2 mb-1">
                   {g}
                 </p>
                 <ul className="space-y-0.5">
-                  {NAV.filter((n) => n.group === g).map((item) => {
-                    const active =
-                      item.href === '/admin'
-                        ? pathname === '/admin'
-                        : pathname.startsWith(item.href);
+                  {ADMIN_NAV.filter((n) => n.group === g).map((item) => {
+                    const active = item.href === activeHref;
                     return (
                       <li key={item.href}>
                         <Link
@@ -148,8 +131,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           onClick={() => setSidebarOpen(false)}
                           className={`flex items-center gap-2 px-2 py-1.5 text-sm rounded ${
                             active
-                              ? 'bg-[#0E0E0E] text-[#F4F1EC]'
-                              : 'text-[#0E0E0E] hover:bg-[#F4F1EC]'
+                              ? 'bg-charcoal text-bone'
+                              : 'text-charcoal hover:bg-bone'
                           }`}
                         >
                           <span className="w-5 text-center">{item.icon}</span>
@@ -163,13 +146,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             ))}
           </nav>
 
-          <div className="p-3 border-t border-[#A7A29A] mt-4">
+          <div className="p-3 border-t border-dust mt-4">
             <button
               onClick={async () => {
                 await fetch('/api/admin/auth', { method: 'DELETE' });
                 router.push('/admin/login');
               }}
-              className="w-full text-left px-2 py-1.5 text-sm text-[#6B4F3F] hover:bg-[#F4F1EC] rounded"
+              className="w-full text-left px-2 py-1.5 text-sm text-saddle hover:bg-bone rounded"
             >
               Log out
             </button>

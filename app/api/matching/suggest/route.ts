@@ -468,46 +468,6 @@ export async function POST(request: Request) {
       return effective <= budgetCeiling * BUDGET_TOLERANCE;
     };
 
-    // ── 5 BAR BEEF (FRANK FITZPATRICK) PER-RANCHER POLICY ────────────────
-    // Frank only wants higher-commitment leads in CA: Half or Whole share
-    // AND budget over $2000. Other CA ranchers are unaffected — non-
-    // qualifying CA buyers still route to whoever else is available;
-    // Frank's record just gets excluded from the candidate pool.
-    //
-    // Identifier: Slug is the canonical ID used everywhere else for
-    // rancher lookup (see directMatchRancher below), so we match on it
-    // first. We also fall back to a Ranch Name match on "5 Bar Beef" so
-    // a slug rename for marketing doesn't silently undo this filter.
-    // Operator Name is intentionally NOT used — nicknames and name
-    // formatting drift more than business identity. If Frank's slug or
-    // brand changes, update the two constants below.
-    //
-    // Only "$2000+" represents a budget strictly greater than $2000; the
-    // other ranges all top out at or below $2000. "Unsure"/blank doesn't
-    // qualify either — no committed budget = no Frank.
-    const FIVE_BAR_BEEF_SLUG = '5-bar-beef';
-    const FIVE_BAR_BEEF_NAME_REGEX = /5\s*bar\s*beef/i;
-    const isFiveBarBeefRancher = (r: any): boolean => {
-      const slug = (r['Slug'] || '').toString().trim().toLowerCase();
-      const ranchName = (r['Ranch Name'] || '').toString();
-      return slug === FIVE_BAR_BEEF_SLUG || FIVE_BAR_BEEF_NAME_REGEX.test(ranchName);
-    };
-    const buyerBudgetOver2k = (() => {
-      const r = (budgetRange || '').trim().toLowerCase().replace(/\s/g, '');
-      return r === '$2000+' || r === '2000+';
-    })();
-    const buyerTierIsHalfOrWhole = buyerTier === 'Half' || buyerTier === 'Whole';
-    const buyerQualifiesForFiveBarBeef = buyerTierIsHalfOrWhole && buyerBudgetOver2k;
-    const passesFiveBarBeefPolicy = (_r: any): boolean => {
-      // DEPRECATED: was per-rancher hardcode for Frank Fitzpatrick to filter
-      // Quarter buyers + buyers under $2000. Replaced with the canonical
-      // Tier Specialty field on the Ranchers table. The isTierFit() filter
-      // earlier in the chain already enforces tier match. Returning true
-      // here keeps the call site valid until the function can be removed
-      // (separate PR — call sites may be inlined elsewhere).
-      return true;
-    };
-
     // ── PRIORITY: If lead came from a specific rancher's page, assign to THAT rancher ──
     // Direct page leads have explicit intent for THIS rancher, so we bypass the
     // soft capacity cap (the post-INCR 1.2× hard ceiling still applies). But we
@@ -581,10 +541,6 @@ export async function POST(request: Request) {
         // get routed to Half/Whole-only ranchers, etc. Empty Tier Specialty =
         // no filter applied (legacy default).
         if (!isTierFit(r)) return false;
-        // 5 Bar Beef per-rancher policy — see helper above. Excludes Frank
-        // from the candidate pool when the buyer doesn't meet his Half/Whole
-        // + budget>$2000 bar. Other CA ranchers are unaffected.
-        if (!passesFiveBarBeefPolicy(r)) return false;
         return true;
       });
       const localEligible = localEligibleAll.filter(isPriceFit);

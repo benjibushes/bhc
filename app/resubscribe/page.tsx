@@ -47,10 +47,10 @@ function ResubscribeContent() {
         setSubmitted(true);
       } else {
         const body = await res.json().catch(() => ({}));
-        setSubmitError(body?.error || 'Something went wrong. Email hi@buyhalfcow.com and we will sort it out.');
+        setSubmitError(body?.error || 'Could not resubscribe you - the server rejected the request. Email hello@buyhalfcow.com and we will sort it out.');
       }
     } catch {
-      setSubmitError('Something went wrong. Email hi@buyhalfcow.com and we will sort it out.');
+      setSubmitError('Could not resubscribe you - the server rejected the request. Email hello@buyhalfcow.com and we will sort it out.');
     } finally {
       setLoading(false);
     }
@@ -67,8 +67,8 @@ function ResubscribeContent() {
               </h1>
               <p className="text-saddle leading-relaxed mb-6">
                 {tokenError}. Email{' '}
-                <a href="mailto:hi@buyhalfcow.com" className="text-charcoal hover:underline transition-base">
-                  hi@buyhalfcow.com
+                <a href="mailto:hello@buyhalfcow.com" className="text-charcoal hover:underline transition-base">
+                  hello@buyhalfcow.com
                 </a>{' '}
                 and we&apos;ll add you back manually.
               </p>

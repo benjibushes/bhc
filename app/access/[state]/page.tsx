@@ -233,7 +233,7 @@ export default async function AccessStatePage({ params }: Props) {
                   href={`/ranchers/${r.slug}`}
                   className="group block border border-dust bg-white hover:border-saddle transition-colors"
                 >
-                  <div className="h-40 bg-bone flex items-center justify-center overflow-hidden">
+                  <div className="h-28 sm:h-40 bg-bone flex items-center justify-center overflow-hidden">
                     {r.logoUrl ? (
                       <Image
                         src={r.logoUrl}

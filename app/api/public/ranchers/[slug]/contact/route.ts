@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getRancherBySlug, getAllRecords, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTrackedContactEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 60;
 
@@ -15,6 +16,22 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   try {
+    const ip = getRequestIp(request);
+    const rlMin = await rateLimit(`contact:${ip}`, { requests: 3, window: '1m' });
+    if (!rlMin.ok) {
+      return NextResponse.json(
+        { error: 'Too many messages from this network — wait a minute and try again.' },
+        { status: 429 }
+      );
+    }
+    const rlHour = await rateLimit(`contact-hr:${ip}`, { requests: 10, window: '1h' });
+    if (!rlHour.ok) {
+      return NextResponse.json(
+        { error: 'Too many messages from this network in the past hour. Email ben@buyhalfcow.com if this is wrong.' },
+        { status: 429 }
+      );
+    }
+
     const { slug } = await params;
 
     let body: any;

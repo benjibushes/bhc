@@ -20,6 +20,7 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import { normalizeState } from '@/lib/states';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
+import { metaEventId } from '@/lib/analytics';
 
 export const maxDuration = 60;
 
@@ -246,7 +247,7 @@ export async function POST(request: Request) {
         event_name: 'Lead',
         event_time: Math.floor(Date.now() / 1000),
         event_source_url: `${SITE_URL}/wholesale`,
-        event_id: recordId,
+        event_id: metaEventId(recordId),
         action_source: 'website',
         user_data: buildUserData({
           email,

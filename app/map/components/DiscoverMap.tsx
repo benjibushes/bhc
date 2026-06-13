@@ -128,18 +128,18 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
                 setStateFilter('');
                 setProductFilter('');
               }}
-              className="text-xs underline text-[#6B4F3F] hover:text-[#0E0E0E]"
+              className="text-xs underline text-saddle hover:text-charcoal"
             >
               Clear filters
             </button>
           )}
         </div>
-        <p className="text-xs text-[#A7A29A]">
+        <p className="text-xs text-dust">
           Showing {filtered.length} of {pins.length}
         </p>
       </div>
 
-      <div className="border border-[#A7A29A] overflow-hidden h-[420px] md:h-[600px]">
+      <div className="border border-dust overflow-hidden h-[420px] md:h-[600px]">
         <MapContainer
           center={DEFAULT_CENTER}
           zoom={DEFAULT_ZOOM}

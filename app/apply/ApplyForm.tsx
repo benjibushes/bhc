@@ -431,7 +431,7 @@ export default function ApplyForm() {
       </div>
 
       {error && (
-        <div className="p-3 border border-[#8C2F2F] text-[#8C2F2F] text-sm">
+        <div className="p-3 border border-weathered text-weathered text-sm">
           {error}
         </div>
       )}

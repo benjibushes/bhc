@@ -17,6 +17,7 @@ interface NewsPost {
 export default function NewsPage() {
   const [posts, setPosts] = useState<NewsPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     fetchPosts();
@@ -26,9 +27,15 @@ export default function NewsPage() {
     try {
       const response = await fetch('/api/news');
       const data = await response.json();
-      setPosts(data);
+      // Drop records that can't render (no title or slug) — half-filled
+      // Airtable rows shouldn't produce blank articles on the public feed.
+      const publishable = Array.isArray(data)
+        ? data.filter((p: NewsPost) => p?.title && p?.slug)
+        : [];
+      setPosts(publishable);
     } catch (error) {
       console.error('Error fetching news:', error);
+      setLoadError(true);
     }
     setLoading(false);
   };
@@ -38,7 +45,7 @@ export default function NewsPage() {
       <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="text-center">
-            <p className="text-lg text-saddle">Loading...</p>
+            <p className="text-lg text-saddle">Pulling the latest from the ranch...</p>
           </div>
         </Container>
       </main>
@@ -61,7 +68,13 @@ export default function NewsPage() {
           </div>
 
           {/* Posts List */}
-          {posts.length === 0 ? (
+          {loadError && !loading ? (
+            <div className="text-center py-12">
+              <p className="text-lg text-saddle">
+                Couldn&apos;t load the news feed - the server didn&apos;t respond. Refresh the page, or check back in a few minutes.
+              </p>
+            </div>
+          ) : posts.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-lg text-saddle">
                 No posts yet. Check back soon for updates.
@@ -81,11 +94,13 @@ export default function NewsPage() {
                       </Link>
                     </h2>
                     <div className="flex gap-4 text-sm text-saddle">
-                      <span>{new Date(post.published_date).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                      })}</span>
+                      {post.published_date && !Number.isNaN(new Date(post.published_date).getTime()) && (
+                        <span>{new Date(post.published_date).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric'
+                        })}</span>
+                      )}
                       {post.author && <span>by {post.author}</span>}
                     </div>
                   </div>

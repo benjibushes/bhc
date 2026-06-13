@@ -1,6 +1,6 @@
 export default function MapLegend() {
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-[#0E0E0E]/80">
+    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-charcoal/80">
       <div className="flex items-start gap-2">
         <span
           aria-hidden

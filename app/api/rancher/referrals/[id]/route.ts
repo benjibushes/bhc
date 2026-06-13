@@ -585,7 +585,7 @@ export async function PATCH(
         const rancherForCheck = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
         if (!hasLockedCommissionRate(rancherForCheck)) {
           return NextResponse.json({
-            error: 'No Commission Rate locked on your account. Contact support@buyhalfcow.com to set this before closing deals.',
+            error: 'No Commission Rate locked on your account. Contact hello@buyhalfcow.com to set this before closing deals.',
           }, { status: 400 });
         }
       } catch (e) {
@@ -605,7 +605,7 @@ export async function PATCH(
       if (isClosedRow) {
         return NextResponse.json({
           error:
-            'Sale Amount cannot be edited on a closed deal — invoice would drift. Contact support@buyhalfcow.com to cancel and reissue.',
+            'Sale Amount cannot be edited on a closed deal — invoice would drift. Contact hello@buyhalfcow.com to cancel and reissue.',
         }, { status: 400 });
       }
       fields['Sale Amount'] = saleAmount;
