@@ -1378,6 +1378,142 @@ export async function sendRancherApproval(data: {
 }
 
 // =====================================================
+// RANCHER REACTIVATION CAMPAIGN EMAILS (warm + cold)
+//
+// Staggered "book a v2 call or remove yourself" campaign to dormant
+// legacy ranchers. Both templates carry a Book CTA (Ben's Cal link) and
+// a Remove CTA (the existing one-click unsubscribe flow). Whitelisted in
+// emailFrequencyGuard so the 3/week cap can't silently drop them.
+// Sent by app/api/cron/rancher-reactivation (flag-gated).
+// =====================================================
+
+// Ben's 15-min booking link. Single source for both reactivation templates.
+const REACTIVATION_CAL_URL = 'https://cal.com/ben-beauchman-1itnsg/15min';
+
+// Tier A — WARM. Legacy ranchers who got partway through onboarding
+// (Call Complete / Docs Sent / Verification Complete) but never went live.
+export async function sendRancherReactivationWarm(data: {
+  firstName: string;
+  ranchName: string;
+  state?: string;
+  email: string;
+}) {
+  const first = (data.firstName || '').trim() || 'there';
+  const subject = `still want buyers from us, ${first}?`;
+  const bookUrl = REACTIVATION_CAL_URL;
+  const removeUrl = getUnsubscribeUrl(data.email);
+  return guardedSend({
+    templateName: 'sendRancherReactivationWarm',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px 0; }
+            p { margin: 16px 0; color: #6B4F3F; }
+            .button { display: inline-block; padding: 14px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: bold; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+            .button-secondary { display: inline-block; padding: 12px 28px; background: #FFFFFF; color: #0E0E0E !important; text-decoration: none; font-weight: bold; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; border: 1px solid #0E0E0E; }
+            .divider { height: 1px; background: #A7A29A; margin: 28px 0; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Still want buyers from us?</h1>
+            <p>Hi ${esc(first)},</p>
+            <p>We're putting BuyHalfCow ranchers on direct deposits, and I'm running every buyer call myself now.</p>
+            <p>To keep sending you buyers I need about 15 minutes to get ${esc(data.ranchName)} set up on the new flow. Pick a time and I'll handle the rest.</p>
+            <div style="text-align:center;margin:28px 0;">
+              <a href="${esc(bookUrl)}" class="button">Book a 15-min call</a>
+            </div>
+            <p>If you're not taking orders anymore, no problem — remove yourself below and I'll close it out.</p>
+            <div style="text-align:center;margin:14px 0;">
+              <a href="${esc(removeUrl)}" class="button-secondary">Remove me</a>
+            </div>
+            <div class="divider"></div>
+            <p style="font-size:13px;">Reply to this email if you've got a question instead.</p>
+            <div class="footer">
+              <p>— Ben<br>BuyHalfCow</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    }),
+  });
+}
+
+// Tier B — COLD. Legacy ranchers listed but never onboarded (blank
+// Onboarding Status). Harder cleanup-or-book ask.
+export async function sendRancherReactivationCold(data: {
+  firstName: string;
+  ranchName: string;
+  email: string;
+}) {
+  const first = (data.firstName || '').trim() || 'there';
+  const subject = 'closing your BuyHalfCow listing unless…';
+  const bookUrl = REACTIVATION_CAL_URL;
+  const removeUrl = getUnsubscribeUrl(data.email);
+  return guardedSend({
+    templateName: 'sendRancherReactivationCold',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 26px; margin: 0 0 20px 0; }
+            p { margin: 16px 0; color: #6B4F3F; }
+            .button { display: inline-block; padding: 14px 32px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: bold; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+            .button-secondary { display: inline-block; padding: 12px 28px; background: #FFFFFF; color: #0E0E0E !important; text-decoration: none; font-weight: bold; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; border: 1px solid #0E0E0E; }
+            .divider { height: 1px; background: #A7A29A; margin: 28px 0; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Closing your listing unless…</h1>
+            <p>Hi ${esc(first)},</p>
+            <p>${esc(data.ranchName)} is listed on BuyHalfCow but we never got you live. I'm cleaning up the roster.</p>
+            <p>Want buyers? Book 15 minutes and I'll set you up on the new direct-deposit flow.</p>
+            <div style="text-align:center;margin:28px 0;">
+              <a href="${esc(bookUrl)}" class="button">Book a 15-min call</a>
+            </div>
+            <p>Otherwise I'll close your listing — no hard feelings. You can remove yourself below.</p>
+            <div style="text-align:center;margin:14px 0;">
+              <a href="${esc(removeUrl)}" class="button-secondary">Remove me</a>
+            </div>
+            <div class="divider"></div>
+            <p style="font-size:13px;">Reply to this email if you've got a question instead.</p>
+            <div class="footer">
+              <p>— Ben<br>BuyHalfCow</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    }),
+  });
+}
+
+// =====================================================
 // RANCHER GO LIVE EMAIL
 // =====================================================
 

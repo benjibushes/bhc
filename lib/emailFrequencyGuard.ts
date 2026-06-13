@@ -108,6 +108,14 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // T3 (2026-06-10): rancher intro after manual referral approval.
   // Manual-approve path bypassed cap; whitelist makes it consistent.
   'sendReferralApprovedIntro',
+  // Rancher reactivation campaign (2026-06-13): staggered "book a v2 call
+  // or remove yourself" sends to ~44 dormant legacy ranchers. Cadence is
+  // already sanity-capped by the cron (8/day, 5d spacing, max ~2 touches),
+  // and the Remove CTA is the existing unsubscribe flow, so the 3/week cap
+  // would only ever drop a legitimately-scheduled campaign touch. Whitelist
+  // both so the campaign engine — not the frequency guard — owns cadence.
+  'sendRancherReactivationWarm',
+  'sendRancherReactivationCold',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage
