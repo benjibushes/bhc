@@ -65,6 +65,16 @@ export default function MigrationTrackerPage() {
   const [bulkSending, setBulkSending] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ sent: number; failed: number } | null>(null);
 
+  // ── Reactivation campaign panel state ───────────────────────────────
+  const [reactBusy, setReactBusy] = useState(false);
+  const [reactPreview, setReactPreview] = useState<{
+    tierACounted: number;
+    tierBCounted: number;
+    names: string[];
+  } | null>(null);
+  const [reactSent, setReactSent] = useState<{ sent: number; skipped: number } | null>(null);
+  const [reactError, setReactError] = useState('');
+
   async function load() {
     setLoading(true);
     setError('');
@@ -203,6 +213,57 @@ export default function MigrationTrackerPage() {
     }
   }
 
+  // ── Reactivation campaign: Preview (dry-run) ────────────────────────
+  // POST ?dryRun=1 → shows who WOULD be contacted. Sends nothing.
+  async function reactPreviewNow() {
+    setReactBusy(true);
+    setReactError('');
+    setReactSent(null);
+    try {
+      const r = await fetch('/api/admin/rancher-reactivation/send-now?dryRun=1', {
+        method: 'POST',
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        setReactError(j?.error || `HTTP ${r.status}`);
+        return;
+      }
+      setReactPreview({ tierACounted: j.tierACounted || 0, tierBCounted: j.tierBCounted || 0, names: j.names || [] });
+    } catch (e: any) {
+      setReactError(e?.message || 'Preview failed');
+    } finally {
+      setReactBusy(false);
+    }
+  }
+
+  // ── Reactivation campaign: Send Now (real) ──────────────────────────
+  // Confirm dialog → POST (no dryRun) → sends to ALL eligible first-touch
+  // ranchers. Not gated on the campaign flag — this click IS the go.
+  async function reactSendNow() {
+    const n = reactPreview ? reactPreview.names.length : null;
+    const confirmMsg = n !== null
+      ? `Send the reactivation email to ${n} ranchers now? This cannot be undone.`
+      : 'Send the reactivation email to all eligible ranchers now? This cannot be undone.';
+    if (!confirm(confirmMsg)) return;
+    setReactBusy(true);
+    setReactError('');
+    try {
+      const r = await fetch('/api/admin/rancher-reactivation/send-now', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        setReactError(j?.error || `HTTP ${r.status}`);
+        return;
+      }
+      setReactSent({ sent: j.sent || 0, skipped: j.skipped || 0 });
+      // Refresh the preview to reflect the now-stamped (no-longer-eligible) set.
+      setReactPreview({ tierACounted: 0, tierBCounted: 0, names: [] });
+    } catch (e: any) {
+      setReactError(e?.message || 'Send failed');
+    } finally {
+      setReactBusy(false);
+    }
+  }
+
   if (loading) return <main className="p-8 text-saddle">Loading migration funnel…</main>;
   if (error || !data) return <main className="p-8 text-weathered">Error: {error || 'No data'}</main>;
 
@@ -258,6 +319,69 @@ export default function MigrationTrackerPage() {
             ✓ Bulk send complete. Sent: {bulkResult.sent} · Failed: {bulkResult.failed}
           </div>
         )}
+
+        {/* ── Reactivation campaign panel ──────────────────────────────── */}
+        <div className="bg-white border border-dust p-5 space-y-4">
+          <div className="flex justify-between items-start flex-wrap gap-3">
+            <div>
+              <h2 className="font-serif text-xl text-charcoal">📣 Reactivation Campaign</h2>
+              <p className="text-xs text-saddle mt-1 max-w-2xl">
+                One-click first-touch blast to dormant legacy ranchers (Tier A warm,
+                then Tier B cold). Preview first to see exactly who would be contacted,
+                then Send Now. Excludes Wave-1, hold-outs, agreement-signed, unsubscribed,
+                and already-booked ranchers automatically. Bypasses the campaign flag —
+                this button is the authorization.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={reactPreviewNow}
+                disabled={reactBusy}
+                className="px-4 py-2 text-sm border border-dust hover:bg-bone disabled:opacity-50"
+              >
+                {reactBusy ? 'Working…' : '👁 Preview'}
+              </button>
+              <button
+                onClick={reactSendNow}
+                disabled={reactBusy}
+                className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle disabled:opacity-50"
+              >
+                {reactBusy ? 'Working…' : '📣 Send Now'}
+              </button>
+            </div>
+          </div>
+
+          {reactError && (
+            <div className="bg-weathered/10 border border-weathered text-weathered text-sm p-3">
+              Error: {reactError}
+            </div>
+          )}
+
+          {reactPreview && reactPreview.names.length > 0 && (
+            <div className="bg-bone border border-dust p-4 text-sm space-y-2">
+              <p className="text-charcoal font-medium">
+                Would send to {reactPreview.names.length} ranchers: Tier A {reactPreview.tierACounted}, Tier B {reactPreview.tierBCounted}
+              </p>
+              <ul className="text-saddle text-xs grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1">
+                {reactPreview.names.map((n, i) => (
+                  <li key={`${n}-${i}`}>• {n}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {reactPreview && reactPreview.names.length === 0 && !reactSent && (
+            <div className="bg-bone border border-dust p-3 text-sm text-saddle">
+              No eligible ranchers for a first touch right now.
+            </div>
+          )}
+
+          {reactSent && (
+            <div className="bg-bone border border-charcoal p-3 text-sm text-charcoal">
+              ✓ Sent {reactSent.sent}, skipped {reactSent.skipped}.
+            </div>
+          )}
+        </div>
 
         {/* Per-rancher table */}
         <div className="bg-white border border-dust overflow-x-auto">

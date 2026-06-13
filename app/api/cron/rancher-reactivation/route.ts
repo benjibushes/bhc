@@ -27,7 +27,7 @@
 // sequential per-record try/catch, Telegram digest, GET+POST, maxDuration).
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { updateRecord, TABLES } from '@/lib/airtable';
 import {
   sendRancherReactivationWarm,
   sendRancherReactivationCold,
@@ -35,10 +35,8 @@ import {
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { logAuditEntry } from '@/lib/auditLog';
-import {
-  segmentRanchers,
-  type ReactivationRancher,
-} from '@/lib/rancherReactivationSegment';
+import { type ReactivationRancher } from '@/lib/rancherReactivationSegment';
+import { runReactivationSend } from '@/lib/rancherReactivation';
 
 export const maxDuration = 180;
 
@@ -107,22 +105,28 @@ async function realHandler(_request: Request): Promise<CronResult> {
     };
   }
 
-  const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
-  const seg = segmentRanchers(ranchers, now);
+  // ── FIRST TOUCHES (capped at DAILY_SEND_CAP, Tier A first) ──────────
+  // Shared with the operator's one-click send-now button. This does the
+  // getAllRecords → segment → send → stamp → audit work; we reuse the
+  // returned segment for the reminder + dormant passes below (no re-fetch).
+  const run = await runReactivationSend({
+    now,
+    dryRun: false,
+    cap: DAILY_SEND_CAP,
+    actor: 'cron',
+    tool: 'rancher-reactivation',
+  });
+  const seg = run.segment;
+  const firstTouchQueue = run.firstTouchQueue;
 
-  // First-touch queue: Tier A first, then Tier B, sliced to the daily cap.
-  const firstTouchQueue: ReactivationRancher[] = [
-    ...seg.tierAToSend,
-    ...seg.tierBToSend,
-  ].slice(0, DAILY_SEND_CAP);
-
-  let sent = 0;
+  let sent = run.sent;
   let remindersSent = 0;
   let dormantMarked = 0;
-  const failures: string[] = [];
+  const failures: string[] = [...run.failures];
 
   // Stamp Airtable after a successful (non-suppressed) send. nextTouchCount is
-  // the value to write (first touch → 1, reminder → 2).
+  // the value to write (reminder → 2). Used by the reminder pass below; the
+  // first-touch stamping happens inside runReactivationSend.
   async function stampSend(r: ReactivationRancher, nextTouchCount: number): Promise<void> {
     const prevTouch = r.touchCount;
     await updateRecord(TABLES.RANCHERS, r.id, {
@@ -148,25 +152,6 @@ async function realHandler(_request: Request): Promise<CronResult> {
         },
       },
     });
-  }
-
-  // ── FIRST TOUCHES (capped, Tier A first) ────────────────────────────
-  for (const r of firstTouchQueue) {
-    try {
-      const res = await sendByTier(r);
-      if (res?.suppressed) {
-        failures.push(`${r.ranchName}: send suppressed — ${res.reason || 'unknown'}`);
-        continue;
-      }
-      if (!res?.success) {
-        failures.push(`${r.ranchName}: send not confirmed`);
-        continue;
-      }
-      await stampSend(r, (r.touchCount || 0) + 1);
-      sent++;
-    } catch (e: any) {
-      failures.push(`${r.ranchName}: send failed — ${e?.message || 'unknown'}`);
-    }
   }
 
   // ── REMINDERS (+5d, no booking; bumps Touch Count → 2) ──────────────
