@@ -31,6 +31,12 @@ interface Props {
 export default function StripeConnectStep({ rancherId, pricingModel, wizardToken, onComplete, onBack }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Skipping bank setup is the single biggest silent revenue hole: a tier_v2
+  // rancher who skips goes live with Connect 'onboarding', and every buyer
+  // deposit then 409s at checkout. So "Skip" is a two-step acknowledgment —
+  // first click reveals the consequence, second click confirms — instead of a
+  // one-tap exit (and no jarring native confirm() on mobile).
+  const [skipArmed, setSkipArmed] = useState(false);
 
   // Legacy ranchers skip this step entirely — auto-advance on mount.
   // Use effect so the parent wizard's setState doesn't fire during render.
@@ -108,18 +114,45 @@ export default function StripeConnectStep({ rancherId, pricingModel, wizardToken
         >
           {loading ? 'Redirecting to Stripe…' : 'Connect bank account →'}
         </button>
-        <button
-          onClick={onComplete}
-          className="text-sm text-saddle underline hover:text-charcoal transition-colors"
-        >
-          Skip for now
-        </button>
+        {!skipArmed && (
+          <button
+            onClick={() => setSkipArmed(true)}
+            className="text-sm text-saddle underline hover:text-charcoal transition-colors"
+          >
+            Skip for now
+          </button>
+        )}
       </div>
 
-      <p className="text-xs text-saddle/80">
-        You can also finish this later from your /rancher/billing dashboard.
-        We can&apos;t route buyer deposits to you until Connect is verified.
-      </p>
+      {skipArmed ? (
+        <div className="border border-amber-dark bg-amber/10 p-4 space-y-3">
+          <p className="text-sm text-charcoal">
+            <strong>Heads up:</strong> until your bank is connected, buyers
+            <strong> can&apos;t pay deposits</strong> — your page goes live but
+            checkout blocks on every order. It only takes 2–3 minutes.
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleConnect}
+              disabled={loading}
+              className="px-5 py-2.5 bg-charcoal text-bone text-xs font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-50"
+            >
+              Connect now
+            </button>
+            <button
+              onClick={onComplete}
+              className="text-xs text-saddle underline hover:text-charcoal transition-colors"
+            >
+              Skip anyway — I&apos;ll finish from my dashboard
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-saddle/80">
+          You can also finish this later from your /rancher/billing dashboard.
+          We can&apos;t route buyer deposits to you until Connect is verified.
+        </p>
+      )}
 
       {onBack && (
         <div className="pt-2">

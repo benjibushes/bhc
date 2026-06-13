@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { getRecordById, updateRecord, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
@@ -159,10 +159,31 @@ export async function GET(request: Request) {
       fields['States Served'] = String(rancher['State']);
     }
 
-    // Slug — kebab-case from Ranch Name if blank
+    // Slug — kebab-case from Ranch Name if blank. Collision-safe: two ranchers
+    // with the same name (e.g. two "Bar S Ranch") must NOT auto-generate the
+    // same slug — getRancherBySlug returns whichever Airtable lists first, so
+    // the second rancher's page and all their direct traffic would silently
+    // route to the first. Append -2, -3, … until free; on lookup failure fall
+    // back to a record-id-suffixed slug rather than risk writing a collision.
     if (!rancher['Slug']) {
-      const fallback = kebab(rancher['Ranch Name'] || rancher['Operator Name'] || `ranch-${payload.rancherId.slice(-6)}`);
-      fields['Slug'] = fallback || `ranch-${payload.rancherId.slice(-6)}`;
+      const base =
+        kebab(rancher['Ranch Name'] || rancher['Operator Name'] || '') ||
+        `ranch-${payload.rancherId.slice(-6)}`;
+      let unique = base;
+      try {
+        for (let n = 2; n < 50; n++) {
+          const safe = escapeAirtableValue(unique);
+          const taken = (
+            (await getAllRecords(TABLES.RANCHERS, `LOWER({Slug}) = "${safe}"`)) as any[]
+          ).filter((r) => r.id !== payload.rancherId);
+          if (taken.length === 0) break;
+          unique = `${base}-${n}`;
+        }
+      } catch (e: any) {
+        console.warn('[activate] slug collision check failed:', e?.message);
+        unique = `${base}-${payload.rancherId.slice(-6)}`;
+      }
+      fields['Slug'] = unique;
     }
 
     // Append audit-trail line to Custom Notes

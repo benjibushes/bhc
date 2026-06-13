@@ -294,6 +294,33 @@ export async function PATCH(req: Request) {
     }
   }
 
+  // Money fields — coerce to number + reject negatives. These render verbatim
+  // on the buyer deposit page and feed the deposit/balance math; a string or a
+  // negative price (no min on the wizard inputs before this) would either make
+  // Airtable choke or publish broken/negative pricing that 409s checkout. Same
+  // gate the landing-page editor route already enforces.
+  const MONEY_FIELDS = [
+    'Quarter Price', 'Quarter Deposit', 'Quarter Processing Fee', 'Quarter lbs',
+    'Half Price', 'Half Deposit', 'Half Processing Fee', 'Half lbs',
+    'Whole Price', 'Whole Deposit', 'Whole Processing Fee', 'Whole lbs',
+  ];
+  for (const key of MONEY_FIELDS) {
+    if (key in updates && updates[key] !== null && updates[key] !== '') {
+      const num = parseFloat(String(updates[key]));
+      if (isNaN(num) || num < 0) {
+        return NextResponse.json(
+          { error: `${key} must be a valid number of zero or more.` },
+          { status: 400 },
+        );
+      }
+      updates[key] = num;
+    } else if (updates[key] === '') {
+      // Empty string from a cleared input → null so Airtable clears the cell
+      // instead of rejecting a blank number.
+      updates[key] = null;
+    }
+  }
+
   // If ZIP / City / State changed, re-geocode and store fresh lat/lng so the
   // public map reflects the rancher's chosen location accurately. ZIP-first
   // for ~3-5 mi accuracy; falls back to city centroid if zippopotam misses.

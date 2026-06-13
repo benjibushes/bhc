@@ -182,6 +182,7 @@ export default function RancherDashboardPage() {
   // Commission was collected upfront at deposit time on top of the listed
   // sale price — so balance = listed − processingFee, NOT listed − deposit.
   const [finalInvoiceModal, setFinalInvoiceModal] = useState<Referral | null>(null);
+  const [acceptModal, setAcceptModal] = useState<Referral | null>(null);
   const [finalInvoiceTotalSale, setFinalInvoiceTotalSale] = useState('');
   const [finalInvoiceProcessingFee, setFinalInvoiceProcessingFee] = useState('');
   const [finalInvoiceProcessingDate, setFinalInvoiceProcessingDate] = useState('');
@@ -315,10 +316,22 @@ export default function RancherDashboardPage() {
   // Rancher Accepted At on the referral and locks the deposit to non-
   // refundable (refund endpoint guards against post-accept refunds). Sends
   // buyer "slot locked" confirmation email. Idempotent on the server.
-  const acceptReferral = async (referralId: string) => {
-    if (!confirm('Accept this slot? The buyer is then locked in — their deposit becomes non-refundable per BHC policy. Only do this when you can commit to processing their share.')) {
-      return;
-    }
+  // Open the accept-slot confirmation modal. Replaces a window.confirm() —
+  // this is a money moment (deposit becomes non-refundable on accept), and a
+  // native confirm renders as a tiny unbranded popup on mobile Safari that
+  // ranchers skim past. The modal makes the consequence unmissable.
+  const handleAcceptSlot = (referral: Referral) => {
+    setUpdateError('');
+    setAcceptModal(referral);
+  };
+
+  // NRD-2 (2026-06-05): confirm action for the accept-slot modal. Stamps
+  // Rancher Accepted At + locks the deposit non-refundable. Idempotent server-
+  // side (re-accept returns the original timestamp, 200). On a real failure
+  // (deposit not paid, not owned) nothing changed server-side → no refetch.
+  const acceptReferral = async () => {
+    if (!acceptModal) return;
+    const referralId = acceptModal.id;
     setUpdating(referralId);
     setUpdateError('');
     try {
@@ -329,7 +342,10 @@ export default function RancherDashboardPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setUpdateError(data.error || 'Could not accept slot. Try again.');
+        setUpdating(null);
+        return;
       }
+      setAcceptModal(null);
       await fetchDashboard();
     } catch {
       setUpdateError('Network error. Please check your connection.');
@@ -1265,7 +1281,7 @@ export default function RancherDashboardPage() {
                         onPass={() => setPassModal(ref)}
                         onLost={() => handleMarkLost(ref)}
                         onSendFinal={() => openFinalInvoiceModal(ref)}
-                        onAccept={() => acceptReferral(ref.id)}
+                        onAccept={() => handleAcceptSlot(ref)}
                         updating={updating}
                       />
                     ))}
@@ -1352,7 +1368,7 @@ export default function RancherDashboardPage() {
                         onPass={() => setPassModal(ref)}
                         onLost={() => handleMarkLost(ref)}
                         onSendFinal={() => openFinalInvoiceModal(ref)}
-                        onAccept={() => acceptReferral(ref.id)}
+                        onAccept={() => handleAcceptSlot(ref)}
                         updating={updating}
                       />
                     ))}
@@ -2329,6 +2345,51 @@ export default function RancherDashboardPage() {
                 className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
               >
                 {updating ? 'Saving...' : 'Confirm Closed Lost'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Accept Slot Modal — NRD-2. Replaces window.confirm(). The deposit
+          becomes non-refundable on accept, so the consequence is spelled out
+          before the rancher commits. */}
+      {acceptModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start">
+              <h2 className="font-serif text-2xl">Accept this slot?</h2>
+              <button onClick={() => { setAcceptModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle">×</button>
+            </div>
+            <p className="text-sm text-saddle">
+              Buyer: <strong className="text-charcoal">{acceptModal.buyer_name}</strong>
+              {acceptModal.buyer_state ? ` · ${acceptModal.buyer_state}` : ''}
+            </p>
+            <div className="border-l-4 border-amber-dark bg-amber/10 px-4 py-3 text-sm text-charcoal/90 leading-relaxed">
+              Accepting locks the buyer in — <strong>their deposit becomes
+              non-refundable</strong> per BHC policy. Only accept when you can
+              commit to processing their share.
+            </div>
+
+            {updateError && (
+              <div className="p-3 border border-weathered text-weathered text-sm">
+                {updateError}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setAcceptModal(null); setUpdateError(''); }}
+                className="flex-1 px-4 py-3 border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium uppercase text-sm tracking-wider"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={acceptReferral}
+                disabled={!!updating}
+                className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+              >
+                {updating ? 'Accepting...' : 'Accept & lock slot'}
               </button>
             </div>
           </div>

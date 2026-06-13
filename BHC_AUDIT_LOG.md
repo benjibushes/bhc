@@ -106,6 +106,28 @@ Every Claude Code session that touches BHC data must:
 
 ---
 
+### Run 2026-06-12 (PM-5) — rancher pages perfection (setup → portal → public)
+- **Trigger**: manual, by Ben ("make the rancher pages perfect" → all three surfaces)
+- **Method**: 3 parallel read-only audits (public landing / portal / setup wizard) → fixed by impact wave. Verified: tsc clean, `next build` clean, adversarial diff review (cavecrew-reviewer) = zero findings. Public-page date change browser-verified earlier; portal/setup are auth-gated UI (verified by build + review). NOT yet committed at time of writing this line.
+- **Wave 1 — cashflow + buyer conversion**:
+  - **Setup: Stripe Connect skip is now a two-step warning** ([StripeConnectStep.tsx](app/rancher/setup/steps/StripeConnectStep.tsx)). Was a one-tap "Skip for now" → tier_v2 rancher went live with Connect='onboarding' → every buyer deposit 409'd at checkout (silent revenue hole). Now first tap reveals an amber consequence panel ("buyers can't pay deposits"), second tap confirms. No native confirm().
+  - **Setup: money-field validation** ([api/rancher/setup/route.ts](app/api/rancher/setup/route.ts)). The setup PATCH coerced prices/deposits/fees/lbs as raw strings with ZERO validation — a negative or non-numeric price published broken pricing + fed bad deposit math. Added the same numeric+non-negative gate the landing-page editor route already had (0 allowed; empty→null).
+  - **Public: processing-date hardened** ([ranchers/[slug]/page.tsx](app/ranchers/[slug]/page.tsx)). Twice-flagged "UTC bug" was a FALSE POSITIVE for date-only `<input type="date">` values (timeZone:'UTC' renders them faithfully). But it silently shifts a day if a record ever holds a datetime. New `formatProcessingDate()` formats the YYYY-MM-DD calendar parts directly → correct in every timezone, datetime fallback retained. Covers both render sites.
+  - **Public: prospect pages now `robots: noindex`** — unclaimed auto-generated listings were indexable (thin/stale SEO). Claimed verified pages stay indexable.
+  - **Public: deleted dead `RancherLeadModal.tsx`** — orphaned (self-reference only), posted to a different endpoint than the live OrderForm. Removed to kill the two-funnels confusion.
+- **Wave 2 — portal manage surface**:
+  - **Accept-slot `window.confirm` → branded modal** ([rancher/page.tsx](app/rancher/page.tsx)). The deposit-becomes-non-refundable moment rendered as a tiny mobile-Safari popup; now an amber-warning modal matching the lost/close/invoice modal pattern. New `acceptModal` state + `handleAcceptSlot` opener; both call sites repointed.
+  - **`acceptReferral` no longer refetches after a failed write** (early-return) — audited all 5 money-mutation handlers; it was the only remaining refetch-on-failure (markLost/closeDeal/passOnLead already correct). Companion to the updateReferralStatus fix in PM-1.
+  - Skipped `min="0"` input churn — no native form submit to enforce it; server gate is the real guarantee.
+- **Wave 3 — setup polish**:
+  - **`activate` auto-slug is now collision-safe** ([api/rancher/activate/route.ts](app/api/rancher/activate/route.ts)). Two ranchers with the same Ranch Name both kebab'd to one slug → `getRancherBySlug` returns whichever Airtable lists first → second rancher's page + direct traffic silently routed to the first. Now appends -2/-3/… until free (excludes own record), id-suffix fallback on lookup failure. NOTE: the landing-page editor route ALREADY had a 409 uniqueness check — the audit's "no uniqueness check" was scoped to the setup route (which doesn't write Slug). Only the activate auto-gen path was unguarded.
+- **Audited, NOT changed (intentional)**:
+  - LivePreview vs public page drift — preview is approximate by design (can't render live gallery/reviews/testimonials); informational only.
+  - Onboarding video placeholder — content (Ben films it), not code.
+  - `handleReviveLead` window.prompt + `confirmUpgrade` window.confirm — admin-only / one-time low-traffic; left for a later pass.
+
+---
+
 ### Run 2026-06-12 (PM-4) — /access CRO rework (perfect-funnel pass)
 - **Trigger**: manual, by Ben ("/access needs audit + rework so it flows like a perfect funnel")
 - **Method**: signup-flow-cro skill audit → rework. Verified: `tsc` clean, `next build` clean, live preview-tested (field order, coverage hint, typo suggestion, layout order all confirmed in browser + screenshot). NOT committed.

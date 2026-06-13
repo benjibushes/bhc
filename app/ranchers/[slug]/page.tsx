@@ -64,6 +64,10 @@ export async function generateMetadata(
   return {
     title: isProspect ? `${name} — Unclaimed Listing` : name,
     description: tagline,
+    // Prospects are unclaimed/auto-generated listings — keep them out of the
+    // index so they don't rank as stale or thin pages. Claimed, verified
+    // rancher pages stay fully indexable.
+    robots: isProspect ? { index: false, follow: true } : undefined,
     openGraph: {
       title: `${name} — BuyHalfCow`,
       description: tagline,
@@ -80,6 +84,31 @@ function getYouTubeEmbedUrl(url: string): string | null {
   if (longMatch) return `https://www.youtube.com/embed/${longMatch[1]}`;
   if (url.includes('youtube.com/embed') || url.includes('vimeo.com')) return url;
   return null;
+}
+
+const PROCESSING_MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+// Render the rancher's Next Processing Date faithfully in every timezone.
+// The portal writes it via <input type="date"> → "YYYY-MM-DD" (no time);
+// `new Date("2026-06-12").toLocaleDateString(...)` only renders correctly when
+// pinned to UTC, and silently shifts a day if the field ever holds a datetime.
+// Formatting the calendar parts directly shows exactly the day the rancher
+// picked — a MT buyer never sees the pickup date off by one. Falls back to a
+// UTC-pinned parse for any non-date-only legacy value.
+function formatProcessingDate(raw: string): string | null {
+  if (!raw) return null;
+  const m = raw.slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    const month = PROCESSING_MONTHS[parseInt(m[2], 10) - 1];
+    if (month) return `${month} ${parseInt(m[3], 10)}, ${m[1]}`;
+  }
+  const dt = new Date(raw);
+  return isNaN(dt.getTime())
+    ? null
+    : dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
 export default async function RancherPage(
@@ -284,14 +313,7 @@ export default async function RancherPage(
       : {}),
   };
 
-  const processingDateDisplay = nextProcessingDate
-    ? new Date(nextProcessingDate).toLocaleDateString('en-US', {
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-        timeZone: 'UTC',
-      })
-    : null;
+  const processingDateDisplay = formatProcessingDate(nextProcessingDate);
 
   const locationLine = [city, state].filter(Boolean).join(', ');
 
