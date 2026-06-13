@@ -104,10 +104,10 @@ function parseDateMs(v: unknown): number | null {
 function hasBooking(r: any): boolean {
   const ms = readEnumOrString(r['Migration Status']).toLowerCase();
   if (ms === 'call_scheduled') return true;
-  // Any Cal booking stamp present (field name varies across the base; check
-  // the common ones). Presence of a value is enough — we don't parse it.
+  // Booking stamps that actually exist on the Ranchers table (confirmed against
+  // the live schema). Presence of a value is enough — we don't parse it.
   if (r['Call Scheduled'] === true) return true;
-  if (r['Cal Booking At'] || r['Cal Booked At'] || r['Booking At'] || r['Call Booked At']) return true;
+  if (r['Migration Call Booked At'] || r['Migration Call Completed At']) return true;
   return false;
 }
 
