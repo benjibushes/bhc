@@ -106,9 +106,9 @@ export async function POST(
 
     const subject = `${firstName} — quick payout upgrade for ${ranchName} (5-min + optional call)`;
     const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;background:#F4F1EC;color:#0E0E0E;">
-<h1 style="font-family:Georgia,serif;margin:0 0 20px 0;">${firstName}, time to upgrade your payout flow</h1>
+<h1 style="font-family:Georgia,serif;margin:0 0 20px 0;">${firstName}, you're up first for the payout upgrade</h1>
 
-<p>Hey ${firstName} — I've been refining the BuyHalfCow funnel and I'm standardizing how everyone handles deposits. Right now you're on the original model where you invoice the customer offline. The new model is better for you, the buyer, and the long-term health of the platform.</p>
+<p>Hey ${firstName} — you're one of the ranchers actually moving beef through BuyHalfCow, so I want you on the new payout flow first. I'm standardizing how everyone handles deposits, and you're at the front of the line. Right now you invoice the buyer offline; the new model lands the money in your account same-day and takes the chase-down off your plate.</p>
 
 <p><strong>What changes for you:</strong></p>
 <ul style="color:#2A2A2A;line-height:1.8;">
@@ -142,14 +142,14 @@ export async function POST(
 </div>
 
 <div style="background:#FFF6E0;border:1px solid #C99A2E;padding:14px 18px;margin:24px 0;">
-  <p style="margin:0;font-size:14px;color:#0E0E0E;"><strong>Heads up — deadline ${deadlineLabel}.</strong> After that date, ranchers still on the old model are paused from receiving new leads until they upgrade. Plenty of runway (14 days) to either DIY or book a call.</p>
+  <p style="margin:0;font-size:14px;color:#0E0E0E;"><strong>I'm sunsetting the old invoice model on ${deadlineLabel}.</strong> Run the wizard or grab a call before then and the switch is seamless — nothing changes on your end except faster, cleaner payouts.</p>
 </div>
 
 <p style="font-size:14px;color:#6B4F3F;"><strong>Why now:</strong> we're about to put real ad spend behind the platform. Standardizing the deposit flow means every buyer sees the same checkout — fewer questions, more closes, faster cash to your account.</p>
 
 <p style="font-size:14px;color:#6B4F3F;">Hit reply with any questions — I read every email.</p>
 
-<p style="font-size:14px;color:#6B4F3F;">— Benjamin, BuyHalfCow</p>
+<p style="font-size:14px;color:#6B4F3F;">— Ben, BuyHalfCow</p>
 </body></html>`;
 
     let sendOk = true;
