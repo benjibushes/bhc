@@ -329,7 +329,17 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
     },
     {
       stripeAccount: input.rancherConnectAccountId,
-      idempotencyKey: `deposit-${input.referralId}`,
+      // CUT-SPECIFIC idempotency key (2026-06-15). Previously
+      // `deposit-${referralId}` — keyed on the referral ALONE. A buyer who
+      // started one cut, abandoned, then returned and picked a DIFFERENT cut
+      // (different amount) hit Stripe's idempotency error: same key, different
+      // request body → 500 → buyer locked out of checkout for ~24h (Stripe's
+      // idempotency-key retention window). The cut is captured by the charge
+      // composition (deposit amountCents + that cut's fullSaleCents — each cut
+      // has distinct Quarter/Half/Whole Price), so folding both into the key
+      // makes a cut change a NEW idempotent request instead of a hard wall,
+      // while a true double-submit of the SAME cut still dedupes safely.
+      idempotencyKey: `deposit-${input.referralId}-${input.amountCents}-${input.fullSaleCents}`,
     },
   );
   const url = session.url;

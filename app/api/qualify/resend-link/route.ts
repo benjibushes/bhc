@@ -9,8 +9,10 @@
 // alert fires only when an actual send happens.
 
 import { NextResponse } from 'next/server';
+import jwt from 'jsonwebtoken';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
+import { JWT_SECRET } from '@/lib/secrets';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,7 +57,19 @@ export async function POST(req: Request) {
 
     const firstName = String(consumer['Full Name'] || '').split(' ')[0] || 'there';
     const state = String(consumer['State'] || 'your state');
-    const quizUrl = `${SITE_URL}/qualify/${consumer.id}`;
+    // F10 fix (2026-06-15): mint a FRESH qualify-access JWT and append it as
+    // ?token=. The /qualify page hard-requires a token (page.tsx surfaces
+    // "Missing qualification token" without one), and /api/qualify rejects a
+    // tokenless submit with 401. Without this the "resend my link" recovery
+    // just looped the buyer straight back into the expired-link error.
+    // Same shape every other qualify link uses (/api/consumers, warmup/engage):
+    // { type: 'qualify-access', consumerId, email }, 24h expiry.
+    const qualifyToken = jwt.sign(
+      { type: 'qualify-access', consumerId: consumer.id, email },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    const quizUrl = `${SITE_URL}/qualify/${encodeURIComponent(consumer.id)}?token=${encodeURIComponent(qualifyToken)}`;
     const subject = `${firstName}, your fresh quiz link`;
     const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px;">
 <div style="max-width:600px;margin:0 auto;background:white;padding:40px;border:1px solid #A7A29A;">

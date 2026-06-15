@@ -418,7 +418,7 @@ export async function POST(request: Request) {
     operatorCalLink = '';
   }
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     qualified: true,
     score,
     routingOk,
@@ -462,6 +462,40 @@ export async function POST(request: Request) {
     // Client uses these to render the dual-path CTA. If routingOk + tier_v2 +
     // depositAmount → render Path B. Otherwise Path A only.
   });
+
+  // HOT-PATH SESSION (2026-06-15). The buyer just PASSED the quiz — on the hot
+  // signup path (/api/consumers → qualifyUrl → quiz → "skip the call, pay
+  // deposit") they never went through /api/warmup/engage, so they have no
+  // bhc-member-auth cookie. Without it, the deposit button POST to
+  // /api/checkout/deposit 401s ("Not authenticated") and /member bounces to
+  // /member/login — the hot path dead-ends right at the conversion moment.
+  //
+  // Passing the quiz is sufficient auth: the qualify-access JWT (verified
+  // above) proves this person owns the email-issued token for THIS consumerId,
+  // exactly the same trust basis warmup/engage uses to mint its session.
+  // Mirror that cookie EXACTLY — same name, JWT payload (type/consumerId/
+  // email/state/name), 30-day maxAge, httpOnly, sameSite, secure, path — so
+  // resolveBuyerSession + /api/member/content (reads decoded.state) work
+  // identically on both paths.
+  const sessionToken = jwt.sign(
+    {
+      type: 'member-session',
+      consumerId,
+      email: (consumer['Email'] || '').trim().toLowerCase(),
+      state: consumer['State'] || '',
+      name: consumer['Full Name'] || '',
+    },
+    JWT_SECRET,
+    { expiresIn: '30d' }
+  );
+  res.cookies.set('bhc-member-auth', sessionToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+    path: '/',
+  });
+  return res;
 }
 
 // PATCH /api/qualify — buyer chose direct_deposit path after quiz pass.

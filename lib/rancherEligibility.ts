@@ -45,6 +45,8 @@ export type RancherFields = Record<string, unknown> & {
   'Agreement Signed'?: unknown;
   'Onboarding Status'?: unknown;
   'Subscription Status'?: unknown;
+  'Pricing Model'?: unknown;
+  'Stripe Connect Status'?: unknown;
   'State'?: unknown;
   'States Served'?: unknown;
 };
@@ -69,6 +71,10 @@ function readEnumOrString(v: unknown): string {
  *   - Subscription Status NOT in past_due|unpaid|canceled. Active, trialing,
  *     and empty/unset all pass. Mirrors the deposit 409 gate so we never
  *     route a buyer to a rancher whose deposit would be blocked downstream.
+ *   - tier_v2 ONLY: Stripe Connect Status === 'active'. Legacy (non-tier_v2)
+ *     ranchers are exempt — they checkout off-platform and never hit the
+ *     Connect deposit endpoint. Mirrors the deposit 409 gate (Connect not
+ *     active → buyer dead-ends at deposit time).
  */
 export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
   const active = readEnumOrString(rancher['Active Status']);
@@ -86,6 +92,24 @@ export function isRancherOperationalForBuyers(rancher: RancherFields): boolean {
   const subStatus = String(rancher['Subscription Status'] || '').toLowerCase();
   if (subStatus === 'past_due' || subStatus === 'unpaid' || subStatus === 'canceled') {
     return false;
+  }
+
+  // Stripe Connect gate — tier_v2 ONLY (2026-06-15). tier_v2 buyers pay via
+  // the platform deposit endpoint, which hard-requires Stripe Connect
+  // Status==='active' (app/api/checkout/deposit/route.ts:123 → 409 otherwise).
+  // Without this gate, a tier_v2 rancher mid-onboarding (Connect='onboarding')
+  // gets routed buyers + a deposit link, then the buyer hits a 409 wall at
+  // deposit time — a dead-end conversion. Mirror the deposit endpoint here so
+  // these ranchers are excluded from the routing pool until Connect is live.
+  //
+  // Legacy ranchers (Pricing Model != tier_v2, e.g. Payment Link model) are
+  // INTENTIONALLY exempt: they route buyers to their own off-platform checkout
+  // on /ranchers/[slug] and never touch the Connect deposit endpoint, so a
+  // Connect status (which they may not even have) must NOT gate them.
+  const pricingModel = String(rancher['Pricing Model'] || '').toLowerCase();
+  if (pricingModel === 'tier_v2') {
+    const connectStatus = String(rancher['Stripe Connect Status'] || '').toLowerCase();
+    if (connectStatus !== 'active') return false;
   }
 
   return true;
