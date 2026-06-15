@@ -173,14 +173,21 @@ export async function POST(request: Request) {
     const isBuyerSalesCall =
       eventTypeSlug.includes('sales') ||
       /sales call|buyer.*call|reserve.*share/i.test(eventTitle);
-    // M2 (2026-06-10): rancher migration call detection. Ben's `/15min`
-    // event type is the migration onboarding slot. Used to transition
-    // Rancher.Migration Status from invited → call_scheduled (BOOKING_
-    // CREATED) and → call_completed (MEETING_ENDED).
+    // M2 (2026-06-10): rancher migration call detection. Ben runs a dedicated
+    // "Rancher Onboarding" event (slug `30min`, 45min) — the canonical
+    // migration/onboarding slot the scheduling emails link to. Older invites
+    // used `/15min`; both are detected. Transitions Rancher.Migration Status
+    // invited → call_scheduled (BOOKING_CREATED) → call_completed (MEETING_ENDED).
+    // 2026-06-15: added `30min` + onboarding-title match. Rancher scheduling
+    // emails were routed to the Rancher Onboarding event; the webhook only
+    // matched `15min`, so Onboarding bookings went UNTRACKED → ranchers got
+    // re-nudged/auto-paused despite booking. This closes that funnel gap.
     const isMigrationCall =
+      eventTypeSlug.includes('30min') ||
       eventTypeSlug.includes('15min') ||
       eventTypeSlug.includes('migration') ||
-      /migration|upgrade.*call|tier.*v2/i.test(eventTitle);
+      eventTypeSlug.includes('onboard') ||
+      /migration|upgrade.*call|tier.*v2|rancher.*onboard|onboarding/i.test(eventTitle);
 
     // ── RANCHER MIGRATION CALL (legacy → tier_v2) ─────────────────────
     // M2 (2026-06-10): when a legacy rancher books Ben's `/15min` slot,
