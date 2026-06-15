@@ -204,18 +204,45 @@ export async function POST(request: Request) {
         ) as any[];
         const rancher = ranchers[0];
         if (rancher) {
+          // FIX 2 (2026-06-15): the booked slot is the "Rancher Onboarding"
+          // /30min event, NOT the legacy /15min. Derive a human label from the
+          // actual event title/slug so the alert never lies about which slot
+          // was booked. Falls back to a neutral phrase.
+          const slotLabel =
+            (bookingPayload.title && String(bookingPayload.title).trim()) ||
+            (bookingPayload.eventType?.title && String(bookingPayload.eventType.title).trim()) ||
+            'Rancher Onboarding call';
+          // FIX 1b (2026-06-15): a pre-live rancher who DOES book must also
+          // advance the wizard's Step-4 gate. The wizard checks Onboarding
+          // Status (alreadyBooked = status==='Call Scheduled'; canSkipBooking
+          // keys off Call Complete / Call Completed At). The migration branch
+          // returns early — before the BOOKING_CREATED block that normally
+          // stamps Onboarding Status — so without this, booking via the
+          // onboarding slug flips Migration Status but never Onboarding Status.
+          // Only touch pre-live ranchers (empty / New / Call Scheduled): never
+          // knock back a rancher already further along (Docs Sent, Live, etc.).
+          const onbStatus = String(rancher['Onboarding Status'] || '');
+          const isPreLive =
+            !onbStatus || onbStatus === 'New' || onbStatus === 'Call Scheduled';
           if (triggerEvent === 'BOOKING_CREATED' || triggerEvent === 'BOOKING_RESCHEDULED') {
             await updateRecord(TABLES.RANCHERS, rancher.id, {
               'Migration Status': 'call_scheduled',
               'Migration Call Booked At': new Date().toISOString(),
+              // Tie back to the onboarding wizard gate for pre-live ranchers.
+              ...(isPreLive ? { 'Onboarding Status': 'Call Scheduled', 'Call Scheduled': true } : {}),
             }).catch((e: any) => console.warn('[cal webhook] migration booked stamp failed:', e?.message));
             await sendTelegramMessage(
               TELEGRAM_ADMIN_CHAT_ID,
-              `📅 <b>Migration call booked</b>\n\n${rancher['Operator Name'] || rancher['Ranch Name']} (${rancher['State'] || '?'}) booked Ben's /15min migration slot @ ${dateDisplay}.${migMeetingUrl ? `\n🔗 ${migMeetingUrl}` : ''}`
+              `📅 <b>Migration call booked</b>\n\n${rancher['Operator Name'] || rancher['Ranch Name']} (${rancher['State'] || '?'}) booked Ben's ${slotLabel} @ ${dateDisplay}.${migMeetingUrl ? `\n🔗 ${migMeetingUrl}` : ''}`
             ).catch(() => {});
           } else if (triggerEvent === 'MEETING_ENDED') {
             await updateRecord(TABLES.RANCHERS, rancher.id, {
               'Migration Call Completed At': new Date().toISOString(),
+              // Advance the wizard gate to Call Complete only from the
+              // pre-call state, mirroring the main MEETING_ENDED branch.
+              ...(onbStatus === 'Call Scheduled'
+                ? { 'Onboarding Status': 'Call Complete', 'Call Completed At': new Date().toISOString().slice(0, 10) }
+                : {}),
             }).catch((e: any) => console.warn('[cal webhook] migration completed stamp failed:', e?.message));
             await sendTelegramMessage(
               TELEGRAM_ADMIN_CHAT_ID,

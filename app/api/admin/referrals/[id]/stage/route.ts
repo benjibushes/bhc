@@ -6,7 +6,7 @@
 
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
-import { getRecord, updateRecord, TABLES } from '@/lib/airtable';
+import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
 export const dynamic = 'force-dynamic';
@@ -44,7 +44,7 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'missing status' }, { status: 400 });
   }
 
-  const referral = await getRecord(TABLES.REFERRALS, id).catch(() => null);
+  const referral = await getRecordById(TABLES.REFERRALS, id).catch(() => null);
   if (!referral) {
     return NextResponse.json({ ok: false, error: 'referral not found' }, { status: 404 });
   }

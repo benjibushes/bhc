@@ -211,8 +211,8 @@ export async function POST(request: Request) {
       // failed (no row to poll).
       if (reservedCampaignId) {
         try {
-          const { getRecord } = await import('@/lib/airtable');
-          const row: any = await getRecord(TABLES.CAMPAIGNS, reservedCampaignId);
+          const { getRecordById } = await import('@/lib/airtable');
+          const row: any = await getRecordById(TABLES.CAMPAIGNS, reservedCampaignId);
           if (row && (row['Status'] || '') === 'Aborting') {
             aborted = true;
             break;

@@ -1548,17 +1548,24 @@ export default function RancherSetupWizard() {
                 </div>
                 {form[`${tier} Price`] && form[`${tier} Processing Fee`] && Number(form[`${tier} Price`]) > 0 && Number(form[`${tier} Processing Fee`]) >= 0 && (
                   <div className="bg-bone border border-dust p-3 text-xs text-charcoal/85 leading-relaxed">
+                    {/* Tier-agnostic on purpose: BHC's commission depends on the
+                        plan you pick later (Step 7), and the rates differ per
+                        plan — so we DON'T assert a flat % here. The only numbers
+                        we can state for certain are the processing recoup and
+                        your net on the listed price. */}
                     <p className="font-medium mb-1">How the math works on a {tier.toLowerCase()}:</p>
                     <p>
-                      Deposit collected upfront: <strong>${(Number(form[`${tier} Processing Fee`]) + Number(form[`${tier} Price`]) * 0.10).toFixed(2)}</strong>{' '}
-                      (your $${Number(form[`${tier} Processing Fee`]).toFixed(2)} processing recoup + 10% BHC fee on $${Number(form[`${tier} Price`]).toFixed(2)} listed)
+                      Deposit collected upfront covers your{' '}
+                      <strong>${Number(form[`${tier} Processing Fee`]).toFixed(2)}</strong> processing recoup
+                      plus BHC&rsquo;s commission per the plan you select at the end.
                     </p>
                     <p>
                       Final invoice (rancher net): <strong>${(Number(form[`${tier} Price`]) - Number(form[`${tier} Processing Fee`])).toFixed(2)}</strong>{' '}
                       (listed minus processing, 100% to you)
                     </p>
                     <p className="text-saddle italic mt-1">
-                      You keep ${Number(form[`${tier} Price`]).toFixed(2)} total (your full listed price). Buyer pays ${(Number(form[`${tier} Price`]) * 1.10).toFixed(2)} total (listed + 10% BHC fee on top).
+                      You keep your full listed ${Number(form[`${tier} Price`]).toFixed(2)}. The buyer pays that plus
+                      BHC&rsquo;s commission on top — the exact rate is set by the plan you choose at Step 7.
                     </p>
                   </div>
                 )}
@@ -2411,7 +2418,7 @@ function CallStep({
         <p className="text-sm text-saddle mt-1">
           {alreadyBooked
             ? `Great — looking forward to walking through your dashboard, expectations, and agreement on the call. After it, you sign + go live.`
-            : `This is the second of two calls. If you already had a 15-min discovery call via /apply, this is the deeper 30-min onboarding session — we walk through your dashboard, confirm fit, and queue up your agreement. After this call you sign + go live.`}
+            : `This call is optional. If you'd like to walk through your dashboard, pricing, and questions with Ben before signing, book a 30-min slot below. Otherwise you can continue straight to your agreement — no call needed.`}
         </p>
       </header>
 
@@ -2455,8 +2462,9 @@ function CallStep({
           </div>
 
           <p className="text-xs text-dust leading-relaxed text-center">
-            Once you book, we&rsquo;ll auto-stamp this step. After the call,
-            sign agreement + go live.
+            Once you book, we&rsquo;ll auto-stamp this step. Don&rsquo;t want a
+            call? Use the &ldquo;continue&rdquo; option below to skip straight to
+            your agreement.
           </p>
         </>
       )}
@@ -2479,15 +2487,21 @@ function CallStep({
         </div>
       )}
 
+      {/* Step 4 is NEVER a hard gate. The onboarding call is optional (Step 0
+          + the header copy say so), and CallStep doesn't re-poll after a
+          booking — so a disabled-until-booked button would dead-end every
+          self-serve rancher. Always offer a way forward: if they've booked,
+          the primary CTA reads "Continue"; if not, it's an explicit
+          "I don't need a call — continue" so skipping is a deliberate choice,
+          not an accident. Ranchers who DO book still advance because the Cal
+          webhook stamps Onboarding Status (see app/api/webhooks/cal). */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center pt-2 border-t border-dust">
         <button
           type="button"
           onClick={onProceedAnyway}
-          disabled={!alreadyBooked}
-          className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-40 disabled:cursor-not-allowed"
-          title={alreadyBooked ? '' : 'Book a call first'}
+          className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
         >
-          {alreadyBooked ? 'Continue to agreement →' : 'Book a call to continue'}
+          {alreadyBooked ? 'Continue to agreement →' : 'I don’t need a call — continue →'}
         </button>
         <button
           type="button"
