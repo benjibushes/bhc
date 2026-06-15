@@ -26,6 +26,7 @@ import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { getOperatorBookingUrl } from '@/lib/calBooking';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
@@ -398,6 +399,25 @@ export async function POST(request: Request) {
     );
   } catch {}
 
+  // Operator booking link for the tier_v2 inline Cal booker on the result
+  // page. page.tsx is a client component and can't call the server resolver,
+  // so we resolve here (server-side, where CAL_API_KEY lives) and pass the
+  // embed-ready slug down as a prop. The Cal embed wants a bare 'username/slug'
+  // — strip the 'https://cal.com/' prefix the resolver returns. If the
+  // resolver fell back to /contact (no live Cal event), there's no cal.com URL
+  // to strip → send '' so the client shows "booking temporarily unavailable"
+  // instead of feeding a non-Cal URL into the embed. Never throws.
+  let operatorCalLink = '';
+  try {
+    const resolvedOperatorUrl = await getOperatorBookingUrl();
+    const CAL_PREFIX = 'https://cal.com/';
+    if (resolvedOperatorUrl.startsWith(CAL_PREFIX)) {
+      operatorCalLink = resolvedOperatorUrl.slice(CAL_PREFIX.length);
+    }
+  } catch {
+    operatorCalLink = '';
+  }
+
   return NextResponse.json({
     qualified: true,
     score,
@@ -426,6 +446,9 @@ export async function POST(request: Request) {
     // booking back to the buyer by attendee email).
     buyerName: consumer['Full Name'] || '',
     buyerEmail: consumer['Email'] || '',
+    // Embed-ready operator Cal slug ('username/slug') for the tier_v2 inline
+    // booker. '' when no live Cal event (client renders unavailable message).
+    operatorCalLink,
     // R9 diagnostic — surfaces matching/suggest status + summary in the
     // response. Synthetic-e2e + manual debugs use this to find WHY a
     // qualified buyer didn't get a referralId.

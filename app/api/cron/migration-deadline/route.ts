@@ -25,15 +25,16 @@ import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { addCalPrefill } from '@/lib/calPrefill';
+import { getOperatorBookingUrl } from '@/lib/calBooking';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 180;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
-const BEN_MIGRATION_CAL_URL =
-  process.env.NEXT_PUBLIC_BEN_MIGRATION_CAL_URL ||
-  'https://cal.com/ben-beauchman-1itnsg/15min';
+// Operator booking link is resolved once per run via getOperatorBookingUrl()
+// (lib/calBooking.ts) and threaded into buildNudgeEmail — single source of
+// truth, never a dead hardcoded slug (incident 2026-06-14).
 // Days from deadline at which we fire a nudge email. Tighten cadence as
 // deadline approaches.
 const NUDGE_DAYS = new Set([7, 4, 2, 1]);
@@ -49,6 +50,9 @@ interface NudgeEmailArgs {
   ranchName: string;
   daysLeft: number;
   setupUrl: string;
+  // Resolved operator booking URL (from getOperatorBookingUrl). Never a dead
+  // hardcoded slug — falls back to /contact if no live Cal event.
+  bookUrl: string;
   // Identity passed to Cal.com prefill so the rancher doesn't re-type
   // name/email on the booking form. Falsy values are tolerated — Cal
   // falls back to manual entry.
@@ -57,7 +61,7 @@ interface NudgeEmailArgs {
   rancherId?: string;
 }
 
-function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, fullName, email, rancherId }: NudgeEmailArgs) {
+function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, bookUrl, fullName, email, rancherId }: NudgeEmailArgs) {
   const first = firstName || 'there';
   const urgency = daysLeft <= 1 ? 'tomorrow' : daysLeft <= 2 ? 'in 2 days' : `in ${daysLeft} days`;
   const subject =
@@ -73,7 +77,7 @@ function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, fullName, e
 </div>
 <p><strong>Want me to walk you through it on a 15-min call?</strong></p>
 <div style="text-align:center;margin:14px 0;">
-  <a href="${addCalPrefill(BEN_MIGRATION_CAL_URL, { name: fullName, email, metadata: { rancherId } })}" style="display:inline-block;padding:12px 28px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
+  <a href="${addCalPrefill(bookUrl, { name: fullName, email, metadata: { rancherId } })}" style="display:inline-block;padding:12px 28px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
 </div>
 <p style="font-size:13px;color:#6B4F3F;">Reply to this email if you hit any snag — I'll respond same-day.</p>
 <p style="font-size:13px;color:#6B4F3F;">— Benjamin, BuyHalfCow</p>
@@ -82,6 +86,9 @@ function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, fullName, e
 }
 
 async function realHandler(_request: Request): Promise<CronResult> {
+  // Resolve the operator booking link once per run (single source of truth;
+  // cached 1h inside calBooking). Never throws; falls back to /contact.
+  const bookUrl = await getOperatorBookingUrl();
   const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
   // Only legacy ranchers with an invite already sent. Other statuses (not_invited,
   // completed, paused_overdue) are out of scope for this cron.
@@ -162,6 +169,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
         ranchName: name,
         daysLeft,
         setupUrl,
+        bookUrl,
         fullName: name,
         email,
         rancherId: id,

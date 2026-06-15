@@ -11,6 +11,7 @@ import {
   sendTelegramMessage,
   TELEGRAM_ADMIN_CHAT_ID,
 } from '@/lib/telegram';
+import { getOperatorBookingUrl } from '@/lib/calBooking';
 
 // ManyChat → BHC webhook for the IG/Messenger DM AI closer.
 //
@@ -785,8 +786,12 @@ export async function POST(request: Request) {
   } catch (e: any) {
     aiError = e?.message || 'AI failure';
     console.error('[manychat webhook] AI error:', aiError);
+    // Resolve the operator booking link from the single source of truth
+    // (never a dead hardcoded slug; falls back to /contact). Incident
+    // 2026-06-14: the old cal.com/.../30min slug 404'd.
+    const bookUrl = await getOperatorBookingUrl();
     reply =
-      "tied up for a sec — getting ben on this. he'll reply shortly. (you can also book a 30-min call: cal.com/ben-beauchman-1itnsg/30min)";
+      `tied up for a sec — getting ben on this. he'll reply shortly. (you can also book a call: ${bookUrl})`;
     signals = { needs_human: 'true', note: 'AI provider error — fallback' };
   }
 

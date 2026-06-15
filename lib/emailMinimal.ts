@@ -14,11 +14,14 @@
 // so suppression list + frequency cap + Email Sends audit log all fire.
 
 import { sendEmail } from './email';
+import { getOperatorBookingUrl } from './calBooking';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
-const BHC_OPERATOR_CAL_URL =
-  process.env.BHC_OPERATOR_CAL_URL ||
-  'https://cal.com/ben-beauchman-1itnsg/sales';
+// Operator booking link is resolved at send time via getOperatorBookingUrl()
+// (lib/calBooking.ts) — single source of truth that fetches the operator's
+// LIVE Cal event via CAL_API_KEY and falls back to /contact if none exists.
+// The old hardcoded /sales slug 404'd after the Cal events were deleted
+// (incident 2026-06-14).
 
 // 1. /access signup confirmation — replaces sendConsumerConfirmation as the
 //    one-shot welcome. Drops them right into the quiz.
@@ -52,7 +55,7 @@ export async function sendQuizCompleteCalInvite(opts: {
   score: number;
   calUrl?: string;
 }) {
-  const cal = opts.calUrl || BHC_OPERATOR_CAL_URL;
+  const cal = opts.calUrl || (await getOperatorBookingUrl());
   return sendEmail({
     to: opts.to,
     subject: `You qualified. Book a 15-min call to lock your beef.`,

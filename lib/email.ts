@@ -3,6 +3,11 @@ import jwt from 'jsonwebtoken';
 import { getAllRecords, escapeAirtableValue, TABLES } from './airtable';
 import { checkFrequencyCap, logEmailSend } from './emailFrequencyGuard';
 import { JWT_SECRET } from './secrets';
+import {
+  getOperatorBookingStatus,
+  OPERATOR_BOOKING_FALLBACK_URL,
+} from './calBooking';
+import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from './telegram';
 
 // DOMPurify allowlist for /admin/broadcast HTML mode. P0 audit fix (C-5)
 // hardened in P4-F: operator-supplied HTML was forwarded raw to Resend — a
@@ -1197,9 +1202,11 @@ export async function sendBuyerIntroNotification(data: {
 
   // Cal.com booking CTA — branches on rancher tier:
   //   - Operator tier ($500/mo, 0% commission): BHC handles every sales call.
-  //     CTA points at Ben's sales Cal URL (env: NEXT_PUBLIC_BEN_SALES_CAL_URL,
-  //     fallback https://cal.com/ben-beauchman-1itnsg/sales). Copy reframed
-  //     as "lock in your share with Ben" — the operator-service pitch.
+  //     CTA points at Ben's LIVE Cal event, resolved at send time via
+  //     getOperatorBookingUrl() (single source of truth). Falls back to
+  //     /contact if no live event — and fires a Telegram alert via the guard.
+  //     The old hardcoded /sales slug 404'd after the events were deleted
+  //     (incident 2026-06-14). Copy reframed as "lock in your share with Ben".
   //   - Pasture / Ranch / Legacy Connect / legacy: CTA points at rancher's
   //     own Cal slug. Buyer self-schedules directly with the rancher.
   //   - No slug + non-Operator: block hidden entirely.
@@ -1210,9 +1217,11 @@ export async function sendBuyerIntroNotification(data: {
     .replace(/\/+$/, '');
   const tierLower = String(data.rancherTier || '').toLowerCase();
   const isOperatorTier = tierLower === 'operator';
-  const benSalesCalUrl =
-    process.env.NEXT_PUBLIC_BEN_SALES_CAL_URL ||
-    'https://cal.com/ben-beauchman-1itnsg/sales';
+  // Resolve only for the Operator-tier branch (the only one that links to the
+  // operator's own Cal). Guard fires a Telegram alert on /contact fallback.
+  const benSalesCalUrl = isOperatorTier
+    ? await resolveBookUrlGuarded('buyer-intro-operator-tier')
+    : '';
   let calBlock = '';
   if (isOperatorTier) {
     // Pre-fill Cal.com booking page with buyer context so they don't re-type
@@ -1396,8 +1405,31 @@ export async function sendRancherApproval(data: {
 // Sent by app/api/cron/rancher-reactivation (flag-gated).
 // =====================================================
 
-// Ben's 15-min booking link. Single source for both reactivation templates.
-const REACTIVATION_CAL_URL = 'https://cal.com/ben-beauchman-1itnsg/15min';
+// Dead-link guard (incident 2026-06-14). Resolve the operator's live booking
+// URL via the API-driven resolver. If it fell back to /contact (no live Cal
+// event), we still SEND the email — a /contact link is a real page, far better
+// than blocking a revenue email — but fire one best-effort Telegram alert so
+// the operator knows the Cal event is down and can run /api/admin/cal/ensure-event.
+// Never throws.
+async function resolveBookUrlGuarded(context: string): Promise<string> {
+  try {
+    const status = await getOperatorBookingStatus();
+    if (!status.live || status.url === OPERATOR_BOOKING_FALLBACK_URL) {
+      try {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `⚠️ <b>Booking link fell back to /contact</b>\n\nNo live Cal event — a "book a call" email (${context}) shipped with ${OPERATOR_BOOKING_FALLBACK_URL} instead of a Cal slot.\n\nRun GET /api/admin/cal/ensure-event?create=1 to self-heal.`,
+        );
+      } catch {
+        // Best-effort alert only — never block the send.
+      }
+    }
+    return status.url;
+  } catch {
+    // Resolver is built never to throw, but belt-and-suspenders: fall back.
+    return OPERATOR_BOOKING_FALLBACK_URL;
+  }
+}
 
 // Tier A — WARM. Legacy ranchers who got partway through onboarding
 // (Call Complete / Docs Sent / Verification Complete) but never went live.
@@ -1411,7 +1443,7 @@ export async function sendRancherReactivationWarm(data: {
 }) {
   const first = (data.firstName || '').trim() || 'there';
   const subject = `still want buyers from us, ${first}?`;
-  const bookUrl = REACTIVATION_CAL_URL;
+  const bookUrl = await resolveBookUrlGuarded('reactivation-warm');
   const removeUrl = getUnsubscribeUrl(data.email);
   return guardedSend({
     templateName: 'sendRancherReactivationWarm',
@@ -1475,7 +1507,7 @@ export async function sendRancherReactivationCold(data: {
 }) {
   const first = (data.firstName || '').trim() || 'there';
   const subject = 'closing your BuyHalfCow listing unless…';
-  const bookUrl = REACTIVATION_CAL_URL;
+  const bookUrl = await resolveBookUrlGuarded('reactivation-cold');
   const removeUrl = getUnsubscribeUrl(data.email);
   return guardedSend({
     templateName: 'sendRancherReactivationCold',

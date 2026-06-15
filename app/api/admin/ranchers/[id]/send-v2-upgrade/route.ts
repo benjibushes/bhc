@@ -3,6 +3,7 @@ import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { addCalPrefill } from '@/lib/calPrefill';
+import { getOperatorBookingUrl } from '@/lib/calBooking';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 import { requireAdmin } from '@/lib/adminAuth';
@@ -30,13 +31,11 @@ export const maxDuration = 30;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
-// Ben's Cal.com migration-call link. Rancher books a 15-min walkthrough
-// to ensure flawless tier_v2 transition (subscription pick + Connect KYC
-// + per-tier deposits). Embedded in every upgrade invite email so the
-// rancher can self-schedule without back-and-forth.
-const BEN_MIGRATION_CAL_URL =
-  process.env.NEXT_PUBLIC_BEN_MIGRATION_CAL_URL ||
-  'https://cal.com/ben-beauchman-1itnsg/15min';
+// Ben's Cal.com migration-call link is now resolved at request time via
+// getOperatorBookingUrl() (lib/calBooking.ts) — single source of truth that
+// fetches the operator's LIVE Cal event via CAL_API_KEY and falls back to
+// /contact if no live event exists. The old hardcoded slug 404'd after the
+// Cal events were deleted (incident 2026-06-14).
 // 14-day soft-cutover deadline. After this, migration-deadline-pause cron
 // flips non-upgraded ranchers to Paused status (stops routing). Plenty of
 // runway for a 5-min wizard + 15-min call.
@@ -104,6 +103,10 @@ export async function POST(
       day: 'numeric',
     });
 
+    // Resolve the operator booking link at request time (single source of
+    // truth). Never throws; falls back to /contact if no live Cal event.
+    const benMigrationCalUrl = await getOperatorBookingUrl();
+
     const subject = `${firstName} — quick payout upgrade for ${ranchName} (5-min + optional call)`;
     const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;background:#F4F1EC;color:#0E0E0E;">
 <h1 style="font-family:Georgia,serif;margin:0 0 20px 0;">${firstName}, you're up first for the payout upgrade</h1>
@@ -137,7 +140,7 @@ export async function POST(
   <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6B4F3F;">Option B — book a 15-min walkthrough with me</p>
   <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Prefer to do it together so nothing falls through cracks? Grab a slot — I'll screen-share and walk you through every step. Bring your deposit/processing numbers + your bank info handy.</p>
   <div style="text-align:center;margin:16px 0 4px;">
-    <a href="${addCalPrefill(BEN_MIGRATION_CAL_URL, { name, email, metadata: { rancherId: id } })}" style="display:inline-block;padding:14px 32px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
+    <a href="${addCalPrefill(benMigrationCalUrl, { name, email, metadata: { rancherId: id } })}" style="display:inline-block;padding:14px 32px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
   </div>
 </div>
 

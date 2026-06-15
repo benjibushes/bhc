@@ -86,6 +86,9 @@ export default function QualifyPage({
     depositAmount?: number | null;
     buyerName?: string;
     buyerEmail?: string;
+    // Embed-ready operator Cal slug ('username/slug') resolved server-side in
+    // /api/qualify. '' when no live Cal event → booker shows unavailable msg.
+    operatorCalLink?: string;
     message?: string;
   } | null>(null);
   const [pathChosen, setPathChosen] = useState<'rancher_meet' | 'direct_deposit' | null>(null);
@@ -458,6 +461,7 @@ export default function QualifyPage({
                           </p>
                         </div>
                         <CalInlineBooker
+                          operatorCalLink={result.operatorCalLink}
                           name={result.buyerName}
                           email={result.buyerEmail}
                           referralId={result.referralId}

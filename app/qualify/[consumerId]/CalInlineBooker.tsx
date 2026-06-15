@@ -17,30 +17,43 @@
 
 import { useEffect, useRef } from 'react';
 
-// Operator sales-call event — the default when no calLink is passed. Override
-// via env without a redeploy if the slug ever changes. Matches
-// lib/emailMinimal.ts BHC_OPERATOR_CAL_URL default.
-const OPERATOR_CAL_LINK =
-  process.env.NEXT_PUBLIC_BHC_OPERATOR_CAL_LINK || 'ben-beauchman-1itnsg/sales';
+// INCIDENT (2026-06-14): this component used to default to a hardcoded operator
+// slug ('ben-beauchman-1itnsg/sales'). That Cal event was deleted, so the embed
+// rendered a dead 404 booker. There is NO safe hardcoded fallback — a client
+// component can't call the server resolver (lib/calBooking.ts reads CAL_API_KEY).
+// Instead the operator slug is resolved server-side in /api/qualify and passed
+// down as `operatorCalLink` ('username/slug', embed-ready). If neither a rancher
+// `calLink` nor a resolved `operatorCalLink` is available, we render an
+// "unavailable" message rather than embedding a guessed dead slug.
 const NS = 'salescall';
 const MOUNT_ID = 'bhc-cal-inline-booker';
 
 interface Props {
-  // Cal event to embed, e.g. 'some-rancher/30min'. Defaults to the operator
-  // sales call. The dual-funnel branch passes the matched LEGACY rancher's
-  // own event here so funnel-1 buyers book the rancher, not the operator.
+  // Cal event to embed, e.g. 'some-rancher/30min'. The dual-funnel branch
+  // passes the matched LEGACY rancher's own event here so funnel-1 buyers book
+  // the rancher, not the operator.
   calLink?: string;
+  // Operator's resolved Cal slug ('username/slug') for the tier_v2 funnel where
+  // Ben runs the call. Resolved server-side via getOperatorBookingUrl() and
+  // passed in. Empty/undefined when no live Cal event exists.
+  operatorCalLink?: string;
   name?: string;
   email?: string;
   referralId?: string | null;
   onBooked?: () => void;
 }
 
-export default function CalInlineBooker({ calLink, name, email, referralId, onBooked }: Props) {
-  const resolvedCalLink = calLink || OPERATOR_CAL_LINK;
+export default function CalInlineBooker({ calLink, operatorCalLink, name, email, referralId, onBooked }: Props) {
+  // Prefer an explicit rancher calLink, else the resolved operator link. No
+  // hardcoded slug fallback — a missing link means "no live event" and we
+  // render a message instead of a dead embed.
+  const resolvedCalLink = (calLink || operatorCalLink || '').trim();
   const initialized = useRef(false);
 
   useEffect(() => {
+    // No live booking link → nothing to embed (the JSX renders the
+    // "unavailable" message instead).
+    if (!resolvedCalLink) return;
     if (initialized.current) return;
     initialized.current = true;
 
@@ -105,6 +118,21 @@ export default function CalInlineBooker({ calLink, name, email, referralId, onBo
       });
     }
   }, [resolvedCalLink, name, email, referralId, onBooked]);
+
+  // No live booking link — show a graceful fallback instead of a dead embed.
+  if (!resolvedCalLink) {
+    return (
+      <div className="border border-dust bg-white p-6 text-center">
+        <p className="text-sm text-saddle leading-relaxed">
+          Booking is temporarily unavailable. Email{' '}
+          <a href="mailto:ben@buyhalfcow.com" className="underline text-charcoal">
+            ben@buyhalfcow.com
+          </a>{' '}
+          and we&apos;ll get you scheduled right away.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div
