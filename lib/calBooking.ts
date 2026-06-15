@@ -25,6 +25,10 @@
 
 const CAL_API_BASE = 'https://api.cal.com/v2';
 const CAL_API_VERSION = '2024-08-13';
+// Cal's event-types endpoints require a DIFFERENT api version than /me + /bookings.
+// With 2024-08-13, GET /v2/event-types 404s ("Cannot GET /v2/event-types"); the
+// correct version per Cal docs is 2024-06-14. (Incident 2026-06-15.)
+const CAL_EVENT_TYPES_VERSION = '2024-06-14';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // The always-200 fallback. /contact is a real page (never 404s) so a dead
@@ -49,10 +53,10 @@ interface BookingResolution {
 // doesn't pin us to /contact for an hour.
 let _cache: { value: BookingResolution; at: number } | null = null;
 
-function readFromHeaders() {
+function readFromHeaders(version: string = CAL_API_VERSION) {
   return {
     Authorization: `Bearer ${process.env.CAL_API_KEY}`,
-    'cal-api-version': CAL_API_VERSION,
+    'cal-api-version': version,
   };
 }
 
@@ -117,7 +121,7 @@ async function resolveLive(): Promise<BookingResolution> {
       return { live: false, url: FALLBACK_URL, eventCount: 0 };
     }
 
-    const etRes = await fetch(`${CAL_API_BASE}/event-types`, { headers: readFromHeaders() });
+    const etRes = await fetch(`${CAL_API_BASE}/event-types`, { headers: readFromHeaders(CAL_EVENT_TYPES_VERSION) });
     if (!etRes.ok) {
       console.warn('[calBooking] no live Cal event — falling back to /contact');
       return { live: false, url: FALLBACK_URL, username, eventCount: 0 };

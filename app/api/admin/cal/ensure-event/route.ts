@@ -25,12 +25,14 @@ export const dynamic = 'force-dynamic';
 
 const CAL_API_BASE = 'https://api.cal.com/v2';
 const CAL_API_VERSION = '2024-08-13';
+// event-types endpoints require 2024-06-14 (2024-08-13 → 404). See lib/calBooking.ts.
+const CAL_EVENT_TYPES_VERSION = '2024-06-14';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 
-function calHeaders(apiKey: string, json = false): Record<string, string> {
+function calHeaders(apiKey: string, json = false, version: string = CAL_API_VERSION): Record<string, string> {
   const h: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
-    'cal-api-version': CAL_API_VERSION,
+    'cal-api-version': version,
   };
   if (json) h['Content-Type'] = 'application/json';
   return h;
@@ -102,7 +104,7 @@ export async function GET(req: Request) {
   let events: any[] = [];
   let listRaw = '';
   try {
-    const etRes = await fetch(`${CAL_API_BASE}/event-types`, { headers: calHeaders(apiKey) });
+    const etRes = await fetch(`${CAL_API_BASE}/event-types`, { headers: calHeaders(apiKey, false, CAL_EVENT_TYPES_VERSION) });
     listRaw = await etRes.text().catch(() => '');
     if (!etRes.ok) {
       return NextResponse.json({
@@ -157,7 +159,7 @@ export async function GET(req: Request) {
   try {
     const createRes = await fetch(`${CAL_API_BASE}/event-types`, {
       method: 'POST',
-      headers: calHeaders(apiKey, true),
+      headers: calHeaders(apiKey, true, CAL_EVENT_TYPES_VERSION),
       body: JSON.stringify({
         lengthInMinutes: 15,
         title: 'BuyHalfCow Call',
