@@ -1220,7 +1220,7 @@ export async function sendBuyerIntroNotification(data: {
   // Resolve only for the Operator-tier branch (the only one that links to the
   // operator's own Cal). Guard fires a Telegram alert on /contact fallback.
   const benSalesCalUrl = isOperatorTier
-    ? await resolveBookUrlGuarded('buyer-intro-operator-tier')
+    ? await resolveBookUrlGuarded('buyer-intro-operator-tier', 'sales')
     : '';
   let calBlock = '';
   if (isOperatorTier) {
@@ -1411,9 +1411,12 @@ export async function sendRancherApproval(data: {
 // than blocking a revenue email — but fire one best-effort Telegram alert so
 // the operator knows the Cal event is down and can run /api/admin/cal/ensure-event.
 // Never throws.
-async function resolveBookUrlGuarded(context: string): Promise<string> {
+async function resolveBookUrlGuarded(
+  context: string,
+  purpose: 'rancher' | 'sales' = 'sales',
+): Promise<string> {
   try {
-    const status = await getOperatorBookingStatus();
+    const status = await getOperatorBookingStatus(purpose);
     if (!status.live || status.url === OPERATOR_BOOKING_FALLBACK_URL) {
       try {
         await sendTelegramMessage(
@@ -1443,7 +1446,7 @@ export async function sendRancherReactivationWarm(data: {
 }) {
   const first = (data.firstName || '').trim() || 'there';
   const subject = `still want buyers from us, ${first}?`;
-  const bookUrl = await resolveBookUrlGuarded('reactivation-warm');
+  const bookUrl = await resolveBookUrlGuarded('reactivation-warm', 'rancher');
   const removeUrl = getUnsubscribeUrl(data.email);
   return guardedSend({
     templateName: 'sendRancherReactivationWarm',
@@ -1507,7 +1510,7 @@ export async function sendRancherReactivationCold(data: {
 }) {
   const first = (data.firstName || '').trim() || 'there';
   const subject = 'closing your BuyHalfCow listing unless…';
-  const bookUrl = await resolveBookUrlGuarded('reactivation-cold');
+  const bookUrl = await resolveBookUrlGuarded('reactivation-cold', 'rancher');
   const removeUrl = getUnsubscribeUrl(data.email);
   return guardedSend({
     templateName: 'sendRancherReactivationCold',

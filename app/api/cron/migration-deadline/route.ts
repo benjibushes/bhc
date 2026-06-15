@@ -88,7 +88,7 @@ function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, bookUrl, fu
 async function realHandler(_request: Request): Promise<CronResult> {
   // Resolve the operator booking link once per run (single source of truth;
   // cached 1h inside calBooking). Never throws; falls back to /contact.
-  const bookUrl = await getOperatorBookingUrl();
+  const bookUrl = await getOperatorBookingUrl('rancher');
   const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
   // Only legacy ranchers with an invite already sent. Other statuses (not_invited,
   // completed, paused_overdue) are out of scope for this cron.

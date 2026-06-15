@@ -409,7 +409,7 @@ export async function POST(request: Request) {
   // instead of feeding a non-Cal URL into the embed. Never throws.
   let operatorCalLink = '';
   try {
-    const resolvedOperatorUrl = await getOperatorBookingUrl();
+    const resolvedOperatorUrl = await getOperatorBookingUrl('sales');
     const CAL_PREFIX = 'https://cal.com/';
     if (resolvedOperatorUrl.startsWith(CAL_PREFIX)) {
       operatorCalLink = resolvedOperatorUrl.slice(CAL_PREFIX.length);

@@ -40,6 +40,16 @@ const FALLBACK_URL = `${SITE_URL}/contact`;
 // of Cal API calls.
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
+// Which Cal event a caller wants. Ben runs MULTIPLE live events serving
+// different audiences:
+//   - 'sales'   → "Sales Calls" (slug `sales`, 15min) — BUYER sales calls.
+//   - 'rancher' → "Rancher Onboarding" (slug `30min`, 45min) — rancher
+//     migration/onboarding calls.
+// Picking the FIRST non-hidden event (the old behavior) sent every caller to
+// Sales Calls, so rancher migration emails linked buyers' sales slot. The
+// `purpose` arg selects the right event from the fetched list.
+export type BookingPurpose = 'rancher' | 'sales';
+
 interface BookingResolution {
   live: boolean;
   url: string;
@@ -47,11 +57,13 @@ interface BookingResolution {
   eventCount: number;
 }
 
-// Module-level cache. Holds the FULL resolution (so getOperatorBookingStatus
-// and getOperatorBookingUrl share one fetch). Only successful LIVE resolutions
-// are cached — a fallback result is never cached, so a transient Cal outage
-// doesn't pin us to /contact for an hour.
-let _cache: { value: BookingResolution; at: number } | null = null;
+// Module-level cache, KEYED BY PURPOSE. Holds the FULL resolution (so
+// getOperatorBookingStatus and getOperatorBookingUrl share one fetch). Only
+// successful LIVE resolutions are cached — a fallback result is never cached,
+// so a transient Cal outage doesn't pin us to /contact for an hour. Keyed so
+// 'rancher' and 'sales' don't clobber each other (they resolve to different
+// events).
+const _cache = new Map<BookingPurpose, { value: BookingResolution; at: number }>();
 
 function readFromHeaders(version: string = CAL_API_VERSION) {
   return {
@@ -96,12 +108,39 @@ function extractUsername(json: any): string {
 }
 
 /**
- * Do the live Cal lookup. Returns a full resolution. NEVER throws — any error
- * resolves to the /contact fallback (live:false) so callers can treat the
- * result uniformly. Logs a single warn on the fallback path so the operator
- * can see it in Vercel logs.
+ * Pick the right event for `purpose` from the non-hidden events list:
+ *   - 'rancher': slug === '30min' OR title/slug includes 'rancher' / 'onboard'.
+ *   - 'sales':   slug === 'sales'  OR title includes 'sales'.
+ * Falls back to the first non-hidden event (the old behavior) when no
+ * purpose-specific match exists, so a renamed event still resolves to a live
+ * slot rather than /contact. Returns undefined only when there are no events.
  */
-async function resolveLive(): Promise<BookingResolution> {
+function selectEventForPurpose(events: any[], purpose: BookingPurpose): any | undefined {
+  const nonHidden = events.filter((e) => e && e.hidden !== true);
+  if (nonHidden.length === 0) return undefined;
+
+  const match = nonHidden.find((e) => {
+    const slug = String(e.slug || '').toLowerCase().trim();
+    const title = String(e.title || '').toLowerCase().trim();
+    if (purpose === 'rancher') {
+      return slug === '30min' || slug.includes('rancher') || slug.includes('onboard')
+        || title.includes('rancher') || title.includes('onboard');
+    }
+    // 'sales'
+    return slug === 'sales' || title.includes('sales');
+  });
+
+  // Fall back to the first non-hidden event (current behavior) on no match.
+  return match || nonHidden[0];
+}
+
+/**
+ * Do the live Cal lookup for `purpose`. Returns a full resolution. NEVER throws
+ * — any error resolves to the /contact fallback (live:false) so callers can
+ * treat the result uniformly. Logs a single warn on the fallback path so the
+ * operator can see it in Vercel logs.
+ */
+async function resolveLive(purpose: BookingPurpose): Promise<BookingResolution> {
   const apiKey = process.env.CAL_API_KEY || '';
   if (!apiKey) {
     console.warn('[calBooking] no live Cal event — falling back to /contact');
@@ -129,8 +168,10 @@ async function resolveLive(): Promise<BookingResolution> {
     const etJson = await etRes.json();
     const events = extractEventTypes(etJson);
 
-    // First non-hidden event wins. hidden !== true tolerates undefined/missing.
-    const liveEvent = events.find((e) => e && e.hidden !== true);
+    // Pick the event matching `purpose` (rancher onboarding vs buyer sales),
+    // falling back to the first non-hidden event. hidden !== true tolerates
+    // undefined/missing.
+    const liveEvent = selectEventForPurpose(events, purpose);
     const slug = String(liveEvent?.slug || '').trim();
 
     if (!liveEvent || !slug) {
@@ -151,23 +192,38 @@ async function resolveLive(): Promise<BookingResolution> {
 }
 
 /**
- * Resolve the operator's live booking URL, using the module cache. Only LIVE
- * resolutions are cached; fallbacks are always re-attempted on the next call.
+ * The manual override URL for `purpose`, checked BEFORE the Cal API (same as
+ * the old single CAL_BOOKING_URL). Purpose-specific var wins, then the shared
+ * CAL_BOOKING_URL legacy var:
+ *   - 'rancher' → CAL_RANCHER_BOOKING_URL || CAL_BOOKING_URL
+ *   - 'sales'   → CAL_SALES_BOOKING_URL   || CAL_BOOKING_URL
  */
-async function resolve(): Promise<BookingResolution> {
+function overrideForPurpose(purpose: BookingPurpose): string {
+  const specific =
+    purpose === 'rancher' ? process.env.CAL_RANCHER_BOOKING_URL : process.env.CAL_SALES_BOOKING_URL;
+  return (specific || process.env.CAL_BOOKING_URL || '').trim();
+}
+
+/**
+ * Resolve the operator's live booking URL for `purpose`, using the per-purpose
+ * module cache. Only LIVE resolutions are cached; fallbacks are always
+ * re-attempted on the next call.
+ */
+async function resolve(purpose: BookingPurpose): Promise<BookingResolution> {
   // Manual override always wins, bypasses cache + Cal entirely.
-  const override = (process.env.CAL_BOOKING_URL || '').trim();
+  const override = overrideForPurpose(purpose);
   if (override) {
     return { live: true, url: override, eventCount: 1 };
   }
 
-  if (_cache && Date.now() - _cache.at < CACHE_TTL_MS) {
-    return _cache.value;
+  const cached = _cache.get(purpose);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.value;
   }
 
-  const result = await resolveLive();
+  const result = await resolveLive(purpose);
   if (result.live) {
-    _cache = { value: result, at: Date.now() };
+    _cache.set(purpose, { value: result, at: Date.now() });
   }
   return result;
 }
@@ -175,29 +231,36 @@ async function resolve(): Promise<BookingResolution> {
 /**
  * SINGLE SOURCE OF TRUTH for Ben's booking link.
  *
+ * `purpose` selects which live Cal event to link (defaults to 'sales' so
+ * existing buyer surfaces are unchanged):
+ *   - 'sales'   → "Sales Calls" (buyer sales calls).
+ *   - 'rancher' → "Rancher Onboarding" (rancher migration/onboarding calls).
+ *
  * Resolution order (never throws, never returns a 404-able cal.com slug):
- *   1. CAL_BOOKING_URL env (manual override) → return as-is.
- *   2. Live Cal API lookup (cached 1h): GET /me → username, GET /event-types
- *      → first non-hidden event → https://cal.com/<username>/<slug>.
+ *   1. Env override (manual): rancher → CAL_RANCHER_BOOKING_URL||CAL_BOOKING_URL;
+ *      sales → CAL_SALES_BOOKING_URL||CAL_BOOKING_URL → return as-is.
+ *   2. Live Cal API lookup (cached 1h, per purpose): GET /me → username,
+ *      GET /event-types → purpose-matched non-hidden event (else first
+ *      non-hidden) → https://cal.com/<username>/<slug>.
  *   3. Any error / no live event / no CAL_API_KEY → SITE_URL/contact.
  */
-export async function getOperatorBookingUrl(): Promise<string> {
-  const r = await resolve();
+export async function getOperatorBookingUrl(purpose: BookingPurpose = 'sales'): Promise<string> {
+  const r = await resolve(purpose);
   return r.url;
 }
 
 /**
  * Diagnostics + guard surface. Lets callers (e.g. the dead-link guard in
  * lib/email.ts, or an admin endpoint) see whether the link is live without
- * re-implementing the resolution logic.
+ * re-implementing the resolution logic. `purpose` mirrors getOperatorBookingUrl.
  */
-export async function getOperatorBookingStatus(): Promise<{
+export async function getOperatorBookingStatus(purpose: BookingPurpose = 'sales'): Promise<{
   live: boolean;
   url: string;
   username?: string;
   eventCount: number;
 }> {
-  return resolve();
+  return resolve(purpose);
 }
 
 // Exported only so the dead-link guard can compare a resolved URL against the

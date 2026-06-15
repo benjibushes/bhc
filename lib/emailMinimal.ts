@@ -55,7 +55,7 @@ export async function sendQuizCompleteCalInvite(opts: {
   score: number;
   calUrl?: string;
 }) {
-  const cal = opts.calUrl || (await getOperatorBookingUrl());
+  const cal = opts.calUrl || (await getOperatorBookingUrl('sales'));
   return sendEmail({
     to: opts.to,
     subject: `You qualified. Book a 15-min call to lock your beef.`,

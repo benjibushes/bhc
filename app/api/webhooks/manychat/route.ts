@@ -789,7 +789,7 @@ export async function POST(request: Request) {
     // Resolve the operator booking link from the single source of truth
     // (never a dead hardcoded slug; falls back to /contact). Incident
     // 2026-06-14: the old cal.com/.../30min slug 404'd.
-    const bookUrl = await getOperatorBookingUrl();
+    const bookUrl = await getOperatorBookingUrl('sales');
     reply =
       `tied up for a sec — getting ben on this. he'll reply shortly. (you can also book a call: ${bookUrl})`;
     signals = { needs_human: 'true', note: 'AI provider error — fallback' };

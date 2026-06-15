@@ -105,7 +105,7 @@ export async function POST(
 
     // Resolve the operator booking link at request time (single source of
     // truth). Never throws; falls back to /contact if no live Cal event.
-    const benMigrationCalUrl = await getOperatorBookingUrl();
+    const benMigrationCalUrl = await getOperatorBookingUrl('rancher');
 
     const subject = `${firstName} — quick payout upgrade for ${ranchName} (5-min + optional call)`;
     const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;background:#F4F1EC;color:#0E0E0E;">
