@@ -22,8 +22,10 @@
 // route through the platform, but rancher keeps the legacy 10% commission
 // model (no monthly subscription, no Stripe Price). Use when a rancher
 // wants on-platform deposits without committing to Pasture/Ranch/Operator
-// monthly fees. Picked via /api/admin/ranchers/[id]/mark-legacy-connect
-// (operator-only — not exposed in the wizard).
+// monthly fees. Selectable two ways: (1) self-serve in the setup wizard —
+// the Legacy Connect TIER_CARD POSTs /api/rancher/tier/select (requireRancher,
+// hybrid path persists Tier='Legacy Connect' + synthetic Subscription
+// Status='active'); (2) operator-side via /api/admin/ranchers/[id]/mark-legacy-connect.
 export type TierSlug = 'pasture' | 'ranch' | 'operator' | 'legacy_connect';
 
 export interface TierConfig {

@@ -97,58 +97,62 @@ export async function POST(
     // more leads) until they finish. Surfaced in email so the rancher
     // sees the urgency.
     const deadline = new Date(Date.now() + MIGRATION_DEADLINE_DAYS * 24 * 60 * 60 * 1000);
-    const deadlineLabel = deadline.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-    });
 
     // Resolve the operator booking link at request time (single source of
     // truth). Never throws; falls back to /contact if no live Cal event.
     const benMigrationCalUrl = await getOperatorBookingUrl('rancher');
 
-    const subject = `${firstName} — quick payout upgrade for ${ranchName} (5-min + optional call)`;
+    const subject = `${firstName} — buyers can pay you direct now`;
     const html = `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;background:#F4F1EC;color:#0E0E0E;">
-<h1 style="font-family:Georgia,serif;margin:0 0 20px 0;">${firstName}, you're up first for the payout upgrade</h1>
+<h1 style="font-family:Georgia,serif;margin:0 0 20px 0;">${firstName}, buyers can pay you direct now</h1>
 
-<p>Hey ${firstName} — you're one of the ranchers actually moving beef through BuyHalfCow, so I want you on the new payout flow first. I'm standardizing how everyone handles deposits, and you're at the front of the line. Right now you invoice the buyer offline; the new model lands the money in your account same-day and takes the chase-down off your plate.</p>
+<p>Hey ${firstName} — for a while I've wanted buyers to pay you directly through BuyHalfCow instead of you chasing invoices. I had to get the payment setup approved to move money on your behalf. That's done. So I'm turning it on for the ranchers actually moving beef — and ${ranchName} is one of them.</p>
 
-<p><strong>What changes for you:</strong></p>
+<p><strong>What changes:</strong></p>
 <ul style="color:#2A2A2A;line-height:1.8;">
-  <li><strong>Stripe Connect direct charges</strong> — buyers pay deposit on the platform, money lands in YOUR Stripe account same-day. No invoice-then-wait dance.</li>
-  <li><strong>Locked-in commitment</strong> — buyers who pay deposit don't ghost. Conversion goes up; rancher time wasted goes down.</li>
-  <li><strong>BHC handles final invoice too</strong> — when processing's done, one click in your dashboard fires the final invoice to the buyer (BHC takes 0% on the final).</li>
-  <li><strong>Same commission rate</strong> — your existing cut doesn't change. We just collect it once at deposit instead of after the close.</li>
+  <li><strong>Buyers reserve their share with a deposit that lands in YOUR Stripe account same-day.</strong> Money down means they show up — no ghosting.</li>
+  <li><strong>I run every buyer call + qualification.</strong> You just fulfill the order.</li>
+  <li><strong>Same beef, same payout</strong> — I collect the commission once, up front, instead of chasing it after the close.</li>
 </ul>
 
-<p><strong>Two paths — pick what works for you:</strong></p>
+<p><strong>Your options</strong> (start small, upgrade anytime):</p>
+
+<table style="border-collapse:collapse;width:100%;margin:16px 0;font-size:14px;color:#2A2A2A;">
+  <tr style="background:#FFFFFF;">
+    <td style="border:1px solid #A7A29A;padding:10px 14px;"><strong>Legacy Connect — keep your 10%, $0/mo</strong></td>
+    <td style="border:1px solid #A7A29A;padding:10px 14px;">Deposits + I run the calls. Most ranchers start here.</td>
+  </tr>
+  <tr style="background:#F4F1EC;">
+    <td style="border:1px solid #A7A29A;padding:10px 14px;"><strong>Pasture — $150/mo · 7%</strong></td>
+    <td style="border:1px solid #A7A29A;padding:10px 14px;">Listing, landing page, buyer matching.</td>
+  </tr>
+  <tr style="background:#FFFFFF;">
+    <td style="border:1px solid #A7A29A;padding:10px 14px;"><strong>Ranch — $350/mo · 3%</strong></td>
+    <td style="border:1px solid #A7A29A;padding:10px 14px;">+ priority routing, quarterly copy rewrites, social features.</td>
+  </tr>
+  <tr style="background:#F4F1EC;">
+    <td style="border:1px solid #A7A29A;padding:10px 14px;"><strong>Operator — $500/mo · 0%</strong></td>
+    <td style="border:1px solid #A7A29A;padding:10px 14px;">+ done-for-you marketing. Zero commission.</td>
+  </tr>
+</table>
+
+<p><strong>Two ways to go:</strong></p>
 
 <div style="background:#FFFFFF;border:2px solid #0E0E0E;padding:22px;margin:20px 0;">
-  <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#0E0E0E;">Option A — DIY in the wizard (5 min)</p>
-  <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">If you're comfortable with Stripe + can paste in your deposit numbers, knock it out solo:</p>
-  <ol style="color:#2A2A2A;line-height:1.7;margin:8px 0;padding-left:22px;font-size:14px;">
-    <li>Pick subscription tier (Pasture $150 / Ranch $350 / Operator $500 per mo)</li>
-    <li>Stripe Connect onboarding (business info + bank account)</li>
-    <li>Set per-tier deposits + processing fees</li>
-  </ol>
+  <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#0E0E0E;">Set it up myself (5 min)</p>
+  <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Pick your plan, connect your bank, set your deposit — taking orders the same day. Have your business info + bank account handy.</p>
   <div style="text-align:center;margin:16px 0 4px;">
-    <a href="${setupUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Start the upgrade →</a>
+    <a href="${setupUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Set it up myself →</a>
   </div>
 </div>
 
 <div style="background:#FFFFFF;border:2px solid #6B4F3F;padding:22px;margin:20px 0;">
-  <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6B4F3F;">Option B — book a 15-min walkthrough with me</p>
-  <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Prefer to do it together so nothing falls through cracks? Grab a slot — I'll screen-share and walk you through every step. Bring your deposit/processing numbers + your bank info handy.</p>
+  <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6B4F3F;">Book 15 min with me</p>
+  <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Questions, or want to do it together? Grab a slot and I'll set you up live on the call.</p>
   <div style="text-align:center;margin:16px 0 4px;">
-    <a href="${addCalPrefill(benMigrationCalUrl, { name, email, metadata: { rancherId: id } })}" style="display:inline-block;padding:14px 32px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book your 15-min call →</a>
+    <a href="${addCalPrefill(benMigrationCalUrl, { name, email, metadata: { rancherId: id } })}" style="display:inline-block;padding:14px 32px;background:#FFFFFF;color:#0E0E0E;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;border:1px solid #0E0E0E;">Book 15 min →</a>
   </div>
 </div>
-
-<div style="background:#FFF6E0;border:1px solid #C99A2E;padding:14px 18px;margin:24px 0;">
-  <p style="margin:0;font-size:14px;color:#0E0E0E;"><strong>I'm sunsetting the old invoice model on ${deadlineLabel}.</strong> Run the wizard or grab a call before then and the switch is seamless — nothing changes on your end except faster, cleaner payouts.</p>
-</div>
-
-<p style="font-size:14px;color:#6B4F3F;"><strong>Why now:</strong> we're about to put real ad spend behind the platform. Standardizing the deposit flow means every buyer sees the same checkout — fewer questions, more closes, faster cash to your account.</p>
 
 <p style="font-size:14px;color:#6B4F3F;">Hit reply with any questions — I read every email.</p>
 
