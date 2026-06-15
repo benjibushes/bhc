@@ -1,9 +1,18 @@
 # BHC Platform Map — Top-Down Source of Truth
 
-_Last updated: 2026-06-11. Accurate to current production code. This is the single
+_Last updated: 2026-06-15. Accurate to current production code. This is the single
 crystal-clear picture of the whole machine: service offerings, the money model, the
 rancher onboarding funnel, the customer funnel, and every tool that executes. Where an
 older doc disagrees, this one wins. Drift between code and comments is flagged in §6._
+
+> **2026-06-15 launch note.** tier_v2 is **LIVE** and the legacy→tier_v2 migration has
+> **launched** (14 active legacy ranchers invited via Bulk Invite, 41 dormant reactivated).
+> A 16-fix hardening pass shipped the same day (Connect-active routing gate, hot-path buyer
+> session, resend-link token, `/contact` page, cut-specific deposit idempotency, self-serve
+> wizard Step 4, deposit-input UI, admin `getRecordById` fixes, Cal webhook onboarding
+> tie-back, capacity-drift Slot Locked, migration-status guards on 3 crons, rancher-followup
+> live Cal link, Telegram HTML-escaping, Connect-stuck monitoring). For the marketing-funnel +
+> paths-to-money view, see [`MONEY-FUNNELS.md`](MONEY-FUNNELS.md).
 
 ---
 
@@ -147,11 +156,13 @@ flowchart LR
 | **Sign agreement** | Locks commission rate; if content-complete, **auto-goes-live** | `/api/ranchers/sign-agreement` | `Agreement Signed`, `Commission Rate` (locked), → `Active`/`Live` |
 | **Go live** | 8 paths converge on the same tuple; most fire a waitlist warmup blast | sign-agreement / admin go-live / Telegram / batch-approve cron | `Page Live=true`, `Active Status=Active`, `Onboarding Status=Live` |
 
-**Legacy-rancher migration (the wave you're starting):**
+**Legacy-rancher migration (LAUNCHED 2026-06-15 — 14 active legacy invited via Bulk Invite, 41 dormant reactivated):**
 `/admin/migration` tracker → `send-v2-upgrade` (60-day JWT + 14-day deadline) →
 `migration-deadline` cron (nudges at **7/4/2/1 days left**, auto-pause at Day 14) →
 **🔄 Resync** button (`/api/admin/ranchers/[id]/resync-connect`) force-reads Stripe when a
 Connect status is stuck. Migration self-completes the moment Connect goes active on a paying tier.
+Ranchers can self-serve the `/rancher/setup` wizard end-to-end (tier pick incl Legacy Connect →
+Connect bank → per-cut Price/Deposit/Fee → sign → go live) **or** book the "Rancher Onboarding" call.
 
 > **The single gate that turns deposits on:** the buyer deposit checkout
 > (`/api/checkout/deposit`) hard-requires `Stripe Connect Status='active'`. Only the

@@ -5,16 +5,18 @@ to bottom-of-funnel conversion paths, voice, audience, channel-specific
 copy, CTAs. Used by the marketing skill. Update when business model evolves.
 
 **Status:** v1, post-launch ready
-**Companion docs:** `VISION.md` (locked plan + give-back) · `BUSINESS-MODEL.md` (engines, costs, metrics)
-**Last revised:** 2026-05-03
+**Companion docs:** `VISION.md` (locked plan + give-back) · `BUSINESS-MODEL.md` (engines, costs, metrics) · `MONEY-FUNNELS.md` (paths to money + funnels) · `BHC-PLATFORM-MAP.md` (code-level truth)
+**Last revised:** 2026-05-03 · **tier_v2 note added 2026-06-15**
+
+> **⚠️ 2026-06-15 — money model changed (tier_v2 is LIVE).** The "10% commission only on closed deals / you close the deal, we take 10%" lines below describe the **legacy** model. For ranchers migrated to **tier_v2**, BHC collects its commission **upfront** on the buyer's deposit via Stripe Connect, and the rate is tier-based (Legacy Connect 10% · Pasture 7% · Ranch 3% · Operator 0%, `lib/tiers.ts`). On tier_v2, **Ben runs the sales call** and the deposit closes the buyer — it is no longer "the rancher closes, we invoice 10% after." Onboarding is the self-serve `/rancher/setup` wizard (tier pick → Connect bank → prices → sign → go live) **or** a booked "Rancher Onboarding" call. Treat the verbatim "10%" pitch lines as **legacy-only**; for current rancher/buyer money copy, anchor to `MONEY-FUNNELS.md`.
 
 ---
 
 ## ONE-LINE PITCHES (use verbatim)
 
-- **Generic / press:** "BuyHalfCow is the private network connecting families directly to verified ranchers. Real beef, no middleman, 10% commission only on closed deals."
+- **Generic / press:** "BuyHalfCow is the private network connecting families directly to verified ranchers. Real beef, no middleman, no markup on your meat." _(2026-06-15: dropped the "10% commission only on closed deals" tag — commission is now tier-based and, for tier_v2 ranchers, collected upfront on the deposit. Don't state a flat 10% in press.)_
 - **Buyer-facing:** "Source beef directly from a real ranch in your state. Quarter, half, or whole. The way local families have been doing it for generations."
-- **Rancher-facing:** "We send you pre-screened buyers in your state who are ready to buy a quarter, half, or whole. You close the deal. We take 10%."
+- **Rancher-facing (tier_v2):** "We bring qualified, in-state buyers to your door and run the sales call. You raise and fulfill the beef. Pick your plan — pay as little as 0% commission." _(Legacy line, now tier-dependent: ~~"You close the deal. We take 10%."~~ — only true for un-migrated legacy ranchers. tier_v2 rates: Legacy Connect 10% · Pasture 7% · Ranch 3% · Operator 0%.)_
 - **Founder/backer-facing:** "100 spots, $1,000 each. Numbered placement, lifetime priority, no equity, no theatrics. The Founding Herd is the people who paid in before this was easy to bet on."
 - **Brand-facing:** "Three tiers. $99/$499/$2,500. Get your brand in front of D2C ranchers + the families who buy real beef."
 - **Mission line (always available):** "We're gonna take back American ranching and agriculture. One family, one rancher, one freezer at a time."
@@ -98,7 +100,7 @@ processor parking lots.
 
 **What they want to hear:**
 1. "Non-exclusive. Sell anywhere else you want."
-2. "10% only when YOU close the deal."
+2. "Pick your commission: 0% on Operator, or pay-per-sale on Legacy Connect — your choice." _(2026-06-15: replaced the legacy "10% only when YOU close the deal" — tier_v2 commission is tier-based and collected upfront on the deposit.)_
 3. "Pause routing or leave any time."
 4. "Five-minute self-serve onboarding. No call required."
 5. "We send you pre-screened, in-state, ready-to-buy buyers."
@@ -276,7 +278,7 @@ All in `lib/email.ts`. Don't write new ones — extend existing.
 - `sendRancherSelfSubmitWelcome()` — fired from `/api/prospects/self-submit`
 - Subject: `[ranch] is on the map — set up your page`
 - Primary CTA: "Set up your page →" (magic link to wizard)
-- Calendly fallback link present
+- "Book a call" fallback link present (Cal.com; new code resolves it live via `getOperatorBookingUrl`, `lib/calBooking.ts`)
 
 ### Rancher community-submit intro
 - `sendRancherCommunityIntro()` — fired from `/api/prospects/self-submit` for community-flagged ranchers

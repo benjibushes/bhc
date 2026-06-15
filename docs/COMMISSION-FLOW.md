@@ -2,6 +2,8 @@
 
 Canonical state machine for buyer-rancher referrals + commission capture. Born from the 2026-05-20 Ashcraft / Eric Turner incident — codify the model so it doesn't drift.
 
+> **⚠️ 2026-06-15 scope note.** This doc describes the **legacy post-close commission model** (rancher runs the sale, BHC invoices a % afterward via `createCommissionInvoice`). That model is still live **for legacy ranchers**, but it is no longer the primary money path. **tier_v2 is now LIVE** (launched 2026-06-15): commission is collected **upfront** as a Stripe Connect `application_fee_amount` on the buyer's **deposit**, and the final invoice is fee-free. For the tier_v2 deposit mechanics and the full revenue map, see [`MONEY-FUNNELS.md`](MONEY-FUNNELS.md) and [`BHC-PLATFORM-MAP.md`](BHC-PLATFORM-MAP.md). The `commission-invoices` cron (this doc's flow) now **skips tier_v2 ranchers** so commission is never taken twice.
+
 ## State machine
 
 ```
@@ -11,8 +13,9 @@ Canonical state machine for buyer-rancher referrals + commission capture. Born f
                           ↓                                   ↓
                   [Awaiting Payment]                    [Closed Lost]
                           ↓
-                  rancher confirms via
-                  dashboard or /confirmpaid
+                  rancher confirms via dashboard
+                  "Confirm Payment Received" button
+                  (or operator Telegram reply)
                           ↓
                     [Closed Won]
                           ↓
@@ -75,7 +78,7 @@ There is ONE way Awaiting Payment moves into Closed Won:
 |---|---|---|
 | `POST /api/rancher/referrals/[id]/confirm-payment` | rancher dashboard "Confirm Payment Received" button | rancher received money |
 
-Telegram `/confirmpaid recXXX $1500` is a future addition — not yet built. Workaround: rancher uses the dashboard button.
+There is **no** `/confirmpaid` Telegram command (it was never built, and the dead advertisement of it was removed 2026-06-15). The dashboard "Confirm Payment Received" button is the real path; an operator can also reply to the Telegram close-marker card with the dollar amount.
 
 ## Per-rancher Commission Rate field
 
@@ -108,7 +111,7 @@ Telegram `/confirmpaid recXXX $1500` is a future addition — not yet built. Wor
 
 - Rancher manually edits Sale Amount in Airtable after Stripe invoice fires → no invoice update path. Operator must cancel + re-fire manually. Could automate via a "rebill" admin endpoint later.
 - `Commission Paid=true` set manually via Telegram `markpaid` button doesn't email a receipt to the rancher (until PR #34 lands).
-- No Stripe Connect — invoice fires from BHC's Stripe account, not split-paid via Connect. Phase 1 of VISION.md.
+- This legacy invoice path fires from BHC's own Stripe account (not split-paid). **Note (2026-06-15):** Stripe Connect is now live for tier_v2 — those ranchers collect via on-platform deposits with the commission taken upfront as an `application_fee`, so this post-close invoice path applies to **legacy ranchers only**. (Originally tracked as "Phase 1 of VISION.md"; that phase has shipped.)
 
 ## When something looks wrong
 

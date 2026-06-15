@@ -2,7 +2,9 @@
 
 Procedure for merging `stage-3-verticals` → `main` and activating tier_v2 in production.
 
-**Current state:** branch `stage-3-verticals` is feature-complete (12/12 Phase 1 tasks + 5 audit fixes + 4 build blockers + BHC Promise floor). Final review passed with operator caveats below.
+> **⚠️ 2026-06-15 update — tier_v2 IS LIVE.** This playbook is now **historical**. The merge happened, `STRIPE_CONNECT_ENABLED=true` in prod, and the legacy→tier_v2 migration **launched 2026-06-15** (14 active legacy ranchers invited via Bulk Invite, 41 dormant reactivated). Ranchers self-serve the `/rancher/setup` wizard (4 tiers incl Legacy Connect, deposit input, in-wizard checkout, go-live) **or** book the "Rancher Onboarding" Cal. Keep this doc for the merge/rollback procedure and the corrected webhook-registration steps in §0.1; the phased "soak → pilot → open" sequence below has already run. Current code-level truth lives in [`BHC-PLATFORM-MAP.md`](BHC-PLATFORM-MAP.md); money model in [`MONEY-FUNNELS.md`](MONEY-FUNNELS.md).
+
+**Original state (at time of writing):** branch `stage-3-verticals` is feature-complete (12/12 Phase 1 tasks + 5 audit fixes + 4 build blockers + BHC Promise floor). Final review passed with operator caveats below.
 
 ## Phase 0 — Pre-merge operator steps
 
@@ -12,22 +14,36 @@ These MUST happen before merging or activating tier_v2. None require code change
 
 The Stage-3 Connect webhook at `/api/webhooks/stripe-connect` exists but won't function until registered in the Stripe Dashboard.
 
+> **⚠️ 2026-06-09 correction — register V1 events, NOT the V2 thin events.** The
+> implementation switched from V2 Connect to **V1 Express** accounts on 2026-06-09
+> (`app/api/webhooks/stripe-connect/route.ts:189`). On V1 Express, the status flip is
+> driven by `account.updated` (fires whenever `charges_enabled` / `payouts_enabled` /
+> `requirements.currently_due` / `capabilities.card_payments` change) with
+> `capability.updated` alongside for capability lifecycle. The old V2 thin-event strings
+> (`v2.core.account[requirements].updated`, `…[configuration.merchant].capability_status_updated`,
+> `v2.core.account.updated`) are retained as **no-op cases** in the handler for
+> forward-compat — they will NOT fire on V1 Express accounts, so subscribing to them alone
+> leaves the deposit gate dead. Subscribe to the V1 events below.
+
 1. Stripe Dashboard → Developers → Webhooks → **Add endpoint**
 2. URL: `https://buyhalfcow.com/api/webhooks/stripe-connect`
 3. **Listen to: events on Connected accounts** (NOT "events on your account")
-4. Subscribe to these event types:
-   - `v2.core.account[requirements].updated`
-   - `v2.core.account[configuration.merchant].capability_status_updated`
-   - `v2.core.account.updated` (belt-and-suspenders catch-all)
+4. Subscribe to these event types (V1 Express — what the handler actually consumes):
+   - `account.updated` (the one that flips `Stripe Connect Status=active`)
+   - `capability.updated` (capability lifecycle, fires alongside)
 5. Save → copy the signing secret
 6. Vercel → Project Settings → Environment Variables → add `STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...` (Production scope only)
 7. Redeploy main so the new env var is picked up
 
-**Failure mode if skipped:** Ranchers finish Stripe Express onboarding but the dashboard banner cascade stays on "Connect bank →" forever — because nothing writes back to the `Stripe Connect Status` field on Airtable. The startup warning at `app/api/webhooks/stripe-connect/route.ts:38` will log on every cold-start to surface this.
+**Failure mode if skipped:** Ranchers finish Stripe Express onboarding but the dashboard banner cascade stays on "Connect bank →" forever — because nothing writes back to the `Stripe Connect Status` field on Airtable. The startup warning at `app/api/webhooks/stripe-connect/route.ts:47` will log on every cold-start to surface this.
+
+> **Recovery (added post-launch):** when a rancher's Connect status is stuck despite a finished Stripe flow, the **🔄 Resync** button (`/api/admin/ranchers/[id]/resync-connect`) force-reads Stripe and writes the correct status — no need to wait for a webhook re-fire.
 
 ### 0.2 Confirm `STRIPE_CONNECT_ENABLED=false` on Vercel prod
 
 This flag gates tier_v2 exposure even AFTER the code lands. Keep it false through merge + soak. Flip to true only after the controlled-launch step below.
+
+> **2026-06-15:** done — `STRIPE_CONNECT_ENABLED=true` in prod, tier_v2 launched.
 
 ### 0.3 Confirm Stripe products are LIVE (not test mode)
 
@@ -144,6 +160,6 @@ From the final code review:
 ## Locked constraints
 
 - NEVER push to main without explicit user consent
-- NEVER commit to main directly — only merge from `stage-3-verticals`
-- LIVE Stripe mode — real charges from the moment flag flips
-- 17 verified ranchers continue legacy commission flow until they opt-in to tier_v2
+- ~~NEVER commit to main directly — only merge from `stage-3-verticals`~~ (2026-06-15: `stage-3-verticals` is merged; this constraint is historical)
+- LIVE Stripe mode — real charges (the `STRIPE_CONNECT_ENABLED` flag is now `true`)
+- 2026-06-15: legacy ranchers are actively migrating to tier_v2 (14 active legacy invited via Bulk Invite, 41 dormant reactivated). Legacy ranchers not yet Connect-active continue the legacy commission flow until they finish the wizard/onboarding. (The old "17 verified ranchers" count predated the migration launch.)

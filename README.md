@@ -1,8 +1,12 @@
 # BuyHalfCow (BHC)
 
-Private network connecting serious beef buyers with verified American ranchers. Not a marketplace — a curated, relationship-based sourcing platform with manual approval, intent-based segmentation, and commission tracking.
+Private network connecting serious beef buyers with verified American ranchers. Not a marketplace — a curated, relationship-based sourcing platform with intent-based segmentation and on-platform commission capture.
 
 > 📍 **Start here for the top-down picture:** [`docs/BHC-PLATFORM-MAP.md`](docs/BHC-PLATFORM-MAP.md) — the single source of truth for service offerings, the money model, the rancher onboarding funnel, the customer funnel, and every cron/webhook/email that executes. Kept current with the code.
+>
+> 💰 **Money model + every funnel:** [`docs/MONEY-FUNNELS.md`](docs/MONEY-FUNNELS.md) — paths to money + marketing funnels, end to end.
+>
+> **2026-06-15:** the **tier_v2** model is LIVE — ranchers run on Stripe Connect and BHC's commission is collected **upfront** as an `application_fee` on the buyer's deposit (tiers in `lib/tiers.ts`: Legacy Connect $0/10% · Pasture $150/7% · Ranch $350/3% · Operator $500/0%). The legacy 10% post-close invoice flow still runs for un-migrated ranchers. Much of the section-by-section detail below predates tier_v2 — `BHC-PLATFORM-MAP.md` is authoritative where they disagree.
 
 ## Tech Stack
 
@@ -38,9 +42,10 @@ All required env vars for `.env.local` and Vercel:
 | `JWT_SECRET` | Secret for signing all JWT tokens |
 | `CRON_SECRET` | Bearer token for cron job endpoints |
 | `NEXT_PUBLIC_SITE_URL` | Production URL (`https://www.buyhalfcow.com`) |
-| `NEXT_PUBLIC_COMMISSION_RATE` | Commission rate (`0.10`) |
-| `NEXT_PUBLIC_CALENDLY_LINK` | Cal.com scheduling link (public) |
-| `CALENDLY_LINK` | Cal.com scheduling link (server) |
+| `NEXT_PUBLIC_COMMISSION_RATE` | Legacy commission-rate fallback (`0.10`). tier_v2 rates come from `lib/tiers.ts`; per-rancher locked rate wins over this env. |
+| `CAL_API_KEY` | Cal.com API key. **Primary** booking-link mechanism: `lib/calBooking.ts` `getOperatorBookingUrl(purpose)` resolves Ben's live Cal event by purpose (`'rancher'` → Rancher Onboarding, `'sales'` → Sales Calls) — no hardcoded slugs. Falls back to `/contact` if unresolvable. |
+| `CAL_RANCHER_BOOKING_URL` / `CAL_SALES_BOOKING_URL` / `CAL_BOOKING_URL` | Optional manual booking-URL overrides (per-purpose, then shared). Win over the API lookup. |
+| `NEXT_PUBLIC_CALENDLY_LINK` / `CALENDLY_LINK` | Legacy fallback Cal links still read by some older surfaces (e.g. `lib/email.ts`, `/apply`, `/partner`). New code should use `getOperatorBookingUrl` instead. |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (optional) |
 | `TELEGRAM_ADMIN_CHAT_ID` | Telegram chat ID for admin alerts (optional) |
 | `TELEGRAM_WEBHOOK_SECRET` | Secret for Telegram webhook auth |
@@ -52,8 +57,8 @@ All required env vars for `.env.local` and Vercel:
 **Consumer Signup:**
 Signup (`/access`) → Intent scoring + segmentation → Auto-approve (Beef Buyer + medium/high intent) or Pending (manual review) → Segment-specific welcome email → Member dashboard (`/member`)
 
-**Rancher Onboarding:**
-Application (`/partner`) → Admin review → Calendly call → Approval → Agreement signing → Rancher dashboard (`/rancher`)
+**Rancher Onboarding (tier_v2, current):**
+Apply (`/apply` or `/partner`) → magic link → **self-serve `/rancher/setup` wizard**: pick tier (Legacy Connect / Pasture / Ranch / Operator) → connect bank (Stripe Connect) → products + per-cut Price/Deposit/Fee → landing page → sign agreement → **go live**. Alternative door: book the "Rancher Onboarding" Cal and Ben walks them through it. Once Stripe Connect status is `active`, the rancher can take buyer deposits. (The older admin-review → Calendly-call → approval path is superseded — see `docs/BHC-PLATFORM-MAP.md` §2.)
 
 **Matching:**
 Approved Beef Buyer → Matching engine finds ranchers by state/preferences → Referral created → Rancher reviews → Direct connection
