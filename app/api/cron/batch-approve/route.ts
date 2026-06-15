@@ -281,11 +281,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       const readyToGoLive = allRanchers.filter((r: any) => {
         if (r['Onboarding Status'] !== 'Verification Complete') return false;
         if (r['Page Live'] === true) return false;
-        // Required: Slug + About Text + at least 1 payment link
+        // Required: Slug + About Text + a way to collect payment.
         if (!r['Slug']) return false;
         if (!r['About Text']) return false;
+        // tier_v2 ranchers collect via Stripe Connect deposits, not a legacy
+        // Payment Link — accept an active Connect account as equivalent, else
+        // every tier_v2 rancher is permanently blocked from auto-go-live.
         const hasPaymentLink = !!(r['Quarter Payment Link'] || r['Half Payment Link'] || r['Whole Payment Link']);
-        if (!hasPaymentLink) return false;
+        const pricingModel = String(r['Pricing Model'] || 'legacy').toLowerCase();
+        const connectStatus = String(r['Stripe Connect Status'] || '').toLowerCase();
+        const canCollectPayment =
+          hasPaymentLink || (pricingModel === 'tier_v2' && connectStatus === 'active');
+        if (!canCollectPayment) return false;
         return true;
       });
 

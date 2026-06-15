@@ -39,6 +39,12 @@ export async function POST(req: Request) {
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
   const tier = String(body.tier || '').toLowerCase() as TierSlug;
+  // When the request originates from the self-serve setup wizard, thread the
+  // wizard token so Stripe sends the rancher BACK into the wizard (at the
+  // Connect step) instead of /rancher/billing — otherwise paying ranchers
+  // skip Fulfillment + Refund Policy + Sign. Mirrors the connect/start route.
+  const fromWizard = body?.from === 'wizard';
+  const wizardToken = typeof body?.wizardToken === 'string' ? body.wizardToken : '';
   if (!TIERS[tier]) {
     return NextResponse.json(
       { error: 'Invalid tier — must be pasture, ranch, operator, or legacy_connect' },
@@ -135,14 +141,25 @@ export async function POST(req: Request) {
     });
   }
 
-  // Now create Checkout Session for the tier subscription (Pasture / Ranch / Operator)
+  // Now create Checkout Session for the tier subscription (Pasture / Ranch / Operator).
+  // Wizard callers return INTO the wizard (Step 9 / Connect via tierComplete=1)
+  // so they keep going through Fulfillment + Sign; non-wizard callers (e.g. the
+  // /partner/checkout pages) keep the original success/cancel pages.
+  const successUrl =
+    fromWizard && wizardToken
+      ? `${SITE_URL}/rancher/setup?token=${encodeURIComponent(wizardToken)}&tierComplete=1`
+      : `${SITE_URL}/partner/checkout/${tier}/success?session_id={CHECKOUT_SESSION_ID}`;
+  const cancelUrl =
+    fromWizard && wizardToken
+      ? `${SITE_URL}/rancher/setup?token=${encodeURIComponent(wizardToken)}`
+      : `${SITE_URL}/partner/checkout/${tier}?canceled=1`;
   try {
     const { url } = await createTierCheckoutSession({
       rancherId: session.rancherId,
       connectedAccountId: accountId,
       tier,
-      successUrl: `${SITE_URL}/partner/checkout/${tier}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${SITE_URL}/partner/checkout/${tier}?canceled=1`,
+      successUrl,
+      cancelUrl,
     });
     return NextResponse.json({ url });
   } catch (e: any) {

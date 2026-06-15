@@ -127,7 +127,15 @@ export async function POST(request: Request) {
       rancher['Half Payment Link'] ||
       rancher['Whole Payment Link']
     );
-    const readyToGoLive = hasSlug && hasPrice && hasPaymentLink;
+    // tier_v2 ranchers take deposits via Stripe Connect (buyers pay on the
+    // platform checkout), so they have NO legacy Payment Link. Gating go-live
+    // on hasPaymentLink would leave every tier_v2 rancher signed-but-dark.
+    // Accept an active Stripe Connect account as equivalent to a payment link.
+    const pricingModel = String(rancher['Pricing Model'] || 'legacy').toLowerCase();
+    const connectStatus = String(rancher['Stripe Connect Status'] || '').toLowerCase();
+    const canCollectPayment =
+      hasPaymentLink || (pricingModel === 'tier_v2' && connectStatus === 'active');
+    const readyToGoLive = hasSlug && hasPrice && canCollectPayment;
 
     const updateFields: Record<string, unknown> = {
       'Agreement Signed': true,

@@ -321,6 +321,52 @@ export async function PATCH(req: Request) {
     }
   }
 
+  // Per-cut deposit validation. The deposit is the buyer's upfront reserve
+  // payment in the tier_v2 Stripe Connect model; app/api/checkout/deposit
+  // charges it (defaulting to the full price when unset). A deposit of 0/
+  // negative or one that exceeds the listed price would publish broken
+  // checkout math, so enforce 0 < Deposit ≤ Price here (mirrors the wizard's
+  // client-side gate). When the same PATCH includes the matching Price we
+  // validate against it; otherwise we fall back to the stored Price so a
+  // single-field deposit save is still bounded.
+  const DEPOSIT_CUTS: Array<'Quarter' | 'Half' | 'Whole'> = ['Quarter', 'Half', 'Whole'];
+  let currentForDeposits: any = null;
+  for (const cut of DEPOSIT_CUTS) {
+    const depKey = `${cut} Deposit`;
+    if (!(depKey in updates)) continue;
+    const dep = updates[depKey];
+    if (dep === null) continue; // cleared → charge full price upfront, allowed
+    const depNum = Number(dep);
+    if (!Number.isFinite(depNum) || depNum <= 0) {
+      return NextResponse.json(
+        { error: `${depKey} must be greater than 0, or cleared to charge the full price upfront.` },
+        { status: 400 },
+      );
+    }
+    const priceKey = `${cut} Price`;
+    let priceNum: number;
+    if (priceKey in updates && updates[priceKey] !== null) {
+      priceNum = Number(updates[priceKey]);
+    } else {
+      // Price not in this PATCH — read the stored value once (lazy) so a
+      // standalone deposit update is still bounded by the existing price.
+      if (currentForDeposits === null) {
+        try {
+          currentForDeposits = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
+        } catch {
+          currentForDeposits = {};
+        }
+      }
+      priceNum = Number(currentForDeposits?.[priceKey]);
+    }
+    if (Number.isFinite(priceNum) && priceNum > 0 && depNum > priceNum) {
+      return NextResponse.json(
+        { error: `${depKey} can't exceed the ${cut} Price.` },
+        { status: 400 },
+      );
+    }
+  }
+
   // If ZIP / City / State changed, re-geocode and store fresh lat/lng so the
   // public map reflects the rancher's chosen location accurately. ZIP-first
   // for ~3-5 mi accuracy; falls back to city centroid if zippopotam misses.

@@ -300,6 +300,19 @@ export default function RancherSetupWizard() {
     setStep(8);
   }, [connectComplete, rancher]);
 
+  // Resume-from-paid-tier-checkout handler. After a Pasture/Ranch/Operator
+  // subscription clears in Stripe, tier/select's successUrl returns the rancher
+  // here with ?tierComplete=1. They must land at Step 9 (Connect bank) so they
+  // finish Stripe Connect → Fulfillment → Sign instead of being stranded on
+  // /rancher/billing (the old new-tab /partner/checkout success target). Mirror
+  // of the connectComplete handler above. Only runs once rancher data is loaded.
+  const tierComplete = searchParams.get('tierComplete') === '1';
+  useEffect(() => {
+    if (!tierComplete) return;
+    if (!rancher) return;
+    setStep(9);
+  }, [tierComplete, rancher]);
+
   // P1-2 — localStorage step persistence. Rancher returning next day with
   // their token would always land at Step 0 even if they'd previously made it
   // to Step 7. Now we save the current step keyed by a short token hash so
@@ -332,7 +345,8 @@ export default function RancherSetupWizard() {
   const didRestoreStep = useRef(false);
   useEffect(() => {
     if (!rancher) return;
-    if (connectComplete) return; // Stripe handler wins
+    if (connectComplete) return; // Stripe Connect-return handler wins
+    if (tierComplete) return; // paid-tier-return handler wins (jumps to Step 9)
     if (didRestoreStep.current) return;
     if (!stepStorageKey) return;
     didRestoreStep.current = true;
@@ -348,7 +362,7 @@ export default function RancherSetupWizard() {
     } catch {
       /* localStorage disabled — non-fatal, fall back to Step 0. */
     }
-  }, [rancher, connectComplete, stepStorageKey]);
+  }, [rancher, connectComplete, tierComplete, stepStorageKey]);
 
   // Persist step on every transition. Skip Step 10/6 — at "Done" we clear so
   // a subsequent rancher visiting the same machine isn't stuck on the
@@ -1466,13 +1480,20 @@ export default function RancherSetupWizard() {
             {(['Quarter', 'Half', 'Whole'] as const).map((tier) => (
               <div key={tier} className="border border-dust p-4 md:p-5 space-y-3 bg-bone-warm">
                 <p className="font-serif text-lg text-charcoal">{tier} Cow</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <Field
                     label="Listed sale price ($)"
                     type="number"
                     value={form[`${tier} Price`]}
                     onChange={(v) => setField(`${tier} Price`, v)}
                     placeholder="2000"
+                  />
+                  <Field
+                    label="Deposit ($)"
+                    type="number"
+                    value={form[`${tier} Deposit`]}
+                    onChange={(v) => setField(`${tier} Deposit`, v)}
+                    placeholder="500"
                   />
                   <Field
                     label="Processing fee ($) — your processor cost"
@@ -1482,6 +1503,34 @@ export default function RancherSetupWizard() {
                     placeholder="1000"
                   />
                 </div>
+                {/* Deposit explainer + inline validation. The deposit is what the
+                    buyer pays NOW to reserve their share (tier_v2 Stripe Connect
+                    deposit model); the rancher collects the balance at fulfillment.
+                    Leaving it blank charges the full price upfront. */}
+                <p className="text-xs text-saddle leading-relaxed -mt-1">
+                  <strong>Deposit</strong> — what the buyer pays now to reserve. Leave blank to charge the full price upfront.
+                </p>
+                {form[`${tier} Deposit`] !== '' &&
+                  form[`${tier} Deposit`] != null &&
+                  (() => {
+                    const dep = Number(form[`${tier} Deposit`]);
+                    const price = Number(form[`${tier} Price`]);
+                    if (!Number.isFinite(dep) || dep <= 0) {
+                      return (
+                        <p className="text-xs text-weathered -mt-1">
+                          Deposit must be greater than $0 (or leave it blank to charge the full price upfront).
+                        </p>
+                      );
+                    }
+                    if (Number.isFinite(price) && price > 0 && dep > price) {
+                      return (
+                        <p className="text-xs text-weathered -mt-1">
+                          Deposit can&rsquo;t exceed the listed sale price (${price.toFixed(2)}).
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field
                     label="Approx finished weight (lbs)"
@@ -1588,6 +1637,24 @@ export default function RancherSetupWizard() {
               onBack={() => setStep(2)}
               onContinue={async () => {
                 setError('');
+                // Validate deposits: if set, must be 0 < Deposit <= Price for
+                // each cut. A bad deposit silently breaks the buyer deposit
+                // checkout math (app/api/checkout/deposit), so block here AND
+                // mirror server-side in /api/rancher/setup.
+                for (const tier of ['Quarter', 'Half', 'Whole'] as const) {
+                  const depRaw = form[`${tier} Deposit`];
+                  if (depRaw === '' || depRaw == null) continue;
+                  const dep = Number(depRaw);
+                  const price = Number(form[`${tier} Price`]);
+                  if (!Number.isFinite(dep) || dep <= 0) {
+                    setError(`${tier} deposit must be greater than $0, or leave it blank to charge the full price upfront.`);
+                    return;
+                  }
+                  if (Number.isFinite(price) && price > 0 && dep > price) {
+                    setError(`${tier} deposit can't exceed the ${tier.toLowerCase()} listed sale price.`);
+                    return;
+                  }
+                }
                 // Filter out empty testimonials before saving (rancher may add
                 // then leave blank).
                 const validTestimonials = testimonials.filter(
@@ -2613,24 +2680,66 @@ function TierPickStep({
                   {showCheckmark ? `On Legacy Connect ✓` : checking ? 'Setting up…' : `Pick ${card.label}`}
                 </button>
               ) : (
-                <a
-                  href={`/partner/checkout/${card.slug}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                // Paid tiers (Pasture / Ranch / Operator): POST tier/select
+                // INLINE and redirect the SAME tab to the returned Stripe
+                // Checkout url. Previously this opened /partner/checkout/[slug]
+                // in a new tab, whose success routed to /rancher/billing — so
+                // paying ranchers fell out of the wizard and skipped
+                // Fulfillment + Refund Policy + Sign. from='wizard' + the
+                // wizard token make tier/select return the rancher to
+                // /rancher/setup?...&tierComplete=1 after paying.
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      setChecking(true);
+                      const res = await fetch('/api/rancher/tier/select', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          tier: card.slug,
+                          from: 'wizard',
+                          wizardToken: token,
+                        }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        alert(data?.error || `Could not start ${card.label} checkout`);
+                        setChecking(false);
+                        return;
+                      }
+                      if (data?.url) {
+                        // Same-tab redirect into Stripe Checkout. On success
+                        // Stripe returns to the wizard (tierComplete=1).
+                        window.location.href = data.url;
+                        return;
+                      }
+                      // No url returned — surface so the rancher isn't stuck on
+                      // a silent no-op.
+                      alert('Could not start checkout — please retry.');
+                      setChecking(false);
+                    } catch (e: any) {
+                      alert(e?.message || 'Network error — please retry');
+                      setChecking(false);
+                    }
+                  }}
+                  disabled={checking || showCheckmark}
                   className={`mt-auto text-center text-[11px] tracking-widest uppercase border px-3 py-2 transition-base ${
                     showCheckmark
                       ? 'border-sage text-sage-dark bg-bone-warm hover:bg-bone'
                       : selected
                       ? 'border-charcoal bg-charcoal text-bone hover:bg-divider'
                       : 'border-charcoal text-charcoal hover:bg-charcoal hover:text-bone'
-                  }`}
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                   {showCheckmark
                     ? `Manage ${card.label} →`
+                    : checking
+                    ? 'Starting checkout…'
                     : selected
                     ? `Resume checkout →`
                     : `Pick ${card.label}`}
-                </a>
+                </button>
               )}
             </div>
           );
