@@ -3417,7 +3417,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               chatId,
               `🕓 <b>Awaiting Payment</b> — ${buyerName} → ${rancherName}\n\n` +
               `Status: Awaiting Payment. Capacity slot freed.\n` +
-              `Use the rancher dashboard "Confirm Payment Received" button (or reply /confirmpaid ${refId} $X here) when buyer pays. Invoice fires automatically at that point.\n\n` +
+              `When the buyer pays, open the rancher dashboard and tap the "Confirm Payment Received" button — the invoice fires automatically at that point.\n\n` +
               `I'll nudge you at 14 days if it's still unresolved.`,
             );
             try {

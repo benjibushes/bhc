@@ -4,7 +4,7 @@
 // Gated by ENABLE_RESERVATION_HOLD env flag. When off → 404.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getRecord, TABLES } from '@/lib/airtable';
+import { getRecordById, TABLES } from '@/lib/airtable';
 import {
   createHoldCheckoutSession,
   isReservationHoldEnabled,
@@ -26,7 +26,7 @@ export async function POST(
     return NextResponse.json({ ok: false, error: 'missing consumerId' }, { status: 400 });
   }
 
-  const consumer = await getRecord(TABLES.CONSUMERS, consumerId).catch(() => null);
+  const consumer = await getRecordById(TABLES.CONSUMERS, consumerId).catch(() => null);
   if (!consumer) {
     return NextResponse.json({ ok: false, error: 'consumer not found' }, { status: 404 });
   }

@@ -4,7 +4,7 @@
 // Gated by ENABLE_WHITE_GLOVE flag.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getRecord, TABLES } from '@/lib/airtable';
+import { getRecordById, TABLES } from '@/lib/airtable';
 import { requireRancher } from '@/lib/rancherAuth';
 import {
   createWhiteGloveCheckoutSession,
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   }
 
   const rancherId = auth.session.rancherId;
-  const rancher = await getRecord(TABLES.RANCHERS, rancherId).catch(() => null);
+  const rancher = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
   if (!rancher) {
     return NextResponse.json({ ok: false, error: 'rancher not found' }, { status: 404 });
   }

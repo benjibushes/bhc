@@ -62,8 +62,11 @@ async function realHandler(_request: Request): Promise<DriftResult> {
     // Ground-truth count: every NON-TERMINAL referral attached to this rancher.
     // A slot is held from the Intro Sent INCR until the Closed Won/Lost DECR.
     // Statuses BETWEEN those bookends (Rancher Contacted, Negotiation,
-    // Awaiting Payment) hold the slot too — there's no INCR/DECR at those
-    // transitions. Counting only 'Intro Sent' was wrong (2026-06-02 audit):
+    // Awaiting Payment, Slot Locked) hold the slot too — there's no INCR/DECR
+    // at those transitions. 'Slot Locked' (tier_v2 paid-deposit accepted, post
+    // Awaiting Payment, pre Closed Won) was omitted originally → the cron freed
+    // the held slot the instant a deposit landed → over-allocation. Counting
+    // only 'Intro Sent' was wrong (2026-06-02 audit):
     // when a rancher progressed buyers PAST Intro Sent (real sales work),
     // the cron read queryCount=N-1 and "fixed" airtableCount=N down to N-1
     // → silently freed a held slot → matching/suggest then over-allocated
@@ -75,7 +78,7 @@ async function realHandler(_request: Request): Promise<DriftResult> {
     let queryCount = 0;
     try {
       const escapedId = escapeAirtableValue(rancherId);
-      const formula = `AND(FIND("${escapedId}", ARRAYJOIN({Rancher})) > 0, OR({Status}="Intro Sent", {Status}="Rancher Contacted", {Status}="Negotiation", {Status}="Awaiting Payment"))`;
+      const formula = `AND(FIND("${escapedId}", ARRAYJOIN({Rancher})) > 0, OR({Status}="Intro Sent", {Status}="Rancher Contacted", {Status}="Negotiation", {Status}="Awaiting Payment", {Status}="Slot Locked"))`;
       const refs = (await getAllRecords(TABLES.REFERRALS, formula)) as any[];
       queryCount = refs.length;
     } catch (e: any) {

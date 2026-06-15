@@ -60,6 +60,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     for (const rancher of operationalRanchers) {
       // Already trusted — skip
       if (rancher['Trust Mode']) continue;
+      // Migration guard: a rancher mid-migration (invited / call_scheduled /
+      // upgrading) is being moved to tier_v2 — don't auto-promote Trust Mode
+      // off legacy close-count signals while their account is in flux.
+      const migrationStatus = String(rancher['Migration Status'] || '').toLowerCase();
+      if (['invited', 'call_scheduled', 'upgrading'].includes(migrationStatus)) continue;
       evaluated++;
 
       const closedWon = closedWonByRancher.get(rancher.id) || 0;
@@ -80,7 +85,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         rancher['Agreement Signed At'] ||
         rancher['Approved At'] ||
         rancher['Created'] ||
-        rancher.createdTime;
+        rancher.createdTime ||
+        rancher._createdTime;
       const liveSignalMs = liveSignal ? new Date(liveSignal).getTime() : null;
       const legacyGraduated =
         phaseUntilRaw == null &&

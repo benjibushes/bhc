@@ -80,6 +80,14 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const livePages = ranchers.filter((r: any) => r['Page Live'] === true).length;
   const tier_v2 = ranchers.filter((r: any) => String(r['Pricing Model'] || '').toLowerCase() === 'tier_v2').length;
   const legacyActive = ranchers.length - tier_v2;
+  // #1 silent failure: a tier_v2 rancher whose Stripe Connect onboarding never
+  // reached 'active' CANNOT take buyer deposits — leads route to them and die
+  // at checkout. Surface the count so stuck Connect onboarding is visible.
+  const connectStuck = ranchers.filter(
+    (r: any) =>
+      String(r['Pricing Model'] || '').toLowerCase() === 'tier_v2' &&
+      String(r['Stripe Connect Status'] || '').toLowerCase() !== 'active'
+  ).length;
   const capacityTotal = ranchers.reduce(
     (acc: number, r: any) => acc + Number(r['Current Active Referrals'] || 0),
     0
@@ -103,6 +111,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
     `  signups ${signups24h} → qualified ${qualified24h} → intro ${intro24h} → booked ${booked24h}`,
     '',
     `<b>Ranchers:</b> ${ranchers.length} active · ${livePages} live pages · ${tier_v2} tier_v2 (${legacyActive} legacy) · ${capacityTotal} buyers in pipeline`,
+    connectStuck > 0
+      ? `🚨 <b>Connect stuck:</b> ${connectStuck} tier_v2 rancher${connectStuck === 1 ? '' : 's'} can't take deposits (Stripe Connect ≠ active)`
+      : `✅ <b>Connect:</b> all tier_v2 ranchers can take deposits`,
     '',
     `<b>Email (24h):</b> ${sent24h} sent · ${suppressed24h} suppressed · ${bounced24h} bounced`,
     '',

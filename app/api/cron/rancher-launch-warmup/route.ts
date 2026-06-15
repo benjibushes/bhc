@@ -63,7 +63,7 @@ function priorityScore(buyer: any): number {
     const ms = new Date(lastLogin).getTime();
     if (!Number.isNaN(ms) && Date.now() - ms < 14 * DAY_MS) s += 50;
   }
-  const createdRaw = buyer['Created At'] || buyer['Created'] || buyer.createdTime || 0;
+  const createdRaw = buyer['Created At'] || buyer['Created'] || buyer.createdTime || buyer._createdTime || 0;
   const createdMs = createdRaw ? new Date(createdRaw).getTime() : 0;
   if (createdMs > 0) {
     const days = (Date.now() - createdMs) / DAY_MS;

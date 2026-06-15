@@ -5,6 +5,7 @@ import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
+import { getOperatorBookingUrl } from '@/lib/calBooking';
 
 export const maxDuration = 60;
 
@@ -70,7 +71,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       // This path runs DAILY — self-submit prospects shouldn't wait up to 6 days
       // for first nudge.
       if (!status) {
-        const created = new Date(rancher.createdTime || 0);
+        const created = new Date(rancher._createdTime || 0);
         const daysOld = Math.floor((now.getTime() - created.getTime()) / DAY_MS);
         if (daysOld >= 2) {
           stalled.push({ rancher, stage: 'New Applicant', daysStuck: daysOld, isNewApplicant: true });
@@ -89,9 +90,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       // Figure out which date field to check per stage
       let dateValue = '';
       if (status === 'Call Scheduled') {
-        dateValue = rancher['Created'] || rancher.createdTime || '';
+        dateValue = rancher['Created'] || rancher.createdTime || rancher._createdTime || '';
       } else if (status === 'Call Complete') {
-        dateValue = rancher['Call Completed At'] || rancher['Created'] || rancher.createdTime || '';
+        dateValue = rancher['Call Completed At'] || rancher['Created'] || rancher.createdTime || rancher._createdTime || '';
       } else if (status === 'Docs Sent') {
         dateValue = rancher['Docs Sent At'] || '';
       } else if (status === 'Agreement Signed') {
@@ -176,7 +177,7 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
       };
 
       if (isNewApplicant || stage === 'Call Scheduled') {
-        const calLink = process.env.NEXT_PUBLIC_CALENDLY_LINK || '';
+        const calLink = await getOperatorBookingUrl('rancher');
         if (calLink) {
           keyboard.inline_keyboard.push([{ text: '📅 Schedule Call', url: calLink }]);
         }
@@ -217,7 +218,7 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
         if (rancherEmail && !unsubscribed) {
           const first = (rancher['Operator Name'] || '').toString().split(' ')[0] || 'there';
           const ranchName = (rancher['Ranch Name'] || rancher['Operator Name'] || 'your ranch').toString();
-          const calLink = process.env.NEXT_PUBLIC_CALENDLY_LINK || `${SITE_URL}/contact`;
+          const calLink = await getOperatorBookingUrl('rancher');
           try {
             await sendEmail({
               to: rancherEmail,
@@ -273,7 +274,7 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
       const fiveDaysAgo = now.getTime() - 5 * DAY_MS;
       const sevenDaysAgo = now.getTime() - 7 * DAY_MS;
       const staleOnes = staleReferrals.filter(r => {
-        const ts = r['Intro Sent At'] || r['Created'] || r.createdTime;
+        const ts = r['Intro Sent At'] || r['Created'] || r.createdTime || r._createdTime;
         return ts && new Date(ts).getTime() < fiveDaysAgo;
       });
 
@@ -299,7 +300,7 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
         if (lastReminderAt && lastReminderAt > sevenDaysAgo) continue;
 
         const rancherId = rancherIds[0];
-        const ts = r['Intro Sent At'] || r['Created'] || r.createdTime;
+        const ts = r['Intro Sent At'] || r['Created'] || r.createdTime || r._createdTime;
         const daysSince = Math.floor((now.getTime() - new Date(ts).getTime()) / DAY_MS);
         if (!byRancher[rancherId]) byRancher[rancherId] = { rancherId, leads: [], refIds: [] };
         byRancher[rancherId].leads.push({

@@ -32,6 +32,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   let sentCount = 0;
   let nonCompliantCount = 0;
   let skippedDuplicateCount = 0;
+  let skippedMigratingCount = 0;
   let throttleFieldMissing = false;
   const DAY_MS = 24 * 60 * 60 * 1000;
   const nowMs = Date.now();
@@ -49,6 +50,17 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     // rancher who unsubscribed, bounced, or complained must never get the
     // monthly compliance report — even though it's mission-critical ops mail.
     if (rancher['Unsubscribed'] || rancher['Bounced'] || rancher['Complained']) continue;
+
+    // Migration guard: tier_v2 ranchers don't self-report (commission is taken
+    // automatically via Connect deposits), and a rancher mid-migration (invited /
+    // call_scheduled / upgrading) must not get the legacy self-report email NOR
+    // be auto-flipped Non-Compliant for "missed reports" they were never asked for.
+    const pricingModel = String(rancher['Pricing Model'] || '').toLowerCase();
+    const migrationStatus = String(rancher['Migration Status'] || '').toLowerCase();
+    if (pricingModel === 'tier_v2' || ['invited', 'call_scheduled', 'upgrading'].includes(migrationStatus)) {
+      skippedMigratingCount++;
+      continue;
+    }
 
     // Throttle: skip if we sent compliance to this rancher in the past 25 days.
     // Field is new — graceful fallback if Airtable doesn't have it yet.
@@ -133,8 +145,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     const skipSuffix = skippedDuplicateCount > 0
       ? ` (skipped ${skippedDuplicateCount} already-reminded within ${25}d)`
       : '';
+    const migratingSuffix = skippedMigratingCount > 0
+      ? ` (skipped ${skippedMigratingCount} tier_v2/migrating)`
+      : '';
     await sendTelegramUpdate(
-      `📋 <b>Compliance reminders sent</b>\n\nSent to ${sentCount} active rancher(s) for ${month}${skipSuffix}${warningSuffix}`
+      `📋 <b>Compliance reminders sent</b>\n\nSent to ${sentCount} active rancher(s) for ${month}${skipSuffix}${migratingSuffix}${warningSuffix}`
     );
   } catch (e) {
     console.error('Telegram error:', e);
@@ -143,7 +158,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   return {
     status: 'success',
     recordsTouched: sentCount + nonCompliantCount,
-    notes: `${month}: sent ${sentCount} reminders, ${nonCompliantCount} non-compliant, ${skippedDuplicateCount} skipped (dedup)${throttleFieldMissing ? ' WARN: throttle field missing' : ''}`,
+    notes: `${month}: sent ${sentCount} reminders, ${nonCompliantCount} non-compliant, ${skippedDuplicateCount} skipped (dedup), ${skippedMigratingCount} skipped (tier_v2/migrating)${throttleFieldMissing ? ' WARN: throttle field missing' : ''}`,
   };
 }
 

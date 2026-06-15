@@ -152,20 +152,20 @@ export async function sendTelegramReferralNotification(data: {
 }) {
   const matchLabel = data.matchType === 'nationwide' ? ' 🌎 NATIONWIDE' : data.matchType === 'direct' ? ' 🎯 DIRECT (RANCHER PAGE)' : data.matchType === 'local' ? ' 📍 LOCAL' : '';
   const rancherLine = data.suggestedRancher
-    ? `\n🤠 <b>Suggested:</b> ${data.suggestedRancher.name}${matchLabel}\n   Load: ${data.suggestedRancher.activeReferrals}/${data.suggestedRancher.maxReferrals}`
+    ? `\n🤠 <b>Suggested:</b> ${escapeHtml(data.suggestedRancher.name)}${matchLabel}\n   Load: ${data.suggestedRancher.activeReferrals}/${data.suggestedRancher.maxReferrals}`
     : '\n⚠️ <b>No rancher match found</b>';
 
   const message = `🔔 <b>NEW BUYER LEAD</b>
 
 📊 Intent: ${data.intentScore} (${data.intentClassification})
 
-👤 <b>Buyer:</b> ${data.buyerName}
+👤 <b>Buyer:</b> ${escapeHtml(data.buyerName)}
 📍 <b>State:</b> ${data.buyerState}
 🥩 <b>Order:</b> ${data.orderType}
 💵 <b>Budget:</b> ${data.budgetRange}
 ${rancherLine}
 
-📝 <b>Notes:</b> ${data.notes || 'None'}`;
+📝 <b>Notes:</b> ${data.notes ? escapeHtml(data.notes) : 'None'}`;
 
   const keyboard = {
     inline_keyboard: [
@@ -204,7 +204,7 @@ ${segmentEmoji} <b>Segment:</b> ${data.segment}
 📊 <b>Intent:</b> ${data.intentScore} (${data.intentClassification})
 ${statusEmoji} <b>Status:</b> ${data.status === 'approved' ? 'Auto-Approved' : 'Pending Review'}
 
-<b>Name:</b> ${data.name}
+<b>Name:</b> ${escapeHtml(data.name)}
 📧 ${data.email}
 📍 ${data.state}${data.orderType ? `\n🥩 Order: ${data.orderType}` : ''}${data.budgetRange ? `\n💵 Budget: ${data.budgetRange}` : ''}`;
 
@@ -239,7 +239,7 @@ export async function sendTelegramPartnerAlert(data: {
 
   const message = `${typeEmoji} <b>NEW ${typeLabel.toUpperCase()} APPLICATION</b>
 
-<b>Name:</b> ${data.name}
+<b>Name:</b> ${escapeHtml(data.name)}
 📧 ${data.email}${data.state ? `\n📍 ${data.state}` : ''}
 
 ${data.details}`;
@@ -281,10 +281,10 @@ export async function sendTelegramHotLeadAlert(data: {
 📊 Intent: <b>${data.intentScore}/100</b> (high)
 ⏱ Reach out within 5 min for best close rate
 
-👤 <b>${data.name}</b>
+👤 <b>${escapeHtml(data.name)}</b>
 📧 ${data.email}
 ${phoneLine}
-📍 ${data.state}${data.orderType ? `\n🥩 Order: <b>${data.orderType}</b>` : ''}${data.budgetRange ? `\n💵 Budget: <b>${data.budgetRange}</b>` : ''}${data.notes ? `\n\n📝 <i>${data.notes}</i>` : ''}`;
+📍 ${data.state}${data.orderType ? `\n🥩 Order: <b>${data.orderType}</b>` : ''}${data.budgetRange ? `\n💵 Budget: <b>${data.budgetRange}</b>` : ''}${data.notes ? `\n\n📝 <i>${escapeHtml(data.notes)}</i>` : ''}`;
 
   const keyboard = {
     inline_keyboard: [
@@ -316,13 +316,13 @@ export async function sendTelegramSaleCelebration(data: {
   lifetimeCommission: number;
 }) {
   const banner = data.isFirstSaleForRancher
-    ? `🎉🎉🎉 <b>FIRST SALE — ${data.rancherName.toUpperCase()}</b> 🎉🎉🎉\n\nThis is their first closed deal on BuyHalfCow. Big moment.`
+    ? `🎉🎉🎉 <b>FIRST SALE — ${escapeHtml(data.rancherName.toUpperCase())}</b> 🎉🎉🎉\n\nThis is their first closed deal on BuyHalfCow. Big moment.`
     : `💰 <b>DEAL CLOSED</b> 💰`;
 
   const message = `${banner}
 
-🤠 Rancher: <b>${data.rancherName}</b>
-👤 Buyer: <b>${data.buyerName}</b>
+🤠 Rancher: <b>${escapeHtml(data.rancherName)}</b>
+👤 Buyer: <b>${escapeHtml(data.buyerName)}</b>
 💵 Sale: <b>$${data.saleAmount.toLocaleString()}</b>
 💰 Commission: <b>$${data.commission.toLocaleString()}</b>
 
