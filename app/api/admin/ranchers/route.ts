@@ -91,7 +91,7 @@ export async function GET(request: Request) {
       quarter_clicks: record['Quarter Clicks'] || 0,
       half_clicks: record['Half Clicks'] || 0,
       whole_clicks: record['Whole Clicks'] || 0,
-      created_at: record['Created'] || record.createdTime || new Date().toISOString(),
+      created_at: record['Created'] || record.createdTime || record._createdTime || new Date().toISOString(),
     }));
     
     return NextResponse.json(ranchers);

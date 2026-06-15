@@ -198,7 +198,7 @@ export async function GET(request: Request) {
         // deals too (Routed/Quoted) and can chase a stalled quote.
         wholesaleActive: sample(
           wholesaleActive.sort((a: any, b: any) =>
-            new Date(b['Created'] || 0).getTime() - new Date(a['Created'] || 0).getTime()
+            new Date(b['Created'] || b._createdTime || 0).getTime() - new Date(a['Created'] || a._createdTime || 0).getTime()
           ),
           5,
           (i: any) => ({
@@ -207,7 +207,7 @@ export async function GET(request: Request) {
             contact_name: i['Consumer Name'] || '',
             state: parseWholesaleState(i['Notes']),
             status: str(i['Status']) || 'New',
-            created_at: i['Created'] || '',
+            created_at: i['Created'] || i._createdTime || '',
           })
         ),
       },

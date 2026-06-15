@@ -80,7 +80,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         const email = (rec['Email'] || '').trim().toLowerCase();
         if (!email) continue;
         const stage = rec['Sequence Stage'] || 'abandoned_pending';
-        const createdAt = new Date(rec.createdTime || 0).getTime();
+        const createdAt = new Date(rec.createdTime || rec._createdTime || 0).getTime();
         const lastSent = rec['Sequence Sent At'] ? new Date(rec['Sequence Sent At']).getTime() : 0;
         const ageHours = (now - createdAt) / (60 * 60 * 1000);
         const hoursSinceLast = lastSent ? (now - lastSent) / (60 * 60 * 1000) : Infinity;

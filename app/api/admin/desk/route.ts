@@ -150,7 +150,7 @@ function formatWholesale(i: any) {
   const businessMatch = notes.match(/^Business:\s*(.+)$/m);
   const businessTypeMatch = notes.match(/^Business Type:\s*(.+)$/m);
   const volumeMatch = notes.match(/^Monthly Volume:\s*(.+)$/m);
-  const lastActivity = i['Last Activity At'] || i['Created'] || i._rawJson?.createdTime || '';
+  const lastActivity = i['Last Activity At'] || i['Created'] || i._createdTime || '';
   const ageDays = lastActivity
     ? Math.floor((Date.now() - new Date(String(lastActivity)).getTime()) / (1000 * 60 * 60 * 24))
     : null;
@@ -216,14 +216,16 @@ function formatReferral(r: any) {
   // Rancher Accepted At, Intro Sent At, createdTime). The bigger this is, the
   // colder the deal.
   // R3 (2026-06-10): Referrals has NO `Created At` field. The only universal
-  // creation timestamp is Airtable metadata `createdTime` exposed on _rawJson.
+  // creation timestamp is Airtable metadata `createdTime`, exposed by
+  // getAllRecords as `_createdTime` (the flatten drops _rawJson, so reading
+  // _rawJson.createdTime here was always undefined).
   const now = Date.now();
   const candidates = [
     r['Last Rancher Activity At'],
     r['Last Buyer Activity At'],
     r['Rancher Accepted At'],
     r['Intro Sent At'],
-    r._rawJson?.createdTime,
+    r._createdTime,
   ]
     .filter(Boolean)
     .map((s: any) => {

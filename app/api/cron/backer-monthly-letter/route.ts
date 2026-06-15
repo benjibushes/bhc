@@ -56,7 +56,7 @@ async function realHandler(
     return closed >= monthStart;
   }).length;
   const monthNewRanchers = ranchers.filter((r: any) => {
-    const launched = new Date(r['Launched At'] || r['Created'] || 0);
+    const launched = new Date(r['Launched At'] || r['Created'] || r._createdTime || 0);
     return launched >= monthStart;
   }).length;
   const foundingHundredClaimed = consumers.filter(

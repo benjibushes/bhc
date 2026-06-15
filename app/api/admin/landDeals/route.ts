@@ -21,7 +21,7 @@ export async function GET(request: Request) {
       asking_price: record['Asking Price'] || '',
       status: record['Status'] || 'Pending',
       visible_to_members: record['Visible to Members'] || false,
-      created_at: record['Created'] || record.createdTime || new Date().toISOString(),
+      created_at: record['Created'] || record.createdTime || record._createdTime || new Date().toISOString(),
     }));
     
     return NextResponse.json(landDeals);

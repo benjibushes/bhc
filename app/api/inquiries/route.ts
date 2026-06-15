@@ -216,7 +216,7 @@ export async function GET() {
           commission_amount: inquiry['Commission Amount'] || 0,
           commission_paid: inquiry['Commission Paid'] || false,
           notes: inquiry['Notes'] || null,
-          created_at: inquiry['Created'] || new Date().toISOString(),
+          created_at: inquiry['Created'] || inquiry._createdTime || new Date().toISOString(),
           status_changed_at: inquiry['Status Changed At'] || null,
           business_name: isWholesale ? (inquiry['Ranch Name'] || '') : '',
           buyer_state: isWholesale ? readWholesaleField(inquiry['Notes'], 'State') : '',

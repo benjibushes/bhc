@@ -43,7 +43,7 @@ async function countOnboardingIntros(rancherId: string, sinceISO?: string | null
     const status = ref['Status'] || '';
     if (!ONBOARDING_INTRO_STATUSES.includes(status)) continue;
     if (sinceMs > 0) {
-      const ts = ref['Approved At'] || ref['Intro Sent At'] || ref['Created'] || ref.createdTime;
+      const ts = ref['Approved At'] || ref['Intro Sent At'] || ref['Created'] || ref.createdTime || ref._createdTime;
       const tsMs = ts ? new Date(ts).getTime() : 0;
       if (tsMs > 0 && tsMs < sinceMs) continue;
     }

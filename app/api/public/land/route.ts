@@ -25,7 +25,7 @@ export async function GET() {
       description: r['Description'] || '',
       zoning: r['Zoning'] || '',
       utilities: r['Utilities'] || '',
-      created: r['Created'] || '',
+      created: r['Created'] || r._createdTime || '',
     })).sort((a, b) => {
       // Featured/newest first — for now just newest first
       return new Date(b.created).getTime() - new Date(a.created).getTime();

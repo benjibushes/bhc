@@ -79,7 +79,7 @@ export async function GET(request: Request) {
         sale_amount: record['Sale Amount'] || 0,
         commission_due: record['Commission Due'] || 0,
         commission_paid: record['Commission Paid'] || false,
-        created_at: record['Created At'] || record.createdTime || new Date().toISOString(),
+        created_at: record['Created At'] || record.createdTime || record._createdTime || new Date().toISOString(),
         approved_at: record['Approved At'] || '',
         intro_sent_at: record['Intro Sent At'] || '',
         closed_at: record['Closed At'] || '',

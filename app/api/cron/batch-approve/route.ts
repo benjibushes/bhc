@@ -396,7 +396,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         if (c['Warmup Engaged At']) return 0;
         // Priority 1: brand-new high-intent buyer (signed up in last 14 days).
         // Their signup IS consent. The qualification gate already verified.
-        const created = c['Created'] || c['Created Time'] || c['createdTime'];
+        const created = c['Created'] || c['Created Time'] || c['createdTime'] || c._createdTime;
         if (created) {
           const ageMs = Date.now() - new Date(created).getTime();
           if (ageMs >= 0 && ageMs <= 14 * 24 * 60 * 60 * 1000) return 1;

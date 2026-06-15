@@ -67,12 +67,39 @@ export async function POST(request: Request) {
     if (__authResp) return __authResp;
     const body = await request.json();
     const { subject, message, htmlBody, campaignName, audienceType, selectedStates, includeCTA, ctaText, ctaLink, preview, scheduledFor } = body;
+    // Explicit single/targeted recipient path (admin-gated above). The
+    // compliance per-rancher "Send Reminder" button POSTs
+    // { recipients: [{ email, name }] } with no audienceType — pre-fix
+    // getRecipients() saw no audienceType, returned [], and the route 400'd
+    // "No recipients found". When an explicit recipients[] is supplied we send
+    // to exactly those addresses (sanitized + deduped) instead of building an
+    // audience. Audience-based sends are unchanged.
+    const explicitRecipients: Array<{ email: string; name: string }> | null =
+      Array.isArray(body?.recipients)
+        ? (body.recipients as any[])
+            .map((r) => ({
+              email: String(r?.email || '').trim().toLowerCase(),
+              name: String(r?.name || '').trim() || 'there',
+            }))
+            .filter((r) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email))
+        : null;
 
     if (!subject || !campaignName || (htmlBody ? false : !message)) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const recipients = await getRecipients(audienceType, selectedStates);
+    let recipients: Array<{ email: string; name: string }>;
+    if (explicitRecipients !== null) {
+      // Dedupe explicit list by email (same shape getRecipients returns).
+      const seen = new Set<string>();
+      recipients = explicitRecipients.filter((r) => {
+        if (seen.has(r.email)) return false;
+        seen.add(r.email);
+        return true;
+      });
+    } else {
+      recipients = await getRecipients(audienceType, selectedStates);
+    }
 
     if (recipients.length === 0) {
       return NextResponse.json({ error: 'No recipients found' }, { status: 400 });

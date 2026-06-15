@@ -19,6 +19,13 @@ import { fireCapi, buildUserData } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { logAuditEntry } from '@/lib/auditLog';
 
+// Heaviest events (deposit/final-invoice settlement) do many sequential
+// Airtable reads + writes plus a Stripe invoice call; the default function
+// budget can be tight. 60s gives headroom so a slow Airtable batch can't
+// truncate the handler before the idempotency processed-flip. Node runtime
+// is already the default for this route (no edge export).
+export const maxDuration = 60;
+
 // Airtable table name for Stripe Events (Task 24 idempotency log)
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
 

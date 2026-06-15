@@ -38,9 +38,9 @@ export async function GET(request: Request) {
 
     // Apply date filter — fall back to including the row if it has no Created
     // when sinceDays is 'all' (legacy rows pre-Created field).
-    const consumersInRange = consumers.filter((c: any) => withinRange(c['Created']));
-    const inquiriesInRange = inquiries.filter((i: any) => withinRange(i['Created']));
-    const referralsInRange = referrals.filter((r: any) => withinRange(r['Created At'] || r['Created']));
+    const consumersInRange = consumers.filter((c: any) => withinRange(c['Created'] || c._createdTime));
+    const inquiriesInRange = inquiries.filter((i: any) => withinRange(i['Created'] || i._createdTime));
+    const referralsInRange = referrals.filter((r: any) => withinRange(r['Created At'] || r['Created'] || r._createdTime));
 
     const completedSales = inquiriesInRange.filter((i: any) => i['Status'] === 'Sale Completed');
     const totalSales = completedSales.length;

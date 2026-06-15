@@ -1,3 +1,5 @@
+import { getOperatorBookingUrl } from '@/lib/calBooking';
+
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_ADMIN_CHAT_ID = process.env.TELEGRAM_ADMIN_CHAT_ID || '';
 
@@ -245,7 +247,12 @@ export async function sendTelegramPartnerAlert(data: {
 ${data.details}`;
 
   if (data.type === 'rancher') {
-    const calLink = process.env.NEXT_PUBLIC_CALENDLY_LINK || process.env.CALENDLY_LINK || '';
+    // Resolve Ben's LIVE rancher-onboarding booking link via the single source
+    // of truth (calBooking). The old NEXT_PUBLIC_CALENDLY_LINK/CALENDLY_LINK
+    // env was a dead Calendly slug — same dead-link class fixed everywhere else.
+    // getOperatorBookingUrl never throws and never returns a 404-able slug
+    // (falls back to /contact), so this button is always safe to render.
+    const calLink = await getOperatorBookingUrl('rancher');
     const keyboard: { inline_keyboard: Array<Array<{ text: string; callback_data?: string; url?: string }>> } = {
       inline_keyboard: [],
     };

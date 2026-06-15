@@ -34,7 +34,7 @@ export async function GET(request: Request) {
       backfill_email_sent_at: record['Backfill Emails Sent At'] || '',
       referred_by: record['Referred By'] || '',
       campaign: record['Campaign'] || '',
-      created_at: record['Created'] || record.createdTime || new Date().toISOString(),
+      created_at: record['Created'] || record.createdTime || record._createdTime || new Date().toISOString(),
       // AI / sequence fields
       sequence_stage: record['Sequence Stage'] || '',
       sequence_sent_at: record['Sequence Sent At'] || '',

@@ -3881,7 +3881,7 @@ You can also just ask me anything in plain English — I'll figure it out.`;
         ]);
 
         const recentSignups = consumers.filter((c: any) => {
-          const created = new Date(c['Created'] || c.createdTime || 0);
+          const created = new Date(c['Created'] || c.createdTime || c._createdTime || 0);
           return created >= yesterday;
         });
         const beefSignups = recentSignups.filter((c: any) => c['Segment'] === 'Beef Buyer').length;
@@ -3984,7 +3984,7 @@ ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numer
           const status = r['Status'];
           if (!['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(status)) return false;
           const last = new Date(
-            r['Last Updated'] || r['Intro Sent At'] || r['Created'] || 0
+            r['Last Updated'] || r['Intro Sent At'] || r['Created'] || r._createdTime || 0
           ).getTime();
           return now.getTime() - last >= sevenDays;
         });
@@ -4355,7 +4355,7 @@ Be specific and concise. No fluff.`,
           getAllRecords(TABLES.REFERRALS),
         ]);
 
-        const recentSignups = consumers.filter((c: any) => new Date(c['Created'] || c.createdTime || 0) >= yesterday).length;
+        const recentSignups = consumers.filter((c: any) => new Date(c['Created'] || c.createdTime || c._createdTime || 0) >= yesterday).length;
         const pendingConsumers = consumers.filter((c: any) => (c['Status'] || '').toLowerCase() === 'pending').length;
         const pendingReferrals = referrals.filter((r: any) => r['Status'] === 'Pending Approval').length;
         const stalledReferrals = (referrals as any[]).filter(r => {
@@ -5668,7 +5668,7 @@ Confirm send?`;
             `AND({Status}="Approved", {Referral Status}="Waitlisted", NOT({Unsubscribed}))`,
           )) as any[];
           const stuck = buyers.filter((b: any) => {
-            const created = new Date(b['Created'] || b['Approved At'] || 0).getTime();
+            const created = new Date(b['Created'] || b['Approved At'] || b._createdTime || 0).getTime();
             return created > 0 && created < cutoff;
           });
           const byState = new Map<string, number>();

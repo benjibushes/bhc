@@ -262,6 +262,18 @@ function AccessPageContent() {
     // G15 — rancher deep-link attribution on /access?rancher=<slug>
     const rancherSlugFromUrl = searchParams.get('rancher');
     if (rancherSlugFromUrl) localStorage.setItem('bhc_rancher_slug', rancherSlugFromUrl);
+    // State-landing prefill — /access?state=XX from the per-state landing
+    // pages + state-targeted ads/SEO. Uppercase + validate it's a REAL
+    // 2-letter US_STATES code before applying (a bad ?state=ZZ would otherwise
+    // leave the select on an option the dropdown can't show). Only prefill an
+    // empty field so we never clobber a selection the buyer already made.
+    const stateFromUrl = (searchParams.get('state') || '').trim().toUpperCase();
+    if (
+      /^[A-Z]{2}$/.test(stateFromUrl) &&
+      US_STATES.some((s) => s.value === stateFromUrl)
+    ) {
+      setState((prev) => (prev ? prev : stateFromUrl));
+    }
     const campaign = localStorage.getItem('bhc_campaign') || '';
     const source = localStorage.getItem('bhc_source') || 'organic';
     const utmParams = localStorage.getItem('bhc_utm_params') || '';

@@ -22,7 +22,7 @@ export async function GET(request: Request) {
       status: record['Status'] || 'Pending',
       active: record['Active'] || false,
       payment_status: record['Payment Status'] || '',
-      created_at: record['Created'] || record.createdTime || new Date().toISOString(),
+      created_at: record['Created'] || record.createdTime || record._createdTime || new Date().toISOString(),
     }));
     
     return NextResponse.json(brands);

@@ -32,6 +32,12 @@ export default function CompliancePage() {
   const sendReminder = async (id: string, email: string, name: string) => {
     try {
       const month = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      // Campaign name must be UNIQUE per rancher+month — the broadcast route
+      // dupe-gate 409s on a repeated Campaign Name. A shared
+      // 'compliance-reminder-manual' would let the first rancher send but 409
+      // every subsequent one. Per-rancher+month also gives the right semantic:
+      // re-sending the SAME rancher in the SAME month is correctly blocked.
+      const monthSlug = new Date().toISOString().slice(0, 7); // YYYY-MM
       const res = await fetch('/api/admin/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -39,7 +45,7 @@ export default function CompliancePage() {
           recipients: [{ email, name }],
           subject: `BuyHalfCow Sales Report Reminder - ${month}`,
           message: `Hi ${name},\n\nThis is a reminder to submit your monthly sales report for BuyHalfCow referrals.\n\nPlease reply with your sales from last month, or "No sales" if none.\n\nThanks,\nBenjamin`,
-          campaignName: 'compliance-reminder-manual',
+          campaignName: `compliance-reminder-${id}-${monthSlug}`,
         }),
       });
       // P1 audit D-4: surface non-2xx via toast instead of "success" alert on every result

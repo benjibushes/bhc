@@ -27,7 +27,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     ]);
 
     const recentSignups = consumers.filter((c: any) => {
-      const created = new Date(c['Created'] || c.createdTime || 0);
+      const created = new Date(c['Created'] || c.createdTime || c._createdTime || 0);
       return created >= yesterday;
     });
     const beefSignups = recentSignups.filter((c: any) => c['Segment'] === 'Beef Buyer').length;

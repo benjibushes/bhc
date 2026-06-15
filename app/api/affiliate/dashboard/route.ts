@@ -107,14 +107,14 @@ export async function GET() {
       id: c.id,
       name: c['Full Name'] || '',
       state: c['State'] || '',
-      created: c['Created'] || c.createdTime || '',
+      created: c['Created'] || c.createdTime || c._createdTime || '',
     }));
 
     const referredRanchers = (ranchers as any[]).map((r) => ({
       id: r.id,
       name: r['Operator Name'] || r['Ranch Name'] || '',
       state: r['State'] || '',
-      created: r['Created'] || r.createdTime || '',
+      created: r['Created'] || r.createdTime || r._createdTime || '',
     }));
 
     const buyerLink = `${SITE_URL}/access?ref=${encodeURIComponent(code)}`;

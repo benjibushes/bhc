@@ -97,7 +97,7 @@ export async function GET() {
       return t >= since;
     }).length;
     const signups24h = consumers.filter((c: any) => {
-      const t = c['Created'] || c['Created At'] || '';
+      const t = c['Created'] || c['Created At'] || c._createdTime || '';
       const ts = t ? new Date(t.toString()).getTime() : 0;
       return ts >= since;
     }).length;

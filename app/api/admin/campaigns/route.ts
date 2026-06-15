@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
 
     // Newest-first. Prefer Sent At, fall back to Scheduled For, then Created.
     const sortKey = (c: any): number => {
-      const raw = c['Sent At'] || c['Scheduled For'] || c['Created'] || '';
+      const raw = c['Sent At'] || c['Scheduled For'] || c['Created'] || c._createdTime || '';
       const t = new Date(raw).getTime();
       return Number.isFinite(t) ? t : 0;
     };
