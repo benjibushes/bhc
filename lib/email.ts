@@ -723,6 +723,58 @@ export async function sendWelcomeAndReadyToBuy(data: {
   });
 }
 
+// ── QUIZ INVITE — backup + delivery for the gamified qualify quiz ─────────────
+// FUNNEL FIX (2026-06-13). The quiz used to be reachable ONLY via the instant
+// client redirect after signup (Beef Buyer + in-state rancher). That branch
+// sent NO email, so a failed/aborted redirect was a dead end — and the quiz had
+// no email entry point at all. This sends the buyer their own quiz link so the
+// gamified sequence survives a dropped redirect and can be picked up any time
+// within the token window. Mirrors the abandoned-quiz-nudge link pattern.
+export async function sendQuizInvite(data: {
+  firstName: string;
+  email: string;
+  state: string;
+  quizUrl: string;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = data.firstName || 'there';
+  const stateLabel = data.state || 'your state';
+  const subject = `${first}, here's your 60-second match quiz`;
+  return guardedSend({
+    templateName: 'sendQuizInvite',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.q{background:#FAF8F4;border:1px solid #A7A29A;padding:18px 22px;margin:24px 0;font-family:Georgia,serif;font-size:18px;color:#0E0E0E}.divider{height:1px;background:#A7A29A;margin:24px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}.progress{margin:0 0 22px 0;font-family:'Courier New',monospace;font-size:12px;letter-spacing:2px;color:#6B4F3F;text-align:center}.progress-bar{display:inline-block;height:6px;background:#E5E2DC;width:60%;margin:6px 0;vertical-align:middle;overflow:hidden}.progress-fill{display:block;height:100%;background:#0E0E0E;width:40%}</style>
+</head><body><div class="container">
+  <div class="progress">
+    Step 2 of 5 · Qualify<br>
+    <span class="progress-bar"><span class="progress-fill"></span></span><br>
+    ✓ Apply &nbsp;·&nbsp; <strong style="color:#0E0E0E">Qualify</strong> &nbsp;·&nbsp; Match &nbsp;·&nbsp; Connect &nbsp;·&nbsp; Stock
+  </div>
+  <h1>You're in, ${esc(first)}.</h1>
+  <p>You applied to BuyHalfCow and I just approved you. One quick step before I match you with a verified rancher in ${esc(stateLabel)} - a 60-second quiz. It tells me your size, your timing, and how you'll store it, so I match you to the right rancher and the right cut breakdown.</p>
+  <div class="q">No payment. No pressure. About a minute.</div>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.quizUrl}" class="cta">Take the quiz &rarr;</a>
+    <p style="font-size:13px;color:#A7A29A;margin-top:10px;">Already started it in your browser? This is the same link - finish any time.</p>
+  </div>
+  <p style="font-size:14px;color:#6B4F3F;">Questions? Just reply.</p>
+  <div class="divider"></div>
+  <p style="font-size:12px;color:#A7A29A;">- Ben<br>BuyHalfCow</p>
+  <div class="footer">
+    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
+    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
+  </div>
+</div></body></html>`,
+    }),
+  });
+}
+
 // ── WAITING + Day 7 / monthly: founder letter ────────────────────────────────
 // Built from the rescued Day3 + Day10 founder copy (lib/_rescued-copy.md). One
 // function, three letter variants based on which letter in the rolling cadence

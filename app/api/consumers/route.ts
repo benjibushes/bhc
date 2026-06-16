@@ -6,7 +6,7 @@ import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const maxDuration = 90;
-import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy, sendStateWaitlistLetter, getSuppressionList } from '@/lib/email';
+import { sendConsumerConfirmation, sendAdminAlert, sendWelcomeAndReadyToBuy, sendStateWaitlistLetter, sendQuizInvite, getSuppressionList } from '@/lib/email';
 import { normalizeState } from '@/lib/states';
 import { hasOperationalRancherForState } from '@/lib/rancherEligibility';
 import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/telegram';
@@ -95,11 +95,21 @@ export async function POST(request: Request) {
 
     const {
       fullName, email, phone, smsOptIn, state,
-      orderType: orderTypeRaw, budgetRange: budgetRangeRaw, timing, notes,
+      orderType: orderTypeRaw, budgetRange: budgetRangeRaw, timing: timingRaw, notes,
       interestBeef: interestBeefRaw, interestLand, interestMerch, interestAll,
       intentScore, intentClassification, segment,
       source, campaign, utmParams, ref, rancherSlug,
     } = body;
+
+    // FUNNEL FIX (2026-06-13): the /access form's highest-intent timing option
+    // submits the literal "now", but every downstream check here AND in
+    // /api/qualify speaks "Within 30 days". Unmapped, "now" scored 0 intent
+    // points → highIntentTiming=false → Order Type stayed blank → segment fell
+    // to "Community" → the quiz-redirect gate (Beef Buyer only) never fired.
+    // Production proof: 47 of 47 "now" signups landed Community, 0 Beef Buyer —
+    // the hottest cohort was the ONLY one auto-disqualified from the quiz.
+    // Normalize once at the entry so all branches below classify it correctly.
+    const timing = timingRaw === 'now' ? 'Within 30 days' : timingRaw;
 
     // ── DEFAULT QUALIFICATION SIGNALS — revenue lever ────────────────
     // /access form trimmed to 5 fields (state, household, timing, email,
@@ -516,10 +526,17 @@ export async function POST(request: Request) {
 
         // Determine stage + send the appropriate single welcome email
         if (redirectToQualify) {
-          // Hot signup — /access is about to redirect them to /qualify directly.
-          // No welcome email needed; the quiz page IS the welcome experience.
-          // Stage stays READY; /api/qualify will flip to MATCHED post-quiz pass.
+          // Hot signup — /access redirects them straight to /qualify.
+          // Stage stays READY; /api/qualify flips to MATCHED post-quiz pass.
           buyerStage = 'READY';
+          // FUNNEL FIX (2026-06-13): also email the quiz link as a backup. The
+          // redirect is a client-side window.location — if JS stalls or the tab
+          // closes before it fires, the buyer was previously stranded with no
+          // email and no quiz. Fire-and-forget so it never delays the redirect.
+          if (qualifyUrlForResponse && email) {
+            sendQuizInvite({ firstName, email, state, quizUrl: qualifyUrlForResponse })
+              .catch((e) => console.error('[quiz-invite] send failed:', e));
+          }
         } else if (hasInStateRancher && !isRancherPageLead) {
           // Rancher available, not auto-routed (form not qualified or rancher full).
           // Send welcome with YES button — engageUrl drives the matching click later.

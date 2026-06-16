@@ -108,6 +108,21 @@ export default function QualifyPage({
     (step === 2 && !!storage) ||
     (step === 3 && ack);
 
+  // FUNNEL FIX (2026-06-13): 64% of buyers who reached the quiz abandoned it.
+  // Every single-select question required tap-an-answer THEN tap-Next — double
+  // the interaction cost. Selecting an answer now auto-advances after a beat
+  // (long enough to see the selection highlight). The `from === s` guard means
+  // if the buyer also taps Next in that window we don't double-advance and skip
+  // a question. Back still corrects. Ack (step 3) stays manual — it's a consent.
+  function selectAndAdvance(setter: (v: string) => void, value: string) {
+    setter(value);
+    const from = step;
+    window.setTimeout(
+      () => setStep((s) => (s === from && s < totalSteps - 1 ? s + 1 : s)),
+      220,
+    );
+  }
+
   async function submit() {
     if (!token) return;
     setSubmitting(true);
@@ -213,7 +228,7 @@ export default function QualifyPage({
               {TIER_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
-                  onClick={() => setTier(opt.value)}
+                  onClick={() => selectAndAdvance(setTier, opt.value)}
                   className={`text-left border p-4 transition-all ${
                     tier === opt.value
                       ? 'border-charcoal bg-charcoal text-bone'
@@ -242,7 +257,7 @@ export default function QualifyPage({
               {TIMING_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
-                  onClick={() => setTiming(opt.value)}
+                  onClick={() => selectAndAdvance(setTiming, opt.value)}
                   className={`text-left border p-4 transition-all ${
                     timing === opt.value
                       ? 'border-charcoal bg-charcoal text-bone'
@@ -271,7 +286,7 @@ export default function QualifyPage({
               {STORAGE_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
-                  onClick={() => setStorage(opt.value)}
+                  onClick={() => selectAndAdvance(setStorage, opt.value)}
                   className={`text-left border p-4 transition-all ${
                     storage === opt.value
                       ? 'border-charcoal bg-charcoal text-bone'
