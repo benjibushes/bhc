@@ -43,3 +43,20 @@ next-env.d.ts
 # Local one-off operational scripts (not for production code path)
 /scripts/
 .env*.local
+.gstack/
+
+# AI agent tooling + local skill installs (not app code)
+.agents/
+.claude/worktrees/
+.claude/skills/agent-browser
+.claude/skills/find-skills
+.claude/skills/mcp-builder
+.claude/skills/stripe-best-practices
+.claude/skills/stripe-projects
+.claude/skills/upgrade-stripe
+skills-lock.json
+
+# Local data exports + one-off audit scripts
+exports/
+/audit-pull.mjs
+/audit-ranchers.mjs
