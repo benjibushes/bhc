@@ -166,10 +166,14 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Scheduled time must be in the future' }, { status: 400 });
       }
       try {
-        await createRecord(TABLES.CAMPAIGNS, {
+        // BUG FIX: persist htmlBody so the send-scheduled cron can read it.
+        // Previously, Custom-HTML campaigns stored the HTML body nowhere on the
+        // Campaigns row — the cron called sendBroadcastEmail with htmlBody=undefined
+        // and the plain-text fallback produced a blank email.
+        const scheduleFields: Record<string, any> = {
           'Campaign Name': campaignName,
           'Subject': subject,
-          'Message': message,
+          'Message': message || '',
           'Audience': audienceType === 'consumers-by-state'
             ? `state:${selectedStates?.join(',')}`
             : audienceType,
@@ -179,7 +183,14 @@ export async function POST(request: Request) {
           'Include CTA': includeCTA || false,
           'CTA Text': ctaText || '',
           'CTA Link': ctaLink || '',
-        });
+        };
+        // Write the HTML body field defensively — if the Airtable table doesn't
+        // have the "HTML Body" field yet the entire createRecord will fail, so
+        // we only add it when there is actually HTML to save.
+        if (htmlBody) {
+          scheduleFields['HTML Body'] = htmlBody;
+        }
+        await createRecord(TABLES.CAMPAIGNS, scheduleFields);
       } catch (e) {
         console.error('Failed to schedule campaign:', e);
         return NextResponse.json({ error: 'Failed to schedule campaign' }, { status: 500 });

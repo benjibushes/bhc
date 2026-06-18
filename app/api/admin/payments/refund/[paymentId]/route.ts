@@ -137,8 +137,23 @@ export async function POST(
 
   // Partial refund support — P0 audit fix (C-6). amountCents is optional;
   // absent → full refund (preserves prior behavior). Must be positive +
-  // <= the original payment amount.
+  // <= the net-refundable amount (original minus already-refunded).
+  //
+  // NRD-7 (2026-06-18): cap against Refunded Amount Cents so sequential
+  // partial refunds cannot exceed the original. Fall back to 0 if the field
+  // is absent (older schema rows / first refund). Defensive — never throw on
+  // missing field.
   const originalAmountCents = Number(payment['Amount Cents'] || 0);
+  const alreadyRefundedCents = Number(payment['Refunded Amount Cents'] || 0);
+  const netRefundableCents = Math.max(0, originalAmountCents - alreadyRefundedCents);
+
+  if (netRefundableCents <= 0) {
+    return NextResponse.json(
+      { error: `Payment has already been fully refunded (${originalAmountCents} cents, ${alreadyRefundedCents} already refunded).` },
+      { status: 422 },
+    );
+  }
+
   let amountCents: number | undefined;
   if (body?.amountCents != null) {
     const n = Number(body.amountCents);
@@ -148,15 +163,18 @@ export async function POST(
         { status: 400 },
       );
     }
-    if (n > originalAmountCents) {
+    if (n > netRefundableCents) {
       return NextResponse.json(
-        { error: `amountCents (${n}) exceeds original payment amount (${originalAmountCents})` },
+        {
+          error: `amountCents (${n}) exceeds net-refundable amount (${netRefundableCents}). ` +
+            `Original: ${originalAmountCents}, already refunded: ${alreadyRefundedCents}.`,
+        },
         { status: 400 },
       );
     }
     amountCents = Math.floor(n);
   }
-  const isPartial = typeof amountCents === 'number' && amountCents < originalAmountCents;
+  const isPartial = typeof amountCents === 'number' && amountCents < netRefundableCents;
 
   // Stripe Refund — on the connected account. reverse_transfer=true returns
   // the application fee from the platform balance back to the connected
@@ -196,7 +214,11 @@ export async function POST(
   try {
     await markDepositRefunded(piId, {
       reason,
-      refundedAmountCents: refund?.amount ?? amountCents ?? originalAmountCents,
+      // Refunded Amount Cents is the CUMULATIVE total — accumulate, don't
+      // overwrite, or sequential partials reset the cap and over-refund. The
+      // full-refund fallback is net-remaining (not the original) so prior
+      // partials aren't double-counted.
+      refundedAmountCents: alreadyRefundedCents + (refund?.amount ?? amountCents ?? netRefundableCents),
       partial: isPartial,
     });
   } catch (e: any) {

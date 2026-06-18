@@ -4,9 +4,9 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Container from '../../components/Container';
 import Divider from '../../components/Divider';
-import Input from '../../components/Input';
 import Link from 'next/link';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
+import { confirmBlast } from '@/app/admin/components/ListControls';
 
 interface AudienceStats {
   allConsumers: number;
@@ -165,10 +165,15 @@ function BroadcastEmailInner() {
       }
     }
 
-    const action = sendMode === 'scheduled'
-      ? `Schedule "${subject}" for ${new Date(`${scheduledDate}T${scheduledTime}`).toLocaleString()}?`
-      : `Send "${subject}" to ${previewData?.recipientCount || recipientCount} recipients? This cannot be undone.`;
-    if (!confirm(action)) return;
+    const count = previewData?.recipientCount || recipientCount;
+    if (sendMode === 'scheduled') {
+      // Scheduled recipients are resolved later by the cron, so don't gate on a
+      // 0 count here — a plain confirm is correct for a future-dated job.
+      const when = new Date(`${scheduledDate}T${scheduledTime}`).toLocaleString();
+      if (!window.confirm(`Schedule "${subject}" to send ${when}? Recipients are resolved when it fires.`)) return;
+    } else if (!confirmBlast(count, `Send "${subject}"`)) {
+      return;
+    }
 
     setSending(true);
     try {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
+import { confirmBlast } from '@/app/admin/components/ListControls';
 
 interface TodayData {
   counts: {
@@ -22,7 +23,17 @@ interface TodayData {
     stalled: { id: string; buyer_name: string; rancher_name: string; days: number }[];
     unpaidCommissions: { id: string; buyer_name: string; rancher_name: string; commission_due: number; closed_at: string }[];
     highIntentWaiting: { id: string; name: string; state: string; intent: number; warmup: string }[];
-    pendingGoLive: { id: string; ranch_name: string; operator: string; state: string; status: string }[];
+    pendingGoLive: {
+      id: string;
+      ranch_name: string;
+      operator: string;
+      state: string;
+      status: string;
+      /** active_status from Airtable — used to show Pause/Resume affordance */
+      active_status?: string;
+      /** stripe_connect status — used to show Resync-Connect affordance */
+      stripe_connect_status?: string;
+    }[];
     warmupEngaged: { id: string; name: string; state: string; engaged_at: string }[];
     wholesaleActive?: { id: string; business_name: string; contact_name: string; state: string; status: string; created_at: string }[];
   };
@@ -60,7 +71,9 @@ export default function TodayPage() {
   }, []);
 
   // Inline action: approve a Pending Approval referral
-  const handleApprove = async (referralId: string) => {
+  // confirmBlast guard: sends intro email to buyer + rancher (2 live sends)
+  const handleApprove = async (referralId: string, buyerName: string) => {
+    if (!confirmBlast(2, `send intro emails for "${buyerName}"`)) return;
     setRowLoading(referralId);
     try {
       const res = await fetch(`/api/referrals/${referralId}/approve`, { method: 'PATCH' });
@@ -79,7 +92,13 @@ export default function TodayPage() {
   };
 
   // Inline action: flip a rancher to Live + fire warmup blast
-  const handleGoLive = async (rancherId: string) => {
+  // confirmBlast guard: go-live triggers warmup email to waiting buyers
+  const handleGoLive = async (rancherId: string, ranchName: string, waitingBuyerCount?: number) => {
+    // Go-live warmup-blasts every waiting buyer in the rancher's state; we don't
+    // have the exact count here, so use an honest plain confirm instead of a
+    // confirmBlast that would claim a specific (and wrong) "1 person" count.
+    void waitingBuyerCount;
+    if (!window.confirm(`Go live: publish "${ranchName}" and email every waiting buyer in their state. This cannot be undone. Continue?`)) return;
     setRowLoading(rancherId);
     try {
       const res = await fetch(`/api/admin/ranchers/${rancherId}/go-live`, { method: 'POST' });
@@ -120,10 +139,67 @@ export default function TodayPage() {
     }
   };
 
+  // Rancher action: Pause (stop receiving new leads)
+  const handlePauseRancher = async (rancherId: string, ranchName: string) => {
+    setRowLoading(`pause-${rancherId}`);
+    try {
+      const res = await fetch(`/api/admin/ranchers/${rancherId}/pause`, { method: 'POST' });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.error) {
+        toast.error('Pause failed', payload?.error || `HTTP ${res.status}`);
+      } else {
+        toast.success(`${ranchName} paused`, 'No new leads until resumed');
+        await load();
+      }
+    } catch (e: any) {
+      toast.error('Pause failed', e?.message);
+    } finally {
+      setRowLoading(null);
+    }
+  };
+
+  // Rancher action: Resume (re-open to new leads)
+  const handleResumeRancher = async (rancherId: string, ranchName: string) => {
+    setRowLoading(`resume-${rancherId}`);
+    try {
+      const res = await fetch(`/api/admin/ranchers/${rancherId}/resume`, { method: 'POST' });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.error) {
+        toast.error('Resume failed', payload?.error || `HTTP ${res.status}`);
+      } else {
+        toast.success(`${ranchName} resumed`, 'Now accepting new leads');
+        await load();
+      }
+    } catch (e: any) {
+      toast.error('Resume failed', e?.message);
+    } finally {
+      setRowLoading(null);
+    }
+  };
+
+  // Rancher action: Resync Stripe Connect (fix stuck onboarding)
+  const handleResyncConnect = async (rancherId: string, ranchName: string) => {
+    setRowLoading(`resync-${rancherId}`);
+    try {
+      const res = await fetch(`/api/admin/ranchers/${rancherId}/resync-connect`, { method: 'POST' });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.error) {
+        toast.error('Resync failed', payload?.error || `HTTP ${res.status}`);
+      } else {
+        toast.success(`${ranchName} Connect resynced`, payload?.message);
+        await load();
+      }
+    } catch (e: any) {
+      toast.error('Resync failed', e?.message);
+    } finally {
+      setRowLoading(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-8">
-        <p className="text-sm text-saddle">Loading today's priorities…</p>
+        <p className="text-sm text-saddle">Loading today&apos;s priorities…</p>
       </div>
     );
   }
@@ -180,7 +256,7 @@ export default function TodayPage() {
                 </p>
               </div>
               <button
-                onClick={() => handleApprove(r.id)}
+                onClick={() => handleApprove(r.id, r.buyer_name)}
                 disabled={rowLoading === r.id}
                 className="shrink-0 px-3 py-1 bg-charcoal text-bone uppercase text-xs tracking-wider hover:bg-saddle disabled:opacity-50"
               >
@@ -202,30 +278,74 @@ export default function TodayPage() {
           }))}
         />
 
-        {/* INLINE-ACTION DRAWER: Go Live */}
+        {/* INLINE-ACTION DRAWER: Go Live + Pause / Resume / Resync-Connect */}
         <ActionDrawer
           title="Ready to go live"
           count={samples.pendingGoLive.length}
           emptyText="No ranchers awaiting launch."
           fullListHref="/admin/ranchers"
         >
-          {samples.pendingGoLive.map((r) => (
-            <li key={r.id} className="flex items-center justify-between gap-3 p-2 border-b border-dust last:border-b-0">
-              <div className="min-w-0 flex-1">
-                <p className="font-medium text-charcoal truncate">{r.ranch_name}</p>
-                <p className="text-xs text-saddle truncate">
-                  {r.operator} · {r.state} · {r.status}
-                </p>
-              </div>
-              <button
-                onClick={() => handleGoLive(r.id)}
-                disabled={rowLoading === r.id}
-                className="shrink-0 px-3 py-1 bg-charcoal text-bone uppercase text-xs tracking-wider hover:bg-saddle disabled:opacity-50"
-              >
-                {rowLoading === r.id ? '…' : 'Go Live'}
-              </button>
-            </li>
-          ))}
+          {samples.pendingGoLive.map((r) => {
+            const isPaused = r.active_status === 'Paused';
+            const isActive = r.active_status === 'Active';
+            const needsResync = r.stripe_connect_status === 'pending' || r.stripe_connect_status === 'incomplete';
+
+            return (
+              <li key={r.id} className="flex items-center justify-between gap-2 p-2 border-b border-dust last:border-b-0">
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-charcoal truncate">{r.ranch_name}</p>
+                  <p className="text-xs text-saddle truncate">
+                    {r.operator} · {r.state} · {r.status}
+                    {r.active_status && ` · ${r.active_status}`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Go Live — only show when not already live */}
+                  {r.status !== 'Live' && (
+                    <button
+                      onClick={() => handleGoLive(r.id, r.ranch_name)}
+                      disabled={rowLoading === r.id}
+                      className="px-3 py-1 bg-charcoal text-bone uppercase text-xs tracking-wider hover:bg-saddle disabled:opacity-50"
+                    >
+                      {rowLoading === r.id ? '…' : 'Go Live'}
+                    </button>
+                  )}
+                  {/* Pause / Resume — for live ranchers whose capacity needs toggling */}
+                  {isActive && (
+                    <button
+                      onClick={() => handlePauseRancher(r.id, r.ranch_name)}
+                      disabled={rowLoading === `pause-${r.id}`}
+                      title="Stop this rancher from receiving new leads"
+                      className="px-2 py-1 border border-amber-dark text-amber-dark text-xs hover:bg-amber/10 disabled:opacity-50"
+                    >
+                      {rowLoading === `pause-${r.id}` ? '…' : 'Pause'}
+                    </button>
+                  )}
+                  {isPaused && (
+                    <button
+                      onClick={() => handleResumeRancher(r.id, r.ranch_name)}
+                      disabled={rowLoading === `resume-${r.id}`}
+                      title="Re-open this rancher to new leads"
+                      className="px-2 py-1 border border-sage text-sage-dark text-xs hover:bg-sage/10 disabled:opacity-50"
+                    >
+                      {rowLoading === `resume-${r.id}` ? '…' : 'Resume'}
+                    </button>
+                  )}
+                  {/* Resync Connect — fix stuck Stripe Connect onboarding */}
+                  {needsResync && (
+                    <button
+                      onClick={() => handleResyncConnect(r.id, r.ranch_name)}
+                      disabled={rowLoading === `resync-${r.id}`}
+                      title="Re-pull Stripe Connect account status to unblock deposit gate"
+                      className="px-2 py-1 border border-saddle text-saddle text-xs hover:bg-saddle/10 disabled:opacity-50"
+                    >
+                      {rowLoading === `resync-${r.id}` ? '…' : 'Resync ↻'}
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ActionDrawer>
 
         {/* INLINE-ACTION DRAWER: Mark Paid */}

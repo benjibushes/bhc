@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { getAdminConfig } from '@/lib/adminConfig';
 
 // GET /api/admin/today — aggregates action items across the platform so the
 // operator can see the highest-value next actions in one glance.
@@ -13,6 +14,9 @@ export async function GET(request: Request) {
     // Don't silently swallow Airtable errors — if the DB read fails, the
     // dashboard would show all-zero counts and the operator wouldn't know
     // anything was wrong. Surface failures so they can be diagnosed.
+    // Load operator config first (never throws — falls back to defaults)
+    const adminCfg = await getAdminConfig();
+
     let referrals: any[] = [];
     let consumers: any[] = [];
     let ranchers: any[] = [];
@@ -57,12 +61,13 @@ export async function GET(request: Request) {
     // Pending referrals awaiting approval
     const pendingApproval = referrals.filter((r: any) => str(r['Status']) === 'Pending Approval');
 
-    // Stalled — Intro Sent 5+ days, not yet closed
+    // Stalled — Intro Sent for more than adminCfg.stallThresholdDays, not yet closed.
+    // Threshold is operator-tunable via /admin/settings (default: 5 days).
     const stalled = referrals.filter((r: any) => {
       if (str(r['Status']) !== 'Intro Sent') return false;
       const t = r['Intro Sent At'] || r['Approved At'];
       if (!t) return false;
-      return (now - new Date(t).getTime()) >= 5 * DAY;
+      return (now - new Date(t).getTime()) >= adminCfg.stallThresholdDays * DAY;
     });
 
     // Unpaid commissions — Closed Won, Commission Paid = false, sorted by oldest
@@ -71,12 +76,13 @@ export async function GET(request: Request) {
     );
     const unpaidTotal = unpaid.reduce((s: number, r: any) => s + (Number(r['Commission Due']) || 0), 0);
 
-    // High-intent buyers who are Waitlisted/Unmatched (ready to route if rancher appears)
+    // High-intent buyers who are Waitlisted/Unmatched (ready to route if rancher appears).
+    // Cutoff is operator-tunable via /admin/settings (default: 70).
     const highIntentWaiting = consumers.filter((c: any) => {
       const refStatus = str(c['Referral Status']);
       if (refStatus !== 'Waitlisted' && refStatus !== 'Unmatched') return false;
       if (c['Unsubscribed'] || c['Bounced']) return false;
-      return (Number(c['Intent Score']) || 0) >= 70;
+      return (Number(c['Intent Score']) || 0) >= adminCfg.highIntentCutoff;
     });
 
     // Ranchers who need attention: operationally live but at 0 active referrals.
@@ -181,6 +187,10 @@ export async function GET(request: Request) {
           operator: r['Operator Name'] || '',
           state: r['State'] || '',
           status: str(r['Onboarding Status']),
+          // Emit so the drawer's Resume / Resync-Connect affordances can render
+          // for a paused or Connect-stuck rancher sitting in the go-live queue.
+          active_status: str(r['Active Status']),
+          stripe_connect_status: str(r['Stripe Connect Status']),
         })),
         warmupEngaged: sample(
           warmupEngaged.sort((a: any, b: any) => (b['Intent Score'] || 0) - (a['Intent Score'] || 0)),
