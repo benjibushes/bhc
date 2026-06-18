@@ -150,7 +150,15 @@ export default function AdminInquiriesPage() {
 
   const handleMarkClosedLost = async (id: string) => {
     const reason = prompt('Reason for Closed Lost (optional)?') || '';
-    await handleWholesaleTransition(id, 'Closed Lost', { notes: reason });
+    // APPEND the reason — never replace Notes, or the structured buyer State /
+    // Monthly Volume that readWholesaleField parses out is destroyed. Leave
+    // Notes untouched entirely when no reason is given.
+    const opts: { notes?: string } = {};
+    if (reason.trim()) {
+      const existing = (inquiries.find((i) => i.id === id)?.notes || '').trim();
+      opts.notes = existing ? `${existing}\n\n[Closed Lost] ${reason.trim()}` : reason.trim();
+    }
+    await handleWholesaleTransition(id, 'Closed Lost', opts);
   };
 
   const handleEdit = (inquiry: Inquiry) => {
@@ -274,8 +282,10 @@ export default function AdminInquiriesPage() {
     Wholesale: 'Wholesale (B2B)',
   };
 
-  // Calculate commission summary
-  const completedSales = inquiries.filter(i => i.status === 'Sale Completed');
+  // Calculate commission summary. Member inquiries close as 'Sale Completed';
+  // wholesale inquiries close as 'Closed Won'. Both count toward revenue —
+  // excluding 'Closed Won' hid all wholesale ($5-15k AOV) from every card.
+  const completedSales = inquiries.filter(i => i.status === 'Sale Completed' || i.status === 'Closed Won');
   const totalSales = completedSales.reduce((sum, i) => sum + (i.sale_amount || 0), 0);
   const totalCommission = completedSales.reduce((sum, i) => sum + (i.commission_amount || 0), 0);
   const unpaidCommission = completedSales
