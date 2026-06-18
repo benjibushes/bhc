@@ -150,7 +150,15 @@ export default function AdminInquiriesPage() {
 
   const handleMarkClosedLost = async (id: string) => {
     const reason = prompt('Reason for Closed Lost (optional)?') || '';
-    await handleWholesaleTransition(id, 'Closed Lost', { notes: reason });
+    // APPEND the reason — never replace Notes, or the structured buyer State /
+    // Monthly Volume that readWholesaleField parses out is destroyed. Leave
+    // Notes untouched entirely when no reason is given.
+    const opts: { notes?: string } = {};
+    if (reason.trim()) {
+      const existing = (inquiries.find((i) => i.id === id)?.notes || '').trim();
+      opts.notes = existing ? `${existing}\n\n[Closed Lost] ${reason.trim()}` : reason.trim();
+    }
+    await handleWholesaleTransition(id, 'Closed Lost', opts);
   };
 
   const handleEdit = (inquiry: Inquiry) => {
