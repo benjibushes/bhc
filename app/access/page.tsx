@@ -922,6 +922,13 @@ function AccessPageContent() {
                 &larr; back to home
               </Link>
             </div>
+
+            <div className="pt-6 text-xs text-dust text-center">
+              Are you a rancher?{' '}
+              <Link href="/apply" className="underline underline-offset-2 hover:text-charcoal transition-colors">
+                Apply here &rarr;
+              </Link>
+            </div>
           </div>
         </Container>
       </main>

@@ -6,6 +6,7 @@ import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals, MAX_ACTIVE_REFERRALS_FIELD } from '@/lib/rancherCapacity';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
+import { geocodeRancher } from '@/lib/geocode';
 
 export async function PATCH(
   request: NextRequest,
@@ -30,6 +31,8 @@ export async function PATCH(
     if (body.email) fields['Email'] = body.email;
     if (body.phone !== undefined) fields['Phone'] = body.phone;
     if (body.state) fields['State'] = body.state;
+    if (body.zip !== undefined) fields['Zip'] = body.zip;
+    if (body.city !== undefined) fields['City'] = body.city;
     if (body.beefTypes) fields['Beef Types'] = body.beefTypes;
     if (body.monthlyCapacity !== undefined) fields['Monthly Capacity'] = parseInt(body.monthlyCapacity);
     if (body.certifications !== undefined) fields['Certifications'] = body.certifications;
@@ -96,6 +99,32 @@ export async function PATCH(
           shouldSendGoLive = true;
         }
       } catch { /* proceed */ }
+    }
+
+    // Re-geocode when Zip / City / State changes so the map pin stays accurate.
+    // ZIP-first for ~3-5 mi precision; falls back to city centroid. Non-fatal —
+    // field updates proceed even if geocoding fails. Mirrors setup/route.ts:370-403.
+    const locationChanged = 'Zip' in fields || 'City' in fields || 'State' in fields;
+    if (locationChanged) {
+      try {
+        const current: any = await getRecordById(TABLES.RANCHERS, id);
+        const zip = ('Zip' in fields ? String(fields['Zip'] || '') : String(current?.['Zip'] || ''))
+          .trim().slice(0, 5);
+        const city = 'City' in fields
+          ? String(fields['City'] || '')
+          : String(current?.['City'] || '');
+        const state = 'State' in fields
+          ? String(fields['State'] || '')
+          : String(current?.['State'] || '');
+        const coords = await geocodeRancher({ zip, city, state });
+        if (coords) {
+          fields['Latitude'] = coords.lat;
+          fields['Longitude'] = coords.lng;
+        }
+      } catch (e: any) {
+        // Non-fatal — keep field updates, skip lat/lng refresh.
+        console.warn('[admin-rancher-patch] re-geocode skipped:', e?.message);
+      }
     }
 
     // P1 audit D-3: capture pre-state for reversible audit log

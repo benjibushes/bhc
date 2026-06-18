@@ -31,6 +31,7 @@ import { sendEmail } from '@/lib/email';
 import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
 import { logAuditEntry } from '@/lib/auditLog';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 
 // Mirror the platform webhook's Stripe Events table for idempotency.
 const STRIPE_EVENTS_TABLE = 'Stripe Events';
@@ -399,6 +400,74 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
   }
 
   await updateRecord(TABLES.RANCHERS, rancher.id, writeFields);
+
+  // ── AUTO-GO-LIVE (2026-06-18) ─────────────────────────────────────
+  // Self-submitted tier_v2 ranchers who finish Connect AFTER signing their
+  // agreement were stuck dark forever: the Stripe Connect webhook flipped
+  // Connect Status to 'active' but never flipped Active Status → no
+  // bookings. Fix: when Connect just went active AND the rancher already
+  // has a signed agreement AND they are not yet Active, AND their Onboarding
+  // Status is still in a pre-live state, auto-flip them to Live.
+  //
+  // Gate conditions (all must pass — idempotent, never double-flips):
+  //   1. Connect just went active (isNowActive)
+  //   2. Agreement Signed is truthy (legal gate satisfied)
+  //   3. Active Status is NOT already 'Active' (idempotency)
+  //   4. Onboarding Status is one of the pre-live states
+  //      ('', 'Agreement Signed', 'Verification Complete',
+  //       'Verification Pending', 'Docs Sent')
+  //
+  // We read the ORIGINAL `rancher` fields (not `writeFields`) to check
+  // current state before our write — this is safe because `writeFields`
+  // only ever sets Connect-related + Pricing/Migration fields, never
+  // Active Status or Onboarding Status. Defensive Airtable: never throw
+  // on missing field; all guards below handle undefined gracefully.
+  const PRE_LIVE_ONBOARDING_STATUSES = new Set([
+    '',
+    'Agreement Signed',
+    'Verification Complete',
+    'Verification Pending',
+    'Docs Sent',
+  ]);
+  const currentActiveStatus = String(rancher['Active Status'] || '');
+  const agreementSigned = !!rancher['Agreement Signed'];
+  const currentOnboardingStatus = String(rancher['Onboarding Status'] || '');
+  const shouldAutoGoLive =
+    isNowActive &&
+    agreementSigned &&
+    currentActiveStatus !== 'Active' &&
+    PRE_LIVE_ONBOARDING_STATUSES.has(currentOnboardingStatus);
+
+  if (shouldAutoGoLive) {
+    try {
+      await updateRecord(TABLES.RANCHERS, rancher.id, {
+        'Active Status': 'Active',
+        'Onboarding Status': 'Live',
+        'Page Live': true,
+      });
+
+      // Fire launch warmup so the rancher's state buyers get warmed up
+      // immediately instead of waiting up to 24h for the scheduled cron.
+      // triggerLaunchWarmup is fire-and-forget + idempotent (per-buyer
+      // Warmup Sent At gates double-send). Mirrors the admin go-live
+      // endpoint at app/api/admin/ranchers/[id]/go-live/route.ts:80.
+      triggerLaunchWarmup(`connect-webhook-auto-go-live:${rancher.id}`);
+
+      // LOUD Telegram to ops — HTML-escape dynamic ranch name for safety.
+      const ranchLabel = String(
+        rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId,
+      ).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `🟢 ${ranchLabel} auto-went-live — Connect active + agreement signed`,
+      );
+    } catch (e: any) {
+      // Non-fatal — log but do NOT re-throw. The Connect Status flip already
+      // landed above. The auto-go-live failure leaves them in a "Connect
+      // active but not yet Live" state which ops can manually resolve.
+      console.error('[stripe-connect webhook] auto-go-live failed:', e?.message);
+    }
+  }
 
   // Telegram celebration when Connect goes active for the first time
   // EVER (gated on the persisted Connected At stamp, not the in-memory

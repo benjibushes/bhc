@@ -15,6 +15,7 @@ export default function Footer() {
             <Button href="/founders" variant="secondary">Founders</Button>
             <Button href="/brand-partners" variant="secondary">Brand Partners</Button>
             <Button href="/map/add-a-rancher" variant="secondary">Add a Rancher</Button>
+            <Button href="/apply" variant="secondary">Apply as a rancher</Button>
             <Button href="/faq" variant="secondary">FAQ</Button>
             <Button href="/about" variant="secondary">About</Button>
             <Button href="/news" variant="secondary">News</Button>
