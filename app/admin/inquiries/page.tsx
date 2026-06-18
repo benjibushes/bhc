@@ -5,6 +5,17 @@ import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import Link from 'next/link';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
+import {
+  useListSearch,
+  SearchSortBar,
+  useDensity,
+  DensityToggle,
+  densityPad,
+  useSavedViews,
+  SavedViewsBar,
+  confirmBlast,
+  type SortOption,
+} from '@/app/admin/components/ListControls';
 
 interface Inquiry {
   id: string;
@@ -40,11 +51,52 @@ interface RancherLite {
   state: string;
 }
 
+// View-state shape for saved views
+interface InquiryViewState {
+  query: string;
+  sortKey: string;
+  statusFilter: string;
+}
+
+// Module-level consts so they're stable references for useListSearch's
+// opts (avoids re-creating the array on every render).
+const SEARCH_FIELDS: (keyof Inquiry)[] = [
+  'consumer_name',
+  'consumer_email',
+  'buyer_state',
+  'message',
+  'business_name',
+];
+
+const SORT_OPTIONS: SortOption[] = [
+  { key: '-created_at', label: 'Newest first' },
+  { key: 'created_at', label: 'Oldest first' },
+  { key: '-sale_amount', label: 'Sale amount (high → low)' },
+  { key: 'sale_amount', label: 'Sale amount (low → high)' },
+  { key: 'consumer_name', label: 'Name (A → Z)' },
+  { key: '-consumer_name', label: 'Name (Z → A)' },
+];
+
+const STATUS_TABS = [
+  { value: 'all', label: 'All' },
+  { value: 'Pending', label: 'Pending' },
+  { value: 'Approved', label: 'Approved' },
+  { value: 'Rejected', label: 'Rejected' },
+  { value: 'Sale Completed', label: 'Completed' },
+  { value: 'No Sale', label: 'No Sale' },
+  { value: 'New', label: 'Wholesale New' },
+  { value: 'Routed', label: 'Routed' },
+  { value: 'Quoted', label: 'Quoted' },
+  { value: 'Closed Won', label: 'Closed Won' },
+  { value: 'Closed Lost', label: 'Closed Lost' },
+];
+
 export default function AdminInquiriesPage() {
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [ranchers, setRanchers] = useState<RancherLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState('all');
   // Wholesale match drawer state — null when no row is in match-mode,
   // otherwise the inquiry ID + selected rancher ID list.
   const [matchingId, setMatchingId] = useState<string | null>(null);
@@ -60,6 +112,29 @@ export default function AdminInquiriesPage() {
     sale_amount: '',
     commission_paid: false,
     notes: '',
+  });
+
+  // Density toggle — persisted per page
+  const [density, setDensity] = useDensity('inquiries');
+
+  // Saved views
+  const { views, save: saveView, remove: removeView } = useSavedViews<InquiryViewState>('inquiries');
+
+  // Status-filtered intermediate (mirrors the referrals pattern)
+  const statusFiltered: Inquiry[] =
+    statusFilter === 'all' ? inquiries : inquiries.filter((i) => i.status === statusFilter);
+
+  // Search + sort (operates on status-filtered result)
+  const {
+    filtered: filteredInquiries,
+    query,
+    setQuery,
+    sortKey,
+    setSortKey,
+  } = useListSearch<Inquiry>(statusFiltered, {
+    searchFields: SEARCH_FIELDS,
+    sortOptions: SORT_OPTIONS,
+    defaultSort: '-created_at',
   });
 
   useEffect(() => {
@@ -172,6 +247,8 @@ export default function AdminInquiriesPage() {
   };
 
   const handleApprove = async (id: string) => {
+    // confirmBlast guard — Approve sends live email to the rancher
+    if (!confirmBlast(1, 'Approve inquiry (sends live email to rancher)')) return;
     try {
       const response = await fetch(`/api/inquiries/${id}`, {
         method: 'PATCH',
@@ -260,9 +337,9 @@ export default function AdminInquiriesPage() {
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric', 
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
@@ -292,6 +369,19 @@ export default function AdminInquiriesPage() {
     .filter(i => !i.commission_paid)
     .reduce((sum, i) => sum + (i.commission_amount || 0), 0);
 
+  // Saved-view helpers
+  const applyView = (state: InquiryViewState) => {
+    setQuery(state.query);
+    setSortKey(state.sortKey);
+    setStatusFilter(state.statusFilter);
+  };
+
+  const saveCurrentView = () => {
+    const name = prompt('Name for this view?');
+    if (!name?.trim()) return;
+    saveView(name.trim(), { query, sortKey, statusFilter });
+  };
+
   if (loading) {
     return (
       <AdminAuthGuard>
@@ -320,8 +410,8 @@ export default function AdminInquiriesPage() {
               </p>
             </div>
             <div className="flex gap-2">
-              <Link 
-                href="/admin" 
+              <Link
+                href="/admin"
                 className="px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
               >
                 ← Back to Admin
@@ -370,15 +460,70 @@ export default function AdminInquiriesPage() {
 
           <Divider />
 
+          {/* Status filter tabs */}
+          <div className="flex flex-wrap gap-2">
+            {STATUS_TABS.map((tab) => {
+              const count = tab.value === 'all'
+                ? inquiries.length
+                : inquiries.filter((i) => i.status === tab.value).length;
+              if (tab.value !== 'all' && count === 0) return null;
+              return (
+                <button
+                  key={tab.value}
+                  onClick={() => setStatusFilter(tab.value)}
+                  className={`px-4 py-2 text-sm border transition-colors ${
+                    statusFilter === tab.value
+                      ? 'bg-charcoal text-bone border-charcoal'
+                      : 'border-dust hover:bg-dust'
+                  }`}
+                >
+                  {tab.label} ({count})
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Search / Sort toolbar + Density toggle */}
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <SavedViewsBar<InquiryViewState>
+                views={views}
+                onApply={applyView}
+                onSaveCurrent={saveCurrentView}
+                onDelete={removeView}
+              />
+              <SearchSortBar
+                query={query}
+                setQuery={setQuery}
+                sortKey={sortKey}
+                setSortKey={setSortKey}
+                sortOptions={SORT_OPTIONS}
+                placeholder="Search name, email, state, or message…"
+                resultCount={filteredInquiries.length}
+                totalCount={statusFiltered.length}
+              />
+            </div>
+            <div className="pt-6">
+              <DensityToggle density={density} setDensity={setDensity} />
+            </div>
+          </div>
+
           {/* Inquiries List */}
           <div className="space-y-4">
-            {inquiries.length === 0 ? (
+            {filteredInquiries.length === 0 ? (
               <div className="p-12 border border-dust text-center">
-                <p className="text-saddle">No inquiries yet.</p>
+                <p className="text-saddle">
+                  {inquiries.length === 0
+                    ? 'No inquiries yet.'
+                    : 'No inquiries match the current filters.'}
+                </p>
               </div>
             ) : (
-              inquiries.map((inquiry) => (
-                <div key={inquiry.id} className="p-6 border border-dust bg-white space-y-4">
+              filteredInquiries.map((inquiry) => (
+                <div
+                  key={inquiry.id}
+                  className={`border border-dust bg-white space-y-4 px-6 ${densityPad[density]}`}
+                >
                   {editingId === inquiry.id ? (
                     // Edit Mode
                     <div className="space-y-4">
@@ -638,6 +783,8 @@ export default function AdminInquiriesPage() {
                               alert('Pick at least one rancher to route to.');
                               return;
                             }
+                            // confirmBlast guard — routing sends live intro emails to ranchers
+                            if (!confirmBlast(matchSelected.length, 'Route to ranchers (sends live intro emails)')) return;
                             handleWholesaleTransition(inquiry.id, 'Routed', {
                               matchedRancherIds: matchSelected,
                             });
@@ -775,5 +922,3 @@ function WholesaleMatchDrawer({
     </div>
   );
 }
-
-

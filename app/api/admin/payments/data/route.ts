@@ -93,6 +93,9 @@ export async function GET(request: Request) {
       tier: tier ? String(tier) : '',
       amountCents: Number(p['Amount Cents'] || 0),
       platformFeeCents: Number(p['Platform Fee Cents'] || 0),
+      // Refunded Amount Cents tracks cumulative partial refunds. Fall back to
+      // 0 if the field is absent (older schema / not-yet-refunded rows).
+      refundedAmountCents: Number(p['Refunded Amount Cents'] || 0),
       status: String(p['Status'] || 'pending'),
       createdAt: String(p['Created At'] || ''),
       capturedAt: String(p['Captured At'] || ''),

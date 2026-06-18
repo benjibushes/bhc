@@ -35,6 +35,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { group: 'SYSTEM', icon: '🩺', label: 'Health', href: '/admin/health' },
   { group: 'SYSTEM', icon: '🗃', label: 'Backfill', href: '/admin/backfill' },
   { group: 'SYSTEM', icon: '🚚', label: 'Migration', href: '/admin/migration' },
+  { group: 'SYSTEM', icon: '⚙️', label: 'Settings', href: '/admin/settings', shortcut: 'g s' },
 ];
 
 export const ADMIN_NAV_GROUPS = ['PIPELINE', 'MONEY', 'GROWTH', 'SYSTEM'] as const;

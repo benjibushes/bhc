@@ -6,6 +6,7 @@ import Divider from '../../components/Divider';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
+import { useListSearch, SearchSortBar } from '@/app/admin/components/ListControls';
 
 interface Referral {
   id: string;
@@ -88,6 +89,18 @@ const STATUS_COLORS: Record<string, string> = {
   'Dormant': 'bg-bone-deep text-charcoal border-dust',
   'Reassigned': 'bg-amber/15 text-amber-dark border-amber/60',
 };
+
+const SEARCH_FIELDS: (keyof Referral)[] = [
+  'buyer_name', 'buyer_email', 'buyer_state', 'order_type',
+  'suggested_rancher_name', 'suggested_rancher_state', 'rancher_email',
+];
+const SORT_OPTIONS = [
+  { key: '-created_at', label: 'Newest' },
+  { key: 'created_at', label: 'Oldest' },
+  { key: '-intent_score', label: 'Highest intent' },
+  { key: '-sale_amount', label: 'Largest sale' },
+  { key: '-closed_at', label: 'Recently closed' },
+];
 
 export default function ReferralsPage() {
   const [referrals, setReferrals] = useState<Referral[]>([]);
@@ -506,9 +519,13 @@ export default function ReferralsPage() {
     setBulkLoading(false);
   };
 
-  const filteredReferrals = filter === 'all'
+  const statusFiltered = filter === 'all'
     ? referrals
     : referrals.filter(r => r.status === filter);
+  const { filtered: filteredReferrals, query, setQuery, sortKey, setSortKey } = useListSearch(statusFiltered, {
+    searchFields: SEARCH_FIELDS,
+    sortOptions: SORT_OPTIONS,
+  });
 
   if (loading) {
     return (
@@ -592,6 +609,17 @@ export default function ReferralsPage() {
                 );
               })}
             </div>
+
+            <SearchSortBar
+              query={query}
+              setQuery={setQuery}
+              sortKey={sortKey}
+              setSortKey={setSortKey}
+              sortOptions={SORT_OPTIONS}
+              placeholder="Search buyer, email, state, rancher…"
+              resultCount={filteredReferrals.length}
+              totalCount={statusFiltered.length}
+            />
 
             {/* Referral Cards */}
             {filteredReferrals.length === 0 ? (

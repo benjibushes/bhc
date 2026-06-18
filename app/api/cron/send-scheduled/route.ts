@@ -129,6 +129,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       }
     }
 
+    // Read the HTML body saved at scheduling time (if any). Defensive: the
+    // field may not exist if this is an old record or the table schema hasn't
+    // been updated yet — fall back to undefined so plain-text path is used.
+    const htmlBody: string | undefined =
+      typeof campaign['HTML Body'] === 'string' && campaign['HTML Body'].trim()
+        ? campaign['HTML Body']
+        : undefined;
+
     let sent = 0;
     let failed = 0;
     for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
@@ -141,7 +149,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             subject: campaign['Subject'],
             message: campaign['Message'] || '',
             campaignName: campaign['Campaign Name'],
-            includeCTA: campaign['Include CTA'] || false,
+            // Pass htmlBody so Custom-HTML campaigns render correctly.
+            // When htmlBody is set, the email lib uses it as the full email
+            // body and suppresses the CTA button (same as immediate-send path).
+            htmlBody,
+            includeCTA: htmlBody ? false : (campaign['Include CTA'] || false),
             ctaText: campaign['CTA Text'] || 'Learn More',
             ctaLink: fullCtaLink,
           })
