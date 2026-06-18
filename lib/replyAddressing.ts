@@ -60,17 +60,21 @@ export function parseReplyAddress(rawAddress: string): ReplyContext | null {
   // Strip any "Name <addr>" wrapping
   const match = rawAddress.match(/<?([^@<>\s]+)@([^>\s]+)>?/);
   if (!match) return null;
-  const localPart = match[1].toLowerCase();
+  // Preserve the local-part case: Airtable record IDs are CASE-SENSITIVE.
+  // Lowercasing it (prior bug) turned `ref-recAbC123` into `recabc123`, so
+  // getRecordById 404'd on every tagged reply and attribution silently died.
+  const localPart = match[1];
   const domain = match[2].toLowerCase();
 
   // Only accept addresses on our replies domain (ignore forwarded externals)
   if (!domain.endsWith(REPLIES_DOMAIN.toLowerCase())) return null;
 
   // Special inbox bucket — no specific record context
-  if (localPart === 'inbox') return null;
+  if (localPart.toLowerCase() === 'inbox') return null;
 
-  // Prefix-record format
-  const prefixMatch = localPart.match(/^(ref|usr|rnc|inq|thread)-(rec[a-z0-9]+)$/i);
+  // Prefix-record format. Prefix is case-insensitive; the record ID keeps its
+  // original case ([a-zA-Z0-9], not [a-z0-9]) so it matches the real Airtable id.
+  const prefixMatch = localPart.match(/^(ref|usr|rnc|inq|thread)-(rec[a-zA-Z0-9]+)$/i);
   if (!prefixMatch) return null;
 
   const type = prefixMatch[1].toLowerCase() as ReplyContextType;

@@ -106,6 +106,21 @@ Every Claude Code session that touches BHC data must:
 
 ---
 
+### Run 2026-06-13 — buyer funnel + quiz conversion audit & repair
+- **Trigger**: manual, by Ben ("why aren't people getting through the gamified quiz to a qualified lead — assure everything works")
+- **Method**: code trace /access → /api/consumers → /qualify → /api/qualify; live Airtable aggregation (2,060 consumers); Granola checked (no relevant meetings).
+- **Funnel reality (last 30d, from Airtable):** 586 records · 466 real signups · Segment 183 Beef Buyer / 283 Community · reached quiz ~129 (~28%) · **passed quiz → qualified lead 46 (9.9%)** · matched any path 17 (3.6%). Quiz mechanically healthy (most recent pass today).
+- **Root causes (3 leaks, ranked):**
+  1. **🔴 "now" timing bug.** /access highest-intent option submits literal `"now"`; `/api/consumers` + `/api/qualify` only recognize `"Within 30 days"`/`"1-3 months"`. Unmapped → 0 intent → `highIntentTiming=false` → Order Type blank → segment `Community` → quiz-redirect gate (`Beef Buyer` only) never fires. **Proof: 47/47 `"now"` signups landed Community, 0 Beef Buyer** — hottest cohort was the ONLY one auto-disqualified. NOTE: this is the same surface as the PM-4 "/access CRO rework" — that pass added the high-intent default-Half logic but missed that the form value `"now"` never matches the gate string.
+  2. **🔴 Quiz had no email entry.** Reachable ONLY via the post-signup client redirect (Beef Buyer + in-state rancher), and that branch sent NO email. Welcome email's only CTA → `/api/warmup/engage` (direct match), never `/qualify`. Out-of-state + dropped redirect = never see the quiz.
+  3. **🟡 64% quiz abandonment.** Single-select questions required tap-answer THEN tap-Next (2× cost). abandoned-quiz-nudge recovered 2/83 — cron is HEALTHY (fresh 14d token); low recovery is a symptom of leaks 1+2 + nudging low-intent tire-kickers, not a cron bug.
+- **Fixes applied (tsc + next build clean; quiz auto-advance screenshot-verified on localhost):**
+  - [app/api/consumers/route.ts](app/api/consumers/route.ts) — normalize `timing "now" → "Within 30 days"` at destructure (fixes leak 1 for future signups; not retroactive).
+  - [app/qualify/[consumerId]/page.tsx](app/qualify/[consumerId]/page.tsx) — `selectAndAdvance()` auto-advances steps 0-2 with a `from===s` guard against double-skip; ack stays manual (fixes leak 3).
+  - [lib/email.ts](lib/email.ts) — new `sendQuizInvite()` wired into `redirectToQualify` as a fire-and-forget backup so a dropped redirect isn't a dead end (fixes leak 2 reliability gap).
+- **NOT changed / deferred:** nudge cron (healthy — could later target only quiz-reachers + stop re-nudging sub-75 scorers); quiz pass threshold 75 (intentional); out-of-state → waitlist (intentional, no rancher to route to).
+- **Followups:** after deploy re-pull 30d funnel — expect `"now"` cohort → Beef Buyer and quiz-completion % to rise; watch `Qualification Score` fill-rate + nudge volume. Working tree carries these funnel fixes + the earlier frontend sweep — Ben to review/commit.
+
 ### Run 2026-06-12 (PM-5) — rancher pages perfection (setup → portal → public)
 - **Trigger**: manual, by Ben ("make the rancher pages perfect" → all three surfaces)
 - **Method**: 3 parallel read-only audits (public landing / portal / setup wizard) → fixed by impact wave. Verified: tsc clean, `next build` clean, adversarial diff review (cavecrew-reviewer) = zero findings. Public-page date change browser-verified earlier; portal/setup are auth-gated UI (verified by build + review). NOT yet committed at time of writing this line.

@@ -208,6 +208,50 @@ export async function getRecordById(tableName: string, recordId: string) {
   }
 }
 
+// Resolve the best-fit referral for an inbound BUYER reply that arrived WITHOUT
+// a ref-<id> Reply-To tag. This is the COMMON case: most buyer-facing emails
+// fall back to inbox@replies.buyhalfcow.com (no _replyContext), and buyers also
+// reply to old threads — so the tagged-Reply-To path almost never fires. We
+// match the bare From address against {Buyer Email}. When a buyer has several
+// referrals (~22% do), disambiguate: prefer an OPEN referral (not Closed
+// Lost/Won), then the most recent by Intro Sent At / Approved At. Returns the
+// referral record (id + fields) or null. Read-only — never mutates.
+export async function findReferralByBuyerEmail(email: string) {
+  // Strip quotes to keep the formula safe; emails are otherwise injection-safe.
+  const e = String(email || '').toLowerCase().replace(/"/g, '').trim();
+  if (!e || !e.includes('@')) return null;
+  try {
+    const records = await withRateLimitRetry(() =>
+      base(TABLES.REFERRALS)
+        .select({
+          // Exact bare match, or exact match inside a "Name <addr>" wrapper.
+          // Avoids substring false positives (e.g. ben@x vs rueben@x).
+          filterByFormula: `OR(LOWER(TRIM({Buyer Email})) = "${e}", FIND("<${e}>", LOWER({Buyer Email})) > 0)`,
+          maxRecords: 50,
+        })
+        .all(),
+    );
+    if (!records.length) return null;
+    const CLOSED = new Set(['Closed Lost', 'Closed Won']);
+    const ts = (v: any) => {
+      const t = v ? new Date(v as string).getTime() : 0;
+      return Number.isFinite(t) ? t : 0;
+    };
+    const best = records
+      .map((r) => ({
+        id: r.id,
+        fields: r.fields as Record<string, any>,
+        open: !CLOSED.has(String(r.fields['Status'] || '')),
+        recency: Math.max(ts(r.fields['Intro Sent At']), ts(r.fields['Approved At'])),
+      }))
+      .sort((a, b) => (a.open !== b.open ? (a.open ? -1 : 1) : b.recency - a.recency))[0];
+    return { id: best.id, ...best.fields };
+  } catch (error) {
+    console.error(`Error resolving referral by buyer email "${e}":`, error);
+    return null;
+  }
+}
+
 // Alias for consistency
 export async function getRecord(tableName: string, recordId: string) {
   try {

@@ -46,7 +46,7 @@
 //     - Raw Headers (longtext) — for forensic threading
 
 import { NextResponse } from 'next/server';
-import { createRecord, getRecordById, TABLES } from '@/lib/airtable';
+import { createRecord, getRecordById, findReferralByBuyerEmail, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
 import { findReplyContext, type ReplyContext } from '@/lib/replyAddressing';
@@ -57,6 +57,13 @@ export const maxDuration = 30;
 const CONVERSATIONS_TABLE = 'Conversations';
 
 const rf = (v: any) => v == null ? '' : (typeof v === 'object' && 'name' in v) ? String(v.name) : String(v);
+
+// Extract the bare lowercased email from a "Name <addr@host>" or "addr@host" string.
+const bareEmail = (raw: any): string => {
+  const s = String(raw || '').toLowerCase().trim();
+  const m = s.match(/<([^>]+)>/);
+  return (m ? m[1] : s).trim();
+};
 
 // Normalize Resend's inbound payload across versions. The shape isn't
 // completely stable, so we accept multiple variants and fall through.
@@ -264,6 +271,35 @@ export async function POST(request: Request) {
 
     const context = findReplyContext(to);
     const links = await resolveLinks(context);
+
+    // ── FROM-EMAIL FALLBACK ───────────────────────────────────────────────
+    // The tagged Reply-To path (ref-<id>@replies...) almost never fires: most
+    // buyer-facing emails fall back to inbox@replies... (no _replyContext) and
+    // buyers reply to old threads. Result: `Last Buyer Activity At` was blank
+    // table-wide, so referral-chasup's ghost-auto-close treated every buyer as
+    // never-engaged. When we have no tagged context, resolve the referral by
+    // matching the inbound From address to a referral's Buyer Email. A From
+    // match means the sender IS the buyer, so we also force senderType below.
+    let matchedByFromEmail = false;
+    if (!links.referralId && !links.threadId) {
+      const fromAddr = bareEmail(from);
+      if (fromAddr && fromAddr.includes('@')) {
+        try {
+          const ref: any = await findReferralByBuyerEmail(fromAddr);
+          if (ref?.id) {
+            links.referralId = ref.id;
+            const buyerLinks = ref['Buyer'] || [];
+            const rancherLinks = ref['Rancher'] || ref['Suggested Rancher'] || [];
+            if (!links.consumerId && Array.isArray(buyerLinks)) links.consumerId = buyerLinks[0];
+            if (!links.rancherId && Array.isArray(rancherLinks)) links.rancherId = rancherLinks[0];
+            matchedByFromEmail = true;
+          }
+        } catch (e: any) {
+          console.warn('[resend-inbound] from-email referral fallback failed:', e?.message);
+        }
+      }
+    }
+
     const bodyForClassify = text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const classification = await classifyReply({
       from,
@@ -337,6 +373,9 @@ export async function POST(request: Request) {
         // as the safe default — over-stamping buyer activity is harmless,
         // under-stamping rancher activity kills leads.
         let effectiveSenderType: 'rancher' | 'buyer' | 'unknown' = classification.senderType as any;
+        // A From-email match resolved this referral via the buyer's own address,
+        // so the sender is definitively the buyer — don't trust a shaky AI read.
+        if (matchedByFromEmail) effectiveSenderType = 'buyer';
         if (effectiveSenderType === 'unknown' || !effectiveSenderType) {
           try {
             const { getRecordById, TABLES } = await import('@/lib/airtable');
@@ -496,7 +535,7 @@ export async function POST(request: Request) {
         tool: 'resend-inbound',
         targetType: links.threadId ? 'Thread' : links.referralId ? 'Referral' : links.consumerId ? 'Consumer' : links.rancherId ? 'Rancher' : 'Other',
         targetId: links.threadId || links.referralId || links.consumerId || links.rancherId || 'unknown',
-        args: { from, to, subject, hadContext: !!context },
+        args: { from, to, subject, hadContext: !!context, matchedByFromEmail },
         result: { classification, conversationId },
         reverseAction: { type: 'noop', reason: 'inbound capture is read-only' },
       });
