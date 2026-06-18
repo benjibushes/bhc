@@ -465,11 +465,6 @@ export async function POST(request: Request) {
     // the qualifyUrl when the buyer should be redirected directly to /qualify
     // instead of waiting for the welcome+RTB email.
     let qualifyUrlForResponse: string | null = null;
-    // AUTO-QUALIFY (2026-06-17): set true when a high-intent (server intent >= 75)
-    // in-state Beef Buyer is qualified by signup intent and matched at signup
-    // instead of being routed to the /qualify quiz. Hoisted to outer scope so
-    // backgroundTasks() can fire matching/suggest for them.
-    let autoQualifyMatch = false;
 
     if (status === 'Approved') {
       const isRancherPageLead = (campaign || '').startsWith('rancher-');
@@ -505,46 +500,7 @@ export async function POST(request: Request) {
         // preserved through the state-match cascade.
         let qualifyUrl: string | null = null;
         let redirectToQualify = false;
-
-        // AUTO-QUALIFY high-intent Beef Buyers (2026-06-17 — restore pre-June
-        // auto-match). The strict quiz gate (24968fb, deployed 2026-06-05)
-        // routed EVERY in-state Beef Buyer through /qualify, which only ~2.86%
-        // complete → matching collapsed (86%→22% MoM) and 15 of 16 closers had
-        // bypassed the quiz entirely. A signup with server intent >= 75 IS
-        // qualified by the intent signal; the quiz is redundant friction for
-        // them. Stamp Qualified At + Qualification Score so matching/suggest's
-        // GUARD-2 gate passes, then fire the matcher at signup (backgroundTasks)
-        // — identical path to rancher-page leads. Lower-intent Beef Buyers still
-        // take the quiz; capacity caps + state-local rules in matching/suggest
-        // are unchanged.
-        const autoQualify =
-          consumerSegment === 'Beef Buyer' &&
-          hasInStateRancher &&
-          !isRancherPageLead &&
-          serverIntentScore >= 75 &&
-          !!orderType;
-
-        if (autoQualify) {
-          try {
-            await updateRecord(TABLES.CONSUMERS, record.id, {
-              'Qualified At': nowIso,
-              'Qualification Score': serverIntentScore, // >= 75 → clears GUARD-2
-              'Ready to Buy': true,
-            });
-            autoQualifyMatch = true; // backgroundTasks fires matching/suggest
-          } catch (e: any) {
-            // Stamp failed — DON'T strand the buyer with a YES-button email they
-            // can't act on (warmup-engage would 412 with no Qualified At). Leave
-            // autoQualifyMatch=false so they fall through to the /qualify
-            // redirect below and still have a path to qualify + match.
-            console.warn('[signup] auto-qualify stamp failed, falling back to /qualify:', e?.message);
-          }
-        }
-
-        // Beef Buyers NOT auto-qualified (lower intent, OR the stamp above
-        // failed) take the /qualify quiz. The !autoQualifyMatch guard ensures a
-        // successful auto-qualify skips this redirect.
-        if (!autoQualifyMatch && consumerSegment === 'Beef Buyer' && (hasInStateRancher || isRancherPageLead)) {
+        if (consumerSegment === 'Beef Buyer' && (hasInStateRancher || isRancherPageLead)) {
           const qualifyToken = jwt.sign(
             { type: 'qualify-access', consumerId: record.id, email: email.trim().toLowerCase() },
             JWT_SECRET,
@@ -574,13 +530,7 @@ export async function POST(request: Request) {
         }
 
         // Determine stage + send the appropriate single welcome email
-        if (autoQualifyMatch) {
-          // Matched at signup — backgroundTasks fires matching/suggest, which
-          // sends the rancher intro + buyer intro and flips stage to MATCHED on
-          // success. No welcome/quiz email here (mirrors the rancher-page-lead
-          // path). Stays READY if matching fails so batch-approve can retry.
-          buyerStage = 'READY';
-        } else if (redirectToQualify) {
+        if (redirectToQualify) {
           // Hot signup — /access redirects them straight to /qualify.
           // Stage stays READY; /api/qualify flips to MATCHED post-quiz pass.
           buyerStage = 'READY';
@@ -654,7 +604,7 @@ export async function POST(request: Request) {
         // Replaces a direct updateRecord that bypassed the funnel telemetry +
         // duplicated the stage-write logic seen in /api/warmup/engage,
         // /api/matching/suggest, and the rancher PATCH handler.
-        await transitionBuyerStage(record.id, buyerStage, `signup:${autoQualifyMatch ? 'auto-qualify' : redirectToQualify ? 'qualify-redirect' : isRancherPageLead ? 'rancher-page' : hasInStateRancher ? 'in-state' : 'no-rancher'}`);
+        await transitionBuyerStage(record.id, buyerStage, `signup:${redirectToQualify ? 'qualify-redirect' : isRancherPageLead ? 'rancher-page' : hasInStateRancher ? 'in-state' : 'no-rancher'}`);
       } catch (e) {
         console.error('Post-approval flow error:', e);
       }
@@ -756,11 +706,7 @@ export async function POST(request: Request) {
       // At, so it silently fails. /api/qualify will fire matching/suggest with
       // the campaign param after the quiz so the pinned rancher is preserved
       // through the cascade.
-      // Fires for rancher-page leads AND auto-qualified high-intent Beef Buyers
-      // (2026-06-17). Both have an explicit-intent equivalent to a YES click;
-      // the buyer record already carries Qualified At + Qualification Score (set
-      // above for auto-qualify) so matching/suggest's GUARD-2 gate passes.
-      if (!qualifyUrlForResponse && ((campaign || '').startsWith('rancher-') || autoQualifyMatch) && state) {
+      if (!qualifyUrlForResponse && (campaign || '').startsWith('rancher-') && state) {
         try {
           await fetch(
             `${SITE_URL}/api/matching/suggest`,
