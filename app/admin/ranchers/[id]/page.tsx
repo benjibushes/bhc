@@ -29,9 +29,13 @@ export default function AdminRancherDetailPage() {
   const [saved, setSaved] = useState(false);
   const [rancher, setRancher] = useState<any>(null);
   const [error, setError] = useState('');
+  const [regeocodingPin, setRegeocodingPin] = useState(false);
+  const [regeocodeMsg, setRegeocodeMsg] = useState('');
 
   // Form state
   const [form, setForm] = useState({
+    zip: '',
+    city: '',
     slug: '',
     tagline: '',
     about_text: '',
@@ -86,6 +90,8 @@ export default function AdminRancherDetailPage() {
 
       // Populate form from rancher data
       setForm({
+        zip: r.zip || '',
+        city: r.city || '',
         slug: r.slug || '',
         tagline: r.tagline || '',
         about_text: r.about_text || '',
@@ -161,6 +167,22 @@ export default function AdminRancherDetailPage() {
       alert('Save failed: ' + e.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleRegeocodePin() {
+    setRegeocodingPin(true);
+    setRegeocodeMsg('');
+    try {
+      const res = await fetch(`/api/admin/ranchers/${id}/regeocode`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Regeocode failed');
+      setRegeocodeMsg(data.message || 'Pin updated');
+      setTimeout(() => setRegeocodeMsg(''), 4000);
+    } catch (e: any) {
+      setRegeocodeMsg('Error: ' + e.message);
+    } finally {
+      setRegeocodingPin(false);
     }
   }
 
@@ -305,6 +327,57 @@ export default function AdminRancherDetailPage() {
                 </label>
               </div>
             </div>
+
+            {/* Location / Map Pin */}
+            <section className="p-6 border border-dust bg-white space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-[family-name:var(--font-playfair)] text-xl">Location &amp; Map Pin</h2>
+                <div className="flex items-center gap-3">
+                  {regeocodeMsg && (
+                    <span className="text-xs text-saddle">{regeocodeMsg}</span>
+                  )}
+                  <button
+                    onClick={handleRegeocodePin}
+                    disabled={regeocodingPin}
+                    className="px-4 py-2 text-sm border border-dust bg-bone hover:bg-white disabled:opacity-50"
+                    title="Re-geocodes using current Zip / City / State and writes fresh Latitude + Longitude. Save the location fields first."
+                  >
+                    {regeocodingPin ? 'Updating pin…' : '↻ Regeocode pin'}
+                  </button>
+                </div>
+              </div>
+              <div className="grid md:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-xs text-dust block mb-1">ZIP Code</label>
+                  <input
+                    value={form.zip}
+                    onChange={e => updateForm('zip', e.target.value)}
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone"
+                    placeholder="80203"
+                    maxLength={10}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-dust block mb-1">City</label>
+                  <input
+                    value={form.city}
+                    onChange={e => updateForm('city', e.target.value)}
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone"
+                    placeholder="Denver"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-dust block mb-1">State (read-only here)</label>
+                  <input
+                    value={rancher?.state || ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-dust text-sm bg-bone opacity-60 cursor-not-allowed"
+                    title="Edit State in the main admin panel"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-dust">Save changes first, then click ↻ Regeocode pin to push a fresh map pin. ZIP gives ~3–5 mi precision; city falls back if ZIP lookup fails.</p>
+            </section>
 
             {/* Page Identity */}
             <section className="p-6 border border-dust bg-white space-y-4">

@@ -106,6 +106,29 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
           // Day 14 already fired — close out the drip.
           await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': 'completed' });
           stopped.push({ id: r.id, ranch: ranchName, reason: 'completed-after-day14' });
+
+          // If they're still a Prospect after the full drip, alert Ben so he can call them.
+          if (verification === 'Prospect' && TELEGRAM_ADMIN_CHAT_ID) {
+            try {
+              const rancherState = (r['State'] || '').toString().replace(/[<>&"]/g, (c: string) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c] ?? c));
+              const rancherPhone = (r['Phone'] || r['Cell Phone'] || '').toString().replace(/[<>&"]/g, (c: string) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c] ?? c));
+              const safeName = operatorName.replace(/[<>&"]/g, (c: string) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c] ?? c));
+              const safeEmail = email.replace(/[<>&"]/g, (c: string) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c] ?? c));
+              const safeRanch = ranchName.replace(/[<>&"]/g, (c: string) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c] ?? c));
+              const prospectMsg = [
+                `📞 <b>Drip exhausted — still a Prospect</b>`,
+                `Ranch: ${safeRanch}`,
+                `Name: ${safeName}`,
+                `State: ${rancherState || '(unknown)'}`,
+                `Email: ${safeEmail}`,
+                `Phone: ${rancherPhone || '(none on file)'}`,
+                `Action: drip exhausted, still a prospect — call them`,
+              ].join('\n');
+              await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, prospectMsg);
+            } catch (e) {
+              console.error('[drip] prospect-alert telegram failed:', e);
+            }
+          }
         }
       } catch (e) {
         console.error(`[drip] send failed for ${r.id} (${ranchName}):`, e);

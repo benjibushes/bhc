@@ -127,15 +127,25 @@ export async function POST(request: Request) {
       rancher['Half Payment Link'] ||
       rancher['Whole Payment Link']
     );
-    // tier_v2 ranchers take deposits via Stripe Connect (buyers pay on the
-    // platform checkout), so they have NO legacy Payment Link. Gating go-live
-    // on hasPaymentLink would leave every tier_v2 rancher signed-but-dark.
-    // Accept an active Stripe Connect account as equivalent to a payment link.
+    // Branch by pricing model so the two paths are explicit and independent:
+    //
+    //   tier_v2 → takes deposits via Stripe Connect (platform checkout).
+    //             No legacy Payment Link exists for these ranchers — gating
+    //             on hasPaymentLink would leave every tier_v2 rancher
+    //             signed-but-dark forever. Require active Stripe Connect
+    //             account instead. The Stripe Connect gate ONLY applies here.
+    //
+    //   legacy  → no Stripe Connect involved. Must have slug + price +
+    //             payment link (Square/Stripe/PayPal direct link). The
+    //             Stripe Connect Status field is irrelevant and MUST NOT
+    //             block go-live for these ranchers.
     const pricingModel = String(rancher['Pricing Model'] || 'legacy').toLowerCase();
+    const isTierV2 = pricingModel === 'tier_v2';
     const connectStatus = String(rancher['Stripe Connect Status'] || '').toLowerCase();
-    const canCollectPayment =
-      hasPaymentLink || (pricingModel === 'tier_v2' && connectStatus === 'active');
-    const readyToGoLive = hasSlug && hasPrice && canCollectPayment;
+
+    const readyToGoLive = isTierV2
+      ? hasSlug && hasPrice && connectStatus === 'active'
+      : hasSlug && hasPrice && hasPaymentLink;
 
     const updateFields: Record<string, unknown> = {
       'Agreement Signed': true,
@@ -276,7 +286,9 @@ export async function POST(request: Request) {
           `Signed as: ${signatureName.trim()}\n` +
           `Time: ${new Date(now).toLocaleString('en-US', { timeZone: 'America/Denver' })}\n\n` +
           `📧 Dashboard setup email sent automatically.\n` +
-          `Page is content-complete (slug + price + payment link) — flipped Active + Page Live. Launch warmup fired for ${rancher['State'] || 'their state'}.`
+          (isTierV2
+            ? `tier_v2: slug + price + Stripe Connect active — flipped Active + Page Live. Launch warmup fired for ${rancher['State'] || 'their state'}.`
+            : `legacy: slug + price + payment link — flipped Active + Page Live. Launch warmup fired for ${rancher['State'] || 'their state'}.`)
         );
       } else {
         // Inline 1-tap-verify button. Without this, freshly-signed self-serve
