@@ -46,7 +46,10 @@ export default function AdminAffiliatesPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create');
-      setAffiliates((prev) => [...prev, data.affiliate]);
+      // Refetch the list — the POST response doesn't include a full affiliate
+      // record, so pushing data.affiliate (undefined) crashed the table row.
+      const list = await fetch('/api/admin/affiliates').then((r) => r.json()).catch(() => null);
+      if (Array.isArray(list)) setAffiliates(list);
       setForm({ name: '', email: '', code: '' });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create affiliate');

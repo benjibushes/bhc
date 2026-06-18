@@ -3,7 +3,7 @@ import { updateRecord, getRecordById, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramSaleCelebration } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
-import { calcCommission, getCommissionRate } from '@/lib/commission';
+import { calcCommission, calcCommissionForRancher, getCommissionRate } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 
@@ -55,7 +55,21 @@ export async function PATCH(
         return NextResponse.json({ error: 'Sale amount must be a positive number' }, { status: 400 });
       }
       fields['Sale Amount'] = amount;
-      fields['Commission Due'] = calcCommission(amount);
+      // Honor the rancher's LOCKED Commission Rate, not the global default —
+      // otherwise a negotiated-rate rancher (e.g. 8%, or a 3% tier_v2) is
+      // overbilled on every admin close. Resolve the rancher off the referral's
+      // Rancher link; fall back to the global rate only if it can't be resolved.
+      let rancherForRate: any = null;
+      try {
+        const refForRate = await getRecordById(TABLES.REFERRALS, id);
+        const rid = (refForRate as any)['Rancher']?.[0];
+        if (rid) rancherForRate = await getRecordById(TABLES.RANCHERS, rid);
+      } catch (e: any) {
+        console.warn('[referral-close] rancher fetch for commission rate failed, using global default:', e?.message);
+      }
+      fields['Commission Due'] = rancherForRate
+        ? calcCommissionForRancher(rancherForRate, amount)
+        : calcCommission(amount);
     }
 
     if (commissionPaid !== undefined) {

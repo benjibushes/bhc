@@ -321,8 +321,14 @@ export default function AdminPage() {
 
   const updateOnboardingStatus = async (rancherId: string, newStatus: string) => {
     try {
-      const body: Record<string, string> = { onboarding_status: newStatus };
-      if (newStatus === 'Live') body.active_status = 'Active';
+      const body: Record<string, string | boolean> = { onboarding_status: newStatus };
+      if (newStatus === 'Live') {
+        body.active_status = 'Active';
+        // Go-Live must ALSO publish the public page — otherwise the rancher is
+        // routable + warmup-blasted while their /ranchers/[slug] page stays
+        // hidden (the PATCH route only sets Page Live when page_live is passed).
+        body.page_live = true;
+      }
       const res = await fetch(`/api/admin/ranchers/${rancherId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
