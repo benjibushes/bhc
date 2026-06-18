@@ -61,7 +61,10 @@ export async function POST(request: NextRequest) {
   if (__authResp) return __authResp;
 
   const url = new URL(request.url);
-  const fire = url.searchParams.get('fire') === 'true';
+  // GET is ALWAYS a dry-run — the GET handler delegates here, so without this
+  // guard a bookmarked/misclicked `GET ?fire=true` would send real emails.
+  // Only an explicit POST ?fire=true actually sends.
+  const fire = request.method !== 'GET' && url.searchParams.get('fire') === 'true';
   const hoursBack = Number(url.searchParams.get('hours') || '72');
   const since = new Date(Date.now() - hoursBack * 3600 * 1000).toISOString().slice(0, 10);
 

@@ -274,8 +274,10 @@ export default function AdminInquiriesPage() {
     Wholesale: 'Wholesale (B2B)',
   };
 
-  // Calculate commission summary
-  const completedSales = inquiries.filter(i => i.status === 'Sale Completed');
+  // Calculate commission summary. Member inquiries close as 'Sale Completed';
+  // wholesale inquiries close as 'Closed Won'. Both count toward revenue —
+  // excluding 'Closed Won' hid all wholesale ($5-15k AOV) from every card.
+  const completedSales = inquiries.filter(i => i.status === 'Sale Completed' || i.status === 'Closed Won');
   const totalSales = completedSales.reduce((sum, i) => sum + (i.sale_amount || 0), 0);
   const totalCommission = completedSales.reduce((sum, i) => sum + (i.commission_amount || 0), 0);
   const unpaidCommission = completedSales

@@ -123,7 +123,11 @@ export async function POST(request: NextRequest) {
     const pm = String(r['Pricing Model'] || 'legacy').toLowerCase();
     if (pm === 'tier_v2') return false;
     const ms = String(r['Migration Status'] || 'not_invited');
-    if (ms !== 'not_invited' && ms !== 'paused_overdue') return false;
+    // Only 'not_invited' — match the page's confirm + button exactly. Re-engaging
+    // paused/overdue ranchers is a separate flow (reactivation); they must never
+    // be silently swept into a "Bulk Invite Not-Invited" action the operator
+    // approved by count.
+    if (ms !== 'not_invited') return false;
     return true;
   });
 
