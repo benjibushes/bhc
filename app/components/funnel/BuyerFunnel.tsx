@@ -141,10 +141,30 @@ export default function BuyerFunnel({
 
   // Attribution — read once on mount from the same localStorage keys the legacy
   // /access form wrote (UtmCapture populates these site-wide). Best-effort.
-  const attribution = useRef<{ source: string; campaign: string; utmParams: string }>({
+  const attribution = useRef<{
+    source: string;
+    campaign: string;
+    utmParams: string;
+    // Rich first-touch snapshot from bhc_source_v2 (individual UTM + click-ids
+    // for ad-level ROAS and offline-conversion upload).
+    utm_source: string;
+    utm_medium: string;
+    utm_campaign: string;
+    utm_content: string;
+    utm_term: string;
+    fbclid: string;
+    gclid: string;
+  }>({
     source: 'funnel',
     campaign: '',
     utmParams: '',
+    utm_source: '',
+    utm_medium: '',
+    utm_campaign: '',
+    utm_content: '',
+    utm_term: '',
+    fbclid: '',
+    gclid: '',
   });
 
   // Guard the auto-advance timer so a fast double-tap can't skip a step.
@@ -167,6 +187,16 @@ export default function BuyerFunnel({
     try {
       const ls = window.localStorage;
       const campaignFromRancher = rancherSlug ? `rancher-${rancherSlug}` : '';
+      // Parse the rich first-touch snapshot written by UtmCapture (bhc_source_v2).
+      // Best-effort — corrupt JSON or localStorage-blocked environments fall back
+      // to empty strings so signup always completes.
+      let v2: Record<string, string> = {};
+      try {
+        const raw = ls.getItem('bhc_source_v2');
+        if (raw) v2 = JSON.parse(raw) as Record<string, string>;
+      } catch {
+        // corrupt JSON — treat as empty
+      }
       attribution.current = {
         source: ls.getItem('bhc_source') || 'funnel',
         // A rancher-pinned entry (?rancher=slug) takes precedence so matching
@@ -174,6 +204,16 @@ export default function BuyerFunnel({
         // campaign.
         campaign: campaignFromRancher || ls.getItem('bhc_campaign') || '',
         utmParams: ls.getItem('bhc_utm_params') || '',
+        // Individual UTM + click-ids from rich snapshot (first-touch, never
+        // overwritten). Empty string when not present (never undefined — keeps
+        // the POST body shape stable).
+        utm_source: v2.utm_source || '',
+        utm_medium: v2.utm_medium || '',
+        utm_campaign: v2.utm_campaign || '',
+        utm_content: v2.utm_content || '',
+        utm_term: v2.utm_term || '',
+        fbclid: v2.fbclid || '',
+        gclid: v2.gclid || '',
       };
     } catch {
       /* localStorage blocked (private mode) — defaults are fine. */
@@ -287,6 +327,19 @@ export default function BuyerFunnel({
           source: attribution.current.source,
           campaign: attribution.current.campaign,
           utmParams: attribution.current.utmParams,
+          // Rich per-field attribution for ad-level ROAS + offline conversions.
+          // Server writes non-empty values into dedicated Airtable columns.
+          // All fields are always present (empty string when not captured) so
+          // the server can safely destructure without optional-chaining.
+          attribution: {
+            utm_source: attribution.current.utm_source,
+            utm_medium: attribution.current.utm_medium,
+            utm_campaign: attribution.current.utm_campaign,
+            utm_content: attribution.current.utm_content,
+            utm_term: attribution.current.utm_term,
+            fbclid: attribution.current.fbclid,
+            gclid: attribution.current.gclid,
+          },
         }),
       });
       const j = await res.json().catch(() => ({}));
