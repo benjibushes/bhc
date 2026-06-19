@@ -140,6 +140,24 @@ export function getOperationalServedStates(rancher: RancherFields): string[] {
 }
 
 /**
+ * True iff the rancher is on Stripe Connect AND Connect is active.
+ *
+ * "On Connect" means: Pricing Model === 'tier_v2' AND Stripe Connect Status
+ * === 'active' (both case-insensitive). Single source of truth used by:
+ *   - app/ranchers/[slug]/pay/[tier]/route.ts  (blocks Payment-Link redirect)
+ *   - app/ranchers/[slug]/page.tsx             (suppresses raw Payment-Link hrefs)
+ *
+ * For ALL such ranchers every buyer-facing payment path must route through
+ * BHC's Connect commission rails (/access?rancher=<slug>). Legacy ranchers
+ * (non-tier_v2 or Connect not active) are UNAFFECTED.
+ */
+export function isRancherOnConnect(rancher: RancherFields): boolean {
+  const pricingModel = String(rancher['Pricing Model'] || '').toLowerCase();
+  const connectStatus = String(rancher['Stripe Connect Status'] || '').toLowerCase();
+  return pricingModel === 'tier_v2' && connectStatus === 'active';
+}
+
+/**
  * Convenience: does any rancher in the list serve `buyerState`?
  * Used by the signup-time gate to decide ready-to-buy-prompt vs waitlist.
  */

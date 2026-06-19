@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getRancherBySlug, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage } from '@/lib/telegram';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
 
 // Tracking redirect: /ranchers/[slug]/pay/[tier]
 // Logs the click, appends UTM params, then redirects to the rancher's payment link.
@@ -79,6 +80,35 @@ export async function GET(
     } catch (e) {
       console.error('Telegram click notification error:', e);
     }
+
+    // ── MONEY-INTEGRITY INVARIANT ─────────────────────────────────────────
+    // Connected ranchers (tier_v2 + Connect active) must NEVER route buyers
+    // to a raw Payment Link — that bypasses BHC's commission. Instead send
+    // the buyer through the on-platform commission path (/access?rancher=slug).
+    // Legacy (non-Connect) ranchers keep the Payment-Link path below.
+    if (isRancherOnConnect(rancher)) {
+      // Still notify rancher that a buyer was routed to on-platform checkout
+      if (rancherEmail) {
+        try {
+          await sendEmail({
+            to: rancherEmail,
+            subject: `New buyer interest — ${config.label} on BuyHalfCow`,
+            html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+              <h1 style="font-family:Georgia,serif;font-size:22px;">New Buyer Interest</h1>
+              <p>Hi ${rancherName},</p>
+              <p>Someone just clicked to purchase a <strong>${config.label}</strong> through your BuyHalfCow page. They've been routed to BuyHalfCow's on-platform checkout (Stripe Connect commission flow) — you'll receive payment via your connected Stripe account once the order is confirmed.</p>
+              <p>Keep an eye on your Stripe Connect dashboard for the incoming order.</p>
+              <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
+            </div>`,
+          });
+        } catch (e) {
+          console.error('Rancher click email error (Connect path):', e);
+        }
+      }
+      return NextResponse.redirect(`${siteUrl}/access?rancher=${slug}`, { status: 302 });
+    }
+
+    // ── LEGACY (non-Connect) path — Payment Link redirect ─────────────────
 
     // Notify the rancher they have a potential buyer
     if (rancherEmail && paymentLink) {

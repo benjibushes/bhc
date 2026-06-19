@@ -9,6 +9,7 @@ import Card from '../../components/Card';
 import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import BHCPromiseBadge from '../../components/BHCPromiseBadge';
 import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import RancherOrderForm from './RancherOrderForm';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
 
@@ -238,6 +239,10 @@ export default async function RancherPage(
 
   const quarterPrice = r['Quarter Price'];
   const quarterLbs = r['Quarter lbs'] || '';
+  // NOTE: Payment Links below are IGNORED for Connected ranchers (tier_v2 +
+  // Connect active). isRancherOnConnect(r) routes all buyer-facing paths to
+  // the on-platform commission flow (/access?rancher=slug). Config fields are
+  // left as-is so ranchers can keep them for reference or legacy fallback.
   const quarterLink = r['Quarter Payment Link'] || '';
   const halfPrice = r['Half Price'];
   const halfLbs = r['Half lbs'] || '';
@@ -245,6 +250,11 @@ export default async function RancherPage(
   const wholePrice = r['Whole Price'];
   const wholeLbs = r['Whole lbs'] || '';
   const wholeLink = r['Whole Payment Link'] || '';
+
+  // MONEY-INTEGRITY INVARIANT: Connected ranchers must never expose raw
+  // Payment-Link hrefs to buyers. All buy paths route through /access?rancher=
+  // (the on-platform commission flow). Legacy ranchers are unaffected.
+  const onConnect = isRancherOnConnect(r);
 
   const hasPricing = !isProspect && (quarterPrice || halfPrice || wholePrice);
   const embedUrl = getYouTubeEmbedUrl(videoUrl);
@@ -863,7 +873,15 @@ export default async function RancherPage(
                         </p>
                       )}
                     </div>
-                    {product.link && (
+                    {/* Connected ranchers: suppress raw product link; route to commission path instead */}
+                    {onConnect ? (
+                      <Link
+                        href={`/access?rancher=${slug}`}
+                        className="block w-full text-center mt-5 px-6 py-3 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
+                      >
+                        Buy now
+                      </Link>
+                    ) : product.link ? (
                       <a
                         href={product.link}
                         target="_blank"
@@ -872,7 +890,7 @@ export default async function RancherPage(
                       >
                         Buy now
                       </a>
-                    )}
+                    ) : null}
                   </Card>
                 ))}
               </div>
@@ -907,7 +925,8 @@ export default async function RancherPage(
                 fills up.
               </p>
               <div className="pt-2">
-                {reserveLink ? (
+                {/* Connected ranchers: always route through commission path, never raw Reserve Link */}
+                {reserveLink && !onConnect ? (
                   <a
                     href={reserveLink}
                     target="_blank"
@@ -919,10 +938,10 @@ export default async function RancherPage(
                   </a>
                 ) : (
                   <Link
-                    href="/access"
+                    href={onConnect ? `/access?rancher=${slug}` : '/access'}
                     className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
                   >
-                    Get in touch
+                    {onConnect ? 'Reserve your share' : 'Get in touch'}
                     <span aria-hidden>→</span>
                   </Link>
                 )}
