@@ -61,8 +61,13 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
     throw new Error(`buyer_deposit missing required ids — refId=${!!referralId} rancherId=${!!rancherId} piId=${!!pi.id} actualMetadataKeys=[${metadataKeys}]`);
   }
 
-  // Flip Payments row pending → succeeded (idempotent — no-op on retry).
-  await markDepositSucceeded(pi.id);
+  // Flip Payments row pending → succeeded. This is the cross-webhook
+  // idempotency anchor: both the platform AND Connect webhooks may deliver the
+  // same PI, in either order. markDepositSucceeded returns false if the row was
+  // ALREADY succeeded (a prior delivery settled it) — return now so the
+  // non-idempotent side effects below (funnel/email/Telegram) don't double-fire.
+  const depositFlipped = await markDepositSucceeded(pi.id);
+  if (!depositFlipped) return;
 
   // S1 (2026-06-10): NRD policy — deposit pay flips Referral to
   // `Awaiting Payment`, NOT Closed Won. Rancher must tap Accept
@@ -220,6 +225,10 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
   try {
     referralRow = await getRecordById(TABLES.REFERRALS, referralId);
   } catch {}
+  // Cross-webhook idempotency: if the referral is already Closed Won, a prior
+  // delivery (platform or Connect) settled this — return so recordClose's
+  // transitionBuyerStage + the Telegram/CAPI/audit below don't double-fire.
+  if (String(referralRow?.['Status'] || '') === 'Closed Won') return;
   const totalSaleAmount = Number(referralRow?.['Total Sale Amount'] || 0);
   const depositAmount = Number(referralRow?.['Deposit Amount'] || 0);
   const finalAmount = finalCents / 100;
