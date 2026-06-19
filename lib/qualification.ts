@@ -111,41 +111,40 @@ export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: strin
   const budget = readField(buyer['Budget']);
   const inferredBeefBuyer = !!(orderType && budget);
   const isBeefBuyer = segment === 'Beef Buyer' || inferredBeefBuyer;
-  if (!isBeefBuyer) return { ok: false, reason: 'not a beef buyer (no order/budget signals)' };
 
-  // Real values, not "Unsure" / "Just exploring"
+  // Order type (tier) is required for EVERYONE — it's what the quiz captures
+  // and what sets the price the buyer is matched on.
   if (!orderType) return { ok: false, reason: 'no order type' };
   if (isUnsureValue(orderType)) return { ok: false, reason: 'order type unsure' };
-  if (!budget) return { ok: false, reason: 'no budget' };
-  if (isUnsureValue(budget)) return { ok: false, reason: 'budget unsure' };
-  if (isJustExploringValue(budget)) {
-    return { ok: false, reason: 'just exploring — buyer hasn\'t committed yet' };
-  }
 
-  // CONSENT SIGNAL — STRICT QUIZ-ONLY (2026-06-05 hardening).
+  // ── THE QUIZ IS THE QUALIFIER ───────────────────────────────────────────
+  // A passed quiz (Qualified At + score >= 75) with a chosen tier qualifies for
+  // routing — full stop. This runs BEFORE the budget gate on purpose: the
+  // 4-question quiz captures tier/timing/storage but NOT budget, so a quiz-passer
+  // legitimately has a blank Budget field. Hard-rejecting them for "no budget"
+  // was stranding score-100 buyers in Waitlisted forever — batch-approve's retry
+  // rejected them here before ever reaching the quiz signal. matching/suggest
+  // treats a blank budget as unbounded and prices on the chosen tier, so the
+  // resulting route is correct. (Fix 2026-06-18.)
   //
-  // Previous behavior had legacy fallback signals (ready-to-buy /
-  // warmup-engaged) that pre-dated the /qualify quiz. Those fallbacks
-  // allowed 270+ pre-quiz buyers to be auto-routed by batch-approve, AND
-  // were the proximate cause of the 2026-06-05 incident where 179 healed
-  // buyers cascaded through batch-approve → matching/suggest → nationwide
-  // fallback → 39 cross-state misroutes to Ashcraft + Hartsock.
-  //
-  // Strict policy: ONLY the 4-question quiz signal qualifies for routing.
-  // Score >=75 is the only path. Buyer must answer tier/timing/storage and
-  // acknowledge commitment. No exceptions, no legacy fallbacks.
-  //
-  // Grandfather plan: pre-quiz buyers with old engagement signals are NOT
-  // silently routed — they get a fresh /qualify invite via the existing
-  // re-engagement nurture cron (sendCleanupRecovery + Welcome+RTB drip),
-  // which delivers a quiz JWT to re-onboard them through the gate.
+  // Strict policy still holds: ONLY the quiz qualifies (score >= 75). No legacy
+  // ready-to-buy / warmup fallback — those caused the 2026-06-05 cascade (179
+  // healed buyers → matching/suggest → 39 cross-state misroutes to Ashcraft +
+  // Hartsock). Pre-quiz buyers get a fresh /qualify invite via the nurture cron.
   const qualScore = Number(buyer['Qualification Score'] || 0);
   if (buyer['Qualified At'] && qualScore >= 75) {
     return { ok: true, signal: 'qualified-quiz' };
   }
 
-  // Missing quiz = REJECTED for routing. Buyer stays in nurture until they
-  // complete /qualify. No silent legacy bypass.
+  // ── Not quiz-qualified → REJECTED (no legacy bypass). The budget /
+  // beef-buyer checks below only shape the diagnostic reason; a buyer without
+  // a passing quiz never routes regardless of budget. ──
+  if (!isBeefBuyer) return { ok: false, reason: 'not a beef buyer (no order/budget signals)' };
+  if (!budget) return { ok: false, reason: 'no budget' };
+  if (isUnsureValue(budget)) return { ok: false, reason: 'budget unsure' };
+  if (isJustExploringValue(budget)) {
+    return { ok: false, reason: 'just exploring — buyer hasn\'t committed yet' };
+  }
   const reason = buyer['Qualified At']
     ? `quiz incomplete — score ${qualScore}/100 below 75 threshold`
     : buyer['Ready to Buy'] || buyer['Warmup Engaged At']
