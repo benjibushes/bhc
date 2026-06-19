@@ -93,6 +93,143 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, consumer: null, rancherAvailable: false });
     }
 
+    // ── UNIFIED FUNNEL — mid-flow lead capture (2026-06-18) ──────────────────
+    // The game-like buyer wizard (BuyerFunnel) creates the lead at its contact
+    // step by POSTing `{ quizStarted: true, ... }`. This is an ADDITIVE branch:
+    // it returns before any legacy /access form logic runs, so the legacy path
+    // below is byte-for-byte unchanged.
+    //
+    // Lead shape per spec (docs/.../2026-06-18-unified-buyer-funnel-design.md):
+    //   Status=Approved, Buyer Stage=WAITING, Segment=Beef Buyer, Order Type=tier,
+    //   Timing, State, contact, Source/UTMs — and CRUCIALLY no `Qualified At`.
+    //   With Approved + empty `Qualified At`, GUARD-2 in /api/matching/suggest
+    //   keeps the lead UNROUTABLE until the quiz completes via /api/qualify
+    //   (which stamps `Qualified At`). The wizard stays on-page and calls
+    //   /api/qualify next, so we issue NO legacy qualifyUrl/redirect here —
+    //   just a 14d `qualify-access` resume token for that finalize call.
+    if (body.quizStarted === true) {
+      const fullNameQ = typeof body.fullName === 'string' ? body.fullName.trim() : '';
+      const emailQ = typeof body.email === 'string' ? body.email.trim() : '';
+      const phoneQ = typeof body.phone === 'string' ? body.phone.trim() : '';
+      const stateQ = typeof body.state === 'string' ? body.state.trim() : '';
+      const tierQ = typeof body.tier === 'string' ? body.tier.trim() : '';
+      // Reuse the entry-level "now" → "Within 30 days" normalization so the
+      // funnel and legacy paths speak the same Timing vocabulary downstream.
+      const timingQ = body.timing === 'now' ? 'Within 30 days'
+        : (typeof body.timing === 'string' ? body.timing.trim() : '');
+
+      // Required fields — clear 400 per missing field. Phone is a HARD product
+      // rule (operator decision 2026-06-18): the rancher must be able to reach
+      // the buyer, so an empty/missing phone is a 400, not a soft default.
+      if (!fullNameQ) {
+        return NextResponse.json({ error: 'Please enter your name' }, { status: 400 });
+      }
+      if (!emailQ) {
+        return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+      }
+      if (!phoneQ) {
+        return NextResponse.json({ error: 'Phone number is required so your rancher can reach you' }, { status: 400 });
+      }
+      if (!stateQ) {
+        return NextResponse.json({ error: 'State is required' }, { status: 400 });
+      }
+      if (!tierQ) {
+        return NextResponse.json({ error: 'Please pick a size' }, { status: 400 });
+      }
+      if (!timingQ) {
+        return NextResponse.json({ error: 'Please pick a timing' }, { status: 400 });
+      }
+
+      // Reuse the same field validators as the legacy path so quality bars
+      // (throwaway-domain block, phone digit count, name sanity) never drift.
+      if (!isValidName(fullNameQ)) {
+        return NextResponse.json({ error: 'Please enter a valid name' }, { status: 400 });
+      }
+      if (!isValidEmail(emailQ)) {
+        return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
+      }
+      if (!isValidPhone(phoneQ)) {
+        return NextResponse.json({ error: 'Please enter a valid phone number' }, { status: 400 });
+      }
+      if (!normalizeState(stateQ)) {
+        return NextResponse.json({
+          error: `State "${stateQ}" not recognized — pick from the dropdown or use the 2-letter code (e.g. TX, MT, WV).`,
+        }, { status: 400 });
+      }
+
+      const emailLowerQ = emailQ.toLowerCase();
+      const nowIsoQ = new Date().toISOString();
+      const todayDateQ = nowIsoQ.slice(0, 10); // YYYY-MM-DD (Date field type)
+
+      // UPSERT on email (spec: "don't create a second record"). Reuse the
+      // file's existing duplicate-lookup query shape (LOWER({Email}) match).
+      // Unlike the legacy path (which 409s a non-stub duplicate), the funnel
+      // intentionally updates the existing lead in place — a buyer re-entering
+      // the wizard with the same email should resume their record, not be
+      // blocked. Fail-open on lookup error (create a fresh record).
+      let existingIdQ: string | null = null;
+      try {
+        const existingQ = await getAllRecords(
+          TABLES.CONSUMERS,
+          `LOWER({Email}) = "${escapeAirtableValue(emailLowerQ)}"`
+        ) as any[];
+        if (existingQ.length > 0) existingIdQ = existingQ[0].id;
+      } catch (e) {
+        console.error('[funnel] duplicate-email lookup failed:', e);
+      }
+
+      // Source/UTMs exactly as the legacy flow records them.
+      const funnelFields: Record<string, unknown> = {
+        'Full Name': fullNameQ,
+        'Email': emailLowerQ,
+        'Phone': phoneQ,
+        'State': normalizeState(stateQ) || stateQ.toUpperCase(),
+        'Order Type': tierQ,
+        'Timing': timingQ,
+        'Segment': 'Beef Buyer',
+        'Status': 'Approved',
+        'Buyer Stage': 'WAITING',
+        'Buyer Stage Updated At': nowIsoQ,
+        'Created': todayDateQ,
+        'Approved At': nowIsoQ,
+        'Source': typeof body.source === 'string' && body.source ? body.source : 'funnel',
+        'Campaign': typeof body.campaign === 'string' ? body.campaign : '',
+        'UTM Parameters': typeof body.utmParams === 'string' ? body.utmParams : '',
+        // NOTE: `Qualified At` is DELIBERATELY NOT set — GUARD-2 holds the lead
+        // unroutable until /api/qualify stamps it on quiz completion.
+      };
+
+      let funnelRec: any;
+      try {
+        if (existingIdQ) {
+          await updateRecord(TABLES.CONSUMERS, existingIdQ, funnelFields);
+          funnelRec = { id: existingIdQ };
+        } else {
+          funnelRec = await createRecord(TABLES.CONSUMERS, funnelFields);
+        }
+      } catch (e) {
+        console.error('[funnel] consumer upsert failed:', e);
+        return NextResponse.json(
+          { error: 'Could not save your details. Please try again or email hello@buyhalfcow.com.' },
+          { status: 500 },
+        );
+      }
+
+      // 14d resume token — lets the wizard (and the quiz-drip resume link)
+      // finalize this exact lead at /api/qualify. Same `qualify-access` shape
+      // /api/qualify verifies (type + consumerId + email).
+      const resumeToken = jwt.sign(
+        { type: 'qualify-access', consumerId: funnelRec.id, email: emailLowerQ },
+        JWT_SECRET,
+        { expiresIn: '14d' },
+      );
+
+      return NextResponse.json(
+        { success: true, consumerId: funnelRec.id, resumeToken },
+        { status: 201 },
+      );
+    }
+
     const {
       fullName, email, phone, smsOptIn, state,
       orderType: orderTypeRaw, budgetRange: budgetRangeRaw, timing: timingRaw, notes,
