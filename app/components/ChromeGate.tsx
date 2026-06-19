@@ -14,7 +14,9 @@ import { usePathname } from 'next/navigation';
 // Add a prefix here to seal another flow.
 // '/access' is the unified buyer funnel (2026-06-18) — sealed like '/qualify'
 // so the game-like wizard is a checkout-style room with no nav/promo/footer.
-const FOCUSED_PREFIXES = ['/qualify', '/access'];
+// '/book' is the on-site booking keystone (2026-06-19) — sealed so email/SMS
+// booking links land on a focused, chrome-free booking page (no escape hatches).
+const FOCUSED_PREFIXES = ['/qualify', '/access', '/book'];
 
 export function isFocusedRoute(pathname: string | null | undefined): boolean {
   const p = pathname || '';
