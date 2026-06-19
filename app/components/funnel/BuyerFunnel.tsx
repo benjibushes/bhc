@@ -43,6 +43,7 @@ import {
 } from '@/lib/funnelConfig';
 import { US_STATES } from '@/lib/states';
 import CalInlineBooker from '@/app/qualify/[consumerId]/CalInlineBooker';
+import { trackEvent, metaEventId } from '@/lib/analytics';
 
 // ── Props ──────────────────────────────────────────────────────────────────
 interface BuyerFunnelProps {
@@ -149,6 +150,16 @@ export default function BuyerFunnel({
   // Guard the auto-advance timer so a fast double-tap can't skip a step.
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (advanceTimer.current) clearTimeout(advanceTimer.current); }, []);
+
+  // ── Meta Pixel: ViewContent on /access lander mount ───────────────────────
+  // No server CAPI pair needed (top-of-funnel view, low signal). event_id
+  // omitted — no dedup surface to pair against.
+  const viewContentFired = useRef(false);
+  useEffect(() => {
+    if (viewContentFired.current) return;
+    viewContentFired.current = true;
+    trackEvent('access_view');
+  }, []);
 
   // ── Attribution capture (mount) ────────────────────────────────────────────
   useEffect(() => {
@@ -286,6 +297,13 @@ export default function BuyerFunnel({
       }
       setConsumerId(j.consumerId);
       setToken(j.resumeToken);
+      // ── Meta Pixel: Lead (contact captured) ────────────────────────────────
+      // event_id = consumerId (raw Airtable record id, no prefix). Server CAPI
+      // Lead fires at /api/consumers with the SAME id → Meta deduplicates the
+      // two fires. Both use metaEventId(consumerId) which is a passthrough.
+      trackEvent('funnel_lead', {
+        event_id: metaEventId(j.consumerId),
+      });
       setSubmitting(false);
       advance(); // → storage
     } catch {
@@ -337,6 +355,13 @@ export default function BuyerFunnel({
         setFlashing(null);
         return;
       }
+      // ── Meta Pixel: CompleteRegistration (quiz complete / qualified) ─────────
+      // event_id = same client-minted eventId sent to /api/qualify so server
+      // CAPI CompleteRegistration (fired there with clientEventId) and this
+      // client Pixel fire share the id and Meta deduplicates them correctly.
+      trackEvent('funnel_complete_registration', {
+        event_id: eventId,
+      });
       setResult(j as QualifyResult);
       setFlashing(null);
       setSubmitting(false);

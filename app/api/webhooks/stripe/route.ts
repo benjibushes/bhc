@@ -370,6 +370,45 @@ export async function POST(request: Request) {
             saleAmount: closeSaleAmount,
           });
 
+          // ── Meta Conversions API: server-side `Purchase` event (Closed Won) ─
+          // Purchase fires HERE (not at deposit) — this is the actual revenue
+          // event. referralRow already hydrated above; fetch buyer for user_data.
+          // Fire-and-forget — never block the webhook response.
+          (async () => {
+            try {
+              const buyerLinks: string[] = (referralRow?.['Buyer'] || []) as string[];
+              const buyerId = buyerLinks[0] || '';
+              const closedWonBuyer: any = buyerId
+                ? await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null)
+                : null;
+              if (closedWonBuyer?.['Email']) {
+                const fullName = String(closedWonBuyer['Full Name'] || '').trim();
+                const nameParts = fullName.split(/\s+/);
+                const closedWonState = String(closedWonBuyer['State'] || '');
+                fireCapi([{
+                  event_name: 'Purchase',
+                  event_time: Math.floor(Date.now() / 1000),
+                  event_id: metaEventId(referralId),
+                  action_source: 'system_generated',
+                  user_data: buildUserData({
+                    email: String(closedWonBuyer['Email']).toLowerCase(),
+                    firstName: nameParts[0] || undefined,
+                    lastName: nameParts.slice(1).join(' ') || undefined,
+                    state: closedWonState || undefined,
+                  }),
+                  custom_data: {
+                    value: closeSaleAmount,
+                    currency: 'usd',
+                    content_name: 'Beef — full sale',
+                    content_category: 'closed-won',
+                  },
+                }]).catch((e) => console.error('[meta-capi] closed-won Purchase fire failed:', e));
+              }
+            } catch (e) {
+              console.error('[meta-capi] closed-won Purchase buyer fetch failed:', e);
+            }
+          })();
+
           try {
             await sendTelegramMessage(
               TELEGRAM_ADMIN_CHAT_ID,
@@ -501,29 +540,28 @@ export async function POST(request: Request) {
           console.warn('[stripe webhook] sendPostPurchaseWelcome failed:', e?.message);
         }
 
-        // ── Meta Conversions API: server-side `Purchase` event ──────────
-        // Largest paid-ad attribution event on the platform — buyer deposit
-        // is the highest-LTV conversion. Pairs with client deposit_completed
-        // Pixel fire via event_id=referralId (server has pi.id, client has
-        // Stripe Checkout session_id — referralId is the only stable identifier
-        // both surfaces share). E-1 + E-3 fixes ensure dedup actually works.
-        // Fire-and-forget — never block.
+        // ── Meta Conversions API: server-side `InitiateCheckout` event ──────
+        // Deposit is the INTENT signal (buyer committed to pay), not the
+        // Closed-Won signal. Demoted from Purchase → InitiateCheckout so that
+        // Purchase fires only at final_invoice (Closed Won), giving Meta a
+        // clean revenue signal without double-counting. Pairs with the client
+        // deposit_completed Pixel fire (also InitiateCheckout, same event_id)
+        // via event_id=referralId for dedup. Fire-and-forget — never block.
         fireCapi([{
-          event_name: 'Purchase',
+          event_name: 'InitiateCheckout',
           event_time: Math.floor(Date.now() / 1000),
           event_id: metaEventId(referralId),
           action_source: 'system_generated',
           user_data: buildUserData(buyerForCapi),
           custom_data: {
             // Buyer-paid total (deposit + BHC fee) — matches what buyer
-            // sees in Stripe receipt + their bank statement. Pixel-side
-            // Purchase value should mirror this for clean ROAS attribution.
+            // sees in Stripe receipt + their bank statement.
             value: totalChargedDollars,
             currency: 'usd',
             content_name: `Beef deposit — ${tier || 'unknown'} tier`,
             content_category: 'buyer-deposit',
           },
-        }]).catch((e) => console.error('[meta-capi] buyer_deposit Purchase fire failed:', e));
+        }]).catch((e) => console.error('[meta-capi] buyer_deposit InitiateCheckout fire failed:', e));
 
         // Telegram celebration to admin chat. Shows the full deal shape:
         // deposit to rancher / BHC commission / fulfillment balance still

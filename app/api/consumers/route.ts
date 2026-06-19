@@ -13,6 +13,7 @@ import { sendTelegramConsumerSignup, sendTelegramHotLeadAlert } from '@/lib/tele
 import { transitionBuyerStage } from '@/lib/contracts';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
+import { metaEventId } from '@/lib/analytics';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -223,6 +224,36 @@ export async function POST(request: Request) {
         JWT_SECRET,
         { expiresIn: '14d' },
       );
+
+      // ── Meta CAPI: server-side `Lead` event ──────────────────────────────────
+      // Contact step = lead created. Pairs with client Pixel Lead fire via
+      // event_id=consumerId (metaEventId = raw record id, no prefix). Both
+      // surfaces MUST use the same id or Meta sees two Leads → double-count.
+      // Fire-and-forget — never block the 201 response.
+      (async () => {
+        try {
+          fireCapi([{
+            event_name: 'Lead',
+            event_time: Math.floor(Date.now() / 1000),
+            event_id: metaEventId(funnelRec.id),
+            action_source: 'website',
+            user_data: buildUserData({
+              email: emailLowerQ,
+              phone: phoneQ,
+              firstName: fullNameQ.split(/\s+/)[0] || undefined,
+              state: normalizeState(stateQ) || stateQ.toUpperCase() || undefined,
+            }),
+            custom_data: {
+              value: 0,
+              currency: 'usd',
+              content_name: 'funnel-lead',
+              content_category: 'buyer-funnel',
+            },
+          }]).catch((e) => console.error('[meta-capi] funnel Lead fire failed:', e));
+        } catch (e) {
+          console.error('[meta-capi] funnel Lead import/fire failed:', e);
+        }
+      })();
 
       return NextResponse.json(
         { success: true, consumerId: funnelRec.id, resumeToken },
