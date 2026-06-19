@@ -22,6 +22,7 @@
 //   - Audit log
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { transition } from '@/lib/deal/transitionLive';
 import { requireRancher } from '@/lib/rancherAuth';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -129,15 +130,28 @@ export async function POST(
     // gates (admin desk pipeline, /member buyer page) see the right state.
     try {
       const existingNotes = String(referral['Notes'] || '');
-      await updateRecord(TABLES.REFERRALS, id, {
-        'Rancher Accepted At': nowIso,
-        'Status': 'Slot Locked',
-        'Notes':
-          `[NRD-accept ${nowIso.slice(0, 16)}] ${rancherName} confirmed processing slot. ${existingNotes}`.slice(
-            0,
-            2000,
-          ),
+      const notesValue = `[NRD-accept ${nowIso.slice(0, 16)}] ${rancherName} confirmed processing slot. ${existingNotes}`.slice(0, 2000);
+      const _t = await transition(id, {
+        to: 'SLOT_LOCKED',
+        actor: `rancher:${rancherId}`,
+        reason: 'rancher accepted deposit slot',
+        extraFields: {
+          'Rancher Accepted At': nowIso,
+          'Notes': notesValue,
+        },
       });
+      if (!_t.ok && !_t.noop) {
+        console.error('[accept] transition rejected, falling back to direct write:', _t.error);
+        await updateRecord(TABLES.REFERRALS, id, {
+          'Rancher Accepted At': nowIso,
+          'Status': 'Slot Locked',
+          'Notes': notesValue,
+        });
+        try {
+          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+          await sendOperatorSignal({ urgency: 'normal', kind: 'system-error', summary: `Deal ${id}: state-machine rejected SLOT_LOCKED (used fallback). Check lib/deal.`, dedupeKey: `transition-fallback-${id}`, dedupeWindowMs: 3600_000 });
+        } catch {}
+      }
     } catch (e: any) {
       console.error('[NRD-accept] referral update failed:', e?.message);
       return NextResponse.json(
