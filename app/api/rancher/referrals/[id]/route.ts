@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { transition } from '@/lib/deal/transitionLive';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTelegramSaleCelebration } from '@/lib/telegram';
 import { sendRerouteNotification, sendPilotUpsellEmail, sendInstantCommissionInvoice } from '@/lib/email';
 import { isQualifiedForRouting } from '@/lib/qualification';
@@ -96,11 +97,28 @@ export async function PATCH(
 
       // 1. Close current referral as Closed Lost with reason note
       const passNote = `[PASSED ${new Date().toISOString().slice(0, 10)} — ${decoded.name}] ${reasonLabel}`;
-      await updateRecord(TABLES.REFERRALS, id, {
-        'Status': 'Closed Lost',
-        'Closed At': new Date().toISOString(),
-        'Notes': `${passNote}\n${referral['Notes'] || ''}`.trim(),
+      const _tPass = await transition(id, {
+        to: 'CLOSED_LOST',
+        actor: `rancher:${decoded.rancherId}`,
+        reason: `rancher passed: ${reasonLabel}`,
+        extraFields: {
+          'Closed At': new Date().toISOString(),
+          'Notes': `${passNote}\n${referral['Notes'] || ''}`.trim(),
+        },
       });
+      if (!_tPass.ok && !_tPass.noop) {
+        // Safety net: machine rejected — fall back to direct write + alert.
+        console.error('[referrals/pass] transition rejected, falling back to direct write:', _tPass.error);
+        await updateRecord(TABLES.REFERRALS, id, {
+          'Status': 'Closed Lost',
+          'Closed At': new Date().toISOString(),
+          'Notes': `${passNote}\n${referral['Notes'] || ''}`.trim(),
+        });
+        try {
+          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+          await sendOperatorSignal({ urgency: 'normal', kind: 'system-error', summary: `Deal ${id}: state-machine rejected CLOSED_LOST on pass (used fallback). Check lib/deal.`, dedupeKey: `transition-fallback-${id}`, dedupeWindowMs: 3600_000 });
+        } catch {}
+      }
 
       // 2. Decrement rancher's active referral count via atomic Redis DECR
       // (see lib/rancherCapacity — race-safe under concurrent closes). Also
@@ -635,7 +653,36 @@ export async function PATCH(
     fields['Last Rancher Activity At'] = new Date().toISOString();
     fields['Rancher Engaged Flag'] = true;
 
-    await updateRecord(TABLES.REFERRALS, id, fields);
+    // Route Status writes for machine-mapped states through transition() so
+    // they are audited + events emitted. Unmapped states (Negotiation,
+    // Awaiting Payment) continue as direct writes — no DealState for them yet.
+    const STATUS_TO_DEAL_STATE: Record<string, 'CLOSED_WON' | 'CLOSED_LOST' | 'IN_CONVERSATION'> = {
+      'Closed Won': 'CLOSED_WON',
+      'Closed Lost': 'CLOSED_LOST',
+      'Rancher Contacted': 'IN_CONVERSATION',
+    };
+    const dealStateTarget = status && STATUS_TO_DEAL_STATE[status];
+    if (dealStateTarget) {
+      // Build extraFields from everything except Status (machine writes that).
+      const { Status: _omit, ...extraFields } = fields;
+      const _tPatch = await transition(id, {
+        to: dealStateTarget,
+        actor: `rancher:${decoded.rancherId}`,
+        reason: `dashboard PATCH: ${status}`,
+        extraFields,
+      });
+      if (!_tPatch.ok && !_tPatch.noop) {
+        // Safety net: machine rejected — fall back to original direct write + alert.
+        console.error('[referrals/PATCH] transition rejected, falling back to direct write:', _tPatch.error);
+        await updateRecord(TABLES.REFERRALS, id, fields);
+        try {
+          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+          await sendOperatorSignal({ urgency: 'normal', kind: 'system-error', summary: `Deal ${id}: state-machine rejected ${dealStateTarget} on dashboard PATCH (used fallback). Check lib/deal.`, dedupeKey: `transition-fallback-${id}`, dedupeWindowMs: 3600_000 });
+        } catch {}
+      }
+    } else {
+      await updateRecord(TABLES.REFERRALS, id, fields);
+    }
 
     // Funnel telemetry — emit close event so the admin dashboard sees this
     // dashboard-PATCH close in the same conversion funnel as quick-action and

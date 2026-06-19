@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { transition } from '@/lib/deal/transitionLive';
 import {
   calcCommissionForRancher,
   hasLockedCommissionRate,
@@ -87,16 +88,39 @@ export async function POST(
     const rate = getRancherCommissionRate(rancher);
 
     const nowIso = new Date().toISOString();
-    await updateRecord(TABLES.REFERRALS, id, {
-      Status: 'Closed Won',
-      'Sale Amount': saleAmount,
-      'Commission Due': commission,
-      'Payment Confirmed At': nowIso,
-      'Payment Confirmation Method': method,
-      'Closed At': ref['Closed At'] || nowIso,
-      'Last Rancher Activity At': nowIso,
-      'Rancher Engaged Flag': true,
+    const _t = await transition(id, {
+      to: 'CLOSED_WON',
+      actor: `rancher:${decoded.rancherId}`,
+      reason: 'off-platform payment confirmed',
+      extraFields: {
+        'Sale Amount': saleAmount,
+        'Commission Due': commission,
+        'Payment Confirmed At': nowIso,
+        'Payment Confirmation Method': method,
+        'Closed At': ref['Closed At'] || nowIso,
+        'Last Rancher Activity At': nowIso,
+        'Rancher Engaged Flag': true,
+      },
     });
+    if (!_t.ok && !_t.noop) {
+      // Safety net: the state machine must NEVER block a real close. Fall back to
+      // the original direct write and alert the operator.
+      console.error('[confirm-payment] transition rejected, falling back to direct write:', _t.error);
+      await updateRecord(TABLES.REFERRALS, id, {
+        Status: 'Closed Won',
+        'Sale Amount': saleAmount,
+        'Commission Due': commission,
+        'Payment Confirmed At': nowIso,
+        'Payment Confirmation Method': method,
+        'Closed At': ref['Closed At'] || nowIso,
+        'Last Rancher Activity At': nowIso,
+        'Rancher Engaged Flag': true,
+      });
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({ urgency: 'normal', kind: 'system-error', summary: `Deal ${id}: state-machine rejected Closed Won (used fallback). Check lib/deal.`, dedupeKey: `transition-fallback-${id}`, dedupeWindowMs: 3600_000 });
+      } catch {}
+    }
 
     // Fire the invoice. createCommissionInvoice enforces floor + ratio guards
     // — if it throws, we surface the error to the dashboard so the rancher
