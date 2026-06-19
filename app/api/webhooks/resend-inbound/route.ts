@@ -253,6 +253,21 @@ export async function POST(request: Request) {
       // anonymous-callable → writes to Conversations + Claude classify cost
       // + admin email spam vector. Fail-closed in prod.
       console.error('[resend-inbound] RESEND_INBOUND_WEBHOOK_SECRET unset in prod — refusing all requests');
+      // Loud, deduped operator alarm so a missing secret can never silently
+      // drop inbound replies again (the prior weeks-long leak). Once per 6h.
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary:
+            '🚨 Inbound replies are being DROPPED — RESEND_INBOUND_WEBHOOK_SECRET is unset in production. Set it in Vercel + the Resend Inbound endpoint to restore reply routing.',
+          dedupeKey: 'inbound-secret-missing',
+          dedupeWindowMs: 6 * 60 * 60 * 1000,
+        });
+      } catch {
+        /* alerting must never block the response */
+      }
       return NextResponse.json({ ok: false, error: 'webhook secret not configured' }, { status: 401 });
     }
     let payload: ResendInboundPayload;
