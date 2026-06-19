@@ -16,6 +16,7 @@ import {
 } from '@/lib/telegram';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { sendInstantCommissionInvoice } from '@/lib/email';
+import { transition } from '@/lib/deal/transitionLive';
 
 // Site URL for internal calls (used by pass-action re-route → matching/suggest)
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -376,12 +377,29 @@ async function applyAction(
       }
     }
   } else {
-    // Non-close transition (e.g. in_talks → Rancher Contacted) — direct write
-    // since contract scope is close-completion only.
-    try {
-      await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
-    } catch (e: any) {
-      return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
+    // Non-close transition (in_talks → IN_CONVERSATION / Rancher Contacted).
+    // Route through state machine so the transition is audited + emitted.
+    const _t = await transition(decoded.referralId, {
+      to: 'IN_CONVERSATION',
+      actor: `rancher:${decoded.rancherId}`,
+      reason: 'rancher marked in talks via email link',
+      extraFields: {
+        'Last Rancher Activity At': updates['Last Rancher Activity At'],
+        'Rancher Engaged Flag': updates['Rancher Engaged Flag'],
+      },
+    });
+    if (!_t.ok && !_t.noop) {
+      // Safety net: machine rejected — fall back to direct write + alert.
+      console.error('[quick-action in_talks] transition rejected, falling back to direct write:', _t.error);
+      try {
+        await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
+      } catch (e: any) {
+        return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
+      }
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({ urgency: 'normal', kind: 'system-error', summary: `Deal ${decoded.referralId}: state-machine rejected IN_CONVERSATION (used fallback). Check lib/deal.`, dedupeKey: `transition-fallback-${decoded.referralId}`, dedupeWindowMs: 3600_000 });
+      } catch {}
     }
   }
 
