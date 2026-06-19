@@ -200,6 +200,21 @@ export async function POST(request: Request) {
         // unroutable until /api/qualify stamps it on quiz completion.
       };
 
+      // ── Ad attribution write-through (per-field UTM + click-ids) ─────────────
+      // Reads the `attribution` object posted by BuyerFunnel from bhc_source_v2.
+      // Only writes non-empty values so missing/empty attribution never clobbers
+      // an existing value (e.g. a manychat row that already has fbclid). Signup
+      // always completes even when attribution is absent or malformed.
+      const attrRaw = body.attribution && typeof body.attribution === 'object' ? body.attribution as Record<string, unknown> : {};
+      const attrStr = (k: string): string => (typeof attrRaw[k] === 'string' && (attrRaw[k] as string).trim() ? (attrRaw[k] as string).trim() : '');
+      if (attrStr('utm_source'))   funnelFields['utm_source']   = attrStr('utm_source');
+      if (attrStr('utm_medium'))   funnelFields['utm_medium']   = attrStr('utm_medium');
+      if (attrStr('utm_campaign')) funnelFields['utm_campaign'] = attrStr('utm_campaign');
+      if (attrStr('utm_content'))  funnelFields['utm_content']  = attrStr('utm_content');
+      if (attrStr('utm_term'))     funnelFields['utm_term']     = attrStr('utm_term');
+      if (attrStr('fbclid'))       funnelFields['fbclid']       = attrStr('fbclid');
+      if (attrStr('gclid'))        funnelFields['gclid']        = attrStr('gclid');
+
       let funnelRec: any;
       try {
         if (existingIdQ) {
