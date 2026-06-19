@@ -3,22 +3,38 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import AdminAuthGuard from '../../components/AdminAuthGuard';
+import type { DeliverabilitySummary } from '@/lib/deliverabilityStats';
 
 type Health = any;
+
+type DeliverabilityData = {
+  ok: boolean;
+  summary: DeliverabilitySummary;
+  inboundConfigured: boolean;
+  eventsConfigured: boolean;
+} | null;
 
 function HealthDashboard() {
   const [data, setData] = useState<Health | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
+  const [deliverability, setDeliverability] = useState<DeliverabilityData>(null);
 
   const fetchData = async () => {
     setLoading(true);
     setErr('');
     try {
-      const res = await fetch('/api/admin/health');
+      const [res, dRes] = await Promise.all([
+        fetch('/api/admin/health'),
+        fetch('/api/admin/deliverability'),
+      ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const j = await res.json();
       setData(j);
+      if (dRes.ok) {
+        const dj = await dRes.json();
+        setDeliverability(dj);
+      }
     } catch (e: any) {
       setErr(e?.message || 'Load failed');
     } finally {
@@ -182,6 +198,42 @@ function HealthDashboard() {
             ))}
           </div>
         </section>
+
+        {/* Deliverability */}
+        {deliverability && (
+          <section>
+            <h2 className="font-serif text-xl mb-3">Deliverability</h2>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              <Card title="Inbound (24h)" value={deliverability.summary.inboundLast24h} />
+              <Card title="Inbound (total)" value={deliverability.summary.inboundTotal} />
+              <Card title="Bounced" value={deliverability.summary.bounced} tone={deliverability.summary.bounced > 0 ? 'warn' : undefined} />
+              <Card title="Complained" value={deliverability.summary.complained} tone={deliverability.summary.complained > 0 ? 'warn' : undefined} />
+              <Card title="Suppressed (total)" value={deliverability.summary.suppressedTotal} />
+            </div>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <div className="flex items-center gap-2">
+                <span className={`inline-block w-2.5 h-2.5 rounded-full ${deliverability.inboundConfigured ? 'bg-sage-dark' : 'bg-weathered'}`} />
+                <span className="text-saddle">Inbound webhook</span>
+                <span className={deliverability.inboundConfigured ? 'text-sage-dark' : 'text-weathered'}>
+                  {deliverability.inboundConfigured ? 'configured' : 'not set'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`inline-block w-2.5 h-2.5 rounded-full ${deliverability.eventsConfigured ? 'bg-sage-dark' : 'bg-weathered'}`} />
+                <span className="text-saddle">Event webhook</span>
+                <span className={deliverability.eventsConfigured ? 'text-sage-dark' : 'text-weathered'}>
+                  {deliverability.eventsConfigured ? 'configured' : 'not set'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`inline-block w-2.5 h-2.5 rounded-full ${deliverability.summary.healthy ? 'bg-sage-dark' : 'bg-amber-dark'}`} />
+                <span className={`font-medium ${deliverability.summary.healthy ? 'text-sage-dark' : 'text-amber-dark'}`}>
+                  {deliverability.summary.healthy ? 'LIVE' : 'No inbound yet'}
+                </span>
+              </div>
+            </div>
+          </section>
+        )}
       </div>
     </main>
   );
