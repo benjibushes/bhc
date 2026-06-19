@@ -28,15 +28,11 @@ function DepositSuccessContent() {
   const [info, setInfo] = useState<Info | null>(null);
 
   // G4 — deposit_completed client Pixel fire on success landing.
-  // Server-side CAPI Purchase fires from the buyer_deposit branch of
-  // app/api/webhooks/stripe/route.ts (payment_intent.succeeded on the
-  // Connect account). Server uses event_id=referralId — match here.
+  // Server-side CAPI InitiateCheckout fires from the buyer_deposit branch of
+  // app/api/webhooks/stripe/route.ts (payment_intent.succeeded). Both deposit
+  // events are InitiateCheckout; the real Purchase fires at Closed Won
+  // (final_invoice branch). Server uses event_id=referralId — match here.
   // Idempotency guard prevents re-fire on remount/back-button.
-  //
-  // E-3 audit fix: prior `deposit_completed:${sessionId}` prefix broke
-  // dedup. Meta dedup is by (event_name, event_id) — referralId works
-  // because event_name=Purchase differs from deposit_initiated's
-  // event_name=InitiateCheckout.
   const depositCompletedFired = useRef(false);
   useEffect(() => {
     if (depositCompletedFired.current || !refId) return;

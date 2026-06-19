@@ -21,7 +21,7 @@
  * - 'exit_intent_shown'        — exit modal displayed
  * - 'exit_intent_capture'      — email submitted to exit modal
  * - 'deposit_initiated'        — buyer landed on /checkout/[refId]/deposit (InitiateCheckout)
- * - 'deposit_completed'        — buyer landed on /checkout/[refId]/success (Purchase) — dedupe with server CAPI via event_id
+ * - 'deposit_completed'        — buyer landed on /checkout/[refId]/success (InitiateCheckout) — dedupe with server CAPI InitiateCheckout via event_id
  */
 
 declare global {
@@ -84,7 +84,9 @@ export type AnalyticsEventName =
   | 'rancher_pricing_click'
   | 'state_landing_view'
   | 'deposit_initiated'
-  | 'deposit_completed';
+  | 'deposit_completed'
+  | 'funnel_lead'
+  | 'funnel_complete_registration';
 
 export function trackEvent(
   event: AnalyticsEventName,
@@ -107,11 +109,12 @@ export function trackEvent(
         founders_checkout_start: 'InitiateCheckout',
         brand_partners_purchased: 'Purchase',
         exit_intent_capture: 'Lead',
-        // G4 — deposit is the MOST VALUABLE conversion event on the platform.
-        // Server-side CAPI fires from /api/checkout/deposit POST (F5); this
-        // client Pixel fire pairs via event_id passed in properties for dedup.
+        // G4 — deposit fires are both InitiateCheckout (intent signal). The
+        // actual Purchase fires server-side at Closed Won (final_invoice) — see
+        // app/api/webhooks/stripe/route.ts final_invoice branch. Both deposit
+        // events use event_id=referralId for client+server dedup.
         deposit_initiated: 'InitiateCheckout',
-        deposit_completed: 'Purchase',
+        deposit_completed: 'InitiateCheckout',
         // Audit 6 P0/P1 — paid-scale tracking gaps:
         // /partner is the B-side acquisition funnel (rancher/brand/land).
         // Each submit is a Lead — server CAPI pairs via record.id event_id.
@@ -122,6 +125,8 @@ export function trackEvent(
         // Pricing-click is the in-page intent signal — closer to AddToCart
         // than ViewContent. Funnel: rancher_page_view → rancher_pricing_click → Lead.
         rancher_pricing_click: 'AddToCart',
+        // /access lander view — top-of-funnel ViewContent for the buyer funnel.
+        access_view: 'ViewContent',
         // /access/[state] state-targeted ads need a state-segmented view
         // event for Meta optimization on the geo audience.
         state_landing_view: 'ViewContent',
@@ -131,6 +136,13 @@ export function trackEvent(
         // (E-4 audit fix). Previously fired as trackCustom which never
         // matched the server Lead → 100% double-count for wholesale.
         wholesale_submit_success: 'Lead',
+        // BuyerFunnel contact step — Lead (pairs with server CAPI Lead at
+        // /api/consumers contact branch via event_id=consumerId).
+        funnel_lead: 'Lead',
+        // BuyerFunnel storage step complete — CompleteRegistration (pairs
+        // with server CAPI CompleteRegistration at /api/qualify via client-
+        // minted eventId passed through the POST body).
+        funnel_complete_registration: 'CompleteRegistration',
       };
       const standardName = metaStandardEvents[event];
       if (standardName) {
