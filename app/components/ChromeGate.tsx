@@ -11,8 +11,10 @@ import { usePathname } from 'next/navigation';
 // reached it finished. A qualification quiz should be a checkout-style flow with
 // one job and zero escape hatches. (2026-06-18)
 //
-// Add a prefix here to seal another flow (e.g. '/access' for signup).
-const FOCUSED_PREFIXES = ['/qualify'];
+// Add a prefix here to seal another flow.
+// '/access' is the unified buyer funnel (2026-06-18) — sealed like '/qualify'
+// so the game-like wizard is a checkout-style room with no nav/promo/footer.
+const FOCUSED_PREFIXES = ['/qualify', '/access'];
 
 export function isFocusedRoute(pathname: string | null | undefined): boolean {
   const p = pathname || '';

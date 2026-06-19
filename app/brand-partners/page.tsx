@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import Container from '../components/Container';
 import Pill from '../components/Pill';
 import BrandTierCTA, { BrandPartnersViewTracker } from './BrandTierCTA';
-import ExitIntentModal from '@/app/components/ExitIntentModal';
 
 // Tiered brand partner offer. Brands pay to be featured in the BuyHalfCow
 // network — logo placement, posts on the IG / founder list, pinned in
@@ -359,7 +358,6 @@ export default async function BrandPartnersPage() {
           </div>
         </Container>
       </section>
-      <ExitIntentModal />
     </main>
   );
 }

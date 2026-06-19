@@ -14,10 +14,11 @@ interface FieldMeta {
   key: keyof AdminConfig;
   label: string;
   description: string;
-  unit: string;
-  min: number;
-  max: number;
-  step: number;
+  type?: 'number' | 'toggle';
+  unit?: string;
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 const FIELDS: FieldMeta[] = [
@@ -60,6 +61,13 @@ const FIELDS: FieldMeta[] = [
     min: 1,
     max: 100,
     step: 1,
+  },
+  {
+    key: 'funnelOfferOperatorCall',
+    label: 'Offer "book a call with Ben" in the funnel',
+    description:
+      'When on, the buyer funnel\'s final step offers an inline call booking with you instead of "your rancher reaches out". Flip this on the day you start taking sales calls — takes effect live, no deploy.',
+    type: 'toggle',
   },
 ];
 
@@ -230,27 +238,45 @@ export default function SettingsPage() {
                             }
                             className="text-xs text-saddle underline hover:text-charcoal"
                           >
-                            Reset to default ({defaultVal})
+                            Reset to default ({String(defaultVal)})
                           </button>
                         )}
                       </div>
                       <p className="text-xs text-saddle leading-relaxed">{field.description}</p>
-                      <div className="flex items-center gap-3">
-                        <input
-                          id={field.key}
-                          type="number"
-                          value={current}
-                          min={field.min}
-                          max={field.max}
-                          step={field.step}
-                          onChange={(e) => handleChange(field.key, e.target.value)}
-                          className="w-32 px-3 py-2 border border-dust bg-white text-charcoal focus:border-charcoal focus:outline-none text-sm"
-                        />
-                        <span className="text-sm text-saddle">{field.unit}</span>
-                        <span className="text-xs text-dust">
-                          (default: {defaultVal})
-                        </span>
-                      </div>
+                      {field.type === 'toggle' ? (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={current === true}
+                          onClick={() =>
+                            setDraft((prev) => (prev ? { ...prev, [field.key]: !prev[field.key] } : prev))
+                          }
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                            current ? 'bg-charcoal' : 'bg-dust'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                              current ? 'translate-x-5' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-3">
+                          <input
+                            id={field.key}
+                            type="number"
+                            value={current as number}
+                            min={field.min}
+                            max={field.max}
+                            step={field.step}
+                            onChange={(e) => handleChange(field.key, e.target.value)}
+                            className="w-32 px-3 py-2 border border-dust bg-white text-charcoal focus:border-charcoal focus:outline-none text-sm"
+                          />
+                          <span className="text-sm text-saddle">{field.unit}</span>
+                          <span className="text-xs text-dust">(default: {String(defaultVal)})</span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
