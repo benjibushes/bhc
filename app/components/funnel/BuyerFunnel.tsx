@@ -319,7 +319,11 @@ export default function BuyerFunnel({
         body: JSON.stringify({
           token,
           consumerId,
-          answers: { tier, timing, storage: storageValue },
+          // ack: true — completing the flow IS the commitment signal (replaces
+          // the old explicit checkbox). The server scorer awards 25 pts for it;
+          // without it every completer was capped at 75 and "Not sure" buyers
+          // wrongly failed the 75 gate.
+          answers: { tier, timing, storage: storageValue, ack: true },
           eventId,
           ...(attribution.current.campaign.startsWith('rancher-')
             ? { campaign: attribution.current.campaign }
