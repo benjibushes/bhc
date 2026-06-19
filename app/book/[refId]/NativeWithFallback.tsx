@@ -38,6 +38,10 @@ interface Props {
   calUsername: string;
   eventSlug: string;
   // Iframe fallback props
+  // calLink: rancher's embed-ready slug (e.g. 'username/event') — when present,
+  // the iframe books the rancher rather than the operator. Mirrors the
+  // CalInlineBooker priority: calLink > operatorCalLink.
+  calLink?: string;
   operatorCalLink?: string;
   name?: string;
   email?: string;
@@ -50,6 +54,7 @@ export default function NativeWithFallback({
   referralId,
   calUsername,
   eventSlug,
+  calLink,
   operatorCalLink,
   name,
   email,
@@ -64,8 +69,11 @@ export default function NativeWithFallback({
   if (useFallback) {
     // Atoms failed → render the battle-tested iframe. referralId is passed
     // so the webhook still ties the booking back to the Airtable Referral row.
+    // calLink (rancher slug) takes priority when present — same priority as
+    // the non-fallback CalInlineBooker path.
     return (
       <CalInlineBooker
+        calLink={calLink}
         operatorCalLink={operatorCalLink}
         name={name}
         email={email}

@@ -361,7 +361,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 // send with CALENDLY_LINK unset silently shipped a broken booking CTA — a
 // guaranteed zero-conversion bug for the whole self-submit drip.
 const CALENDLY_LINK =
-  process.env.CALENDLY_LINK || process.env.NEXT_PUBLIC_CALENDLY_LINK || `${SITE_URL}/contact`;
+  process.env.CALENDLY_LINK || process.env.NEXT_PUBLIC_CALENDLY_LINK || `${SITE_URL}/book`;
 const MERCH_URL = process.env.MERCH_URL || 'https://www.sackett-ranch.com/pages/buy-half-cow';
 
 // =====================================================
@@ -1303,18 +1303,21 @@ export async function sendBuyerIntroNotification(data: {
     <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Same beef. Same rancher. I just make sure both sides show up prepared.</p>
   </div>`;
   } else if (normalizedCalSlug) {
-    // Pre-fill the rancher's Cal.com booking form with the buyer's name +
-    // email + referralId so the buyer doesn't re-type. Webhook reads
-    // metadata[referralId] to link the booking back to the Referral row.
-    const rancherCalUrl = `https://cal.com/${normalizedCalSlug}`;
-    const rancherCalPrefillParams = new URLSearchParams();
-    if (data.firstName) rancherCalPrefillParams.set('name', data.firstName);
-    if (data.email) rancherCalPrefillParams.set('email', data.email);
-    if (data.referralId) rancherCalPrefillParams.set('metadata[referralId]', data.referralId);
-    const rancherCalQs = rancherCalPrefillParams.toString();
-    const rancherCalUrlWithPrefill = rancherCalQs
-      ? `${rancherCalUrl}?${rancherCalQs}`
-      : rancherCalUrl;
+    // Send buyer to /book/<referralId> — the on-site booker that resolves the
+    // rancher's Cal slug server-side and embeds it in an iframe. Buyer never
+    // leaves buyhalfcow.com. The /book/[refId] page prefills name/email from
+    // the Referral → Consumer lookup and passes metadata.referralId to Cal so
+    // the webhook ties the booking back to the Referral row.
+    //
+    // NOTE: we intentionally drop the URL-level prefill params here — the
+    // /book/[refId] server component re-resolves them from Airtable, which is
+    // more reliable than round-tripping them through the email link.
+    //
+    // Fallback when referralId is absent: generic /book (operator sales call).
+    const rancherCalUrl = data.referralId
+      ? `${SITE_URL}/book/${data.referralId}`
+      : `${SITE_URL}/book`;
+    const rancherCalUrlWithPrefill = rancherCalUrl;
     calBlock = `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
     <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Schedule a 15-min intro call</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Pick a time that works for both of you. ${esc(data.rancherName)} sets their availability &mdash; book a slot and they'll be expecting your call. No phone tag.</p>
