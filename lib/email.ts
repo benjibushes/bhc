@@ -355,7 +355,13 @@ const resend = {
   }
 };
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
-const CALENDLY_LINK = process.env.CALENDLY_LINK || 'https://buyhalfcow.com/call';
+// Booking link for "book a call" CTAs. Prefer the explicit env var, then the
+// NEXT_PUBLIC_ mirror (same value), and finally /contact — a REAL page that
+// routes to Ben. The old fallback (buyhalfcow.com/call) was a dead 404, so any
+// send with CALENDLY_LINK unset silently shipped a broken booking CTA — a
+// guaranteed zero-conversion bug for the whole self-submit drip.
+const CALENDLY_LINK =
+  process.env.CALENDLY_LINK || process.env.NEXT_PUBLIC_CALENDLY_LINK || `${SITE_URL}/contact`;
 const MERCH_URL = process.env.MERCH_URL || 'https://www.sackett-ranch.com/pages/buy-half-cow';
 
 // =====================================================
@@ -4109,9 +4115,22 @@ export async function sendRancherOnboardingDripDay2(data: {
   to: string;
   ranchName: string;
   operatorName: string;
+  setupUrl?: string; // when present → self-serve wizard is the PRIMARY CTA
+  state?: string;    // when present → state-specific urgency line
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
   const subject = `Re: ${data.ranchName} on the map`;
+  const buyersLine = data.state
+    ? `families in ${esc(data.state)} are searching BuyHalfCow for a half or whole cow right now`
+    : `families near you are searching BuyHalfCow for a half or whole cow right now`;
+  const ctaBlock = data.setupUrl
+    ? `<div style="text-align:center;margin:24px 0;">
+    <a href="${utm(data.setupUrl, 'self-submit-drip', 'day2-wizard')}" class="cta">Set up your page &rarr; (5 min)</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">No call needed &mdash; or if you'd rather talk first, <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day2-call')}">grab 15 min with me</a>.</p>`
+    : `<div style="text-align:center;margin:24px 0;">
+    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day2')}" class="cta">Grab a slot</a>
+  </div>`;
   return guardedSend({
     templateName: 'sendRancherOnboardingDripDay2',
     recipientEmail: data.to,
@@ -4125,12 +4144,10 @@ export async function sendRancherOnboardingDripDay2(data: {
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}</style>
 </head><body><div class="container">
   <p>Hey ${esc(first)},</p>
-  <p>Following up on my note from a couple days back &mdash; ${esc(data.ranchName)} is sitting on the map as a yellow pin and I haven't heard from you yet.</p>
-  <p>The 15-minute call is the only way to flip you from yellow ("on the map") to green ("getting routed real customers"). I'll come in with a couple of buyer profiles already in your area so we have something concrete to look at.</p>
-  <div style="text-align:center;margin:24px 0;">
-    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day2')}" class="cta">Grab a slot</a>
-  </div>
-  <p style="font-size:13px;color:#6B4F3F;">Reply with a phone number if email isn't your thing. I'll call.</p>
+  <p>${esc(data.ranchName)} is on the map but still a yellow pin &mdash; visible, but not getting routed customers. Meanwhile ${buyersLine}, and your pin can't take them until you're live.</p>
+  <p>Flipping green is a 5-minute self-serve setup &mdash; logo, prices, done. No call unless you want one.</p>
+  ${ctaBlock}
+  <p style="font-size:13px;color:#6B4F3F;">Reply with a phone number if email isn't your thing. I'll call you.</p>
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
   ${emailFooter(data.to)}
 </div></body></html>`,
@@ -4142,9 +4159,19 @@ export async function sendRancherOnboardingDripDay5(data: {
   to: string;
   ranchName: string;
   operatorName: string;
+  setupUrl?: string; // when present → self-serve wizard is the PRIMARY CTA
+  state?: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
   const subject = `What we actually do for ranchers like you`;
+  const ctaBlock = data.setupUrl
+    ? `<div style="text-align:center;margin:24px 0;">
+    <a href="${utm(data.setupUrl, 'self-submit-drip', 'day5-wizard')}" class="cta">Set up ${esc(data.ranchName)} &rarr; (5 min)</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Rather talk it through first? <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day5-call')}">Book 15 min with me</a>.</p>`
+    : `<div style="text-align:center;margin:24px 0;">
+    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day5')}" class="cta">Book the call</a>
+  </div>`;
   return guardedSend({
     templateName: 'sendRancherOnboardingDripDay5',
     recipientEmail: data.to,
@@ -4164,10 +4191,8 @@ export async function sendRancherOnboardingDripDay5(data: {
     <li><strong>Buyer matching</strong> &mdash; we route pre-screened families with confirmed budgets and timing directly to ranchers we've vetted.</li>
     <li><strong>Marketing services</strong> &mdash; story-driven email, content, and outreach so families understand why your beef is worth $7/lb instead of $4/lb.</li>
   </ul>
-  <p>One 15-minute call, no slide deck, you tell me how you sell today and I tell you whether we'd actually move the needle for ${esc(data.ranchName)}.</p>
-  <div style="text-align:center;margin:24px 0;">
-    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day5')}" class="cta">Book the call</a>
-  </div>
+  <p>You don't need a call to start &mdash; the 5-minute self-serve wizard gets ${esc(data.ranchName)} live and routable today.</p>
+  ${ctaBlock}
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
   ${emailFooter(data.to)}
 </div></body></html>`,
@@ -4179,9 +4204,19 @@ export async function sendRancherOnboardingDripDay14(data: {
   to: string;
   ranchName: string;
   operatorName: string;
+  setupUrl?: string; // when present → self-serve wizard is the PRIMARY CTA
+  state?: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = (data.operatorName || '').split(' ')[0] || 'there';
   const subject = `Last note from me`;
+  const ctaBlock = data.setupUrl
+    ? `<div style="text-align:center;margin:24px 0;">
+    <a href="${utm(data.setupUrl, 'self-submit-drip', 'day14-wizard')}" class="cta">Set up in 5 min &rarr;</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Or <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day14-call')}">grab a quick call</a> if you'd rather.</p>`
+    : `<div style="text-align:center;margin:24px 0;">
+    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day14')}" class="cta">Pick a slot</a>
+  </div>`;
   return guardedSend({
     templateName: 'sendRancherOnboardingDripDay14',
     recipientEmail: data.to,
@@ -4196,11 +4231,8 @@ export async function sendRancherOnboardingDripDay14(data: {
 </head><body><div class="container">
   <p>Hey ${esc(first)},</p>
   <p>Last note from me unless I hear back &mdash; I don't want to be that guy who emails forever.</p>
-  <p>${esc(data.ranchName)} stays on the map as a yellow pin either way. If timing isn't right now, that's fine. Pin's there when you're ready.</p>
-  <p>If you DO want to talk:</p>
-  <div style="text-align:center;margin:24px 0;">
-    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day14')}" class="cta">Pick a slot</a>
-  </div>
+  <p>${esc(data.ranchName)} stays on the map as a yellow pin either way. But yellow doesn't get routed buyers &mdash; green does, and green is a 5-minute setup away.</p>
+  ${ctaBlock}
   <p>If you want OFF the map, just reply "remove" and you're gone, same day.</p>
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
   ${emailFooter(data.to)}
