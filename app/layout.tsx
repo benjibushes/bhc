@@ -7,6 +7,8 @@ import PixelTracker from "./components/PixelTracker";
 import RouteChangeTracker from "./components/RouteChangeTracker";
 import UtmCapture from "./components/UtmCapture";
 import Footer from "./components/Footer";
+import ChromeGate from "./components/ChromeGate";
+import FocusedHeader from "./components/FocusedHeader";
 
 const playfair = Playfair_Display({
   variable: "--font-playfair",
@@ -104,10 +106,18 @@ export default function RootLayout({
         <PixelTracker />
         <RouteChangeTracker />
         <UtmCapture />
-        <PromoBar />
-        <Header />
+        {/* Full site chrome — hidden on focused flows (the quiz) so it's a
+            sealed, no-exit, checkout-style experience. */}
+        <ChromeGate>
+          <PromoBar />
+          <Header />
+        </ChromeGate>
+        {/* Minimal brand-only header shown ONLY on focused flows. */}
+        <FocusedHeader />
         {children}
-        <Footer />
+        <ChromeGate>
+          <Footer />
+        </ChromeGate>
       </body>
     </html>
   );
