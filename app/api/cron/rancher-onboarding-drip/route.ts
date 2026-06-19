@@ -7,8 +7,11 @@ import {
 } from '@/lib/email';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { CRON_SECRET } from '@/lib/secrets';
+import { CRON_SECRET, JWT_SECRET } from '@/lib/secrets';
 import { withCronRun } from '@/lib/cronRun';
+import jwt from 'jsonwebtoken';
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 // Self-submit / community-submit drip — fires Day 2 / Day 5 / Day 14 nudges
 // for ranchers who landed on the map via /map/add-a-rancher and haven't been
@@ -89,17 +92,29 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
 
       const elapsedDays = Math.floor((now - new Date(submittedAt).getTime()) / DAY_MS);
 
+      // Mint a fresh 60-day self-serve setup link so the drip nudges can lead
+      // with the 5-minute wizard (primary CTA) instead of only "book a call".
+      // Token is minted per send and never stored — same shape as /go.
+      const state = (r['State'] || '').toString();
+      let setupUrl = '';
+      try {
+        const token = jwt.sign({ type: 'rancher-setup', rancherId: r.id }, JWT_SECRET, { expiresIn: '60d' });
+        setupUrl = `${SITE_URL}/rancher/setup?token=${token}`;
+      } catch (e) {
+        console.error('[drip] setup token mint failed:', e);
+      }
+
       try {
         if (stage === 'welcome-sent' && elapsedDays >= 2) {
-          await sendRancherOnboardingDripDay2({ to: email, ranchName, operatorName });
+          await sendRancherOnboardingDripDay2({ to: email, ranchName, operatorName, setupUrl, state });
           await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': 'day2-sent' });
           sent.push({ id: r.id, ranch: ranchName, sent: 'day2' });
         } else if (stage === 'day2-sent' && elapsedDays >= 5) {
-          await sendRancherOnboardingDripDay5({ to: email, ranchName, operatorName });
+          await sendRancherOnboardingDripDay5({ to: email, ranchName, operatorName, setupUrl, state });
           await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': 'day5-sent' });
           sent.push({ id: r.id, ranch: ranchName, sent: 'day5' });
         } else if (stage === 'day5-sent' && elapsedDays >= 14) {
-          await sendRancherOnboardingDripDay14({ to: email, ranchName, operatorName });
+          await sendRancherOnboardingDripDay14({ to: email, ranchName, operatorName, setupUrl, state });
           await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': 'day14-sent' });
           sent.push({ id: r.id, ranch: ranchName, sent: 'day14' });
         } else if (stage === 'day14-sent') {
