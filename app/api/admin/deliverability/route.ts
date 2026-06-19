@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   try {
     consumers = await getAllRecords(
       TABLES.CONSUMERS,
-      'OR({Bounced}=TRUE(),{Complained}=TRUE())',
+      'OR({Unsubscribed}=TRUE(),{Bounced}=TRUE(),{Complained}=TRUE())',
     );
   } catch {
     // Non-fatal
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
   try {
     ranchers = await getAllRecords(
       TABLES.RANCHERS,
-      'OR({Bounced}=TRUE(),{Complained}=TRUE())',
+      'OR({Unsubscribed}=TRUE(),{Bounced}=TRUE(),{Complained}=TRUE())',
     );
   } catch {
     // Non-fatal
