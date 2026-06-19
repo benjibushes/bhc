@@ -13,6 +13,12 @@ export interface AdminConfig {
   migrationDeadlineDays: number;
   /** Rancher capacity fill % that triggers a capacity warning. */
   capacityWarningPct: number;
+  /**
+   * When true, the buyer funnel's reveal step offers "book a call with Ben"
+   * (inline Cal booking) instead of "your rancher reaches out". Flip this in
+   * /admin/settings the day the operator starts taking sales calls — no deploy.
+   */
+  funnelOfferOperatorCall: boolean;
 }
 
 export const ADMIN_CONFIG_DEFAULTS: AdminConfig = {
@@ -20,4 +26,5 @@ export const ADMIN_CONFIG_DEFAULTS: AdminConfig = {
   highIntentCutoff: 70,
   migrationDeadlineDays: 14,
   capacityWarningPct: 80,
+  funnelOfferOperatorCall: false,
 };

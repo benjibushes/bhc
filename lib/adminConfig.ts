@@ -30,7 +30,12 @@ const KEY_MAP: Record<string, keyof AdminConfig> = {
   'high_intent_cutoff': 'highIntentCutoff',
   'migration_deadline_days': 'migrationDeadlineDays',
   'capacity_warning_pct': 'capacityWarningPct',
+  'funnel_offer_operator_call': 'funnelOfferOperatorCall',
 };
+
+// Fields parsed as booleans (Airtable Value of "true"/"false"). Everything else
+// is parsed as a number.
+const BOOLEAN_FIELDS: Set<keyof AdminConfig> = new Set(['funnelOfferOperatorCall']);
 
 // Inverse map for saving
 const FIELD_TO_KEY: Record<keyof AdminConfig, string> = Object.fromEntries(
@@ -67,9 +72,13 @@ export async function getAdminConfig(): Promise<AdminConfig> {
       const raw = String(rec.fields['Value'] ?? '').trim();
       const field = KEY_MAP[key];
       if (!field) continue;
+      if (BOOLEAN_FIELDS.has(field)) {
+        const lower = raw.toLowerCase();
+        if (lower === 'true' || lower === 'false') (overrides as any)[field] = lower === 'true';
+        continue;
+      }
       const num = Number(raw);
       if (!isNaN(num)) {
-        // All current fields are numbers
         (overrides as any)[field] = num;
       }
     }
