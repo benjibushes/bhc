@@ -24,8 +24,10 @@ import {
   createRecord,
   updateRecord,
   getAllRecords,
+  getRecordById,
   TABLES,
 } from '@/lib/airtable';
+import { settleBuyerDeposit, settleFinalInvoice } from '@/lib/stripeSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
@@ -273,6 +275,48 @@ export async function POST(request: Request) {
           }).catch(e => console.error('[audit] connect charge-refunded log failed:', e));
         } catch (e: any) {
           console.warn('[stripe-connect charge.refunded] handler:', e?.message);
+        }
+        break;
+      }
+
+      // ── Dual-delivery settlement guard (p0-money-routing) ──────────────
+      // The platform webhook AND this Connect webhook both receive
+      // payment_intent.succeeded for the same PI (Stripe fans out to both
+      // because the platform holds the application_fee and the connected
+      // account owns the charge). The event.ids differ → the Stripe Events
+      // table dedup at the top of this handler gives ZERO cross-webhook
+      // protection. These guards make whichever fires FIRST settle fully;
+      // the SECOND sees terminal state and no-ops.
+      //
+      //   buyer_deposit : Payments.Status === 'succeeded'  → pi.id-keyed anchor
+      //   final_invoice : Referral.Status === 'Closed Won' → referralId-keyed anchor
+      //
+      // The settle* functions themselves (lib/stripeSettlement.ts) contain
+      // markDepositSucceeded as a second idempotency anchor for deposit — this
+      // outer guard is belt-and-suspenders so we never even enter the function
+      // on the second delivery.
+      case 'payment_intent.succeeded': {
+        const pi = event?.data?.object;
+        const metaType = pi?.metadata?.type;
+        if (metaType !== 'buyer_deposit' && metaType !== 'final_invoice') break;
+        const referralId = String(pi?.metadata?.referralId || '');
+        if (!referralId) break;
+        try {
+          if (metaType === 'buyer_deposit') {
+            // pi.id-keyed guard: if the Payments row is already 'succeeded', the
+            // platform webhook (or a prior delivery) already settled — no-op.
+            const rows: any[] = await getAllRecords(PAYMENTS_TABLE, `{Stripe Payment Intent Id} = "${String(pi.id).replace(/"/g, '\\"')}"`);
+            if ((rows[0] as any)?.['Status'] === 'succeeded') break;
+            await settleBuyerDeposit(pi);            // we're first — full settlement
+          } else { // final_invoice
+            const ref: any = await getRecordById(TABLES.REFERRALS, referralId).catch(() => null);
+            if (String(ref?.['Status'] || '') === 'Closed Won') break;  // already closed
+            await settleFinalInvoice(pi);
+          }
+        } catch (e: any) {
+          console.error('[stripe-connect] payment_intent.succeeded settlement failed:', e);
+          await flipStripeEventFailed(event.id, e?.message || 'unknown');
+          return NextResponse.json({ received: true });
         }
         break;
       }
