@@ -211,6 +211,30 @@ export default function RancherSetupWizard() {
     Array<{ name: string; quote: string; location?: string }>
   >([]);
 
+  // ── Live Stripe Connect status (read-only resume layer) ──────────────────
+  // GET /api/rancher/setup does NOT return Stripe Connect Status / Account Id,
+  // so the wizard cannot infer Connect state from `rancher`. The dedicated
+  // /api/rancher/connect/status endpoint reads Stripe directly (never cached).
+  // We fetch it once on load for tier_v2 ranchers to (a) drive the cold-load
+  // "you paid but never connected" routing into Step 9 and (b) power the
+  // persistent finish-connecting banner with live requirements. NEVER writes
+  // any Airtable field — pure read surfacing.
+  type ConnectStatus = 'not_connected' | 'onboarding' | 'active' | 'restricted' | 'unknown';
+  const [connectStatus, setConnectStatus] = useState<ConnectStatus | null>(null);
+  const [connectRequirements, setConnectRequirements] = useState<string | null>(null);
+  // Banner CTA in-flight flag — minting a fresh onboarding link can take a
+  // beat (Stripe round-trip). Drives the button's disabled/loading copy.
+  const [connectResuming, setConnectResuming] = useState(false);
+  const [connectResumeError, setConnectResumeError] = useState('');
+  // Guards the one-shot cold-load route-to-Step-9 so we don't fight the user
+  // if they manually navigate back to an earlier step after the redirect.
+  const didConnectResumeRoute = useRef(false);
+  // Declared up here (rather than next to the localStorage-restore effect that
+  // also uses it) so the Connect-resume routing effect below can mark restore
+  // as done without a use-before-declaration. Both effects coordinate through
+  // this single ref: whichever runs first claims the one-shot step decision.
+  const didRestoreStep = useRef(false);
+
   // Editable form state — initialized from server response, updated locally.
   const [form, setForm] = useState<Record<string, any>>({});
 
@@ -313,6 +337,91 @@ export default function RancherSetupWizard() {
     setStep(9);
   }, [tierComplete, rancher]);
 
+  // ── Connect-resume derivation (read-only) ────────────────────────────────
+  // A tier_v2 rancher whose subscription is `active` MUST finish Stripe
+  // Connect before any buyer deposit can clear. `Subscription Status` + `Tier`
+  // come from GET /api/rancher/setup (already on `rancher`); the live Connect
+  // state comes from /api/rancher/connect/status (fetched below). We treat
+  // anything other than 'active' (including the not-yet-loaded `null`) as
+  // "still needs Connect" ONLY once the live status has actually loaded — see
+  // the effects below, which gate on `connectStatus !== null` so we never
+  // flash the banner / route before we know the truth.
+  // `Rancher` already types 'Pricing Model' / 'Subscription Status' as
+  // optional strings, so no `as any` cast is needed here — keeps the net-new
+  // lint delta at zero. ('Tier' can be string | {name}, but we only need the
+  // pricing-model + subscription-status reads for the resume gate.)
+  const isTierV2 =
+    String(rancher?.['Pricing Model'] || '').toLowerCase() === 'tier_v2';
+  const subStatus = String(rancher?.['Subscription Status'] || '').toLowerCase();
+  const subActive = subStatus === 'active' || subStatus === 'trialing';
+  // True once we KNOW (live read completed) Connect is not yet active.
+  const connectNeedsFinish =
+    isTierV2 && subActive && connectStatus !== null && connectStatus !== 'active';
+
+  // Fetch live Connect status once on load for tier_v2 ranchers with an active
+  // subscription. Skipped for legacy (no Connect) and for tier_v2 ranchers who
+  // haven't paid yet (nothing to resume). The /api/rancher/connect/status read
+  // is authenticated by the rancher-session cookie that GET /api/rancher/setup
+  // sets, so it resolves for anyone who reached the wizard via their token.
+  useEffect(() => {
+    if (!rancher) return;
+    if (!isTierV2 || !subActive) return;
+    if (connectStatus !== null) return; // fetch once
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/connect/status');
+        if (cancelled) return;
+        if (!res.ok) {
+          // Endpoint reachable but errored (e.g. Stripe read failed) — mark
+          // 'unknown' so we stop retrying and surface a soft prompt rather
+          // than silently swallowing. 'unknown' != 'active' → banner shows.
+          setConnectStatus('unknown');
+          return;
+        }
+        const data = await res.json().catch(() => ({} as any));
+        const s = String(data?.status || 'unknown') as ConnectStatus;
+        setConnectStatus(
+          s === 'not_connected' || s === 'onboarding' || s === 'active' || s === 'restricted'
+            ? s
+            : 'unknown'
+        );
+        // Stripe's live requirements summary (V2 minimum_deadline status):
+        // 'currently_due' / 'past_due' tell the rancher what's still blocking.
+        if (data?.requirementsStatus != null) {
+          setConnectRequirements(String(data.requirementsStatus));
+        }
+      } catch {
+        if (!cancelled) setConnectStatus('unknown');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rancher, isTierV2, subActive, connectStatus]);
+
+  // Cold-load resume routing. The "closed the tab after Checkout/Connect" case:
+  // a tier_v2 rancher paid (sub active) but abandoned Connect, then returns via
+  // their token with NO ?connectComplete=1 / ?tierComplete=1 param. Once we've
+  // confirmed Connect is not active (live read), route them straight to Step 9
+  // so they can finish — even though no query param asked for it.
+  //
+  // Query-param precedence is preserved: connectComplete jumps to Step 8 and
+  // tierComplete jumps to Step 9 in their own effects above; we bail here when
+  // either is present so we never override an explicit Stripe-return target.
+  // One-shot (didConnectResumeRoute) so a rancher who manually clicks "← Back"
+  // out of Step 9 isn't yanked back in on the next render.
+  useEffect(() => {
+    if (!rancher) return;
+    if (connectComplete || tierComplete) return; // explicit return params win
+    if (!connectNeedsFinish) return; // only when we KNOW Connect isn't done
+    if (didConnectResumeRoute.current) return;
+    didConnectResumeRoute.current = true;
+    // Also stop the localStorage step-restore from fighting this jump.
+    didRestoreStep.current = true;
+    setStep(9);
+  }, [rancher, connectComplete, tierComplete, connectNeedsFinish]);
+
   // P1-2 — localStorage step persistence. Rancher returning next day with
   // their token would always land at Step 0 even if they'd previously made it
   // to Step 7. Now we save the current step keyed by a short token hash so
@@ -341,8 +450,7 @@ export default function RancherSetupWizard() {
 
   // Restore saved step on first load after rancher data is available. Skip
   // when ?connectComplete=1 is present — the Stripe useEffect handles that.
-  // Run once per rancher load (guarded by didRestoreStep ref).
-  const didRestoreStep = useRef(false);
+  // Run once per rancher load (guarded by didRestoreStep ref, declared above).
   useEffect(() => {
     if (!rancher) return;
     if (connectComplete) return; // Stripe Connect-return handler wins
@@ -520,6 +628,38 @@ export default function RancherSetupWizard() {
       return false;
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Resume Stripe Connect — mints a FRESH onboarding link and sends the rancher
+  // straight into Stripe. Used by the persistent "finish connecting your bank"
+  // banner. Identical contract to StripeConnectStep.handleConnect: POST
+  // /api/rancher/connect/start with from='wizard' + the wizard token, so the
+  // start endpoint sets the Stripe return_url back to this wizard
+  // (?connectComplete=1). The endpoint always re-mints (Date.now idempotency
+  // key) so a previously-expired link is replaced — this IS the "link expired?
+  // get a new one" path. Writes nothing to Airtable here; the start endpoint
+  // owns the Stripe Connect Account Id / Status writes it already performs.
+  async function resumeConnect() {
+    setConnectResuming(true);
+    setConnectResumeError('');
+    try {
+      const res = await fetch('/api/rancher/connect/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rancherId: rancher?.id, from: 'wizard', wizardToken: token }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody?.error || `Connect failed (${res.status})`);
+      }
+      const data = await res.json();
+      const target = data?.url || data?.onboardingUrl;
+      if (!target) throw new Error('No onboarding URL returned');
+      window.location.href = target;
+    } catch (e: any) {
+      setConnectResumeError(e?.message || 'Could not start Stripe Connect.');
+      setConnectResuming(false);
     }
   }
 
@@ -758,10 +898,19 @@ export default function RancherSetupWizard() {
     // the "all set" page. If Connect is onboarding/pending/empty, fall
     // through to the wizard render so Step 9 (StripeConnectStep) can
     // collect the bank.
-    const connectStatus = String((rancher as any)['Stripe Connect Status'] || '').toLowerCase();
-    const connectAccountId = String((rancher as any)['Stripe Connect Account Id'] || '').trim();
+    //
+    // GET /api/rancher/setup does NOT return Stripe Connect fields, so the
+    // old reads of rancher['Stripe Connect Status'] were always undefined —
+    // this branch never knew the real Connect state. We now consult the LIVE
+    // status from /api/rancher/connect/status (component state `connectStatus`,
+    // fetched on load). `connectFullyActive` is true ONLY once that live read
+    // returns 'active'. While it's still loading (null) we treat Connect as
+    // not-done and keep the rancher in the wizard (safe default — matches the
+    // prior always-fall-through behavior) so a paid-but-unconnected rancher is
+    // never dumped on the "all set" dead-end. The cold-load effect routes them
+    // to Step 9 once the live read confirms the gap.
     const connectFullyActive = connectStatus === 'active';
-    const stillNeedsConnect = pm === 'tier_v2' && (!connectAccountId || !connectFullyActive);
+    const stillNeedsConnect = pm === 'tier_v2' && !connectFullyActive;
     if (isLegacy || stillNeedsConnect) {
       // 2026-06-09 fix: previously `if (step === 0) setTimeout(setStep(7))`
       // — which had two races:
@@ -898,6 +1047,29 @@ export default function RancherSetupWizard() {
           <div role="alert" className="text-sm text-weathered border border-weathered/40 bg-weathered/5 p-3">
             {error}
           </div>
+        )}
+
+        {/* ── Persistent "finish connecting your bank" banner ──────────────────
+            Shown whenever the rancher is tier_v2 + paid (Subscription active)
+            but Stripe Connect is not yet 'active' (live read). This is the
+            visible resume affordance for the 22 paying-but-unconnected ranchers
+            stuck at $0 GMV: buyers can't pay a deposit until Connect is done.
+            Suppressed on Step 9 (StripeConnectStep already shows the full CTA)
+            and Step 6 (Done). The button mints a FRESH onboarding link, so it
+            doubles as the expired-link recovery. */}
+        {connectNeedsFinish && step !== 9 && step !== 6 && (
+          <ConnectResumeBanner
+            status={connectStatus}
+            requirements={connectRequirements}
+            resuming={connectResuming}
+            error={connectResumeError}
+            onResume={resumeConnect}
+            onGoToStep={() => {
+              // Let the rancher jump into the dedicated Connect step too.
+              didConnectResumeRoute.current = true;
+              setStep(9);
+            }}
+          />
         )}
 
         {/* Mobile preview accordion — desktop sees split-screen below; mobile
@@ -1762,6 +1934,8 @@ export default function RancherSetupWizard() {
             wizardToken={token}
             onComplete={() => setStep(8)}
             onBack={() => setStep(7)}
+            liveStatus={connectStatus}
+            liveRequirements={connectRequirements}
           />
         )}
 
@@ -2095,6 +2269,89 @@ function ReviewRow({ label, value }: { label: string; value: any }) {
         {label}
       </span>
       <span className="text-charcoal">{String(value)}</span>
+    </div>
+  );
+}
+
+// ── Persistent Connect-resume banner ───────────────────────────────────────
+// Prominent, always-visible (on every step except the dedicated Connect step
+// and the Done screen) prompt for a tier_v2 rancher who paid but never
+// finished Stripe Connect. Surfaces the LIVE Connect status + Stripe's
+// requirements summary so the rancher knows what's still blocking, and mints a
+// FRESH onboarding link on click (which also recovers an expired link).
+function ConnectResumeBanner({
+  status,
+  requirements,
+  resuming,
+  error,
+  onResume,
+  onGoToStep,
+}: {
+  status: 'not_connected' | 'onboarding' | 'active' | 'restricted' | 'unknown' | null;
+  requirements: string | null;
+  resuming: boolean;
+  error: string;
+  onResume: () => void;
+  onGoToStep: () => void;
+}) {
+  // Translate the live Connect status + requirements into a plain-English
+  // "here's what's left" line. Mirrors lib/stripeConnect getConnectAccountStatus
+  // semantics: 'restricted' = past_due (Stripe needs info NOW), 'onboarding' =
+  // started-but-incomplete, 'not_connected' = never began.
+  let detail: string;
+  if (status === 'restricted') {
+    detail =
+      'Stripe has paused payouts until you provide more information (often ID verification or a bank account). Reopen Stripe to clear it.';
+  } else if (status === 'onboarding') {
+    detail =
+      requirements === 'past_due'
+        ? 'Stripe needs additional details now — some required info is past due. Reopen Stripe to finish.'
+        : 'You started bank setup but didn’t finish. Pick up where you left off — it takes about 2 minutes.';
+  } else if (status === 'not_connected') {
+    detail = 'You haven’t connected a bank yet. It takes about 2 minutes — your routing number and SSN.';
+  } else {
+    // 'unknown' or null — we couldn't read live status; still safe to prompt.
+    detail = 'Finish connecting your bank so buyer deposits can settle directly to you.';
+  }
+
+  return (
+    <div
+      role="alert"
+      className="border-2 border-amber-dark bg-amber/10 p-5 md:p-6 space-y-3"
+    >
+      <div className="flex items-start gap-3">
+        <span aria-hidden className="text-2xl shrink-0 leading-none">⚠</span>
+        <div className="space-y-1">
+          <p className="font-serif text-lg md:text-xl text-charcoal leading-snug">
+            Finish connecting your bank — buyers can’t pay you a deposit until this is done.
+          </p>
+          <p className="text-sm text-charcoal/85 leading-relaxed">{detail}</p>
+        </div>
+      </div>
+
+      {error && (
+        <p className="text-sm text-rust border border-rust/40 bg-rust/5 px-3 py-2">
+          {error}
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 pt-1">
+        <button
+          type="button"
+          onClick={onResume}
+          disabled={resuming}
+          className="px-6 py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-50"
+        >
+          {resuming ? 'Opening Stripe…' : 'Finish connecting my bank →'}
+        </button>
+        <button
+          type="button"
+          onClick={onGoToStep}
+          className="text-sm text-saddle underline underline-offset-4 hover:text-charcoal transition-colors"
+        >
+          Go to the bank-connect step
+        </button>
+      </div>
     </div>
   );
 }

@@ -4064,6 +4064,88 @@ export async function sendRancherSelfSubmitWelcome(data: {
   });
 }
 
+/**
+ * Connect-stuck nudge — the rancher mirror of the buyer abandoned-quiz drip.
+ *
+ * Fired by /api/cron/connect-stuck-nudge for tier_v2 ranchers who paid
+ * (Subscription Status='active') but never finished Stripe Connect onboarding
+ * (Stripe Connect Status != 'active'). Until Connect is live they're invisible
+ * to buyer routing AND any buyer who reaches their deposit hits a 409 wall —
+ * so they paid and can't get paid. This is the recovery touch.
+ *
+ * The ONLY CTA is the fresh Stripe Connect onboarding link, which the cron
+ * mints per-send (createOnboardingLink → return_url back into the wizard at
+ * Step 8). This template never mints anything itself — it just renders the
+ * link it's handed, so there's exactly one path forward.
+ *
+ * `touchNum` (1-based) escalates the copy across the day-1/3/7 cadence:
+ * friendly nudge → "here's why it matters" → last automated note. Founder
+ * voice throughout (Ben), matching every other rancher email.
+ */
+export async function sendConnectStuckNudge(data: {
+  to: string;
+  ranchName: string;
+  operatorName: string;
+  connectUrl: string;     // fresh Stripe Connect onboarding link (minted by the cron)
+  touchNum?: number;      // 1 | 2 | 3 — escalating copy across the cadence
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const first = (data.operatorName || '').split(' ')[0] || 'there';
+  const ranch = data.ranchName || 'your ranch';
+  const touch = data.touchNum && data.touchNum >= 1 ? data.touchNum : 1;
+
+  // Touch-indexed copy. Subject 1 is the canonical "one step left" line; the
+  // later touches re-frame around the cost of leaving it (invisible to buyers,
+  // money sitting unreachable) before backing off on the final note.
+  const variants: Record<number, { subject: string; lead: string; body: string }> = {
+    1: {
+      subject: 'One step left — connect your bank to start getting paid',
+      lead: `You're almost done. <strong>${esc(ranch)}</strong> is set up and your plan is active — the only thing between you and buyer payouts is connecting your bank with Stripe.`,
+      body: `It takes about three minutes: Stripe verifies your details and sets up your payouts. Until that's done I can't route buyers to you, and any buyer who tries to put a deposit down gets stopped. One click below picks up right where you left off.`,
+    },
+    2: {
+      subject: `${first}, your payouts aren't switched on yet`,
+      lead: `Quick nudge — your BuyHalfCow plan is active, but <strong>${esc(ranch)}</strong> still isn't connected to Stripe for payouts.`,
+      body: `That's the piece that turns you on for buyers. Right now you're invisible in routing and a buyer who finds you can't actually pay a deposit — it dead-ends. The good news: it's the last step, and it's a few minutes of verifying your details. Here's a fresh link straight into it.`,
+    },
+    3: {
+      subject: `Last call, ${first} — finish connecting ${esc(ranch)}`,
+      lead: `This is my last automated note on this, ${esc(first)} — I don't want to keep emailing if the timing's off.`,
+      body: `You're paid up and one short step from live: connect your bank with Stripe and buyers can start sending you deposits. If now's not the moment, no worries — just reply and tell me, and I'll hold off. Otherwise the link below takes you right to it.`,
+    },
+  };
+  const v = variants[touch] || variants[1];
+
+  // Single CTA — the fresh Connect link. Tagged with utm for attribution; the
+  // link itself already carries the return_url back into the wizard.
+  const cta = utm(data.connectUrl, 'connect-stuck-nudge', `t${touch}`);
+
+  return guardedSend({
+    templateName: 'sendConnectStuckNudge',
+    recipientEmail: data.to,
+    subject: v.subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.to,
+      subject: v.subject,
+      headers: getUnsubscribeHeaders(data.to),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:14px 30px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+</head><body><div class="container">
+  <h1>Hey ${esc(first)},</h1>
+  <p>${v.lead}</p>
+  <p>${v.body}</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${cta}" class="cta">Connect my bank →</a>
+  </div>
+  <p style="font-size:13px;color:#6B4F3F;">This link is fresh and good to go — it drops you right back into the last step. Questions? Just hit reply.</p>
+  <div class="divider"></div>
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
+  ${emailFooter(data.to)}
+</div></body></html>`,
+    }),
+  });
+}
+
 export async function sendRancherCommunityIntro(data: {
   to: string;
   ranchName: string;

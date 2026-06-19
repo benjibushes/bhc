@@ -26,9 +26,22 @@ interface Props {
   wizardToken?: string;
   onComplete: () => void;
   onBack?: () => void;
+  // Live Stripe Connect status surfaced by the parent wizard (read from
+  // /api/rancher/connect/status). Lets this step show what Stripe still needs
+  // for a rancher resuming mid-onboarding instead of a generic "connect" CTA.
+  liveStatus?: 'not_connected' | 'onboarding' | 'active' | 'restricted' | 'unknown' | null;
+  liveRequirements?: string | null;
 }
 
-export default function StripeConnectStep({ rancherId, pricingModel, wizardToken, onComplete, onBack }: Props) {
+export default function StripeConnectStep({
+  rancherId,
+  pricingModel,
+  wizardToken,
+  onComplete,
+  onBack,
+  liveStatus = null,
+  liveRequirements = null,
+}: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   // Skipping bank setup is the single biggest silent revenue hole: a tier_v2
@@ -95,6 +108,30 @@ export default function StripeConnectStep({ rancherId, pricingModel, wizardToken
         </p>
       </header>
 
+      {/* Live status surfacing — when the rancher is resuming an in-progress
+          or stalled Connect onboarding, tell them exactly where they stand
+          (read from /api/rancher/connect/status by the parent). 'active' never
+          renders this step, so we only describe the not-done states. */}
+      {(liveStatus === 'onboarding' || liveStatus === 'restricted') && (
+        <div className="border border-amber-dark bg-amber/10 p-4 text-sm text-charcoal/90 leading-relaxed">
+          {liveStatus === 'restricted' ? (
+            <p>
+              <strong>Stripe paused your payouts.</strong> They need more
+              information before money can move
+              {liveRequirements === 'past_due' ? ' (some details are past due)' : ''}.
+              Reopen Stripe below to clear it.
+            </p>
+          ) : (
+            <p>
+              <strong>You started bank setup but didn’t finish.</strong>{' '}
+              {liveRequirements === 'past_due'
+                ? 'Some required details are past due — reopen Stripe to complete them.'
+                : 'Pick up where you left off — Stripe remembers what you already entered.'}
+            </p>
+          )}
+        </div>
+      )}
+
       <ul className="space-y-2 text-sm text-charcoal/85">
         <li>· Stripe is the same payments rails used by Shopify, Lyft, and Amazon</li>
         <li>· 2-3 minutes to finish — needs your bank routing + SSN</li>
@@ -112,7 +149,11 @@ export default function StripeConnectStep({ rancherId, pricingModel, wizardToken
           disabled={loading}
           className="px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-50"
         >
-          {loading ? 'Redirecting to Stripe…' : 'Connect bank account →'}
+          {loading
+            ? 'Redirecting to Stripe…'
+            : liveStatus === 'onboarding' || liveStatus === 'restricted'
+            ? 'Reopen Stripe to finish →'
+            : 'Connect bank account →'}
         </button>
         {!skipArmed && (
           <button
@@ -123,6 +164,25 @@ export default function StripeConnectStep({ rancherId, pricingModel, wizardToken
           </button>
         )}
       </div>
+
+      {/* Expired-link recovery. Stripe's hosted onboarding links expire (24h
+          default); a rancher who clicked an old email/banner link and hit a
+          "link expired" wall needs a one-tap re-mint. handleConnect always
+          mints a FRESH link (the start endpoint uses a Date.now idempotency
+          key), so this is just an explicitly-labeled second door to the same
+          action — no separate endpoint, no operator involvement. */}
+      <p className="text-xs text-saddle/90">
+        Link expired or showing an error?{' '}
+        <button
+          type="button"
+          onClick={handleConnect}
+          disabled={loading}
+          className="underline underline-offset-2 text-charcoal hover:text-saddle disabled:opacity-50"
+        >
+          Get a fresh Stripe link
+        </button>
+        .
+      </p>
 
       {skipArmed ? (
         <div className="border border-amber-dark bg-amber/10 p-4 space-y-3">

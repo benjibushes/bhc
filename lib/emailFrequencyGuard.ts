@@ -116,6 +116,15 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // both so the campaign engine — not the frequency guard — owns cadence.
   'sendRancherReactivationWarm',
   'sendRancherReactivationCold',
+  // Connect-stuck nudge (2026-06-19): rancher mirror of the abandoned-quiz
+  // drip. tier_v2 ranchers who paid (Subscription active) but never finished
+  // Stripe Connect — until they do, they're invisible to routing AND any
+  // buyer deposit 409s, so they paid and can't get paid. Cadence is owned by
+  // /api/cron/connect-stuck-nudge (1/day, day-1/3/7, max 3 touches, Notes
+  // dedup, per-run cap). These ranchers just got their migration + agreement
+  // + go-live mail this same week, so the 3/week cap would silently drop the
+  // recovery touches. Whitelist so the cron — not the guard — owns cadence.
+  'sendConnectStuckNudge',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage

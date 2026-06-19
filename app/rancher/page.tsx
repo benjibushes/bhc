@@ -3163,6 +3163,8 @@ function FulfillmentConfirmRow({
 // ── Stage-3 Task 11C — Dashboard banner cascade ───────────────────────────
 // Five states, ALL stacked when applicable (no priority short-circuit).
 // State → color → CTA:
+//   0. CONNECT-RECOVERY (red, prominent) — tier_v2 + sub active + Connect
+//      != active. "You're not getting paid yet." → POST /api/rancher/connect/start
 //   1. No tier picked  → blue   → /partner
 //   2. Connect not_connected  → amber  → POST /api/rancher/connect/start
 //   3. Connect onboarding     → amber  → same as #2 (resume)
@@ -3172,6 +3174,17 @@ function FulfillmentConfirmRow({
 // Gated by Pricing Model === 'tier_v2' at the caller — legacy ranchers
 // never see this section. Each banner opens its target in a new tab so the
 // dashboard state stays around for refresh-based feedback.
+//
+// CONNECT-RECOVERY ENHANCEMENT (2026-06-19): the banners below previously
+// keyed off the Airtable cache (rancher.connectStatus), which is only
+// webhook-refreshed and can lag the real Stripe state. We now ALSO read the
+// LIVE Connect status on mount from GET /api/rancher/connect/status (the same
+// read-only endpoint the billing page uses — never writes Migration Status /
+// Connect fields) and prefer it once it resolves. This drives a prominent,
+// persistent "you're not getting paid yet" recovery banner for the exact
+// case the v2 migration cares about: a rancher who is PAYING their tier
+// subscription (active) but whose bank isn't connected, so buyer deposits
+// have nowhere to land. Read-only: no Airtable writes happen here.
 function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
   const noTier = !rancher.tier;
   const status = rancher.subscriptionStatus || '';
@@ -3186,24 +3199,70 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
   const subBroken = status === 'past_due' || status === 'unpaid'
     || status === 'incomplete' || status === 'incomplete_expired'
     || status === 'canceled';
-  const connect = rancher.connectStatus || 'not_connected';
+
+  // Live Connect status — read-only. Seed from the Airtable cache so the
+  // banner is correct on first paint, then overwrite with the live Stripe
+  // read once GET /api/rancher/connect/status resolves. This endpoint never
+  // mutates Airtable (no Migration Status / Connect-field writes), so it's
+  // safe to call on every dashboard mount.
+  const [liveConnect, setLiveConnect] = useState<string>(rancher.connectStatus || 'not_connected');
+  const [connectChecked, setConnectChecked] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/connect/status', { credentials: 'include' });
+        const data = await res.json().catch(() => null);
+        if (!cancelled && res.ok && data?.status) {
+          setLiveConnect(String(data.status));
+        }
+      } catch {
+        // Network hiccup — keep the cached status; banner still renders.
+      } finally {
+        if (!cancelled) setConnectChecked(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const connect = liveConnect || 'not_connected';
+
+  // CONNECT-RECOVERY banner — the v2-migration money-leak guard. Fires only
+  // when the rancher is tier_v2 (gated at caller) AND their tier subscription
+  // is *fully active* (NOT trialing — they're paying, so deposits must be able
+  // to land) AND Connect is anything other than active. Read-only; opening the
+  // onboarding link is the only side effect.
+  const subActive = status === 'active';
+  const showConnectRecovery = subActive && connect !== 'active';
 
   // Banner gates follow the spec literal — only #2 (Connect not_connected)
   // requires the rancher to have a paying subscription first, so we don't
   // ask them to connect a bank before they've picked a plan. States 3/4
   // fire on the singular Connect field. State 5 catches any broken sub.
-  const showConnectNotConnected = !noTier && subPaying && connect === 'not_connected';
-  const showConnectOnboarding = connect === 'onboarding';
-  const showConnectRestricted = connect === 'restricted';
+  // The recovery banner (state 0) supersedes the narrower not_connected /
+  // onboarding amber banners when the rancher is fully active, so we don't
+  // stack two "connect your bank" messages.
+  const showConnectNotConnected = !showConnectRecovery && !noTier && subPaying && connect === 'not_connected';
+  const showConnectOnboarding = !showConnectRecovery && connect === 'onboarding';
+  const showConnectRestricted = !showConnectRecovery && connect === 'restricted';
   const showSubBroken = !noTier && subBroken;
 
   const anyBanner =
-    noTier || showConnectNotConnected || showConnectOnboarding || showConnectRestricted || showSubBroken;
+    showConnectRecovery || noTier || showConnectNotConnected || showConnectOnboarding
+    || showConnectRestricted || showSubBroken;
   if (!anyBanner) return null;
 
+  // Human-readable live Connect status for the recovery banner's status line.
+  const connectStatusLabel =
+    connect === 'active' ? 'Connected'
+    : connect === 'restricted' ? 'Restricted — Stripe needs more info'
+    : connect === 'onboarding' ? 'In progress — verification unfinished'
+    : 'Not connected';
+
   // Opens Stripe Connect onboarding link from /api/rancher/connect/start in
-  // a new tab. Same handler powers #2 + #3 (start auto-resumes existing
-  // onboarding when account already exists).
+  // a new tab. Same handler powers #0 + #2 + #3 (start auto-resumes existing
+  // onboarding when account already exists, and mints a fresh link otherwise).
   async function openConnectOnboarding() {
     try {
       const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
@@ -3231,6 +3290,48 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
 
   return (
     <div className="space-y-3">
+      {/* State 0 — CONNECT-RECOVERY. Prominent, persistent. tier_v2 +
+          subscription active + Connect != active. The rancher is paying for
+          leads but buyer deposits have nowhere to land until their bank is
+          connected. Shows the LIVE Connect status (read-only). */}
+      {showConnectRecovery && (
+        <div className="border-2 border-red-600 bg-red-50 p-5 md:p-6 space-y-4">
+          <div className="flex items-start gap-3 flex-wrap">
+            <span className="text-2xl leading-none" aria-hidden="true">⚠️</span>
+            <div className="flex-1 min-w-[260px]">
+              <p className="text-xs uppercase tracking-widest text-red-700 mb-1">
+                Action required — payouts blocked
+              </p>
+              <h3 className="font-serif text-xl text-red-900 mb-2">
+                You&rsquo;re not getting paid yet — finish connecting your bank (2 min).
+              </h3>
+              <p className="text-sm text-red-900 leading-relaxed">
+                Your subscription is active, but Stripe hasn&rsquo;t finished
+                verifying your bank. Until it does, buyer deposits have nowhere
+                to land. Finishing takes about two minutes — Stripe picks up
+                exactly where you left off.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-4 flex-wrap pt-2 border-t border-red-200">
+            <p className="text-xs text-red-800">
+              Live Stripe Connect status:{' '}
+              <strong>{connectStatusLabel}</strong>
+              {!connectChecked && (
+                <span className="ml-1 text-red-500">(checking…)</span>
+              )}
+            </p>
+            <button
+              type="button"
+              onClick={openConnectOnboarding}
+              className="inline-flex items-center gap-1 px-5 py-2.5 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors"
+            >
+              Finish connecting your bank →
+            </button>
+          </div>
+        </div>
+      )}
+
       {noTier && (
         <div className="p-4 border-l-4 border-blue-500 bg-blue-50 flex items-center justify-between gap-4 flex-wrap">
           <p className="text-sm text-blue-900">
