@@ -52,9 +52,13 @@ const CAL_OPERATOR_SALES_EVENT_SLUG = process.env.CAL_OPERATOR_SALES_EVENT_SLUG 
 export default async function BookPage({ params }: PageProps) {
   const { refId } = await params;
 
-  // --- Resolve buyer name/email from referral (never throws) ---
+  // --- Resolve buyer name/email + rancher cal slug from referral (never throws) ---
   let buyerName = '';
   let buyerEmail = '';
+  // Rancher's Cal.com slug ('username' or 'username/event'), normalized like
+  // email.ts:1271 (strip https://cal.com/ prefix + leading/trailing slashes).
+  // Empty string = no rancher slug → fall back to operator sales call.
+  let rancherCalLink = '';
 
   try {
     const referral = (await getRecordById(TABLES.REFERRALS, refId)) as any;
@@ -63,6 +67,17 @@ export default async function BookPage({ params }: PageProps) {
       const consumer = (await getRecordById(TABLES.CONSUMERS, consumerId)) as any;
       buyerName = String(consumer?.['Full Name'] || '');
       buyerEmail = String(consumer?.['Email'] || '');
+    }
+    // Resolve the matched rancher's Cal.com slug (mirrors email.ts:1271).
+    const rancherId = referral?.['Rancher']?.[0];
+    if (rancherId) {
+      const rancher = (await getRecordById(TABLES.RANCHERS, rancherId)) as any;
+      const rawSlug = String(rancher?.['Cal.com Slug'] || '');
+      rancherCalLink = rawSlug
+        .trim()
+        .replace(/^https?:\/\/(www\.)?cal\.com\//i, '')
+        .replace(/^\/+/, '')
+        .replace(/\/+$/, '');
     }
   } catch {
     // Referral not found or fetch failed — render the booking page with no
@@ -115,14 +130,20 @@ export default async function BookPage({ params }: PageProps) {
             referralId={refId}
             calUsername={CAL_OPERATOR_USERNAME}
             eventSlug={CAL_OPERATOR_SALES_EVENT_SLUG}
-            // Iframe fallback props (same as legacy path)
+            // Iframe fallback props — calLink (rancher) takes priority when
+            // resolved; else operator sales call via operatorCalLink.
+            calLink={rancherCalLink || undefined}
             operatorCalLink={operatorCalLink}
             name={buyerName || undefined}
             email={buyerEmail || undefined}
           />
         ) : (
           // CAL_NATIVE_BOOKER not set → battle-tested iframe, always works.
+          // calLink (rancher's slug) takes priority when resolved; else operator
+          // sales call (operatorCalLink). CalInlineBooker already prefers calLink
+          // over operatorCalLink internally (see CalInlineBooker.tsx:50).
           <CalInlineBooker
+            calLink={rancherCalLink || undefined}
             operatorCalLink={operatorCalLink}
             name={buyerName || undefined}
             email={buyerEmail || undefined}
