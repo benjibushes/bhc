@@ -43,20 +43,27 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
   return { id: created.id };
 }
 
-export async function markDepositSucceeded(stripePaymentIntentId: string): Promise<void> {
+// Returns true if this call flipped the row to succeeded (or there is no row to
+// flip — not a duplicate); false if the row was ALREADY succeeded (a repeat
+// delivery). Callers use the false return as a cross-webhook idempotency guard
+// to skip non-idempotent side effects (funnel/email/Telegram) on the second
+// delivery of the same PaymentIntent. Backward-compatible: callers that ignore
+// the return value keep working.
+export async function markDepositSucceeded(stripePaymentIntentId: string): Promise<boolean> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
   const existing: any[] = await getAllRecords(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`
   );
-  if (existing.length === 0) return;
+  if (existing.length === 0) return true;
   const payment = existing[0];
   // Idempotency: already-succeeded payments are a no-op on webhook retry.
-  if (payment['Status'] === 'succeeded') return;
+  if (payment['Status'] === 'succeeded') return false;
   await updateRecord(PAYMENTS_TABLE, payment.id, {
     'Status': 'succeeded',
     'Captured At': new Date().toISOString(),
   });
+  return true;
 }
 
 /**
