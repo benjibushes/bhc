@@ -17,6 +17,10 @@ export function canTransition(from: DealState, to: DealState): boolean {
   if (TERMINAL.includes(from)) return false;
   if (to === 'CLOSED_LOST' || to === 'REFUNDED') return true; // universal exit
   if (to === 'CLOSED_WON') return true; // off-platform fast-close from any active
+  // IN_CONVERSATION ("Rancher Contacted"/in-talks) is a re-affirmable engagement
+  // state — the operator can mark a deal "in talks" from any active state,
+  // including stepping back from Negotiation. Allow it (matches the old PATCH).
+  if (to === 'IN_CONVERSATION') return true;
   const fi = FORWARD.indexOf(from);
   const ti = FORWARD.indexOf(to);
   if (fi === -1 || ti === -1) return false;

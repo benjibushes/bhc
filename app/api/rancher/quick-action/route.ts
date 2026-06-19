@@ -379,27 +379,35 @@ async function applyAction(
   } else {
     // Non-close transition (in_talks → IN_CONVERSATION / Rancher Contacted).
     // Route through state machine so the transition is audited + emitted.
-    const _t = await transition(decoded.referralId, {
-      to: 'IN_CONVERSATION',
-      actor: `rancher:${decoded.rancherId}`,
-      reason: 'rancher marked in talks via email link',
-      extraFields: {
-        'Last Rancher Activity At': updates['Last Rancher Activity At'],
-        'Rancher Engaged Flag': updates['Rancher Engaged Flag'],
-      },
-    });
-    if (!_t.ok && !_t.noop) {
-      // Safety net: machine rejected — fall back to direct write + alert.
-      console.error('[quick-action in_talks] transition rejected, falling back to direct write:', _t.error);
+    try {
+      const _t = await transition(decoded.referralId, {
+        to: 'IN_CONVERSATION',
+        actor: `rancher:${decoded.rancherId}`,
+        reason: 'rancher marked in talks via email link',
+        extraFields: {
+          'Last Rancher Activity At': updates['Last Rancher Activity At'],
+          'Rancher Engaged Flag': updates['Rancher Engaged Flag'],
+        },
+      });
+      if (!_t.ok && !_t.noop) {
+        // Machine rejected — fall back to direct write + alert.
+        console.error('[quick-action in_talks] transition rejected, falling back to direct write:', _t.error);
+        await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
+        try {
+          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+          await sendOperatorSignal({ urgency: 'normal', kind: 'system-error', summary: `Deal ${decoded.referralId}: state-machine rejected IN_CONVERSATION (used fallback). Check lib/deal.`, dedupeKey: `transition-fallback-${decoded.referralId}`, dedupeWindowMs: 3600_000 });
+        } catch {}
+      }
+    } catch (err: any) {
+      // A thrown Airtable error must degrade exactly like the old inline write:
+      // attempt a plain direct write, and only on ITS failure return the graceful
+      // "try again" message — never a raw 500 to a rancher clicking an email link.
+      console.error('[quick-action in_talks] transition threw, falling back to direct write:', err?.message || err);
       try {
         await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
       } catch (e: any) {
         return { ok: false, message: `Couldn't update — try again. (${e?.message || 'unknown'})` };
       }
-      try {
-        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
-        await sendOperatorSignal({ urgency: 'normal', kind: 'system-error', summary: `Deal ${decoded.referralId}: state-machine rejected IN_CONVERSATION (used fallback). Check lib/deal.`, dedupeKey: `transition-fallback-${decoded.referralId}`, dedupeWindowMs: 3600_000 });
-      } catch {}
     }
   }
 
