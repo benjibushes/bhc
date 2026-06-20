@@ -23,6 +23,12 @@ interface SourceRow {
   matches: number;
   closes: number;
   commissionDue: number;
+  saleRevenue?: number;
+  spend?: number;
+  // commission / spend
+  roas?: number | null;
+  // sale $ / spend (standard marketing ROAS)
+  gmvRoas?: number | null;
 }
 
 interface AnalyticsData {
@@ -34,6 +40,9 @@ interface AnalyticsData {
     totalRevenue: number;
     totalCommission: number;
     conversionRate: number;
+    totalSpend?: number;
+    blendedRoas?: number | null;
+    blendedGmvRoas?: number | null;
   };
   campaigns: CampaignStats[];
   sourceBreakdown?: SourceRow[];
@@ -63,9 +72,60 @@ export default function AnalyticsPage() {
   // campaign perform?" is the most common question — all-time was the bug.
   const [sinceFilter, setSinceFilter] = useState<SinceFilter>('30');
 
+  // Ad-spend → ROAS tooling (ads partner). Form + recent-entries log.
+  const today = new Date().toISOString().slice(0, 10);
+  const [spendLog, setSpendLog] = useState<any[]>([]);
+  const [showSpendForm, setShowSpendForm] = useState(false);
+  const [spendForm, setSpendForm] = useState({ source: '', channel: 'Meta', amount: '', date: today, note: '' });
+  const [spendSaving, setSpendSaving] = useState(false);
+  const [spendMsg, setSpendMsg] = useState('');
+
   useEffect(() => {
     fetchAnalytics(sinceFilter);
   }, [sinceFilter]);
+
+  useEffect(() => {
+    fetchSpendLog();
+  }, []);
+
+  const fetchSpendLog = async () => {
+    try {
+      const r = await fetch('/api/admin/ad-spend');
+      if (r.ok) {
+        const d = await r.json();
+        setSpendLog(d.entries || []);
+      }
+    } catch {
+      /* non-fatal */
+    }
+  };
+
+  const submitSpend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSpendSaving(true);
+    setSpendMsg('');
+    try {
+      const res = await fetch('/api/admin/ad-spend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...spendForm, amount: Number(spendForm.amount) }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setSpendMsg('Logged ✓');
+        setSpendForm({ source: '', channel: spendForm.channel, amount: '', date: spendForm.date, note: '' });
+        fetchSpendLog();
+        fetchAnalytics(sinceFilter);
+      } else {
+        setSpendMsg(d.error || 'Failed to log');
+      }
+    } catch {
+      setSpendMsg('Failed to log');
+    }
+    setSpendSaving(false);
+  };
+
+  const formatRoas = (v?: number | null) => (v == null ? '—' : `${v.toFixed(2)}×`);
 
   const fetchAnalytics = async (since: SinceFilter) => {
     setLoading(true);
@@ -218,6 +278,31 @@ export default function AnalyticsPage() {
                     {formatPercent(data.overview.conversionRate)}
                   </div>
                 </div>
+                <div className="p-6 border border-dust bg-white">
+                  <div className="text-sm text-saddle mb-1">Ad Spend</div>
+                  <div className="text-2xl font-[family-name:var(--font-serif)]">
+                    {formatCurrency(data.overview.totalSpend || 0)}
+                  </div>
+                  {!data.overview.totalSpend && (
+                    <button
+                      onClick={() => setShowSpendForm(true)}
+                      className="text-xs text-rust underline mt-1"
+                    >
+                      Log spend ↓
+                    </button>
+                  )}
+                </div>
+                <div className="p-6 border border-charcoal bg-white">
+                  <div className="text-sm text-saddle mb-1">Blended ROAS</div>
+                  <div className="text-2xl font-[family-name:var(--font-serif)]">
+                    {data.overview.totalSpend ? formatRoas(data.overview.blendedGmvRoas) : '—'}
+                  </div>
+                  <div className="text-xs text-saddle mt-1">
+                    {data.overview.totalSpend
+                      ? `${formatRoas(data.overview.blendedRoas)} on commission`
+                      : 'sale $ ÷ ad spend'}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -278,13 +363,105 @@ export default function AnalyticsPage() {
 
             {/* P1 audit D-5: per-Source attribution breakdown */}
             <div>
-              <h2 className="font-[family-name:var(--font-serif)] text-2xl mb-2">
-                Source Attribution
-              </h2>
-              <p className="text-sm text-saddle mb-4">
-                Funnel by Consumer Source — organic vs rancher-page vs partner-XXX vs exit-intent.
-                Closest signal to per-channel CAC w/o paid-ad spend integration.
-              </p>
+              <div className="flex items-start justify-between gap-4 mb-2">
+                <div>
+                  <h2 className="font-[family-name:var(--font-serif)] text-2xl mb-2">
+                    Source Attribution & ROAS
+                  </h2>
+                  <p className="text-sm text-saddle">
+                    Funnel by Consumer Source — joined to logged ad spend → ROAS per channel.
+                    Log spend under the same Source name you tag in your UTMs so it matches.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowSpendForm((v) => !v)}
+                  className="shrink-0 px-4 py-2 bg-charcoal text-bone text-sm hover:bg-divider transition-colors"
+                >
+                  {showSpendForm ? 'Close' : '+ Log Ad Spend'}
+                </button>
+              </div>
+
+              {showSpendForm && (
+                <div className="mb-4 p-5 border border-charcoal bg-white">
+                  <form onSubmit={submitSpend} className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+                    <label className="text-sm">
+                      <span className="block text-saddle mb-1">Source</span>
+                      <input
+                        type="text"
+                        required
+                        list="known-sources"
+                        value={spendForm.source}
+                        onChange={(e) => setSpendForm({ ...spendForm, source: e.target.value })}
+                        placeholder="facebook"
+                        className="w-full px-3 py-2 border border-dust bg-bone"
+                      />
+                      <datalist id="known-sources">
+                        {(data.sourceBreakdown || []).map((s) => (
+                          <option key={s.source} value={s.source} />
+                        ))}
+                      </datalist>
+                    </label>
+                    <label className="text-sm">
+                      <span className="block text-saddle mb-1">Channel</span>
+                      <select
+                        value={spendForm.channel}
+                        onChange={(e) => setSpendForm({ ...spendForm, channel: e.target.value })}
+                        className="w-full px-3 py-2 border border-dust bg-bone"
+                      >
+                        <option>Meta</option>
+                        <option>Google</option>
+                        <option>TikTok</option>
+                        <option>Other</option>
+                      </select>
+                    </label>
+                    <label className="text-sm">
+                      <span className="block text-saddle mb-1">Amount ($)</span>
+                      <input
+                        type="number"
+                        required
+                        min="0.01"
+                        step="0.01"
+                        value={spendForm.amount}
+                        onChange={(e) => setSpendForm({ ...spendForm, amount: e.target.value })}
+                        placeholder="250"
+                        className="w-full px-3 py-2 border border-dust bg-bone"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <span className="block text-saddle mb-1">Date</span>
+                      <input
+                        type="date"
+                        required
+                        value={spendForm.date}
+                        onChange={(e) => setSpendForm({ ...spendForm, date: e.target.value })}
+                        className="w-full px-3 py-2 border border-dust bg-bone"
+                      />
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="submit"
+                        disabled={spendSaving}
+                        className="px-4 py-2 bg-rust text-white text-sm hover:bg-rust/90 disabled:opacity-50 transition-colors"
+                      >
+                        {spendSaving ? 'Saving…' : 'Log'}
+                      </button>
+                      {spendMsg && <span className="text-xs text-saddle">{spendMsg}</span>}
+                    </div>
+                  </form>
+                  {spendLog.length > 0 && (
+                    <div className="mt-4 pt-3 border-t border-dust">
+                      <div className="text-xs text-saddle mb-2">Recent spend</div>
+                      <div className="flex flex-wrap gap-2">
+                        {spendLog.slice(0, 12).map((e) => (
+                          <span key={e.id} className="text-xs px-2 py-1 border border-dust bg-bone">
+                            {e.date} · {e.source} · {formatCurrency(e.amount)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               {!data.sourceBreakdown || data.sourceBreakdown.length === 0 ? (
                 <div className="p-8 border border-dust bg-white text-center text-saddle">
                   No source data in this range.
@@ -299,6 +476,8 @@ export default function AnalyticsPage() {
                         <th className="text-right p-4 font-medium">Matches</th>
                         <th className="text-right p-4 font-medium">Closes</th>
                         <th className="text-right p-4 font-medium">Commission $</th>
+                        <th className="text-right p-4 font-medium">Spend</th>
+                        <th className="text-right p-4 font-medium" title="Sale $ ÷ ad spend (platform commission ÷ spend in parens)">ROAS</th>
                         <th className="text-right p-4 font-medium">Conv %</th>
                       </tr>
                     </thead>
@@ -312,6 +491,19 @@ export default function AnalyticsPage() {
                             <td className="p-4 text-right">{s.matches}</td>
                             <td className="p-4 text-right">{s.closes}</td>
                             <td className="p-4 text-right font-semibold">{formatCurrency(s.commissionDue)}</td>
+                            <td className="p-4 text-right text-saddle">{s.spend ? formatCurrency(s.spend) : '—'}</td>
+                            <td className="p-4 text-right">
+                              {s.spend ? (
+                                <span
+                                  className={`font-semibold ${(s.gmvRoas || 0) >= 1 ? 'text-sage-dark' : 'text-rust'}`}
+                                  title={`${formatRoas(s.roas)} on commission`}
+                                >
+                                  {formatRoas(s.gmvRoas)}
+                                </span>
+                              ) : (
+                                <span className="text-dust">—</span>
+                              )}
+                            </td>
                             <td className="p-4 text-right text-sm text-saddle">{formatPercent(convRate)}</td>
                           </tr>
                         );
