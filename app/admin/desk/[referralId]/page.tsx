@@ -178,8 +178,8 @@ export default function DealCockpitPage({ params }: { params: Promise<{ referral
               <div><span className="text-saddle">Rancher: </span>
                 {data.rancher ? <span className="font-medium">{data.rancher.name} <span className="text-dust">({data.rancher.state})</span></span>
                   : <span className="text-rust font-medium">Unmatched</span>}</div>
-              {!!r.saleAmount && <div><span className="text-saddle">Sale: </span><span className="font-medium">{money(r.saleAmount)}</span></div>}
-              {!!r.commissionDue && <div><span className="text-saddle">Commission: </span><span className="font-medium">{money(r.commissionDue)}{r.commissionPaid ? ' (paid)' : ''}</span></div>}
+              {isAdmin && !!r.saleAmount && <div><span className="text-saddle">Sale: </span><span className="font-medium">{money(r.saleAmount)}</span></div>}
+              {isAdmin && !!r.commissionDue && <div><span className="text-saddle">Commission: </span><span className="font-medium">{money(r.commissionDue)}{r.commissionPaid ? ' (paid)' : ''}</span></div>}
             </div>
             <div className="mt-4 p-3 bg-bone border-l-4 border-charcoal text-sm">
               <span className="font-medium">Next: </span>{data.nextAction}
