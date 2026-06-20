@@ -608,22 +608,45 @@ export async function POST(request: Request) {
 
       topMatch = eligible.length > 0 ? eligible[0] : null;
 
-      // ── NATIONWIDE FALLBACK — DISABLED 2026-06-05 ──────────────────────
-      // BPF-1 (2026-06-02) wired `Ships Nationwide=true` as a cross-state
-      // fallback when no in-state rancher matched. In prod this fired
-      // through the batch-approve cron and routed 39 cross-state buyers
-      // to Ashcraft (TX) and Hartsock (CO) within minutes — neither
-      // rancher expected or wanted the volume, and the buyers got a
-      // misrouted intro that contradicted their state.
-      //
-      // Reverted to STATE-LOCAL ONLY policy. No nationwide auto-route.
-      // Buyers without an in-state rancher waitlist via the no-match
-      // short-circuit below. If/when a specific rancher needs explicit
-      // multi-state coverage, use `Admin Approved Multi-State` + populate
-      // `Routing States` (handled above) — that's the controlled path.
-      //
-      // The Ships Nationwide field is intentionally NOT read here. Flipped
-      // both Ashcraft and Hartsock to Ships Nationwide=false to be safe.
+      // ── CONTROLLED NATIONWIDE FALLBACK (re-enabled 2026-06-20, admin-gated) ─
+      // Local/regional always WINS (handled above). Only when NO local rancher
+      // matched do we fall back to a rancher the operator has EXPLICITLY approved
+      // for nationwide shipping — gated on `Admin Approved Multi-State` AND
+      // `Ships Nationwide`. This is the SAFE version of the path reverted on
+      // 2026-06-05: that one auto-routed ANY Ships-Nationwide flag (incl. stray /
+      // bulk-imported ones) and dumped 39 cross-state buyers on two ranchers who
+      // never opted in. Here a rancher only enters this tier if the operator
+      // deliberately double-flagged them, so an accidental flag can't misroute.
+      // Lets an uncovered-state buyer get a real match (it ships) instead of
+      // waitlisting, while keeping the local-first experience intact.
+      if (!topMatch) {
+        const nationwideEligible = allRanchers.filter((r: any) => {
+          if (!isEligibleBase(r)) return false;
+          if (!(r['Admin Approved Multi-State'] && r['Ships Nationwide'])) return false;
+          // Home-state ranchers were already considered in the local tier.
+          if (normalizeState(r['State']) === normalizedBuyerState) return false;
+          if (!isTierFit(r)) return false;
+          if (!isPriceFit(r)) return false;
+          return true;
+        });
+        // No primary-state preference here (none are in-state). Load-balance →
+        // round-robin → performance, same tiebreakers as the local sort.
+        nationwideEligible.sort((a: any, b: any) => {
+          const aRefs = a['Current Active Referrals'] || 0;
+          const bRefs = b['Current Active Referrals'] || 0;
+          if (aRefs !== bRefs) return aRefs - bRefs;
+          const aDate = a['Last Assigned At'] ? new Date(a['Last Assigned At']).getTime() : 0;
+          const bDate = b['Last Assigned At'] ? new Date(b['Last Assigned At']).getTime() : 0;
+          if (aDate !== bDate) return aDate - bDate;
+          const aScore = a['Performance Score'] || 50;
+          const bScore = b['Performance Score'] || 50;
+          return bScore - aScore;
+        });
+        if (nationwideEligible.length > 0) {
+          topMatch = nationwideEligible[0];
+          matchType = 'nationwide';
+        }
+      }
     }
 
     // ── NO-MATCH SHORT-CIRCUIT (2026-05-09 fix) ──
