@@ -27,6 +27,7 @@ import {
 import { sendPostPurchaseWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { markDepositSucceeded } from '@/lib/contracts/payments';
+import { claimOnce } from '@/lib/rancherCapacity';
 import { recordClose } from '@/lib/contracts/rancher';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, closePurchaseEnabled } from '@/lib/metaCapi';
@@ -66,6 +67,13 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
   // same PI, in either order. markDepositSucceeded returns false if the row was
   // ALREADY succeeded (a prior delivery settled it) — return now so the
   // non-idempotent side effects below (funnel/email/Telegram) don't double-fire.
+  // Serialize concurrent dual-webhook deliveries for this PI. The flip-gate
+  // below handles SEQUENTIAL delivery, but two SIMULTANEOUS deliveries can both
+  // read 'pending' before either writes 'succeeded' and double-fire the
+  // funnel/email/Telegram side effects. The atomic claim closes that window;
+  // it degrades open if Redis is down (the flip-gate still protects).
+  if (!(await claimOnce(`settle-deposit:${pi.id}`, 60))) return;
+
   const depositFlipped = await markDepositSucceeded(pi.id);
   if (!depositFlipped) return;
 
@@ -224,11 +232,21 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
   let referralRow: any = null;
   try {
     referralRow = await getRecordById(TABLES.REFERRALS, referralId);
-  } catch {}
+  } catch (e: any) {
+    console.error('[settleFinalInvoice] referral read failed:', e?.message);
+  }
+  // FAIL CLOSED: if we couldn't read the referral, do NOT proceed. A null row
+  // makes the Closed-Won idempotency check below ('' !== 'Closed Won') pass and
+  // re-runs recordClose — double-counting the funnel + re-firing side effects.
+  // Throw so the webhook marks the event failed (operator-visible) rather than
+  // silently double-settling on a transient read blip.
+  if (!referralRow) {
+    throw new Error(`settleFinalInvoice: referral ${referralId} unreadable — aborting to avoid double-settle`);
+  }
   // Cross-webhook idempotency: if the referral is already Closed Won, a prior
   // delivery (platform or Connect) settled this — return so recordClose's
   // transitionBuyerStage + the Telegram/CAPI/audit below don't double-fire.
-  if (String(referralRow?.['Status'] || '') === 'Closed Won') return;
+  if (String(referralRow['Status'] || '') === 'Closed Won') return;
   const totalSaleAmount = Number(referralRow?.['Total Sale Amount'] || 0);
   const depositAmount = Number(referralRow?.['Deposit Amount'] || 0);
   const finalAmount = finalCents / 100;

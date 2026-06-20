@@ -87,7 +87,11 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
   const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
   if (buyerId && input.outcome === 'won') {
     try {
-      await transitionBuyerStage(buyerId, 'CLOSED', `referral:${nextStatus}`);
+      // Only on the FIRST transition into Closed Won — a re-run (dual webhook
+      // delivery, or a read-blip retry) must not re-flip an already-CLOSED buyer.
+      if (prevStatus !== 'Closed Won') {
+        await transitionBuyerStage(buyerId, 'CLOSED', `referral:${nextStatus}`);
+      }
     } catch (e: any) {
       console.warn('[contracts.recordClose] Buyer Stage flip failed:', e?.message);
     }
@@ -121,12 +125,16 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     await restoreBuyerAfterClosedLost(buyerId, input.referralId);
   }
 
-  await funnelRecord({
-    stage: `close:${input.outcome}`,
-    rancherId: input.rancherId,
-    referralId: input.referralId,
-    amount: input.saleAmount,
-  });
+  // Only on a FRESH transition — a re-run (dual webhook delivery / retry) must
+  // not double-count close revenue in the funnel metrics.
+  if (prevStatus !== nextStatus) {
+    await funnelRecord({
+      stage: `close:${input.outcome}`,
+      rancherId: input.rancherId,
+      referralId: input.referralId,
+      amount: input.saleAmount,
+    });
+  }
 
   // Close any open Threads for this referral on terminal close. Awaiting
   // Payment keeps threads Active (deal still in progress; rancher may still
