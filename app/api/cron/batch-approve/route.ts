@@ -281,9 +281,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       const readyToGoLive = allRanchers.filter((r: any) => {
         if (r['Onboarding Status'] !== 'Verification Complete') return false;
         if (r['Page Live'] === true) return false;
-        // Required: Slug + About Text + a way to collect payment.
+        // Required: Slug + a way to collect payment. About Text is NOT required —
+        // the wizard never makes it mandatory and rancher-go-live-sync doesn't gate
+        // on it, so requiring it here silently stranded ranchers who finished
+        // everything else but left About blank.
         if (!r['Slug']) return false;
-        if (!r['About Text']) return false;
         // tier_v2 ranchers collect via Stripe Connect deposits, not a legacy
         // Payment Link — accept an active Connect account as equivalent, else
         // every tier_v2 rancher is permanently blocked from auto-go-live.
