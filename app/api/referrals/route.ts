@@ -1,10 +1,18 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { requireRole } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
 export async function GET(request: Request) {
+  // SECURITY: this returns the whole marketplace's buyer PII (name/email/phone)
+  // + sale/commission $. It was previously UNAUTHENTICATED. All consumers are
+  // admin surfaces (Sales Desk, commissions, referrals, heatmap), so gate it to
+  // admin + onboarding — the same roles allowed to view the deal cockpit.
+  const authResp = await requireRole(request, ['admin', 'onboarding']);
+  if (authResp) return authResp;
+
   try {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
