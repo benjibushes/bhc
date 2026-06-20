@@ -96,12 +96,28 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     let bucketLabel = '';
     const missing: string[] = [];
 
-    if (agreementSigned && !pageLive) {
+    const connectAcct = !!(r['Stripe Connect Account Id'] || r['Stripe Account Id']);
+    const connectActive = String(r['Stripe Connect Status'] || '').toLowerCase() === 'active';
+    const isTierV2 = String(r['Pricing Model'] || '').toLowerCase() === 'tier_v2';
+
+    if (connectAcct && !connectActive && !pageLive) {
+      // CONNECT-STUCK — started Stripe Connect KYC but never finished. The #1
+      // silent drop-off: previously NO bucket caught them, so a rancher who
+      // abandoned the bank/SSN step just vanished with zero follow-up. Anchor on
+      // when they started (fallback to signed/docs for rows predating the stamp).
+      anchorISO = r['Connect Started At'] || r['Agreement Signed At'] || r['Docs Sent At'] || null;
+      bucketLabel = 'connect-stuck';
+      missing.push('Finish connecting your bank with Stripe — about 5 minutes, then buyers can pay you');
+    } else if (agreementSigned && !pageLive) {
       anchorISO = r['Agreement Signed At'] || null;
       bucketLabel = 'signed-no-page';
       if (!r['Slug']) missing.push('A URL slug (in My Page tab)');
-      if (!r['About Text']) missing.push('About text (a short story of your ranch)');
-      if (!(r['Quarter Payment Link'] || r['Half Payment Link'] || r['Whole Payment Link'])) {
+      if (!(r['Quarter Price'] || r['Half Price'] || r['Whole Price'])) missing.push('At least one price');
+      // tier_v2 collects via Stripe Connect, never a legacy Payment Link — asking
+      // them for a "payment link" was the confusing wrong message the audit flagged.
+      if (isTierV2) {
+        if (!connectActive) missing.push('Connect your bank with Stripe');
+      } else if (!(r['Quarter Payment Link'] || r['Half Payment Link'] || r['Whole Payment Link'])) {
         missing.push('At least one payment link (Square / Stripe / PayPal)');
       }
     } else if (onboarding === 'Call Complete') {
