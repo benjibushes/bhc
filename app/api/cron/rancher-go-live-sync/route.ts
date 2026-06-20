@@ -71,11 +71,26 @@ async function realHandler(
     let skipReason = '';
 
     if (isTierV2) {
+      // tier_v2 needs an ACTIVE Connect account AND real page content (slug +
+      // at least one price) before going live. Previously this gated on Connect
+      // ALONE, so a connected-but-content-less rancher would flip Live with a
+      // BLANK page — a buyer landing there sees nothing. (No payment-link check:
+      // tier_v2 collects deposits via Stripe Connect, not a Payment Link.)
       const connectStatus = String(rancher['Stripe Connect Status'] || '').toLowerCase();
-      if (connectStatus === 'active') {
+      const hasSlug = !!rancher['Slug'];
+      const hasPrice = !!(
+        rancher['Quarter Price'] ||
+        rancher['Half Price'] ||
+        rancher['Whole Price']
+      );
+      if (connectStatus === 'active' && hasSlug && hasPrice) {
         eligible = true;
       } else {
-        skipReason = `tier_v2 but Stripe Connect Status="${rancher['Stripe Connect Status'] || 'unset'}"`;
+        const missing: string[] = [];
+        if (connectStatus !== 'active') missing.push(`Connect="${rancher['Stripe Connect Status'] || 'unset'}"`);
+        if (!hasSlug) missing.push('Slug');
+        if (!hasPrice) missing.push('Price');
+        skipReason = `tier_v2 missing: ${missing.join(', ')}`;
       }
     } else {
       // Legacy rancher: needs slug + at least one price + at least one payment link
