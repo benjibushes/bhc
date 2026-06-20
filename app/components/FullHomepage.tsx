@@ -89,7 +89,7 @@ export default function FullHomepage() {
               source beef directly from a real ranch
             </h2>
             <p className="text-lg text-saddle mb-10">
-              We route you to a verified rancher in your state. You talk to them direct, set your cuts, pick your processing date. We take 10% only when the deal closes — nothing else.
+              Answer a few questions and we match you with a verified rancher serving your area — or put you first in line as we bring one to your state. You talk to them direct, set your cuts, pick your processing date. You pay the rancher, not a marketplace.
               {totalMembers ? ` Join ${totalMembers.toLocaleString()}+ members already sourcing direct.` : ''}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
@@ -104,9 +104,13 @@ export default function FullHomepage() {
               </a>
             </div>
             <p className="text-xs text-saddle mt-8">
-              Rancher, brand, or have land to list?{' '}
+              Raise cattle?{' '}
+              <a href="/sell" className="underline hover:text-charcoal transition-colors">
+                Sell direct — free to join
+              </a>
+              {' · '}Brand or land to list?{' '}
               <a href="/partner" className="underline hover:text-charcoal transition-colors">
-                Partner with us instead
+                Partner with us
               </a>
             </p>
           </div>
@@ -123,8 +127,8 @@ export default function FullHomepage() {
               {[
                 { n: '1', t: 'Apply', d: 'Tell us your state + cut size. Takes 90 seconds.' },
                 { n: '2', t: 'Qualify', d: 'Answer 4 questions to confirm your match.' },
-                { n: '3', t: 'Match', d: 'We route you to a verified rancher in your state.' },
-                { n: '4', t: 'Connect', d: 'Schedule a call or pay deposit on the platform.' },
+                { n: '3', t: 'Match', d: 'We match you to a verified rancher serving your area.' },
+                { n: '4', t: 'Connect', d: 'Book a call or pay your deposit on the platform.' },
                 { n: '5', t: 'Stock', d: 'Pick up at processing date. Freezer full.' },
               ].map((step) => (
                 <li
@@ -302,7 +306,7 @@ export default function FullHomepage() {
                 <div className="text-4xl">01</div>
                 <h3 className="font-serif text-xl">Approval-only access</h3>
                 <p className="text-sm text-saddle leading-relaxed">
-                  Every member is manually reviewed before joining. No bots, no spam, no tire-kickers.
+                  Every buyer passes a short qualification quiz before any introduction. No bots, no spam, no tire-kickers.
                 </p>
               </div>
               <div className="text-center space-y-4">
@@ -357,7 +361,7 @@ export default function FullHomepage() {
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
                   <p className="font-medium">Get routed</p>
-                  <p className="text-sm text-saddle">We match you with a verified rancher in your state within hours.</p>
+                  <p className="text-sm text-saddle">We match you with a verified rancher serving your area within hours.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
@@ -380,23 +384,23 @@ export default function FullHomepage() {
               <div className="grid md:grid-cols-4 gap-6">
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">1</div>
-                  <p className="font-medium">Apply</p>
-                  <p className="text-sm text-saddle">5-min self-serve. Submit ranch info, capacity, processor.</p>
+                  <p className="font-medium">Join free</p>
+                  <p className="text-sm text-saddle">$0 to start. A few fields, then a guided setup wizard.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
-                  <p className="font-medium">Sign + verify</p>
-                  <p className="text-sm text-saddle">Partnership agreement + USDA processor check. Listed as verified.</p>
+                  <p className="font-medium">Set up</p>
+                  <p className="text-sm text-saddle">Set your prices, connect your bank for direct payouts, go live.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
-                  <p className="font-medium">Get routed buyers</p>
-                  <p className="text-sm text-saddle">Pre-screened, in-state buyers email you direct. You close it.</p>
+                  <p className="font-medium">Get matched buyers</p>
+                  <p className="text-sm text-saddle">Pre-qualified buyers in your area come to you. You close it direct.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
                   <p className="font-medium">Keep 90%</p>
-                  <p className="text-sm text-saddle">10% commission only on closed deals. Pause or leave anytime.</p>
+                  <p className="text-sm text-saddle">10% only when you sell — nothing up front. Pause or leave anytime.</p>
                 </div>
               </div>
             </div>
@@ -420,7 +424,7 @@ export default function FullHomepage() {
               </div>
               <div className="space-y-2">
                 <p className="font-medium">Buyer vetting</p>
-                <p className="text-sm text-saddle">Every application is reviewed. We match intent, location, and order type before any introduction is made.</p>
+                <p className="text-sm text-saddle">Every buyer passes a short qualification quiz — we match intent, location, and order type before any introduction is made.</p>
               </div>
               <div className="space-y-2">
                 <p className="font-medium">BHC Promise</p>
@@ -446,8 +450,8 @@ export default function FullHomepage() {
             </h2>
             <p className="text-xl max-w-2xl mx-auto">
               {totalMembers
-                ? `${totalMembers.toLocaleString()}+ people already routed. Applications reviewed daily.`
-                : 'Applications reviewed daily. Most members are approved within 24 hours.'}
+                ? `${totalMembers.toLocaleString()}+ people already matched. The quiz takes 90 seconds.`
+                : 'Take the 90-second quiz. Most buyers are matched within hours.'}
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-6">
               <a
@@ -457,10 +461,10 @@ export default function FullHomepage() {
                 Join as a buyer
               </a>
               <a
-                href="/partner"
+                href="/sell"
                 className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                Apply as a rancher
+                Sell as a rancher
               </a>
               <a
                 href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=cta&utm_campaign=hat-launch"
