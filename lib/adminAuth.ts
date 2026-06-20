@@ -2,18 +2,32 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { verifyJwtWithFallback } from './jwt';
+import { ADMIN_PASSWORD } from './secrets';
 
 /**
  * Centralized admin auth check.
  *
  * Accepts EITHER:
  *   - The `bhc-admin-auth` cookie set by /api/admin/auth (browser sessions).
- *     P3-C (2026-05-27): cookie is now a SIGNED JWT with claims { role: 'admin', iat },
- *     not the prior literal string 'authenticated'. We verify via verifyJwtWithFallback
- *     so JWT_SECRET rotation (with JWT_SECRET_LEGACY grace) doesn't blow up
- *     outstanding admin sessions.
- *   - `?password=...` query param matching ADMIN_PASSWORD (CLI / curl / scripted ops)
+ *     P3-C (2026-05-27): cookie is now a SIGNED JWT with claims { role, iat },
+ *     verified via verifyJwtWithFallback for JWT_SECRET rotation grace.
  *   - `x-admin-password` header matching ADMIN_PASSWORD (programmatic clients)
+ *   - `?password=` in non-prod matching ADMIN_PASSWORD (DEPRECATED)
+ *
+ * --- PARTNER ROLES (2026-06-19) ---
+ * The login route (/api/admin/auth POST) now issues JWTs with role-specific
+ * values: 'admin' | 'onboarding' | 'ads'. Every route continues to call
+ * requireAdmin() (which only allows role='admin'), EXCEPT for a small,
+ * explicitly opened surface that calls requireRole(request, [...]).
+ *
+ * requireAdmin() is a thin wrapper around requireRole(request, ['admin'])
+ * so every existing caller is automatically backward-compatible.
+ *
+ * Header / ?password= paths always authorize as 'admin' (owner ops scripts).
+ *
+ * DEFAULT-DENY: routes that don't call this (or call requireAdmin) stay
+ * admin-only. Only explicitly opened routes may call requireRole with a
+ * partner role in the allowed list.
  *
  * Returns `null` if authorized. Returns a `NextResponse` 401 if not — callers
  * should `if (response) return response;` at the top of their handler.
@@ -23,7 +37,7 @@ import { verifyJwtWithFallback } from './jwt';
  * password in URL/header form for the Telegram bot + cron-style scripts.
  */
 
-interface AdminTokenClaims {
+export interface AdminTokenClaims {
   role: string;
   iat?: number;
   exp?: number;
@@ -43,42 +57,50 @@ function safeEqual(a: string | undefined | null, b: string | undefined | null): 
   return eq && aBuf.length === bBuf.length;
 }
 
-export async function requireAdmin(request: Request): Promise<NextResponse | null> {
+/**
+ * requireRole — authorize if the cookie role is in `allowed`, OR if the
+ * x-admin-password header / ?password= matches ADMIN_PASSWORD (those paths
+ * always grant full admin access and satisfy any `allowed` list that includes
+ * 'admin').
+ *
+ * This is the single enforcement point. Use requireAdmin() for admin-only
+ * routes (all existing routes). Use requireRole(req, ['admin','onboarding'])
+ * or requireRole(req, ['admin','ads']) only on explicitly opened surfaces.
+ */
+export async function requireRole(
+  request: Request,
+  allowed: string[],
+): Promise<NextResponse | null> {
   // 1. Cookie auth (set by POST /api/admin/auth)
-  // P3-C: cookie now holds a signed JWT { role: 'admin', iat }. Verify via
-  // verifyJwtWithFallback so JWT_SECRET rotation has a grace window (legacy
-  // secrets listed in JWT_SECRET_LEGACY). On any failure (missing, malformed,
-  // bad signature, expired, wrong role) we fall through to header/query auth.
   try {
     const cookieStore = await cookies();
     const cookie = cookieStore.get('bhc-admin-auth');
     if (cookie?.value) {
       try {
         const claims = verifyJwtWithFallback<AdminTokenClaims>(cookie.value);
-        if (claims.role === 'admin') return null;
+        if (claims.role && allowed.includes(claims.role)) return null;
       } catch {
         // Bad / expired / unsigned cookie — fall through to header/query auth
       }
     }
   } catch {
-    // Cookies may not be available in some contexts — fall through to header/query
+    // Cookies may not be available in some contexts — fall through
   }
 
-  // 2. Header auth: x-admin-password
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (adminPassword) {
+  // 2. Header auth: x-admin-password — ALWAYS authorizes as 'admin'.
+  // Partner tokens (cookies) can only reach routes explicitly opened to them;
+  // the header path is ops-script-only and always grants full admin.
+  if (ADMIN_PASSWORD) {
     const headerPw = request.headers.get('x-admin-password');
-    if (headerPw && safeEqual(headerPw, adminPassword)) return null;
+    if (headerPw && safeEqual(headerPw, ADMIN_PASSWORD)) return null;
 
     // 3. Query param auth: ?password=... — DEPRECATED 2026-05-20
-    // Audit finding #42: password in URL → Vercel access logs, browser
-    // history, Referer headers to any external resource. Kept for
-    // backwards compat in non-prod (scripts, curl); rejected in prod.
+    // Kept for backwards compat in non-prod only. Same admin-only semantics.
     if (process.env.NODE_ENV !== 'production') {
       try {
         const url = new URL(request.url);
         const queryPw = url.searchParams.get('password');
-        if (queryPw && safeEqual(queryPw, adminPassword)) return null;
+        if (queryPw && safeEqual(queryPw, ADMIN_PASSWORD)) return null;
       } catch {
         // Invalid URL — treat as unauthorized
       }
@@ -86,4 +108,12 @@ export async function requireAdmin(request: Request): Promise<NextResponse | nul
   }
 
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+}
+
+/**
+ * requireAdmin — only admits role='admin' (or the header/query password paths).
+ * All existing callers are backward-compatible; this now delegates to requireRole.
+ */
+export async function requireAdmin(request: Request): Promise<NextResponse | null> {
+  return requireRole(request, ['admin']);
 }

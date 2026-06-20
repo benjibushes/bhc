@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
-import { ADMIN_PASSWORD } from '@/lib/secrets';
+import { ADMIN_PASSWORD, ONBOARDING_PARTNER_PASSWORD, ADS_PARTNER_PASSWORD } from '@/lib/secrets';
 import { signJwt, verifyJwtWithFallback } from '@/lib/jwt';
 
 const AUTH_TOKEN = 'bhc-admin-auth';
@@ -19,13 +19,15 @@ interface AdminTokenClaims {
   exp?: number;
 }
 
-function isValidAdminToken(value: string | undefined): boolean {
-  if (!value) return false;
+const VALID_ROLES = new Set(['admin', 'onboarding', 'ads']);
+
+function getTokenRole(value: string | undefined): string | null {
+  if (!value) return null;
   try {
     const claims = verifyJwtWithFallback<AdminTokenClaims>(value);
-    return claims.role === 'admin';
+    return claims.role && VALID_ROLES.has(claims.role) ? claims.role : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -104,17 +106,26 @@ export async function POST(request: Request) {
     }
     const { password } = parsedBody;
 
+    // Determine which role this password grants.
+    // Partner passwords are optional (empty string = disabled). Check them via
+    // safeEqual ONLY when the env var is non-empty so an unset var never
+    // accidentally matches an empty submitted password.
+    let grantedRole: string | null = null;
     if (safeEqual(password, ADMIN_PASSWORD)) {
+      grantedRole = 'admin';
+    } else if (ONBOARDING_PARTNER_PASSWORD && safeEqual(password, ONBOARDING_PARTNER_PASSWORD)) {
+      grantedRole = 'onboarding';
+    } else if (ADS_PARTNER_PASSWORD && safeEqual(password, ADS_PARTNER_PASSWORD)) {
+      grantedRole = 'ads';
+    }
+
+    if (grantedRole) {
       // Successful login → clear failure counter for this IP.
       clearFailures(ip);
-      // Mint a signed JWT (P3-C). Before: cookie value was literal string
-      // 'authenticated' — anyone who knew the cookie name could forge admin
-      // by hand-setting it (no rotation, no expiry semantics beyond cookie
-      // maxAge). Now: HS256 JWT signed with JWT_SECRET, claims {role,iat},
-      // 7d exp. Rotating JWT_SECRET (with grace via JWT_SECRET_LEGACY)
-      // invalidates outstanding admin sessions.
+      // Mint a signed JWT. Role is embedded in claims so requireRole() can
+      // enforce the minimal surface each partner token can reach.
       const token = signJwt(
-        { role: 'admin', iat: Math.floor(Date.now() / 1000) },
+        { role: grantedRole, iat: Math.floor(Date.now() / 1000) },
         { expiresIn: ADMIN_TOKEN_EXPIRY },
       );
       const cookieStore = await cookies();
@@ -126,7 +137,7 @@ export async function POST(request: Request) {
         path: '/',
       });
 
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, role: grantedRole });
     }
 
     // Record failure + return 401.
@@ -148,9 +159,11 @@ export async function GET() {
   try {
     const cookieStore = await cookies();
     const authCookie = cookieStore.get(AUTH_TOKEN);
+    const role = getTokenRole(authCookie?.value);
 
-    if (isValidAdminToken(authCookie?.value)) {
-      return NextResponse.json({ authenticated: true });
+    if (role) {
+      // Return the role so the client-side layout can gate nav items.
+      return NextResponse.json({ authenticated: true, role });
     }
 
     return NextResponse.json({ authenticated: false }, { status: 401 });

@@ -6,7 +6,7 @@ import { addCalPrefill } from '@/lib/calPrefill';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
-import { requireAdmin } from '@/lib/adminAuth';
+import { requireRole } from '@/lib/adminAuth';
 
 // POST /api/admin/ranchers/[id]/send-v2-upgrade
 //
@@ -49,7 +49,9 @@ export async function POST(
     const internalHeader = request.headers.get('x-internal-secret') || '';
     const isInternal = INTERNAL_API_SECRET && internalHeader === INTERNAL_API_SECRET;
     if (!isInternal) {
-      const unauthorized = await requireAdmin(request);
+      // Opened to 'onboarding' partner: sending tier_v2 upgrade invites is a
+      // core onboarding task; sends only to the rancher, no consumer PII.
+      const unauthorized = await requireRole(request, ['admin', 'onboarding']);
       if (unauthorized) return unauthorized;
     }
 

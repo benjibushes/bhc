@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { requireAdmin } from '@/lib/adminAuth';
+import { requireRole } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
@@ -11,7 +11,8 @@ export const maxDuration = 60;
 
 export async function GET(request: Request) {
   try {
-    const __authResp = await requireAdmin(request);
+    // Opened to 'ads' partner: read-only buyer/funnel analytics.
+    const __authResp = await requireRole(request, ['admin', 'ads']);
     if (__authResp) return __authResp;
 
     const url = new URL(request.url);

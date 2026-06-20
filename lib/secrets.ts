@@ -46,6 +46,16 @@ export const JWT_SECRET = requireEnv('JWT_SECRET');
 // Admin login password (operator UI gate). Required.
 export const ADMIN_PASSWORD = requireEnv('ADMIN_PASSWORD');
 
+// Partner passwords — optional; absence means the partner role is simply
+// disabled (login with that password returns 401 as if wrong).
+// Set ONBOARDING_PARTNER_PASSWORD and ADS_PARTNER_PASSWORD in Vercel env
+// to grant limited-access sessions to the rancher-onboarding and ads
+// partners respectively. Neither password grants admin-level access.
+export const ONBOARDING_PARTNER_PASSWORD: string =
+  process.env.ONBOARDING_PARTNER_PASSWORD || '';
+export const ADS_PARTNER_PASSWORD: string =
+  process.env.ADS_PARTNER_PASSWORD || '';
+
 // Cron auth — Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. Required
 // to prevent anyone who guesses cron URLs from triggering expensive jobs (mass
 // emails, bulk DB writes).

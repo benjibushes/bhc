@@ -9,7 +9,7 @@
 
 import { NextResponse, NextRequest } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
-import { requireAdmin } from '@/lib/adminAuth';
+import { requireRole } from '@/lib/adminAuth';
 
 export const maxDuration = 30;
 
@@ -31,7 +31,8 @@ interface MigrationRancher {
 }
 
 export async function GET(request: NextRequest) {
-  const __authResp = await requireAdmin(request);
+  // Opened to 'onboarding' partner: migration read + upgrade-invite sends.
+  const __authResp = await requireRole(request, ['admin', 'onboarding']);
   if (__authResp) return __authResp;
 
   const all: any[] = await getAllRecords(TABLES.RANCHERS);
@@ -106,7 +107,8 @@ export async function GET(request: NextRequest) {
 // Body: { exclude?: string[] } — array of rancher IDs to skip (e.g. test
 // excludes for already-handled people).
 export async function POST(request: NextRequest) {
-  const __authResp = await requireAdmin(request);
+  // Opened to 'onboarding' partner: migration read + upgrade-invite sends.
+  const __authResp = await requireRole(request, ['admin', 'onboarding']);
   if (__authResp) return __authResp;
 
   let body: any = {};
