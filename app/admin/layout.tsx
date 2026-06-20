@@ -5,12 +5,14 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Toaster } from 'sonner';
 import CommandPalette from './CommandPalette';
-import { ADMIN_NAV, ADMIN_NAV_GROUPS, activeNavHref } from './nav';
+import { ADMIN_NAV_GROUPS, activeNavHref, navForRole } from './nav';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [authed, setAuthed] = useState<boolean | null>(null);
+  // 'admin' | 'onboarding' | 'ads' — drives nav filtering and home redirect.
+  const [role, setRole] = useState<string>('admin');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const isLoginPage = pathname === '/admin/login';
@@ -26,6 +28,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         const res = await fetch('/api/admin/auth');
         if (cancelled) return;
         if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setRole(data.role || 'admin');
           setAuthed(true);
         } else {
           setAuthed(false);
@@ -63,7 +67,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (!authed) return null;
 
+  // Compute the filtered nav for this role. navForRole handles default-deny:
+  // admin sees all items; partners see only items with visibleTo including their role.
+  const visibleNav = navForRole(role);
   const activeHref = activeNavHref(pathname);
+
+  // Logo link: send partners to the first page they can actually access.
+  const homeHref = visibleNav[0]?.href ?? '/admin/migration';
+
+  // Subtitle badge shown under BuyHalfCow in the sidebar.
+  const roleBadge =
+    role === 'onboarding' ? 'Onboarding Partner'
+    : role === 'ads' ? 'Ads Partner'
+    : 'Admin';
 
   return (
     <div className="min-h-screen bg-bone text-charcoal">
@@ -78,16 +94,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <span className="block w-5 h-0.5 bg-charcoal mb-1" />
           <span className="block w-5 h-0.5 bg-charcoal" />
         </button>
-        <Link href="/admin/today/v2" className="font-[family-name:var(--font-serif)] text-lg">
+        <Link href={homeHref} className="font-[family-name:var(--font-serif)] text-lg">
           BuyHalfCow · Admin
         </Link>
-        <button
-          onClick={() => (document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true })))}
-          className="text-xs text-saddle"
-          aria-label="Search"
-        >
-          🔍
-        </button>
+        {role === 'admin' && (
+          <button
+            onClick={() => (document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true })))}
+            className="text-xs text-saddle"
+            aria-label="Search"
+          >
+            🔍
+          </button>
+        )}
+        {role !== 'admin' && <span className="w-8" />}
       </div>
 
       <div className="flex">
@@ -99,51 +118,57 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         >
           <div className="p-5 border-b border-dust">
             <Link
-              href="/admin/today/v2"
+              href={homeHref}
               className="block font-[family-name:var(--font-serif)] text-xl"
               onClick={() => setSidebarOpen(false)}
             >
               BuyHalfCow
             </Link>
-            <p className="text-xs text-saddle mt-0.5">Admin</p>
-            <button
-              onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
-              className="mt-3 w-full flex items-center justify-between px-3 py-2 text-sm border border-dust hover:border-charcoal bg-bone"
-            >
-              <span className="text-saddle">Search…</span>
-              <kbd className="text-xs text-dust font-mono">⌘K</kbd>
-            </button>
+            <p className="text-xs text-saddle mt-0.5">{roleBadge}</p>
+            {role === 'admin' && (
+              <button
+                onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
+                className="mt-3 w-full flex items-center justify-between px-3 py-2 text-sm border border-dust hover:border-charcoal bg-bone"
+              >
+                <span className="text-saddle">Search…</span>
+                <kbd className="text-xs text-dust font-mono">⌘K</kbd>
+              </button>
+            )}
           </div>
 
           <nav className="p-3 space-y-5">
-            {ADMIN_NAV_GROUPS.map((g) => (
-              <div key={g}>
-                <p className="text-[10px] font-semibold text-dust tracking-widest px-2 mb-1">
-                  {g}
-                </p>
-                <ul className="space-y-0.5">
-                  {ADMIN_NAV.filter((n) => n.group === g).map((item) => {
-                    const active = item.href === activeHref;
-                    return (
-                      <li key={item.href}>
-                        <Link
-                          href={item.href}
-                          onClick={() => setSidebarOpen(false)}
-                          className={`flex items-center gap-2 px-2 py-1.5 text-sm rounded ${
-                            active
-                              ? 'bg-charcoal text-bone'
-                              : 'text-charcoal hover:bg-bone'
-                          }`}
-                        >
-                          <span className="w-5 text-center">{item.icon}</span>
-                          <span>{item.label}</span>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
+            {ADMIN_NAV_GROUPS.map((g) => {
+              const groupItems = visibleNav.filter((n) => n.group === g);
+              if (groupItems.length === 0) return null;
+              return (
+                <div key={g}>
+                  <p className="text-[10px] font-semibold text-dust tracking-widest px-2 mb-1">
+                    {g}
+                  </p>
+                  <ul className="space-y-0.5">
+                    {groupItems.map((item) => {
+                      const active = item.href === activeHref;
+                      return (
+                        <li key={item.href}>
+                          <Link
+                            href={item.href}
+                            onClick={() => setSidebarOpen(false)}
+                            className={`flex items-center gap-2 px-2 py-1.5 text-sm rounded ${
+                              active
+                                ? 'bg-charcoal text-bone'
+                                : 'text-charcoal hover:bg-bone'
+                            }`}
+                          >
+                            <span className="w-5 text-center">{item.icon}</span>
+                            <span>{item.label}</span>
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
+            })}
           </nav>
 
           <div className="p-3 border-t border-dust mt-4">
@@ -172,7 +197,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <main className="flex-1 min-w-0">{children}</main>
       </div>
 
-      <CommandPalette />
+      {/* CommandPalette only available to admin — partners have no search surface */}
+      {role === 'admin' && <CommandPalette />}
       <Toaster position="top-right" richColors closeButton />
     </div>
   );

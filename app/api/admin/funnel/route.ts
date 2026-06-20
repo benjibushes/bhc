@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/adminAuth';
+import { requireRole } from '@/lib/adminAuth';
 import { getAllRecords } from '@/lib/airtable';
 
 // Funnel conversion dashboard API.
@@ -20,7 +20,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 export async function GET(request: Request) {
-  const auth = await requireAdmin(request);
+  // Opened to 'ads' partner: read-only funnel event log.
+  const auth = await requireRole(request, ['admin', 'ads']);
   if (auth) return auth;
 
   const url = new URL(request.url);

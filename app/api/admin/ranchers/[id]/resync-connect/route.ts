@@ -3,7 +3,7 @@ import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { getConnectAccountStatus } from '@/lib/stripeConnect';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { logAuditEntry } from '@/lib/auditLog';
-import { requireAdmin } from '@/lib/adminAuth';
+import { requireRole } from '@/lib/adminAuth';
 
 // POST /api/admin/ranchers/[id]/resync-connect
 //
@@ -53,7 +53,10 @@ export async function POST(
     const internalHeader = request.headers.get('x-internal-secret') || '';
     const isInternal = INTERNAL_API_SECRET && internalHeader === INTERNAL_API_SECRET;
     if (!isInternal) {
-      const unauthorized = await requireAdmin(request);
+      // Opened to 'onboarding' partner: re-syncing Connect status fixes
+      // stuck onboarding and carries no money/PII risk (read from Stripe,
+      // write a status field).
+      const unauthorized = await requireRole(request, ['admin', 'onboarding']);
       if (unauthorized) return unauthorized;
     }
 

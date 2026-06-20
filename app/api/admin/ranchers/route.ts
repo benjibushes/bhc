@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { requireAdmin } from '@/lib/adminAuth';
+import { requireRole } from '@/lib/adminAuth';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 export const maxDuration = 60;
 
 export async function GET(request: Request) {
   try {
-    const __authResp = await requireAdmin(request);
+    // Opened to 'onboarding' partner: read-only rancher list for kanban/migration.
+    const __authResp = await requireRole(request, ['admin', 'onboarding']);
     if (__authResp) return __authResp;
     const records = await getAllRecords(TABLES.RANCHERS);
     

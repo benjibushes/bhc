@@ -4,7 +4,7 @@ import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
-import { requireAdmin } from '@/lib/adminAuth';
+import { requireRole } from '@/lib/adminAuth';
 
 // POST /api/admin/ranchers/[id]/resend-setup
 //
@@ -34,7 +34,9 @@ export async function POST(
     const internalHeader = request.headers.get('x-internal-secret') || '';
     const isInternal = INTERNAL_API_SECRET && internalHeader === INTERNAL_API_SECRET;
     if (!isInternal) {
-      const unauthorized = await requireAdmin(request);
+      // Opened to 'onboarding' partner: resending setup links is a core
+      // onboarding action and carries no money/PII risk.
+      const unauthorized = await requireRole(request, ['admin', 'onboarding']);
       if (unauthorized) return unauthorized;
     }
 

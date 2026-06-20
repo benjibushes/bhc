@@ -17,7 +17,7 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
-import { requireAdmin } from '@/lib/adminAuth';
+import { requireRole } from '@/lib/adminAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -26,7 +26,8 @@ const STAGES = ['signup', 'qualified', 'booked', 'invoiced', 'locked', 'closed']
 type Stage = (typeof STAGES)[number];
 
 export async function GET(req: Request) {
-  const a = await requireAdmin(req);
+  // Opened to 'ads' partner: read-only pipeline stage/UTM conversion data.
+  const a = await requireRole(req, ['admin', 'ads']);
   if (a) return a;
 
   const url = new URL(req.url);
