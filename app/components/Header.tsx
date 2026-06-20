@@ -13,6 +13,7 @@ const HATS_NAV_URL =
 const NAV_LINKS = [
   { href: '/map', label: 'Map' },
   { href: '/ranchers', label: 'Ranchers' },
+  { href: '/sell', label: 'Sell Your Beef' },
   { href: '/wins', label: 'Wins' },
   { href: '/founders', label: 'Founders' },
   { href: '/brand-partners', label: 'Brands' },
