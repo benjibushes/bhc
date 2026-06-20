@@ -4,6 +4,7 @@ import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
 function esc(s: string): string {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -80,6 +81,16 @@ export async function POST(
     const newRancher: any = await getRecordById(TABLES.RANCHERS, newRancherId);
     if (!newRancher) {
       return NextResponse.json({ error: 'Target rancher not found' }, { status: 404 });
+    }
+
+    // Don't reroute a buyer onto a rancher who can't actually take them — every
+    // routing path in matching/suggest enforces this gate so the buyer's deposit
+    // isn't dead-ended at a 409. Reassign was the one hole (it checked only
+    // existence + capacity).
+    if (!isRancherOperationalForBuyers(newRancher)) {
+      return NextResponse.json({
+        error: `${newRancher['Operator Name'] || 'Target rancher'} is not operational (inactive, past-due subscription, or Stripe Connect not active) — pick another.`,
+      }, { status: 400 });
     }
 
     const newCap = getMaxActiveReferrals(newRancher);
