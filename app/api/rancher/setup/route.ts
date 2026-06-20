@@ -238,23 +238,41 @@ export async function PATCH(req: Request) {
     }
     updates['Refund Policy'] = policy;
   }
+  // NOTE on the null guards below: the wizard ALWAYS sends both keys, using
+  // `null` when the matching fulfillment type isn't selected (e.g. no Local
+  // Delivery → Delivery Radius = null; no Cold-Chain Shipping → Lead Time =
+  // null — RancherSetupWizard.tsx ~L3016). Without the null short-circuit,
+  // `Number(null)` coerces to 0, `0 <= 0` trips the "positive whole number"
+  // check, and the WHOLE Step-8 save 400s — blocking every rancher who doesn't
+  // offer that fulfillment type (the DD Ranch / Linda Anspach report,
+  // 2026-06-20). null means "type not offered": clear the field, don't validate.
   if ('Delivery Radius Miles' in updates) {
-    const v = Number(updates['Delivery Radius Miles']);
-    if (!Number.isInteger(v) || v <= 0 || v > 500) {
-      return NextResponse.json({
-        error: 'Delivery Radius Miles must be a positive whole number ≤ 500.',
-      }, { status: 400 });
+    const raw = updates['Delivery Radius Miles'];
+    if (raw === null || raw === undefined || raw === '') {
+      updates['Delivery Radius Miles'] = null;
+    } else {
+      const v = Number(raw);
+      if (!Number.isInteger(v) || v <= 0 || v > 500) {
+        return NextResponse.json({
+          error: 'Delivery Radius Miles must be a positive whole number ≤ 500.',
+        }, { status: 400 });
+      }
+      updates['Delivery Radius Miles'] = v;
     }
-    updates['Delivery Radius Miles'] = v;
   }
   if ('Shipping Lead Time Days' in updates) {
-    const v = Number(updates['Shipping Lead Time Days']);
-    if (!Number.isInteger(v) || v <= 0 || v > 180) {
-      return NextResponse.json({
-        error: 'Shipping Lead Time Days must be a positive whole number ≤ 180.',
-      }, { status: 400 });
+    const raw = updates['Shipping Lead Time Days'];
+    if (raw === null || raw === undefined || raw === '') {
+      updates['Shipping Lead Time Days'] = null;
+    } else {
+      const v = Number(raw);
+      if (!Number.isInteger(v) || v <= 0 || v > 180) {
+        return NextResponse.json({
+          error: 'Shipping Lead Time Days must be a positive whole number ≤ 180.',
+        }, { status: 400 });
+      }
+      updates['Shipping Lead Time Days'] = v;
     }
-    updates['Shipping Lead Time Days'] = v;
   }
   if ('Fulfillment Cost Notes' in updates) {
     const notes = String(updates['Fulfillment Cost Notes'] || '').trim().slice(0, 500);
