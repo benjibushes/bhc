@@ -36,13 +36,16 @@ export async function GET(
         reserve_link: r['Reserve Link'] || '',
         quarter_price: r['Quarter Price'] || null,
         quarter_lbs: r['Quarter lbs'] || '',
-        quarter_payment_link: r['Quarter Payment Link'] || '',
+        // Raw buy.stripe.com Payment Links are NOT exposed — any integrator gets
+        // the tracked, fork-aware buy URL instead (Connect → on-site deposit,
+        // legacy → Payment Link), so no off-platform link leaks via the API.
+        quarter_buy_url: (r['Quarter Price'] || r['Quarter Payment Link']) ? `/ranchers/${slug}/pay/quarter` : '',
         half_price: r['Half Price'] || null,
         half_lbs: r['Half lbs'] || '',
-        half_payment_link: r['Half Payment Link'] || '',
+        half_buy_url: (r['Half Price'] || r['Half Payment Link']) ? `/ranchers/${slug}/pay/half` : '',
         whole_price: r['Whole Price'] || null,
         whole_lbs: r['Whole lbs'] || '',
-        whole_payment_link: r['Whole Payment Link'] || '',
+        whole_buy_url: (r['Whole Price'] || r['Whole Payment Link']) ? `/ranchers/${slug}/pay/whole` : '',
         custom_notes: r['Custom Notes'] || '',
       },
     });

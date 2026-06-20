@@ -8,6 +8,7 @@ import ContactRancherButton from '../components/ContactRancherButton';
 import Link from 'next/link';
 import { trackEvent } from '@/lib/analytics';
 import { normalizeImageUrl } from '@/lib/imageUrl';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
 
 interface Rancher {
   id: string;
@@ -36,6 +37,9 @@ interface Rancher {
   'Whole Payment Link'?: string;
   'Next Processing Date'?: string;
   'Reserve Link'?: string;
+  // Used to decide Connect-deposit vs legacy Payment-Link routing.
+  'Pricing Model'?: string;
+  'Stripe Connect Status'?: string;
 }
 
 interface LandDeal {
@@ -895,16 +899,20 @@ function ReadyToBuyButton({ hasMatch }: { hasMatch: boolean }) {
   );
 }
 
-// Renders the price-tier buy buttons for a rancher that has payment links.
-// Uses the tracked redirect endpoint (/ranchers/[slug]/pay/[tier]) so clicks
-// are logged in Airtable before the user lands on the payment page.
+// Renders the price-tier buy buttons for a matched rancher.
+// Always routes through the tracked redirect endpoint (/ranchers/[slug]/pay/[tier]),
+// which forks server-side: Connect ranchers → on-site /access deposit (commission +
+// ad-signal), legacy ranchers → their Payment Link. Tier visibility is driven by
+// PRICE (not Payment Link existence) so Connect ranchers — who have no Payment Links —
+// still show buy buttons instead of a dead "we're finalizing" message.
 function BuyTierButtons({ rancher }: { rancher: Rancher }) {
   const slug = rancher.Slug;
+  const onConnect = isRancherOnConnect(rancher as any);
   const tiers = [
     { key: 'quarter', label: 'Quarter Cow', price: rancher['Quarter Price'], lbs: rancher['Quarter lbs'], link: rancher['Quarter Payment Link'] },
     { key: 'half', label: 'Half Cow', price: rancher['Half Price'], lbs: rancher['Half lbs'], link: rancher['Half Payment Link'] },
     { key: 'whole', label: 'Whole Cow', price: rancher['Whole Price'], lbs: rancher['Whole lbs'], link: rancher['Whole Payment Link'] },
-  ].filter(t => t.link && t.price);
+  ].filter(t => t.price && (onConnect ? !!slug : !!t.link));
 
   if (tiers.length === 0) return null;
 
@@ -941,7 +949,12 @@ function YourMatchHero({ rancher, status }: { rancher: Rancher; status: string }
         ? `Next processing: ${new Date(processingDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`
         : null;
 
-  const hasPricing = rancher['Quarter Payment Link'] || rancher['Half Payment Link'] || rancher['Whole Payment Link'];
+  const onConnect = isRancherOnConnect(rancher as any);
+  // Connect ranchers have no Payment Links — gate their buy UI on price + slug
+  // (buttons route to the on-site deposit). Legacy ranchers still gate on link.
+  const hasPricing = onConnect
+    ? !!(rancher.Slug && (rancher['Quarter Price'] || rancher['Half Price'] || rancher['Whole Price']))
+    : !!(rancher['Quarter Payment Link'] || rancher['Half Payment Link'] || rancher['Whole Payment Link']);
 
   return (
     <div className="p-6 md:p-8 border-2 border-charcoal bg-white space-y-5">
@@ -1026,7 +1039,12 @@ function RancherCard({ rancher }: { rancher: Rancher }) {
     email: rancher.Email || '',
     state: rancher.State || '',
   };
-  const hasPricing = rancher['Quarter Payment Link'] || rancher['Half Payment Link'] || rancher['Whole Payment Link'];
+  const onConnect = isRancherOnConnect(rancher as any);
+  // Connect ranchers have no Payment Links — gate their buy UI on price + slug
+  // (buttons route to the on-site deposit). Legacy ranchers still gate on link.
+  const hasPricing = onConnect
+    ? !!(rancher.Slug && (rancher['Quarter Price'] || rancher['Half Price'] || rancher['Whole Price']))
+    : !!(rancher['Quarter Payment Link'] || rancher['Half Payment Link'] || rancher['Whole Payment Link']);
 
   return (
     <div className="p-6 border border-dust bg-white space-y-4">
