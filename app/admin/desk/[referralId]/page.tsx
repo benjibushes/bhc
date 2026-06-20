@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { use as usePromise } from 'react';
 import Link from 'next/link';
 import AdminAuthGuard from '../../../components/AdminAuthGuard';
@@ -30,6 +31,7 @@ const money = (n: number) => (n ? `$${Number(n).toLocaleString()}` : '—');
 
 export default function DealCockpitPage({ params }: { params: Promise<{ referralId: string }> }) {
   const { referralId } = usePromise(params);
+  const router = useRouter();
   const [data, setData] = useState<Journey | null>(null);
   const [ranchers, setRanchers] = useState<RancherOpt[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,6 +109,26 @@ export default function DealCockpitPage({ params }: { params: Promise<{ referral
     buyerName: data!.referral.buyerName, buyerEmail: data!.referral.buyerEmail,
     ...(override ? { operatorOverride: true, operatorOverrideReason: override } : {}),
   });
+
+  const rerunMatch = async () => {
+    if (!window.confirm('Re-run the matching engine for this buyer? Fires intro emails on a match.')) return;
+    setBusy('Re-run match'); setMsg('');
+    try {
+      const res = await postMatch();
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) { router.push(`/admin/desk/${j.referralId || referralId}`); return; }
+      if (res.status === 412) {
+        const reason = window.prompt('Buyer not auto-qualified. Operator override reason (6+ chars)?');
+        if (reason && reason.trim().length >= 6) {
+          const r2 = await postMatch(reason.trim());
+          const j2 = await r2.json().catch(() => ({}));
+          if (r2.ok) { router.push(`/admin/desk/${j2.referralId || referralId}`); return; }
+          setMsg(j2.error || 'Re-run match failed');
+        } else setMsg('Override needs a reason (6+ chars).');
+      } else setMsg(j.error || `Re-run match failed (${res.status})`);
+    } catch { setMsg('Re-run match failed'); }
+    setBusy('');
+  };
 
   if (!data) {
     return (
@@ -227,7 +249,7 @@ export default function DealCockpitPage({ params }: { params: Promise<{ referral
               {r.buyerEmail && <a href={`mailto:${r.buyerEmail}`} className="text-sm px-3 py-2 border border-dust hover:bg-bone">Email</a>}
               {r.buyerPhone && <a href={`sms:${r.buyerPhone}`} className="text-sm px-3 py-2 border border-dust hover:bg-bone">Text</a>}
               {r.buyerPhone && <a href={`tel:${r.buyerPhone}`} className="text-sm px-3 py-2 border border-dust hover:bg-bone">Call</a>}
-              {isAdmin && !rancherId && r.buyerId && <B label="Re-run match" tone="primary" onClick={() => run('Re-run match', () => postMatch(), 'Re-run the matching engine for this buyer? Fires intro emails on a match.', { prompt: 'Buyer not auto-qualified. Operator override reason (6+ chars)?', retry: (reason) => postMatch(reason) })} />}
+              {isAdmin && !rancherId && r.buyerId && <B label="Re-run match" tone="primary" onClick={rerunMatch} />}
               {isAdmin && r.buyerId && <B label="Resend warmup" onClick={() => run('Resend warmup', () => POST(`/api/admin/consumers/${r.buyerId}/resend-warmup`, {}), 'Send the warmup YES-button email to this buyer?')} />}
             </div>
 

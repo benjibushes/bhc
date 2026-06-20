@@ -106,8 +106,9 @@ export async function GET(
   let lastInbound: { at: string; from: Actor; summary: string } | null = null;
   let responded = false;
   try {
-    if (buyerEmail) {
-      const clauses = [`LOWER({From})="${escapeAirtableValue(buyerEmail)}"`];
+    if (buyerEmail || rancherEmail) {
+      const clauses: string[] = [];
+      if (buyerEmail) clauses.push(`LOWER({From})="${escapeAirtableValue(buyerEmail)}"`);
       if (rancherEmail) clauses.push(`LOWER({From})="${escapeAirtableValue(rancherEmail)}"`);
       const convos = await getAllRecords(TABLES.CONVERSATIONS, `AND({Direction}="inbound", OR(${clauses.join(', ')}))`) as any[];
       for (const c of convos) {
