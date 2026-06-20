@@ -89,7 +89,7 @@ export default function FullHomepage() {
               source beef directly from a real ranch
             </h2>
             <p className="text-lg text-saddle mb-10">
-              Answer a few questions and we match you with a verified rancher serving your area — or put you first in line as we bring one to your state. You talk to them direct, set your cuts, pick your processing date. You pay the rancher, not a marketplace.
+              Answer a few questions and we match you with a verified rancher — local to you, or one who ships direct to your door. You talk to them direct, set your cuts, pick your processing date. You pay the rancher, not a marketplace.
               {totalMembers ? ` Join ${totalMembers.toLocaleString()}+ members already sourcing direct.` : ''}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
@@ -127,7 +127,7 @@ export default function FullHomepage() {
               {[
                 { n: '1', t: 'Apply', d: 'Tell us your state + cut size. Takes 90 seconds.' },
                 { n: '2', t: 'Qualify', d: 'Answer 4 questions to confirm your match.' },
-                { n: '3', t: 'Match', d: 'We match you to a verified rancher serving your area.' },
+                { n: '3', t: 'Match', d: 'We match you to a verified rancher — local, or one who ships to you.' },
                 { n: '4', t: 'Connect', d: 'Book a call or pay your deposit on the platform.' },
                 { n: '5', t: 'Stock', d: 'Pick up at processing date. Freezer full.' },
               ].map((step) => (
@@ -361,7 +361,7 @@ export default function FullHomepage() {
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">2</div>
                   <p className="font-medium">Get routed</p>
-                  <p className="text-sm text-saddle">We match you with a verified rancher serving your area within hours.</p>
+                  <p className="text-sm text-saddle">We match you with a verified rancher — local or nationwide — within hours.</p>
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">3</div>
