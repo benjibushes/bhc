@@ -103,10 +103,28 @@ export async function POST(request: Request) {
   }
 
   // Validate shape — reject unknown values so client can't smuggle freeform.
-  const tier = String(answers.tier || '').trim() as Tier;
-  const timing = String(answers.timing || '').trim() as Timing;
+  let tier = String(answers.tier || '').trim() as Tier;
+  let timing = String(answers.timing || '').trim() as Timing;
   const storage = String(answers.storage || '').trim() as Storage;
   const ack = answers.ack === true;
+
+  // Resume-mode funnel (the YES-click / quiz-link path) starts at the storage
+  // step and never re-collects tier/timing, so it POSTs them EMPTY — which
+  // previously hard-400'd every such buyer out of the funnel. When empty,
+  // hydrate from the buyer's stored signup answers (so they're scored on their
+  // REAL order), then fall back to low-intent defaults so we never reject a
+  // legitimate resume. A NON-empty invalid value (smuggled freeform) still 400s
+  // below — only the empty case is hydrated.
+  if (!tier || !timing) {
+    try {
+      const c: any = await getRecordById(TABLES.CONSUMERS, consumerId);
+      if (!tier) tier = String(c?.['Order Type'] || '').trim() as Tier;
+      if (!timing) timing = String(c?.['Timing'] || '').trim() as Timing;
+    } catch { /* fall through to defaults */ }
+    if (!VALID_TIERS.includes(tier)) tier = 'Not Sure';
+    if (!VALID_TIMINGS.includes(timing)) timing = 'Just exploring';
+  }
+
   if (!VALID_TIERS.includes(tier)) {
     return NextResponse.json({ error: 'Invalid tier' }, { status: 400 });
   }
