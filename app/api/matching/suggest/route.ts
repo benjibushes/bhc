@@ -179,7 +179,7 @@ export async function POST(request: Request) {
       try {
         const existingRefs = await getAllRecords(
           TABLES.REFERRALS,
-          `{Buyer Email} = "${buyerEmail.trim().toLowerCase()}"`
+          `LOWER({Buyer Email}) = "${buyerEmail.trim().toLowerCase()}"`
         ) as any[];
         // Active short-circuit. Pending Approval requires a linked rancher
         // — otherwise it's an orphan record from a failed match attempt and
@@ -640,7 +640,10 @@ export async function POST(request: Request) {
       'Buyer': [buyerId],
       'Status': 'Pending Approval',
       'Buyer Name': buyerName || '',
-      'Buyer Email': buyerEmail || '',
+      // Store normalized so the dedup short-circuit (LOWER match) is reliable +
+      // future bare-equality queries match. Prevents the same buyer being
+      // double-matched to two ranchers when their email casing varies.
+      'Buyer Email': (buyerEmail || '').trim().toLowerCase(),
       'Buyer Phone': buyerPhone || '',
       'Buyer State': normalizedBuyerState,
       'Order Type': orderType || '',
