@@ -6,6 +6,10 @@
   },
   "crons": [
     {
+      "path": "/api/cron/auto-verify-stale",
+      "schedule": "30 8 * * *"
+    },
+    {
       "path": "/api/cron/compliance-reminders",
       "schedule": "15 9 * * *"
     },

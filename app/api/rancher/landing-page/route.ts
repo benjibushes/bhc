@@ -168,7 +168,11 @@ export async function PATCH(request: Request) {
       const signalCount = [hasReferences, hasReviews, hasSocial, hasProcessor, hasCerts, hasPhotos]
         .filter(Boolean).length;
 
-      const autoApprove = signalCount >= 3;
+      // Lowered 3→2 to match the dashboard submit floor + unblock small ranchers
+      // (no website/reviews/social commonly have <3 signals). The nightly
+      // auto-verify-stale cron clears anything still Pending >24h, so a 100-wave
+      // never waits on a manual rverify_ tap. Spot-check provisional ones after.
+      const autoApprove = signalCount >= 2;
 
       if (autoApprove) {
         updates['Onboarding Status'] = 'Verification Complete';
@@ -213,22 +217,53 @@ export async function PATCH(request: Request) {
     if (body._action === 'request-go-live') {
       const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
       const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown';
-      const slug = rancher['Slug'] || '(no slug set)';
+      const slug = rancher['Slug'] || '';
       const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+
+      // SELF-PUBLISH when the rancher is genuinely eligible — same predicate the
+      // go-live safety-net cron uses (#66). No more waiting on an admin tap; the
+      // rancher who finished everything goes live the moment they ask. Falls back
+      // to a Telegram ping (and tells the rancher exactly what's left) otherwise.
+      const signed = !!rancher['Agreement Signed'];
+      const hasSlug = !!rancher['Slug'];
+      const hasPrice = !!(rancher['Quarter Price'] || rancher['Half Price'] || rancher['Whole Price']);
+      const isTierV2 = String(rancher['Pricing Model'] || 'legacy').toLowerCase() === 'tier_v2';
+      const connectActive = String(rancher['Stripe Connect Status'] || '').toLowerCase() === 'active';
+      const hasPaymentLink = !!(rancher['Quarter Payment Link'] || rancher['Half Payment Link'] || rancher['Whole Payment Link']);
+      const canCollect = isTierV2 ? connectActive : hasPaymentLink;
+      const alreadyLive = String(rancher['Active Status']) === 'Active' && rancher['Page Live'] === true;
+
+      if (alreadyLive) return NextResponse.json({ success: true, live: true, message: "You're already live." });
+
+      if (signed && hasSlug && hasPrice && canCollect) {
+        await updateRecord(TABLES.RANCHERS, session.rancherId, {
+          'Active Status': 'Active', 'Onboarding Status': 'Live', 'Page Live': true,
+        });
+        try {
+          const { triggerLaunchWarmup } = await import('@/lib/triggerLaunchWarmup');
+          triggerLaunchWarmup(`request-go-live:${session.rancherId}`);
+        } catch (e: any) { console.warn('[request-go-live] warmup trigger failed:', e?.message); }
+        try {
+          await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, `🟢 <b>${name} is now LIVE</b> (self-published)\n${siteUrl}/ranchers/${slug}`);
+        } catch { /* non-fatal */ }
+        return NextResponse.json({ success: true, live: true, message: "You're live! Buyers in your state can now find you." });
+      }
+
+      const missing: string[] = [];
+      if (!signed) missing.push('sign the agreement');
+      if (!hasSlug) missing.push('set your page link');
+      if (!hasPrice) missing.push('set at least one price');
+      if (!canCollect) missing.push(isTierV2 ? 'finish Stripe Connect' : 'add a payment link');
       try {
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
-          `🟢 <b>GO LIVE REQUEST</b>\n\n🤠 ${name} wants their page published\nSlug: ${slug}\nPreview: ${siteUrl}/ranchers/${slug}`,
-          {
-            inline_keyboard: [
-              [{ text: '🟢 Set Live', callback_data: `rgolive_${session.rancherId}` }],
-            ],
-          }
+          `🟡 <b>GO LIVE REQUEST</b> (not auto-eligible)\n\n🤠 ${name}\nStill needs: ${missing.join(', ') || 'unknown'}\n${slug ? `Preview: ${siteUrl}/ranchers/${slug}` : ''}`,
+          { inline_keyboard: [[{ text: '🟢 Force Live', callback_data: `rgolive_${session.rancherId}` }]] },
         );
       } catch (e) {
         console.error('Telegram go-live notification error:', e);
       }
-      return NextResponse.json({ success: true, message: 'Go-live request sent to admin' });
+      return NextResponse.json({ success: false, live: false, message: `Almost there — you still need to: ${missing.join(', ')}.` });
     }
 
     const fields: Record<string, any> = {};

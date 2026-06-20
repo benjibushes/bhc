@@ -95,42 +95,46 @@ const TIER_CARDS: Array<{
   perks: string[];
   mode: 'checkout' | 'inline';
 }> = [
+  // Free tier FIRST + prominent. This is the default self-serve path: $0 to
+  // join, BHC earns 10% only when the rancher actually sells. Honest match to
+  // the entry page's "$0 setup · 10% on what closes" promise. The paid tiers
+  // below are an OPTIONAL upgrade (more leads / lower commission), never a wall.
+  {
+    slug: 'legacy_connect',
+    label: 'Legacy Connect',
+    price: 'Free to start · 10% per sale',
+    promise: 'Pay nothing up front. BHC earns 10% only when you actually sell — same buyer routing as the paid tiers.',
+    perks: [
+      'No monthly fee — $0 to join',
+      '10% commission only on closed sales (deducted at deposit)',
+      'Stripe Connect direct-to-bank payouts',
+      'Same buyer routing as paid tiers',
+    ],
+    mode: 'inline',
+  },
   {
     slug: 'pasture',
     label: 'Pasture',
-    price: '$150/mo + 7%',
-    promise: 'We send you buyers.',
-    perks: ['Buyer matching for your states', 'Stripe Connect payouts', 'Lead inbox'],
+    price: 'Upgrade · $150/mo + 7%',
+    promise: 'Optional upgrade: drop your commission to 7% on a flat monthly.',
+    perks: ['Lower 7% commission', 'Buyer matching for your states', 'Lead inbox'],
     mode: 'checkout',
   },
   {
     slug: 'ranch',
     label: 'Ranch',
-    price: '$350/mo + 3%',
-    promise: 'We send you buyers AND make sure they see you first.',
-    perks: ['Priority placement', 'Featured ranch badge', 'Homepage rotation slot'],
+    price: 'Upgrade · $350/mo + 3%',
+    promise: 'Optional upgrade: more leads — we make sure buyers see you first.',
+    perks: ['Just 3% commission', 'Priority placement', 'Featured ranch badge', 'Homepage rotation slot'],
     mode: 'checkout',
   },
   {
     slug: 'operator',
     label: 'Operator',
-    price: '$500/mo + 0%',
-    promise: 'We send you buyers, position you, and run your marketing.',
+    price: 'Upgrade · $500/mo + 0%',
+    promise: 'Optional upgrade: 0% commission and we run your marketing for you.',
     perks: ['0% commission', 'Dedicated brand strategist', 'Monthly content + social cadence'],
     mode: 'checkout',
-  },
-  {
-    slug: 'legacy_connect',
-    label: 'Legacy Connect',
-    price: '$0/mo + 10%',
-    promise: 'Keep your current 10% deal. Get on Stripe Connect for direct deposits.',
-    perks: [
-      'No monthly fee',
-      '10% commission per sale (deducted at deposit)',
-      'Stripe Connect direct-to-bank payouts',
-      'Same buyer routing as paid tiers',
-    ],
-    mode: 'inline',
   },
 ];
 
@@ -2516,16 +2520,24 @@ function CallStep({
 }
 
 // ── Step 7 — Pick Your Plan (Stage-3 Task 11A) ────────────────────────────
-// Rancher picks one of the three tiers. Each card opens
-// /partner/checkout/[tier] in a new tab. While the rancher is in the
-// Stripe Checkout tab, we poll /api/rancher/setup every 4s to detect when
-// Tier + Subscription Status='active' have been written to Airtable (via
-// the Stripe webhook). When detected, the card shows a ✓ and Continue
-// enables. The rancher can also tap "I picked my plan, continue" once a
-// tier+active subscription is confirmed.
+// FREE-DEFAULT MODEL (paywall removed 2026-06): self-serve ranchers land on
+// the free Legacy Connect tier ($0 to join, BHC earns 10% only on closed
+// sales). On entry, if the rancher has no tier yet, we auto-select Legacy
+// Connect (server-backed, via /api/rancher/tier/select) so Continue is enabled
+// immediately — no card, no Stripe, no wall. It stays fully changeable: the
+// three paid cards (Pasture/Ranch/Operator) are an OPTIONAL upgrade for more
+// leads / a lower commission. Picking a paid card redirects the same tab into
+// Stripe Checkout; on success Stripe returns to the wizard (tierComplete=1) and
+// the poll detects Subscription Status='active' to confirm that paid tier.
 //
-// We DO NOT advance automatically — rancher confirms to keep them in
-// control (and so we don't blow past mid-loaded state during webhook lag).
+// Continue gate: enabled the moment the FREE tier is selected (freeTierSelected
+// or a persisted Tier='Legacy Connect') — it never requires a paid Stripe
+// subscription. Paid tiers still gate Continue on an active subscription.
+//
+// We poll /api/rancher/setup every 4s to reconcile persisted Tier +
+// Subscription Status, but the free path does not depend on that round-trip to
+// advance. We still don't auto-ADVANCE past this step — the rancher clicks
+// Continue to stay in control.
 function TierPickStep({
   token,
   currentTier,
@@ -2543,9 +2555,73 @@ function TierPickStep({
   const [polledStatus, setPolledStatus] = useState<string>(subscriptionStatus);
   const [lastRancher, setLastRancher] = useState<Rancher | null>(null);
   const [checking, setChecking] = useState(false);
+  // Optimistic free-tier flag. The free (Legacy Connect) path has NO Stripe
+  // subscription, so we must not gate Continue on Subscription Status for it.
+  // We flip this true the instant the rancher picks Legacy Connect (or auto-
+  // select picks it on entry) so Continue proceeds immediately — without
+  // waiting on the synthetic 'active' write to round-trip through Airtable.
+  const [freeTierSelected, setFreeTierSelected] = useState(currentTier === 'legacy_connect');
 
   const isActive = polledStatus === 'active' || polledStatus === 'trialing';
-  const planLocked = !!polledTier && isActive;
+  // A paid tier is confirmed only once its subscription is active. The FREE
+  // tier needs no subscription — selecting it (freeTierSelected, or a persisted
+  // Tier='Legacy Connect') is enough to advance. This is the paywall removal:
+  // Continue is enabled by the free pick alone, never forcing a paid sub.
+  const onFreeTier = freeTierSelected || polledTier === 'legacy_connect';
+  const planLocked = onFreeTier || (!!polledTier && isActive);
+
+  // Auto-select the FREE tier on entry for self-serve ranchers who arrive
+  // with no tier yet, so a rancher who just wants in can hit Continue
+  // immediately (the entry page promised "$0 to start"). This persists
+  // Tier='Legacy Connect' + synthetic 'active' via the same route the card
+  // uses, so the downstream Connect / deposit gates see them correctly.
+  // It stays fully changeable — the rancher can still click any paid card to
+  // upgrade. Guarded by a ref so it fires at most once and never overrides a
+  // rancher who already picked a (paid or free) tier.
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedRef.current) return;
+    // Only auto-pick when no tier is set anywhere. If they already have a tier
+    // (returning rancher, or mid-checkout paid pick) leave their choice alone.
+    if (currentTier || polledTier) return;
+    autoSelectedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/tier/select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tier: 'legacy_connect' }),
+        });
+        if (cancelled) return;
+        if (res.ok) {
+          // Locked onto the free path — Continue is now enabled. Reconcile
+          // persisted state so the status copy + card ✓ reflect the record.
+          setFreeTierSelected(true);
+          setPolledTier('legacy_connect');
+          const fresh = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
+          if (!cancelled && fresh.ok) {
+            const fd = await fresh.json();
+            if (fd?.rancher) {
+              const r = fd.rancher as Rancher;
+              setLastRancher(r);
+              setPolledTier(tierSlugFromRancher(r));
+              setPolledStatus(String(r['Subscription Status'] || ''));
+            }
+          }
+        }
+        // On failure we stay silent — the rancher can still click the free
+        // card manually; we just don't pop an alert for a background action.
+      } catch {
+        /* non-fatal — manual card pick still works */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally runs once on mount (currentTier is the server snapshot).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Poll for Tier + Subscription Status. Runs every 4s while the step is
   // mounted. Stops once both are set + active (saves Airtable read budget).
@@ -2603,17 +2679,25 @@ function TierPickStep({
       <header>
         <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 6 · Pick Your Plan</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
-          Pick the marketing engine that fits your ranch.
+          Start free. Pay 10% only when you sell.
         </h2>
         <p className="text-sm text-saddle mt-1">
-          We send you buyers. You raise the cattle. Cancel anytime.
+          You&rsquo;re set up on the free plan by default — no monthly fee, no
+          card. Want more leads or a lower commission? The paid upgrades are
+          optional. Cancel or change anytime.
         </p>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         {TIER_CARDS.map((card) => {
-          const selected = polledTier === card.slug;
-          const showCheckmark = selected && isActive;
+          const isFreeCard = card.slug === 'legacy_connect';
+          // The free card is "selected" the moment freeTierSelected flips,
+          // even before the synthetic 'active' write round-trips — so its
+          // selected/✓ styling stays in sync with the now-enabled Continue.
+          const selected = polledTier === card.slug || (isFreeCard && freeTierSelected);
+          // Free card confirms on selection (no subscription to wait on);
+          // paid cards still require an active subscription to show ✓.
+          const showCheckmark = isFreeCard ? selected : selected && isActive;
           return (
             <div
               key={card.slug}
@@ -2644,11 +2728,12 @@ function TierPickStep({
                 ))}
               </ul>
               {card.mode === 'inline' ? (
-                // Legacy Connect: POST tier/select inline (no Stripe Checkout
-                // for subscription — the rancher picks 10% commission /
-                // no-monthly-fee path). On success the polling effect at line
-                // 2461-2477 detects the persisted Tier='Legacy Connect' +
-                // Subscription Status='active' and unlocks Continue.
+                // Legacy Connect (FREE): POST tier/select inline — no Stripe
+                // Checkout, no subscription. The rancher keeps the $0 /
+                // 10%-on-close deal. We flip freeTierSelected immediately so
+                // Continue enables on the spot (no paid sub required); the
+                // refresh below + the polling effect then reconcile the
+                // persisted Tier='Legacy Connect' + synthetic 'active' status.
                 <button
                   type="button"
                   onClick={async () => {
@@ -2664,8 +2749,12 @@ function TierPickStep({
                         alert(data?.error || `Could not select ${card.label}`);
                         return;
                       }
-                      // Refresh polled state so the Continue button enables
-                      // without waiting for the 4s tick.
+                      // Free path is locked in the moment select succeeds —
+                      // Continue no longer waits on any subscription state.
+                      setFreeTierSelected(true);
+                      setPolledTier('legacy_connect');
+                      // Refresh polled state so the rest of the UI (status copy)
+                      // reflects the persisted record without the 4s tick.
                       const fresh = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
                       if (fresh.ok) {
                         const fd = await fresh.json();
@@ -2761,7 +2850,15 @@ function TierPickStep({
       </div>
 
       <div className="border border-dust bg-bone-warm p-4 text-sm text-charcoal/85 leading-relaxed">
-        {planLocked ? (
+        {onFreeTier ? (
+          <p>
+            <span aria-hidden className="text-sage mr-1.5">✓</span>
+            You&rsquo;re on <strong>Legacy Connect</strong> — free to start, 10%
+            only when you sell. Hit continue to set up your payouts and
+            fulfillment. Want more leads or a lower rate? Pick a paid upgrade
+            above anytime.
+          </p>
+        ) : planLocked ? (
           <p>
             <span aria-hidden className="text-sage mr-1.5">✓</span>
             Plan confirmed — <strong>{TIER_CARDS.find((c) => c.slug === polledTier)?.label || polledTier}</strong>.
@@ -2769,15 +2866,16 @@ function TierPickStep({
           </p>
         ) : polledTier && !isActive ? (
           <p>
-            You picked <strong>{TIER_CARDS.find((c) => c.slug === polledTier)?.label || polledTier}</strong> but
-            we haven&rsquo;t seen the subscription clear yet (status: {polledStatus || 'pending'}).
-            Finish checkout in the Stripe tab. We&rsquo;ll auto-detect when it&rsquo;s active.
+            You picked the <strong>{TIER_CARDS.find((c) => c.slug === polledTier)?.label || polledTier}</strong> upgrade
+            but we haven&rsquo;t seen the subscription clear yet (status: {polledStatus || 'pending'}).
+            Finish checkout in the Stripe tab. We&rsquo;ll auto-detect when it&rsquo;s active —
+            or pick <strong>Legacy Connect</strong> to start free instead.
           </p>
         ) : (
           <p>
-            Picking a plan opens Stripe Checkout in a new tab. Once you finish,
-            come back here — we&rsquo;ll auto-detect your active subscription
-            and unlock the continue button.
+            Setting you up on the free <strong>Legacy Connect</strong> plan — one
+            sec. You can start with no monthly fee, or pick a paid upgrade above
+            for more leads / a lower commission.
           </p>
         )}
         <button
@@ -2796,9 +2894,13 @@ function TierPickStep({
           onClick={() => onContinue(lastRancher)}
           disabled={!planLocked}
           className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider disabled:opacity-40 disabled:cursor-not-allowed"
-          title={planLocked ? '' : 'Pick a plan + finish checkout first'}
+          title={planLocked ? '' : 'Setting up your free plan…'}
         >
-          {planLocked ? 'I picked my plan, continue →' : 'Pick a plan to continue'}
+          {onFreeTier
+            ? 'Continue free →'
+            : planLocked
+            ? 'I picked my plan, continue →'
+            : 'Setting up your free plan…'}
         </button>
         <button
           type="button"
