@@ -9,6 +9,10 @@ export const maxDuration = 60;
 
 const BATCH_SIZE = 10;
 const BATCH_DELAY_MS = 1000;
+// Per cron run: at 10/batch + 1s/batch that's ~40s of sends, safely under the
+// 60s maxDuration. Larger audiences resume on the next hourly tick via the
+// 'Sent' cursor instead of getting killed mid-send.
+const MAX_PER_RUN = 400;
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -82,7 +86,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     const all = await getAllRecords(TABLES.CAMPAIGNS);
     campaigns = all.filter((c: any) => {
       const status = (c['Status'] || c['Campaign Status'] || '').toLowerCase();
-      return status === 'scheduled';
+      // 'sending' is included so a campaign whose run was killed mid-send (large
+      // audience > maxDuration) RESUMES from its cursor instead of stranding.
+      return status === 'scheduled' || status === 'sending';
     });
   } catch {
     return { status: 'success', recordsTouched: 0, notes: 'no campaigns table or no scheduled campaigns' };
@@ -101,13 +107,36 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
   let totalSent = 0;
   let totalFailed = 0;
+  // Per-run recipient budget — keeps a single cron run well under maxDuration so
+  // a large audience can't get killed mid-send. Remaining recipients (and any
+  // remaining campaigns) resume on the next hourly tick via the 'Sent' cursor.
+  let runBudget = MAX_PER_RUN;
+
   for (const campaign of due) {
+    if (runBudget <= 0) break; // out of budget — finish on the next tick
     const audienceType = campaign['Audience'] || 'consumers';
     const recipients = await getRecipients(audienceType);
 
-    // Flip Status='Sending' BEFORE the send loop. If the cron crashes mid-send,
-    // the next tick won't re-pick this row (filter is Status='scheduled'). This
-    // prevents double-sending the whole audience after a partial crash.
+    // Resume cursor: how many of this audience we've already sent in prior runs.
+    // recipients come back in Airtable's stable order, so slicing is consistent.
+    const alreadySent = Number(campaign['Sent'] || 0);
+    const startFailed = Number(campaign['Failed'] || 0);
+    const remaining = recipients.slice(alreadySent);
+    if (remaining.length === 0) {
+      // Already fully sent (e.g. a 'Sending' row stranded right at the end) —
+      // finalize so it leaves the queue.
+      try {
+        await updateRecord(TABLES.CAMPAIGNS, campaign.id, {
+          'Status': startFailed > 0 ? 'Partial' : 'Sent',
+          'Sent At': new Date().toISOString(),
+        });
+      } catch (e) { console.error('Failed to finalize already-sent campaign:', e); }
+      continue;
+    }
+
+    // Reserve as 'Sending' (idempotent — may already be 'sending' on resume). The
+    // pick filter now includes 'sending', so a crash mid-send resumes from the
+    // cursor instead of stranding the campaign forever.
     try {
       await updateRecord(TABLES.CAMPAIGNS, campaign.id, {
         'Status': 'Sending',
@@ -139,8 +168,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
     let sent = 0;
     let failed = 0;
-    for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
-      const batch = recipients.slice(i, i + BATCH_SIZE);
+    const thisRun = remaining.slice(0, runBudget);
+    for (let i = 0; i < thisRun.length; i += BATCH_SIZE) {
+      const batch = thisRun.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map(recipient =>
           sendBroadcastEmail({
@@ -162,21 +192,35 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       sent += results.filter(r => r.status === 'fulfilled' && (r.value as any)?.success).length;
       failed += results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !(r.value as any)?.success)).length;
 
-      if (i + BATCH_SIZE < recipients.length) {
+      // Persist the cursor after EACH batch so a mid-run crash resumes from here
+      // instead of re-sending the front (or stranding the campaign).
+      try {
+        await updateRecord(TABLES.CAMPAIGNS, campaign.id, {
+          'Sent': alreadySent + sent,
+          'Failed': startFailed + failed,
+        });
+      } catch { /* cursor persist best-effort */ }
+
+      if (i + BATCH_SIZE < thisRun.length) {
         await sleep(BATCH_DELAY_MS);
       }
     }
+    runBudget -= sent;
 
     // Mirror the immediate-send path in /api/admin/broadcast: flip to 'Partial'
     // if any failures occurred, else 'Sent'. Operators rely on this status to
     // know whether to investigate Resend failures or move on.
-    const finalStatus = failed > 0 ? 'Partial' : 'Sent';
+    const totalDone = alreadySent + sent;
+    const cumFailed = startFailed + failed;
+    const isComplete = totalDone >= recipients.length;
     try {
       await updateRecord(TABLES.CAMPAIGNS, campaign.id, {
-        'Status': finalStatus,
-        'Sent At': new Date().toISOString(),
-        'Sent': sent,
-        'Failed': failed,
+        // Only finalize when the WHOLE audience is exhausted; otherwise stay
+        // 'Sending' so the next hourly tick resumes from the cursor.
+        'Status': isComplete ? (cumFailed > 0 ? 'Partial' : 'Sent') : 'Sending',
+        'Sent': totalDone,
+        'Failed': cumFailed,
+        ...(isComplete ? { 'Sent At': new Date().toISOString() } : {}),
       });
     } catch (e) {
       console.error('Failed to update campaign status:', e);
