@@ -169,8 +169,20 @@ export async function markDepositRefunded(
   );
   if (existing.length === 0) return { flipped: false };
   const payment = existing[0];
-  // For non-partial refunds, idempotently no-op on re-call.
-  if (!opts.partial && payment['Status'] === 'refunded') return { flipped: false };
+
+  // FULL-refund detection — the gate that decides whether to NUKE the whole
+  // Closed Won deal (restoreReferralAfterRefund). A FULL refund requires BOTH:
+  //   (a) the caller didn't flag it partial, AND
+  //   (b) when amounts are known, the refund covers the captured deposit.
+  // Belt-and-suspenders: a Stripe-Dashboard partial refund hits the webhook
+  // directly with NO partial flag — without the amount check it would wrongly
+  // restore (reverting Status/Sale/Commission + capacity) on a $1 refund.
+  const capturedCents = Number(payment['Amount Cents'] || 0);
+  const refundedCents = Number(opts.refundedAmountCents ?? 0);
+  const isFullRefund = !opts.partial && (capturedCents <= 0 || refundedCents <= 0 || refundedCents >= capturedCents);
+
+  // Idempotently no-op on re-call for full refunds.
+  if (isFullRefund && payment['Status'] === 'refunded') return { flipped: false };
 
   // Best-effort field writes — Refund Reason + Refunded Amount Cents may not
   // exist in older Airtable schemas. Catch the typed-field error and retry
@@ -178,7 +190,7 @@ export async function markDepositRefunded(
   const fields: Record<string, any> = {
     'Refunded At': new Date().toISOString(),
   };
-  if (!opts.partial) fields['Status'] = 'refunded';
+  if (isFullRefund) fields['Status'] = 'refunded';
   if (opts.reason) fields['Refund Reason'] = opts.reason;
   if (typeof opts.refundedAmountCents === 'number') {
     fields['Refunded Amount Cents'] = opts.refundedAmountCents;
@@ -191,7 +203,7 @@ export async function markDepositRefunded(
     // Refund Reason / Refunded Amount Cents will reject those keys outright.
     console.warn('[markDepositRefunded] schema fallback (retrying without new fields):', e?.message);
     const fallback: Record<string, any> = { 'Refunded At': fields['Refunded At'] };
-    if (!opts.partial) fallback['Status'] = 'refunded';
+    if (isFullRefund) fallback['Status'] = 'refunded';
     await updateRecord(PAYMENTS_TABLE, payment.id, fallback);
   }
 
@@ -218,7 +230,7 @@ export async function markDepositRefunded(
   // Idempotency: the early-return on Status==='refunded' above already
   // prevents double-restore. We also guard on Referral.Status==='Closed Won'
   // so re-running against an already-restored Referral is a no-op.
-  if (!opts.partial) {
+  if (isFullRefund) {
     try {
       await restoreReferralAfterRefund(payment, stripePaymentIntentId);
     } catch (e: any) {

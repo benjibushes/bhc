@@ -254,7 +254,10 @@ export async function POST(request: Request) {
           typeof charge?.payment_intent === 'string' ? charge.payment_intent : '';
         if (!piId) break;
         try {
-          const { flipped } = await markDepositRefunded(piId);
+          // Pass the real partial/amount so a PARTIAL refund doesn't nuke the deal.
+          const refundedCents = Number(charge?.amount_refunded || 0);
+          const isPartial = refundedCents > 0 && refundedCents < Number(charge?.amount || 0);
+          const { flipped } = await markDepositRefunded(piId, { partial: isPartial, refundedAmountCents: refundedCents });
           if (flipped) {
             await sendTelegramMessage(
               TELEGRAM_ADMIN_CHAT_ID,
