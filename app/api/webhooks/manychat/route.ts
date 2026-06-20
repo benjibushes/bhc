@@ -655,6 +655,10 @@ async function upsertConsumerFromDM(args: {
       if (args.utmSource && !rec['utm_source']) updates['utm_source'] = args.utmSource;
       if (args.utmCampaign && !rec['utm_campaign']) updates['utm_campaign'] = args.utmCampaign;
       if (args.fbclid && !rec['fbclid']) updates['fbclid'] = args.fbclid;
+      // Stamp click-time ms alongside fbclid so the close-Purchase can rebuild
+      // _fbc (fb.1.<fbclid_ts>.<fbclid>). reconstructFbc returns undefined without
+      // it → no click attribution. Guard so we never overwrite an existing one.
+      if (args.fbclid && !rec['fbclid_ts']) updates['fbclid_ts'] = String(Date.now());
       if (args.state && !rec['State']) updates['State'] = args.state;
       await updateRecord(TABLES.CONSUMERS, rec.id, updates);
       return;
@@ -668,9 +672,16 @@ async function upsertConsumerFromDM(args: {
       'Notes': args.noteEntry,
     };
     if (args.state) fields['State'] = args.state;
-    // Final-sweep fix (2026-06-10): Consumers has no utm_source/utm_campaign/
-    // fbclid columns — those writes were silently stripped, losing IG-DM ad
-    // attribution. Schema's catch-all is `UTM Parameters` (same as /access).
+    // Attribution. `fbclid`/`fbclid_ts` are real Consumers columns (same ones the
+    // web funnel /api/consumers writes and lib/contracts/rancher.ts reads back to
+    // rebuild _fbc at close) — write them directly so IG-DM buyers carry click
+    // attribution. fbclid_ts = click-time ms, required by reconstructFbc. The
+    // `UTM Parameters` blob is kept as a human-readable backup for utm_source/
+    // utm_campaign (no guaranteed dedicated columns for those).
+    if (args.fbclid) {
+      fields['fbclid'] = args.fbclid;
+      fields['fbclid_ts'] = String(Date.now());
+    }
     const utmParts: string[] = [];
     if (args.utmSource) utmParts.push(`utm_source=${args.utmSource}`);
     if (args.utmCampaign) utmParts.push(`utm_campaign=${args.utmCampaign}`);

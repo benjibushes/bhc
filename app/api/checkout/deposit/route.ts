@@ -10,8 +10,8 @@
 // GET ?refId=X — returns rancher info + fulfillment details for the deposit page.
 
 import { NextResponse } from 'next/server';
-import { getRecordById, TABLES } from '@/lib/airtable';
-import { createDepositCheckout } from '@/lib/stripeConnect';
+import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { createDepositCheckout, getConnectAccountStatus } from '@/lib/stripeConnect';
 import { recordDeposit } from '@/lib/contracts/payments';
 import { tierFor, TIERS } from '@/lib/tiers';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
@@ -126,6 +126,29 @@ export async function POST(req: Request) {
   const connectAccountId = String(rancher['Stripe Connect Account Id'] || '');
   if (!connectAccountId) {
     return NextResponse.json({ error: 'Rancher Stripe Connect Account missing' }, { status: 409 });
+  }
+
+  // Live Connect status re-check. The cached `Stripe Connect Status` field
+  // above can go stale when Stripe flips a rancher active→restricted and the
+  // Connect webhook misses it (CONNECT_WEBHOOK_SECRET is often unset in prod).
+  // A stale 'active' would route buyers here and then blow up inside
+  // createDepositCheckout at Stripe (a 500) instead of a clean rejection.
+  // Read live, self-heal Airtable so routing recovers, and reject with the
+  // SAME 409 as the cached gate. Transient read failures fall back to the
+  // cached value already validated above — never block a deposit on a flaky
+  // Stripe read.
+  try {
+    const live = await getConnectAccountStatus(connectAccountId);
+    if (live.status !== 'active') {
+      try {
+        await updateRecord(TABLES.RANCHERS, rancherId, { 'Stripe Connect Status': live.status });
+      } catch (persistErr: any) {
+        console.error('[checkout/deposit] failed to persist corrected Connect status:', persistErr?.message);
+      }
+      return NextResponse.json({ error: 'Rancher bank not connected — cannot accept deposits yet' }, { status: 409 });
+    }
+  } catch (statusErr: any) {
+    console.error('[checkout/deposit] live Connect status read failed — falling back to cached field:', statusErr?.message);
   }
 
   // Subscription status gate. past_due/unpaid/canceled ranchers cannot accept
@@ -288,6 +311,7 @@ export async function POST(req: Request) {
       event_time: Math.floor(Date.now() / 1000),
       event_id: metaEventId(referralId),
       action_source: 'website',
+      event_source_url: `${SITE_URL}/checkout/${referralId}/deposit`,
       user_data: buildUserData({
         email: buyerEmail,
         phone: buyerPhone,

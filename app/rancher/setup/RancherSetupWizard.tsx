@@ -784,9 +784,21 @@ export default function RancherSetupWizard() {
         didRestoreStep.current = true;
         setTimeout(() => setStep(7 as any), 0);
       }
-      // Fall through to the wizard render below (no early return). For
-      // stillNeedsConnect path, the parent already setStep(9) before
-      // re-render, so we naturally land in StripeConnectStep.
+      // 2026-06-19 fix: COLD-revisit for a tier_v2 rancher who SKIPPED Stripe
+      // Connect. On a fresh open (setup?token=…, no ?tierComplete=1) nothing
+      // calls setStep(9) — the tierComplete effect (line 314) is gated on the
+      // query param and Step-7's onContinue (line 1755) is unreachable without
+      // first reaching Step 7. So they were stranded at the Step-0 intro whose
+      // only forward button goes to setStep(1), never to Connect. Mirror the
+      // isLegacy one-shot above using the SAME didRestoreStep guard so it fires
+      // once and doesn't fight the ?tierComplete=1 / localStorage paths.
+      if (stillNeedsConnect && typeof window !== 'undefined' && !didRestoreStep.current) {
+        didRestoreStep.current = true;
+        setTimeout(() => setStep(9 as any), 0);
+      }
+      // Fall through to the wizard render below (no early return). When the
+      // rancher arrived via ?tierComplete=1 that effect already setStep(9), so
+      // the guard above no-ops and we naturally land in StripeConnectStep.
     } else {
       return (
         <Container>

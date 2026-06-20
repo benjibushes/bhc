@@ -90,11 +90,16 @@ async function mintOnboardingUrl(
       };
     }
 
-    // Persist BEFORE link creation so a refresh mid-flow doesn't create duplicates
+    // Persist BEFORE link creation so a refresh mid-flow doesn't create duplicates.
+    // 'Connect Started At' is written ONLY here (the first-start branch, gated by
+    // `if (!accountId)`), so re-entry/refresh never overwrites it. This anchors the
+    // onboarding-stuck recovery-nudge cron, which targets ranchers who began Stripe
+    // Connect and abandoned KYC.
     try {
       await updateRecord(TABLES.RANCHERS, session.rancherId, {
         'Stripe Connect Account Id': accountId,
         'Stripe Connect Status': 'onboarding',
+        'Connect Started At': new Date().toISOString(),
       });
     } catch (e: any) {
       console.error('[connect/start] Airtable persist failed:', e?.message);
