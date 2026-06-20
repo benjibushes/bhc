@@ -114,13 +114,17 @@ export async function GET(request: Request) {
       final_invoice_amount: Number(r['Final Invoice Amount'] || 0),
       final_paid_at: r['Final Paid At'] || '',
       total_sale_amount: Number(r['Total Sale Amount'] || 0),
+      // Processing Fee is stamped per-referral by send-final-invoice when the
+      // rancher submits the invoice (Airtable field 'Processing Fee'). Used by
+      // the Collect Balance section: balance = total_sale_amount - processing_fee.
+      processing_fee: Number(r['Processing Fee'] || 0),
       processing_date: r['Processing Date'] || '',
       };
     });
 
     // Sort: active first, then by date
     referralsList.sort((a: any, b: any) => {
-      const activeStatuses = ['Intro Sent', 'In Progress', 'Rancher Contacted', 'Negotiation'];
+      const activeStatuses = ['Intro Sent', 'In Progress', 'Rancher Contacted', 'Negotiation', 'Awaiting Payment', 'Slot Locked'];
       const aActive = activeStatuses.includes(a.status) ? 0 : 1;
       const bActive = activeStatuses.includes(b.status) ? 0 : 1;
       if (aActive !== bActive) return aActive - bActive;

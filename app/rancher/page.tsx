@@ -124,6 +124,9 @@ interface Referral {
   final_invoice_amount?: number;
   final_paid_at?: string;
   total_sale_amount?: number;
+  // Stamped by send-final-invoice; used by Collect Balance section to show
+  // balance = total_sale_amount - processing_fee without re-entering data.
+  processing_fee?: number;
   processing_date?: string;
 }
 
@@ -146,6 +149,9 @@ const statusStyles: Record<string, string> = {
   'Closed Won': 'bg-green-100 text-green-800',
   'Closed Lost': 'bg-gray-100 text-gray-600',
   'Pending Approval': 'bg-orange-100 text-orange-800',
+  // Deposit-gate statuses — set by Airtable typecast on first write (no schema change needed).
+  'Awaiting Payment': 'bg-amber-100 text-amber-800',
+  'Slot Locked': 'bg-blue-100 text-blue-700',
 };
 
 export default function RancherDashboardPage() {
@@ -738,6 +744,27 @@ export default function RancherDashboardPage() {
 
   const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r.status));
   const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost'].includes(r.status));
+  // Collect Balance: deposit-paid + not fully paid + not terminal. Same predicate
+  // as showFinalInvoice (ReferralRow). Sorted oldest deposit first so ranchers
+  // collect in the right priority order. This filter is purely client-side —
+  // no new API endpoint; reuses the existing referrals payload.
+  const collectBalanceRefs = referrals
+    .filter((r) => {
+      const depositPaid = !!r.deposit_paid_at && (r.deposit_amount || 0) > 0;
+      const finalPaid = !!r.final_paid_at;
+      const isTerminal = r.status === 'Closed Won' || r.status === 'Closed Lost';
+      return depositPaid && !finalPaid && !isTerminal;
+    })
+    .sort((a, b) =>
+      new Date(a.deposit_paid_at || 0).getTime() - new Date(b.deposit_paid_at || 0).getTime()
+    );
+  // Sum of known balances for the heading. If total_sale_amount is not yet set
+  // we treat that referral's balance as 0 for the aggregate (it shows "set in invoice").
+  const collectBalanceTotal = collectBalanceRefs.reduce((sum, r) => {
+    if (!r.total_sale_amount || r.total_sale_amount <= 0) return sum;
+    const fee = r.processing_fee && r.processing_fee > 0 ? r.processing_fee : 0;
+    return sum + (r.total_sale_amount - fee);
+  }, 0);
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
@@ -1384,6 +1411,109 @@ export default function RancherDashboardPage() {
                 <div className="p-8 border border-dust text-center bg-white">
                   <p className="text-saddle">No active leads right now. New buyer introductions will appear here.</p>
                 </div>
+              )}
+
+              {/* ── Collect Balance ─────────────────────────────────────────
+                  Shows every deposit-paid customer whose final balance is still
+                  outstanding. Reuses the existing send-final-invoice route +
+                  modal + submitFinalInvoice handler — no new API endpoints.
+                  Filter: depositPaid && !finalPaid && !terminal (same as
+                  showFinalInvoice predicate in ReferralRow).
+                  Sort: oldest deposit first (most urgent collection first). */}
+              {collectBalanceRefs.length > 0 && (
+                <>
+                  <Divider />
+                  <div className="flex flex-col sm:flex-row sm:items-baseline gap-2">
+                    <h2 className="font-serif text-2xl">Collect Balance</h2>
+                    <span className="text-sm text-saddle">
+                      {collectBalanceTotal > 0
+                        ? `$${collectBalanceTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} across `
+                        : ''}
+                      {collectBalanceRefs.length} {collectBalanceRefs.length === 1 ? 'customer' : 'customers'} owed
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {collectBalanceRefs.map((ref) => {
+                      const depositPaidDate = ref.deposit_paid_at
+                        ? new Date(ref.deposit_paid_at).toLocaleDateString()
+                        : '';
+                      const hasTotal = ref.total_sale_amount && ref.total_sale_amount > 0;
+                      const hasFee = ref.processing_fee && ref.processing_fee > 0;
+                      const balanceKnown = hasTotal && hasFee;
+                      const balanceAmt = balanceKnown
+                        ? (ref.total_sale_amount! - ref.processing_fee!)
+                        : null;
+                      const slotLocked = !!ref.rancher_accepted_at;
+                      const invoiceSent = !!ref.final_invoice_sent_at || !!ref.final_invoice_url;
+                      // Badge state: paid (green), sent (yellow), not sent (gray)
+                      const badgeClass = ref.final_paid_at
+                        ? 'bg-green-100 text-green-800'
+                        : invoiceSent
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-gray-100 text-gray-600';
+                      const badgeLabel = ref.final_paid_at
+                        ? 'Paid'
+                        : invoiceSent
+                          ? 'Invoice sent'
+                          : 'Not sent';
+                      return (
+                        <div key={ref.id} className="border border-dust bg-white">
+                          <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                            {/* Left: buyer info + deposit details */}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap mb-1">
+                                <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-gray-100 text-gray-600'}`}>
+                                  {ref.status}
+                                </span>
+                                <span className={`inline-block px-2 py-0.5 text-xs font-medium ${badgeClass}`}>
+                                  {badgeLabel}
+                                </span>
+                                {slotLocked ? (
+                                  <span className="inline-block px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800" title={`Slot accepted ${ref.rancher_accepted_at}`}>
+                                    🔒 Slot locked
+                                  </span>
+                                ) : (
+                                  <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700">
+                                    Accept Slot first
+                                  </span>
+                                )}
+                              </div>
+                              <p className="font-medium">{ref.buyer_name}</p>
+                              <p className="text-xs text-dust">{ref.order_type}</p>
+                              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-saddle">
+                                <span>
+                                  Deposit:{' '}
+                                  <strong className="text-charcoal">
+                                    ${(ref.deposit_amount || 0).toFixed(0)}
+                                  </strong>
+                                  {depositPaidDate ? ` · ${depositPaidDate}` : ''}
+                                </span>
+                                <span>
+                                  Balance owed:{' '}
+                                  <strong className="text-charcoal">
+                                    {balanceAmt !== null
+                                      ? `$${balanceAmt.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                                      : 'set in invoice'}
+                                  </strong>
+                                </span>
+                              </div>
+                            </div>
+                            {/* Right: action button */}
+                            <div className="flex-shrink-0">
+                              <button
+                                onClick={() => openFinalInvoiceModal(ref)}
+                                className="px-4 py-2 text-sm bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+                                title={invoiceSent ? 'Re-send the final balance invoice to buyer' : 'Send final balance invoice to buyer (100% to you)'}
+                              >
+                                {invoiceSent ? 'Re-send invoice' : 'Send Final Invoice'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
 
               {closedRefs.length > 0 && (
