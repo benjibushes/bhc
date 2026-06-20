@@ -297,9 +297,14 @@ export async function POST(request: Request) {
     // Reading-once + grouping avoids one Airtable call per rancher × state.
     let activeRefsByRancherState = new Map<string, Map<string, number>>();
     try {
+      // Count the SAME slot-holding statuses the global counter holds (Current
+      // Active Referrals is incremented at Intro Sent and held through later
+      // statuses). Counting only 'Intro Sent' here let in-state leads that
+      // progressed vanish from the per-state count while still consuming a global
+      // slot — so a multi-state rancher could take 2× their per-state cap.
       const activeReferrals = (await getAllRecords(
         TABLES.REFERRALS,
-        `{Status} = "Intro Sent"`,
+        `OR({Status} = "Intro Sent", {Status} = "Rancher Contacted", {Status} = "Negotiation", {Status} = "Awaiting Payment", {Status} = "Slot Locked")`,
       )) as any[];
       for (const ref of activeReferrals) {
         const rancherIds = (Array.isArray(ref['Rancher']) ? ref['Rancher'] : []) as string[];

@@ -3,7 +3,7 @@ import { updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
-import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { getMaxActiveReferrals, getLiveCapacity, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 
 function esc(s: string): string {
@@ -94,7 +94,9 @@ export async function POST(
     }
 
     const newCap = getMaxActiveReferrals(newRancher);
-    const newCount = newRancher['Current Active Referrals'] || 0;
+    // Live Redis read (source of truth) — the Airtable mirror is eventually
+    // consistent and can admit a reassign that pushes the rancher over cap.
+    const newCount = await getLiveCapacity(newRancherId);
     if (newCount >= newCap) {
       return NextResponse.json({
         error: `${newRancher['Operator Name'] || 'Target rancher'} is at capacity (${newCount}/${newCap})`
@@ -104,16 +106,17 @@ export async function POST(
     // Decrement old rancher's count if we had one assigned (and referral was active).
     // Re-read immediately before write to reduce the race window on concurrent
     // reassigns. The daily capacity self-heal cron catches any residual drift.
-    const wasActive = ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(referral['Status']);
+    // Slot-holding statuses per the capacity-drift-check invariant: Awaiting
+    // Payment + Slot Locked still consume a slot, so a reassign out of them must
+    // release the old rancher's slot too (previously leaked permanently).
+    const wasActive = ['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Awaiting Payment', 'Slot Locked'].includes(referral['Status']);
     if (oldRancherId && wasActive) {
       try {
-        const oldRancher: any = await getRecordById(TABLES.RANCHERS, oldRancherId);
-        const oldCount = Number(oldRancher['Current Active Referrals']) || 0;
-        if (oldCount > 0) {
-          await updateRecord(TABLES.RANCHERS, oldRancherId, {
-            'Current Active Referrals': oldCount - 1,
-          });
-        }
+        // Redis is the source of truth (Airtable mirror never propagates back).
+        // Use the atomic helper + sync the mirror — direct Airtable writes here
+        // desynced the counter that gates ALL routing.
+        const newOld = await decrementCapacity(oldRancherId);
+        await syncCapacityToAirtable(oldRancherId, newOld);
       } catch (e) {
         console.error('Old rancher decrement error:', e);
       }
@@ -139,12 +142,10 @@ export async function POST(
     // minimize the race window on concurrent reassigns. Not truly atomic
     // (Airtable has no compare-and-swap) but closes the critical gap.
     try {
-      const fresh: any = await getRecordById(TABLES.RANCHERS, newRancherId);
-      const freshCount = Number(fresh['Current Active Referrals']) || 0;
-      await updateRecord(TABLES.RANCHERS, newRancherId, {
-        'Current Active Referrals': freshCount + 1,
-        'Last Assigned At': now,
-      });
+      // Atomic Redis INCR + mirror sync (was a non-atomic Airtable read+1).
+      const newNew = await incrementCapacity(newRancherId);
+      await syncCapacityToAirtable(newRancherId, newNew);
+      await updateRecord(TABLES.RANCHERS, newRancherId, { 'Last Assigned At': now });
     } catch (e) {
       console.error('New rancher increment error:', e);
     }
