@@ -179,23 +179,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   }
 
-  // Compute balance per new commission-on-top model:
-  //   balance = listed − processingFee  (preferred)
-  //   balance = listed − depositAmount  (legacy fallback when processingFee unset)
-  // Commission rode on top of the deposit charge, so subtracting deposit
-  // would double-discount the rancher (they'd lose the commission portion
-  // of the listed price). Use processingFee whenever rancher knows their
-  // out-of-pocket processor cost.
+  // Balance the buyer still owes the rancher to reach the listed price:
+  //   balance = listed sale − deposit the rancher ALREADY received
+  // The rancher nets the full deposit (BHC's commission was taken as a fee ON
+  // TOP from the buyer at deposit time, NOT deducted from the rancher's deposit),
+  // so deposit + balance == listed. The prior code subtracted `processingFee`
+  // instead — and since processingFee is commonly $0, the rancher was invoiced
+  // the FULL listed price ON TOP of the deposit (≈2× the sale). processingFee is
+  // the rancher's own USDA out-of-pocket cost, unrelated to the buyer balance.
   const totalSaleAmount = body.totalSaleAmount;
+  const balanceDollars = Math.round((totalSaleAmount - depositAmount) * 100) / 100;
+  const balanceCents = Math.round(balanceDollars * 100);
+  // Recorded on the referral + receipt for the rancher's own books — it does NOT
+  // affect the buyer balance above (that's listed − deposit).
   const processingFeeInput = typeof body.processingFee === 'number' && body.processingFee >= 0
     ? body.processingFee
     : null;
-  const subtractFrom = processingFeeInput !== null ? processingFeeInput : depositAmount;
-  const balanceDollars = Math.round((totalSaleAmount - subtractFrom) * 100) / 100;
-  const balanceCents = Math.round(balanceDollars * 100);
 
   if (balanceCents < MIN_FINAL_INVOICE_CENTS) {
-    const subtractLabel = processingFeeInput !== null ? `processing fee ($${subtractFrom})` : `deposit ($${subtractFrom})`;
+    const subtractLabel = `deposit ($${depositAmount})`;
     return NextResponse.json(
       {
         error: `Final balance must be at least $${(MIN_FINAL_INVOICE_CENTS / 100).toFixed(2)}. Total sale ($${totalSaleAmount}) minus ${subtractLabel} = $${balanceDollars}.`,
@@ -322,9 +324,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Telegram alert
   try {
     if (TELEGRAM_ADMIN_CHAT_ID) {
-      const subtractDesc = processingFeeInput !== null
-        ? `processing fee $${processingFeeInput.toFixed(2)}`
-        : `deposit $${depositAmount.toFixed(2)}`;
+      const subtractDesc = `deposit $${depositAmount.toFixed(2)}`;
       await sendTelegramMessage(
         TELEGRAM_ADMIN_CHAT_ID,
         `📑 <b>FINAL INVOICE SENT</b>\n\n` +
