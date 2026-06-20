@@ -76,13 +76,34 @@ async function realHandler(
       // ALONE, so a connected-but-content-less rancher would flip Live with a
       // BLANK page — a buyer landing there sees nothing. (No payment-link check:
       // tier_v2 collects deposits via Stripe Connect, not a Payment Link.)
-      const connectStatus = String(rancher['Stripe Connect Status'] || '').toLowerCase();
+      let connectStatus = String(rancher['Stripe Connect Status'] || '').toLowerCase();
       const hasSlug = !!rancher['Slug'];
       const hasPrice = !!(
         rancher['Quarter Price'] ||
         rancher['Half Price'] ||
         rancher['Whole Price']
       );
+      const connectAcctId = rancher['Stripe Connect Account Id'] || rancher['Stripe Account Id'] || '';
+
+      // LIVE-READ RECONCILE: the Connect webhook is the only writer of Status
+      // 'active', and it returns 400 when CONNECT_WEBHOOK_SECRET is unset (the
+      // usual prod state), so the cached field can lag FOREVER — a rancher who
+      // finished Stripe KYC would never auto-go-live. When the rancher is
+      // otherwise ready (acct + slug + price) but the cached status isn't active,
+      // read live from Stripe and persist it, removing the webhook dependency.
+      if (connectStatus !== 'active' && connectAcctId && hasSlug && hasPrice) {
+        try {
+          const { getConnectAccountStatus } = await import('@/lib/stripeConnect');
+          const live = await getConnectAccountStatus(connectAcctId);
+          if (live.status && live.status.toLowerCase() !== connectStatus) {
+            await updateRecord(TABLES.RANCHERS, rancher.id, { 'Stripe Connect Status': live.status });
+            connectStatus = live.status.toLowerCase();
+          }
+        } catch (e: any) {
+          console.warn(`[rancher-go-live-sync] live Connect read failed for ${name}:`, e?.message);
+        }
+      }
+
       if (connectStatus === 'active' && hasSlug && hasPrice) {
         eligible = true;
       } else {
