@@ -29,7 +29,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { markDepositSucceeded } from '@/lib/contracts/payments';
 import { recordClose } from '@/lib/contracts/rancher';
 import { funnelRecord } from '@/lib/funnelMetrics';
-import { fireCapi, buildUserData } from '@/lib/metaCapi';
+import { fireCapi, buildUserData, closePurchaseEnabled } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { logAuditEntry } from '@/lib/auditLog';
 
@@ -258,10 +258,14 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
   });
 
   // ── Meta Conversions API: server-side `Purchase` event (Closed Won) ─
-  // Purchase fires HERE (not at deposit) — this is the actual revenue
-  // event. referralRow already hydrated above; fetch buyer for user_data.
+  // LEGACY fire — only when the attributed close Purchase is NOT enabled.
+  // When META_CLOSE_PURCHASE_ENABLED='true', recordClose() (invoked just above)
+  // owns the single Purchase for this close, with a real fbc + action_source
+  // 'website'. Firing here too would double-count on the same event_id (only
+  // saved by Meta's idempotency window), so we suppress it. This branch is the
+  // unattributed (system_generated, no fbc) fallback for the flag-off state.
   // Fire-and-forget — never block the webhook response.
-  (async () => {
+  if (!closePurchaseEnabled()) (async () => {
     try {
       const buyerLinks: string[] = (referralRow?.['Buyer'] || []) as string[];
       const buyerId = buyerLinks[0] || '';

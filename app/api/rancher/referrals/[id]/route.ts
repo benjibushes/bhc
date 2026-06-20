@@ -405,10 +405,20 @@ export async function PATCH(
                 // recordClose) fires the same flywheel. Idempotent via
                 // ensureBuyerAffiliate's email-based lookup.
                 try {
-                  const { enrollClosedWonAffiliate } = await import('@/lib/contracts/rancher');
+                  const { enrollClosedWonAffiliate, fireClosePurchaseIfEnabled } = await import('@/lib/contracts/rancher');
                   await enrollClosedWonAffiliate(buyerId);
+                  // Meta CAPI attributed Purchase (gated). This dashboard close
+                  // does NOT route through recordClose, so fire the shared helper
+                  // here. previousStatus guards against re-firing on a re-close.
+                  fireClosePurchaseIfEnabled({
+                    referralId: id,
+                    buyerId,
+                    saleAmount: Number(saleAmount),
+                    prevStatus: previousStatus,
+                    closedAtIso: String(fields['Closed At'] || new Date().toISOString()),
+                  });
                 } catch (e: any) {
-                  console.warn('[closed-won] affiliate enroll failed (non-fatal):', e?.message);
+                  console.warn('[closed-won] affiliate enroll / Purchase fire failed (non-fatal):', e?.message);
                 }
               } catch (e) {
                 console.error('Post-purchase welcome send error:', e);

@@ -10,6 +10,8 @@ import { transitionBuyerStage } from './buyer';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { ensureBuyerAffiliate } from '@/lib/affiliates';
 import { sendAffiliateWelcome } from '@/lib/email';
+import { fireCapi, buildUserData, reconstructFbc, closePurchaseEnabled } from '@/lib/metaCapi';
+import { metaEventId } from '@/lib/analytics';
 
 const AFFILIATE_SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
@@ -98,6 +100,22 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     // firing the welcome email; the tier_v2 Stripe webhook path skipped
     // enrollment entirely. Fire-and-forget: never block the close path.
     await enrollClosedWonAffiliate(buyerId);
+
+    // Meta CAPI: the attributed Purchase for this close. recordClose covers the
+    // Stripe final-invoice, Telegram/quick-action, and tier_v2 webhook close
+    // paths. The rancher-dashboard PATCH and admin PATCH close INLINE (not via
+    // recordClose), so those routes call fireClosePurchaseIfEnabled() directly
+    // too — all routed through the one gated helper (env flag + first-transition
+    // guard + positive amount). Off-session, so attribution rides on the buyer's
+    // stored fbclid rebuilt into _fbc. When the flag is off, settleFinalInvoice
+    // keeps firing its legacy Purchase (no double-count). Never blocks the close.
+    fireClosePurchaseIfEnabled({
+      referralId: input.referralId,
+      buyerId,
+      saleAmount: input.saleAmount,
+      prevStatus,
+      closedAtIso: now,
+    });
   }
   if (buyerId && input.outcome === 'lost') {
     await restoreBuyerAfterClosedLost(buyerId, input.referralId);
@@ -136,6 +154,91 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
   }
 
   return { ok: true, capacityFreed };
+}
+
+/**
+ * Fire the attributed Closed-Won Purchase to Meta CAPI. Server-side and
+ * off-session (rancher/admin close — no buyer browser), so we rebuild the
+ * buyer's _fbc from their stored fbclid + click-time ms. event_time is the real
+ * close time (within Meta's 7-day website-event window); event_id is the
+ * referral id so it shares the dedup key with any prior event for this deal.
+ * Best-effort: callers wrap in .catch and never let this block a close.
+ */
+async function fireClosedWonPurchase(args: {
+  buyerId: string;
+  referralId: string;
+  saleAmount: number;
+  closedAtIso: string;
+}): Promise<void> {
+  const buyer: any = await getRecordById(TABLES.CONSUMERS, args.buyerId).catch(() => null);
+  if (!buyer?.['Email']) return; // no match key → nothing useful to send
+
+  const fullName = String(buyer['Full Name'] || '').trim();
+  const nameParts = fullName ? fullName.split(/\s+/) : [];
+  const fbclid = String(buyer['fbclid'] || '').trim();
+  const fbclidTs = Number(buyer['fbclid_ts'] || 0);
+  const fbc = reconstructFbc(fbclid, fbclidTs);
+
+  const parsed = Date.parse(args.closedAtIso);
+  const eventTime = Number.isFinite(parsed) ? Math.floor(parsed / 1000) : Math.floor(Date.now() / 1000);
+
+  await fireCapi([{
+    event_name: 'Purchase',
+    event_time: eventTime,
+    event_id: metaEventId(args.referralId),
+    // system_generated, not 'website': this is a server-initiated close with no
+    // buyer browser, so we have no event_source_url / client_user_agent — and
+    // Meta DISCARDS action_source='website' events that omit those. fbc is still
+    // honored for attribution under system_generated. Matches the legacy fire.
+    action_source: 'system_generated',
+    event_source_url: AFFILIATE_SITE_URL,
+    user_data: buildUserData({
+      email: String(buyer['Email']).toLowerCase(),
+      firstName: nameParts[0] || undefined,
+      lastName: nameParts.slice(1).join(' ') || undefined,
+      state: String(buyer['State'] || '') || undefined,
+      fbc,
+    }),
+    custom_data: {
+      value: args.saleAmount,
+      currency: 'usd',
+      content_name: 'Beef — full sale',
+      content_category: 'closed-won',
+    },
+  }]);
+}
+
+/**
+ * Gated entry point for the attributed Closed-Won Purchase, callable from EVERY
+ * close path: recordClose() (Stripe final-invoice, Telegram/quick-action,
+ * tier_v2 webhook) AND the rancher-dashboard + admin PATCH routes that close
+ * inline without recordClose. Fires at most once per close:
+ *   - only when META_CLOSE_PURCHASE_ENABLED is on,
+ *   - only on the FIRST transition into Closed Won (prevStatus guard — a re-close
+ *     / re-edit, or a later final-invoice on an already-won deal, is a no-op so
+ *     we never lean on Meta's ~48h event_id dedup window),
+ *   - only with a positive sale amount and a known buyer.
+ * Fire-and-forget: synchronous gating, detached CAPI call, never blocks a close.
+ */
+export function fireClosePurchaseIfEnabled(args: {
+  referralId: string;
+  buyerId: string | null;
+  saleAmount?: number;
+  prevStatus?: string;
+  closedAtIso: string;
+}): void {
+  if (!closePurchaseEnabled()) return;
+  if (!args.buyerId) return;
+  if (args.prevStatus === 'Closed Won') return;
+  if (typeof args.saleAmount !== 'number' || !Number.isFinite(args.saleAmount) || args.saleAmount <= 0) return;
+  fireClosedWonPurchase({
+    buyerId: args.buyerId,
+    referralId: args.referralId,
+    saleAmount: args.saleAmount,
+    closedAtIso: args.closedAtIso,
+  }).catch((e: any) =>
+    console.error('[contracts.fireClosePurchaseIfEnabled] Purchase CAPI fire failed:', e?.message),
+  );
 }
 
 /**

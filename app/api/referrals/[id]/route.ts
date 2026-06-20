@@ -168,6 +168,21 @@ export async function PATCH(
             } catch (e) {
               console.error('Post-purchase welcome (admin close) error:', e);
             }
+            // Meta CAPI attributed Purchase (gated). Admin close is inline (not
+            // via recordClose), so fire the shared helper here too. preState
+            // holds the pre-flip status, guarding against re-firing on re-close.
+            try {
+              const { fireClosePurchaseIfEnabled } = await import('@/lib/contracts/rancher');
+              fireClosePurchaseIfEnabled({
+                referralId: id,
+                buyerId,
+                saleAmount: Number(saleAmount),
+                prevStatus: String(preState?.['Status'] || ''),
+                closedAtIso: String(fields['Closed At'] || new Date().toISOString()),
+              });
+            } catch (e: any) {
+              console.warn('[admin closed-won] Purchase fire failed (non-fatal):', e?.message);
+            }
           } else {
             // Closed Lost — base status sync always (Buyer Stage stays put;
             // matching/suggest re-route may move them back to MATCHED if a new

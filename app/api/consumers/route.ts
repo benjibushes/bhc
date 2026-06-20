@@ -213,6 +213,7 @@ export async function POST(request: Request) {
       if (attrStr('utm_content'))  funnelFields['utm_content']  = attrStr('utm_content');
       if (attrStr('utm_term'))     funnelFields['utm_term']     = attrStr('utm_term');
       if (attrStr('fbclid'))       funnelFields['fbclid']       = attrStr('fbclid');
+      if (attrStr('fbclid_ts'))    funnelFields['fbclid_ts']    = attrStr('fbclid_ts');
       if (attrStr('gclid'))        funnelFields['gclid']        = attrStr('gclid');
 
       let funnelRec: any;
