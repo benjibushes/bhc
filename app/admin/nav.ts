@@ -28,9 +28,11 @@ export interface AdminNavItem {
 
 export const ADMIN_NAV: AdminNavItem[] = [
   // PIPELINE — admin-only: referral decisions, go-live, consumer PII
-  { group: 'PIPELINE', icon: '🎛', label: 'Desk', href: '/admin/today/v2', shortcut: 'g k' },
-  { group: 'PIPELINE', icon: '🏠', label: 'Today', href: '/admin/today', shortcut: 'g t' },
-  { group: 'PIPELINE', icon: '📨', label: 'Referrals', href: '/admin/referrals', shortcut: 'g r' },
+  {
+    group: 'PIPELINE', icon: '🎛', label: 'Sales desk', href: '/admin/desk', shortcut: 'g k',
+    visibleTo: ['admin', 'onboarding'],
+  },
+  { group: 'PIPELINE', icon: '📨', label: 'All deals', href: '/admin/referrals', shortcut: 'g r' },
   { group: 'PIPELINE', icon: '📬', label: 'Inquiries', href: '/admin/inquiries' },
   { group: 'PIPELINE', icon: '📋', label: 'Full Dashboard', href: '/admin', shortcut: 'g d' },
 
@@ -67,7 +69,7 @@ export const ADMIN_NAV_GROUPS = ['PIPELINE', 'MONEY', 'GROWTH', 'SYSTEM'] as con
 
 /**
  * Longest-prefix active match so nested routes highlight exactly one item
- * (/admin/today/v2 lights Desk, not Today; /admin/consumers/rec123 falls
+ * (/admin/desk/rec123 lights Sales desk; /admin/consumers/rec123 falls
  * through to Full Dashboard, its parent surface).
  */
 export function activeNavHref(pathname: string): string | undefined {
