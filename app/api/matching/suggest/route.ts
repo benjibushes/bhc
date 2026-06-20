@@ -198,11 +198,30 @@ export async function POST(request: Request) {
           return true;
         });
         if (active) {
+          // Resolve the already-matched rancher so the funnel reveal shows the
+          // MATCH (Mode 2) instead of a false "we're bringing ranches to your
+          // state" waitlist (Mode 3) to a buyer who is actively matched.
+          let suggestedRancher: any = null;
+          try {
+            const rIds = (Array.isArray(active['Rancher']) && active['Rancher'].length
+              ? active['Rancher'] : active['Suggested Rancher']) || [];
+            const rid = Array.isArray(rIds) ? rIds[0] : null;
+            if (rid) {
+              const rr: any = await getRecordById(TABLES.RANCHERS, rid);
+              if (rr) suggestedRancher = {
+                id: rr.id,
+                name: rr['Operator Name'] || rr['Ranch Name'] || '',
+                state: rr['State'] || '',
+                slug: rr['Slug'] || '',
+              };
+            }
+          } catch { /* non-fatal — falls back to no rancher */ }
           return NextResponse.json({
             success: true,
             matchFound: true,
             alreadyActive: true,
             referralId: active.id,
+            suggestedRancher,
             message: `Buyer already has an active referral (${active['Status']})`,
           });
         }
