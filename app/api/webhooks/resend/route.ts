@@ -85,7 +85,7 @@ export async function POST(request: Request) {
       try {
         const consumers = await getAllRecords(
           TABLES.CONSUMERS,
-          `{Email} = "${recipientEmail}"`
+          `LOWER({Email}) = "${recipientEmail}"`
         ) as any[];
         for (const c of consumers) {
           const updates: Record<string, any> = {
@@ -104,7 +104,7 @@ export async function POST(request: Request) {
       try {
         const ranchers = await getAllRecords(
           TABLES.RANCHERS,
-          `{Email} = "${recipientEmail}"`
+          `LOWER({Email}) = "${recipientEmail}"`
         ) as any[];
         for (const r of ranchers) {
           await updateRecord(TABLES.RANCHERS, r.id, {
@@ -143,7 +143,7 @@ export async function POST(request: Request) {
         // Find Consumer for this recipient
         const consumers = await getAllRecords(
           TABLES.CONSUMERS,
-          `{Email} = "${recipientEmail}"`
+          `LOWER({Email}) = "${recipientEmail}"`
         ) as any[];
         for (const c of consumers) {
           const updates: Record<string, any> = { 'Last Email Event At': now };
