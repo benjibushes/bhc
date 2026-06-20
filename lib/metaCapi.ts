@@ -23,7 +23,50 @@ import crypto from 'crypto';
 const PIXEL_ID = process.env.META_PIXEL_ID;
 const ACCESS_TOKEN = process.env.META_CAPI_ACCESS_TOKEN;
 const TEST_CODE = process.env.META_CAPI_TEST_CODE;
-const GRAPH_API_VERSION = 'v18.0';
+const GRAPH_API_VERSION = 'v21.0';
+
+/**
+ * Opt-in switch for the attributed Closed-Won Purchase fired from recordClose().
+ *
+ * OFF (default): byte-identical to prior behavior — settleFinalInvoice fires its
+ * own (unattributed, system_generated) Purchase for final-invoice closes only,
+ * recordClose fires nothing. No new data leaves for Meta.
+ *
+ * ON: recordClose() fires ONE attributed Purchase (action_source=website, real
+ * fbc from the buyer's stored fbclid) for ALL close paths, and settleFinalInvoice
+ * suppresses its own fire to avoid a double-count.
+ *
+ * Flip to 'true' only after (1) the privacy policy discloses Meta measurement
+ * data-sharing and (2) a Test Events dry-run (META_CAPI_TEST_CODE set) confirms
+ * the Purchase arrives with fbc present. fireCapi already fails open if the
+ * pixel/token env is missing, so this can never block a close.
+ */
+export function closePurchaseEnabled(): boolean {
+  return process.env.META_CLOSE_PURCHASE_ENABLED === 'true';
+}
+
+/**
+ * Rebuild Meta's _fbc click-id match key from a stored raw fbclid + the
+ * millisecond timestamp of when the click was first observed.
+ *
+ *   fbc = fb.1.<clickTimeMs>.<fbclid>
+ *
+ * - subdomainIndex is always 1 when generated server-side without an _fbc cookie
+ *   (Meta's documented fallback).
+ * - clickTimeMs MUST be the click time (captured at landing), NOT the time the
+ *   deal closes. A wrong timestamp produces an fbc that will not match, so when
+ *   we don't have a valid click timestamp we return undefined rather than
+ *   fabricating one (a bare fbclid passed as fbc does not match either).
+ */
+export function reconstructFbc(fbclid?: string | null, clickTimeMs?: number | null): string | undefined {
+  const id = (fbclid || '').trim();
+  if (!id) return undefined;
+  const ts = typeof clickTimeMs === 'number' && Number.isFinite(clickTimeMs) && clickTimeMs > 0
+    ? Math.floor(clickTimeMs)
+    : null;
+  if (!ts) return undefined;
+  return `fb.1.${ts}.${id}`;
+}
 
 export interface CapiEvent {
   event_name: 'Lead' | 'CompleteRegistration' | 'InitiateCheckout' | 'Purchase' | 'PageView' | 'Schedule';

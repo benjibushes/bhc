@@ -153,6 +153,9 @@ export default function BuyerFunnel({
     utm_content: string;
     utm_term: string;
     fbclid: string;
+    // Click-time ms timestamp (Date.now() at fbclid first-touch). Required to
+    // rebuild Meta's _fbc (fb.1.<ts>.<fbclid>) for the days-later close Purchase.
+    fbclid_ts: string;
     gclid: string;
   }>({
     source: 'funnel',
@@ -164,6 +167,7 @@ export default function BuyerFunnel({
     utm_content: '',
     utm_term: '',
     fbclid: '',
+    fbclid_ts: '',
     gclid: '',
   });
 
@@ -213,6 +217,7 @@ export default function BuyerFunnel({
         utm_content: v2.utm_content || '',
         utm_term: v2.utm_term || '',
         fbclid: v2.fbclid || '',
+        fbclid_ts: v2.fbclid_ts || '',
         gclid: v2.gclid || '',
       };
     } catch {
@@ -338,6 +343,7 @@ export default function BuyerFunnel({
             utm_content: attribution.current.utm_content,
             utm_term: attribution.current.utm_term,
             fbclid: attribution.current.fbclid,
+            fbclid_ts: attribution.current.fbclid_ts,
             gclid: attribution.current.gclid,
           },
         }),

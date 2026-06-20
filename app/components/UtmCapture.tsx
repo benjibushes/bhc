@@ -66,6 +66,14 @@ export default function UtmCapture() {
         if (v && !stored[k]) {
           stored[k] = v;
           captured = true;
+          // Persist the millisecond timestamp of the click when we first see
+          // fbclid. Meta's _fbc match key is fb.1.<clickTimeMs>.<fbclid> and the
+          // click time MUST be when the click happened, not when the deal later
+          // closes — so we capture it here at landing and carry it through to
+          // the Consumer row for offline-conversion reconstruction.
+          if (k === 'fbclid' && !stored.fbclid_ts) {
+            stored.fbclid_ts = String(Date.now());
+          }
         }
       }
 
