@@ -156,10 +156,24 @@ export async function POST(request: Request) {
       'Commission Rate Locked At': now,
     };
 
+    // Pre-vetted = tier_v2 rancher with an ACTIVE Stripe Connect account. They
+    // KYC'd through Stripe + signed the agreement — they must NEVER be sent to
+    // the new-rancher verification form (that gate is for unvetted self-serve
+    // signups). The v2 migration stranded these pre-vetted ranchers at
+    // 'Agreement Signed' → the verification wall ("not verified yet") because
+    // they completed Connect BEFORE signing, so the auto-go-live webhook (which
+    // only fires on a Connect state change) never re-fired at sign time.
+    const preVetted = isTierV2 && connectStatus === 'active';
     if (readyToGoLive) {
       updateFields['Onboarding Status'] = 'Live';
       updateFields['Active Status'] = 'Active';
       updateFields['Page Live'] = true;
+    } else if (preVetted) {
+      // Skip verification — they're already vetted. They still need slug+price
+      // to flip Live (handled by the next dashboard save / batch-approve cron /
+      // the Connect webhook), but they no longer sit behind the verification form.
+      updateFields['Onboarding Status'] = 'Verification Complete';
+      updateFields['Verification Status'] = 'Verified';
     }
 
     await updateRecord(TABLES.RANCHERS, decoded.rancherId, updateFields);
