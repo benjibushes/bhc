@@ -6,6 +6,13 @@ import Link from 'next/link';
 import Container from '../../components/Container';
 import LivePreview from './LivePreview';
 import StripeConnectStep from './steps/StripeConnectStep';
+import {
+  deriveLadder,
+  deriveDeposit,
+  checkWholePrice,
+  impliedPerLb,
+  MIN_TIER_PRICE,
+} from '@/lib/pricing';
 
 // 4-step self-serve wizard. State + transitions live in the component;
 // each step PATCHes /api/rancher/setup with its slice of the payload.
@@ -218,6 +225,17 @@ export default function RancherSetupWizard() {
   // Editable form state — initialized from server response, updated locally.
   const [form, setForm] = useState<Record<string, any>>({});
 
+  // ── Step-3 pricing model (2026-06-20 rebuild) ────────────────────────────
+  // Rancher enters ONE number — the whole-cow price — and lib/pricing derives
+  // the Half/Quarter ladder + every tier's reserve deposit. `priceUnit` lets
+  // them type a per-pound rate instead (× hanging weight → whole total).
+  // `touchedDerived` tracks which derived fields the rancher hand-edited so we
+  // never clobber a deliberate override when the whole price changes.
+  const [priceUnit, setPriceUnit] = useState<'total' | 'perlb'>('total');
+  const [perLbInput, setPerLbInput] = useState('');
+  const [hangingLbsInput, setHangingLbsInput] = useState('');
+  const [touchedDerived, setTouchedDerived] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     if (!token) {
       setError('No setup token provided. Use the link from your welcome email.');
@@ -283,6 +301,31 @@ export default function RancherSetupWizard() {
             'Refund Policy': data.rancher['Refund Policy'] || '',
             'Fulfillment Cost Notes': data.rancher['Fulfillment Cost Notes'] || '',
           });
+
+          // Touched-init (Step-3 pricing): if this rancher already has a
+          // CUSTOM ladder/deposit on file (a value that doesn't match what we'd
+          // derive from the loaded Whole Price), mark those keys touched so the
+          // first edit to the whole price doesn't silently overwrite their
+          // hand-set numbers. With no whole price on file, nothing is derived
+          // yet, so leave touched empty.
+          const loadedWhole = Number(data.rancher['Whole Price']);
+          if (loadedWhole > 0) {
+            const ladder = deriveLadder(loadedWhole);
+            const touched = new Set<string>();
+            const halfP = Number(data.rancher['Half Price']);
+            if (halfP > 0 && halfP !== ladder.half) touched.add('Half Price');
+            const quarterP = Number(data.rancher['Quarter Price']);
+            if (quarterP > 0 && quarterP !== ladder.quarter) touched.add('Quarter Price');
+            for (const tier of ['Quarter', 'Half', 'Whole'] as const) {
+              const loadedDep = Number(data.rancher[`${tier} Deposit`]);
+              // Compare against the deposit derived from the loaded tier price
+              // (overridden ladder prices use their loaded value).
+              const loadedTierPrice = Number(data.rancher[`${tier} Price`]);
+              const derivedDep = deriveDeposit(loadedTierPrice);
+              if (loadedDep > 0 && loadedDep !== derivedDep) touched.add(`${tier} Deposit`);
+            }
+            setTouchedDerived(touched);
+          }
         }
       } catch {
         setError('Network error — try refreshing');
@@ -387,6 +430,97 @@ export default function RancherSetupWizard() {
   }, [step, stepStorageKey]);
 
   const setField = (key: string, value: any) => setForm((f) => ({ ...f, [key]: value }));
+
+  // ── Pricing derivation (Step 3) ──────────────────────────────────────────
+  // Given a form object + the set of hand-edited derived fields, recompute the
+  // Half/Quarter ladder and every tier's deposit from the Whole Price. Any key
+  // in `touched` is left exactly as the rancher set it (their override wins).
+  // The deposit %/multipliers live ONLY in lib/pricing — never inline here.
+  const PRICE_TIERS = ['Quarter', 'Half', 'Whole'] as const;
+  function fillDerived(
+    f: Record<string, any>,
+    touched: Set<string>
+  ): Record<string, any> {
+    // Only derive into tiers the rancher actually SELLS — otherwise a rancher
+    // who sells just Quarter but enters the whole-cow anchor would silently
+    // publish derived Half/Whole tiers to buyers. (Unsold tiers are also nulled
+    // in the save slice as a belt — see onContinue.)
+    const sells: string[] = Array.isArray(f['Tier Specialty']) ? f['Tier Specialty'] : [];
+    const whole = Number(f['Whole Price']) || 0;
+    const next = { ...f };
+    const ladder = deriveLadder(whole); // {0,0,0} when whole <= 0
+    // Half/Quarter prices derive from the whole anchor (Whole is the input).
+    // When the whole is cleared, blank the untouched derived prices too so a
+    // stale ladder can't linger in form state or get saved.
+    for (const tier of ['Half', 'Quarter'] as const) {
+      if (!sells.includes(tier)) continue;
+      const key = `${tier} Price`;
+      if (touched.has(key)) continue;
+      next[key] = whole > 0 ? (tier === 'Half' ? ladder.half : ladder.quarter) : '';
+    }
+    // Deposits derive from each SOLD tier's (possibly overridden) price, not the
+    // ladder — so an overridden Half price still gets a matching deposit.
+    for (const tier of PRICE_TIERS) {
+      if (!sells.includes(tier)) continue;
+      const depKey = `${tier} Deposit`;
+      if (touched.has(depKey)) continue;
+      const dep = deriveDeposit(Number(next[`${tier} Price`]) || 0);
+      // Only write a positive derived deposit; leave blank if price not set
+      // (deriveDeposit returns 0) so the field shows its placeholder.
+      next[depKey] = dep > 0 ? dep : '';
+    }
+    return next;
+  }
+
+  // Whole-price input → recompute the whole ladder + deposits live.
+  const onWholeChange = (v: string) =>
+    setForm((f) => fillDerived({ ...f, 'Whole Price': v }, touchedDerived));
+
+  // Half/Quarter price hand-edit → mark touched, then recompute (so the matching
+  // deposit re-derives off the new price unless that deposit is also touched).
+  const onLadderPriceChange = (tier: 'Half' | 'Quarter', v: string) => {
+    const key = `${tier} Price`;
+    const nextTouched = new Set(touchedDerived).add(key);
+    setTouchedDerived(nextTouched);
+    setForm((f) => fillDerived({ ...f, [key]: v }, nextTouched));
+  };
+
+  // Any tier's deposit hand-edit → mark touched, set value directly (a touched
+  // deposit is never re-derived, so no recompute needed).
+  const onDepositChange = (tier: 'Quarter' | 'Half' | 'Whole', v: string) => {
+    const key = `${tier} Deposit`;
+    setTouchedDerived((prev) => new Set(prev).add(key));
+    setField(key, v);
+  };
+
+  // "reset" link → drop the override and recompute that field from the whole.
+  const resetDerived = (key: string) => {
+    const nextTouched = new Set(touchedDerived);
+    nextTouched.delete(key);
+    setTouchedDerived(nextTouched);
+    setForm((f) => fillDerived({ ...f }, nextTouched));
+  };
+
+  // Per-lb mode: $/lb × hanging weight → whole total, fed through onWholeChange
+  // so the same ladder/deposit derivation runs. Empty/invalid inputs clear the
+  // whole price (so the form falls back to placeholders).
+  const recomputeFromPerLb = (perLb: string, lbs: string) => {
+    const p = Number(perLb);
+    const w = Number(lbs);
+    if (Number.isFinite(p) && p > 0 && Number.isFinite(w) && w > 0) {
+      onWholeChange(String(Math.round(p * w)));
+    } else {
+      onWholeChange('');
+    }
+  };
+  const onPerLbChange = (v: string) => {
+    setPerLbInput(v);
+    recomputeFromPerLb(v, hangingLbsInput);
+  };
+  const onHangingLbsChange = (v: string) => {
+    setHangingLbsInput(v);
+    recomputeFromPerLb(perLbInput, v);
+  };
 
   // Phone mask — formats raw input as (555) 555-5555 progressively. Plays
   // nice with backspace and partial input. Strips non-digits, truncates at 10.
@@ -1493,100 +1627,243 @@ export default function RancherSetupWizard() {
               </div>
             </div>
 
-            {(['Quarter', 'Half', 'Whole'] as const).map((tier) => (
-              <div key={tier} className="border border-dust p-4 md:p-5 space-y-3 bg-bone-warm">
-                <p className="font-serif text-lg text-charcoal">{tier} Cow</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Field
-                    label="Listed sale price ($)"
-                    type="number"
-                    value={form[`${tier} Price`]}
-                    onChange={(v) => setField(`${tier} Price`, v)}
-                    placeholder="2000"
-                  />
-                  <Field
-                    label="Deposit ($)"
-                    type="number"
-                    value={form[`${tier} Deposit`]}
-                    onChange={(v) => setField(`${tier} Deposit`, v)}
-                    placeholder="500"
-                  />
-                  <Field
-                    label="Processing fee ($) — your processor cost"
-                    type="number"
-                    value={form[`${tier} Processing Fee`]}
-                    onChange={(v) => setField(`${tier} Processing Fee`, v)}
-                    placeholder="1000"
-                  />
-                </div>
-                {/* Deposit explainer + inline validation. The deposit is what the
-                    buyer pays NOW to reserve their share (tier_v2 Stripe Connect
-                    deposit model); the rancher collects the balance at fulfillment.
-                    Leaving it blank charges the full price upfront. */}
-                <p className="text-xs text-saddle leading-relaxed -mt-1">
-                  <strong>Deposit</strong> — what the buyer pays now to reserve. Leave blank to charge the full price upfront.
-                </p>
-                {form[`${tier} Deposit`] !== '' &&
-                  form[`${tier} Deposit`] != null &&
-                  (() => {
-                    const dep = Number(form[`${tier} Deposit`]);
-                    const price = Number(form[`${tier} Price`]);
-                    if (!Number.isFinite(dep) || dep <= 0) {
+            {/* ── Whole-cow price → auto-ladder + auto-deposits ──────────────
+                The rancher types ONE number (the whole-cow price, or a $/lb rate
+                × hanging weight) and lib/pricing derives Half (~0.55×), Quarter
+                (~0.28×) and every tier's 25% reserve deposit. Hand-edits to any
+                derived field stick (touchedDerived); a "reset" link re-derives. */}
+            {(() => {
+              const whole = Number(form['Whole Price']);
+              const ladder = deriveLadder(whole > 0 ? whole : 0);
+              const lbsKnown = Number(hangingLbsInput) > 0;
+              const perLb = lbsKnown ? impliedPerLb(whole, Number(hangingLbsInput)) : 0;
+              const sells: string[] = Array.isArray(form['Tier Specialty'])
+                ? form['Tier Specialty']
+                : [];
+              const wholeOk = !(whole > 0) || checkWholePrice(whole).ok;
+              // Live ladder summary under the whole-price input.
+              const ladderHelper =
+                whole > 0 ? (
+                  <span>
+                    {lbsKnown && perLb > 0 && <>≈ ${perLb.toFixed(2)}/lb · </>}
+                    Half ${ladder.half.toLocaleString()} · Quarter ${ladder.quarter.toLocaleString()} ·
+                    deposits W ${deriveDeposit(Number(form['Whole Price'])).toLocaleString()} / H $
+                    {deriveDeposit(Number(form['Half Price'])).toLocaleString()} / Q $
+                    {deriveDeposit(Number(form['Quarter Price'])).toLocaleString()}
+                  </span>
+                ) : (
+                  <span>Half and Quarter prices + every deposit fill in automatically.</span>
+                );
+              return (
+                <div className="space-y-4">
+                  {/* Unit toggle: whole-cow total vs price per pound */}
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        ['total', 'Price per whole cow'],
+                        ['perlb', 'Price per pound'],
+                      ] as const
+                    ).map(([unit, label]) => {
+                      const active = priceUnit === unit;
                       return (
-                        <p className="text-xs text-weathered -mt-1">
-                          Deposit must be greater than $0 (or leave it blank to charge the full price upfront).
-                        </p>
+                        <button
+                          key={unit}
+                          type="button"
+                          onClick={() => {
+                            setPriceUnit(unit);
+                            // Leaving per-lb mode: clear its inputs so a stale
+                            // $/lb × weight can't silently recompute the whole.
+                            if (unit === 'total') {
+                              setPerLbInput('');
+                              setHangingLbsInput('');
+                            }
+                          }}
+                          className={`px-4 py-2 text-sm font-medium uppercase tracking-wide border transition-base ${
+                            active
+                              ? 'bg-charcoal text-bone border-charcoal'
+                              : 'bg-bone text-charcoal border-dust hover:border-saddle'
+                          }`}
+                        >
+                          {label}
+                        </button>
                       );
-                    }
-                    if (Number.isFinite(price) && price > 0 && dep > price) {
-                      return (
-                        <p className="text-xs text-weathered -mt-1">
-                          Deposit can&rsquo;t exceed the listed sale price (${price.toFixed(2)}).
-                        </p>
-                      );
-                    }
-                    return null;
-                  })()}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Field
-                    label="Approx finished weight (lbs)"
-                    value={form[`${tier} lbs`]}
-                    onChange={(v) => setField(`${tier} lbs`, v)}
-                    placeholder="~150 lbs"
-                  />
-                  <Field
-                    label="Stripe / payment link (optional)"
-                    value={form[`${tier} Payment Link`]}
-                    onChange={(v) => setField(`${tier} Payment Link`, v)}
-                    type="url"
-                    placeholder="https://buy.stripe.com/..."
-                  />
-                </div>
-                {form[`${tier} Price`] && form[`${tier} Processing Fee`] && Number(form[`${tier} Price`]) > 0 && Number(form[`${tier} Processing Fee`]) >= 0 && (
-                  <div className="bg-bone border border-dust p-3 text-xs text-charcoal/85 leading-relaxed">
-                    {/* Tier-agnostic on purpose: BHC's commission depends on the
-                        plan you pick later (Step 7), and the rates differ per
-                        plan — so we DON'T assert a flat % here. The only numbers
-                        we can state for certain are the processing recoup and
-                        your net on the listed price. */}
-                    <p className="font-medium mb-1">How the math works on a {tier.toLowerCase()}:</p>
-                    <p>
-                      Deposit collected upfront covers your{' '}
-                      <strong>${Number(form[`${tier} Processing Fee`]).toFixed(2)}</strong> processing recoup
-                      plus BHC&rsquo;s commission per the plan you select at the end.
-                    </p>
-                    <p>
-                      Final invoice (rancher net): <strong>${(Number(form[`${tier} Price`]) - Number(form[`${tier} Processing Fee`])).toFixed(2)}</strong>{' '}
-                      (listed minus processing, 100% to you)
-                    </p>
-                    <p className="text-saddle italic mt-1">
-                      You keep your full listed ${Number(form[`${tier} Price`]).toFixed(2)}. The buyer pays that plus
-                      BHC&rsquo;s commission on top — the exact rate is set by the plan you choose at Step 7.
-                    </p>
+                    })}
                   </div>
-                )}
-              </div>
-            ))}
+
+                  {priceUnit === 'total' ? (
+                    <Field
+                      label="Whole-cow price"
+                      prefix="$"
+                      suffix="/ whole"
+                      inputMode="decimal"
+                      value={form['Whole Price']}
+                      onChange={onWholeChange}
+                      placeholder="2800"
+                      helper={ladderHelper}
+                    />
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <Field
+                          label="Price per pound"
+                          prefix="$"
+                          suffix="/ lb"
+                          inputMode="decimal"
+                          value={perLbInput}
+                          onChange={onPerLbChange}
+                          placeholder="7.50"
+                        />
+                        <Field
+                          label="Hanging weight"
+                          suffix="lbs"
+                          inputMode="decimal"
+                          value={hangingLbsInput}
+                          onChange={onHangingLbsChange}
+                          placeholder="375"
+                        />
+                      </div>
+                      <p className="text-sm text-charcoal">
+                        {whole > 0 ? (
+                          <>
+                            Whole-cow total:{' '}
+                            <strong>${whole.toLocaleString()}</strong>{' '}
+                            <span className="text-saddle">{ladderHelper}</span>
+                          </>
+                        ) : (
+                          <span className="text-saddle">
+                            Enter a per-pound price and hanging weight to set the whole-cow total.
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Soft sanity warning — never blocks (server hard-blocks < $MIN_TIER_PRICE) */}
+                  {whole > 0 && !wholeOk && (
+                    <p className="text-xs text-weathered">{checkWholePrice(whole).message}</p>
+                  )}
+
+                  {/* ── Your prices & deposits ── per tier the rancher SELLS ── */}
+                  {sells.length > 0 && (
+                    <div className="border border-dust bg-bone-warm p-4 md:p-5 space-y-4">
+                      <p className="text-sm font-medium text-charcoal">Your prices &amp; deposits</p>
+                      {(['Quarter', 'Half', 'Whole'] as const)
+                        .filter((tier) => sells.includes(tier))
+                        .map((tier) => {
+                          const isWhole = tier === 'Whole';
+                          const priceTouched = touchedDerived.has(`${tier} Price`);
+                          const depTouched = touchedDerived.has(`${tier} Deposit`);
+                          return (
+                            <div key={tier} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {/* Whole's price is the primary input above — don't
+                                  duplicate it; show a read-only echo instead. */}
+                              {isWhole ? (
+                                <div>
+                                  <span className="block text-sm font-medium text-charcoal mb-1.5">
+                                    Whole price
+                                  </span>
+                                  <div className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal/70">
+                                    {whole > 0 ? `$${whole.toLocaleString()}` : 'Set above'}
+                                  </div>
+                                </div>
+                              ) : (
+                                <Field
+                                  label={`${tier} price`}
+                                  prefix="$"
+                                  inputMode="decimal"
+                                  value={form[`${tier} Price`]}
+                                  onChange={(v) => onLadderPriceChange(tier, v)}
+                                  placeholder="0"
+                                  autoChip={!priceTouched}
+                                  onReset={priceTouched ? () => resetDerived(`${tier} Price`) : undefined}
+                                />
+                              )}
+                              <Field
+                                label={`${tier} deposit`}
+                                prefix="$"
+                                inputMode="decimal"
+                                value={form[`${tier} Deposit`]}
+                                onChange={(v) => onDepositChange(tier, v)}
+                                placeholder="0"
+                                autoChip={!depTouched}
+                                onReset={depTouched ? () => resetDerived(`${tier} Deposit`) : undefined}
+                              />
+                            </div>
+                          );
+                        })}
+                      <p className="text-xs text-saddle leading-relaxed">
+                        <strong>Deposit</strong> — what the buyer pays now to reserve. Auto-set to ~25% of each
+                        price; edit any and we&rsquo;ll keep your number.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── Per-tier processing, weight, payment link + math card ──────
+                Only for tiers the rancher SELLS. Price/deposit live above; here
+                we collect the processor cost, finished weight, and any external
+                payment link, then show the math on the (overridden) price. */}
+            {(['Quarter', 'Half', 'Whole'] as const)
+              .filter((tier) =>
+                (Array.isArray(form['Tier Specialty']) ? form['Tier Specialty'] : []).includes(tier)
+              )
+              .map((tier) => {
+                const price = Number(form[`${tier} Price`]);
+                const fee = Number(form[`${tier} Processing Fee`]);
+                const dep = Number(form[`${tier} Deposit`]);
+                return (
+                  <div key={tier} className="border border-dust p-4 md:p-5 space-y-3 bg-bone-warm">
+                    <p className="font-serif text-lg text-charcoal">{tier} Cow — processing &amp; extras</p>
+                    <Field
+                      label="Processing fee ($) — your processor cost"
+                      type="number"
+                      value={form[`${tier} Processing Fee`]}
+                      onChange={(v) => setField(`${tier} Processing Fee`, v)}
+                      placeholder="1000"
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <Field
+                        label="Approx finished weight (lbs)"
+                        value={form[`${tier} lbs`]}
+                        onChange={(v) => setField(`${tier} lbs`, v)}
+                        placeholder="~150 lbs"
+                      />
+                      <Field
+                        label="Stripe / payment link (optional)"
+                        value={form[`${tier} Payment Link`]}
+                        onChange={(v) => setField(`${tier} Payment Link`, v)}
+                        type="url"
+                        placeholder="https://buy.stripe.com/..."
+                      />
+                    </div>
+                    {price > 0 && Number.isFinite(fee) && fee >= 0 && (
+                      <div className="bg-bone border border-dust p-3 text-xs text-charcoal/85 leading-relaxed">
+                        {/* Tier-agnostic on purpose: BHC's commission depends on the
+                            plan you pick later (Step 7), and the rates differ per
+                            plan — so we DON'T assert a flat % here. The only numbers
+                            we can state for certain are the deposit, the processing
+                            recoup, and your net on the listed price. */}
+                        <p className="font-medium mb-1">How the math works on a {tier.toLowerCase()}:</p>
+                        <p>
+                          Buyer pays a <strong>${dep > 0 ? dep.toLocaleString() : '—'}</strong> deposit now to
+                          reserve — that covers your <strong>${fee.toLocaleString()}</strong> processing recoup
+                          plus BHC&rsquo;s commission per the plan you select at the end.
+                        </p>
+                        <p>
+                          Final invoice (rancher net):{' '}
+                          <strong>${(price - fee).toLocaleString()}</strong> (listed minus processing, 100% to you)
+                        </p>
+                        <p className="text-saddle italic mt-1">
+                          You keep your full listed ${price.toLocaleString()}. The buyer pays that plus BHC&rsquo;s
+                          commission on top — the exact rate is set by the plan you choose at Step 7.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
 
             {/* Testimonials editor — array of {name, quote, location}.
                 Stored as JSON-stringified Testimonials field. Renders on the
@@ -1660,20 +1937,39 @@ export default function RancherSetupWizard() {
               onBack={() => setStep(2)}
               onContinue={async () => {
                 setError('');
-                // Validate deposits: if set, must be 0 < Deposit <= Price for
-                // each cut. A bad deposit silently breaks the buyer deposit
-                // checkout math (app/api/checkout/deposit), so block here AND
-                // mirror server-side in /api/rancher/setup.
+                // Validate each tier's price + deposit. Prices are auto-derived
+                // from the whole-cow input, so these normally pass — but a hand
+                // override (or a per-lb value typed as a total) could violate
+                // them. A positive price must be >= MIN_TIER_PRICE (mirrors
+                // checkWholePrice's per-lb-mismatch intent); a set deposit must
+                // be 0 < deposit <= price. A bad deposit silently breaks the
+                // buyer deposit checkout math (app/api/checkout/deposit), so we
+                // block here AND mirror server-side in /api/rancher/setup.
+                const sells: string[] = Array.isArray(form['Tier Specialty']) ? form['Tier Specialty'] : [];
+                // Validate ONLY the tiers the rancher sells.
                 for (const tier of ['Quarter', 'Half', 'Whole'] as const) {
+                  if (!sells.includes(tier)) continue;
+                  const priceRaw = form[`${tier} Price`];
+                  const price = Number(priceRaw);
+                  const hasPrice = priceRaw !== '' && priceRaw != null && Number.isFinite(price) && price > 0;
+                  if (hasPrice && price < MIN_TIER_PRICE) {
+                    setError(
+                      `$${price} looks like a per-pound price for the ${tier.toLowerCase()}, not a total. Tier totals are usually hundreds of dollars — switch to "Price per pound" if you meant per pound.`
+                    );
+                    return;
+                  }
                   const depRaw = form[`${tier} Deposit`];
                   if (depRaw === '' || depRaw == null) continue;
                   const dep = Number(depRaw);
-                  const price = Number(form[`${tier} Price`]);
                   if (!Number.isFinite(dep) || dep <= 0) {
                     setError(`${tier} deposit must be greater than $0, or leave it blank to charge the full price upfront.`);
                     return;
                   }
-                  if (Number.isFinite(price) && price > 0 && dep > price) {
+                  if (!hasPrice) {
+                    setError(`Set a ${tier.toLowerCase()} price before its deposit.`);
+                    return;
+                  }
+                  if (dep > price) {
                     setError(`${tier} deposit can't exceed the ${tier.toLowerCase()} listed sale price.`);
                     return;
                   }
@@ -1683,23 +1979,24 @@ export default function RancherSetupWizard() {
                 const validTestimonials = testimonials.filter(
                   (t) => t.name.trim() && t.quote.trim()
                 );
+                // Persist ONLY the tiers the rancher sells. A deselected tier is
+                // nulled so it can never ship derived/stale price+deposit to a
+                // buyer page (which renders any tier that has a price).
+                const tierSlice = (tier: 'Quarter' | 'Half' | 'Whole') => {
+                  const sold = sells.includes(tier);
+                  return {
+                    [`${tier} Price`]: sold ? form[`${tier} Price`] : '',
+                    [`${tier} Deposit`]: sold ? form[`${tier} Deposit`] : '',
+                    [`${tier} Processing Fee`]: sold ? form[`${tier} Processing Fee`] : '',
+                    [`${tier} lbs`]: sold ? form[`${tier} lbs`] : '',
+                    [`${tier} Payment Link`]: sold ? form[`${tier} Payment Link`] : '',
+                  };
+                };
                 const ok = await saveStep({
                   'Tier Specialty': form['Tier Specialty'],
-                  'Quarter Price': form['Quarter Price'],
-                  'Quarter Deposit': form['Quarter Deposit'],
-                  'Quarter Processing Fee': form['Quarter Processing Fee'],
-                  'Quarter lbs': form['Quarter lbs'],
-                  'Quarter Payment Link': form['Quarter Payment Link'],
-                  'Half Price': form['Half Price'],
-                  'Half Deposit': form['Half Deposit'],
-                  'Half Processing Fee': form['Half Processing Fee'],
-                  'Half lbs': form['Half lbs'],
-                  'Half Payment Link': form['Half Payment Link'],
-                  'Whole Price': form['Whole Price'],
-                  'Whole Deposit': form['Whole Deposit'],
-                  'Whole Processing Fee': form['Whole Processing Fee'],
-                  'Whole lbs': form['Whole lbs'],
-                  'Whole Payment Link': form['Whole Payment Link'],
+                  ...tierSlice('Quarter'),
+                  ...tierSlice('Half'),
+                  ...tierSlice('Whole'),
                   Testimonials: validTestimonials.length
                     ? JSON.stringify(validTestimonials)
                     : '',
@@ -1955,6 +2252,12 @@ function Field({
   type = 'text',
   placeholder,
   required,
+  prefix,
+  suffix,
+  helper,
+  inputMode,
+  autoChip,
+  onReset,
 }: {
   label: string;
   value: any;
@@ -1962,19 +2265,66 @@ function Field({
   type?: string;
   placeholder?: string;
   required?: boolean;
+  // ── Optional extensions (all default off → existing call sites unchanged) ──
+  prefix?: string; // e.g. "$" rendered as a left side-cell
+  suffix?: string; // e.g. "/ whole" rendered as a right side-cell
+  helper?: React.ReactNode; // small text under the input
+  inputMode?: string; // e.g. "decimal" for mobile numeric keypads
+  autoChip?: boolean; // tiny uppercase "auto" chip on the right of the label row
+  onReset?: () => void; // tiny "reset" link on the right of the label row (when !autoChip)
 }) {
+  const input = (
+    <input
+      type={type}
+      inputMode={inputMode as any}
+      value={value || ''}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={
+        prefix || suffix
+          ? 'flex-1 min-w-0 px-3 py-3 border border-transparent bg-bone text-base text-charcoal transition-base focus:outline-none'
+          : 'w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:outline-none focus:border-charcoal hover:border-saddle'
+      }
+    />
+  );
   return (
     <label className="block">
-      <span className="block text-sm font-medium text-charcoal mb-1.5">
-        {label} {required && <span className="text-weathered">*</span>}
+      <span className="flex items-center justify-between gap-2 mb-1.5">
+        <span className="block text-sm font-medium text-charcoal">
+          {label} {required && <span className="text-weathered">*</span>}
+        </span>
+        {autoChip ? (
+          <span className="text-[10px] uppercase tracking-widest text-saddle border border-dust px-1.5 py-0.5 leading-none">
+            auto
+          </span>
+        ) : onReset ? (
+          <button
+            type="button"
+            onClick={onReset}
+            className="text-[11px] uppercase tracking-widest text-saddle hover:text-charcoal underline underline-offset-2"
+          >
+            reset
+          </button>
+        ) : null}
       </span>
-      <input
-        type={type}
-        value={value || ''}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:outline-none focus:border-charcoal hover:border-saddle"
-      />
+      {prefix || suffix ? (
+        <span className="flex items-stretch border border-dust bg-bone transition-base focus-within:border-charcoal hover:border-saddle">
+          {prefix && (
+            <span className="flex items-center px-3 bg-bone-warm border-r border-dust text-base text-saddle select-none">
+              {prefix}
+            </span>
+          )}
+          {input}
+          {suffix && (
+            <span className="flex items-center px-3 bg-bone-warm border-l border-dust text-sm text-saddle whitespace-nowrap select-none">
+              {suffix}
+            </span>
+          )}
+        </span>
+      ) : (
+        input
+      )}
+      {helper && <span className="block text-xs text-saddle mt-1 leading-relaxed">{helper}</span>}
     </label>
   );
 }
