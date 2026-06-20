@@ -271,6 +271,29 @@ export async function peekRedisCapacity(rancherId: string): Promise<number | nul
   }
 }
 
+/**
+ * Atomic once-only claim (SET key NX EX). Returns true if THIS caller won the
+ * claim, false if another holder already has it. Used to serialize concurrent
+ * dual-webhook deliveries (Stripe fans payment_intent.succeeded to the platform
+ * AND the Connect endpoint with different event ids, so the Stripe-Events dedup
+ * gives no cross-webhook protection). Short TTL — just long enough to cover the
+ * in-flight window; on a holder crash the claim expires and a Stripe retry
+ * re-runs. Degrades OPEN (returns true) when Redis is absent/erroring so a
+ * deposit is never blocked — the durable idempotency anchor is still the
+ * Payments-row status flip.
+ */
+export async function claimOnce(key: string, ttlSec = 60): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis) return true;
+  try {
+    const res = await redis.set(key, '1', { nx: true, ex: ttlSec });
+    return res === 'OK';
+  } catch (e: any) {
+    console.error('[claimOnce] Redis SET NX failed (allowing):', e?.message);
+    return true;
+  }
+}
+
 async function legacyIncrement(rancherId: string): Promise<number> {
   try {
     const live = await currentAirtableCount(rancherId);
