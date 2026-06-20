@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { requireRole } from '@/lib/adminAuth';
+import { getSpendInRange } from '@/lib/adSpend';
 
 export const maxDuration = 60;
 
@@ -107,10 +108,11 @@ export async function GET(request: Request) {
       matches: number;
       closes: number;
       commissionDue: number;
+      saleRevenue: number;
     }>();
     const bucket = (key: string) => {
       if (!sourceMap.has(key)) {
-        sourceMap.set(key, { source: key, signups: 0, matches: 0, closes: 0, commissionDue: 0 });
+        sourceMap.set(key, { source: key, signups: 0, matches: 0, closes: 0, commissionDue: 0, saleRevenue: 0 });
       }
       return sourceMap.get(key)!;
     };
@@ -139,11 +141,35 @@ export async function GET(request: Request) {
       if (status === 'Closed Won') {
         bucket(source).closes++;
         bucket(source).commissionDue += Number(r['Commission Due'] || 0);
+        bucket(source).saleRevenue += Number(r['Sale Amount'] || 0);
       }
     });
 
-    const sourceBreakdown = Array.from(sourceMap.values())
-      .sort((a, b) => b.commissionDue - a.commissionDue);
+    // Join paid-ad spend (same date range) to each source → ROAS.
+    //   roas    = BHC commission / spend  (platform return)
+    //   gmvRoas = sale $ / spend          (standard marketing ROAS)
+    const spend = await getSpendInRange(cutoff);
+    const breakdownRows = Array.from(sourceMap.values()).map((s) => {
+      const sp = spend.bySource.get(s.source.trim().toLowerCase()) || 0;
+      return {
+        ...s,
+        spend: sp,
+        roas: sp > 0 ? s.commissionDue / sp : null,
+        gmvRoas: sp > 0 ? s.saleRevenue / sp : null,
+      };
+    });
+    // Surface spend on sources that have no signups in range (pure waste) so
+    // it's never hidden — otherwise blended ROAS would drop with no visible row.
+    const seenSources = new Set(Array.from(sourceMap.keys()).map((k) => k.trim().toLowerCase()));
+    spend.bySource.forEach((sp, src) => {
+      if (!seenSources.has(src)) {
+        breakdownRows.push({
+          source: src, signups: 0, matches: 0, closes: 0, commissionDue: 0,
+          saleRevenue: 0, spend: sp, roas: 0, gmvRoas: 0,
+        });
+      }
+    });
+    const sourceBreakdown = breakdownRows.sort((a, b) => b.commissionDue - a.commissionDue);
 
     const recentActivity: any[] = [];
 
@@ -234,6 +260,10 @@ export async function GET(request: Request) {
         totalRevenue: totalRevenue + refRevenue,
         totalCommission: totalCommission + refCommission,
         conversionRate,
+        totalSpend: spend.total,
+        // Blended return across all paid channels. null when nothing logged.
+        blendedRoas: spend.total > 0 ? (totalCommission + refCommission) / spend.total : null,
+        blendedGmvRoas: spend.total > 0 ? (totalRevenue + refRevenue) / spend.total : null,
       },
       referralStats: {
         total: referralsInRange.length,
