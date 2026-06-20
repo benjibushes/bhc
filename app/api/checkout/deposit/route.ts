@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createDepositCheckout, getConnectAccountStatus } from '@/lib/stripeConnect';
 import { recordDeposit } from '@/lib/contracts/payments';
+import { MIN_TIER_PRICE } from '@/lib/pricing';
 import { tierFor, TIERS } from '@/lib/tiers';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { checkOriginGuard } from '@/lib/csrfGuard';
@@ -182,6 +183,16 @@ export async function POST(req: Request) {
   if (!Number.isFinite(fullSaleDollars) || fullSaleDollars <= 0) {
     return NextResponse.json(
       { error: `Rancher hasn't set a ${CUT_LABELS[cutSize]} price yet — contact rancher` },
+      { status: 409 },
+    );
+  }
+  // Charge-time per-lb mis-entry guard: a positive price below MIN_TIER_PRICE is
+  // almost certainly a per-pound value typed as a total. Refuse to charge rather
+  // than bill a buyer ~$7.40 for a whole cow. Backstops the setup-route floor in
+  // case a broken price was published before that guard existed (e.g. DD Ranch).
+  if (fullSaleDollars < MIN_TIER_PRICE) {
+    return NextResponse.json(
+      { error: `${CUT_LABELS[cutSize]} pricing looks misconfigured — please contact the rancher before paying` },
       { status: 409 },
     );
   }
