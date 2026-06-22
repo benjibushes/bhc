@@ -166,15 +166,18 @@ export default function RancherOrderForm({
 
   return (
     <>
-      {/* Pricing cards */}
+      {/* Pricing cards — ordered Whole → Half → Quarter so the largest share
+          anchors the buyer first (price anchoring). Half stays visually
+          highlighted as the recommended middle. Presentational order only;
+          selection logic, values, and labels are unchanged. */}
       <div className="grid md:grid-cols-3 gap-4">
-        {quarter && (
+        {whole && (
           <PricingCard
-            label="Quarter"
-            lbs={quarter.lbs}
-            price={quarter.price}
+            label="Whole"
+            lbs={whole.lbs}
+            price={whole.price}
             highlighted={false}
-            onClick={() => handleTierClick('quarter')}
+            onClick={() => handleTierClick('whole')}
           />
         )}
         {half && (
@@ -186,13 +189,13 @@ export default function RancherOrderForm({
             onClick={() => handleTierClick('half')}
           />
         )}
-        {whole && (
+        {quarter && (
           <PricingCard
-            label="Whole"
-            lbs={whole.lbs}
-            price={whole.price}
+            label="Quarter"
+            lbs={quarter.lbs}
+            price={quarter.price}
             highlighted={false}
-            onClick={() => handleTierClick('whole')}
+            onClick={() => handleTierClick('quarter')}
           />
         )}
       </div>

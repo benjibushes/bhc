@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Container from '../../components/Container';
+import ImageUploader from '../../components/ImageUploader';
 import LivePreview from './LivePreview';
 import StripeConnectStep from './steps/StripeConnectStep';
 import {
@@ -165,6 +166,51 @@ const FULFILLMENT_OPTIONS = [
   { value: 'Cold-Chain Shipping', label: 'Cold-chain shipping (FedEx/UPS)' },
 ] as const;
 
+// Max gallery photos — mirrors the rancher dashboard's "up to 8" cap so the
+// two editors agree.
+const MAX_GALLERY_PHOTOS = 8;
+
+// ── Gallery Photos (de)serialization ───────────────────────────────────────
+// Stored in the `Gallery Photos` Airtable field. IMPORTANT: every existing
+// CONSUMER of this field — the public buyer page (app/ranchers/[slug]/page.tsx,
+// which uses gallery[0] as the cover hero), the rancher dashboard
+// (app/rancher/page.tsx), and the admin editor — reads it as a JSON ARRAY of
+// URL strings via JSON.parse. So the wizard ALSO serializes as a JSON array;
+// writing newline-separated text here would make every wizard-added photo
+// invisible on the public listing (JSON.parse throws → empty gallery → no
+// cover photo), which is the exact opposite of this feature's goal (photos are
+// the #1 conversion lever). parseGallery is tolerant of BOTH a JSON array and
+// a legacy newline-separated string so older data still renders; serializeGallery
+// always writes the consumer-correct JSON array.
+function parseGallery(raw: any): string[] {
+  if (Array.isArray(raw)) {
+    return raw.map((s) => String(s).trim()).filter(Boolean);
+  }
+  const str = String(raw ?? '').trim();
+  if (!str) return [];
+  // Try JSON array first (the format every consumer writes/reads).
+  if (str.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(str);
+      if (Array.isArray(parsed)) {
+        return parsed.map((s) => String(s).trim()).filter(Boolean);
+      }
+    } catch {
+      /* fall through to newline parsing */
+    }
+  }
+  // Fallback: newline-separated URLs (trim, drop blanks).
+  return str
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function serializeGallery(urls: string[]): string {
+  const clean = urls.map((s) => String(s).trim()).filter(Boolean);
+  return clean.length ? JSON.stringify(clean) : '';
+}
+
 const CALENDLY_LINK = 'https://cal.com/ben-beauchman-1itnsg/30min';
 
 const STATES = [
@@ -272,6 +318,12 @@ export default function RancherSetupWizard() {
             Tagline: data.rancher.Tagline || '',
             'About Text': data.rancher['About Text'] || '',
             'Video URL': data.rancher['Video URL'] || '',
+            // Stored as a JSON array of URLs (see parseGallery/serializeGallery).
+            // Normalize on load so the gallery editor + Save always round-trip
+            // through the consumer-correct JSON shape regardless of legacy format.
+            'Gallery Photos': serializeGallery(parseGallery(data.rancher['Gallery Photos'])),
+            // Date (YYYY-MM-DD) — buyers see "next available processing date".
+            'Next Processing Date': data.rancher['Next Processing Date'] || '',
             'Quarter Price': data.rancher['Quarter Price'] || '',
             'Quarter Deposit': data.rancher['Quarter Deposit'] || '',
             'Quarter Processing Fee': data.rancher['Quarter Processing Fee'] || '',
@@ -1572,6 +1624,83 @@ export default function RancherSetupWizard() {
                 />
                 <AutoSaveIndicator status={autoSaveStatus['Video URL']} />
               </div>
+
+              {/* ── Gallery photos ──────────────────────────────────────────
+                  The #1 conversion lever: the first photo becomes the cover
+                  hero on the public listing. Stored as a JSON array of URLs
+                  (parseGallery/serializeGallery) so the public page, dashboard,
+                  and admin editor all read it correctly. Each existing photo
+                  shows as a thumbnail with a remove button; one empty uploader
+                  appends the next, up to MAX_GALLERY_PHOTOS. */}
+              {(() => {
+                const photos = parseGallery(form['Gallery Photos']);
+                const setPhotos = (next: string[]) =>
+                  setField('Gallery Photos', serializeGallery(next));
+                return (
+                  <div className="space-y-3 border-t border-dust pt-5">
+                    <div>
+                      <p className="text-sm font-medium text-charcoal">
+                        Photos of your ranch{' '}
+                        <span className="text-dust font-normal">
+                          (cattle, the land, your family — what makes it yours)
+                        </span>
+                      </p>
+                      <p className="text-xs text-saddle mt-0.5 leading-relaxed">
+                        Add at least one — your first photo becomes the cover
+                        image families see at the top of your page. Listings
+                        with photos convert far better than those without.
+                      </p>
+                    </div>
+
+                    {photos.length > 0 && (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {photos.map((url, i) => (
+                          <div key={`${url}-${i}`} className="relative group">
+                            <img
+                              src={url}
+                              alt={`Gallery ${i + 1}`}
+                              className="w-full aspect-square object-cover border border-dust bg-bone"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.opacity = '0.3';
+                              }}
+                            />
+                            {i === 0 && (
+                              <span className="absolute bottom-1 left-1 bg-charcoal text-bone text-[10px] uppercase tracking-widest px-1.5 py-0.5">
+                                Cover
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setPhotos(photos.filter((_, idx) => idx !== i))}
+                              className="absolute top-1 right-1 px-2 py-0.5 bg-charcoal text-bone text-xs opacity-0 group-hover:opacity-100 focus:opacity-100 transition-base"
+                              title="Remove photo"
+                              aria-label={`Remove photo ${i + 1}`}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {photos.length < MAX_GALLERY_PHOTOS ? (
+                      <ImageUploader
+                        label=""
+                        hint={`Add photo ${photos.length + 1} of ${MAX_GALLERY_PHOTOS}`}
+                        value=""
+                        onChange={(url) => {
+                          const u = (url || '').trim();
+                          if (u) setPhotos([...photos, u]);
+                        }}
+                      />
+                    ) : (
+                      <p className="text-xs text-dust italic">
+                        Max {MAX_GALLERY_PHOTOS} photos. Remove one to add another.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             <StepFooter
               saving={saving}
@@ -1583,6 +1712,10 @@ export default function RancherSetupWizard() {
                   Tagline: form.Tagline,
                   'About Text': form['About Text'],
                   'Video URL': form['Video URL'],
+                  // Persisted as a JSON array of URLs (serializeGallery already
+                  // ran on every setField, so form['Gallery Photos'] is the
+                  // JSON string — send it through as-is).
+                  'Gallery Photos': form['Gallery Photos'] || '',
                 });
                 if (ok) setStep(3);
               }}
@@ -2144,21 +2277,71 @@ export default function RancherSetupWizard() {
           />
         )}
 
-        {/* STEP 6 — Done. Auto-redirect to dashboard via dashboardLink. */}
-        {step === 6 && (
-          <section className="space-y-5 bg-sage/10 border-2 border-sage p-7 md:p-8 text-center">
-            <p className="text-xs uppercase tracking-[0.2em] text-sage-dark font-bold">
-              Agreement signed
-            </p>
-            <h2 className="font-serif text-3xl md:text-4xl text-charcoal">
-              Welcome to the network.
-            </h2>
-            <p className="text-charcoal/85 max-w-md mx-auto leading-relaxed">
-              <strong>{rancher.ranchName}</strong> is signed and locked in.
-              <strong> One last step:</strong> hit &ldquo;Start Verification&rdquo;
-              on your dashboard. Most ranchers complete it in 2 minutes.
-              Once verified, your page goes live and buyers route to you within 2 hours.
-            </p>
+        {/* STEP 6 — Done. Auto-redirect to dashboard via dashboardLink.
+            Augmented with a READINESS NUDGE: the page is live, but if the
+            highest-leverage conversion pieces are still missing we WARN (Ben's
+            explicit call: warn, never block) and deep-link back to fix them. */}
+        {step === 6 && (() => {
+          // ── Readiness computation ──────────────────────────────────────
+          // Pricing: missing when NONE of the tiers the rancher SELLS has a
+          // positive price. (If no tiers are selected at all, sold[] is empty
+          // and this is true — still "no buyable price on the page".) Reading
+          // from Tier Specialty means deselecting a sold tier in Step 3 removes
+          // it from the check, matching Step 3's nulling of unsold tiers.
+          const sold: string[] = Array.isArray(form['Tier Specialty'])
+            ? form['Tier Specialty']
+            : [];
+          const hasAnyPrice = (['Quarter', 'Half', 'Whole'] as const).some(
+            (tier) => sold.includes(tier) && Number(form[`${tier} Price`]) > 0
+          );
+          const missingPricing = !hasAnyPrice;
+
+          // Bank: only tier_v2 ranchers settle via Stripe Connect; legacy
+          // ranchers use payment links / commission invoicing, so a bank
+          // connection isn't part of their readiness. For tier_v2 we flag
+          // missing ONLY when Connect status is present AND not 'active' — the
+          // setup endpoint doesn't always surface Stripe Connect Status, and
+          // the Step-9 flow already gates completion server-side, so an absent
+          // status is treated as "don't nag" rather than a false negative.
+          const pricingModel = String((rancher as any)['Pricing Model'] || 'legacy').toLowerCase();
+          const isTierV2 = pricingModel === 'tier_v2';
+          const connectStatus = String((rancher as any)['Stripe Connect Status'] || '').toLowerCase();
+          const missingBank = isTierV2 && connectStatus !== '' && connectStatus !== 'active';
+
+          // Photos: zero gallery photos on file.
+          const missingPhotos = parseGallery(form['Gallery Photos']).length === 0;
+
+          const missing = [
+            missingPricing && {
+              key: 'pricing',
+              label: 'Add a share price',
+              hint: 'Buyers see "Contact for pricing" until you set one. Pages with prices convert far better.',
+              cta: 'Set pricing →',
+              go: () => setStep(3),
+            },
+            missingBank && {
+              key: 'bank',
+              label: 'Connect your bank',
+              hint: 'Buyers can’t pay a deposit until your Stripe payout account is connected.',
+              cta: 'Connect bank →',
+              go: () => setStep(9),
+            },
+            missingPhotos && {
+              key: 'photos',
+              label: 'Add at least one photo',
+              hint: 'Your first photo becomes the cover image at the top of your page — the single biggest conversion lever.',
+              cta: 'Add a photo →',
+              go: () => setStep(2),
+            },
+          ].filter(Boolean) as Array<{
+            key: string;
+            label: string;
+            hint: string;
+            cta: string;
+            go: () => void;
+          }>;
+
+          const dashboardCtas = (
             <div className="flex flex-wrap justify-center gap-3 pt-3">
               {dashboardLink ? (
                 <a
@@ -2182,8 +2365,82 @@ export default function RancherSetupWizard() {
                 View my public page →
               </Link>
             </div>
-          </section>
-        )}
+          );
+
+          // Nothing missing → keep the celebratory done state unchanged.
+          if (missing.length === 0) {
+            return (
+              <section className="space-y-5 bg-sage/10 border-2 border-sage p-7 md:p-8 text-center">
+                <p className="text-xs uppercase tracking-[0.2em] text-sage-dark font-bold">
+                  Agreement signed
+                </p>
+                <h2 className="font-serif text-3xl md:text-4xl text-charcoal">
+                  Welcome to the network.
+                </h2>
+                <p className="text-charcoal/85 max-w-md mx-auto leading-relaxed">
+                  <strong>{rancher.ranchName}</strong> is signed and locked in.
+                  <strong> One last step:</strong> hit &ldquo;Start Verification&rdquo;
+                  on your dashboard. Most ranchers complete it in 2 minutes.
+                  Once verified, your page goes live and buyers route to you within 2 hours.
+                </p>
+                {dashboardCtas}
+              </section>
+            );
+          }
+
+          // Something missing → calm "page is live, but finish these" nudge.
+          // Still fully proceedable; the dashboard CTAs stay primary.
+          return (
+            <section className="space-y-6 bg-bone border-2 border-charcoal p-7 md:p-8">
+              <header className="space-y-2 text-center">
+                <p className="text-xs uppercase tracking-[0.2em] text-sage-dark font-bold">
+                  Agreement signed · page live
+                </p>
+                <h2 className="font-serif text-3xl md:text-4xl text-charcoal">
+                  {rancher.ranchName}, you&rsquo;re in.
+                </h2>
+                <p className="text-charcoal/85 max-w-md mx-auto leading-relaxed">
+                  Your page is live. To start closing deals, finish{' '}
+                  {missing.length === 1 ? 'this' : `these ${missing.length}`}:
+                </p>
+              </header>
+
+              <ul className="space-y-2 max-w-lg mx-auto">
+                {missing.map((item) => (
+                  <li
+                    key={item.key}
+                    className="flex items-start gap-3 border border-dust bg-bone-warm p-4"
+                  >
+                    <span
+                      aria-hidden
+                      className="inline-flex items-center justify-center w-5 h-5 border border-saddle text-saddle text-[11px] shrink-0 mt-0.5"
+                    >
+                      ☐
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-charcoal">{item.label}</p>
+                      <p className="text-xs text-saddle mt-0.5 leading-relaxed">{item.hint}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={item.go}
+                      className="shrink-0 self-center text-[11px] uppercase tracking-widest font-semibold border border-charcoal text-charcoal px-3 py-2 transition-base hover:bg-charcoal hover:text-bone"
+                    >
+                      {item.cta}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              <p className="text-xs text-saddle italic text-center max-w-md mx-auto leading-relaxed">
+                You can do all of this now or later from your dashboard — your
+                page stays live either way.
+              </p>
+
+              {dashboardCtas}
+            </section>
+          );
+        })()}
 
           </div>
           {/* Right column — sticky live preview, desktop only. Mobile uses the
@@ -3315,6 +3572,19 @@ function FulfillmentStep({
   const refundPolicy: string = String(form['Refund Policy'] || '');
   const refundLen = refundPolicy.trim().length;
 
+  // Next Processing Date (YYYY-MM-DD). Buyers see this as the "next available
+  // processing date" so they know when they'll get their beef. Compare against
+  // today's LOCAL date (string compare on YYYY-MM-DD is safe + tz-stable) to
+  // gently warn if a saved date has already passed — we never block on it.
+  const nextProcessingDate: string = String(form['Next Processing Date'] || '');
+  const todayStr = (() => {
+    const d = new Date();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${day}`;
+  })();
+  const processingDateIsPast = !!nextProcessingDate && nextProcessingDate < todayStr;
+
   const toggle = (val: string) => {
     const cur = new Set(types);
     if (cur.has(val)) cur.delete(val);
@@ -3367,6 +3637,8 @@ function FulfillmentStep({
       'Shipping Lead Time Days': hasShipping ? Number(form['Shipping Lead Time Days']) : null,
       'Refund Policy': refundPolicy.trim(),
       'Fulfillment Cost Notes': String(form['Fulfillment Cost Notes'] || '').trim(),
+      // ISO date string or '' to clear. Optional — no validation gate.
+      'Next Processing Date': nextProcessingDate || '',
     };
     const ok = await saveStep(payload);
     if (ok) onContinue();
@@ -3451,6 +3723,31 @@ function FulfillmentStep({
         rows={2}
         placeholder='e.g., "Cooler shipping $45 add-on, paid at pickup."'
       />
+
+      {/* Next processing date — buyers see this as "next available processing
+          date" so they know when they'll get their beef. Optional; native date
+          picker stores an ISO YYYY-MM-DD string. Gentle warning if it's past. */}
+      <label className="block">
+        <span className="block text-sm font-medium text-charcoal mb-1.5">
+          Next processing date{' '}
+          <span className="text-saddle font-normal">(optional)</span>
+        </span>
+        <input
+          type="date"
+          value={nextProcessingDate}
+          onChange={(e) => setField('Next Processing Date', e.target.value)}
+          className="w-full px-3 py-3 border border-dust bg-bone text-base text-charcoal transition-base focus:outline-none focus:border-charcoal hover:border-saddle"
+        />
+        <span className="block text-xs text-saddle mt-1 leading-relaxed">
+          Buyers see this as your &ldquo;next available processing date&rdquo; —
+          it tells them when their beef will be ready.
+        </span>
+        {processingDateIsPast && (
+          <span className="block text-xs text-weathered mt-1 leading-relaxed">
+            This date has passed — update it so buyers see an accurate timeline.
+          </span>
+        )}
+      </label>
 
       <div className="space-y-1.5">
         <TextareaField

@@ -13,8 +13,8 @@ import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createDepositCheckout, getConnectAccountStatus } from '@/lib/stripeConnect';
 import { recordDeposit } from '@/lib/contracts/payments';
-import { MIN_TIER_PRICE } from '@/lib/pricing';
-import { tierFor, TIERS } from '@/lib/tiers';
+import { MIN_TIER_PRICE, deriveDeposit } from '@/lib/pricing';
+import { tierFor, TIERS, commissionRateForTier } from '@/lib/tiers';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { checkOriginGuard } from '@/lib/csrfGuard';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
@@ -196,14 +196,18 @@ export async function POST(req: Request) {
       { status: 409 },
     );
   }
-  // Deposit defaults to the full sale price when rancher hasn't set a
-  // separate deposit (back-compat: existing ranchers with empty Deposit
-  // fields charge buyer full price upfront, same as before).
+  // Deposit: use the rancher's set per-cut deposit when valid (0 < dep ≤ price);
+  // otherwise DERIVE the standard reserve (25% of price, lib/pricing) rather than
+  // charging the full price upfront. This keeps the charge consistent with what
+  // the deposit page DISPLAYS (the GET handler shows deriveDeposit when the field
+  // is empty) and means an un-backfilled rancher charges a true partial reserve,
+  // never 100%. deriveDeposit is always < price for any price ≥ MIN_TIER_PRICE
+  // (gated above), so the buyer always pays a partial and the balance is real.
   const depositDollarsRaw = Number(rancher[depositFieldMap[cutSize]]);
   const depositDollars =
     Number.isFinite(depositDollarsRaw) && depositDollarsRaw > 0 && depositDollarsRaw <= fullSaleDollars
       ? depositDollarsRaw
-      : fullSaleDollars;
+      : deriveDeposit(fullSaleDollars);
 
   const fullSaleCents = Math.round(fullSaleDollars * 100);
   const amountCents = Math.round(depositDollars * 100);
@@ -399,6 +403,52 @@ export async function GET(req: Request) {
 
   const pricingModel = String(rancher['Pricing Model'] || 'legacy');
 
+  // Per-cut money breakdown for the buyer deposit page. Mirrors the POST
+  // handler so the page shows the EXACT charge (no surprises at Stripe):
+  //   • fee   = round(fullPrice × commissionRate)  — ADDED ON TOP of deposit
+  //             (POST route.ts:230, stripeConnect.ts:232). Rate resolved via
+  //             tierFor(rancher) exactly like POST route.ts:120; falls back to
+  //             the legacy default (commissionRateForTier) when tier is unset
+  //             so an un-tiered rancher still itemizes instead of NaN.
+  //   • deposit = stored `{Cut} Deposit` if a valid 0<dep≤price, ELSE
+  //             deriveDeposit(price) (a sane ~25% partial). This is the SAME
+  //             resolution POST uses (route.ts ~202), so the page shows exactly
+  //             what the card is charged — no full-price-upfront surprise for an
+  //             un-backfilled rancher.
+  //   • dueNow  = deposit + fee   (what the card is actually charged)
+  //   • balance = fullPrice − deposit (paid rancher-direct at pickup)
+  const tier = tierFor(rancher);
+  const commissionRate = tier ? TIERS[tier].commissionRate : commissionRateForTier(null);
+  const depositFieldByCut: Record<string, string> = {
+    quarter: 'Quarter Deposit',
+    half: 'Half Deposit',
+    whole: 'Whole Deposit',
+  };
+  const buildCut = (slug: 'quarter' | 'half' | 'whole', label: string, priceField: string, lbsField: string) => {
+    const price = Number(rancher[priceField]) || null;
+    if (price === null || price <= 0) {
+      return { slug, label, price: null, lbs: String(rancher[lbsField] || ''), depositCents: null, feeCents: null, dueNowCents: null, balanceCents: null };
+    }
+    const fullCents = Math.round(price * 100);
+    const storedDeposit = Number(rancher[depositFieldByCut[slug]]);
+    const depositDollars =
+      Number.isFinite(storedDeposit) && storedDeposit > 0 && storedDeposit <= price
+        ? storedDeposit
+        : deriveDeposit(price);
+    const depositCents = Math.round(depositDollars * 100);
+    const feeCents = Math.round(price * 100 * commissionRate);
+    return {
+      slug,
+      label,
+      price,
+      lbs: String(rancher[lbsField] || ''),
+      depositCents,
+      feeCents,
+      dueNowCents: depositCents + feeCents,
+      balanceCents: fullCents - depositCents,
+    };
+  };
+
   return NextResponse.json({
     rancher: {
       name: String(rancher['Operator Name'] || rancher['Ranch Name'] || ''),
@@ -410,9 +460,9 @@ export async function GET(req: Request) {
     tierConnected: pricingModel === 'tier_v2' && String(rancher['Stripe Connect Status'] || '') === 'active',
     legacyRedirectUrl: pricingModel === 'legacy' ? `/ranchers/${rancher['Slug'] || ''}` : null,
     cuts: [
-      { slug: 'quarter', label: 'Quarter Cow', price: Number(rancher['Quarter Price']) || null, lbs: String(rancher['Quarter lbs'] || '') },
-      { slug: 'half', label: 'Half Cow', price: Number(rancher['Half Price']) || null, lbs: String(rancher['Half lbs'] || '') },
-      { slug: 'whole', label: 'Whole Cow', price: Number(rancher['Whole Price']) || null, lbs: String(rancher['Whole lbs'] || '') },
+      buildCut('quarter', 'Quarter Cow', 'Quarter Price', 'Quarter lbs'),
+      buildCut('half', 'Half Cow', 'Half Price', 'Half lbs'),
+      buildCut('whole', 'Whole Cow', 'Whole Price', 'Whole lbs'),
     ].filter((c) => c.price !== null && c.price > 0),
     fulfillment: {
       types: (rancher['Fulfillment Types'] || []).map((t: any) => typeof t === 'object' ? t.name : t),
