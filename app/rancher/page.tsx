@@ -171,6 +171,31 @@ interface CommerceProduct {
   variants: CommerceVariant[];
 }
 
+// Commerce ORDER shapes — mirror lib/commerce Order + OrderLineItem as returned
+// by /api/rancher/commerce/orders (action:'list'). Money is in integer CENTS
+// over the wire; balance_cents is computed server-side (subtotal − deposit) so
+// the UI never re-derives the money math. The dashboard rounds to dollars only
+// for display. A commerce order with status 'paid' means the DEPOSIT landed; the
+// balance is owed to the rancher at fulfillment (100% rancher, no BHC fee).
+interface CommerceOrderLine {
+  id: string;
+  label: string;
+  qty: number;
+  unit_price_cents: number;
+}
+interface CommerceOrder {
+  id: string;
+  rancher_id: string;
+  buyer_id: string | null;
+  status: 'pending' | 'deposit_paid' | 'balance_invoiced' | 'paid' | 'cancelled' | 'refunded';
+  subtotal_cents: number;
+  fee_cents: number;
+  deposit_cents: number;
+  balance_cents: number; // server-computed: max(0, subtotal − deposit)
+  created_at: string;
+  order_line_items: CommerceOrderLine[];
+}
+
 type Tab = 'overview' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page';
 
 const statusStyles: Record<string, string> = {
@@ -243,6 +268,17 @@ export default function RancherDashboardPage() {
   const [commerceLoaded, setCommerceLoaded] = useState(false);
   const [commerceBusy, setCommerceBusy] = useState(false);
   const [commerceError, setCommerceError] = useState('');
+  // Commerce ORDERS (Phase-2) — deposit-paid orders + balance collection. Loaded
+  // alongside the catalog when "My Page" opens. `ordersLoaded` distinguishes
+  // "not fetched yet" from "fetched, empty" so the build-dark "No orders yet"
+  // placeholder only shows after a real (empty) response. `balanceLinks` caches
+  // the checkout URL per order id after a successful collect-balance so the
+  // rancher can copy it; `collectingOrderId` tracks the in-flight button.
+  const [commerceOrders, setCommerceOrders] = useState<CommerceOrder[]>([]);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const [ordersError, setOrdersError] = useState('');
+  const [collectingOrderId, setCollectingOrderId] = useState<string | null>(null);
+  const [balanceLinks, setBalanceLinks] = useState<Record<string, string>>({});
   // Capacity editor
   const [editingCapacity, setEditingCapacity] = useState(false);
   const [capacityValue, setCapacityValue] = useState('');
@@ -825,13 +861,76 @@ export default function RancherDashboardPage() {
     }
   };
 
-  // Lazy-load the catalog the first time the rancher opens "My Page".
+  // ── Commerce orders (Phase-2) ─────────────────────────────────────────────
+  // Read-only list of the rancher's deposit-paid orders + the balance the buyer
+  // still owes at fulfillment. Same auth model as the catalog: ONE authenticated
+  // endpoint that injects the session rancher_id server-side; the client never
+  // sends a rancher_id. 503 (build-dark / not enabled) is treated as empty so the
+  // calm "No orders yet" placeholder shows; other errors surface.
+  const loadOrders = async () => {
+    setOrdersError('');
+    try {
+      const res = await fetch('/api/rancher/commerce/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'list' }),
+      });
+      if (!res.ok) {
+        if (res.status !== 503) {
+          const d = await res.json().catch(() => ({}));
+          setOrdersError(d.error || 'Could not load your orders.');
+        }
+        setCommerceOrders([]);
+        setOrdersLoaded(true);
+        return;
+      }
+      const data = await res.json();
+      setCommerceOrders(Array.isArray(data.orders) ? data.orders : []);
+      setOrdersLoaded(true);
+    } catch {
+      setOrdersError('Network error loading your orders.');
+      setCommerceOrders([]);
+      setOrdersLoaded(true);
+    }
+  };
+
+  // Collect the balance for one order → mint a direct-charge Stripe link the
+  // rancher sends the buyer (NO BHC fee; commission was already taken at the
+  // cart). On success we cache the link for copy + reload the list so the row
+  // reflects its new 'balance_invoiced' status. Errors (already collected, no
+  // balance, bank not connected) surface inline on the row's section.
+  const handleCollectBalance = async (orderId: string) => {
+    setCollectingOrderId(orderId);
+    setOrdersError('');
+    try {
+      const res = await fetch('/api/rancher/commerce/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'collect-balance', orderId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.checkoutUrl) {
+        setOrdersError(data.error || 'Could not start balance collection. Please try again.');
+        return;
+      }
+      setBalanceLinks((prev) => ({ ...prev, [orderId]: data.checkoutUrl }));
+      // Reflect the new status on the row (best-effort; the link is already shown).
+      await loadOrders();
+    } catch {
+      setOrdersError('Network error. Please try again.');
+    } finally {
+      setCollectingOrderId(null);
+    }
+  };
+
+  // Lazy-load the catalog + orders the first time the rancher opens "My Page".
   useEffect(() => {
-    if (activeTab === 'my_page' && !commerceLoaded) {
-      loadCommerce();
+    if (activeTab === 'my_page') {
+      if (!commerceLoaded) loadCommerce();
+      if (!ordersLoaded) loadOrders();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, commerceLoaded]);
+  }, [activeTab, commerceLoaded, ordersLoaded]);
 
   if (loading) {
     return (
@@ -2521,6 +2620,22 @@ export default function RancherDashboardPage() {
                 onAction={commerceAction}
               />
 
+              <Divider />
+
+              {/* Orders & fulfillment (Phase-2) — deposit-paid commerce orders +
+                  one-tap balance collection (direct charge, no BHC fee since the
+                  commission was already taken at the cart). Build-dark: shows a
+                  calm "No orders yet" placeholder when there are none / the DB
+                  isn't switched on. Never blocks the rest of the dashboard. */}
+              <OrdersSection
+                orders={commerceOrders}
+                loaded={ordersLoaded}
+                error={ordersError}
+                collectingOrderId={collectingOrderId}
+                balanceLinks={balanceLinks}
+                onCollect={handleCollectBalance}
+              />
+
               {/* Save button */}
               {pageError && (
                 <div className="p-3 border border-weathered text-weathered text-sm">{pageError}</div>
@@ -3730,6 +3845,208 @@ function RancherRotBadge({ days }: { days: number | null }) {
 
 function centsToDollarsStr(cents: number): string {
   return (cents / 100).toFixed(2).replace(/\.00$/, '');
+}
+
+// Round cents → whole-dollar display string with thousands separators, e.g.
+// 240000 → "$2,400". Orders surface amounts as round dollars (the brand spec);
+// the exact cents are carried server-side for the actual Stripe charge.
+function centsToRoundDollars(cents: number): string {
+  return `$${Math.round(cents / 100).toLocaleString()}`;
+}
+
+interface OrdersSectionProps {
+  orders: CommerceOrder[];
+  loaded: boolean;
+  error: string;
+  collectingOrderId: string | null;
+  balanceLinks: Record<string, string>;
+  onCollect: (orderId: string) => void;
+}
+
+// ORDERS & FULFILLMENT (Phase-2) — the rancher's deposit-paid commerce orders +
+// the balance owed at fulfillment, with one-tap balance collection. Mirrors the
+// build-dark posture of CommerceCatalogEditor: a quiet line while loading, a calm
+// "No orders yet" placeholder when empty / unconfigured, and it NEVER throws —
+// an unconfigured commerce DB just yields an empty list upstream.
+//
+// Money note: balance = subtotal − deposit, 100% to the rancher. BHC's
+// commission was already collected on the FULL price at the cart, so the balance
+// carries NO platform fee — the copy says so to set rancher expectations.
+function OrdersSection({
+  orders,
+  loaded,
+  error,
+  collectingOrderId,
+  balanceLinks,
+  onCollect,
+}: OrdersSectionProps) {
+  if (!loaded) {
+    return (
+      <div className="space-y-3">
+        <h3 className="font-serif text-lg border-b border-dust pb-2">Orders &amp; fulfillment</h3>
+        <p className="text-xs text-dust">Loading your orders…</p>
+      </div>
+    );
+  }
+
+  const empty = orders.length === 0;
+
+  return (
+    <div className="space-y-4">
+      <h3 className="font-serif text-lg border-b border-dust pb-2">Orders &amp; fulfillment</h3>
+
+      {error && (
+        <div className="p-3 border border-weathered text-weathered text-sm">{error}</div>
+      )}
+
+      {empty ? (
+        // Build-dark / no-orders-yet placeholder. Calm, on-brand, non-blocking.
+        <div className="border border-dust bg-bone-warm p-5 md:p-6 space-y-2">
+          <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+            No orders yet
+          </p>
+          <p className="text-sm text-saddle leading-relaxed">
+            When a buyer checks out from your catalog, their order shows up here —
+            deposit paid, with the balance you collect at fulfillment. Nothing to do
+            until then.
+          </p>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-dust">
+            Each buyer paid their deposit at checkout. Collect the remaining balance
+            when you&apos;re ready to fulfill — it goes <strong>100% to you</strong>,
+            with no BuyHalfCow fee (we already took our commission at checkout).
+          </p>
+
+          <div className="space-y-4">
+            {orders.map((order) => (
+              <OrderCard
+                key={order.id}
+                order={order}
+                collecting={collectingOrderId === order.id}
+                balanceLink={balanceLinks[order.id]}
+                onCollect={onCollect}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// One commerce order row: buyer/items summary, deposit-paid vs balance-owed, and
+// the collect-balance action. The "Collect balance" button is disabled once the
+// balance is 0 (nothing owed) or a balance link already exists / is in flight.
+function OrderCard({
+  order,
+  collecting,
+  balanceLink,
+  onCollect,
+}: {
+  order: CommerceOrder;
+  collecting: boolean;
+  balanceLink?: string;
+  onCollect: (orderId: string) => void;
+}) {
+  const balanceOwed = order.balance_cents > 0;
+  // 'paid'/'deposit_paid' = deposit landed, balance collectable. 'balance_invoiced'
+  // = a balance link is already outstanding. Terminal states aren't listed.
+  const alreadyInvoiced = order.status === 'balance_invoiced';
+  const statusLabel =
+    alreadyInvoiced ? 'Balance link sent' :
+    order.status === 'paid' || order.status === 'deposit_paid' ? 'Deposit paid' :
+    order.status;
+  const created = (() => {
+    try {
+      return new Date(order.created_at).toLocaleDateString();
+    } catch {
+      return '';
+    }
+  })();
+  // A short, human order ref (full id is long). Display-only.
+  const shortRef = order.id.slice(0, 8);
+
+  return (
+    <div className="border border-dust bg-white p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">
+            Order #{shortRef}
+            <span className="ml-2 text-[10px] uppercase tracking-widest text-dust">
+              {statusLabel}
+            </span>
+          </p>
+          {created && <p className="text-xs text-saddle mt-0.5">Placed {created}</p>}
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-sm font-medium">{centsToRoundDollars(order.subtotal_cents)}</p>
+          <p className="text-[10px] uppercase tracking-widest text-dust">order total</p>
+        </div>
+      </div>
+
+      {/* Items */}
+      <ul className="text-xs text-saddle space-y-0.5">
+        {order.order_line_items.length === 0 && <li className="text-dust">No line items.</li>}
+        {order.order_line_items.map((li) => (
+          <li key={li.id} className="flex justify-between gap-3">
+            <span className="truncate">
+              {li.qty}× {li.label}
+            </span>
+            <span className="shrink-0">{centsToRoundDollars(li.unit_price_cents * li.qty)}</span>
+          </li>
+        ))}
+      </ul>
+
+      {/* Money breakdown: deposit paid + balance owed */}
+      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs border-t border-dust pt-3">
+        <span className="text-saddle">
+          Deposit paid <strong className="text-charcoal">{centsToRoundDollars(order.deposit_cents)}</strong>
+        </span>
+        <span className="text-saddle">
+          Balance owed{' '}
+          <strong className="text-charcoal">{centsToRoundDollars(order.balance_cents)}</strong>
+        </span>
+      </div>
+
+      {/* Collect balance action */}
+      {balanceOwed ? (
+        <div className="space-y-2">
+          <button
+            type="button"
+            disabled={collecting}
+            onClick={() => onCollect(order.id)}
+            className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase tracking-wider disabled:opacity-50"
+          >
+            {collecting
+              ? 'Creating link…'
+              : balanceLink || alreadyInvoiced
+                ? 'Re-create balance link'
+                : 'Collect balance'}
+          </button>
+
+          {balanceLink && (
+            <div className="border border-dust bg-bone-warm p-3 space-y-1">
+              <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+                Send this link to your buyer
+              </p>
+              <a
+                href={balanceLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-charcoal underline underline-offset-2 break-all hover:text-saddle"
+              >
+                {balanceLink}
+              </a>
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-dust">Paid in full — no balance to collect.</p>
+      )}
+    </div>
+  );
 }
 
 interface CommerceEditorProps {

@@ -31,7 +31,8 @@ import { settleBuyerDeposit, settleFinalInvoice } from '@/lib/stripeSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
-import { getOrder, getOrderByCheckoutSession, getOrderByPaymentIntent, getOrderLines, updateOrder, releaseInventory } from '@/lib/commerce/repository';
+import { getOrder, getOrderByCheckoutSession, getOrderByPaymentIntent, getOrderLines, updateOrder, releaseInventory, restockInventory } from '@/lib/commerce/repository';
+import { fireCapi, buildUserData, closePurchaseEnabled } from '@/lib/metaCapi';
 import { logAuditEntry } from '@/lib/auditLog';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
@@ -752,21 +753,28 @@ async function settleCommerceOrder(
 //
 // We deliberately DO NOT call recordClose/settleBuyerDeposit here: those are
 // referral-centric (Closed Won, commission ledger, affiliate enroll) and a
-// commerce order has no referral. See the DEFERRED note below.
+// commerce order has no referral.
 //
-// ── DEFERRED (design task, not a bug) ───────────────────────────────────────
-// The deeper revenue-ledger integration is intentionally out of scope:
-//   - Airtable "Payments" row: the Payments table is REFERRAL-KEYED (Referral
-//     linked-record is effectively required; recordDeposit/markDepositSucceeded
-//     all key on a referralId / deposit PI). Commerce orders aren't referrals,
-//     so writing a Payments row here would need a schema decision (nullable
-//     Referral? a parallel "Commerce Payments" table?).
-//   - Meta CAPI Purchase event + deal-flip: today fired from the referral
-//     close path keyed on the buyer/referral. Commerce orders have no
-//     referral/buyer-record linkage guaranteed, so attributing a CAPI Purchase
-//     needs a buyer-identity design pass.
-// Both are flagged for a follow-up design task; this notify path is the
-// additive, no-refactor slice the audit asked for.
+// Additively, on the same pending→paid edge (this whole fn runs exactly once
+// per settle — settleCommerceOrder's status guard ensures that), we now also:
+//   (a) Fire a Meta CAPI **Purchase** for the sale — real revenue attribution.
+//       Gated like every other server-side Purchase in the codebase: behind
+//       closePurchaseEnabled() (META_CLOSE_PURCHASE_ENABLED) + fireCapi's own
+//       env fail-open. A commerce order has NO referral/consumer, hence no
+//       stored fbc/click-id, so this is lower-match-quality (value + buyer email
+//       only) but still attributes the revenue. event_id = order.id (stable,
+//       dedupe-safe; commerce has no client Pixel pair). Fire-and-forget.
+//   (b) Payments ledger — INTENTIONALLY SKIPPED (logged TODO, not a broken row).
+//       The Payments table is STRUCTURALLY referral-keyed: recordDeposit (the
+//       only PAYMENTS_TABLE writer, lib/contracts/payments.ts) unconditionally
+//       sets Referral/Buyer/Rancher as required linked-record arrays, with no
+//       source/type field. A commerce order has a rancher but no referral and no
+//       guaranteed Buyer record, so writing through recordDeposit would force an
+//       orphan row with Referral:[undefined]. Per spec we DO NOT fake it — the
+//       sale is already captured in Supabase `orders` + Telegram + CAPI. The
+//       referral-keyed-ledger integration needs a schema decision (nullable
+//       Referral, a source column, or a parallel "Commerce Payments" table).
+// EVERY external call below is its own try/catch — this fn NEVER throws.
 // ============================================================================
 async function notifyCommerceOrderPaid(
   order: NonNullable<Awaited<ReturnType<typeof getOrderByCheckoutSession>>>,
@@ -884,6 +892,53 @@ async function notifyCommerceOrderPaid(
       }
     }
 
+    // ── (a) Meta CAPI Purchase — real revenue attribution (best-effort) ─────
+    // Mirrors the deposit/close Purchase call shape (fireClosedWonPurchase /
+    // platform brand-partner Purchase): event_name 'Purchase', action_source
+    // 'system_generated' (server-initiated, no buyer browser → no fbc/UA), value
+    // = order SUBTOTAL in dollars, currency usd, stable event_id = order.id for
+    // dedupe. Gated behind closePurchaseEnabled() exactly like every other
+    // server-side Purchase; fireCapi also fails open when the pixel/token env is
+    // missing. Commerce orders carry no referral/consumer, so there is NO stored
+    // fbc/click-id — we fire value + buyer email only (lower match quality, real
+    // revenue). Fire-and-forget — the detached .catch keeps it from ever throwing
+    // out of this best-effort fn.
+    if (closePurchaseEnabled()) {
+      try {
+        const purchaseEmail = (buyerEmailHint || '').trim().toLowerCase();
+        fireCapi([{
+          event_name: 'Purchase',
+          event_time: Math.floor(Date.now() / 1000),
+          event_id: order.id, // stable; commerce has no client Pixel pair to dedup against
+          action_source: 'system_generated',
+          user_data: buildUserData(purchaseEmail ? { email: purchaseEmail } : {}),
+          custom_data: {
+            // Order subtotal (full sale value), dollars — matches the order total.
+            value: Number(order.subtotal_cents || 0) / 100,
+            currency: 'usd',
+            content_name: 'Commerce order',
+            content_category: 'commerce',
+          },
+        }]).catch((e) => console.error(`[stripe-connect ${logTag}] commerce Purchase CAPI fire failed:`, e?.message));
+      } catch (e: any) {
+        console.warn(`[stripe-connect ${logTag}] commerce Purchase CAPI setup failed:`, e?.message);
+      }
+    }
+
+    // ── (b) Payments ledger — SKIPPED by design (referral-keyed table) ──────
+    // recordDeposit (the only PAYMENTS_TABLE writer) requires a Referral linked
+    // record; a commerce order has none. We do NOT force a broken/orphan row.
+    // The sale is captured in Supabase `orders` + Telegram + the CAPI Purchase
+    // above. TODO(schema): make the Payments ledger commerce-aware (nullable
+    // Referral, a `source` column, or a parallel "Commerce Payments" table) so
+    // commerce sales appear in admin revenue reporting.
+    console.warn(
+      `[stripe-connect ${logTag}] TODO(schema): commerce sale NOT written to Payments ledger ` +
+        `(table is referral-keyed; recordDeposit requires Referral). order=${order.id} ` +
+        `rancher=${order.rancher_id} pi=${paymentIntentId || 'n/a'} subtotalCents=${order.subtotal_cents}. ` +
+        `Captured in Supabase orders + Telegram + CAPI; referral-keyed-ledger integration needs a schema decision.`,
+    );
+
     // Audit log — best-effort, never throws out.
     await logAuditEntry({
       actor: 'cron',
@@ -891,7 +946,7 @@ async function notifyCommerceOrderPaid(
       targetType: 'Other',
       targetId: order.id,
       args: { orderId: order.id, rancherId: order.rancher_id, paymentIntentId, source: logTag },
-      result: { ranchName, itemSummary, totalCents: order.subtotal_cents, notifiedBuyer: !!buyerEmail, notifiedRancher: !!rancherEmail },
+      result: { ranchName, itemSummary, totalCents: order.subtotal_cents, notifiedBuyer: !!buyerEmail, notifiedRancher: !!rancherEmail, capiPurchaseFired: closePurchaseEnabled(), ledgerRow: 'skipped:referral-keyed-payments' },
       reverseAction: { type: 'noop', reason: 'notification side-effect — nothing to reverse' },
     }).catch((e) => console.error('[audit] commerce-order-paid log failed:', e));
   } catch (e: any) {
@@ -1077,22 +1132,21 @@ async function handleDispute(event: any): Promise<void> {
 // (those never consumed stock on a confirmed sale, so there's nothing to
 // restock and nothing to refund-flip).
 //
-// ── RESTOCK SEMANTICS CAVEAT (important for the reviewer) ───────────────────
+// ── RESTOCK SEMANTICS (the real add-back) ───────────────────────────────────
 // On settle we called releaseInventory(variantId, qty, consume=true), which did
 // qty_reserved -= qty AND qty_available -= qty (the units left BOTH counters —
-// sold). The spec prescribes releaseInventory(variantId, qty, consume=false) to
-// "return units" on refund. But per the release_inventory RPC
-// (supabase/migrations/0001_commerce_foundation.sql), consume=false only does
-// qty_reserved = greatest(0, qty_reserved - qty) and leaves qty_available
-// UNCHANGED. On an already-consumed (paid) order qty_reserved is already 0, so
-// this call is effectively a NO-OP and does NOT add the sold units back to
-// qty_available. A true add-back would need to RAISE qty_available (a new RPC
-// or setInventory read-modify-write), but the repository + RPC are out of scope
-// for this change (and setInventory would be racy). We therefore call exactly
-// the prescribed primitive (correct + safe for the unlimited-stock / still-
-// reserved cases, harmless no-op otherwise) and FLAG the true restock-to-
-// available as a deferred repository/RPC task. Variants with no inventory row
-// (unlimited) are a natural no-op inside the RPC.
+// sold). To put refunded units back on the shelf we must RAISE qty_available
+// again, so we call restockInventory(variantId, qty) — the restock_inventory
+// RPC (supabase/migrations/0003) which does qty_available += qty. This is the
+// proper inverse of the consume.
+//
+// (Earlier this path called releaseInventory(consume=false), which only lowers
+// qty_reserved and leaves qty_available UNCHANGED — a NO-OP on an already-
+// consumed/paid order where qty_reserved is already 0, so refunded units never
+// returned to sellable stock. restockInventory fixes that.)
+//
+// Variants with no inventory row (unlimited stock) are a natural no-op inside
+// the RPC, so calling it unconditionally per line is safe.
 // ============================================================================
 async function handleCommerceRefund(piId: string, charge: any): Promise<void> {
   if (!piId) return;
@@ -1145,16 +1199,16 @@ async function handleCommerceRefund(piId: string, charge: any): Promise<void> {
     throw e; // bubble → Stripe Events row failed → operator replay
   }
 
-  // Restock per line. See the RESTOCK SEMANTICS CAVEAT above — this calls the
-  // spec-prescribed primitive; it is a no-op-or-reserved-release in practice on
-  // a consumed sale + a natural no-op for unlimited variants. Best-effort per
-  // line so one failure doesn't strand the others.
+  // Restock per line — RAISE qty_available so refunded units return to sellable
+  // stock (see RESTOCK SEMANTICS above). restockInventory is the proper inverse
+  // of the consume=true we did on settle; a no-op for unlimited variants. Best-
+  // effort per line so one failure doesn't strand the others.
   for (const line of lines) {
     if (!line.variant_id || line.qty <= 0) continue;
     try {
-      await releaseInventory(line.variant_id, line.qty, false);
+      await restockInventory(line.variant_id, line.qty);
     } catch (e: any) {
-      console.error('[stripe-connect commerce.refund] restock releaseInventory failed:', line.variant_id, e?.message, '— manual reconcile for order', order.id);
+      console.error('[stripe-connect commerce.refund] restockInventory failed:', line.variant_id, e?.message, '— manual reconcile for order', order.id);
     }
   }
 

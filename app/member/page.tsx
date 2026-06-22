@@ -84,6 +84,36 @@ interface MemberReferral {
   processing_date?: string;
 }
 
+// Commerce order (Supabase) surfaced on the member dashboard. Served by
+// /api/member/orders, which resolves the buyer session server-side and calls
+// getOrdersByBuyer(consumerId). Money already rounded to whole dollars by the
+// route — the client only displays.
+interface MemberCommerceOrderLine {
+  label: string;
+  qty: number;
+}
+interface MemberCommerceOrder {
+  id: string;
+  rancherName: string;
+  status: string;
+  createdAt: string;
+  items: MemberCommerceOrderLine[];
+  paidDollars: number;
+  balanceDollars: number;
+}
+
+// Map raw commerce order status → buyer-facing label. Unknown statuses fall
+// back to a title-cased version of the raw value so a new status never renders
+// as a dead/empty pill.
+const commerceOrderStatusLabels: Record<string, string> = {
+  pending: 'Pending',
+  deposit_paid: 'Deposit paid',
+  balance_invoiced: 'Balance invoiced',
+  paid: 'Paid in full',
+  cancelled: 'Cancelled',
+  refunded: 'Refunded',
+};
+
 type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
 
 const statusLabels: Record<string, { label: string; style: string }> = {
@@ -133,9 +163,28 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
     memberReferrals: MemberReferral[];
   } | null>(null);
 
+  // Commerce orders (Supabase) — fetched independently of the Airtable content
+  // payload so a commerce-layer hiccup can never block the rest of the
+  // dashboard. BUILD-DARK: the route returns { orders: [] } when the commerce
+  // DB is unconfigured or the buyer has none, so this stays empty and the
+  // section simply doesn't render.
+  const [commerceOrders, setCommerceOrders] = useState<MemberCommerceOrder[]>([]);
+
   useEffect(() => {
     fetchContent();
+    fetchCommerceOrders();
   }, []);
+
+  const fetchCommerceOrders = async () => {
+    try {
+      const res = await fetch('/api/member/orders');
+      if (!res.ok) return; // 401/500 → leave empty, never break the page
+      const data = await res.json();
+      if (Array.isArray(data?.orders)) setCommerceOrders(data.orders);
+    } catch {
+      // Network error — stay empty, dashboard is unaffected.
+    }
+  };
 
   const fetchContent = async () => {
     setFetchError(false);
@@ -344,6 +393,11 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   />
                 );
               })()}
+
+              {/* Your orders — commerce (Supabase) order history for the
+                  logged-in buyer. Renders nothing when there are none
+                  (build-dark / guest-with-no-orders), so it never adds noise. */}
+              <CommerceOrdersSection orders={commerceOrders} />
 
               <h2 className="font-serif text-2xl">Your Referral Status</h2>
 
@@ -726,6 +780,79 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
         </div>
       </Container>
     </main>
+  );
+}
+
+// Your orders — commerce (Supabase) order history. Lists each order with
+// rancher, line items, deposit paid, balance remaining, status, and date.
+// Money arrives already rounded to whole dollars from /api/member/orders.
+// Renders null when empty so the dashboard stays calm for guests/build-dark.
+function CommerceOrdersSection({ orders }: { orders: MemberCommerceOrder[] }) {
+  if (!orders || orders.length === 0) return null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="font-serif text-2xl">Your Orders</h2>
+        <p className="text-sm text-saddle mt-1">
+          Deposits you&apos;ve placed to reserve a share. Your rancher confirms the
+          balance, cut sheet, and pickup after.
+        </p>
+      </div>
+      <div className="space-y-3">
+        {orders.map((order) => {
+          const statusLabel =
+            commerceOrderStatusLabels[order.status] ||
+            order.status.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+          const orderDate = order.createdAt
+            ? new Date(order.createdAt).toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+              })
+            : '';
+          return (
+            <div key={order.id} className="p-5 border border-dust bg-white space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-serif text-lg truncate">{order.rancherName}</p>
+                  {orderDate && <p className="text-xs text-dust mt-0.5">{orderDate}</p>}
+                </div>
+                <span className="inline-block self-start px-3 py-1 text-xs font-medium uppercase tracking-wider bg-charcoal/10 text-charcoal flex-shrink-0">
+                  {statusLabel}
+                </span>
+              </div>
+
+              {order.items.length > 0 && (
+                <ul className="text-sm text-charcoal space-y-1">
+                  {order.items.map((item, i) => (
+                    <li key={i} className="flex justify-between gap-3">
+                      <span className="min-w-0">{item.label}</span>
+                      <span className="text-saddle flex-shrink-0">× {item.qty}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-dust text-sm">
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-saddle">Deposit paid</p>
+                  <p className="font-serif text-lg">${order.paidDollars.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-saddle">Balance remaining</p>
+                  <p className="font-serif text-lg">
+                    {order.balanceDollars > 0
+                      ? `$${order.balanceDollars.toLocaleString()}`
+                      : '—'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

@@ -657,3 +657,119 @@ export async function createFinalInvoiceCheckout(
   }
   return { url, paymentIntentId };
 }
+
+// ─── COMMERCE BALANCE (balance owed after a commerce-cart deposit) ──────────
+//
+// Phase-2 commerce analog of createFinalInvoiceCheckout. A commerce CART
+// (createCartCheckout above) already charged the buyer the per-variant DEPOSIT
+// upfront PLUS the BHC commission on the FULL price — both collected at cart
+// time. So the remaining BALANCE the buyer owes at fulfillment is purely
+// between buyer and rancher:
+//
+//   balanceCents = order.subtotal_cents − order.deposit_cents
+//
+// application_fee is therefore ZERO. The commission was ALREADY taken on the
+// full price at the cart (cart fee = round(price × qty × rate), set as the
+// session's application_fee_amount). Commissioning the balance again would
+// double-charge the rancher on the same sale. This is the EXACT same reasoning
+// as createFinalInvoiceCheckout for the legacy cow-share deposit flow — mirror
+// it: direct charge on the rancher's connected account (stripeAccount header),
+// no application_fee_amount, deterministic per-order idempotency key.
+//
+// Worked example (a $400 custom box, $100 deposit, 10% tier):
+//   Cart charge — already paid via createCartCheckout
+//     • $100 deposit  → rancher Connect balance
+//     • $40 BHC fee   → platform (application_fee on the full $400)
+//   Balance invoice — created here
+//     • $300 ($400 − $100)  → 100% rancher, $0 BHC
+//   Net: rancher $400, BHC $40 (exactly 10% of the $400 sale).
+
+export interface CreateCommerceBalanceCheckoutInput {
+  rancherConnectAccountId: string; // acct_* — direct charge target
+  /** The commerce order id — used for the deterministic idempotency key + metadata. */
+  orderId: string;
+  /**
+   * Balance owed by the buyer, in cents == order.subtotal_cents −
+   * order.deposit_cents. Validated by the caller (the route refuses <= 0 and
+   * enforces a ceiling); we re-guard > 0 here so a bad caller fails loud rather
+   * than minting a $0 Stripe session.
+   */
+  balanceCents: number;
+  /** Optional — Stripe Checkout collects it otherwise (parity with createCartCheckout). */
+  buyerEmail?: string;
+  successUrl: string;
+  cancelUrl: string;
+  /**
+   * Extra metadata stamped on BOTH the Checkout Session and the PaymentIntent
+   * (e.g. { orderId, rancherId, type:'commerce_balance' } from the route). The
+   * webhook can cross-check, though the authoritative lookup is by Checkout
+   * Session id.
+   */
+  metadata?: Record<string, string>;
+}
+
+export async function createCommerceBalanceCheckout(
+  input: CreateCommerceBalanceCheckoutInput,
+): Promise<{ url: string; sessionId: string }> {
+  if (input.balanceCents <= 0) {
+    throw new Error('Commerce balance amount must be greater than zero');
+  }
+
+  const stripe = getStripeClient();
+
+  // Stamp type so the webhook can distinguish this from the deposit charge
+  // ('commerce_order') and the cow-share final invoice ('final_invoice').
+  const baseMetadata: Record<string, string> = {
+    type: 'commerce_balance',
+    orderId: input.orderId,
+    balanceCents: String(input.balanceCents),
+    ...(input.metadata || {}),
+  };
+
+  const session = await stripe.checkout.sessions.create(
+    {
+      mode: 'payment',
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: 'Order balance',
+              description:
+                'Remaining balance for your order — collected by the ranch direct, no BuyHalfCow fee.',
+            },
+            unit_amount: input.balanceCents,
+          },
+          quantity: 1,
+        },
+      ],
+      ...(input.buyerEmail ? { customer_email: input.buyerEmail } : {}),
+      payment_intent_data: {
+        // application_fee_amount intentionally OMITTED (== 0). BHC's commission
+        // was already collected upfront on the cart charge (on the FULL price).
+        // The balance is 100% the rancher's — never commissioned twice.
+        metadata: baseMetadata,
+      },
+      metadata: baseMetadata,
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      // Tax handling kept off (parity with createFinalInvoiceCheckout): this is
+      // direct rancher↔buyer billing for the balance; the rancher's own Stripe
+      // tax setup applies, BHC doesn't touch tax collection here.
+    },
+    {
+      stripeAccount: input.rancherConnectAccountId,
+      // Deterministic per-order key — a double-tap of "Collect balance" reuses
+      // the SAME Stripe session instead of opening a second one. The order id is
+      // stable + unique per order, and the balance for an order is fixed
+      // (subtotal − deposit), so the request body never changes for a given key.
+      idempotencyKey: `commerce-balance-${input.orderId}`,
+    },
+  );
+
+  const url = session.url;
+  if (!url) {
+    throw new Error('Stripe Checkout Session (commerce balance) returned no url');
+  }
+  return { url, sessionId: session.id };
+}

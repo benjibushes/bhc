@@ -14,6 +14,7 @@ import { getRancherCatalog } from '@/lib/commerce/repository';
 import type { CommerceCatalog, CommerceVariant } from './RancherOrderForm';
 import RancherOrderForm from './RancherOrderForm';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
+import CheckoutBanner from './CheckoutBanner';
 
 // Public rancher landing page — the unit of conversion. Verified partners
 // get full pricing + lead capture; prospects get the same shell with pricing
@@ -443,6 +444,10 @@ export default async function RancherPage(
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
+
+      {/* Post-pay return banner — reads ?checkout=success|cancelled CLIENT-SIDE
+          (useSearchParams), so the page stays static/ISR. */}
+      <CheckoutBanner rancherName={name} />
 
       {/* Audit 6 P1 — paid-scale tracking: fires rancher_page_view on mount
           with rancherId/slug/state custom_data for per-rancher Meta + GA
