@@ -140,7 +140,22 @@ interface NetworkBenefit {
   contact_email: string;
 }
 
-type Tab = 'overview' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page';
+// Cockpit (Wave A, 2026-06-22): 'home' is the new triage default. The spine
+// nav surfaces Home / Deals (= 'referrals') / My Page (= 'my_page') and links
+// out to Messages (/rancher/inbox) + Money (/rancher/billing). The legacy
+// 'overview' folds into Home; 'marketing'/'earnings'/'benefits' stay fully
+// reachable under the secondary "More" affordance — no content deleted.
+type Tab = 'home' | 'overview' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page';
+
+// Shape returned by /api/rancher/payouts (Stripe Connect money surface).
+// All fields degrade to null build-dark / when no Connect account.
+interface PayoutsInfo {
+  loginUrl: string | null;
+  availableCents: number | null;
+  pendingCents: number | null;
+  paidCents: number | null;
+  nextPayoutDateISO: string | null;
+}
 
 const statusStyles: Record<string, string> = {
   'Intro Sent': 'bg-blue-100 text-blue-800',
@@ -157,7 +172,18 @@ const statusStyles: Record<string, string> = {
 export default function RancherDashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>('overview');
+  // Cockpit default: land on the calm triage screen, not the old stat grid.
+  const [activeTab, setActiveTab] = useState<Tab>('home');
+  // Secondary nav ("More" dropdown) holds marketing / earnings / benefits so
+  // the spine stays at 5 items without deleting any tab content.
+  const [moreOpen, setMoreOpen] = useState(false);
+  // Stripe payouts ("you got paid $X") — fetched separately so a slow/needs-
+  // Connect Stripe read never blocks the dashboard render. Null until loaded.
+  const [payouts, setPayouts] = useState<PayoutsInfo | null>(null);
+  // Unread buyer messages count — sourced from /api/rancher/inbox (a thread is
+  // "unread" when its latest message came from the buyer). Drives the Messages
+  // nav badge + the Home "N unread" action card.
+  const [unreadCount, setUnreadCount] = useState(0);
   const [rancherInfo, setRancherInfo] = useState<RancherInfo | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [referrals, setReferrals] = useState<Referral[]>([]);
@@ -224,6 +250,38 @@ export default function RancherDashboardPage() {
 
   useEffect(() => {
     fetchDashboard();
+  }, []);
+
+  // Cockpit side-loads — payouts + unread count. Kept out of fetchDashboard so
+  // a slow Stripe read or inbox scan never delays the main dashboard paint.
+  // Both degrade silently on any error (payouts → stays null, unread → 0).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/payouts', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setPayouts(data as PayoutsInfo);
+      } catch {
+        /* leave payouts null — money strip simply omits the payout line */
+      }
+    })();
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/inbox', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const threads: Array<{ unreadFromBuyer?: boolean }> = data?.threads || [];
+        const n = threads.filter((t) => !!t.unreadFromBuyer).length;
+        if (!cancelled) setUnreadCount(n);
+      } catch {
+        /* leave unread at 0 — Messages badge + card simply hidden */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const [isAdminImpersonating, setIsAdminImpersonating] = useState(false);
@@ -766,14 +824,83 @@ export default function RancherDashboardPage() {
     return sum + (r.total_sale_amount - fee);
   }, 0);
 
-  const tabs: { key: Tab; label: string }[] = [
+  // ── Cockpit nav spine (Wave A) ─────────────────────────────────────────
+  // 5 persistent items. Home / Deals / My Page are in-page tabs; Messages and
+  // Money are nav links that route to the (previously orphaned) inbox + billing
+  // pages. "More" tucks the marketing / earnings / benefits tab CONTENT — all
+  // still reachable, nothing deleted.
+  const spineTabs: { key: Tab; label: string }[] = [
+    { key: 'home', label: 'Home' },
+    { key: 'referrals', label: `Deals${activeRefs.length > 0 ? ` (${activeRefs.length})` : ''}` },
+    { key: 'my_page', label: 'My Page' },
+  ];
+  const moreTabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
-    { key: 'referrals', label: `My Buyers (${activeRefs.length})` },
     { key: 'marketing', label: 'Marketing' },
     { key: 'earnings', label: 'Earnings' },
     { key: 'benefits', label: `Network Benefits${benefits.length > 0 ? ` (${benefits.length})` : ''}` },
-    { key: 'my_page', label: 'My Page' },
   ];
+
+  // ── Home triage signals (composition of existing data only) ─────────────
+  // Uncontacted buyers = still at "Intro Sent" (the "Contacted ✓" action moves
+  // them off it). These are the leads needing a first hello.
+  const uncontactedRefs = activeRefs.filter((r) => r.status === 'Intro Sent');
+  // Money the rancher's been paid (Stripe payouts) — drives the money strip +
+  // Money card. paidCents is the last completed payout; available is balance.
+  const paidDollars =
+    payouts?.paidCents != null ? Math.round(payouts.paidCents / 100) : null;
+  const availableDollars =
+    payouts?.availableCents != null ? Math.round(payouts.availableCents / 100) : null;
+  const nextPayoutLabel = payouts?.nextPayoutDateISO
+    ? new Date(payouts.nextPayoutDateISO).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+      })
+    : null;
+
+  // Onboarding / setup readiness — "Finish setup: X of Y". Built from the same
+  // signals the optimization checklist + go-live flow already use. Bank-connect
+  // step only applies to tier_v2 ranchers (legacy ranchers self-collect).
+  const setupSteps: { key: string; label: string; done: boolean; target: Tab }[] = [
+    {
+      key: 'price',
+      label: 'Set a share price',
+      done: !!(rancherInfo.quarterPrice || rancherInfo.halfPrice || rancherInfo.wholePrice),
+      target: 'my_page',
+    },
+    {
+      key: 'photo',
+      label: 'Add a photo',
+      done: (() => {
+        if (rancherInfo.logoUrl) return true;
+        try {
+          const arr = rancherInfo.galleryPhotos ? JSON.parse(rancherInfo.galleryPhotos) : [];
+          return Array.isArray(arr) && arr.length > 0;
+        } catch {
+          return false;
+        }
+      })(),
+      target: 'my_page',
+    },
+    ...(rancherInfo.pricingModel === 'tier_v2'
+      ? [
+          {
+            key: 'bank',
+            label: 'Connect your bank',
+            done: rancherInfo.connectStatus === 'active',
+            target: 'my_page' as Tab, // routed to Money via the card href below
+          },
+        ]
+      : []),
+    {
+      key: 'publish',
+      label: 'Publish your page',
+      done: !!rancherInfo.pageLive,
+      target: 'my_page',
+    },
+  ];
+  const setupDone = setupSteps.filter((s) => s.done).length;
+  const setupRemaining = setupSteps.length - setupDone;
 
   return (
     <main className="min-h-screen py-12 bg-bone text-charcoal">
@@ -1056,13 +1183,17 @@ export default function RancherDashboardPage() {
             );
           })()}
 
-          {/* Tabs */}
+          {/* ── Cockpit nav spine ──────────────────────────────────────────
+              Home · Deals · My Page · Messages · Money. Big tap targets,
+              mobile-first (wraps on narrow screens). Messages + Money route to
+              the inbox + billing pages (previously orphaned). "More" holds the
+              marketing / earnings / benefits tab content. */}
           <div className="flex flex-wrap gap-2">
-            {tabs.map((tab) => (
+            {spineTabs.map((tab) => (
               <button
                 key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`px-4 py-2 text-sm font-medium tracking-wider uppercase transition-colors ${
+                onClick={() => { setActiveTab(tab.key); setMoreOpen(false); }}
+                className={`px-4 py-2.5 min-h-[44px] text-sm font-medium tracking-wider uppercase transition-colors ${
                   activeTab === tab.key
                     ? 'bg-charcoal text-bone'
                     : 'border border-dust hover:bg-charcoal hover:text-bone'
@@ -1071,7 +1202,85 @@ export default function RancherDashboardPage() {
                 {tab.label}
               </button>
             ))}
+
+            {/* Messages — links to the inbox; unread badge from inbox/route.ts */}
+            <Link
+              href="/rancher/inbox"
+              className="relative px-4 py-2.5 min-h-[44px] flex items-center gap-2 text-sm font-medium tracking-wider uppercase border border-dust hover:bg-charcoal hover:text-bone transition-colors"
+            >
+              Messages
+              {unreadCount > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-bold bg-rust text-bone">
+                  {unreadCount}
+                </span>
+              )}
+            </Link>
+
+            {/* Money — links to billing (payouts + tier context) */}
+            <Link
+              href="/rancher/billing"
+              className="px-4 py-2.5 min-h-[44px] flex items-center text-sm font-medium tracking-wider uppercase border border-dust hover:bg-charcoal hover:text-bone transition-colors"
+            >
+              Money
+            </Link>
+
+            {/* More — secondary affordance keeping marketing/earnings/benefits
+                (and the legacy Overview) reachable without crowding the spine. */}
+            <div className="relative">
+              <button
+                onClick={() => setMoreOpen((o) => !o)}
+                aria-expanded={moreOpen}
+                className={`px-4 py-2.5 min-h-[44px] text-sm font-medium tracking-wider uppercase transition-colors ${
+                  moreTabs.some((t) => t.key === activeTab)
+                    ? 'bg-charcoal text-bone'
+                    : 'border border-dust hover:bg-charcoal hover:text-bone'
+                }`}
+              >
+                More {moreOpen ? '▴' : '▾'}
+              </button>
+              {moreOpen && (
+                <div className="absolute z-20 mt-1 min-w-[200px] border border-dust bg-bone">
+                  {moreTabs.map((tab) => (
+                    <button
+                      key={tab.key}
+                      onClick={() => { setActiveTab(tab.key); setMoreOpen(false); }}
+                      className={`block w-full text-left px-4 py-3 min-h-[44px] text-sm font-medium tracking-wider uppercase transition-colors ${
+                        activeTab === tab.key
+                          ? 'bg-charcoal text-bone'
+                          : 'hover:bg-charcoal hover:text-bone'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Home Tab — cockpit triage (Wave A). Action cards (only when there
+              is something to do) → money strip → vitals. Built entirely from
+              data already on the page + /api/rancher/payouts. */}
+          {activeTab === 'home' && (
+            <HomeTab
+              rancherInfo={rancherInfo}
+              stats={stats}
+              collectBalanceRefs={collectBalanceRefs}
+              collectBalanceTotal={collectBalanceTotal}
+              uncontactedRefs={uncontactedRefs}
+              activeRefs={activeRefs}
+              unreadCount={unreadCount}
+              setupSteps={setupSteps}
+              setupDone={setupDone}
+              setupRemaining={setupRemaining}
+              paidDollars={paidDollars}
+              availableDollars={availableDollars}
+              nextPayoutLabel={nextPayoutLabel}
+              payoutsLoginUrl={payouts?.loginUrl || null}
+              onGoToDeals={() => setActiveTab('referrals')}
+              onGoToMyPage={() => setActiveTab('my_page')}
+            />
+          )}
 
           {/* Overview Tab */}
           {activeTab === 'overview' && (
@@ -2898,6 +3107,311 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
       <div className="font-serif text-2xl">{value}</div>
       <p className="text-xs text-saddle mt-1 uppercase tracking-wider">{label}</p>
       {sub && <p className="text-xs text-dust mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+// ── HOME (cockpit triage) ─────────────────────────────────────────────────
+// The new default view. A calm, actionable stack — NOT an alarm wall:
+//   1. Action cards — only the things that need the rancher right now, each a
+//      big tap target that deep-links the existing action. Composed purely
+//      from data already on the page + /api/rancher/payouts. No new data.
+//   2. Money strip — "You've been paid $X · next payout [date]" (Stripe) plus
+//      the deposit money in flight (collected / still to collect) so the
+//      rancher never has to "go check Stripe" to know if money landed.
+//   3. Vitals — capacity/spots, recent buyers, "View my page".
+// All copy is plain ranch language (no "Connect" / "tier_v2" / "capture
+// remaining balance").
+function HomeTab({
+  rancherInfo,
+  stats,
+  collectBalanceRefs,
+  collectBalanceTotal,
+  uncontactedRefs,
+  activeRefs,
+  unreadCount,
+  setupSteps,
+  setupDone,
+  setupRemaining,
+  paidDollars,
+  availableDollars,
+  nextPayoutLabel,
+  payoutsLoginUrl,
+  onGoToDeals,
+  onGoToMyPage,
+}: {
+  rancherInfo: RancherInfo;
+  stats: Stats;
+  collectBalanceRefs: Referral[];
+  collectBalanceTotal: number;
+  uncontactedRefs: Referral[];
+  activeRefs: Referral[];
+  unreadCount: number;
+  setupSteps: { key: string; label: string; done: boolean; target: Tab }[];
+  setupDone: number;
+  setupRemaining: number;
+  paidDollars: number | null;
+  availableDollars: number | null;
+  nextPayoutLabel: string | null;
+  payoutsLoginUrl: string | null;
+  onGoToDeals: () => void;
+  onGoToMyPage: () => void;
+}) {
+  // Deposits already collected on deals still in flight (money in the rancher's
+  // pocket from the platform deposit) vs. balances still to collect.
+  const depositsCollected = collectBalanceRefs.reduce(
+    (sum, r) => sum + (r.deposit_amount || 0),
+    0,
+  );
+
+  // Build the action-card list. Order = money first, then people, then setup.
+  // Each entry renders as a tappable card; we only push cards that have work.
+  type ActionCard = {
+    key: string;
+    accent: string; // left border token class
+    label: string; // small uppercase kicker
+    headline: string; // the "what + $ + →" line
+    onClick: () => void;
+  };
+  const cards: ActionCard[] = [];
+
+  if (collectBalanceRefs.length > 0) {
+    const amt =
+      collectBalanceTotal > 0
+        ? ` ($${collectBalanceTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })})`
+        : '';
+    cards.push({
+      key: 'collect',
+      accent: 'border-sage',
+      label: 'Money to collect',
+      headline:
+        collectBalanceRefs.length === 1
+          ? `Collect the rest of the money${amt}`
+          : `Collect the rest from ${collectBalanceRefs.length} buyers${amt}`,
+      onClick: onGoToDeals,
+    });
+  }
+
+  if (uncontactedRefs.length > 0) {
+    cards.push({
+      key: 'new-buyers',
+      accent: 'border-charcoal',
+      label: 'New buyers',
+      headline:
+        uncontactedRefs.length === 1
+          ? '1 new buyer — say hi'
+          : `${uncontactedRefs.length} new buyers — say hi`,
+      onClick: onGoToDeals,
+    });
+  }
+
+  if (unreadCount > 0) {
+    cards.push({
+      key: 'unread',
+      accent: 'border-rust',
+      label: 'Messages',
+      headline:
+        unreadCount === 1 ? '1 unread message' : `${unreadCount} unread messages`,
+      onClick: () => {
+        window.location.href = '/rancher/inbox';
+      },
+    });
+  }
+
+  if (setupRemaining > 0) {
+    const nextStep = setupSteps.find((s) => !s.done);
+    cards.push({
+      key: 'setup',
+      accent: 'border-amber-dark',
+      label: 'Finish setup',
+      headline: `Finish setup: ${setupDone} of ${setupSteps.length} done${
+        nextStep ? ` — ${nextStep.label.toLowerCase()}` : ''
+      }`,
+      onClick: () => {
+        // Bank-connect step lives on the Money (billing) page; everything else
+        // is on My Page.
+        if (nextStep?.key === 'bank') {
+          window.location.href = '/rancher/billing';
+        } else {
+          onGoToMyPage();
+        }
+      },
+    });
+  }
+
+  const hasMoney =
+    paidDollars != null ||
+    availableDollars != null ||
+    depositsCollected > 0 ||
+    collectBalanceTotal > 0 ||
+    stats.totalRevenue > 0;
+
+  return (
+    <div className="space-y-8">
+      {/* 1 — ACTION CARDS (or calm empty state) */}
+      {cards.length > 0 ? (
+        <div className="space-y-3">
+          <h2 className="font-serif text-2xl">What needs you</h2>
+          {cards.map((c) => (
+            <button
+              key={c.key}
+              onClick={c.onClick}
+              className={`w-full text-left border border-dust ${c.accent} border-l-4 bg-white hover:bg-bone-warm transition-colors p-5 min-h-[64px] flex items-center justify-between gap-4`}
+            >
+              <div className="min-w-0">
+                <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+                  {c.label}
+                </p>
+                <p className="font-serif text-lg text-charcoal mt-0.5">{c.headline}</p>
+              </div>
+              <span aria-hidden className="text-2xl text-saddle shrink-0">
+                →
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="border border-dust bg-white p-8 text-center">
+          <p className="font-serif text-2xl text-charcoal">You&rsquo;re all caught up.</p>
+          <p className="text-sm text-saddle mt-2">
+            No buyers waiting, no money to collect. We&rsquo;ll surface the next thing
+            here the moment it needs you.
+          </p>
+        </div>
+      )}
+
+      {/* 2 — MONEY STRIP */}
+      {hasMoney && (
+        <div className="border border-dust bg-bone-warm p-5 md:p-6 space-y-4">
+          <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+            Your money
+          </p>
+
+          {/* "Did I get paid?" — the one fact we never make them go check
+              Stripe for. Only shown when payouts data is available. */}
+          {paidDollars != null && (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-dust">
+              <p className="font-serif text-xl text-charcoal">
+                You&rsquo;ve been paid ${paidDollars.toLocaleString()}
+                {nextPayoutLabel ? (
+                  <span className="text-saddle text-base font-sans">
+                    {' '}
+                    · next payout {nextPayoutLabel}
+                  </span>
+                ) : null}
+              </p>
+              {payoutsLoginUrl ? (
+                <a
+                  href={payoutsLoginUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 px-4 py-2.5 min-h-[44px] inline-flex items-center text-xs font-medium uppercase tracking-wider bg-charcoal text-bone hover:bg-saddle transition-colors"
+                >
+                  View my payouts →
+                </a>
+              ) : (
+                <Link
+                  href="/rancher/billing"
+                  className="shrink-0 px-4 py-2.5 min-h-[44px] inline-flex items-center text-xs font-medium uppercase tracking-wider bg-charcoal text-bone hover:bg-saddle transition-colors"
+                >
+                  View my payouts →
+                </Link>
+              )}
+            </div>
+          )}
+
+          {/* Deposit money in flight + lifetime sales — from existing data. */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {availableDollars != null && (
+              <div>
+                <p className="font-serif text-2xl text-charcoal">
+                  ${availableDollars.toLocaleString()}
+                </p>
+                <p className="text-xs text-saddle mt-0.5 uppercase tracking-wider">
+                  Ready to pay out
+                </p>
+              </div>
+            )}
+            {depositsCollected > 0 && (
+              <div>
+                <p className="font-serif text-2xl text-charcoal">
+                  ${depositsCollected.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </p>
+                <p className="text-xs text-saddle mt-0.5 uppercase tracking-wider">
+                  Deposits collected
+                </p>
+              </div>
+            )}
+            {collectBalanceTotal > 0 && (
+              <div>
+                <p className="font-serif text-2xl text-charcoal">
+                  ${collectBalanceTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </p>
+                <p className="text-xs text-saddle mt-0.5 uppercase tracking-wider">
+                  Still to collect
+                </p>
+              </div>
+            )}
+            {stats.totalRevenue > 0 && (
+              <div>
+                <p className="font-serif text-2xl text-charcoal">
+                  ${stats.totalRevenue.toLocaleString()}
+                </p>
+                <p className="text-xs text-saddle mt-0.5 uppercase tracking-wider">
+                  Sales all-time
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 3 — VITALS */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="border border-dust bg-white p-4">
+          <p className="text-xs text-saddle uppercase tracking-wider">Buyer slots</p>
+          <p className="font-serif text-xl text-charcoal mt-1">
+            {rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals
+              ? 'Full right now'
+              : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} open`}
+          </p>
+          <p className="text-xs text-dust mt-0.5">
+            {rancherInfo.currentActiveReferrals} of {rancherInfo.maxActiveReferrals} working
+          </p>
+        </div>
+        <div className="border border-dust bg-white p-4">
+          <p className="text-xs text-saddle uppercase tracking-wider">Buyers working</p>
+          <p className="font-serif text-xl text-charcoal mt-1">{activeRefs.length}</p>
+          <p className="text-xs text-dust mt-0.5">
+            {stats.closedWon} deal{stats.closedWon === 1 ? '' : 's'} closed
+          </p>
+        </div>
+        <div className="border border-dust bg-white p-4 flex flex-col justify-between">
+          <div>
+            <p className="text-xs text-saddle uppercase tracking-wider">Your page</p>
+            <p className="font-serif text-xl text-charcoal mt-1">
+              {rancherInfo.pageLive ? 'Live' : 'Not live yet'}
+            </p>
+          </div>
+          {rancherInfo.pageLive && rancherInfo.slug ? (
+            <a
+              href={`/ranchers/${rancherInfo.slug}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-saddle underline underline-offset-2 hover:text-charcoal mt-1"
+            >
+              View my page →
+            </a>
+          ) : (
+            <button
+              onClick={onGoToMyPage}
+              className="text-xs text-saddle underline underline-offset-2 hover:text-charcoal mt-1 text-left"
+            >
+              Finish my page →
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
