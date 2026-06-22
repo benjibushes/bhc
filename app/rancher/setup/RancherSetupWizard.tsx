@@ -227,23 +227,28 @@ export default function RancherSetupWizard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [rancher, setRancher] = useState<Rancher | null>(null);
-  // Hybrid B onboarding flow:
+  // CLOSE-FIRST onboarding flow (reordered 2026-06-22):
   //   Step 0 = intro (business model + video)
+  //   Step 4 = Book onboarding call with Ben (Cal.com embed). REQUIRED GATE,
+  //            now at the FRONT — setup stays locked until the call is done.
+  //            The only way past for a not-yet-called rancher is to book; the
+  //            gate opens (canSkipBooking → true) once Onboarding Status hits
+  //            'Call Complete' (Ben backfilled it for an existing rancher OR
+  //            finished the call and tapped the Telegram callback).
   //   Step 1-3 = page setup (contact / brand / pricing)
-  //   Step 4 = Book onboarding call with Ben (Cal.com embed). REQUIRED unless
-  //            rancher already has Onboarding Status = 'Call Complete' set
-  //            (Ben backfilled it for an existing rancher OR finished the
-  //            call already and tapped the Telegram callback).
   //   Step 7 = Pick Your Plan (tier subscription) [Stage-3 Task 11A]
   //   Step 9 = Stripe Connect onboarding (tier_v2 only) [Stage-3 Task D2]
   //   Step 8 = Fulfillment + Refund Policy [Stage-3 Task 11B]
   //   Step 5 = inline agreement signing
   //   Step 6 = done (logged in, dashboard auto-link)
   //
-  // Order is 0→1→2→3→4→7→9→8→5→6 (steps 7/9/8 are wedged after Call, before Sign).
+  // Order is 0→4→1→2→3→7→9→8→5→6 (CALL is the front gate; 7/9/8 sit before Sign).
+  //   tier_v2: 0 → 4 → 1 → 2 → 3 → 7 → 9 → 8 → 5
+  //   legacy:  0 → 4 → 1 → 2 → 3 → 8 → 5   (skip 7+9)
   // Step 9 auto-advances for legacy ranchers (no Connect needed).
-  // Numbering is awkward to preserve existing setStep call sites; do NOT
-  // re-sequence without auditing every setStep(...) in this file.
+  // Numbering is awkward (step NUMBERS aren't in flow order) to preserve
+  // existing setStep call sites; do NOT re-sequence without auditing every
+  // setStep(...) in this file AND the close-first progress bar (PROGRESS_ORDER).
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>(0);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
@@ -456,7 +461,19 @@ export default function RancherSetupWizard() {
       // Only restore valid in-range steps; 0 means "start at intro" so we
       // skip — no point setting the same state we already have.
       if (n > 0 && n <= 9) {
-        setStep(n as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
+        // CLOSE-FIRST gate enforcement: a rancher who has NOT done the call
+        // (canSkipBooking() false) must never be restored PAST the required
+        // call into a setup step. Clamp any forward-restore to the call gate
+        // (step 4). Steps 5/6 (sign/done) imply the agreement is already in
+        // motion, so leave those alone. A rancher who HAS done the call
+        // (canSkipBooking() true) is restored exactly where they left off —
+        // this preserves mid-onboarding ranchers (Renick/Anna) so they're not
+        // stranded or re-gated.
+        const restoreTarget =
+          !canSkipBooking() && (n === 1 || n === 2 || n === 3 || n === 7 || n === 8 || n === 9)
+            ? 4
+            : n;
+        setStep(restoreTarget as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9);
       }
     } catch {
       /* localStorage disabled — non-fatal, fall back to Step 0. */
@@ -909,6 +926,29 @@ export default function RancherSetupWizard() {
     return labels[n];
   };
 
+  // CLOSE-FIRST progress bar. The displayed step numbers are out of numeric
+  // order (Call=4 now comes FIRST), so "done" can no longer be a numeric
+  // step > n test — that would mark Call as un-done while on Contact (1 > 4 is
+  // false) even though the call happened first. Instead we order the *visible*
+  // bars by flow position and compare flow indices.
+  //
+  // Visible order: Call(4) · Contact(1) · Brand(2) · Pricing(3) · Sign(5).
+  const PROGRESS_ORDER = [4, 1, 2, 3, 5] as const;
+  // Map ANY actual step value to its position on this flow track so the
+  // "current" indicator never sits behind the real progress. Steps 7/9/8
+  // (Plan/Connect/Fulfillment) live between Pricing and Sign, so they read as
+  // "past Pricing, not yet at Sign" — index 3.5 keeps Pricing marked done and
+  // Sign still pending while the rancher is in those mid-steps. Intro (0) is
+  // before everything (-1). Done (6) is after everything.
+  const flowIndexForStep = (s: number): number => {
+    if (s === 0) return -1; // intro — nothing done yet
+    if (s === 6) return PROGRESS_ORDER.length; // done — everything past
+    if (s === 7 || s === 8 || s === 9) return 3.5; // between Pricing and Sign
+    const i = (PROGRESS_ORDER as readonly number[]).indexOf(s);
+    return i === -1 ? -1 : i;
+  };
+  const currentFlowIndex = flowIndexForStep(step);
+
   // Replace YouTube ID below with the real onboarding video ID once filmed.
   // Until then, the placeholder embed is a 60-sec founder intro from the
   // public BHC channel; if missing, the wizard hides the video and falls
@@ -1065,9 +1105,11 @@ export default function RancherSetupWizard() {
         {/* Progress + auto-save indicator */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <nav className="flex flex-wrap items-center gap-3" aria-label="Progress">
-            {([1, 2, 3, 4, 5] as const).map((n) => {
-              const isActive = step === n;
-              const isDone = step > n;
+            {PROGRESS_ORDER.map((n, idx) => {
+              // Done/active by FLOW POSITION (not numeric step) so the bars
+              // stay correct under the close-first reorder — see flowIndexForStep.
+              const isActive = idx === currentFlowIndex;
+              const isDone = idx < currentFlowIndex;
               return (
                 <div key={n} className="flex items-center gap-2">
                   <span
@@ -1079,7 +1121,7 @@ export default function RancherSetupWizard() {
                         : 'bg-bone-deep text-saddle border border-dust'
                     }`}
                   >
-                    {isDone ? '✓' : n}
+                    {isDone ? '✓' : idx + 1}
                   </span>
                   <span
                     className={`text-xs uppercase tracking-widest hidden sm:inline ${
@@ -1088,7 +1130,9 @@ export default function RancherSetupWizard() {
                   >
                     {stepLabel(n)}
                   </span>
-                  {n < 5 && <span aria-hidden className="text-dust hidden sm:inline">·</span>}
+                  {idx < PROGRESS_ORDER.length - 1 && (
+                    <span aria-hidden className="text-dust hidden sm:inline">·</span>
+                  )}
                 </div>
               );
             })}
@@ -1320,22 +1364,22 @@ export default function RancherSetupWizard() {
               </p>
             </div>
 
-            <div className="border-t border-dust pt-5 flex flex-col sm:flex-row sm:items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setStep(1)}
-                className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
-              >
-                Got it &mdash; let&rsquo;s set up &rarr;
-              </button>
-              <a
-                href={CALENDLY_LINK}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-saddle hover:text-charcoal underline underline-offset-4 sm:ml-2"
-              >
-                Or schedule a 30-min onboarding call
-              </a>
+            <div className="border-t border-dust pt-5 space-y-3">
+              <p className="text-sm text-charcoal/85 leading-relaxed">
+                <strong>First, let&rsquo;s hop on a quick call to get you set
+                up.</strong> We&rsquo;ll walk through your dashboard, pricing, and
+                anything you want to ask &mdash; then build your page together.
+                It&rsquo;s the fastest way to go live.
+              </p>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setStep(4)}
+                  className="inline-flex items-center gap-2 justify-center px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+                >
+                  Book your onboarding call &rarr;
+                </button>
+              </div>
             </div>
           </section>
         )}
@@ -2135,14 +2179,13 @@ export default function RancherSetupWizard() {
                     : '',
                 });
                 if (ok) {
-                  // After pricing, route to step 4 (Book Call). If the rancher
-                  // already has Call Complete on file (e.g. Ben backfilled or
-                  // they came back to a partially-onboarded record), skip the
-                  // booking step and jump straight to the next gate.
+                  // CLOSE-FIRST flow: the onboarding call already happened at
+                  // the FRONT (Step 0 → Step 4 → Contact), so after pricing we
+                  // go STRAIGHT to the next setup gate — no call routing here.
                   //
                   // Step ordering depends on Pricing Model:
-                  //   tier_v2: 3 → 4 → 7 (Pick Plan) → 9 (Stripe) → 8 (Fulfill) → 5 (Sign)
-                  //   legacy:  3 → 4 → 8 (Fulfill) → 5 (Sign)  — skip 7+9
+                  //   tier_v2: …3 → 7 (Pick Plan) → 9 (Stripe) → 8 (Fulfill) → 5 (Sign)
+                  //   legacy:  …3 → 8 (Fulfill) → 5 (Sign)  — skip 7+9
                   // Legacy ranchers pay BHC monthly commission on closed deals
                   // (no tier subscription), so forcing them through Pick Plan
                   // (step 7) or Stripe Connect (step 9) is wrong and blocks
@@ -2150,34 +2193,28 @@ export default function RancherSetupWizard() {
                   const isLegacy =
                     String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
                   const nextAfterPricing = isLegacy ? 8 : 7;
-                  if (canSkipBooking()) {
-                    setStep(nextAfterPricing);
-                  } else {
-                    setStep(4);
-                  }
+                  setStep(nextAfterPricing);
                 }
               }}
             />
           </section>
         )}
 
-        {/* STEP 4 — Book onboarding call (Hybrid B gate).
-            Legacy ranchers skip step 7 (Pick Plan) and step 9 (Stripe Connect)
-            entirely — they pay monthly commission, not a tier subscription.
-            (P2-B fix.) */}
-        {step === 4 && (() => {
-          const isLegacy =
-            String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
-          const nextAfterCall = isLegacy ? 8 : 7;
-          return (
-            <CallStep
-              rancher={rancher}
-              onAlreadyComplete={() => setStep(nextAfterCall)}
-              onBack={() => setStep(3)}
-              onProceedAnyway={() => setStep(nextAfterCall)}
-            />
-          );
-        })()}
+        {/* STEP 4 — Book onboarding call. CLOSE-FIRST: this is now the REQUIRED
+            gate at the FRONT of the funnel (intro → CALL → setup). A rancher who
+            has NOT done the call must book and cannot skip into setup. A rancher
+            who HAS done the call (canSkipBooking — returning rancher OR an
+            operator-backfilled record) advances straight into setup at Contact.
+            This preserves the real past-bug fix (Renick/Anna Gajewski must not
+            be asked to re-book). */}
+        {step === 4 && (
+          <CallStep
+            rancher={rancher}
+            callDone={canSkipBooking()}
+            onContinue={() => setStep(1)}
+            onBack={() => setStep(0)}
+          />
+        )}
 
         {/* STEP 7 — Pick Your Plan (Stage-3 Task 11A) */}
         {step === 7 && (
@@ -2185,7 +2222,7 @@ export default function RancherSetupWizard() {
             token={token}
             currentTier={tierSlugFromRancher(rancher)}
             subscriptionStatus={String((rancher as any)['Subscription Status'] || '')}
-            onBack={() => setStep(canSkipBooking() ? 3 : 4)}
+            onBack={() => setStep(3)}
             onContinue={(updated) => {
               // updated holds the latest Rancher snapshot from polling — merge
               // it into our local rancher state so the fulfillment + sign
@@ -2213,16 +2250,15 @@ export default function RancherSetupWizard() {
 
         {/* STEP 8 — Fulfillment + Refund Policy (Stage-3 Task 11B).
             Back-button target depends on Pricing Model: tier_v2 ranchers came
-            from step 9 (Stripe), legacy ranchers came from step 4 (or 3 if
-            they skipped Call). Sending legacy ranchers back to step 9 would
-            trap them — StripeConnectStep auto-advances legacy back to step 8.
-            (P2-B fix.) */}
+            from step 9 (Stripe), legacy ranchers came from step 3 (Pricing) —
+            the call now happens at the FRONT (close-first), so it's no longer
+            between Pricing and Fulfillment. Sending legacy ranchers back to
+            step 9 would trap them — StripeConnectStep auto-advances legacy
+            back to step 8. (P2-B fix.) */}
         {step === 8 && (() => {
           const isLegacy =
             String((rancher as any)['Pricing Model'] || 'legacy') === 'legacy';
-          const backTarget = isLegacy
-            ? (canSkipBooking() ? 3 : 4)
-            : 9;
+          const backTarget = isLegacy ? 3 : 9;
           return (
             <FulfillmentStep
               token={token}
@@ -2971,27 +3007,33 @@ function SignStep({
   );
 }
 
-// ── Step 4 — Hybrid B onboarding call gate ────────────────────────────────
-// Embeds the Cal.com booking iframe. Once the rancher books, Cal.com fires
-// BOOKING_CREATED → /api/webhooks/cal flips Onboarding Status to "Call
-// Scheduled". After Ben hops on the call and marks Call Complete (via
-// Telegram callback or Airtable directly), the rancher's next return to
-// the wizard auto-skips this step (canSkipBooking() returns true).
+// ── Step 4 — Onboarding call (CLOSE-FIRST required gate) ───────────────────
+// This is the FRONT of the funnel: intro → CALL → setup. The onboarding call
+// is REQUIRED and setup stays locked behind it. A rancher who has NOT done the
+// call must book (Cal.com embed) and CANNOT skip into setup; once they book,
+// Cal.com fires BOOKING_CREATED → /api/webhooks/cal flips Onboarding Status to
+// "Call Scheduled" and we show the "you're booked, come back after" state with
+// no forward button.
 //
-// Status display logic per current rancher.onboardingStatus:
-//   "" / "New"             → show booking embed, primary CTA
-//   "Call Scheduled"       → show "you booked, here's what to expect"
-//   "Call Complete"+       → auto-skip via parent, but defensive UI here too
+// `callDone` is the parent's authoritative canSkipBooking() result. When true
+// (a returning rancher who already did the call, OR an operator-backfilled
+// record), we show "✓ Call done — let's set up your page" and let them continue
+// into setup. This PRESERVES the real past-bug fix: an already-called rancher
+// (Renick / Anna Gajewski, 2026-05-13) must NEVER be asked to re-book.
+//
+// Status display (only matters when callDone is false):
+//   "" / "New"        → show booking embed, no skip
+//   "Call Scheduled"  → "you're booked, come back after your call"
 function CallStep({
   rancher,
-  onAlreadyComplete,
+  callDone,
+  onContinue,
   onBack,
-  onProceedAnyway,
 }: {
   rancher: Rancher;
-  onAlreadyComplete: () => void;
+  callDone: boolean;
+  onContinue: () => void;
   onBack: () => void;
-  onProceedAnyway: () => void;
 }) {
   const status = (rancher.onboardingStatus || '').toString();
   const calBookingUrl =
@@ -3001,31 +3043,26 @@ function CallStep({
   const embedUrl = `${calBookingUrl}?embed=true&theme=light&hideEventTypeDetails=false`;
 
   const alreadyBooked = status === 'Call Scheduled';
-  const callDone =
-    status === 'Call Complete' ||
-    status === 'Verification Pending' ||
-    status === 'Verification Complete' ||
-    status === 'Live';
 
   if (callDone) {
-    // Edge case: parent should have auto-skipped, but render fallback so
-    // the rancher isn't dead-ended if the parent gate logic ever drifts.
+    // Returning rancher who already did the call (or operator-backfilled).
+    // Continue straight into setup — do NOT make them re-book.
     return (
       <section className="space-y-5 bg-bone border border-dust p-7 md:p-8">
         <header>
-          <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 4</p>
-          <h2 className="font-serif text-2xl text-charcoal">Call already done.</h2>
+          <p className="text-xs uppercase tracking-widest text-saddle mb-2">Onboarding call</p>
+          <h2 className="font-serif text-2xl text-charcoal">✓ Call done — let&rsquo;s set up your page.</h2>
           <p className="text-sm text-saddle mt-1">
-            Looks like you&rsquo;ve already had your onboarding call. Let&rsquo;s
-            jump to the agreement.
+            You&rsquo;ve already had your onboarding call. Let&rsquo;s build your
+            page.
           </p>
         </header>
         <button
           type="button"
-          onClick={onAlreadyComplete}
+          onClick={onContinue}
           className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
         >
-          Sign agreement →
+          Set up my page →
         </button>
       </section>
     );
@@ -3034,14 +3071,14 @@ function CallStep({
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
-        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 4 · Onboarding call</p>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">First step · Onboarding call</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
-          {alreadyBooked ? 'Your onboarding call is booked.' : 'Book your 30-min onboarding call.'}
+          {alreadyBooked ? 'You’re booked for your call.' : 'Book your 30-min onboarding call.'}
         </h2>
         <p className="text-sm text-saddle mt-1">
           {alreadyBooked
-            ? `Great — looking forward to walking through your dashboard, expectations, and agreement on the call. After it, you sign + go live.`
-            : `This call is optional. If you'd like to walk through your dashboard, pricing, and questions with Ben before signing, book a 30-min slot below. Otherwise you can continue straight to your agreement — no call needed.`}
+            ? `We'll get your page set up together on the call — pricing, dashboard, and any questions. Come back here after to finish your setup.`
+            : `First, let's hop on a quick 30-min call. We'll walk through your dashboard, pricing, and questions, then build your page together. Pick a slot below — your setup unlocks once we've talked.`}
         </p>
       </header>
 
@@ -3066,7 +3103,7 @@ function CallStep({
               </li>
               <li className="flex gap-2.5">
                 <span aria-hidden className="text-sage shrink-0 mt-0.5">✓</span>
-                <span>Anything you want to ask before signing</span>
+                <span>We build your page together — live</span>
               </li>
             </ul>
           </div>
@@ -3085,9 +3122,8 @@ function CallStep({
           </div>
 
           <p className="text-xs text-dust leading-relaxed text-center">
-            Once you book, we&rsquo;ll auto-stamp this step. Don&rsquo;t want a
-            call? Use the &ldquo;continue&rdquo; option below to skip straight to
-            your agreement.
+            Once you book, we&rsquo;ll auto-stamp this step and unlock your setup.
+            Come back here right after your call to finish.
           </p>
         </>
       )}
@@ -3095,9 +3131,10 @@ function CallStep({
       {alreadyBooked && (
         <div className="bg-sage/10 border border-sage p-5 space-y-3">
           <p className="text-sm text-charcoal/85 leading-relaxed">
-            Need to reschedule? Use the link in your booking confirmation email
-            from Cal.com. After our call, this step auto-completes and you can
-            sign your agreement.
+            <strong>You&rsquo;re booked.</strong> We&rsquo;ll get your page set up
+            together on the call. Come back to this link right after &mdash; your
+            setup unlocks once we&rsquo;ve talked. Need to reschedule? Use the link
+            in your Cal.com confirmation email.
           </p>
           <a
             href={calBookingUrl}
@@ -3110,22 +3147,12 @@ function CallStep({
         </div>
       )}
 
-      {/* Step 4 is NEVER a hard gate. The onboarding call is optional (Step 0
-          + the header copy say so), and CallStep doesn't re-poll after a
-          booking — so a disabled-until-booked button would dead-end every
-          self-serve rancher. Always offer a way forward: if they've booked,
-          the primary CTA reads "Continue"; if not, it's an explicit
-          "I don't need a call — continue" so skipping is a deliberate choice,
-          not an accident. Ranchers who DO book still advance because the Cal
-          webhook stamps Onboarding Status (see app/api/webhooks/cal). */}
+      {/* CLOSE-FIRST: this gate is REQUIRED. There is NO self-skip / "proceed
+          anyway" for a not-yet-called rancher — setup stays locked until the
+          call is done (the parent flips canSkipBooking → true after Ben marks
+          Call Complete, at which point the callDone branch above lets them in).
+          The only control here is Back to the intro. */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center pt-2 border-t border-dust">
-        <button
-          type="button"
-          onClick={onProceedAnyway}
-          className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
-        >
-          {alreadyBooked ? 'Continue to agreement →' : 'I don’t need a call — continue →'}
-        </button>
         <button
           type="button"
           onClick={onBack}
