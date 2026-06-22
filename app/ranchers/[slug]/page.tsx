@@ -266,7 +266,14 @@ export default async function RancherPage(
   // Wrapped so a commerce-layer error can NEVER break the legacy ranch page.
   // Money stays in CENTS; only the client form rounds to dollars for display.
   let commerceCatalog: CommerceCatalog | null = null;
-  if (!isProspect) {
+  // GATE the commerce catalog on the SAME predicate the cart enforces
+  // (tier_v2 + Connect-active = isRancherOnConnect). Without this, a legacy
+  // rancher with seeded Supabase products would show a "Reserve" button that
+  // dead-ends in a 409 at /api/commerce/cart (which hard-rejects non-tier_v2).
+  // Legacy ranchers fall through to the working Airtable lead/deposit flow; only
+  // Connected ranchers get the on-page cart. JSON-LD offers key off
+  // hasCommerceCatalog, so they inherit this gate too.
+  if (!isProspect && onConnect) {
     try {
       const products = await getRancherCatalog(r.id);
       if (products.length > 0) {

@@ -314,8 +314,8 @@ export async function POST(req: Request) {
       tier,
       lineItems: checkoutLines,
       applicationFeeCents: feeTotalCents,
-      successUrl: `${SITE_URL}/${rancherSlug}?order=${order.id}&checkout=success`,
-      cancelUrl: `${SITE_URL}/${rancherSlug}?checkout=cancelled`,
+      successUrl: `${SITE_URL}/ranchers/${rancherSlug}?order=${order.id}&checkout=success`,
+      cancelUrl: `${SITE_URL}/ranchers/${rancherSlug}?checkout=cancelled`,
       metadata: { orderId: order.id, rancherId },
     });
   } catch (e: any) {

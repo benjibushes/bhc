@@ -241,6 +241,36 @@ export async function getOrderByCheckoutSession(sessionId: string): Promise<Orde
   return (data as Order) || null;
 }
 
+/** Find a commerce order by its Stripe PaymentIntent id (PI-based webhook fallback + refunds). */
+export async function getOrderByPaymentIntent(paymentIntentId: string): Promise<Order | null> {
+  const db = getCommerceDb();
+  if (!db || !paymentIntentId) return null;
+  const { data, error } = await db
+    .from('orders')
+    .select('*')
+    .eq('stripe_payment_intent_id', paymentIntentId)
+    .maybeSingle();
+  if (error) throw new Error(`getOrderByPaymentIntent: ${error.message}`);
+  return (data as Order) || null;
+}
+
+/**
+ * Orders that still hold/own a given variant — i.e. NOT in a terminal cancelled
+ * state. Used to refuse deleting a variant that an open or paid order references
+ * (protects the consume path + audit trail). Returns the order ids.
+ */
+export async function getOpenOrdersForVariant(variantId: string): Promise<string[]> {
+  const db = getCommerceDb();
+  if (!db || !variantId) return [];
+  const { data, error } = await db
+    .from('order_line_items')
+    .select('order_id, orders!inner(status)')
+    .eq('variant_id', variantId)
+    .neq('orders.status', 'cancelled');
+  if (error) throw new Error(`getOpenOrdersForVariant: ${error.message}`);
+  return Array.from(new Set((data || []).map((r: any) => r.order_id as string)));
+}
+
 export async function getOrderLines(orderId: string): Promise<OrderLineItem[]> {
   const db = getCommerceDb();
   if (!db) return [];
