@@ -74,15 +74,19 @@ One primary input, system derives everything, full ladder shown as **editable** 
 - **Pass B (scripted, idempotent):** for each tier with a plausible price (≥$300) + empty deposit, write `deriveDeposit(price)`. ~9–10 ranchers w/ real pricing. Dry-run → eyeball 27-row diff → commit under bhc-mutation-guardrails.
 - Stale past processing dates (5 Bar, 2M, High Lonesome) need real new dates from ranchers.
 
-## Open decisions for Ben
-1. Deposit % (rec 25%).
-2. Floor $100 + round-$50 (vs round-$25).
-3. Ladder multipliers Half 0.55× / Quarter 0.28× (premium) vs 0.50/0.25 (flat $/lb, less margin).
-4. Refundability — keep verbatim (rec).
-5. Plausibility floor — min publishable whole $300, soft band $2,000–$3,500.
-6. DD Ranch intended whole price.
-7. Silverline whole price (~$6,600?).
-8. Photos: real file upload (needs R2/S3/Cloudinary) vs multi-URL for v1.
-9. Go-live gate: block "live" until price + bank + ≥1 photo, vs warn only.
+## LOCKED decisions (Ben, 2026-06-20)
+1. **Deposit % = 25%** of each tier price (DEPOSIT_PCT=0.25). ✅
+2. **Floor $100, round-$50** (DEPOSIT_MIN=100, roundTo50). ✅ default
+3. **Ladder = premium multipliers Half 0.55× / Quarter 0.28×** (Ben: "not up to me" → use research-backed premium; ranchers can override their own ladder). ✅
+4. **Refundability unchanged** — fully refundable until rancher accepts. ✅
+5. **Plausibility floor = $100/tier** (MIN_TIER_PRICE), soft whole warning < $300. ✅ default
+6. **Photos = REAL FILE UPLOAD** → use **Vercel Blob** (Next-on-Vercel native, no extra account). ✅
+7. **Go-live gate = WARN, not block** (Ben overrode the rec) — rancher can publish incomplete; we nudge. The Phase-0 charge-time floor + the deposit 409 still prevent transacting on broken/no pricing, so "warn" is safe. ✅
+8. ⏳ **DD Ranch intended whole price** — still needed from Ben (per-lb mis-entry; floor blocks transactions meanwhile).
+9. ⏳ **Silverline whole price** — still needed (Quarter $1,950 / Half $3,650 set; back-derive ≈ $6,600 or confirm).
+
+## Status
+- **Phase 0 (safety) + Phase 1 (engine) SHIPPED** on PR #87 (`442fd38`): `lib/pricing.ts` + `lbs`-out-of-MONEY_FIELDS + per-lb price floor (save + charge). Math verified via tsx.
+- Phases 2–5 pending. Wizard-touching phases (2 pricing UX, 3 photos/date, 5 polish) are SEQUENTIAL (one 3,000-line file = serialization point — not a parallel blast). Phase 4 (buyer-facing) is independent.
 
 Sources: fieldandcattle.com/blog/beef-share-pricing-guide · beefmaps.com/buy/quarter-cow · marionacres.com beef-half-deposit · learningloop.io commitment-devices · strategy-business.com round-numbers.
