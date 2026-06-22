@@ -7,6 +7,7 @@ import Divider from '../components/Divider';
 import StateMultiSelect from '../components/StateMultiSelect';
 import ImageUploader from '../components/ImageUploader';
 import Link from 'next/link';
+import { deriveLadder, deriveDeposit, checkWholePrice, MIN_TIER_PRICE } from '@/lib/pricing';
 
 interface RancherInfo {
   id: string;
@@ -208,6 +209,10 @@ export default function RancherDashboardPage() {
   const [lostModal, setLostModal] = useState<Referral | null>(null);
   const [lostReasonCode, setLostReasonCode] = useState<'no_response' | 'price' | 'not_a_fit' | 'other'>('no_response');
   const [lostFreeText, setLostFreeText] = useState('');
+  // Revive-lead modal (admin-only) — audit replaces window.prompt() status
+  // picker. Branded select matches the Mark-Lost UX. Same revive POST.
+  const [reviveModal, setReviveModal] = useState<Referral | null>(null);
+  const [reviveStatus, setReviveStatus] = useState<'Pending Approval' | 'Intro Sent' | 'Rancher Contacted' | 'Negotiation'>('Pending Approval');
   // FINAL INVOICE modal (FINAL-5 2026-05-31): sent by rancher after deposit
   // lands + processing date is locked. Stripe Connect direct charge, app_fee=0,
   // 100% to rancher. Posts to /api/rancher/referrals/[id]/send-final-invoice.
@@ -222,6 +227,17 @@ export default function RancherDashboardPage() {
   const [finalInvoiceSubmitting, setFinalInvoiceSubmitting] = useState(false);
   const [finalInvoiceResult, setFinalInvoiceResult] = useState<{ url: string; balanceAmount: number } | null>(null);
   const [pageForm, setPageForm] = useState<Record<string, string>>({});
+  // One-input pricing (mirrors the setup wizard Step-3 pattern): rancher enters
+  // the Whole price → Half/Quarter + each deposit derive via lib/pricing. Any
+  // field the rancher has set/edited is "touched" — its value is kept verbatim
+  // and never re-derived (so loading an existing rancher never silently changes
+  // their saved numbers). Derivation only fills BLANK untouched fields.
+  const [touchedDerived, setTouchedDerived] = useState<Set<string>>(new Set());
+  // Pricing unit toggle + per-lb inputs (mirrors the wizard): $/lb × hanging
+  // weight feeds the same Whole-price → ladder/deposit derivation.
+  const [priceUnit, setPriceUnit] = useState<'total' | 'perlb'>('total');
+  const [perLbInput, setPerLbInput] = useState('');
+  const [hangingLbsInput, setHangingLbsInput] = useState('');
   const [pageSaving, setPageSaving] = useState(false);
   const [pageSaved, setPageSaved] = useState(false);
   const [pageError, setPageError] = useState('');
@@ -318,12 +334,15 @@ export default function RancherDashboardPage() {
         'About Text': r.aboutText || '',
         'Video URL': r.videoUrl || '',
         'Quarter Price': r.quarterPrice ? String(r.quarterPrice) : '',
+        'Quarter Deposit': r.quarterDeposit ? String(r.quarterDeposit) : '',
         'Quarter lbs': r.quarterLbs || '',
         'Quarter Payment Link': r.quarterPaymentLink || '',
         'Half Price': r.halfPrice ? String(r.halfPrice) : '',
+        'Half Deposit': r.halfDeposit ? String(r.halfDeposit) : '',
         'Half lbs': r.halfLbs || '',
         'Half Payment Link': r.halfPaymentLink || '',
         'Whole Price': r.wholePrice ? String(r.wholePrice) : '',
+        'Whole Deposit': r.wholeDeposit ? String(r.wholeDeposit) : '',
         'Whole lbs': r.wholeLbs || '',
         'Whole Payment Link': r.wholePaymentLink || '',
         'Next Processing Date': r.nextProcessingDate || '',
@@ -337,6 +356,18 @@ export default function RancherDashboardPage() {
         'Certifications': r.certifications || '',
         'Team Emails': (r as any).teamEmails || '',
       });
+      // Seed touched-derived: any tier price/deposit that already has a stored
+      // value loads as a manual override so it's preserved verbatim. Derivation
+      // only ever fills BLANK fields — an existing rancher's saved ladder/
+      // deposits are never silently rewritten on load.
+      {
+        const seeded = new Set<string>();
+        for (const tier of ['Quarter', 'Half', 'Whole'] as const) {
+          if (r[`${tier.toLowerCase()}Price` as keyof typeof r]) seeded.add(`${tier} Price`);
+          if (r[`${tier.toLowerCase()}Deposit` as keyof typeof r]) seeded.add(`${tier} Deposit`);
+        }
+        setTouchedDerived(seeded);
+      }
       // Parse custom products
       try {
         setCustomProducts(r.customProducts ? JSON.parse(r.customProducts) : []);
@@ -426,29 +457,22 @@ export default function RancherDashboardPage() {
   // Shows up only when impersonatedBy === 'admin' (session flag). Server-side
   // endpoint also enforces admin auth, so a normal rancher can't call this
   // even if they craft the request.
-  const handleReviveLead = async (referral: Referral) => {
-    const target = window.prompt(
-      `Revive "${referral.buyer_name}" — pick target status:\n\n` +
-      `  1 = Pending Approval (re-route via cron)\n` +
-      `  2 = Intro Sent (drop back at intro)\n` +
-      `  3 = Rancher Contacted\n` +
-      `  4 = Negotiation\n\n` +
-      `Enter number:`,
-      '1'
-    );
-    if (target === null) return;
-    const map: Record<string, string> = {
-      '1': 'Pending Approval',
-      '2': 'Intro Sent',
-      '3': 'Rancher Contacted',
-      '4': 'Negotiation',
-    };
-    const toStatus = map[target.trim()];
-    if (!toStatus) { setUpdateError('Invalid choice'); return; }
-    setUpdating(referral.id);
+  // Open the branded revive modal (admin-only). Replaces a window.prompt() —
+  // a native prompt renders as a tiny unbranded popup on mobile Safari. The
+  // real revive POST happens in submitRevive (the modal's CTA).
+  const handleReviveLead = (referral: Referral) => {
+    setReviveStatus('Pending Approval');
+    setUpdateError('');
+    setReviveModal(referral);
+  };
+
+  const submitRevive = async () => {
+    if (!reviveModal) return;
+    const toStatus = reviveStatus;
+    setUpdating(reviveModal.id);
     setUpdateError('');
     try {
-      const res = await fetch(`/api/admin/referrals/${referral.id}/revive`, {
+      const res = await fetch(`/api/admin/referrals/${reviveModal.id}/revive`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ toStatus }),
@@ -456,7 +480,10 @@ export default function RancherDashboardPage() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setUpdateError(data.error || 'Failed to revive — admin auth required.');
+        setUpdating(null);
+        return;
       }
+      setReviveModal(null);
       await fetchDashboard();
     } catch {
       setUpdateError('Network error.');
@@ -703,14 +730,87 @@ export default function RancherDashboardPage() {
     router.push('/');
   };
 
+  // ── One-input pricing derivation (mirrors RancherSetupWizard Step-3) ────────
+  // The rancher types ONE number — the Whole price — and lib/pricing derives the
+  // Half (~0.55×) / Quarter (~0.28×) ladder + every tier's 25% reserve deposit.
+  // Hand-edits to any derived field stick (touchedDerived); a "reset" link re-
+  // derives. The deposit %/multipliers live ONLY in lib/pricing, never inline.
+  const PRICE_TIERS = ['Quarter', 'Half', 'Whole'] as const;
+  const fillDerivedPrices = (
+    f: Record<string, string>,
+    touched: Set<string>,
+  ): Record<string, string> => {
+    const whole = Number(f['Whole Price']) || 0;
+    const next = { ...f };
+    const ladder = deriveLadder(whole);
+    // Half/Quarter prices derive from the Whole anchor. When Whole is cleared,
+    // blank the untouched derived prices too so a stale ladder can't linger.
+    for (const tier of ['Half', 'Quarter'] as const) {
+      const key = `${tier} Price`;
+      if (touched.has(key)) continue;
+      next[key] = whole > 0 ? String(tier === 'Half' ? ladder.half : ladder.quarter) : '';
+    }
+    // Deposits derive from each tier's (possibly overridden) price, not the
+    // ladder — so an overridden Half price still gets a matching deposit.
+    for (const tier of PRICE_TIERS) {
+      const depKey = `${tier} Deposit`;
+      if (touched.has(depKey)) continue;
+      const dep = deriveDeposit(Number(next[`${tier} Price`]) || 0);
+      next[depKey] = dep > 0 ? String(dep) : '';
+    }
+    return next;
+  };
+  // Whole-price input → recompute the whole ladder + deposits live.
+  const onWholeChange = (v: string) =>
+    setPageForm((f) => fillDerivedPrices({ ...f, 'Whole Price': v }, touchedDerived));
+  // Half/Quarter price hand-edit → mark touched, then recompute (so the matching
+  // deposit re-derives off the new price unless that deposit is also touched).
+  const onLadderPriceChange = (tier: 'Half' | 'Quarter', v: string) => {
+    const key = `${tier} Price`;
+    const nextTouched = new Set(touchedDerived).add(key);
+    setTouchedDerived(nextTouched);
+    setPageForm((f) => fillDerivedPrices({ ...f, [key]: v }, nextTouched));
+  };
+  // Any tier's deposit hand-edit → mark touched, set value directly.
+  const onDepositChange = (tier: 'Quarter' | 'Half' | 'Whole', v: string) => {
+    const key = `${tier} Deposit`;
+    setTouchedDerived((prev) => new Set(prev).add(key));
+    setPageForm((f) => ({ ...f, [key]: v }));
+  };
+  // "reset" link → drop the override and recompute that field from the whole.
+  const resetDerived = (key: string) => {
+    const nextTouched = new Set(touchedDerived);
+    nextTouched.delete(key);
+    setTouchedDerived(nextTouched);
+    setPageForm((f) => fillDerivedPrices({ ...f }, nextTouched));
+  };
+  // Per-lb mode: $/lb × hanging weight → whole total, fed through onWholeChange
+  // so the same ladder/deposit derivation runs.
+  const recomputeFromPerLb = (perLb: string, lbs: string) => {
+    const p = Number(perLb);
+    const w = Number(lbs);
+    if (Number.isFinite(p) && p > 0 && Number.isFinite(w) && w > 0) {
+      onWholeChange(String(Math.round(p * w)));
+    } else {
+      onWholeChange('');
+    }
+  };
+  const onPerLbChange = (v: string) => { setPerLbInput(v); recomputeFromPerLb(v, hangingLbsInput); };
+  const onHangingLbsChange = (v: string) => { setHangingLbsInput(v); recomputeFromPerLb(perLbInput, v); };
+
   const handleSavePage = async () => {
     setPageSaving(true);
     setPageError('');
     setPageSaved(false);
     try {
-      // Convert price fields to numbers
+      // Convert price + deposit fields to numbers (blank → null so Airtable
+      // clears the cell). Deposits derive from the one-input ladder but save
+      // through the same path + field names as before.
       const body: Record<string, any> = { ...pageForm };
-      for (const key of ['Quarter Price', 'Half Price', 'Whole Price']) {
+      for (const key of [
+        'Quarter Price', 'Half Price', 'Whole Price',
+        'Quarter Deposit', 'Half Deposit', 'Whole Deposit',
+      ]) {
         if (body[key]) body[key] = parseFloat(body[key]) || null;
         else body[key] = null;
       }
@@ -972,7 +1072,7 @@ export default function RancherDashboardPage() {
                 </p>
                 <p className="text-saddle text-sm mt-1">
                   Buyers picking <strong>{missingCuts.join(' or ')}</strong> can&apos;t
-                  check out today — the deposit page 409s until you set a
+                  check out today — they hit a dead end until you set a
                   price.{' '}
                   <button
                     type="button"
@@ -2132,6 +2232,106 @@ export default function RancherDashboardPage() {
                 </div>
               )}
 
+              {/* ── Photos (surfaced to the top w/ in-context preview) ──────────
+                  The first gallery photo is the cover/hero buyers see; the logo
+                  is the brand mark. Same ImageUploader plumbing as before — just
+                  moved up + given a preview + cover label. */}
+              <div className="space-y-4">
+                <h3 className="font-serif text-lg border-b border-dust pb-2">Photos</h3>
+                <p className="text-xs text-dust">The first photo is your cover — it&apos;s the big one buyers see at the top of your page. Add real shots of your cattle, your land, and your family.</p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Cover photo preview (first gallery photo) */}
+                  <div className="sm:col-span-2 space-y-1">
+                    {galleryPhotos[0] ? (
+                      <div className="relative">
+                        <img
+                          src={galleryPhotos[0]}
+                          alt="Cover preview"
+                          className="w-full aspect-[16/9] object-cover border border-dust"
+                          onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
+                        />
+                        <span className="absolute bottom-0 left-0 bg-charcoal text-bone text-[10px] uppercase tracking-widest px-2 py-1">
+                          Your cover photo
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="w-full aspect-[16/9] border border-dashed border-dust bg-bone-warm flex items-center justify-center text-center p-4">
+                        <p className="text-xs text-dust">No cover photo yet — add a gallery photo below and the first one becomes your cover.</p>
+                      </div>
+                    )}
+                  </div>
+                  {/* Logo preview */}
+                  <div className="space-y-1">
+                    {pageForm['Logo URL'] ? (
+                      <div className="relative">
+                        <img
+                          src={pageForm['Logo URL']}
+                          alt="Logo preview"
+                          className="w-full aspect-square object-contain border border-dust bg-white p-2"
+                          onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
+                        />
+                        <span className="absolute bottom-0 left-0 bg-saddle text-bone text-[10px] uppercase tracking-widest px-2 py-1">
+                          Your logo
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="w-full aspect-square border border-dashed border-dust bg-bone-warm flex items-center justify-center text-center p-4">
+                        <p className="text-xs text-dust">No logo yet</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <ImageUploader
+                  label="Logo"
+                  hint="(your ranch logo — shows on your public page)"
+                  value={pageForm['Logo URL'] || ''}
+                  onChange={(url) => setPageForm(p => ({ ...p, 'Logo URL': url }))}
+                />
+
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium">Gallery Photos <span className="text-dust font-normal">(up to 8 — the first is your cover; cattle, the operation, your family, what makes your ranch yours)</span></label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {galleryPhotos.map((url, i) => (
+                      <div key={`${url}-${i}`} className="relative group">
+                        <img
+                          src={url}
+                          alt={`Gallery ${i + 1}`}
+                          className="w-full aspect-square object-cover border border-dust"
+                          onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
+                        />
+                        {i === 0 && (
+                          <span className="absolute top-1 left-1 bg-charcoal text-bone text-[9px] uppercase tracking-widest px-1.5 py-0.5">
+                            Cover
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setGalleryPhotos(galleryPhotos.filter((_, idx) => idx !== i))}
+                          className="absolute top-1 right-1 px-2 py-0.5 bg-charcoal text-bone text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Remove"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {galleryPhotos.length < 8 ? (
+                    <ImageUploader
+                      label=""
+                      hint={`Add photo ${galleryPhotos.length + 1} of 8`}
+                      value=""
+                      onChange={(url) => {
+                        if (url) setGalleryPhotos([...galleryPhotos, url]);
+                      }}
+                    />
+                  ) : (
+                    <p className="text-xs text-dust">Max 8 photos. Remove one to add another.</p>
+                  )}
+                </div>
+              </div>
+
               <div className="grid md:grid-cols-2 gap-8">
 
                 {/* Left column: Brand & Story */}
@@ -2149,49 +2349,6 @@ export default function RancherDashboardPage() {
                     />
                     {pageForm['Slug'] && (
                       <p className="text-xs text-dust">buyhalfcow.com/ranchers/{pageForm['Slug'].toLowerCase().replace(/[^a-z0-9-]/g, '-')}</p>
-                    )}
-                  </div>
-
-                  <ImageUploader
-                    label="Logo"
-                    hint="(your ranch logo — shows on your public page)"
-                    value={pageForm['Logo URL'] || ''}
-                    onChange={(url) => setPageForm(p => ({ ...p, 'Logo URL': url }))}
-                  />
-
-                  <div className="space-y-3">
-                    <label className="block text-sm font-medium">Gallery Photos <span className="text-dust font-normal">(up to 8 — cattle, the operation, your family, what makes your ranch yours)</span></label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {galleryPhotos.map((url, i) => (
-                        <div key={`${url}-${i}`} className="relative group">
-                          <img
-                            src={url}
-                            alt={`Gallery ${i + 1}`}
-                            className="w-full aspect-square object-cover border border-dust"
-                            onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3'; }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setGalleryPhotos(galleryPhotos.filter((_, idx) => idx !== i))}
-                            className="absolute top-1 right-1 px-2 py-0.5 bg-charcoal text-bone text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Remove"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    {galleryPhotos.length < 8 ? (
-                      <ImageUploader
-                        label=""
-                        hint={`Add photo ${galleryPhotos.length + 1} of 8`}
-                        value=""
-                        onChange={(url) => {
-                          if (url) setGalleryPhotos([...galleryPhotos, url]);
-                        }}
-                      />
-                    ) : (
-                      <p className="text-xs text-dust">Max 8 photos. Remove one to add another.</p>
                     )}
                   </div>
 
@@ -2285,15 +2442,12 @@ export default function RancherDashboardPage() {
                           </a>
                         </p>
                         <p className="text-saddle">
-                          ✓ Confirmed{' '}
-                          <code className="bg-bone px-1">benibeauchman@gmail.com</code>{' '}
-                          is added as Additional Guest on your event? If not, do that now —
-                          it&apos;s how Ben sees every booking.
+                          Buyers can book a call with you straight from your page.
                         </p>
                       </div>
                     ) : (
                       <div className="text-xs text-saddle mt-1 space-y-1">
-                        <p className="font-medium text-charcoal">3-step setup:</p>
+                        <p className="font-medium text-charcoal">2-step setup:</p>
                         <ol className="list-decimal pl-5 space-y-0.5">
                           <li>
                             <a
@@ -2303,17 +2457,11 @@ export default function RancherDashboardPage() {
                               className="underline text-charcoal"
                             >
                               Sign up free at cal.com
-                            </a>
+                            </a>{' '}
+                            and create a 15-min event type called &ldquo;BuyHalfCow Intro&rdquo;
                           </li>
-                          <li>Create a 15-min event type called &ldquo;BuyHalfCow Intro&rdquo;</li>
-                          <li>
-                            Add{' '}
-                            <code className="bg-bone px-1">benibeauchman@gmail.com</code>{' '}
-                            as <strong>Additional Guest</strong> on that event (Cal.com →
-                            Event Type → Limits/Workflows → Add invitee). This is how Ben sees every booking.
-                          </li>
+                          <li>Paste your slug above (e.g. <code className="bg-bone px-1">yourname/buyhalfcow-intro</code>).</li>
                         </ol>
-                        <p>Then paste your slug above (e.g. <code className="bg-bone px-1">yourname/buyhalfcow-intro</code>).</p>
                       </div>
                     )}
                   </div>
@@ -2406,121 +2554,211 @@ export default function RancherDashboardPage() {
                   </div>
                 </div>
 
-                {/* Right column: Pricing */}
+                {/* Right column: Pricing — ONE input. Rancher enters the Whole
+                    price (or $/lb × weight); Half/Quarter + every deposit derive
+                    via lib/pricing. Mirrors the setup wizard Step-3 pattern. */}
                 <div className="space-y-5">
-                  <h3 className="font-serif text-lg border-b border-dust pb-2">Pricing &amp; Payment</h3>
-                  <p className="text-xs text-dust">Leave a section blank if you don't offer that cut size. Payment links go to your Square, PayPal, or Stripe checkout.</p>
+                  <h3 className="font-serif text-lg border-b border-dust pb-2">Pricing</h3>
+                  <p className="text-xs text-dust">Enter your <strong>whole-cow</strong> price once — we fill in Half, Quarter, and each reserve deposit for you. Edit any number to override; the rest stay yours.</p>
 
-                  {/* Quarter */}
-                  <div className="p-4 border border-dust bg-white space-y-3">
-                    <p className="text-sm font-medium uppercase tracking-wider">Quarter</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-xs text-dust">Price ($)</label>
-                        <input
-                          type="number"
-                          value={pageForm['Quarter Price'] || ''}
-                          onChange={e => setPageForm(p => ({ ...p, 'Quarter Price': e.target.value }))}
-                          placeholder="450"
-                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-xs text-dust">Approx. lbs</label>
-                        <input
-                          type="text"
-                          value={pageForm['Quarter lbs'] || ''}
-                          onChange={e => setPageForm(p => ({ ...p, 'Quarter lbs': e.target.value }))}
-                          placeholder="~85 lbs"
-                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-dust">Payment Link</label>
-                      <input
-                        type="url"
-                        value={pageForm['Quarter Payment Link'] || ''}
-                        onChange={e => setPageForm(p => ({ ...p, 'Quarter Payment Link': e.target.value }))}
-                        placeholder="https://square.com/pay/..."
-                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                      />
-                    </div>
-                  </div>
+                  {(() => {
+                    const whole = Number(pageForm['Whole Price']) || 0;
+                    const ladder = deriveLadder(whole);
+                    const lbsKnown = Number(hangingLbsInput) > 0;
+                    const perLb = lbsKnown && whole > 0 ? whole / Number(hangingLbsInput) : 0;
+                    const wholeOk = !(whole > 0) || checkWholePrice(whole).ok;
+                    const tiers: Array<'Quarter' | 'Half' | 'Whole'> = ['Quarter', 'Half', 'Whole'];
+                    return (
+                      <div className="space-y-4">
+                        {/* Unit toggle: whole-cow total vs price per pound */}
+                        <div className="flex flex-wrap gap-2">
+                          {([['total', 'Price per whole cow'], ['perlb', 'Price per pound']] as const).map(([unit, label]) => (
+                            <button
+                              key={unit}
+                              type="button"
+                              onClick={() => {
+                                setPriceUnit(unit);
+                                if (unit === 'total') { setPerLbInput(''); setHangingLbsInput(''); }
+                              }}
+                              className={`px-4 py-2 text-xs font-medium uppercase tracking-wide border transition-colors ${
+                                priceUnit === unit
+                                  ? 'bg-charcoal text-bone border-charcoal'
+                                  : 'bg-bone text-charcoal border-dust hover:border-saddle'
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
 
-                  {/* Half */}
-                  <div className="p-4 border-2 border-saddle bg-white space-y-3">
-                    <p className="text-sm font-medium uppercase tracking-wider text-saddle">Half <span className="text-xs font-normal normal-case text-dust">(most popular)</span></p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-xs text-dust">Price ($)</label>
-                        <input
-                          type="number"
-                          value={pageForm['Half Price'] || ''}
-                          onChange={e => setPageForm(p => ({ ...p, 'Half Price': e.target.value }))}
-                          placeholder="875"
-                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-xs text-dust">Approx. lbs</label>
-                        <input
-                          type="text"
-                          value={pageForm['Half lbs'] || ''}
-                          onChange={e => setPageForm(p => ({ ...p, 'Half lbs': e.target.value }))}
-                          placeholder="~170 lbs"
-                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-dust">Payment Link</label>
-                      <input
-                        type="url"
-                        value={pageForm['Half Payment Link'] || ''}
-                        onChange={e => setPageForm(p => ({ ...p, 'Half Payment Link': e.target.value }))}
-                        placeholder="https://square.com/pay/..."
-                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                      />
-                    </div>
-                  </div>
+                        {priceUnit === 'total' ? (
+                          <div className="space-y-1">
+                            <label className="block text-sm font-medium">Whole-cow price ($)</label>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              value={pageForm['Whole Price'] || ''}
+                              onChange={e => onWholeChange(e.target.value)}
+                              placeholder="2800"
+                              className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                            />
+                            <p className="text-xs text-saddle leading-relaxed">
+                              {whole > 0 ? (
+                                <>
+                                  {lbsKnown && perLb > 0 && <>≈ ${perLb.toFixed(2)}/lb · </>}
+                                  Half ${ladder.half.toLocaleString()} · Quarter ${ladder.quarter.toLocaleString()} · deposits W ${deriveDeposit(Number(pageForm['Whole Price'])).toLocaleString()} / H ${deriveDeposit(Number(pageForm['Half Price'])).toLocaleString()} / Q ${deriveDeposit(Number(pageForm['Quarter Price'])).toLocaleString()}
+                                </>
+                              ) : (
+                                <>Half and Quarter prices + every deposit fill in automatically.</>
+                              )}
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <label className="text-xs text-dust">Price per pound ($)</label>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  value={perLbInput}
+                                  onChange={e => onPerLbChange(e.target.value)}
+                                  placeholder="7.50"
+                                  className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs text-dust">Hanging weight (lbs)</label>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  value={hangingLbsInput}
+                                  onChange={e => onHangingLbsChange(e.target.value)}
+                                  placeholder="375"
+                                  className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                                />
+                              </div>
+                            </div>
+                            <p className="text-xs text-saddle leading-relaxed">
+                              {whole > 0 ? (
+                                <>Whole-cow total: <strong className="text-charcoal">${whole.toLocaleString()}</strong> · Half ${ladder.half.toLocaleString()} · Quarter ${ladder.quarter.toLocaleString()}</>
+                              ) : (
+                                <>Enter a per-pound price and hanging weight to set the whole-cow total.</>
+                              )}
+                            </p>
+                          </div>
+                        )}
 
-                  {/* Whole */}
-                  <div className="p-4 border border-dust bg-white space-y-3">
-                    <p className="text-sm font-medium uppercase tracking-wider">Whole</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-xs text-dust">Price ($)</label>
-                        <input
-                          type="number"
-                          value={pageForm['Whole Price'] || ''}
-                          onChange={e => setPageForm(p => ({ ...p, 'Whole Price': e.target.value }))}
-                          placeholder="1600"
-                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                        />
+                        {/* Soft sanity warning — never blocks; the save route hard-blocks < $MIN_TIER_PRICE */}
+                        {whole > 0 && !wholeOk && (
+                          <p className="text-xs text-weathered">{checkWholePrice(whole).message}</p>
+                        )}
+
+                        {/* Your prices & deposits — derived, editable */}
+                        <div className="border border-dust bg-white p-4 space-y-4">
+                          <p className="text-sm font-medium">Your prices &amp; deposits</p>
+                          {tiers.map((tier) => {
+                            const isWhole = tier === 'Whole';
+                            const priceTouched = touchedDerived.has(`${tier} Price`);
+                            const depTouched = touchedDerived.has(`${tier} Deposit`);
+                            return (
+                              <div key={tier} className={`space-y-2 ${tier === 'Half' ? 'border-l-2 border-saddle pl-3' : ''}`}>
+                                <p className="text-xs font-medium uppercase tracking-wider text-charcoal">
+                                  {tier}{tier === 'Half' && <span className="text-dust font-normal normal-case"> (most popular)</span>}
+                                </p>
+                                <div className="grid grid-cols-2 gap-3">
+                                  {/* Price */}
+                                  <div className="space-y-1">
+                                    <span className="flex items-center justify-between gap-2">
+                                      <label className="text-xs text-dust">Price ($)</label>
+                                      {isWhole ? null : !priceTouched ? (
+                                        <span className="text-[10px] uppercase tracking-widest text-saddle border border-dust px-1.5 py-0.5 leading-none">auto</span>
+                                      ) : (
+                                        <button type="button" onClick={() => resetDerived(`${tier} Price`)} className="text-[11px] uppercase tracking-widest text-saddle hover:text-charcoal underline underline-offset-2">reset</button>
+                                      )}
+                                    </span>
+                                    {isWhole ? (
+                                      <div className="w-full px-3 py-2 border border-dust bg-bone-warm text-sm text-charcoal/70">
+                                        {whole > 0 ? `$${whole.toLocaleString()}` : 'Set above'}
+                                      </div>
+                                    ) : (
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        value={pageForm[`${tier} Price`] || ''}
+                                        onChange={e => onLadderPriceChange(tier, e.target.value)}
+                                        placeholder="0"
+                                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                                      />
+                                    )}
+                                  </div>
+                                  {/* Deposit */}
+                                  <div className="space-y-1">
+                                    <span className="flex items-center justify-between gap-2">
+                                      <label className="text-xs text-dust">Deposit ($)</label>
+                                      {!depTouched ? (
+                                        <span className="text-[10px] uppercase tracking-widest text-saddle border border-dust px-1.5 py-0.5 leading-none">auto</span>
+                                      ) : (
+                                        <button type="button" onClick={() => resetDerived(`${tier} Deposit`)} className="text-[11px] uppercase tracking-widest text-saddle hover:text-charcoal underline underline-offset-2">reset</button>
+                                      )}
+                                    </span>
+                                    <input
+                                      type="number"
+                                      inputMode="decimal"
+                                      value={pageForm[`${tier} Deposit`] || ''}
+                                      onChange={e => onDepositChange(tier, e.target.value)}
+                                      placeholder="0"
+                                      className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                                    />
+                                  </div>
+                                </div>
+                                {/* Approx lbs — free text, unchanged field */}
+                                <div className="space-y-1">
+                                  <label className="text-xs text-dust">Approx. finished weight</label>
+                                  <input
+                                    type="text"
+                                    value={pageForm[`${tier} lbs`] || ''}
+                                    onChange={e => setPageForm(p => ({ ...p, [`${tier} lbs`]: e.target.value }))}
+                                    placeholder={tier === 'Quarter' ? '~85 lbs' : tier === 'Half' ? '~170 lbs' : '~340 lbs'}
+                                    className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                          <p className="text-xs text-saddle leading-relaxed">
+                            <strong>Deposit</strong> — what the buyer pays now to reserve their share. Auto-set to ~25% of each price; edit any and we&rsquo;ll keep your number. Leave a price at 0 if you don&rsquo;t sell that size.
+                          </p>
+                        </div>
+
+                        {/* Legacy-only payment links. tier_v2/Connected ranchers
+                            collect through the platform (buyer is routed to BHC
+                            checkout — the public page ignores pasted links), so we
+                            only surface these for legacy ranchers who still take
+                            payment on their own Square/PayPal/Stripe page. Fields
+                            (Quarter/Half/Whole Payment Link) are preserved in the
+                            form + save either way; this just hides the editor for
+                            Connected ranchers where it's misleading. */}
+                        {rancherInfo.pricingModel !== 'tier_v2' && (
+                          <div className="border border-dust bg-white p-4 space-y-3">
+                            <p className="text-sm font-medium">Payment links <span className="text-xs font-normal text-dust">(your Square, PayPal, or Stripe checkout)</span></p>
+                            {(['Quarter', 'Half', 'Whole'] as const).map((tier) => (
+                              <div key={tier} className="space-y-1">
+                                <label className="text-xs text-dust">{tier} payment link</label>
+                                <input
+                                  type="url"
+                                  value={pageForm[`${tier} Payment Link`] || ''}
+                                  onChange={e => setPageForm(p => ({ ...p, [`${tier} Payment Link`]: e.target.value }))}
+                                  placeholder="https://square.com/pay/..."
+                                  className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-xs text-dust">Approx. lbs</label>
-                        <input
-                          type="text"
-                          value={pageForm['Whole lbs'] || ''}
-                          onChange={e => setPageForm(p => ({ ...p, 'Whole lbs': e.target.value }))}
-                          placeholder="~340 lbs"
-                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-dust">Payment Link</label>
-                      <input
-                        type="url"
-                        value={pageForm['Whole Payment Link'] || ''}
-                        onChange={e => setPageForm(p => ({ ...p, 'Whole Payment Link': e.target.value }))}
-                        placeholder="https://square.com/pay/..."
-                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                      />
-                    </div>
-                  </div>
+                    );
+                  })()}
 
                   <Divider />
 
@@ -2550,16 +2788,19 @@ export default function RancherDashboardPage() {
                 </div>
               </div>
 
-              {/* Custom Products */}
+              {/* Other products — honest brochure. Dropped the per-item payment
+                  link: the public page ignores pasted links for Connected
+                  ranchers (routes buyers to BuyHalfCow checkout), so a link
+                  field here is misleading. Existing link data is preserved in the
+                  saved object; we just stop collecting/showing it. */}
               <div className="space-y-4">
-                <h3 className="font-serif text-lg border-b border-dust pb-2">Additional Products</h3>
-                <p className="text-xs text-dust">List extra products beyond quarter/half/whole beef (sampler boxes, jerky, bones, etc.).</p>
+                <h3 className="font-serif text-lg border-b border-dust pb-2">Other products (shown on your page)</h3>
+                <p className="text-xs text-dust">Extras beyond quarter/half/whole beef — sampler boxes, jerky, bones, and the like. These are <strong>displayed on your page</strong> so buyers know what else you offer; buyers contact you about them. Cow shares are sold through BuyHalfCow.</p>
                 {customProducts.map((p, i) => (
                   <div key={i} className="p-3 border border-dust bg-white flex justify-between items-start">
                     <div>
                       <p className="text-sm font-medium">{p.name} — ${p.price}</p>
                       {p.description && <p className="text-xs text-saddle mt-0.5">{p.description}</p>}
-                      {p.link && <p className="text-xs text-dust mt-0.5 truncate max-w-xs">{p.link}</p>}
                     </div>
                     <button onClick={() => setCustomProducts(customProducts.filter((_, idx) => idx !== i))} className="text-red-500 text-xs hover:underline ml-2">Remove</button>
                   </div>
@@ -2570,18 +2811,16 @@ export default function RancherDashboardPage() {
                   <input value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: e.target.value })}
                     type="number" className="px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal" placeholder="Price ($)" />
                 </div>
-                <input value={newProduct.description} onChange={e => setNewProduct({ ...newProduct, description: e.target.value })}
-                  className="w-full px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal" placeholder="Short description (e.g. 10 lbs of mixed cuts)" />
                 <div className="flex gap-2">
-                  <input value={newProduct.link} onChange={e => setNewProduct({ ...newProduct, link: e.target.value })}
-                    className="flex-1 px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal" placeholder="Payment link (https://...)" />
+                  <input value={newProduct.description} onChange={e => setNewProduct({ ...newProduct, description: e.target.value })}
+                    className="flex-1 px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal" placeholder="Short description (e.g. 10 lbs of mixed cuts)" />
                   <button
                     onClick={() => {
                       if (!newProduct.name || !newProduct.price) return;
-                      setCustomProducts([...customProducts, { ...newProduct, price: parseFloat(newProduct.price) || 0 }]);
+                      setCustomProducts([...customProducts, { ...newProduct, price: parseFloat(newProduct.price) || 0, link: '' }]);
                       setNewProduct({ name: '', price: '', description: '', link: '' });
                     }}
-                    className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors"
+                    className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors whitespace-nowrap"
                   >
                     + Add
                   </button>
@@ -2684,6 +2923,56 @@ export default function RancherDashboardPage() {
                 className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
               >
                 {updating ? 'Saving...' : 'Confirm Closed Lost'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revive Lead Modal (admin-only) — replaces window.prompt() status picker. */}
+      {reviveModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start">
+              <h2 className="font-serif text-2xl">Revive Lead</h2>
+              <button onClick={() => { setReviveModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle">×</button>
+            </div>
+            <p className="text-sm text-saddle">Buyer: <strong className="text-charcoal">{reviveModal.buyer_name}</strong></p>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-medium mb-2">Bring back to status</label>
+              <select
+                value={reviveStatus}
+                onChange={(e) => setReviveStatus(e.target.value as typeof reviveStatus)}
+                className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+              >
+                <option value="Pending Approval">Pending Approval (re-route via cron)</option>
+                <option value="Intro Sent">Intro Sent (drop back at intro)</option>
+                <option value="Rancher Contacted">Rancher Contacted</option>
+                <option value="Negotiation">Negotiation</option>
+              </select>
+              <p className="text-xs text-saddle">Admin only. An audit fires to Telegram on revive.</p>
+            </div>
+
+            {updateError && (
+              <div className="p-3 border border-weathered text-weathered text-sm">
+                {updateError}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setReviveModal(null); setUpdateError(''); }}
+                className="flex-1 px-4 py-3 border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium uppercase text-sm tracking-wider"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitRevive}
+                disabled={!!updating}
+                className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+              >
+                {updating ? 'Reviving...' : 'Revive Lead'}
               </button>
             </div>
           </div>
@@ -3976,12 +4265,19 @@ function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // Branded confirm replaces the old window.confirm() — a one-way money switch
+  // shouldn't ride on a tiny unbranded native popup ranchers skim past.
+  const [showConfirm, setShowConfirm] = useState(false);
 
-  async function confirmUpgrade() {
-    const ok = window.confirm(
-      'Switch to tier_v2 pricing? This is one-way — your closed deals will run through Stripe Connect direct charges instead of post-close commission invoices.',
-    );
-    if (!ok) return;
+  function confirmUpgrade() {
+    setError('');
+    setShowConfirm(true);
+  }
+
+  // The actual upgrade action — unchanged from the old confirm path: POST to
+  // legacy-upgrade, reload on success so the cascade re-renders.
+  async function doUpgrade() {
+    setShowConfirm(false);
     setSubmitting(true);
     setError('');
     try {
@@ -3991,7 +4287,7 @@ function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
       });
       const data = await res.json();
       if (res.ok) {
-        // Reload the page so the cascade re-renders against the new Pricing Model.
+        // Reload the page so the cascade re-renders against the new plan.
         window.location.reload();
       } else {
         setError(data?.message || data?.error || 'Upgrade failed.');
@@ -4005,23 +4301,55 @@ function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
 
   if (ready) {
     return (
-      <div className="p-4 border-l-4 border-green-600 bg-green-50 flex items-center justify-between gap-4 flex-wrap">
-        <div className="text-sm text-green-900">
-          <p>
-            <strong>You&rsquo;re set up to switch to tier_v2.</strong>{' '}
-            Subscription is paying, Stripe Connect is active. One click finishes the upgrade.
-          </p>
-          {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
+      <>
+        <div className="p-4 border-l-4 border-green-600 bg-green-50 flex items-center justify-between gap-4 flex-wrap">
+          <div className="text-sm text-green-900">
+            <p>
+              <strong>You&rsquo;re set up to switch to the new plan.</strong>{' '}
+              Your subscription is paying and your bank is connected. One click finishes the upgrade.
+            </p>
+            {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={confirmUpgrade}
+            disabled={submitting}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+          >
+            {submitting ? 'Switching…' : 'Switch to the new plan →'}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={confirmUpgrade}
-          disabled={submitting}
-          className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
-        >
-          {submitting ? 'Switching…' : 'Switch to tier_v2 →'}
-        </button>
-      </div>
+        {showConfirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-start">
+                <h2 className="font-serif text-2xl">Switch to the new plan?</h2>
+                <button onClick={() => setShowConfirm(false)} className="text-2xl leading-none hover:text-saddle">×</button>
+              </div>
+              <p className="text-sm text-saddle">
+                This is one-way. Once you switch, your closed deals collect through your
+                bank automatically at deposit time, instead of you sending a commission
+                invoice after each close.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowConfirm(false)}
+                  className="flex-1 px-4 py-3 border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium uppercase text-sm tracking-wider"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={doUpgrade}
+                  disabled={submitting}
+                  className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+                >
+                  {submitting ? 'Switching…' : 'Yes, switch'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
     );
   }
 
