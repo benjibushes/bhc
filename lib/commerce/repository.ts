@@ -159,6 +159,49 @@ export async function releaseInventory(variantId: string, qty: number, consume =
   if (error) throw new Error(`releaseInventory: ${error.message}`);
 }
 
+/**
+ * RESTOCK — raise qty_available by qty (returns refunded/cancelled units to
+ * sellable stock). No-op when no inventory row exists (unlimited variant).
+ * Distinct from releaseInventory(consume=false), which only lowers qty_reserved.
+ * Calls the restock_inventory Postgres fn (migration 0003).
+ */
+export async function restockInventory(variantId: string, qty: number): Promise<void> {
+  const db = getCommerceDb();
+  if (!db) throw new Error('restockInventory: commerce DB not configured');
+  const { error } = await db.rpc('restock_inventory', { p_variant_id: variantId, p_qty: qty });
+  if (error) throw new Error(`restockInventory: ${error.message}`);
+}
+
+/** Orders for a buyer (newest first) with their line items — buyer order history. */
+export async function getOrdersByBuyer(buyerId: string): Promise<(Order & { order_line_items: OrderLineItem[] })[]> {
+  const db = getCommerceDb();
+  if (!db || !buyerId) return [];
+  const { data, error } = await db
+    .from('orders')
+    .select('*, order_line_items(*)')
+    .eq('buyer_id', buyerId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`getOrdersByBuyer: ${error.message}`);
+  return (data || []) as (Order & { order_line_items: OrderLineItem[] })[];
+}
+
+/**
+ * Orders for a rancher's dashboard (newest first) with line items. Optionally
+ * filter by status (e.g. ['paid'] for fulfillment / balance collection).
+ */
+export async function getOrdersForRancher(
+  rancherId: string,
+  opts?: { statuses?: OrderStatus[] },
+): Promise<(Order & { order_line_items: OrderLineItem[] })[]> {
+  const db = getCommerceDb();
+  if (!db || !rancherId) return [];
+  let q = db.from('orders').select('*, order_line_items(*)').eq('rancher_id', rancherId);
+  if (opts?.statuses && opts.statuses.length) q = q.in('status', opts.statuses);
+  const { data, error } = await q.order('created_at', { ascending: false });
+  if (error) throw new Error(`getOrdersForRancher: ${error.message}`);
+  return (data || []) as (Order & { order_line_items: OrderLineItem[] })[];
+}
+
 /** Set absolute stock for a variant (dashboard). Upserts the inventory row. */
 export async function setInventory(variantId: string, qtyAvailable: number): Promise<void> {
   const db = getCommerceDb();
