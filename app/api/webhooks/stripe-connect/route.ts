@@ -31,7 +31,7 @@ import { settleBuyerDeposit, settleFinalInvoice } from '@/lib/stripeSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
-import { getOrderByCheckoutSession, getOrderLines, updateOrder, releaseInventory } from '@/lib/commerce/repository';
+import { getOrder, getOrderByCheckoutSession, getOrderByPaymentIntent, getOrderLines, updateOrder, releaseInventory } from '@/lib/commerce/repository';
 import { logAuditEntry } from '@/lib/auditLog';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
@@ -280,6 +280,18 @@ export async function POST(request: Request) {
         } catch (e: any) {
           console.warn('[stripe-connect charge.refunded] handler:', e?.message);
         }
+
+        // ── COMMERCE ORDER refund mirror (Audit fix #3) ──────────────────────
+        // The Payments-keyed path above never matches a commerce order (commerce
+        // never writes a Payments row). Run a SEPARATE, additive resolution: if
+        // this charge's PI maps to a commerce order, flip it 'refunded' + restock
+        // the units. Wrapped in its own try so a commerce failure can't break the
+        // (already-completed) deposit path and vice-versa.
+        try {
+          await handleCommerceRefund(piId, charge);
+        } catch (e: any) {
+          console.warn('[stripe-connect charge.refunded] commerce-order handler:', e?.message);
+        }
         break;
       }
 
@@ -319,6 +331,48 @@ export async function POST(request: Request) {
       case 'payment_intent.succeeded': {
         const pi = event?.data?.object;
         const metaType = pi?.metadata?.type;
+
+        // ── PI-FALLBACK SETTLEMENT for commerce orders (CRITICAL gap fix) ──
+        // The commerce cart settles on checkout.session.completed today. If
+        // that Connect event isn't delivered, the order NEVER settles + the
+        // reservation strands. payment_intent.succeeded is the redundant
+        // settlement trigger. We resolve the order by the PI id (or
+        // metadata.orderId fallback) and run the SAME shared settle path the
+        // session handler uses — guarded on order status so whichever event
+        // (session vs PI) fires FIRST settles and the SECOND no-ops. Mirrors
+        // the dual-path the deposit/final_invoice branches already have.
+        if (metaType === 'commerce_order') {
+          const piId = String(pi?.id || '');
+          try {
+            // Primary: PI id (stamped by the session path or the cart route).
+            let order = await getOrderByPaymentIntent(piId);
+            // Fallback: orderId in metadata, for the race where the session
+            // completed event hasn't yet stamped stripe_payment_intent_id when
+            // this PI event arrives first (the exact gap this fix closes).
+            if (!order) {
+              const metaOrderId = String(pi?.metadata?.orderId || '');
+              if (metaOrderId) order = await getOrder(metaOrderId);
+            }
+            if (!order) {
+              // No commerce order matched — likely a non-commerce PI mislabeled,
+              // or commerce DB unconfigured. Nothing to settle.
+              console.warn('[stripe-connect pi.succeeded commerce] no order for PI', piId, 'metaOrderId:', pi?.metadata?.orderId);
+              break;
+            }
+            // Buyer email off the PI (charge billing details or receipt_email).
+            const piBuyerEmail: string | null =
+              pi?.charges?.data?.[0]?.billing_details?.email ||
+              pi?.receipt_email ||
+              null;
+            await settleCommerceOrder(order, piId || order.stripe_payment_intent_id, piBuyerEmail, 'pi.succeeded commerce');
+          } catch (e: any) {
+            console.error('[stripe-connect] payment_intent.succeeded commerce settlement failed:', e);
+            await flipStripeEventFailed(event.id, e?.message || 'unknown');
+            return NextResponse.json({ received: true });
+          }
+          break;
+        }
+
         if (metaType !== 'buyer_deposit' && metaType !== 'final_invoice') break;
         const referralId = String(pi?.metadata?.referralId || '');
         if (!referralId) break;
@@ -588,52 +642,271 @@ async function handleCommerceSessionCompleted(event: any): Promise<void> {
   // Not a commerce order (deposit-flow session, etc.) → ignore entirely.
   if (!order) return;
 
-  // Idempotency: only the pending→paid transition consumes stock. If the order
-  // already advanced to a terminal/paid state, a prior delivery handled it.
-  if (order.status === 'paid' || order.status === 'cancelled' || order.status === 'refunded') {
-    return;
-  }
-
-  const paymentIntentId: string =
+  const paymentIntentId: string | null =
     typeof session?.payment_intent === 'string'
       ? session.payment_intent
       : session?.payment_intent?.id || null;
 
-  // Read the order lines BEFORE marking paid. If this read fails, THROW so
-  // Stripe retries the webhook while the order is still 'pending' — the retry
-  // then re-runs cleanly. (If we marked paid first and the read failed, the
-  // retry would hit the 'paid' guard and skip, stranding the reservation
-  // forever — so the read must come before the status flip.)
+  // Buyer email is NOT on the order (the cart route never collects it — Stripe
+  // Checkout captures it). On a completed session it lives on customer_details.
+  const buyerEmail: string | null =
+    session?.customer_details?.email || session?.customer_email || null;
+
+  // Delegate to the shared settle path so the checkout.session.completed and the
+  // payment_intent.succeeded fallback run byte-identical settlement + are
+  // mutually idempotent (whichever fires first settles; the second sees 'paid'
+  // and no-ops via the status guard inside settleCommerceOrder).
+  await settleCommerceOrder(order, paymentIntentId, buyerEmail, 'commerce.completed');
+}
+
+// ============================================================================
+// SHARED COMMERCE SETTLE PATH — single source of truth for marking a commerce
+// order 'paid' + consuming inventory, called by BOTH:
+//   - checkout.session.completed (handleCommerceSessionCompleted), and
+//   - payment_intent.succeeded   (the PI-fallback branch, p0 settlement gap fix)
+//
+// Stripe fans BOTH events out for the same Connect direct charge, and their
+// event.ids differ → the Stripe Events dedupe table gives ZERO cross-path
+// protection. This function is the cross-path idempotency anchor: it guards on
+// the ORDER's own status (the system-of-record), so whichever event is
+// delivered FIRST performs the full pending→paid settlement and the SECOND
+// observes status 'paid' (or any terminal state) and no-ops — each unit is
+// consumed at most once, regardless of delivery order or redelivery.
+//
+// Returns true only when THIS call performed the pending→paid transition (so
+// the caller fires sale notifications exactly once); false on the idempotent
+// no-op (already paid / cancelled / refunded).
+//
+// Throw-vs-swallow contract (mirrors the original session handler):
+//   - order-lines read failure THROWS (order still 'pending' → Stripe retries
+//     cleanly; if we flipped paid first then failed the read, the retry would
+//     hit the 'paid' guard and strand the reservation forever).
+//   - updateOrder('paid') failure THROWS for the same reason.
+//   - per-line consume failure is logged, NOT thrown: the reserve already
+//     removed the units from "available", so a missed consume leaves them
+//     merely RESERVED (never oversold) — safe to reconcile manually.
+//   - notification failures NEVER bubble (handled inside notifyCommerceOrderPaid).
+// ============================================================================
+async function settleCommerceOrder(
+  order: NonNullable<Awaited<ReturnType<typeof getOrderByCheckoutSession>>>,
+  paymentIntentId: string | null,
+  buyerEmailHint: string | null,
+  logTag: string,
+): Promise<boolean> {
+  // Cross-path + redelivery idempotency: only the pending→paid transition
+  // settles. Any terminal/paid state means a prior delivery (this path or the
+  // other) already handled it.
+  if (order.status === 'paid' || order.status === 'cancelled' || order.status === 'refunded') {
+    return false;
+  }
+
+  // Read the order lines BEFORE marking paid (see throw-contract above).
   let lines: Awaited<ReturnType<typeof getOrderLines>>;
   try {
     lines = await getOrderLines(order.id);
   } catch (e: any) {
-    console.error('[stripe-connect commerce.completed] getOrderLines failed — throwing for retry (order still pending):', e?.message, 'order:', order.id);
+    console.error(`[stripe-connect ${logTag}] getOrderLines failed — throwing for retry (order still pending):`, e?.message, 'order:', order.id);
     throw e;
   }
 
-  // Flip to paid + stamp the PI. Doing this before the per-line consume means a
-  // mid-consume crash leaves the order 'paid' (correct — the buyer paid); a
-  // replay then sees 'paid' and skips, so each unit is consumed at most once.
-  // The reserve already removed the units from "available", so even a missed
-  // consume only leaves them RESERVED (not oversold) — safe; logged for reconcile.
+  // Flip to paid + stamp the PI. A mid-consume crash after this point leaves the
+  // order 'paid' (correct — the buyer paid); a replay sees 'paid' and skips, so
+  // each unit is consumed at most once.
   try {
     await updateOrder(order.id, {
       status: 'paid',
       ...(paymentIntentId ? { stripe_payment_intent_id: paymentIntentId } : {}),
     });
   } catch (e: any) {
-    console.error('[stripe-connect commerce.completed] updateOrder(paid) failed:', e?.message);
+    console.error(`[stripe-connect ${logTag}] updateOrder(paid) failed:`, e?.message);
     throw e;
   }
+
   for (const line of lines) {
     if (!line.variant_id || line.qty <= 0) continue;
     try {
       await releaseInventory(line.variant_id, line.qty, true);
     } catch (e: any) {
-      console.error('[stripe-connect commerce.completed] consume releaseInventory failed:', line.variant_id, e?.message, '— manual reconcile needed for order', order.id);
+      console.error(`[stripe-connect ${logTag}] consume releaseInventory failed:`, line.variant_id, e?.message, '— manual reconcile needed for order', order.id);
     }
   }
+
+  // Best-effort sale notifications — fired exactly once on the real settle.
+  // Wrapped internally so a notification failure NEVER fails the webhook.
+  await notifyCommerceOrderPaid(order, lines, buyerEmailHint, paymentIntentId, logTag);
+
+  return true;
+}
+
+// ============================================================================
+// COMMERCE SALE NOTIFICATIONS (Audit fix #2 — additive, best-effort).
+//
+// Fires on a commerce order settling to 'paid' (from the shared settle path):
+//   - rancher + admin Telegram ("🛒 New order: {ranch} — {items} — ${total}")
+//   - buyer confirmation email (if Stripe captured a buyer email)
+//   - rancher confirmation email (to the rancher's Airtable Email)
+//
+// EVERY external call is wrapped in its own try/catch and logged — this
+// function NEVER throws, so a Telegram/email/Airtable hiccup can't fail the
+// webhook or block inventory settlement (which already happened upstream).
+//
+// We deliberately DO NOT call recordClose/settleBuyerDeposit here: those are
+// referral-centric (Closed Won, commission ledger, affiliate enroll) and a
+// commerce order has no referral. See the DEFERRED note below.
+//
+// ── DEFERRED (design task, not a bug) ───────────────────────────────────────
+// The deeper revenue-ledger integration is intentionally out of scope:
+//   - Airtable "Payments" row: the Payments table is REFERRAL-KEYED (Referral
+//     linked-record is effectively required; recordDeposit/markDepositSucceeded
+//     all key on a referralId / deposit PI). Commerce orders aren't referrals,
+//     so writing a Payments row here would need a schema decision (nullable
+//     Referral? a parallel "Commerce Payments" table?).
+//   - Meta CAPI Purchase event + deal-flip: today fired from the referral
+//     close path keyed on the buyer/referral. Commerce orders have no
+//     referral/buyer-record linkage guaranteed, so attributing a CAPI Purchase
+//     needs a buyer-identity design pass.
+// Both are flagged for a follow-up design task; this notify path is the
+// additive, no-refactor slice the audit asked for.
+// ============================================================================
+async function notifyCommerceOrderPaid(
+  order: NonNullable<Awaited<ReturnType<typeof getOrderByCheckoutSession>>>,
+  lines: Awaited<ReturnType<typeof getOrderLines>>,
+  buyerEmailHint: string | null,
+  paymentIntentId: string | null,
+  logTag: string,
+): Promise<void> {
+  try {
+    // Resolve the rancher (Airtable) for name / phone / email. Best-effort —
+    // a lookup failure must not abort the rest of the fan-out.
+    let rancher: any = null;
+    try {
+      rancher = await getRecordById(TABLES.RANCHERS, order.rancher_id);
+    } catch (e: any) {
+      console.warn(`[stripe-connect ${logTag}] rancher lookup for notify failed:`, e?.message);
+    }
+
+    const ranchName: string = String(
+      rancher?.['Ranch Name'] || rancher?.['Operator Name'] || rancher?.['Email'] || order.rancher_id,
+    );
+    const rancherEmail: string | null = (rancher?.['Email'] as string) || null;
+    const rancherPhone: string | null = (rancher?.['Phone'] as string) || null;
+
+    // Item summary, e.g. "2× Eighth Share, 1× Brisket". Total = full sale value
+    // (subtotal_cents), the buyer-facing order value, NOT the deposit charged now.
+    const itemSummary =
+      (lines || [])
+        .filter((l) => l.qty > 0)
+        .map((l) => `${l.qty}× ${l.label}`)
+        .join(', ') || 'order';
+    const totalDollars = (Number(order.subtotal_cents || 0) / 100).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const depositDollars = (Number(order.deposit_cents || 0) / 100).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+    // ── Telegram: admin chat (always) ──────────────────────────────────────
+    try {
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `🛒 New order: ${ranchName} — ${itemSummary} — $${totalDollars}` +
+          (Number(order.deposit_cents || 0) > 0 ? `\nDeposit charged now: $${depositDollars}` : ''),
+      );
+    } catch (e: any) {
+      console.warn(`[stripe-connect ${logTag}] admin order-telegram failed:`, e?.message);
+    }
+
+    // ── Telegram: rancher chat (only if the rancher has a Telegram chat id) ──
+    // Ranchers may store a personal Telegram chat id; gate on its presence so
+    // we never blast the admin message twice or error on a missing id. Field
+    // name is defensive (schema may vary) — any falsy value → skip silently.
+    const rancherChatId = String(
+      rancher?.['Telegram Chat Id'] || rancher?.['Telegram Chat ID'] || '',
+    ).trim();
+    if (rancherChatId && rancherChatId !== TELEGRAM_ADMIN_CHAT_ID) {
+      try {
+        await sendTelegramMessage(
+          rancherChatId,
+          `🛒 New order on BuyHalfCow: ${itemSummary} — $${totalDollars}`,
+        );
+      } catch (e: any) {
+        console.warn(`[stripe-connect ${logTag}] rancher order-telegram failed:`, e?.message);
+      }
+    }
+
+    // ── Buyer confirmation email (only if Stripe captured a buyer email) ────
+    const buyerEmail = (buyerEmailHint || '').trim();
+    if (buyerEmail) {
+      try {
+        await sendEmail({
+          to: buyerEmail,
+          subject: `your ${ranchName} order is confirmed`,
+          html:
+            `<p>thanks for your order from <strong>${escapeHtmlLocal(ranchName)}</strong>!</p>` +
+            `<p><strong>Order:</strong> ${escapeHtmlLocal(itemSummary)}<br/>` +
+            `<strong>Total:</strong> $${totalDollars}` +
+            (Number(order.deposit_cents || 0) > 0 ? `<br/><strong>Charged today (deposit):</strong> $${depositDollars}` : '') +
+            `</p>` +
+            (rancherEmail || rancherPhone
+              ? `<p>${escapeHtmlLocal(ranchName)} will be in touch about processing + pickup` +
+                (rancherEmail ? ` — reach them at ${escapeHtmlLocal(rancherEmail)}` : '') +
+                (rancherPhone ? ` or ${escapeHtmlLocal(rancherPhone)}` : '') +
+                `.</p>`
+              : '') +
+            `<p>— BuyHalfCow</p>`,
+        });
+      } catch (e: any) {
+        console.warn(`[stripe-connect ${logTag}] buyer confirmation email failed:`, e?.message);
+      }
+    }
+
+    // ── Rancher confirmation email (to the rancher's Airtable Email) ────────
+    if (rancherEmail) {
+      try {
+        const firstName = String(rancher?.['Operator Name'] || '').split(' ')[0] || 'there';
+        await sendEmail({
+          to: rancherEmail,
+          subject: `🛒 new BuyHalfCow order — ${itemSummary}`,
+          html:
+            `<p>hey ${escapeHtmlLocal(firstName)} — you got a new order on BuyHalfCow.</p>` +
+            `<p><strong>Order:</strong> ${escapeHtmlLocal(itemSummary)}<br/>` +
+            `<strong>Total:</strong> $${totalDollars}` +
+            (Number(order.deposit_cents || 0) > 0 ? `<br/><strong>Deposit collected:</strong> $${depositDollars}` : '') +
+            (buyerEmail ? `<br/><strong>Buyer:</strong> ${escapeHtmlLocal(buyerEmail)}` : '') +
+            `</p>` +
+            `<p>log into your dashboard to manage fulfillment.</p>` +
+            `<p>— BuyHalfCow</p>`,
+        });
+      } catch (e: any) {
+        console.warn(`[stripe-connect ${logTag}] rancher confirmation email failed:`, e?.message);
+      }
+    }
+
+    // Audit log — best-effort, never throws out.
+    await logAuditEntry({
+      actor: 'cron',
+      tool: 'stripe-connect-commerce-order-paid',
+      targetType: 'Other',
+      targetId: order.id,
+      args: { orderId: order.id, rancherId: order.rancher_id, paymentIntentId, source: logTag },
+      result: { ranchName, itemSummary, totalCents: order.subtotal_cents, notifiedBuyer: !!buyerEmail, notifiedRancher: !!rancherEmail },
+      reverseAction: { type: 'noop', reason: 'notification side-effect — nothing to reverse' },
+    }).catch((e) => console.error('[audit] commerce-order-paid log failed:', e));
+  } catch (e: any) {
+    // Absolute backstop — this whole function is best-effort.
+    console.error(`[stripe-connect ${logTag}] notifyCommerceOrderPaid unexpected error (swallowed):`, e?.message);
+  }
+}
+
+// Telegram/email HTML escape — local copy (lib/telegram's escapeHtml is not
+// exported). Only <, >, & need escaping for both Telegram HTML mode + email.
+function escapeHtmlLocal(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 // ============================================================================
@@ -737,6 +1010,28 @@ async function handleDispute(event: any): Promise<void> {
     }
   }
 
+  // ── COMMERCE ORDER dispute linkage (Audit fix #3) ──────────────────────────
+  // markDepositDisputed above is a no-op for commerce (no Payments row). If the
+  // disputed charge's PI maps to a commerce order, surface that linkage so ops
+  // can act. Per spec we LEAVE the order 'paid' (a dispute is not yet a loss —
+  // funds may still be won; we do NOT restock here). A LOST dispute later
+  // settles as a refund → charge.refunded → handleCommerceRefund flips it
+  // 'refunded' + restocks. Best-effort: never throws out of the handler.
+  let commerceOrderId: string | null = null;
+  if (piId) {
+    try {
+      const order = await getOrderByPaymentIntent(piId);
+      if (order) {
+        commerceOrderId = order.id;
+        console.warn(
+          `[stripe-connect dispute] commerce order ${order.id} disputed (status=${status}) — left 'paid', no restock until/unless refunded. order status=${order.status}`,
+        );
+      }
+    } catch (e: any) {
+      console.warn('[stripe-connect dispute] commerce order lookup failed:', e?.message);
+    }
+  }
+
   // LOUD Telegram alert — ops needs to act fast on disputes.
   try {
     await sendTelegramMessage(
@@ -747,7 +1042,8 @@ async function handleDispute(event: any): Promise<void> {
         `Status: ${status}\n` +
         `Charge: ${chargeId}\n` +
         `Stripe: https://dashboard.stripe.com/payments/${chargeId}` +
-        (paymentRecordId ? `\nPayments row: ${paymentRecordId}` : ''),
+        (paymentRecordId ? `\nPayments row: ${paymentRecordId}` : '') +
+        (commerceOrderId ? `\nCommerce order: ${commerceOrderId} (left 'paid' — restocks only if refunded)` : ''),
     );
   } catch (e: any) {
     console.warn('[stripe-connect dispute] telegram alert failed:', e?.message);
@@ -761,9 +1057,123 @@ async function handleDispute(event: any): Promise<void> {
     targetType: 'Other',
     targetId: piId || chargeId || 'unknown',
     args: { paymentIntentId: piId, chargeId, eventType },
-    result: { status, amount, reason, paymentRecordId },
+    result: { status, amount, reason, paymentRecordId, commerceOrderId },
     reverseAction: { type: 'noop', reason: 'Stripe-driven dispute — cannot un-dispute via Airtable' },
   }).catch(e => console.error('[audit] connect dispute log failed:', e));
+}
+
+// ============================================================================
+// COMMERCE ORDER REFUND — flip order 'refunded' + restock (Audit fix #3).
+//
+// Called from the charge.refunded handler AFTER (and independently of) the
+// Payments-keyed markDepositRefunded path. Resolves the commerce order by the
+// charge's PaymentIntent; if none matches this is a deposit/other charge and we
+// no-op (the Payments path already handled it).
+//
+// Idempotency (MONEY-CRITICAL): we guard on order.status. We only flip + restock
+// when the order is still 'paid' — a redelivered charge.refunded sees status
+// 'refunded' and no-ops, so units are restocked AT MOST ONCE and the order is
+// flipped once. We deliberately do NOT act on a 'cancelled'/'pending' order
+// (those never consumed stock on a confirmed sale, so there's nothing to
+// restock and nothing to refund-flip).
+//
+// ── RESTOCK SEMANTICS CAVEAT (important for the reviewer) ───────────────────
+// On settle we called releaseInventory(variantId, qty, consume=true), which did
+// qty_reserved -= qty AND qty_available -= qty (the units left BOTH counters —
+// sold). The spec prescribes releaseInventory(variantId, qty, consume=false) to
+// "return units" on refund. But per the release_inventory RPC
+// (supabase/migrations/0001_commerce_foundation.sql), consume=false only does
+// qty_reserved = greatest(0, qty_reserved - qty) and leaves qty_available
+// UNCHANGED. On an already-consumed (paid) order qty_reserved is already 0, so
+// this call is effectively a NO-OP and does NOT add the sold units back to
+// qty_available. A true add-back would need to RAISE qty_available (a new RPC
+// or setInventory read-modify-write), but the repository + RPC are out of scope
+// for this change (and setInventory would be racy). We therefore call exactly
+// the prescribed primitive (correct + safe for the unlimited-stock / still-
+// reserved cases, harmless no-op otherwise) and FLAG the true restock-to-
+// available as a deferred repository/RPC task. Variants with no inventory row
+// (unlimited) are a natural no-op inside the RPC.
+// ============================================================================
+async function handleCommerceRefund(piId: string, charge: any): Promise<void> {
+  if (!piId) return;
+
+  let order = await getOrderByPaymentIntent(piId);
+  if (!order) return; // not a commerce order — Payments path owns it
+
+  // Idempotency: only a still-'paid' order flips + restocks. Terminal/other
+  // states (already 'refunded', 'cancelled', 'pending') no-op.
+  if (order.status !== 'paid') {
+    return;
+  }
+
+  const refundedCents = Number(charge?.amount_refunded || 0);
+  const chargeCents = Number(charge?.amount || 0);
+  const isPartial = refundedCents > 0 && chargeCents > 0 && refundedCents < chargeCents;
+
+  // Read lines BEFORE the status flip so a read failure leaves the order 'paid'
+  // → Stripe retry re-enters cleanly (mirrors the settle path's ordering).
+  let lines: Awaited<ReturnType<typeof getOrderLines>> = [];
+  try {
+    lines = await getOrderLines(order.id);
+  } catch (e: any) {
+    console.error('[stripe-connect commerce.refund] getOrderLines failed — throwing for retry (order still paid):', e?.message, 'order:', order.id);
+    throw e;
+  }
+
+  // PARTIAL refund: do NOT flip the whole order to 'refunded' (the sale is still
+  // largely intact) and do NOT restock — mirrors markDepositRefunded's
+  // partial-vs-full discipline. Log + alert so ops can reconcile manually.
+  if (isPartial) {
+    console.warn(
+      `[stripe-connect commerce.refund] PARTIAL refund ($${(refundedCents / 100).toFixed(2)} of $${(chargeCents / 100).toFixed(2)}) on commerce order ${order.id} — left 'paid', no restock. Manual reconcile if a full refund follows.`,
+    );
+    try {
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `↩️ PARTIAL refund on commerce order ${order.id} — $${(refundedCents / 100).toFixed(2)} of $${(chargeCents / 100).toFixed(2)}. Order left 'paid' (no restock).`,
+      );
+    } catch {}
+    return;
+  }
+
+  // FULL refund: flip 'refunded' FIRST so a mid-restock crash leaves the order
+  // terminal (a replay sees 'refunded' and no-ops → no double-restock).
+  try {
+    await updateOrder(order.id, { status: 'refunded' });
+  } catch (e: any) {
+    console.error('[stripe-connect commerce.refund] updateOrder(refunded) failed:', e?.message, 'order:', order.id);
+    throw e; // bubble → Stripe Events row failed → operator replay
+  }
+
+  // Restock per line. See the RESTOCK SEMANTICS CAVEAT above — this calls the
+  // spec-prescribed primitive; it is a no-op-or-reserved-release in practice on
+  // a consumed sale + a natural no-op for unlimited variants. Best-effort per
+  // line so one failure doesn't strand the others.
+  for (const line of lines) {
+    if (!line.variant_id || line.qty <= 0) continue;
+    try {
+      await releaseInventory(line.variant_id, line.qty, false);
+    } catch (e: any) {
+      console.error('[stripe-connect commerce.refund] restock releaseInventory failed:', line.variant_id, e?.message, '— manual reconcile for order', order.id);
+    }
+  }
+
+  try {
+    await sendTelegramMessage(
+      TELEGRAM_ADMIN_CHAT_ID,
+      `↩️ Commerce order refunded — order ${order.id} (PI ${piId.slice(-8)}). Flipped 'refunded' + restock attempted.`,
+    );
+  } catch {}
+
+  await logAuditEntry({
+    actor: 'cron',
+    tool: 'stripe-connect-commerce-order-refunded',
+    targetType: 'Other',
+    targetId: order.id,
+    args: { paymentIntentId: piId, chargeId: charge?.id, orderId: order.id, refundedCents },
+    result: { orderFlipped: 'refunded', linesRestocked: lines.filter((l) => l.variant_id && l.qty > 0).length },
+    reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },
+  }).catch((e) => console.error('[audit] commerce-order-refunded log failed:', e));
 }
 
 // ============================================================================

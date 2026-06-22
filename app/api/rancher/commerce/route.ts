@@ -21,6 +21,7 @@
 // we surface as a 503 so the UI can explain instead of 500-ing.
 
 import { NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { requireRancher } from '@/lib/rancherAuth';
 import {
   getRancherProducts,
@@ -29,11 +30,13 @@ import {
   deleteVariant,
   deleteProduct,
   setInventory,
+  getOpenOrdersForVariant,
   type ProductWithVariants,
 } from '@/lib/commerce/repository';
 import { getCommerceDb } from '@/lib/commerce/client';
 import type { ProductStatus, ProductType } from '@/lib/commerce/types';
 import { deriveDeposit, isTierPricePlausible, MIN_TIER_PRICE } from '@/lib/pricing';
+import { getRecordById, TABLES } from '@/lib/airtable';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +69,28 @@ function bad(message: string, status = 400) {
 /** Map the repo's "not configured" throw to a 503 the UI can explain. */
 function isUnconfigured(err: unknown): boolean {
   return err instanceof Error && /not configured/i.test(err.message);
+}
+
+/**
+ * Bust the ISR cache for this rancher's PUBLIC ranch page after a catalog
+ * mutation. The buyer page (/ranchers/[slug]) is ISR with revalidate=600, so
+ * without this a price/inventory edit can lag up to 10 min behind the dashboard.
+ *
+ * The slug is resolved SERVER-SIDE from the session's rancherId via the Airtable
+ * record (never trusted from the request body). Best-effort: a slug miss or a
+ * revalidate error must NOT fail the mutation that already succeeded, so we
+ * swallow + log. Skip entirely on read ('list').
+ */
+async function revalidateRanchPage(rancherId: string): Promise<void> {
+  try {
+    const rec: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
+    const slug = rec && typeof rec['Slug'] === 'string' ? rec['Slug'].trim() : '';
+    if (!slug) return; // No public page yet (unpublished rancher) — nothing to bust.
+    revalidatePath('/ranchers/' + slug);
+  } catch (err: any) {
+    // Non-fatal: the write landed; the page will self-heal on its next revalidate window.
+    console.error('[rancher/commerce] revalidate failed:', err?.message || err);
+  }
 }
 
 // Flatten the owned products into quick membership lookups so every
@@ -181,6 +206,7 @@ export async function POST(request: Request) {
           }
         }
 
+        await revalidateRanchPage(rancherId);
         return NextResponse.json({ product, variant });
       }
 
@@ -209,6 +235,7 @@ export async function POST(request: Request) {
           position: body.position,
         });
         if ('error' in v) return bad(v.error, v.status);
+        await revalidateRanchPage(rancherId);
         return NextResponse.json({ variant: v.variant });
       }
 
@@ -228,6 +255,7 @@ export async function POST(request: Request) {
           return bad('Stock must be 0 or a positive whole number.');
         }
         await setInventory(variantId, qty);
+        await revalidateRanchPage(rancherId);
         return NextResponse.json({ success: true, variant_id: variantId, qty_available: qty });
       }
 
@@ -254,10 +282,16 @@ export async function POST(request: Request) {
         }
         const { error } = await db.from('inventory').delete().eq('variant_id', variantId);
         if (error) throw new Error(`clear-inventory: ${error.message}`);
+        await revalidateRanchPage(rancherId);
         return NextResponse.json({ success: true, variant_id: variantId, qty_available: null });
       }
 
       // ── delete-variant ─────────────────────────────────────────────────────
+      // FK guard: order_line_items.variant_id is ON DELETE RESTRICT (migration
+      // 0002). Deleting a variant that any non-cancelled order references would
+      // either error at the DB or (pre-migration) null the line so the webhook's
+      // consume loop skips it → oversell after delete+recreate. Refuse with a 409
+      // and steer the rancher to ARCHIVE instead (status:'archived' via upsert).
       case 'delete-variant': {
         const variantId = String(body.variant_id || body.id || '');
         if (!variantId) return bad('variant_id is required.');
@@ -265,12 +299,30 @@ export async function POST(request: Request) {
         if (!owned.variantToProduct.has(variantId)) {
           return bad('That variant is not in your catalog.', 403);
         }
+        const openOrders = await getOpenOrdersForVariant(variantId);
+        if (openOrders.length > 0) {
+          return NextResponse.json(
+            {
+              error: 'This product has orders — archive it instead of deleting.',
+              suggestion: 'archive',
+              order_count: openOrders.length,
+            },
+            { status: 409 },
+          );
+        }
         await deleteVariant(variantId);
+        await revalidateRanchPage(rancherId);
         return NextResponse.json({ success: true });
       }
 
       // ── delete-product ─────────────────────────────────────────────────────
       // Hard delete. (Archiving is done via upsert-product status:'archived'.)
+      // FK guard: deleting a product CASCADES to its variants (migration 0001),
+      // and each variant is ON DELETE RESTRICT against order_line_items
+      // (migration 0002). So before deleting we check EVERY owned variant of this
+      // product for non-cancelled orders and refuse the whole delete if any has
+      // them — steering the rancher to archive instead. (Archiving the product
+      // hides every variant from buyers without touching the order history.)
       case 'delete-product': {
         const productId = String(body.product_id || body.id || '');
         if (!productId) return bad('product_id is required.');
@@ -278,7 +330,24 @@ export async function POST(request: Request) {
         if (!owned.productIds.has(productId)) {
           return bad('That product is not in your catalog.', 403);
         }
+        const product = owned.products.find((p) => p.id === productId);
+        const variantIds = product ? product.variants.map((v) => v.id) : [];
+        const orderIds = new Set<string>();
+        for (const vid of variantIds) {
+          for (const oid of await getOpenOrdersForVariant(vid)) orderIds.add(oid);
+        }
+        if (orderIds.size > 0) {
+          return NextResponse.json(
+            {
+              error: 'This product has orders — archive it instead of deleting.',
+              suggestion: 'archive',
+              order_count: orderIds.size,
+            },
+            { status: 409 },
+          );
+        }
         await deleteProduct(productId);
+        await revalidateRanchPage(rancherId);
         return NextResponse.json({ success: true });
       }
 

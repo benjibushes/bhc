@@ -2306,6 +2306,22 @@ export default function RancherDashboardPage() {
                 {/* Right column: Pricing */}
                 <div className="space-y-5">
                   <h3 className="font-serif text-lg border-b border-dust pb-2">Pricing &amp; Payment</h3>
+
+                  {/* tier_v2 ranchers manage price + inventory in the Supabase
+                      catalog editor below (the source of truth). Showing the
+                      legacy Airtable price/payment-link inputs here too would let
+                      one product carry two conflicting prices, so we hide them and
+                      point at the catalog. Legacy ranchers keep the editor below. */}
+                  {rancherInfo.pricingModel === 'tier_v2' ? (
+                    <div className="p-4 border border-dust bg-bone text-sm text-charcoal space-y-1">
+                      <p className="font-medium">Pricing is managed in your catalog below.</p>
+                      <p className="text-xs text-dust">
+                        Your prices, deposits, and stock now live in <strong>Products &amp; inventory</strong>{' '}
+                        (the &ldquo;source of truth&rdquo; for what buyers see and pay). Scroll down to edit them.
+                      </p>
+                    </div>
+                  ) : (
+                  <>
                   <p className="text-xs text-dust">Leave a section blank if you don't offer that cut size. Payment links go to your Square, PayPal, or Stripe checkout.</p>
 
                   {/* Quarter */}
@@ -2444,10 +2460,15 @@ export default function RancherDashboardPage() {
                       />
                     </div>
                   </div>
+                  </>
+                  )}
                 </div>
               </div>
 
-              {/* Custom Products */}
+              {/* Custom Products — legacy Airtable custom-product editor. Hidden
+                  for tier_v2 ranchers, who add extra products as catalog items in
+                  the Supabase CommerceCatalogEditor below (single source of truth). */}
+              {rancherInfo.pricingModel !== 'tier_v2' && (
               <div className="space-y-4">
                 <h3 className="font-serif text-lg border-b border-dust pb-2">Additional Products</h3>
                 <p className="text-xs text-dust">List extra products beyond quarter/half/whole beef (sampler boxes, jerky, bones, etc.).</p>
@@ -2484,6 +2505,7 @@ export default function RancherDashboardPage() {
                   </button>
                 </div>
               </div>
+              )}
 
               <Divider />
 

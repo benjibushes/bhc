@@ -436,6 +436,15 @@ export interface CreateCartCheckoutInput {
    * authoritative lookup is by Checkout Session id (stripe_checkout_session_id).
    */
   metadata?: Record<string, string>;
+  /**
+   * Caller-supplied STABLE idempotency key for the Stripe session create. When
+   * set, it is used verbatim (the caller owns dedupe semantics) — the cart route
+   * passes a key derived from {rancherId + sorted variantId:qty + buyer/ip} so a
+   * rapid double-submit of the SAME cart reuses the FIRST Stripe session instead
+   * of opening a second one. When unset, falls back to the legacy order-id seed
+   * below (kept so any other caller's behavior is unchanged).
+   */
+  idempotencyKey?: string;
 }
 
 export async function createCartCheckout(
@@ -483,15 +492,26 @@ export async function createCartCheckout(
     });
   }
 
-  // Deterministic idempotency key. A genuine double-submit of the SAME cart
-  // (same order) dedupes safely; a different cart is a different orderId →
-  // a new idempotent request. We key on the order id + the fee so that a
-  // re-priced retry of the same order (fee changed) is treated as new rather
-  // than colliding with a different request body (the failure mode the deposit
-  // route's cut-specific key was added to avoid). Falls back to a composite of
-  // the connect account + fee when no orderId is supplied.
-  const idemSeed = input.metadata?.orderId || `${input.rancherConnectAccountId}-${input.lineItems.map((l) => `${l.label}:${l.depositCents}x${l.qty}`).join('|')}`;
-  const idempotencyKey = `cart-${idemSeed}-${input.applicationFeeCents}`;
+  // Deterministic idempotency key.
+  //
+  // PREFERRED: the caller passes a STABLE key (input.idempotencyKey) derived
+  // from the cart's identity {rancherId + sorted variantId:qty + buyer/ip}, NOT
+  // from the freshly-minted order id. Keying on the cart's identity is what makes
+  // a rapid double-submit reuse the FIRST session: the legacy order-id seed gave
+  // each POST a brand-new order id → a brand-new key → a second Stripe session
+  // (and the route created a second order + second reservation alongside it).
+  //
+  // FALLBACK (no key supplied — other callers): legacy behavior, keyed on the
+  // order id + fee so a re-priced retry of the same order is treated as new
+  // rather than colliding with a different request body (the failure mode the
+  // deposit route's cut-specific key was added to avoid).
+  let idempotencyKey: string;
+  if (input.idempotencyKey) {
+    idempotencyKey = input.idempotencyKey;
+  } else {
+    const idemSeed = input.metadata?.orderId || `${input.rancherConnectAccountId}-${input.lineItems.map((l) => `${l.label}:${l.depositCents}x${l.qty}`).join('|')}`;
+    idempotencyKey = `cart-${idemSeed}-${input.applicationFeeCents}`;
+  }
 
   const baseMetadata: Record<string, string> = {
     type: 'commerce_order',
