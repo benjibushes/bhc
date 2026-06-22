@@ -28,6 +28,37 @@ interface MemberSession {
   state?: string;
 }
 
+// ── Commerce mode (Supabase catalog) ─────────────────────────────────────────
+// Plain serializable shapes the SERVER COMPONENT resolves from
+// lib/commerce/repository (getRancherCatalog) and passes down. Money already in
+// CENTS from the ETL; we only DISPLAY (round to dollars) here — never recompute
+// deposits. `available`: null = unlimited stock, a number = units left (0 = sold
+// out). When the `commerce` prop is present the form renders the live Supabase
+// catalog + on-platform checkout button; when absent it falls back to the legacy
+// Airtable lead-request path below (unchanged).
+export interface CommerceVariant {
+  variantId: string;
+  label: string;
+  priceCents: number;
+  depositCents: number;
+  weightLbs: number | null;
+  available: number | null;
+}
+
+export interface CommerceProduct {
+  productId: string;
+  type: 'cow_share' | 'custom' | 'csa';
+  name: string;
+  description: string | null;
+  variants: CommerceVariant[];
+}
+
+export interface CommerceCatalog {
+  rancherSlug: string;
+  cowShareVariants: CommerceVariant[];
+  customProducts: CommerceProduct[];
+}
+
 interface Props {
   slug: string;
   rancherName: string;
@@ -35,16 +66,32 @@ interface Props {
   quarter?: TierData;
   half?: TierData;
   whole?: TierData;
+  /**
+   * When present, render the live Supabase commerce catalog + on-platform
+   * checkout (POST /api/commerce/cart → Stripe). When undefined, render the
+   * legacy Airtable lead-request flow. The server component decides which by
+   * whether getRancherCatalog() returned products.
+   */
+  commerce?: CommerceCatalog;
 }
 
+const dollars = (cents: number) => Math.round(cents / 100).toLocaleString();
+// Surface unit counts only when stock is genuinely scarce — a "3 left" nudge,
+// not a live inventory readout. null/unlimited → never shown.
+const LOW_STOCK_THRESHOLD = 10;
+
 /**
- * Inline order request form. Replaces the old "redirect to rancher's external
- * payment link" flow. Buyer submits an order request → BHC creates a Referral
- * + emails rancher (reply-to=buyer) + emails buyer confirmation. Rancher
- * reaches back out within 48h to confirm timing + payment.
+ * Inline order interaction for a rancher page. TWO modes:
  *
- * If buyer is logged into a member session, name/email skip — just pick tier
- * + add optional message. If not, full form (name, email, phone, state, ZIP).
+ *  1. COMMERCE (commerce prop set) — the rancher has a live Supabase catalog.
+ *     Buyer picks a share/product variant, qty defaults to 1, and the buy button
+ *     POSTs { rancherSlug, items:[{ variantId, qty }] } to /api/commerce/cart,
+ *     then redirects the browser to the returned Stripe checkoutUrl. Sold-out
+ *     variants are disabled; a soldOut/error response surfaces inline.
+ *
+ *  2. LEGACY (commerce prop absent) — unchanged. Buyer submits an order request
+ *     → BHC creates a Referral + emails rancher (reply-to=buyer). Used for every
+ *     rancher WITHOUT a live commerce catalog (legacy / unconnected).
  */
 export default function RancherOrderForm({
   slug,
@@ -53,7 +100,265 @@ export default function RancherOrderForm({
   quarter,
   half,
   whole,
+  commerce,
 }: Props) {
+  if (commerce) {
+    return (
+      <CommerceCatalogForm
+        rancherName={rancherName}
+        ranchName={ranchName}
+        commerce={commerce}
+      />
+    );
+  }
+  return (
+    <LegacyOrderForm
+      slug={slug}
+      rancherName={rancherName}
+      ranchName={ranchName}
+      quarter={quarter}
+      half={half}
+      whole={whole}
+    />
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMMERCE MODE — live Supabase catalog + on-platform Stripe checkout.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CommerceCatalogForm({
+  rancherName,
+  ranchName,
+  commerce,
+}: {
+  rancherName: string;
+  ranchName: string;
+  commerce: CommerceCatalog;
+}) {
+  // variantId currently being checked out (drives the per-button spinner) +
+  // an inline error keyed to the variant that failed.
+  const [pendingVariant, setPendingVariant] = useState<string | null>(null);
+  const [errorFor, setErrorFor] = useState<{ variantId: string; message: string } | null>(null);
+
+  async function buy(variant: CommerceVariant) {
+    if (variant.available === 0) return; // sold out — button is disabled anyway
+    setErrorFor(null);
+    setPendingVariant(variant.variantId);
+
+    track('InitiateCheckout', {
+      content_name: rancherName,
+      content_category: variant.label,
+      ranchSlug: commerce.rancherSlug,
+      value: Math.round(variant.priceCents / 100),
+      currency: 'USD',
+    });
+
+    try {
+      const res = await fetch('/api/commerce/cart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rancherSlug: commerce.rancherSlug,
+          items: [{ variantId: variant.variantId, qty: 1 }],
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.checkoutUrl) {
+        setErrorFor({
+          variantId: variant.variantId,
+          message: data?.soldOut
+            ? 'Just sold out — refresh to see what’s still available.'
+            : data?.error || 'Could not start checkout — try again.',
+        });
+        setPendingVariant(null);
+        return;
+      }
+      // Hand the browser to Stripe-hosted checkout.
+      window.location.assign(data.checkoutUrl as string);
+    } catch {
+      setErrorFor({ variantId: variant.variantId, message: 'Network error — try again.' });
+      setPendingVariant(null);
+    }
+  }
+
+  const hasCowShares = commerce.cowShareVariants.length > 0;
+  const hasCustom = commerce.customProducts.length > 0;
+
+  return (
+    <div className="space-y-10">
+      {/* Cow-share variants — Whole → Half → Quarter (largest anchors first),
+          ordered server-side. */}
+      {hasCowShares && (
+        <div className="grid md:grid-cols-3 gap-4">
+          {commerce.cowShareVariants.map((v, i) => (
+            <CommerceVariantCard
+              key={v.variantId}
+              variant={v}
+              // Mid card (Half, when three shares present) reads as the anchor.
+              highlighted={commerce.cowShareVariants.length === 3 ? i === 1 : false}
+              pending={pendingVariant === v.variantId}
+              disabledByOther={pendingVariant !== null && pendingVariant !== v.variantId}
+              error={errorFor?.variantId === v.variantId ? errorFor.message : null}
+              onBuy={() => buy(v)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Custom products (each with its own variant rows). */}
+      {hasCustom && (
+        <div className="space-y-6">
+          {hasCowShares && (
+            <p className="text-center text-xs uppercase tracking-widest text-saddle">
+              More from {ranchName}
+            </p>
+          )}
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {commerce.customProducts.flatMap((product) =>
+              product.variants.map((v) => (
+                <CommerceVariantCard
+                  key={v.variantId}
+                  variant={v}
+                  productName={product.name}
+                  productDescription={product.description}
+                  highlighted={false}
+                  pending={pendingVariant === v.variantId}
+                  disabledByOther={pendingVariant !== null && pendingVariant !== v.variantId}
+                  error={errorFor?.variantId === v.variantId ? errorFor.message : null}
+                  onBuy={() => buy(v)}
+                />
+              )),
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CommerceVariantCard({
+  variant,
+  productName,
+  productDescription,
+  highlighted,
+  pending,
+  disabledByOther,
+  error,
+  onBuy,
+}: {
+  variant: CommerceVariant;
+  productName?: string;
+  productDescription?: string | null;
+  highlighted: boolean;
+  pending: boolean;
+  disabledByOther: boolean;
+  error: string | null;
+  onBuy: () => void;
+}) {
+  const soldOut = variant.available === 0;
+  const lowStock =
+    variant.available !== null && variant.available > 0 && variant.available <= LOW_STOCK_THRESHOLD;
+  const heading = productName ? `${productName} — ${variant.label}` : variant.label;
+
+  return (
+    <div
+      className={`flex flex-col p-6 border ${
+        soldOut
+          ? 'border-dust bg-bone-warm text-charcoal/60'
+          : highlighted
+            ? 'border-saddle bg-saddle text-bone'
+            : 'border-dust bg-white text-charcoal'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <p
+          className={`text-xs uppercase tracking-widest ${
+            highlighted && !soldOut ? 'text-bone/70' : 'text-dust'
+          }`}
+        >
+          {heading}
+        </p>
+        {soldOut && (
+          <span className="text-[10px] uppercase tracking-widest text-weathered font-medium">
+            Sold out
+          </span>
+        )}
+        {!soldOut && lowStock && (
+          <span
+            className={`text-[10px] uppercase tracking-widest font-medium ${
+              highlighted ? 'text-bone/80' : 'text-saddle'
+            }`}
+          >
+            {variant.available} left
+          </span>
+        )}
+      </div>
+
+      <p className="font-serif text-4xl font-bold mb-1">${dollars(variant.priceCents)}</p>
+
+      {variant.weightLbs ? (
+        <p className={`text-sm ${highlighted && !soldOut ? 'text-bone/80' : 'text-dust'}`}>
+          {variant.weightLbs} lbs of beef
+        </p>
+      ) : null}
+
+      {productDescription ? (
+        <p className={`text-sm mt-2 leading-relaxed ${highlighted && !soldOut ? 'text-bone/85' : 'text-charcoal/75'}`}>
+          {productDescription}
+        </p>
+      ) : null}
+
+      {/* Reserve framing — round-dollar deposit, "Reserve your share" voice.
+          Never shown when sold out. */}
+      {!soldOut && (
+        <p className={`text-xs mt-3 ${highlighted ? 'text-bone/80' : 'text-saddle'}`}>
+          Reserve from ${dollars(variant.depositCents)} today
+        </p>
+      )}
+
+      <div className="mt-6">
+        {error && <p className="text-sm text-weathered mb-3">{error}</p>}
+        <button
+          type="button"
+          onClick={onBuy}
+          disabled={soldOut || pending || disabledByOther}
+          className={`block w-full text-center py-3 text-sm font-medium tracking-wide uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            soldOut
+              ? 'bg-dust text-bone'
+              : highlighted
+                ? 'bg-bone text-saddle hover:bg-white'
+                : 'bg-charcoal text-bone hover:bg-saddle'
+          }`}
+        >
+          {soldOut ? 'Sold out' : pending ? 'Starting checkout…' : 'Reserve your share →'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEGACY MODE — unchanged Airtable lead-request flow (ranchers WITHOUT a live
+// commerce catalog). Submits an order REQUEST through BHC (no payment now);
+// rancher reaches back out within 48h.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function LegacyOrderForm({
+  slug,
+  rancherName,
+  ranchName,
+  quarter,
+  half,
+  whole,
+}: {
+  slug: string;
+  rancherName: string;
+  ranchName: string;
+  quarter?: TierData;
+  half?: TierData;
+  whole?: TierData;
+}) {
   const [selectedTier, setSelectedTier] = useState<'quarter' | 'half' | 'whole' | null>(null);
   const [session, setSession] = useState<MemberSession | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);

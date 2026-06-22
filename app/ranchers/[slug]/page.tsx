@@ -10,6 +10,8 @@ import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import BHCPromiseBadge from '../../components/BHCPromiseBadge';
 import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { getRancherCatalog } from '@/lib/commerce/repository';
+import type { CommerceCatalog, CommerceVariant } from './RancherOrderForm';
 import RancherOrderForm from './RancherOrderForm';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
 
@@ -256,6 +258,75 @@ export default async function RancherPage(
   // (the on-platform commission flow). Legacy ranchers are unaffected.
   const onConnect = isRancherOnConnect(r);
 
+  // ── COMMERCE CATALOG (Phase 1A, build-dark) ──────────────────────────────
+  // Fetch the rancher's live Supabase catalog. getRancherCatalog returns []
+  // when the commerce DB is unconfigured (no SUPABASE env) OR the rancher has
+  // no commerce products yet — in BOTH cases we fall back to the existing
+  // Airtable cow-share columns below (zero behavior change for everyone today).
+  // Wrapped so a commerce-layer error can NEVER break the legacy ranch page.
+  // Money stays in CENTS; only the client form rounds to dollars for display.
+  let commerceCatalog: CommerceCatalog | null = null;
+  if (!isProspect) {
+    try {
+      const products = await getRancherCatalog(r.id);
+      if (products.length > 0) {
+        const toVariant = (v: {
+          id: string;
+          label: string;
+          price_cents: number;
+          deposit_cents: number;
+          weight_lbs: number | null;
+          available: number | null;
+        }): CommerceVariant => ({
+          variantId: v.id,
+          label: v.label,
+          priceCents: v.price_cents,
+          depositCents: v.deposit_cents,
+          weightLbs: v.weight_lbs,
+          available: v.available,
+        });
+
+        // Cow-share variants flattened across all cow_share products, ordered
+        // largest-first (Whole → Half → Quarter) so the biggest share anchors.
+        // Sort by weight desc; variants without a weight fall back to position.
+        const cowShareVariants: CommerceVariant[] = products
+          .filter((p) => p.type === 'cow_share')
+          .flatMap((p) => p.variants)
+          .map(toVariant)
+          .sort((a, b) => {
+            const aw = a.weightLbs ?? -1;
+            const bw = b.weightLbs ?? -1;
+            return bw - aw;
+          });
+
+        // Custom products keep their own grouping (name + description + variants).
+        const customProducts = products
+          .filter((p) => p.type === 'custom' || p.type === 'csa')
+          .map((p) => ({
+            productId: p.id,
+            type: p.type,
+            name: p.name,
+            description: p.description,
+            variants: p.variants.map(toVariant),
+          }))
+          .filter((p) => p.variants.length > 0);
+
+        // Only flip to the commerce catalog if there's actually something to buy.
+        if (cowShareVariants.length > 0 || customProducts.length > 0) {
+          commerceCatalog = {
+            rancherSlug: slug,
+            cowShareVariants,
+            customProducts,
+          };
+        }
+      }
+    } catch (e) {
+      console.error(`[rancher-page] commerce catalog fetch failed for ${slug}:`, e);
+      commerceCatalog = null; // fall back to Airtable path
+    }
+  }
+  const hasCommerceCatalog = commerceCatalog !== null;
+
   const hasPricing = !isProspect && (quarterPrice || halfPrice || wholePrice);
   const embedUrl = getYouTubeEmbedUrl(videoUrl);
 
@@ -267,40 +338,72 @@ export default async function RancherPage(
   const lng = Number(r['Longitude']);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
-  // Build offers array + priceRange (verified ranchers only)
+  // Build offers array + priceRange (verified ranchers only). When a live
+  // commerce catalog exists, derive offers from real variants — price (round
+  // dollars from cents) + per-variant availability (SoldOut when available===0,
+  // else InStock). Otherwise keep the Airtable-column offers (all InStock).
   const offers: any[] = [];
-  if (!isProspect && quarterPrice) {
-    offers.push({
-      '@type': 'Offer',
-      name: 'Quarter Beef',
-      price: quarterPrice,
-      priceCurrency: 'USD',
-      availability: 'https://schema.org/InStock',
-    });
-  }
-  if (!isProspect && halfPrice) {
-    offers.push({
-      '@type': 'Offer',
-      name: 'Half Beef',
-      price: halfPrice,
-      priceCurrency: 'USD',
-      availability: 'https://schema.org/InStock',
-    });
-  }
-  if (!isProspect && wholePrice) {
-    offers.push({
-      '@type': 'Offer',
-      name: 'Whole Beef',
-      price: wholePrice,
-      priceCurrency: 'USD',
-      availability: 'https://schema.org/InStock',
-    });
-  }
+  let priceRange: string | undefined;
+  if (commerceCatalog) {
+    const allVariants = [
+      ...commerceCatalog.cowShareVariants,
+      ...commerceCatalog.customProducts.flatMap((p) =>
+        p.variants.map((v) => ({ ...v, label: `${p.name} — ${v.label}` })),
+      ),
+    ];
+    for (const v of allVariants) {
+      offers.push({
+        '@type': 'Offer',
+        name: v.label,
+        price: Math.round(v.priceCents / 100),
+        priceCurrency: 'USD',
+        availability:
+          v.available === 0
+            ? 'https://schema.org/SoldOut'
+            : 'https://schema.org/InStock',
+      });
+    }
+    const dollarPrices = allVariants
+      .map((v) => Math.round(v.priceCents / 100))
+      .filter((p) => p > 0);
+    priceRange =
+      dollarPrices.length > 0
+        ? `$${Math.min(...dollarPrices)}–$${Math.max(...dollarPrices)}`
+        : undefined;
+  } else {
+    if (!isProspect && quarterPrice) {
+      offers.push({
+        '@type': 'Offer',
+        name: 'Quarter Beef',
+        price: quarterPrice,
+        priceCurrency: 'USD',
+        availability: 'https://schema.org/InStock',
+      });
+    }
+    if (!isProspect && halfPrice) {
+      offers.push({
+        '@type': 'Offer',
+        name: 'Half Beef',
+        price: halfPrice,
+        priceCurrency: 'USD',
+        availability: 'https://schema.org/InStock',
+      });
+    }
+    if (!isProspect && wholePrice) {
+      offers.push({
+        '@type': 'Offer',
+        name: 'Whole Beef',
+        price: wholePrice,
+        priceCurrency: 'USD',
+        availability: 'https://schema.org/InStock',
+      });
+    }
 
-  const prices = [quarterPrice, halfPrice, wholePrice]
-    .filter((p) => typeof p === 'number' && p > 0) as number[];
-  const priceRange =
-    prices.length > 0 ? `$${Math.min(...prices)}–$${Math.max(...prices)}` : undefined;
+    const prices = [quarterPrice, halfPrice, wholePrice]
+      .filter((p) => typeof p === 'number' && p > 0) as number[];
+    priceRange =
+      prices.length > 0 ? `$${Math.min(...prices)}–$${Math.max(...prices)}` : undefined;
+  }
 
   const jsonLd: Record<string, unknown> = {
     '@context': 'https://schema.org',
@@ -421,7 +524,7 @@ export default async function RancherPage(
 
               {/* CTA row — verified gets pricing-jump, prospect gets claim */}
               <div className="flex flex-wrap gap-3 pt-2">
-                {hasPricing ? (
+                {hasPricing || hasCommerceCatalog ? (
                   <RancherPricingCTA
                     href="#shares"
                     rancherSlug={slug}
@@ -574,7 +677,7 @@ export default async function RancherPage(
           REQUEST through BHC (no external redirect to rancher's website),
           creates a Referral, emails the rancher with reply-to=buyer.
          ───────────────────────────────────────────────────────────────────── */}
-      {hasPricing && (
+      {(hasPricing || hasCommerceCatalog) && (
         <section id="shares" className="py-16 md:py-20 scroll-mt-12">
           <Container>
             <div className="max-w-4xl mx-auto space-y-8">
@@ -582,7 +685,9 @@ export default async function RancherPage(
                 <Pill tone="neutral" className="mx-auto">Available shares</Pill>
                 <h2 className="font-serif text-3xl md:text-5xl">Choose your share</h2>
                 <p className="text-saddle max-w-xl mx-auto">
-                  All prices include processing. {operatorName ? operatorName.split(' ')[0] : name} reaches back out within 48h to confirm timing + payment.
+                  {hasCommerceCatalog
+                    ? `All prices include processing. Reserve your share now — a deposit holds it; ${operatorName ? operatorName.split(' ')[0] : name} confirms the balance, cut sheet, and timing after.`
+                    : `All prices include processing. ${operatorName ? operatorName.split(' ')[0] : name} reaches back out within 48h to confirm timing + payment.`}
                 </p>
               </div>
 
@@ -593,6 +698,7 @@ export default async function RancherPage(
                 quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs } : undefined}
                 half={halfPrice ? { price: halfPrice, lbs: halfLbs } : undefined}
                 whole={wholePrice ? { price: wholePrice, lbs: wholeLbs } : undefined}
+                commerce={commerceCatalog ?? undefined}
               />
 
               <p className="text-center text-xs text-dust">
@@ -850,8 +956,11 @@ export default async function RancherPage(
         </Container>
       </section>
 
-      {/* ── CUSTOM PRODUCTS ──────────────────────────────────────────────── */}
-      {!isProspect && customProducts.length > 0 && (
+      {/* ── CUSTOM PRODUCTS (legacy Airtable) ────────────────────────────────
+          Suppressed when a live commerce catalog is present — commerce custom
+          products render inside the shares section above (with real checkout),
+          so showing the Airtable JSON list too would duplicate them. */}
+      {!isProspect && !hasCommerceCatalog && customProducts.length > 0 && (
         <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
           <Container>
             <div className="max-w-5xl mx-auto space-y-10">

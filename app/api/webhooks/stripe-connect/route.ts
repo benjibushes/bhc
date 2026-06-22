@@ -31,6 +31,7 @@ import { settleBuyerDeposit, settleFinalInvoice } from '@/lib/stripeSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
+import { getOrderByCheckoutSession, getOrderLines, updateOrder, releaseInventory } from '@/lib/commerce/repository';
 import { logAuditEntry } from '@/lib/auditLog';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
@@ -281,6 +282,23 @@ export async function POST(request: Request) {
         }
         break;
       }
+
+      // ── Phase 1B — commerce cart order settlement (checkout.session.*) ──
+      // tier_v2 cart checkout (app/api/commerce/cart) creates a DIRECT-charge
+      // Checkout Session on the connected account, so checkout.session.completed
+      // and checkout.session.expired fire HERE (connected-account V1 events).
+      //
+      // We look the order up by Checkout Session id. If NO order matches, this
+      // is a deposit-flow session (cow-share deposits never create an `orders`
+      // row) or some other session — IGNORE it so the deposit flow is wholly
+      // unaffected. Only sessions with a matching commerce order are handled.
+      case 'checkout.session.completed':
+        await handleCommerceSessionCompleted(event);
+        break;
+
+      case 'checkout.session.expired':
+        await handleCommerceSessionExpired(event);
+        break;
 
       // ── Dual-delivery settlement guard (p0-money-routing) ──────────────
       // The platform webhook AND this Connect webhook both receive
@@ -535,6 +553,145 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
     } catch (e: any) {
       console.warn('[stripe-connect webhook] telegram celebration failed:', e?.message);
     }
+  }
+}
+
+// ============================================================================
+// PHASE 1B — COMMERCE CART ORDER: checkout.session.completed
+//
+// A tier_v2 cart Checkout Session (created on the connected account by
+// app/api/commerce/cart) finished paying. Look the order up by Checkout
+// Session id; if none matches, this is a deposit-flow (or other) session —
+// no-op so the cow-share deposit flow is wholly unaffected.
+//
+// On match: mark the order 'paid', CONSUME the held inventory (release with
+// consume=true lowers qty_available — the sale is confirmed), and stamp the
+// PaymentIntent id.
+//
+// Idempotency: Stripe can redeliver. We only act when the order is NOT already
+// terminal (paid/cancelled/refunded). Because the cart route reserved the
+// stock and we consume EXACTLY ONCE on the pending→paid transition, a
+// redelivery sees status 'paid' and skips the consume — no double-decrement.
+// ============================================================================
+async function handleCommerceSessionCompleted(event: any): Promise<void> {
+  const session = event?.data?.object as any;
+  const sessionId: string = String(session?.id || '');
+  if (!sessionId) return;
+
+  let order: Awaited<ReturnType<typeof getOrderByCheckoutSession>>;
+  try {
+    order = await getOrderByCheckoutSession(sessionId);
+  } catch (e: any) {
+    console.error('[stripe-connect commerce.completed] order lookup failed:', e?.message);
+    throw e; // bubble → Stripe Events row flipped to failed → operator can replay
+  }
+  // Not a commerce order (deposit-flow session, etc.) → ignore entirely.
+  if (!order) return;
+
+  // Idempotency: only the pending→paid transition consumes stock. If the order
+  // already advanced to a terminal/paid state, a prior delivery handled it.
+  if (order.status === 'paid' || order.status === 'cancelled' || order.status === 'refunded') {
+    return;
+  }
+
+  const paymentIntentId: string =
+    typeof session?.payment_intent === 'string'
+      ? session.payment_intent
+      : session?.payment_intent?.id || null;
+
+  // Read the order lines BEFORE marking paid. If this read fails, THROW so
+  // Stripe retries the webhook while the order is still 'pending' — the retry
+  // then re-runs cleanly. (If we marked paid first and the read failed, the
+  // retry would hit the 'paid' guard and skip, stranding the reservation
+  // forever — so the read must come before the status flip.)
+  let lines: Awaited<ReturnType<typeof getOrderLines>>;
+  try {
+    lines = await getOrderLines(order.id);
+  } catch (e: any) {
+    console.error('[stripe-connect commerce.completed] getOrderLines failed — throwing for retry (order still pending):', e?.message, 'order:', order.id);
+    throw e;
+  }
+
+  // Flip to paid + stamp the PI. Doing this before the per-line consume means a
+  // mid-consume crash leaves the order 'paid' (correct — the buyer paid); a
+  // replay then sees 'paid' and skips, so each unit is consumed at most once.
+  // The reserve already removed the units from "available", so even a missed
+  // consume only leaves them RESERVED (not oversold) — safe; logged for reconcile.
+  try {
+    await updateOrder(order.id, {
+      status: 'paid',
+      ...(paymentIntentId ? { stripe_payment_intent_id: paymentIntentId } : {}),
+    });
+  } catch (e: any) {
+    console.error('[stripe-connect commerce.completed] updateOrder(paid) failed:', e?.message);
+    throw e;
+  }
+  for (const line of lines) {
+    if (!line.variant_id || line.qty <= 0) continue;
+    try {
+      await releaseInventory(line.variant_id, line.qty, true);
+    } catch (e: any) {
+      console.error('[stripe-connect commerce.completed] consume releaseInventory failed:', line.variant_id, e?.message, '— manual reconcile needed for order', order.id);
+    }
+  }
+}
+
+// ============================================================================
+// PHASE 1B — COMMERCE CART ORDER: checkout.session.expired
+//
+// The buyer abandoned a tier_v2 cart Checkout Session and Stripe expired it.
+// Free the held stock so it's not reserved for a dead session. Look up by
+// Checkout Session id; no match → deposit-flow/other session → no-op.
+//
+// On match: release the reservation WITHOUT consuming (qty_available unchanged,
+// qty_reserved lowered → units return to "available"), and mark the order
+// 'cancelled'.
+//
+// Idempotency / double-release guard: we ONLY release when the order is still
+// 'pending'. A session that already completed→'paid' (or was otherwise
+// finalized) must NOT have its stock released — guarding on 'pending' makes the
+// release fire at most once and never undoes a confirmed sale. A redelivered
+// expired event sees status 'cancelled' and no-ops.
+// ============================================================================
+async function handleCommerceSessionExpired(event: any): Promise<void> {
+  const session = event?.data?.object as any;
+  const sessionId: string = String(session?.id || '');
+  if (!sessionId) return;
+
+  let order: Awaited<ReturnType<typeof getOrderByCheckoutSession>>;
+  try {
+    order = await getOrderByCheckoutSession(sessionId);
+  } catch (e: any) {
+    console.error('[stripe-connect commerce.expired] order lookup failed:', e?.message);
+    throw e;
+  }
+  if (!order) return; // not a commerce order — ignore
+
+  // Only a still-pending order frees stock. Already paid/cancelled/refunded →
+  // no-op (never release a confirmed sale; never double-release a cancel).
+  if (order.status !== 'pending') return;
+
+  // Release (no consume) per line so the reserved units return to available.
+  let lines: Awaited<ReturnType<typeof getOrderLines>> = [];
+  try {
+    lines = await getOrderLines(order.id);
+  } catch (e: any) {
+    console.error('[stripe-connect commerce.expired] getOrderLines failed — stock not freed:', e?.message, 'order:', order.id);
+    throw e; // let Stripe retry so the held stock eventually frees
+  }
+  for (const line of lines) {
+    if (!line.variant_id || line.qty <= 0) continue;
+    try {
+      await releaseInventory(line.variant_id, line.qty, false);
+    } catch (e: any) {
+      console.error('[stripe-connect commerce.expired] releaseInventory failed:', line.variant_id, e?.message, '— order', order.id);
+    }
+  }
+
+  try {
+    await updateOrder(order.id, { status: 'cancelled' });
+  } catch (e: any) {
+    console.error('[stripe-connect commerce.expired] updateOrder(cancelled) failed:', e?.message, 'order:', order.id);
   }
 }
 

@@ -7,6 +7,11 @@ import Divider from '../components/Divider';
 import StateMultiSelect from '../components/StateMultiSelect';
 import ImageUploader from '../components/ImageUploader';
 import Link from 'next/link';
+// lib/pricing is pure math (no server-only imports) — safe in this client
+// component for the LIVE deposit preview. The server (/api/rancher/commerce) is
+// the authority; this only mirrors deriveDeposit so the rancher sees the derived
+// deposit before saving, exactly like the setup wizard's one-input ladder.
+import { deriveDeposit, MIN_TIER_PRICE } from '@/lib/pricing';
 
 interface RancherInfo {
   id: string;
@@ -140,6 +145,32 @@ interface NetworkBenefit {
   contact_email: string;
 }
 
+// Commerce catalog shapes — mirror lib/commerce ProductWithVariants /
+// VariantWithAvailability as returned by /api/rancher/commerce (action:'list').
+// Money is in integer CENTS over the wire; the UI converts to dollars for
+// display + back to dollars when posting (the route re-converts to cents).
+interface CommerceVariant {
+  id: string;
+  product_id: string;
+  label: string;
+  price_cents: number;
+  deposit_cents: number;
+  weight_lbs: number | null;
+  position: number;
+  available: number | null; // null = unlimited (no inventory row)
+}
+interface CommerceProduct {
+  id: string;
+  rancher_id: string;
+  slug: string;
+  type: 'cow_share' | 'custom' | 'csa';
+  name: string;
+  description: string | null;
+  status: 'draft' | 'active' | 'archived';
+  position: number;
+  variants: CommerceVariant[];
+}
+
 type Tab = 'overview' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page';
 
 const statusStyles: Record<string, string> = {
@@ -203,6 +234,15 @@ export default function RancherDashboardPage() {
   const [customProducts, setCustomProducts] = useState<{ name: string; price: number | string; description: string; link: string }[]>([]);
   const [galleryPhotos, setGalleryPhotos] = useState<string[]>([]);
   const [newProduct, setNewProduct] = useState({ name: '', price: '', description: '', link: '' });
+  // Commerce catalog (Phase-1C) — the Supabase-backed product/variant/inventory
+  // editor. Lives alongside the legacy Airtable pricing/custom-products editors;
+  // both render until the migration cuts over. `commerceLoaded` distinguishes
+  // "not fetched yet" from "fetched, empty" so the build-dark placeholder only
+  // shows after a real (empty) response, never mid-load.
+  const [commerceProducts, setCommerceProducts] = useState<CommerceProduct[]>([]);
+  const [commerceLoaded, setCommerceLoaded] = useState(false);
+  const [commerceBusy, setCommerceBusy] = useState(false);
+  const [commerceError, setCommerceError] = useState('');
   // Capacity editor
   const [editingCapacity, setEditingCapacity] = useState(false);
   const [capacityValue, setCapacityValue] = useState('');
@@ -726,6 +766,72 @@ export default function RancherDashboardPage() {
       setGoLiveLoading(false);
     }
   };
+
+  // ── Commerce catalog (Phase-1C) ───────────────────────────────────────────
+  // All mutations go through ONE authenticated endpoint that injects the
+  // session rancher_id server-side; the client never sends a rancher_id.
+  const loadCommerce = async () => {
+    setCommerceError('');
+    try {
+      const res = await fetch('/api/rancher/commerce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'list' }),
+      });
+      if (!res.ok) {
+        // 503 = build-dark (DB not provisioned). Treat as empty so the
+        // placeholder shows; surface other errors.
+        if (res.status !== 503) {
+          const d = await res.json().catch(() => ({}));
+          setCommerceError(d.error || 'Could not load your catalog.');
+        }
+        setCommerceProducts([]);
+        setCommerceLoaded(true);
+        return;
+      }
+      const data = await res.json();
+      setCommerceProducts(Array.isArray(data.products) ? data.products : []);
+      setCommerceLoaded(true);
+    } catch {
+      setCommerceError('Network error loading your catalog.');
+      setCommerceProducts([]);
+      setCommerceLoaded(true);
+    }
+  };
+
+  // Generic action caller; reloads the catalog on success so the UI reflects
+  // the server's truth (availability, derived deposits, positions).
+  const commerceAction = async (payload: Record<string, unknown>): Promise<boolean> => {
+    setCommerceBusy(true);
+    setCommerceError('');
+    try {
+      const res = await fetch('/api/rancher/commerce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCommerceError(data.error || 'Could not save. Please try again.');
+        return false;
+      }
+      await loadCommerce();
+      return true;
+    } catch {
+      setCommerceError('Network error. Please try again.');
+      return false;
+    } finally {
+      setCommerceBusy(false);
+    }
+  };
+
+  // Lazy-load the catalog the first time the rancher opens "My Page".
+  useEffect(() => {
+    if (activeTab === 'my_page' && !commerceLoaded) {
+      loadCommerce();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, commerceLoaded]);
 
   if (loading) {
     return (
@@ -2379,6 +2485,20 @@ export default function RancherDashboardPage() {
                 </div>
               </div>
 
+              <Divider />
+
+              {/* Products & inventory (Phase-1C) — Supabase-backed catalog: edit
+                  cow-share variant prices, add/edit custom products with photo +
+                  finite/unlimited stock, archive/delete. Build-dark: shows a calm
+                  placeholder when the commerce DB isn't switched on yet. */}
+              <CommerceCatalogEditor
+                products={commerceProducts}
+                loaded={commerceLoaded}
+                busy={commerceBusy}
+                error={commerceError}
+                onAction={commerceAction}
+              />
+
               {/* Save button */}
               {pageError && (
                 <div className="p-3 border border-weathered text-weathered text-sm">{pageError}</div>
@@ -3575,5 +3695,469 @@ function RancherRotBadge({ days }: { days: number | null }) {
     >
       {label}
     </span>
+  );
+}
+
+// ── Commerce catalog editor (Phase-1C) ───────────────────────────────────────
+// Supabase-backed product/variant/inventory management. Sits beside the legacy
+// Airtable pricing + custom-products editors above (both run until the migration
+// cuts over). Every mutation posts to /api/rancher/commerce, which injects the
+// session rancher_id server-side and re-validates money in cents — this UI never
+// sends a rancher_id and treats the server as the source of truth (it reloads
+// after each write). Money is shown in dollars; the route converts to/from cents.
+
+function centsToDollarsStr(cents: number): string {
+  return (cents / 100).toFixed(2).replace(/\.00$/, '');
+}
+
+interface CommerceEditorProps {
+  products: CommerceProduct[];
+  loaded: boolean;
+  busy: boolean;
+  error: string;
+  onAction: (payload: Record<string, unknown>) => Promise<boolean>;
+}
+
+function CommerceCatalogEditor({ products, loaded, busy, error, onAction }: CommerceEditorProps) {
+  const [showAdd, setShowAdd] = useState(false);
+
+  // BUILD-DARK: fetched and empty → calm "rolling out" placeholder. Never break
+  // the rest of the dashboard. While still loading (not `loaded`) show a quiet
+  // line rather than anything jarring.
+  if (!loaded) {
+    return (
+      <div className="space-y-3">
+        <h3 className="font-serif text-lg border-b border-dust pb-2">Products &amp; inventory</h3>
+        <p className="text-xs text-dust">Loading your catalog…</p>
+      </div>
+    );
+  }
+
+  const empty = products.length === 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between border-b border-dust pb-2">
+        <h3 className="font-serif text-lg">Products &amp; inventory</h3>
+        {!empty && (
+          <button
+            type="button"
+            onClick={() => setShowAdd((s) => !s)}
+            className="text-xs uppercase tracking-widest font-semibold text-charcoal underline underline-offset-2 hover:text-saddle"
+          >
+            {showAdd ? 'Close' : '+ Add product'}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="p-3 border border-weathered text-weathered text-sm">{error}</div>
+      )}
+
+      {empty ? (
+        // Build-dark / no-catalog-yet placeholder. Calm, on-brand, non-blocking.
+        <div className="border border-dust bg-bone-warm p-5 md:p-6 space-y-2">
+          <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+            Catalog tools are rolling out
+          </p>
+          <p className="text-sm text-saddle leading-relaxed">
+            Live inventory and one-tap product editing are coming to your dashboard
+            shortly. For now, set your share prices and extra products in the sections
+            above — nothing here is required yet.
+          </p>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-dust">
+            Edit prices, set how many of each you have (leave stock blank for
+            unlimited / made-to-order), and archive anything you&apos;re not selling
+            right now. Deposits derive automatically from each price.
+          </p>
+
+          <div className="space-y-4">
+            {products.map((product) => (
+              <CommerceProductCard
+                key={product.id}
+                product={product}
+                busy={busy}
+                onAction={onAction}
+              />
+            ))}
+          </div>
+
+          {showAdd && (
+            <AddCustomProductForm busy={busy} onAction={onAction} onDone={() => setShowAdd(false)} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// One product (cow-share or custom) + its variants. Cow-share products carry the
+// quarter/half/whole variants (price-editable); custom products are typically a
+// single variant. Archive flips status; delete removes it entirely.
+function CommerceProductCard({
+  product,
+  busy,
+  onAction,
+}: {
+  product: CommerceProduct;
+  busy: boolean;
+  onAction: (payload: Record<string, unknown>) => Promise<boolean>;
+}) {
+  const archived = product.status === 'archived';
+  return (
+    <div className={`border p-4 space-y-3 ${archived ? 'border-dust bg-bone-warm opacity-70' : 'border-dust bg-white'}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">
+            {product.name}
+            {product.type === 'cow_share' && (
+              <span className="ml-2 text-[10px] uppercase tracking-widest text-dust">cow share</span>
+            )}
+            {archived && (
+              <span className="ml-2 text-[10px] uppercase tracking-widest text-weathered">archived</span>
+            )}
+          </p>
+          {product.description && (
+            <p className="text-xs text-saddle mt-0.5">{product.description}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              onAction({
+                action: 'upsert-product',
+                id: product.id,
+                name: product.name,
+                slug: product.slug,
+                type: product.type,
+                description: product.description ?? '',
+                status: archived ? 'active' : 'archived',
+              })
+            }
+            className="text-xs text-saddle hover:text-charcoal underline underline-offset-2 disabled:opacity-50"
+          >
+            {archived ? 'Unarchive' : 'Archive'}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (
+                typeof window !== 'undefined' &&
+                !window.confirm(`Delete "${product.name}" and all its options? This can't be undone.`)
+              ) {
+                return;
+              }
+              onAction({ action: 'delete-product', product_id: product.id });
+            }}
+            className="text-xs text-weathered hover:underline disabled:opacity-50"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {product.variants.length === 0 && <p className="text-xs text-dust">No options yet.</p>}
+        {product.variants.map((variant) => (
+          <CommerceVariantRow
+            key={variant.id}
+            product={product}
+            variant={variant}
+            busy={busy}
+            onAction={onAction}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// A single variant row: editable price (deposit auto-derives, shown live) +
+// finite/unlimited stock. Save price posts upsert-variant; stock posts
+// set-inventory (finite) or clear-inventory (blank = unlimited).
+function CommerceVariantRow({
+  product,
+  variant,
+  busy,
+  onAction,
+}: {
+  product: CommerceProduct;
+  variant: CommerceVariant;
+  busy: boolean;
+  onAction: (payload: Record<string, unknown>) => Promise<boolean>;
+}) {
+  const [price, setPrice] = useState<string>(centsToDollarsStr(variant.price_cents));
+  // Stock: '' means unlimited; a number means finite. Seed from availability.
+  const [stock, setStock] = useState<string>(
+    variant.available === null ? '' : String(variant.available),
+  );
+
+  const priceNum = parseFloat(price);
+  const priceValid = Number.isFinite(priceNum) && priceNum >= MIN_TIER_PRICE;
+  // Live deposit preview mirrors the server's lib/pricing derivation.
+  const derivedDeposit = priceValid ? deriveDeposit(priceNum) : 0;
+  const priceChanged = Math.round((priceNum || 0) * 100) !== variant.price_cents;
+  const stockChanged =
+    (stock.trim() === '' ? null : Math.floor(Number(stock))) !==
+    (variant.available === null ? null : variant.available);
+
+  const savePrice = () => {
+    if (!priceValid) return;
+    onAction({
+      action: 'upsert-variant',
+      id: variant.id,
+      product_id: product.id,
+      label: variant.label,
+      price_dollars: priceNum,
+      // deposit omitted → server derives via lib/pricing (matches preview).
+      weight_lbs: variant.weight_lbs ?? undefined,
+    });
+  };
+
+  const saveStock = () => {
+    const raw = stock.trim();
+    if (raw === '') {
+      // Blank = unlimited → clear the inventory row.
+      onAction({ action: 'clear-inventory', variant_id: variant.id });
+      return;
+    }
+    const qty = Math.floor(Number(raw));
+    if (!Number.isFinite(qty) || qty < 0) return;
+    onAction({ action: 'set-inventory', variant_id: variant.id, qty_available: qty });
+  };
+
+  return (
+    <div className="border border-dust bg-bone p-3 space-y-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-xs font-medium uppercase tracking-wider">{variant.label}</p>
+        <p className="text-[11px] text-dust">
+          {variant.available === null ? 'Unlimited stock' : `${variant.available} in stock`}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        {/* Price → live deposit preview */}
+        <div className="space-y-1">
+          <label className="text-[11px] text-dust">Price ($)</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            className="w-full px-3 py-2 border border-dust bg-white focus:outline-none focus:border-charcoal text-sm"
+          />
+          <p className="text-[11px] text-dust">
+            {priceValid ? (
+              <>
+                Deposit auto-set to{' '}
+                <strong className="text-saddle">${derivedDeposit.toLocaleString()}</strong>
+              </>
+            ) : (
+              <span className="text-weathered">Min ${MIN_TIER_PRICE}</span>
+            )}
+          </p>
+        </div>
+
+        {/* Stock: blank = unlimited */}
+        <div className="space-y-1">
+          <label className="text-[11px] text-dust">
+            Stock <span className="text-dust">(blank = unlimited)</span>
+          </label>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            value={stock}
+            onChange={(e) => setStock(e.target.value)}
+            placeholder="∞"
+            className="w-full px-3 py-2 border border-dust bg-white focus:outline-none focus:border-charcoal text-sm"
+          />
+          <p className="text-[11px] text-dust">
+            {stock.trim() === ''
+              ? 'Made-to-order'
+              : `${Math.max(0, Math.floor(Number(stock)) || 0)} available`}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={busy || !priceValid || !priceChanged}
+          onClick={savePrice}
+          className="px-3 py-1.5 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-40"
+        >
+          Save price
+        </button>
+        <button
+          type="button"
+          disabled={busy || !stockChanged}
+          onClick={saveStock}
+          className="px-3 py-1.5 text-xs border border-dust hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40"
+        >
+          {stock.trim() === '' ? 'Set unlimited' : 'Save stock'}
+        </button>
+        {/* Custom products' extra variants can be removed; cow-share variants
+            stay (their pricing is structural — archive the product instead). */}
+        {product.type !== 'cow_share' && product.variants.length > 1 && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onAction({ action: 'delete-variant', variant_id: variant.id })}
+            className="text-xs text-weathered hover:underline ml-auto disabled:opacity-50"
+          >
+            Remove option
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Add a brand-new custom product: name, one price (deposit auto-derives), an
+// optional photo via the existing ImageUploader, and optional starting stock.
+// Posts a single upsert-product that creates the product + its lone variant
+// (+ inventory when stock is given) server-side in one round-trip.
+function AddCustomProductForm({
+  busy,
+  onAction,
+  onDone,
+}: {
+  busy: boolean;
+  onAction: (payload: Record<string, unknown>) => Promise<boolean>;
+  onDone: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [price, setPrice] = useState('');
+  const [description, setDescription] = useState('');
+  const [stock, setStock] = useState('');
+  const [photo, setPhoto] = useState('');
+  const [localError, setLocalError] = useState('');
+
+  const priceNum = parseFloat(price);
+  const priceValid = Number.isFinite(priceNum) && priceNum >= MIN_TIER_PRICE;
+  const derivedDeposit = priceValid ? deriveDeposit(priceNum) : 0;
+
+  const submit = async () => {
+    setLocalError('');
+    if (!name.trim()) {
+      setLocalError('Give the product a name.');
+      return;
+    }
+    if (!priceValid) {
+      setLocalError(`Enter a price of at least $${MIN_TIER_PRICE}.`);
+      return;
+    }
+    const ok = await onAction({
+      action: 'upsert-product',
+      name: name.trim(),
+      type: 'custom',
+      status: 'active',
+      description: description.trim(),
+      // image_url is accepted by the route's payload but not a product column in
+      // Phase-1C — passing it is harmless and lets a later phase wire the photo
+      // through without a client change.
+      image_url: photo || undefined,
+      price_dollars: priceNum,
+      variant_label: name.trim(),
+      qty_available: stock.trim() === '' ? undefined : Math.floor(Number(stock)),
+    });
+    if (ok) {
+      setName('');
+      setPrice('');
+      setDescription('');
+      setStock('');
+      setPhoto('');
+      onDone();
+    }
+  };
+
+  return (
+    <div className="border-2 border-saddle bg-white p-4 space-y-3">
+      <p className="text-sm font-medium uppercase tracking-wider text-saddle">New product</p>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-[11px] text-dust">Name</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Beef sampler box"
+            className="w-full px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] text-dust">Price ($)</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            placeholder="250"
+            className="w-full px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
+          />
+          <p className="text-[11px] text-dust">
+            {priceValid ? (
+              <>
+                Deposit <strong className="text-saddle">${derivedDeposit.toLocaleString()}</strong>
+              </>
+            ) : (
+              <span>Min ${MIN_TIER_PRICE}</span>
+            )}
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-[11px] text-dust">
+          Short description <span className="text-dust">(optional)</span>
+        </label>
+        <input
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="10 lbs of mixed cuts — steaks, roasts, ground"
+          className="w-full px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <label className="text-[11px] text-dust">
+          Starting stock <span className="text-dust">(optional — blank = unlimited)</span>
+        </label>
+        <input
+          type="number"
+          inputMode="numeric"
+          min={0}
+          value={stock}
+          onChange={(e) => setStock(e.target.value)}
+          placeholder="∞"
+          className="w-full px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
+        />
+      </div>
+
+      <ImageUploader label="Photo" hint="(optional)" value={photo} onChange={setPhoto} />
+
+      {localError && <p className="text-xs text-weathered">{localError}</p>}
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={submit}
+          className="px-5 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+        >
+          {busy ? 'Saving…' : 'Add product'}
+        </button>
+        <button type="button" onClick={onDone} className="text-xs text-dust hover:text-charcoal">
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }

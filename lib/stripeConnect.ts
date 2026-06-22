@@ -378,6 +378,165 @@ export async function expireCheckoutSession(opts: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Phase 1B — commerce cart checkout (multi-line direct-charge Checkout Session)
+// ---------------------------------------------------------------------------
+//
+// The MONEY path for the commerce platform (catalog → cart → checkout). Mirrors
+// createDepositCheckout EXACTLY (same V2 direct-charge pattern on the rancher's
+// connected account via the `stripeAccount` header, same apiVersion, same
+// automatic_tax, same deterministic idempotency-key discipline) but for an
+// arbitrary multi-variant cart instead of a single cow-share cut.
+//
+// Charge composition (what the buyer's card is hit for):
+//   • one line item PER variant for its DEPOSIT × qty (the upfront reserve the
+//     rancher collects now; the fulfillment balance is settled rancher-direct
+//     later, exactly like the cow-share deposit flow)
+//   • one COMBINED "BuyHalfCow service fee" line == applicationFeeCents (the
+//     platform commission across every line, already summed by the caller)
+//   • application_fee_amount == applicationFeeCents routes that combined fee to
+//     the BHC platform account; the rest stays in the rancher's Connect balance.
+//
+// MONEY INVARIANT: application_fee_amount must be ≤ the charged total. The
+// charged total is (Σ depositCents×qty) + applicationFeeCents, so the fee is
+// always strictly less than the total by exactly the deposits sum (which is
+// > 0 for any real cart). The caller additionally guarantees per-variant
+// deposit < price and fee ≤ ~10% of price, so deposits comfortably exceed the
+// fee. We do NOT clamp here — an inverted cart is a caller bug we want to
+// surface, not silently paper over.
+
+export interface CartCheckoutLineItem {
+  /** Display label for the variant (shown on the buyer's Stripe receipt). */
+  label: string;
+  /** Per-unit deposit collected upfront, in cents. */
+  depositCents: number;
+  /** Per-unit full sale price in cents (for the receipt fee description only). */
+  fullPriceCents: number;
+  /** Quantity ordered for this variant. */
+  qty: number;
+}
+
+export interface CreateCartCheckoutInput {
+  rancherConnectAccountId: string; // acct_* — direct charge target
+  tier: TierSlug;
+  lineItems: CartCheckoutLineItem[];
+  /**
+   * Total platform commission across ALL lines, in cents, pre-computed by the
+   * caller (Σ round(price_cents × qty × commissionRate)). Collected in full at
+   * checkout as a single combined fee line + set as application_fee_amount.
+   */
+  applicationFeeCents: number;
+  referralId?: string;
+  buyerEmail?: string;
+  successUrl: string;
+  cancelUrl: string;
+  /**
+   * Extra metadata stamped on BOTH the Checkout Session and the PaymentIntent.
+   * The cart route passes { orderId } so the webhook can cross-check, though the
+   * authoritative lookup is by Checkout Session id (stripe_checkout_session_id).
+   */
+  metadata?: Record<string, string>;
+}
+
+export async function createCartCheckout(
+  input: CreateCartCheckoutInput,
+): Promise<{ url: string; sessionId: string }> {
+  const stripe = getStripeClient();
+
+  // Build one Stripe line item per variant for its DEPOSIT × qty. The deposit
+  // (not the full price) is what the buyer pays now — same upfront-reserve
+  // model as createDepositCheckout. fullPriceCents only feeds the receipt
+  // description so the buyer can see the balance owed at fulfillment.
+  const lineItems: any[] = input.lineItems.map((li) => {
+    const balancePerUnit = Math.max(0, li.fullPriceCents - li.depositCents);
+    return {
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: li.label,
+          ...(balancePerUnit > 0
+            ? {
+                description: `Deposit now $${(li.depositCents / 100).toFixed(2)}/ea · balance $${(balancePerUnit / 100).toFixed(2)}/ea due to rancher at fulfillment`,
+              }
+            : {}),
+        },
+        unit_amount: li.depositCents,
+      },
+      quantity: li.qty,
+    };
+  });
+
+  // Combined BHC service fee — ONE line for the whole cart (== application fee).
+  // Omitted entirely when zero (e.g. Operator tier at 0% commission) so the
+  // buyer's receipt has no $0.00 noise + application_fee_amount stays unset.
+  if (input.applicationFeeCents > 0) {
+    lineItems.push({
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: 'BuyHalfCow service fee',
+          description: 'Platform commission across your order — covers Stripe processing and order routing.',
+        },
+        unit_amount: input.applicationFeeCents,
+      },
+      quantity: 1,
+    });
+  }
+
+  // Deterministic idempotency key. A genuine double-submit of the SAME cart
+  // (same order) dedupes safely; a different cart is a different orderId →
+  // a new idempotent request. We key on the order id + the fee so that a
+  // re-priced retry of the same order (fee changed) is treated as new rather
+  // than colliding with a different request body (the failure mode the deposit
+  // route's cut-specific key was added to avoid). Falls back to a composite of
+  // the connect account + fee when no orderId is supplied.
+  const idemSeed = input.metadata?.orderId || `${input.rancherConnectAccountId}-${input.lineItems.map((l) => `${l.label}:${l.depositCents}x${l.qty}`).join('|')}`;
+  const idempotencyKey = `cart-${idemSeed}-${input.applicationFeeCents}`;
+
+  const baseMetadata: Record<string, string> = {
+    type: 'commerce_order',
+    tier: input.tier,
+    applicationFeeCents: String(input.applicationFeeCents),
+    ...(input.referralId ? { referralId: input.referralId } : {}),
+    ...(input.metadata || {}),
+  };
+
+  const session = await stripe.checkout.sessions.create(
+    {
+      mode: 'payment',
+      line_items: lineItems,
+      ...(input.buyerEmail ? { customer_email: input.buyerEmail } : {}),
+      payment_intent_data: {
+        // application_fee_amount routes the combined service fee to the BHC
+        // platform account; the deposit lines stay in the rancher's Connect
+        // balance. Omitted when zero (Operator tier) so Stripe doesn't reject
+        // a 0-amount application fee.
+        ...(input.applicationFeeCents > 0
+          ? { application_fee_amount: input.applicationFeeCents }
+          : {}),
+        metadata: baseMetadata,
+      },
+      metadata: baseMetadata,
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      // Same as createDepositCheckout: customer_update intentionally omitted
+      // (no `customer` set), automatic_tax still collects the buyer's address
+      // during Checkout for tax calculation.
+      automatic_tax: { enabled: true },
+    },
+    {
+      stripeAccount: input.rancherConnectAccountId,
+      idempotencyKey,
+    },
+  );
+
+  const url = session.url;
+  if (!url) {
+    throw new Error('Stripe Checkout Session (cart) returned no url');
+  }
+  return { url, sessionId: session.id };
+}
+
 // ─── FINAL INVOICE (balance owed after deposit) ────────────────────────────
 //
 // Rancher-initiated invoice for the FULL fulfillment balance — sent to the
