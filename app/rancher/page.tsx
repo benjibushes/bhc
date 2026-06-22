@@ -83,6 +83,17 @@ interface Stats {
   totalCommission: number;
   unpaidCommission: number;
   netEarnings: number;
+  // Recent-window lead-quality summary (computed server-side in
+  // /api/rancher/dashboard). Optional — older cached payloads omit it, so every
+  // read is guarded. The "zero-cost win" the cockpit surfaces: close rate.
+  leadQuality?: {
+    recentWindowSize: number;
+    closedRecent: number;
+    wonRecent: number;
+    inProgressRecent: number;
+    introRecent: number;
+    closeRatePct: number;
+  };
 }
 
 interface Referral {
@@ -1709,6 +1720,13 @@ export default function RancherDashboardPage() {
                       />
                     ))}
                   </div>
+                ) : activeRefs.length === 0 ? (
+                  // Truly-empty inbox (brand-new rancher, ads cohort lands here
+                  // first): suppress this filter-empty card so the single calm
+                  // "No active leads right now." card below is the ONLY message.
+                  // Without this, both cards stacked. Show the filter-empty copy
+                  // only when leads EXIST but the active filter hid them all.
+                  null
                 ) : (
                   <div className="p-8 border border-dust text-center bg-white">
                     <p className="text-saddle">No leads match the current filter.</p>
@@ -3674,6 +3692,16 @@ function HomeTab({
           <p className="text-xs text-dust mt-0.5">
             {stats.closedWon} deal{stats.closedWon === 1 ? '' : 's'} closed
           </p>
+          {/* Zero-cost win: recent close rate — surfaces lead quality so the
+              rancher sees the platform sends buyers that convert. Render only
+              when the server computed a real, non-zero rate from closed deals. */}
+          {stats.leadQuality &&
+            stats.leadQuality.closedRecent > 0 &&
+            stats.leadQuality.closeRatePct > 0 && (
+              <p className="text-xs text-saddle mt-0.5">
+                Close rate: {stats.leadQuality.closeRatePct}% ({stats.leadQuality.wonRecent} of {stats.leadQuality.closedRecent} recent)
+              </p>
+            )}
         </div>
         <div className="border border-dust bg-white p-4 flex flex-col justify-between">
           <div>

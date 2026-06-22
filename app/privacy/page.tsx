@@ -138,37 +138,79 @@ export default function PrivacyPage() {
 
             <section className="space-y-4">
               <h2 className="font-serif text-2xl">
-                7. Data Retention
+                7. Advertising & Measurement
               </h2>
               <p>
-                We retain your personal information for as long as necessary to fulfill the purposes outlined 
+                We run ads on Meta platforms (Facebook and Instagram) and need to measure whether they
+                actually work. To do that, we use two Meta tools together:
+              </p>
+              <ul className="list-disc list-inside space-y-2 ml-4">
+                <li>
+                  <strong>The Meta Pixel</strong> — a small piece of code on our website that records
+                  actions like visiting a page or starting an application.
+                </li>
+                <li>
+                  <strong>The Conversions API</strong> — a server-to-server connection that reports those
+                  same actions to Meta from our side, so measurement stays accurate even when a browser
+                  blocks the Pixel.
+                </li>
+              </ul>
+              <p>
+                For measurement and ad matching, we share a limited set of information with Meta, including
+                a <strong>hashed (scrambled) version of your email, phone number, and IP address</strong>.
+                Hashing means we send a one-way fingerprint rather than the raw values. Meta uses this to
+                tell us, in aggregate, which ads led to real interest — and to show our ads to people like
+                you. We do not sell this information.
+              </p>
+              <p>
+                You're in control. You can manage or disconnect this activity at any time through Meta's
+                Off-Facebook Activity settings:
+              </p>
+              <p>
+                <a
+                  href="https://www.facebook.com/off_facebook_activity"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-charcoal hover:text-saddle transition-colors underline underline-offset-2"
+                >
+                  facebook.com/off_facebook_activity →
+                </a>
+              </p>
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="font-serif text-2xl">
+                8. Data Retention
+              </h2>
+              <p>
+                We retain your personal information for as long as necessary to fulfill the purposes outlined
                 in this Privacy Policy, unless a longer retention period is required by law.
               </p>
             </section>
 
             <section className="space-y-4">
               <h2 className="font-serif text-2xl">
-                8. Children's Privacy
+                9. Children's Privacy
               </h2>
               <p>
-                Our Platform is not intended for individuals under 18 years of age. We do not knowingly 
+                Our Platform is not intended for individuals under 18 years of age. We do not knowingly
                 collect personal information from children.
               </p>
             </section>
 
             <section className="space-y-4">
               <h2 className="font-serif text-2xl">
-                9. Changes to This Policy
+                10. Changes to This Policy
               </h2>
               <p>
-                We may update this Privacy Policy from time to time. We will notify you of material changes 
+                We may update this Privacy Policy from time to time. We will notify you of material changes
                 via email or Platform notification. Continued use after changes constitutes acceptance.
               </p>
             </section>
 
             <section className="space-y-4">
               <h2 className="font-serif text-2xl">
-                10. Contact Us
+                11. Contact Us
               </h2>
               <p>
                 For questions about this Privacy Policy or to exercise your privacy rights, contact us at:

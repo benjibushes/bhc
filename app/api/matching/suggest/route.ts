@@ -11,6 +11,7 @@ import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { requireAdmin } from '@/lib/adminAuth';
+import { MIN_TIER_PRICE } from '@/lib/pricing';
 
 export const maxDuration = 90;
 
@@ -371,6 +372,24 @@ export async function POST(request: Request) {
       // the signup gate + warmup cron. Don't inline a copy here — drift is
       // exactly how 48 buyers got stranded in TN/OR waitlists.
       if (!isRancherOperationalForBuyers(r)) return false;
+      // ── tier_v2 sub-floor / no-price guard (2026-06-22) ──────────────────
+      // A tier_v2 rancher whose every cut price is missing OR below
+      // MIN_TIER_PRICE cannot accept a deposit: /api/checkout/deposit enforces
+      // the same floor and 409s on EVERY cut (route.ts ~193, the DD-Ranch
+      // $7.40-whole-cow class of mis-entry), so a paid-ad buyer routed here
+      // dead-ends at checkout. Refuse to match them until they publish a real
+      // price ≥ MIN_TIER_PRICE on at least one cut. Mirrors the deposit route's
+      // floor exactly. Legacy / Payment-Link ranchers use a DIFFERENT checkout
+      // (their own links on /ranchers/[slug]) that doesn't enforce this floor,
+      // so the guard is scoped to tier_v2 only — never applied to legacy.
+      if (String(r['Pricing Model'] || 'legacy') === 'tier_v2') {
+        const tierPrices = [r['Quarter Price'], r['Half Price'], r['Whole Price']];
+        const hasFloorPrice = tierPrices.some((p) => {
+          const n = Number(p);
+          return Number.isFinite(n) && n >= MIN_TIER_PRICE;
+        });
+        if (!hasFloorPrice) return false;
+      }
       const maxReferrals = getMaxActiveReferrals(r);
       const currentReferrals = r['Current Active Referrals'] || 0;
       if (isHotLead) {
