@@ -1,6 +1,6 @@
 # BHC Platform Map — Top-Down Source of Truth
 
-_Last updated: 2026-06-15. Accurate to current production code. This is the single
+_Last updated: 2026-06-22 (cockpit launch note appended below; core map current to 2026-06-15). Accurate to current production code. This is the single
 crystal-clear picture of the whole machine: service offerings, the money model, the
 rancher onboarding funnel, the customer funnel, and every tool that executes. Where an
 older doc disagrees, this one wins. Drift between code and comments is flagged in §6._
@@ -13,6 +13,8 @@ older doc disagrees, this one wins. Drift between code and comments is flagged i
 > tie-back, capacity-drift Slot Locked, migration-status guards on 3 crons, rancher-followup
 > live Cal link, Telegram HTML-escaping, Connect-stuck monitoring). For the marketing-funnel +
 > paths-to-money view, see [`MONEY-FUNNELS.md`](MONEY-FUNNELS.md).
+>
+> **2026-06-22 update — launch product shipped.** The rancher dashboard is now the **business cockpit** (PR #88, merged + live): a Home triage tab (tap-to-act action cards + "you've been paid $X · next payout" money strip) + a 5-item nav spine (Home·Deals·My Page·Messages·Money). Pricing collapsed to **one editor** — `lib/pricing.ts` one-input whole-price → half/quarter + 25% deposit (replaced 3 non-reconciling editors). Onboarding is now **close-first**: the setup wizard gates on the discovery/onboarding call BEFORE setup (`canSkipBooking()` spares already-onboarded migrators). PR #89 then removed residual cruft (11 native popups → branded inline notices, a "coming soon" placeholder, hardcoded operator Cal-link/gmail). Migrators get all of this via the same `/rancher` + `/rancher/setup` surfaces. The **Connect webhook is now registered** (`STRIPE_CONNECT_WEBHOOK_SECRET` live, 7 events) — but **no deposit has settled end-to-end yet**; the gate before ad spend is ONE real-card smoke deposit through Renick. The **full commerce platform (catalog/cart/inventory on Supabase) is built but PARKED** (`commerce-platform-phase-0`) — pilot-behind-a-flag later, NOT the launch. (§1 dashboard + §3 rancher funnel reflect this; the cow-share deposit money model in §2 is unchanged.)
 
 ---
 
