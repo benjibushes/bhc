@@ -212,6 +212,9 @@ function serializeGallery(urls: string[]): string {
 }
 
 const CALENDLY_LINK = 'https://cal.com/ben-beauchman-1itnsg/30min';
+// Operator inbox surfaced to ranchers as the Cal "Additional Guest" so Ben sees
+// every booking. Extracted from inline JSX — value unchanged.
+const OPERATOR_NOTIFY_EMAIL = 'benibeauchman@gmail.com';
 
 const STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -1478,7 +1481,7 @@ export default function RancherSetupWizard() {
                     </li>
                     <li>
                       In that event&rsquo;s settings, add{' '}
-                      <code className="bg-white border border-dust px-1.5 py-0.5">benibeauchman@gmail.com</code>{' '}
+                      <code className="bg-white border border-dust px-1.5 py-0.5">{OPERATOR_NOTIFY_EMAIL}</code>{' '}
                       as an <strong>Additional Guest</strong> (Cal.com → Event Type → Limits/Workflows → Add invitee).
                       That&rsquo;s how Ben sees every booking and can join if needed.
                     </li>
@@ -3038,7 +3041,7 @@ function CallStep({
   const status = (rancher.onboardingStatus || '').toString();
   const calBookingUrl =
     process.env.NEXT_PUBLIC_CALENDLY_LINK ||
-    'https://cal.com/ben-beauchman-1itnsg/30min';
+    CALENDLY_LINK;
   // Cal.com inline embed URL — append `?embed=true&theme=light` for clean iframe
   const embedUrl = `${calBookingUrl}?embed=true&theme=light&hideEventTypeDetails=false`;
 
@@ -3201,6 +3204,9 @@ function TierPickStep({
   const [polledStatus, setPolledStatus] = useState<string>(subscriptionStatus);
   const [lastRancher, setLastRancher] = useState<Rancher | null>(null);
   const [checking, setChecking] = useState(false);
+  // Step-level branded error notice — replaces native alert() in the card
+  // onClick handlers below. Shown above the tier grid no matter which card erred.
+  const [tierErr, setTierErr] = useState('');
   // Optimistic free-tier flag. The free (Legacy Connect) path has NO Stripe
   // subscription, so we must not gate Continue on Subscription Status for it.
   // We flip this true the instant the rancher picks Legacy Connect (or auto-
@@ -3334,6 +3340,13 @@ function TierPickStep({
         </p>
       </header>
 
+      {tierErr && (
+        <div className="p-3 border-l-4 border-red-500 bg-red-50 text-sm text-red-900 flex items-center justify-between gap-3">
+          <span>{tierErr}</span>
+          <button type="button" onClick={() => setTierErr('')} className="text-lg leading-none hover:opacity-70">×</button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         {TIER_CARDS.map((card) => {
           const isFreeCard = card.slug === 'legacy_connect';
@@ -3383,6 +3396,7 @@ function TierPickStep({
                 <button
                   type="button"
                   onClick={async () => {
+                    setTierErr('');
                     try {
                       setChecking(true);
                       const res = await fetch('/api/rancher/tier/select', {
@@ -3392,7 +3406,7 @@ function TierPickStep({
                       });
                       const data = await res.json();
                       if (!res.ok) {
-                        alert(data?.error || `Could not select ${card.label}`);
+                        setTierErr(data?.error || `Could not select ${card.label}`);
                         return;
                       }
                       // Free path is locked in the moment select succeeds —
@@ -3412,7 +3426,7 @@ function TierPickStep({
                         }
                       }
                     } catch (e: any) {
-                      alert(e?.message || 'Network error — please retry');
+                      setTierErr(e?.message || 'Network error — please retry');
                     } finally {
                       setChecking(false);
                     }
@@ -3440,6 +3454,7 @@ function TierPickStep({
                 <button
                   type="button"
                   onClick={async () => {
+                    setTierErr('');
                     try {
                       setChecking(true);
                       const res = await fetch('/api/rancher/tier/select', {
@@ -3453,7 +3468,7 @@ function TierPickStep({
                       });
                       const data = await res.json();
                       if (!res.ok) {
-                        alert(data?.error || `Could not start ${card.label} checkout`);
+                        setTierErr(data?.error || `Could not start ${card.label} checkout`);
                         setChecking(false);
                         return;
                       }
@@ -3465,10 +3480,10 @@ function TierPickStep({
                       }
                       // No url returned — surface so the rancher isn't stuck on
                       // a silent no-op.
-                      alert('Could not start checkout — please retry.');
+                      setTierErr('Could not start checkout — please retry.');
                       setChecking(false);
                     } catch (e: any) {
-                      alert(e?.message || 'Network error — please retry');
+                      setTierErr(e?.message || 'Network error — please retry');
                       setChecking(false);
                     }
                   }}

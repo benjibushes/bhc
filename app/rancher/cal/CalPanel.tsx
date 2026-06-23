@@ -40,6 +40,9 @@ export default function CalPanel() {
   const [disconnecting, setDisconnecting] = useState(false);
   const [settingUp, setSettingUp] = useState(false);
   const [error, setError] = useState('');
+  // Two-step inline disconnect confirm — replaces the native confirm() dialog.
+  // First click arms it (shows warning + Yes/Cancel); Yes runs handleDisconnect.
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -80,9 +83,6 @@ export default function CalPanel() {
   }, [status.state, fetchBookings]);
 
   async function handleDisconnect() {
-    if (!confirm('Disconnect Cal? Buyers will no longer be able to self-book through BHC until you reconnect.')) {
-      return;
-    }
     setDisconnecting(true);
     setError('');
     try {
@@ -97,6 +97,7 @@ export default function CalPanel() {
       setError(e?.message || 'Could not disconnect');
     } finally {
       setDisconnecting(false);
+      setConfirmingDisconnect(false);
     }
   }
 
@@ -188,15 +189,43 @@ export default function CalPanel() {
             >
               {settingUp ? 'Setting up…' : 'Sync event types + webhook'}
             </button>
-            <button
-              type="button"
-              onClick={handleDisconnect}
-              disabled={disconnecting}
-              className="px-4 py-2 text-xs uppercase tracking-widest border border-rust text-rust hover:bg-rust hover:text-bone disabled:opacity-50"
-            >
-              {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-            </button>
+            {!confirmingDisconnect && (
+              <button
+                type="button"
+                onClick={() => setConfirmingDisconnect(true)}
+                disabled={disconnecting}
+                className="px-4 py-2 text-xs uppercase tracking-widest border border-rust text-rust hover:bg-rust hover:text-bone disabled:opacity-50"
+              >
+                Disconnect
+              </button>
+            )}
           </div>
+
+          {confirmingDisconnect && (
+            <div className="border border-rust bg-rust/5 p-3 space-y-2">
+              <p className="text-sm text-charcoal">
+                Disconnect Cal? Buyers will no longer be able to self-book through BHC until you reconnect.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                  className="px-4 py-2 text-xs uppercase tracking-widest border border-rust text-rust hover:bg-rust hover:text-bone disabled:opacity-50"
+                >
+                  {disconnecting ? 'Disconnecting…' : 'Yes, disconnect'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDisconnect(false)}
+                  disabled={disconnecting}
+                  className="px-4 py-2 text-xs uppercase tracking-widest border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           <div>
             <p className="text-xs uppercase tracking-widest text-saddle mb-2">

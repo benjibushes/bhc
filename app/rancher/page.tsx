@@ -1962,9 +1962,6 @@ export default function RancherDashboardPage() {
                     <p className="font-serif text-base text-charcoal mt-1.5 mb-2">
                       Always-on in your state
                     </p>
-                    <p className="text-xs text-saddle italic">
-                      Live spend dashboard coming soon
-                    </p>
                   </div>
                 </div>
               </div>
@@ -4160,19 +4157,23 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
 
   const anyBanner =
     noTier || showConnectNotConnected || showConnectOnboarding || showConnectRestricted || showSubBroken;
+  // Branded inline error notice replaces native alert() in both handlers below.
+  // Declared before the early return to keep hook order stable.
+  const [bannerErr, setBannerErr] = useState('');
   if (!anyBanner) return null;
 
   // Opens Stripe Connect onboarding link from /api/rancher/connect/start in
   // a new tab. Same handler powers #2 + #3 (start auto-resumes existing
   // onboarding when account already exists).
   async function openConnectOnboarding() {
+    setBannerErr('');
     try {
       const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
       const data = await res.json();
       if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
-      else alert(data?.error || 'Could not start Stripe Connect onboarding.');
+      else setBannerErr(data?.error || 'Could not start Stripe Connect onboarding.');
     } catch {
-      alert('Network error — try again in a moment.');
+      setBannerErr('Network error — try again in a moment.');
     }
   }
 
@@ -4180,18 +4181,25 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
   // Connect cases where the portal lets the rancher fix payment method or
   // resolve the dispute that flagged them).
   async function openBillingPortal() {
+    setBannerErr('');
     try {
       const res = await fetch('/api/rancher/tier/portal', { credentials: 'include' });
       const data = await res.json();
       if (res.ok && data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
-      else alert(data?.error || 'Could not open billing portal.');
+      else setBannerErr(data?.error || 'Could not open billing portal.');
     } catch {
-      alert('Network error — try again in a moment.');
+      setBannerErr('Network error — try again in a moment.');
     }
   }
 
   return (
     <div className="space-y-3">
+      {bannerErr && (
+        <div className="p-3 border-l-4 border-red-500 bg-red-50 text-sm text-red-900 flex items-center justify-between gap-3">
+          <span>{bannerErr}</span>
+          <button type="button" onClick={() => setBannerErr('')} className="text-lg leading-none hover:opacity-70">×</button>
+        </div>
+      )}
       {noTier && (
         <div className="p-4 border-l-4 border-blue-500 bg-blue-50 flex items-center justify-between gap-4 flex-wrap">
           <p className="text-sm text-blue-900">
