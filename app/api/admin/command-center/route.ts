@@ -167,18 +167,20 @@ export async function GET(request: Request) {
   try {
     if (consumers && referrals) {
       const approved = consumers.filter((c: any) => str(c['Status']) === 'Approved');
+      // Distinct buyers that have a referral = "matched". Real + populated.
+      const matchedBuyers = new Set(
+        referrals.flatMap((r: any) => (Array.isArray(r['Buyer']) ? r['Buyer'] : [])).filter(Boolean),
+      ).size;
+      // Stages kept to fields that actually carry data today, so conversion %
+      // stays honest + monotonic. "Call Booked" (Sales Call Booked At) is dead
+      // until the Cal sales-event webhook is wired; "Deposit" can't be counted
+      // cumulatively until the deposit rail settles a live payment (Payments
+      // table populates) — both would render a fake cliff / >100% step. Re-add
+      // a Deposit stage sourced from Payments once deposits flow.
       const stages = [
         { key: 'signup', label: 'Signup', count: approved.length },
         { key: 'qualified', label: 'Qualified', count: approved.filter((c: any) => c['Qualified At']).length },
-        { key: 'booked', label: 'Call Booked', count: referrals.filter((r: any) => r['Sales Call Booked At']).length },
-        {
-          key: 'deposit',
-          label: 'Deposit',
-          count: referrals.filter((r: any) => {
-            const s = str(r['Status']);
-            return s === 'Awaiting Payment' || s === 'Slot Locked';
-          }).length,
-        },
+        { key: 'matched', label: 'Matched', count: matchedBuyers },
         { key: 'closed', label: 'Closed Won', count: referrals.filter((r: any) => str(r['Status']) === 'Closed Won').length },
       ];
 
@@ -343,7 +345,11 @@ export async function GET(request: Request) {
 
     touchpoints = {
       email: {
-        configured: emailEventsConfigured,
+        // "Configured" only when events are actually FLOWING (delivered > 0) —
+        // not merely when the secret is set. Open/click tracking can be off in
+        // Resend even with the webhook secret present, which would otherwise
+        // show a misleading "0 opens" instead of the config hint.
+        configured: emailEventsConfigured && (emailDelivered || 0) > 0,
         opens: emailOpens,
         clicks: emailClicks,
         delivered: emailDelivered,

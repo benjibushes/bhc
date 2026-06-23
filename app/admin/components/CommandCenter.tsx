@@ -202,8 +202,8 @@ export default function CommandCenter() {
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <Metric
                 label="Open pipeline"
-                value={usd(money.openPipelineRevenue)}
-                sub={`${money.openPipelineCount} active`}
+                value={`${money.openPipelineCount}`}
+                sub="active deals (value set at close)"
               />
               {money.depositsCollected == null ? (
                 <PendingMetric label="Deposits collected" hint="no payments recorded yet" />
