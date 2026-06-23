@@ -38,6 +38,19 @@ function buildEngageUrl(consumerId: string): string {
   return `${SITE_URL}/api/warmup/engage?token=${token}`;
 }
 
+// QUALIFICATION GATE (P0 2026-06-23). Platform rule (per MEMORY +
+// matching/suggest:126-127): a buyer is qualified ONLY after funnel + quiz —
+// `Qualified At` set AND `Qualification Score` >= the platform threshold.
+// Warmup previously fired on Buyer Stage / Referral Status ALONE, warming
+// unqualified buyers (the exact mass-spam anti-pattern the guardrails forbid).
+// Mirror the SAME gate matching/suggest enforces so we never warm a buyer who
+// hasn't cleared the quiz.
+const QUALIFICATION_SCORE_THRESHOLD = 75;
+function isBuyerQualified(buyer: any): boolean {
+  const qualScore = Number(buyer['Qualification Score'] || 0);
+  return !!buyer['Qualified At'] && qualScore >= QUALIFICATION_SCORE_THRESHOLD;
+}
+
 function nowISO(): string {
   return new Date().toISOString();
 }
@@ -166,6 +179,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             skipReasons['bounced-unsub'] = (skipReasons['bounced-unsub'] || 0) + 1;
             return false;
           }
+          // QUALIFICATION GATE (P0): never warm a buyer who hasn't cleared the
+          // funnel + quiz. Trust-Mode drain selected on Referral Status alone.
+          if (!isBuyerQualified(b)) {
+            skipReasons['not-qualified'] = (skipReasons['not-qualified'] || 0) + 1;
+            return false;
+          }
           if (b['Warmup Sent At']) {
             skipReasons['already-warmed'] = (skipReasons['already-warmed'] || 0) + 1;
             return false;
@@ -282,11 +301,17 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         ? stateConds
         : `OR(${stateConds})`;
 
+      // QUALIFICATION GATE (P0): the throttled branch selected on Buyer Stage
+      // (WAITING/READY) + Status=Approved ALONE — never on funnel+quiz. Add the
+      // SAME predicate matching/suggest enforces (Qualified At set AND
+      // Qualification Score >= threshold) so unqualified buyers are never warmed.
       const formula = `AND(
         OR({Buyer Stage}='WAITING',{Buyer Stage}='READY'),
         ${stateOr},
         NOT({Warmup Sent At}),
         {Status}='Approved',
+        NOT({Qualified At}=''),
+        {Qualification Score}>=${QUALIFICATION_SCORE_THRESHOLD},
         NOT({Unsubscribed}),
         NOT({Bounced}),
         NOT({Complained}),
@@ -408,6 +433,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     const nudgeCandidates = waitlistedForNudges.filter((b: any) => {
       if (b['Unsubscribed'] || b['Bounced']) {
         skipReasons['bounced-unsub'] = (skipReasons['bounced-unsub'] || 0) + 1;
+        return false;
+      }
+      // QUALIFICATION GATE (P0): even though Day-7 nudges only target buyers
+      // already warmed in Phase 1 (Warmup Sent At set), a pre-fix backlog of
+      // unqualified-but-already-warmed buyers exists — gate here too so they're
+      // not nudged. Consistent with both Phase 1 paths above.
+      if (!isBuyerQualified(b)) {
+        skipReasons['not-qualified'] = (skipReasons['not-qualified'] || 0) + 1;
         return false;
       }
       if (b['Warmup Engaged At']) {

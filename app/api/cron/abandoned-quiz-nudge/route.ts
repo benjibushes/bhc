@@ -169,12 +169,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
     const email = String(c['Email'] || '').toLowerCase();
     if (!email) { skipped++; continue; }
 
-    // Fresh 14-day qualify-access JWT so the quiz POST authorizes (without it,
-    // /api/qualify rejects the submit and the link dead-ends).
+    // Fresh 30-day qualify-access JWT so the quiz POST authorizes (without it,
+    // /api/qualify rejects the submit and the link dead-ends). 30d (was 14d)
+    // because this is a multi-touch DRIP — the last touch lands ~day 13 and a
+    // buyer may click days later; a short expiry dead-ends the very click the
+    // nudge exists to earn.
     const quizToken = jwt.sign(
       { type: 'qualify-access', consumerId: c.id, email },
       JWT_SECRET,
-      { expiresIn: '14d' },
+      { expiresIn: '30d' },
     );
     const quizUrl = `${SITE_URL}/qualify/${encodeURIComponent(c.id)}?token=${encodeURIComponent(quizToken)}`;
 

@@ -325,6 +325,20 @@ ${stageEmoji[stage] || '⏳'} Stage: <b>${stage}</b>
         try {
           const rancher = ranchers.find((r: any) => r.id === rancherId) as any;
           if (!rancher) continue;
+          // STATUS GUARD (P1 2026-06-23): the Monday stale-lead branch starts a
+          // fresh REFERRALS query and resolves the rancher via find(), so the
+          // Active-Status guard at the top of the stalled-rancher loop (line ~67)
+          // never runs for this path — a Paused / Non-Compliant / Removed rancher
+          // with a stale Intro-Sent referral would get nudged. Re-apply the same
+          // exclusion here (plus 'Removed' per spec). Read defensively in case
+          // Active Status comes back as an { name } object.
+          const staleActiveStatusObj: any = rancher['Active Status'];
+          const staleActiveStatus = String(
+            typeof staleActiveStatusObj === 'object' && staleActiveStatusObj?.name
+              ? staleActiveStatusObj.name
+              : staleActiveStatusObj || ''
+          );
+          if (['Paused', 'Non-Compliant', 'Removed'].includes(staleActiveStatus)) continue;
           const rancherEmail = rancher['Email'] || '';
           if (!rancherEmail) continue;
           const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';

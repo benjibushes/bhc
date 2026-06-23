@@ -88,7 +88,12 @@ export async function POST(request: Request) {
         email: normalizedEmail,
       },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      // 14d expiry (was 7d): this is an EMAILED magic link a buyer may not click
+      // until days later (Email QA, Audit B P1). The post-verify session cookie
+      // is 30d, so 14d on the one-shot link balances late clicks against keeping
+      // the emailed token short. /api/auth/member/verify only checks
+      // type==='member-login', so widening expiry is safe.
+      { expiresIn: '14d' }
     );
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
@@ -115,7 +120,7 @@ export async function POST(request: Request) {
             <p>Hi ${consumer['Full Name']?.split(' ')[0] || 'there'},</p>
             <p>Click the button below to access your BuyHalfCow member dashboard:</p>
             <a href="${loginUrl}" class="button">Log In to Your Dashboard</a>
-            <p style="color: #6B4F3F; font-size: 14px;">This link works for 7 days. If you didn't request this, you can ignore this email.</p>
+            <p style="color: #6B4F3F; font-size: 14px;">This link works for 14 days. If you didn't request this, you can ignore this email.</p>
             <div class="footer">
               <p>BuyHalfCow</p>
             </div>

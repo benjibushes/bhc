@@ -545,9 +545,7 @@ export async function sendConsumerConfirmation(data: {
             <p>You'll hear back from us within <strong>24 hours</strong> with next steps. We review every application personally.</p>
             <p>Questions? Reply to this email or contact <a href="mailto:${ADMIN_EMAIL}" style="color: #0E0E0E;">${ADMIN_EMAIL}</a></p>
             <div class="footer">
-              <p>— Benjamin, Founder<br>BuyHalfCow</p>
-              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
-            </div>
+              <p>— Ben<br>BuyHalfCow</p>            </div>
           </div>
         </body>
         </html>
@@ -637,9 +635,7 @@ export async function sendConsumerApproval(data: {
           <div class="container">
             ${isBeef ? beefBody : communityBody}
             <div class="footer">
-              <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
-              <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
-            </div>
+              <p>— Ben<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>            </div>
           </div>
         </body>
         </html>
@@ -719,11 +715,7 @@ export async function sendWelcomeAndReadyToBuy(data: {
   <p>You applied to BuyHalfCow and I just approved you. Quick what-this-is: I personally connect families to a single verified rancher in their state for a quarter, half, or whole cow. No middleman. Direct relationship. Real beef.</p>
   ${ctaBlock}
   <div class="divider"></div>
-  <p style="font-size:12px;color:#A7A29A;">— Benjamin<br>BuyHalfCow</p>
-  <div class="footer">
-    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
+  <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
@@ -772,10 +764,6 @@ export async function sendQuizInvite(data: {
   <p style="font-size:14px;color:#6B4F3F;">Questions? Just reply.</p>
   <div class="divider"></div>
   <p style="font-size:12px;color:#A7A29A;">- Ben<br>BuyHalfCow</p>
-  <div class="footer">
-    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
 </div></body></html>`,
     }),
   });
@@ -863,11 +851,7 @@ export async function sendFounderLetterWaiting(data: {
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}p{margin:14px 0;color:#2A2A2A}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
 </head><body><div class="container">
   ${body}
-  <p style="margin-top:32px;">— Benjamin<br>Founder, BuyHalfCow</p>
-  <div class="footer">
-    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
+  <p style="margin-top:32px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
@@ -902,10 +886,6 @@ export async function sendMatchedDay4CheckIn(data: {
   <p>If not yet: just hit reply and tell me what's up. If you didn't see their email, I'll resend it. If you've got cold feet, totally fine — tell me what changed and I'll work on a different fit.</p>
   <p>Either way, I want to hear from you. This network only works if both sides actually talk.</p>
   <p style="margin-top:32px;">— Ben</p>
-  <div class="footer">
-    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
 </div></body></html>`,
     }),
   });
@@ -961,11 +941,7 @@ export async function sendPostPurchaseWelcome(data: {
     <li>~5 months from now: I'll ping you about reserving the next ${tier} from ${esc(data.rancherName)} or the next rancher in your area</li>
   </ul>
   <p>Reply anytime. I read every reply.</p>
-  <p style="margin-top:32px;">— Benjamin</p>
-  <div class="footer">
-    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
+  <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
     }),
   });
@@ -1029,12 +1005,8 @@ export async function sendCutsEducation(data: {
   <p style="margin-top:32px;">— Ben</p>
   <div style="border-top: 1px solid #A7A29A; margin-top: 30px; padding-top: 24px;">
     <p style="color: #6B4F3F; font-size: 14px;">
-      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="${SITE_URL}/shop" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
+      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=email&utm_campaign=merch" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
     </p>
-  </div>
-  <div class="footer">
-    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
   </div>
 </div></body></html>`,
     }),
@@ -1074,11 +1046,7 @@ export async function sendClosedMonthlyLetter(data: {
   </ul>
   <p>In a few months I'll ping you about the next round. For now, hope your freezer's still well-stocked.</p>
   <p>Reply anytime — I read every one.</p>
-  <p style="margin-top:32px;">— Benjamin</p>
-  <div class="footer">
-    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
+  <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
     }),
   });
@@ -1113,10 +1081,6 @@ export async function sendRepeatPurchaseAsk(data: {
   <p>Want to try a different rancher this round? Also fine — reply with "different" and I'll match you with someone new.</p>
   <p>Don't need anything? Reply with "not yet" and I'll check back in a few months.</p>
   <p style="margin-top:32px;">— Ben</p>
-  <div class="footer">
-    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
 </div></body></html>`,
     }),
   });
@@ -1242,6 +1206,21 @@ export async function sendBuyerIntroNotification(data: {
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — your deposit puts you on the books for the next available slot. Spots fill first-come, first-served.</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Tap any tier above to lock in your share. <strong>No deposit, no slot held.</strong></p>
     <p style="margin:10px 0 0 0;font-size:11px;color:#6B4F3F;line-height:1.5;">Refundable until ${esc(data.rancherName)} accepts your slot. Non-refundable after.</p>
+  </div>`;
+  } else {
+    // Fallback: neither a tier_v2 deposit magic-link nor per-tier pay-links are
+    // available (e.g. a tier_v2 rancher whose buyer is missing buyerId/buyerEmail
+    // so the caller couldn't mint a deposit deep-link, AND no tier prices/slug to
+    // build pay-links). Without this branch the buyer would get an intro with NO
+    // reserve CTA at all. Point them at their member dashboard, where they can
+    // reserve their share — never send an intro with no call-to-action.
+    reserveBlock = `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
+    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Reserve Your Share Now</p>
+    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — reserving puts you on the books for the next available slot. Spots fill first-come, first-served.</p>
+    <p style="margin:16px 0 4px 0;text-align:center;">
+      <a href="${data.loginUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Reserve your share &rarr;</a>
+    </p>
+    <p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;"><strong>No deposit, no slot held.</strong></p>
   </div>`;
   }
 
@@ -1388,9 +1367,7 @@ export async function sendBuyerIntroNotification(data: {
   <div class="divider"></div>
   <p style="font-size:13px;">If you don't hear back within 48 hours, reply to this email and I'll follow up on my end.</p>
   <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
+    <p>— Ben<br>BuyHalfCow</p>  </div>
 </div></body></html>`;
       return resend.emails.send(introEmailData);
     },
@@ -1446,7 +1423,7 @@ export async function sendRancherApproval(data: {
             <p>Keep an eye on your inbox — the onboarding package will arrive shortly.</p>
             <p>If you have any questions in the meantime, just reply to this email.</p>
             <div class="footer">
-              <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
+              <p>— Ben<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
             </div>
           </div>
         </body>
@@ -1669,14 +1646,14 @@ export async function sendRancherGoLiveEmail(data: {
             <p><strong>How it works:</strong></p>
             <ol style="color: #6B4F3F; line-height: 2;">
               <li>When we find a buyer in your area, we'll send you an intro email with their contact details</li>
-              <li>Reach out directly to discuss their order and close the deal</li>
-              <li>Mark the referral as "Closed Won" in your dashboard and enter the sale amount — we'll handle the rest</li>
+              <li>Connect with them about cuts, processing dates, and pickup — get them excited about your beef</li>
+              <li>When a buyer's ready to commit, we handle the sale. You raise and fulfill the beef and collect the balance at pickup.</li>
             </ol>
             <div class="divider"></div>
             <p><a href="${esc(dashboardUrl)}" class="button">View Your Dashboard</a></p>
             <p>Questions? Just reply to this email.</p>
             <div class="footer">
-              <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
+              <p>— Ben<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
             </div>
           </div>
         </body>
@@ -1746,13 +1723,9 @@ h2{font-family:Georgia,serif;font-size:20px;margin:26px 0 8px;color:#0E0E0E;}
 
 <p>If those slots don't fit, just hit reply with what does and we'll make it work. Either way — congrats on the milestone. Most ranchers we onboard never make it past lead #1. You blew through 4. Let's keep the momentum.</p>
 
-<p style="margin-top:22px;">— Benjamin<br>
-<span style="color:#6B4F3F;font-size:13px;">Founder, BuyHalfCow · ${esc(ADMIN_EMAIL)}</span></p>
+<p style="margin-top:22px;">— Ben<br>
+<span style="color:#6B4F3F;font-size:13px;">BuyHalfCow · ${esc(ADMIN_EMAIL)}</span></p>
 
-<div class="footer">
-<p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p>
-<p style="margin:6px 0 0;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
-</div>
 
 </div></body></html>`,
     }),
@@ -1836,7 +1809,7 @@ export async function sendPartnerConfirmation(data: {
             <div class="divider"></div>
             <p>Questions? Reply to this email or contact <a href="mailto:hello@buyhalfcow.com" style="color: #0E0E0E;">hello@buyhalfcow.com</a></p>
             <div class="footer">
-              <p>— Benjamin, Founder<br>BuyHalfCow</p>
+              <p>— Ben<br>BuyHalfCow</p>
             </div>
           </div>
         </body>
@@ -1897,13 +1870,7 @@ a{color:#0E0E0E;}
     <a href="${fixUrl}" class="cta">update payment</a>
   </p>
   <p style="font-size:14px;color:#6B4F3F;">no action needed if your card's just temporarily declined — stripe handles the retry. reply to this email if you want to talk anything through.</p>
-  <p style="margin-top:28px;">— ben<br>buyhalfcow</p>
-  <div class="footer">
-    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
-    <p style="margin:6px 0 0;">
-      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
-    </p>
-  </div>
+  <p style="margin-top:28px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
@@ -1964,13 +1931,7 @@ a{color:#0E0E0E;}
     <a href="${manageUrl}" class="cta">manage subscription</a>
   </p>
   <p style="font-size:14px;color:#6B4F3F;">questions? reply to this email — lands directly with me.</p>
-  <p style="margin-top:28px;">— ben<br>buyhalfcow</p>
-  <div class="footer">
-    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
-    <p style="margin:6px 0 0;">
-      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
-    </p>
-  </div>
+  <p style="margin-top:28px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
@@ -2017,13 +1978,7 @@ a{color:#0E0E0E;}
     <a href="${CALENDLY_LINK}" class="cta">book a call</a>
   </p>
   <p style="font-size:14px;color:#6B4F3F;">questions in the meantime? reply to this email — it lands directly with me.</p>
-  <p style="margin-top:28px;">— ben<br>buyhalfcow</p>
-  <div class="footer">
-    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
-    <p style="margin:6px 0 0;">
-      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
-    </p>
-  </div>
+  <p style="margin-top:28px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
@@ -2075,7 +2030,7 @@ export async function sendBrandListingConfirmation(data: {
             </div>
             <p>We'll be in touch with any member engagement updates. If you'd like to update your listing details, discount, or website link at any time, just reply to this email.</p>
             <div class="footer">
-              <p>— Benjamin, Founder<br>BuyHalfCow</p>
+              <p>— Ben<br>BuyHalfCow</p>
             </div>
           </div>
         </body>
@@ -2098,8 +2053,8 @@ export async function sendBrandListingConfirmation(data: {
 //
 // Voice anchors (Stage 1 changelog Section 10): sendMerchEmail,
 // sendWelcomeAndReadyToBuy, sendFounderLetterWaiting. Lowercase opener,
-// lowercase conversational subject, single CTA, signed `— Ben` /
-// `— Benjamin`, address-line footer (no "Private Network").
+// lowercase conversational subject, single CTA, signed `— Ben`,
+// address-line footer (no "Private Network").
 export async function sendFoundingHerdWelcome(data: {
   tier: 'Herd' | 'Outlaw' | 'Steward' | 'Founding 100' | 'Title Founder';
   firstName: string;
@@ -2234,13 +2189,7 @@ a{color:#0E0E0E;}
   <p style="margin-top:28px;">— Ben</p>
   <div style="border-top: 1px solid #A7A29A; margin-top: 30px; padding-top: 24px;">
     <p style="color: #6B4F3F; font-size: 14px;">
-      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="${SITE_URL}/shop" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
-    </p>
-  </div>
-  <div class="footer">
-    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
-    <p style="margin:6px 0 0;">
-      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">Unsubscribe</a>
+      p.s. — bhc patches just shipped to the print shop. founder backers get first pick when they hit my desk. <a href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=email&utm_campaign=merch" style="color: #0E0E0E; font-weight: 700;">shop bhc merch</a>
     </p>
   </div>
 </div></body></html>`,
@@ -2315,13 +2264,7 @@ a{color:#0E0E0E;}
   <p style="font-style:italic;color:#6B4F3F;font-family:Georgia,serif;font-size:16px;border-left:3px solid #0E0E0E;padding-left:14px;margin:24px 0;">
     we're gonna take back american ranching and agriculture. one family, one rancher, one freezer at a time.
   </p>
-  <p style="margin-top:28px;">— ben</p>
-  <div class="footer">
-    <p style="margin:0;">${BUSINESS_ADDRESS}</p>
-    <p style="margin:6px 0 0;">
-      <a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">unsubscribe</a>
-    </p>
-  </div>
+  <p style="margin-top:28px;">— Ben</p>
 </div></body></html>`,
     }),
   });
@@ -2419,7 +2362,7 @@ export async function sendAffiliateInvite(data: {
             <p>To view your dashboard and referral counts, request a login link:</p>
             <a href="${data.loginRequestUrl}" class="button">Get Your Login Link</a>
             <div class="footer">
-              <p>— Benjamin, Founder<br>BuyHalfCow</p>
+              <p>— Ben<br>BuyHalfCow</p>
             </div>
           </div>
         </body>
@@ -2708,14 +2651,6 @@ export async function sendBroadcastEmail(data: {
               <div class="divider"></div>
               <a href="${data.ctaLink}" class="button">${data.ctaText}</a>
             ` : ''}
-            <div class="footer">
-              <p>BuyHalfCow<br>
-              1001 S. Main St. Ste 600, Kalispell, MT 59901<br>
-              Questions? Email ${ADMIN_EMAIL}</p>
-              <p style="margin-top: 12px; font-size: 10px; color: #6B4F3F;">
-                <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(data.to)}" style="color: #6B4F3F;">Unsubscribe</a> | Campaign: ${data.campaignName}
-              </p>
-            </div>
           </div>
         </body>
         </html>
@@ -2763,11 +2698,7 @@ a{color:#0E0E0E;}
 <p>If you've been thinking about a cap or shirt:</p>
 <p style="text-align:center;margin:22px 0;"><a href="${utm(MERCH_URL, 'nurture-merch', 'mission-link')}" class="link">${MERCH_URL}</a></p>
 <p>Wear it loud — that's the entire mission.</p>
-<p style="margin-top:22px;">— Benjamin</p>
-<div class="footer">
-<p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p>
-<p style="margin:6px 0 0;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#A7A29A;">Unsubscribe</a></p>
-</div>
+<p style="margin-top:22px;">— Ben</p>
 </div></body></html>`,
     }),
   });
@@ -2831,7 +2762,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <div class="divider"></div>
   <p style="font-size: 13px;">Questions? Just reply to this email.</p>
   <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
+    <p>— Ben<br>BuyHalfCow</p>
   </div>
 </div>
 </body>
@@ -2891,9 +2822,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <div class="divider"></div>
   <p style="font-size: 13px;">Questions? Just reply to this email.</p>
   <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
-  </div>
+    <p>— Ben<br>BuyHalfCow</p>  </div>
 </div>
 </body>
 </html>`,
@@ -2953,7 +2882,7 @@ th { text-align: left; padding: 8px 12px; background: #F4F1EC; font-size: 11px; 
   <div class="divider"></div>
   <p style="font-size: 13px;">Questions? Just reply to this email.</p>
   <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
+    <p>— Ben<br>BuyHalfCow</p>
   </div>
 </div>
 </body>
@@ -3007,9 +2936,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <div class="divider"></div>
   <p style="font-size: 13px;">Not ready yet? No worries — you'll stay in our network and we'll check in again when the time is right.</p>
   <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #ccc;">Unsubscribe</a></p>
-  </div>
+    <p>— Ben<br>BuyHalfCow</p>  </div>
 </div>
 </body>
 </html>`,
@@ -3061,8 +2988,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <p>Not here to buy beef right now? Update your profile anyway — we'll make sure you get the right updates for community members, land deals, and brand partnerships.</p>
 
   <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size: 10px; color: #ccc; margin-top: 12px;"><a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(email)}" style="color: #ccc;">Unsubscribe</a></p>
+    <p>— Ben<br>BuyHalfCow</p>
   </div>
 </div>
 </body>
@@ -3154,9 +3080,7 @@ export async function sendRancherCheckIn(data: {
             <p>No pressure either way — just want to stay in the loop so we can send the right buyers to the right ranchers.</p>
 
             <div class="footer">
-              <p>— Benjamin, Founder<br>BuyHalfCow<br>Questions? Reply directly or email ${ADMIN_EMAIL}</p>
-              <p style="font-size: 10px; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
-            </div>
+              <p>— Ben<br>BuyHalfCow<br>Questions? Reply directly or email ${ADMIN_EMAIL}</p>            </div>
           </div>
         </body>
         </html>
@@ -3305,9 +3229,7 @@ export async function sendPipelineUpdateEmail(data: {
             <div class="divider"></div>
             <p>Questions? Reply to this email or call me directly.</p>
             <div class="footer">
-              <p>— Benjamin, Founder<br>BuyHalfCow</p>
-              <p style="font-size: 10px; margin-top: 12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color: #A7A29A;">Unsubscribe</a></p>
-            </div>
+              <p>— Ben<br>BuyHalfCow</p>            </div>
           </div>
         </body>
         </html>
@@ -3359,7 +3281,7 @@ export async function sendTrackedContactEmail(data: {
   <div class="footer">
     <p>This message was facilitated by BuyHalfCow.<br>
     Remember: 10% commission applies to sales made through the platform.</p>
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
+    <p>— Ben<br>BuyHalfCow</p>
   </div>
 </div></body></html>`,
     }),
@@ -3524,7 +3446,6 @@ th{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#6B4F3F;fo
   }
   <p style="font-size:13px;color:#6B4F3F;">This is sent automatically when you mark a deal Closed Won. Monthly statement still arrives on the 1st as a rollup of any unpaid balance.</p>
   <p style="font-size:12px;color:#A7A29A;">— Ben<br>BuyHalfCow</p>
-  ${emailFooter(data.email)}
 </div></body></html>`,
     }),
   });
@@ -3615,9 +3536,7 @@ export async function sendMonthlyCommissionInvoice(data: {
   <p style="font-size:13px;">Questions about this invoice? Reply to this email.</p>
 
   <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
-    <p style="font-size:10px;color:#ccc;margin-top:12px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
+    <p>— Ben<br>BuyHalfCow</p>  </div>
 </div></body></html>`,
     }),
   });
@@ -3815,7 +3734,7 @@ export async function sendAbandonedRecoveryEmail(data: {
   ${body}
   <p style="text-align:center;margin-top:24px;"><a href="${accessUrl}" class="cta">Finish My Application →</a></p>
   <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
+    <p>— Ben<br>BuyHalfCow</p>
   </div>
 </div></body></html>`,
     }),
@@ -3869,11 +3788,7 @@ export async function sendOrphanCheckoutRewarm(data: {
   <p>If you're still in, here's the same checkout link. One click and you're back where you left off.</p>
   <p style="text-align:center;margin-top:24px;"><a href="${depositUrl}" class="cta">Pick up where I left off &rarr;</a></p>
   <p>If something stopped you — pricing question, freezer space, timing — just hit reply. I read every reply.</p>
-  <p style="margin-top:32px;">— Benjamin</p>
-  <div class="footer">
-    <p>BuyHalfCow · 1001 S. Main St. Ste 600 · Kalispell, MT 59901</p>
-    <p style="font-size:10px;color:#ccc;margin-top:8px;"><a href="${getUnsubscribeUrl(data.email)}" style="color:#ccc;">Unsubscribe</a></p>
-  </div>
+  <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
     }),
   });
@@ -3938,7 +3853,7 @@ export async function sendRerouteNotification(data: {
   <div class="divider"></div>
   <p style="font-size:13px;">Questions or want to talk through what you're looking for? Just reply to this email.</p>
   <div class="footer">
-    <p>— Benjamin, Founder<br>BuyHalfCow</p>
+    <p>— Ben<br>BuyHalfCow</p>
   </div>
 </div></body></html>`,
     }),
@@ -4060,8 +3975,7 @@ export async function sendRancherSelfSubmitWelcome(data: {
   `}
   <div class="divider"></div>
   <p style="font-size:13px;color:#2A2A2A;">We're running the food revolution &mdash; getting families off mystery grocery beef and onto real ranches like yours. The map is how they find you. The marketing services are how you stay full.</p>
-  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
-  ${emailFooter(data.to)}
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
@@ -4102,8 +4016,7 @@ export async function sendRancherCommunityIntro(data: {
   <p style="font-size:13px;color:#6B4F3F;">If you'd rather we take you off the map, just reply with "remove" and you're gone. No questions.</p>
   <div class="divider"></div>
   <p style="font-size:13px;color:#2A2A2A;">${esc(data.submitterName)} flagged you because they think families should be buying from a real rancher instead of a grocery chain. We agree. The food revolution doesn't happen without ranchers like you on the map.</p>
-  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
-  ${emailFooter(data.to)}
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
@@ -4152,7 +4065,6 @@ export async function sendRancherOnboardingDripDay2(data: {
   ${ctaBlock}
   <p style="font-size:13px;color:#6B4F3F;">Reply with a phone number if email isn't your thing. I'll call you.</p>
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
-  ${emailFooter(data.to)}
 </div></body></html>`,
     }),
   });
@@ -4196,8 +4108,7 @@ export async function sendRancherOnboardingDripDay5(data: {
   </ul>
   <p>You don't need a call to start &mdash; the 5-minute self-serve wizard gets ${esc(data.ranchName)} live and routable today.</p>
   ${ctaBlock}
-  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>Founder, BuyHalfCow</p>
-  ${emailFooter(data.to)}
+  <p style="font-size:12px;color:#A7A29A;">&mdash; Ben<br>BuyHalfCow</p>
 </div></body></html>`,
     }),
   });
@@ -4238,7 +4149,6 @@ export async function sendRancherOnboardingDripDay14(data: {
   ${ctaBlock}
   <p>If you want OFF the map, just reply "remove" and you're gone, same day.</p>
   <p style="font-size:12px;color:#A7A29A;">&mdash; Ben</p>
-  ${emailFooter(data.to)}
 </div></body></html>`,
     }),
   });
@@ -4279,10 +4189,9 @@ export async function sendMatchNowRescue(data: {
   <p>Hi ${esc(first)},</p>
   <p>You clicked "ready to buy" — thanks for the signal. I've matched you with a verified rancher in ${esc(data.buyerState)} who's got capacity for you this season.</p>
   <p>You'll get a second email within the next 24 hours with their name, pricing (Quarter / Half / Whole), processing date, and direct contact info. They'll also reach out to you within 48 hours.</p>
-  <p>From there it's between you and the ranch — pickup date, cut sheet, payment method. We take 10% only when the deal closes. The rancher keeps 90.</p>
+  <p>This is a verified rancher — I've vetted them myself. You buy direct: real beef, raised right, straight from the ranch.</p>
   <p>If anything changes, reply to this email and I'll handle it.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
-  ${emailFooter(data.email)}
 </div></body></html>`,
     }),
   });
@@ -4319,13 +4228,12 @@ export async function sendNudgeToEngage(data: {
   <p>Hi ${esc(first)},</p>
   <p>You signed up for BuyHalfCow a while back and we've got verified ranchers in ${esc(data.buyerState)} with capacity right now. Before I introduce you, I want to make sure the timing is right.</p>
   <div class="q"><strong>Are you ready to buy in the next 1–2 months?</strong></div>
-  <p>If yes, tap below and I'll send the rancher's full info within 24 hours. They reach out to you direct. No middleman, no markup — we take 10% only when the deal closes.</p>
+  <p>If yes, tap below and I'll send the rancher's full info within 24 hours. They reach out to you direct. No middleman, no markup — just real beef from a ranch I've vetted myself.</p>
   <div style="text-align:center;margin:30px 0;">
     <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
   </div>
   <p style="font-size:14px;">If not yet, just don't click. You stay on the list and we'll check back in a couple weeks. No pressure.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
-  ${emailFooter(data.email)}
 </div></body></html>`,
     }),
   });
@@ -4366,7 +4274,6 @@ export async function sendWarmLeadReadyCheck(data: {
     <a href="${data.engageUrl}" class="cta">Yes — Ready to Buy</a>
   </div>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
-  ${emailFooter(data.email)}
 </div></body></html>`,
     }),
   });
@@ -4414,7 +4321,6 @@ export async function sendIncompleteProfileAsk(data: {
   </div>
   <p style="font-size:14px;">If you'd rather just talk it through, reply to this email and I'll help you figure out what makes sense.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
-  ${emailFooter(data.email)}
 </div></body></html>`,
     }),
   });
@@ -4468,7 +4374,6 @@ export async function sendNoBudgetFounderPitch(data: {
   </div>
   <p style="font-size:14px;">If $100 isn't in the budget either, no worries — you stay on the list and I'll email when ${esc(data.buyerState)} comes online. The work continues either way.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
-  ${emailFooter(data.email)}
 </div></body></html>`,
     }),
   });
@@ -4564,7 +4469,6 @@ export async function sendStateWaitlistLetter(data: {
   <p>I'll email when it happens. No spam in the meantime — just one short monthly note so you know the platform is still building.</p>
   <p>Thanks for being patient w/ a small platform doing it right.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
-  ${emailFooter(data.email)}
 </div></body></html>`,
     }),
   });
@@ -4611,8 +4515,7 @@ export async function sendBuyerFulfillmentConfirmation(data: {
     <li>Around the 5-month mark I'll ping you about reserving the next share — from ${esc(data.rancherName)} again or another rancher in your area if their next harvest fits your timing better.</li>
   </ul>
   <p>If anything was off about pickup/delivery, reply to this email. I read every reply.</p>
-  <p style="margin-top:32px;">— Benjamin</p>
-  ${emailFooter(data.email)}
+  <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
     }),
   });
@@ -4674,8 +4577,7 @@ export async function sendBuyerFinalInvoice(data: {
   </p>
   <p style="font-size:13px;color:#6B4F3F;">This payment goes directly to ${esc(data.ranchName)} — 100% of the balance, no BuyHalfCow fee. Our service fee was already collected with your deposit, upfront.</p>
   <p style="font-size:13px;color:#6B4F3F;">Questions about cuts, pickup, or timing? Reply to this email — it goes straight to the rancher.</p>
-  <p style="margin-top:32px;">— Benjamin (BuyHalfCow)</p>
-  ${emailFooter(data.buyerEmail)}
+  <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
     }),
   });
@@ -4734,8 +4636,7 @@ export async function sendRancherApplyAutoApproved(data: {
   </div>
   <p><strong>What to have ready before you start the wizard:</strong> bank routing number, EIN (or SSN for sole prop), and your phone in case Stripe asks for a driver license photo. Most ranchers finish in 12-15 minutes.</p>
   <p>Got questions? Reply directly &mdash; this email lands in my inbox. I read every one.</p>
-  <p style="margin-top:32px;">&mdash; Benjamin, BuyHalfCow</p>
-  ${emailFooter(data.email)}
+  <p style="margin-top:32px;">&mdash; Ben</p>
 </div></body></html>`,
     }),
   });

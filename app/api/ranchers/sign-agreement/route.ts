@@ -198,11 +198,16 @@ export async function POST(request: Request) {
     const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
     const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@buyhalfcow.com';
 
-    // Create a login token so they can go straight to their dashboard
+    // Create a login token so they can go straight to their dashboard.
+    // 14d expiry (was 7d): this dashboardLink is EMAILED in the "set up your
+    // ranch page" message below, and ranchers often open it days later — 7d put
+    // late clicks into "Invalid or expired link" (Email QA, Audit B P1). The
+    // verify route only checks type==='rancher-login', and the post-verify
+    // session cookie is 30d, so widening this one-shot link is safe.
     const loginToken = jwt.sign(
       { type: 'rancher-login', rancherId: decoded.rancherId, email: rancherEmail },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: '14d' }
     );
     const dashboardLink = `${SITE_URL}/rancher/verify?token=${loginToken}`;
 
@@ -247,7 +252,7 @@ export async function POST(request: Request) {
     <div style="text-align: center; margin: 32px 0;">
       <a href="${dashboardLink}" class="btn">SET UP YOUR RANCH PAGE</a>
     </div>
-    <p style="font-size: 12px; color: #A7A29A; text-align: center;">This link logs you in automatically. Valid for 7 days.</p>
+    <p style="font-size: 12px; color: #A7A29A; text-align: center;">This link logs you in automatically. Valid for 14 days.</p>
 
     <div class="divider"></div>
 
