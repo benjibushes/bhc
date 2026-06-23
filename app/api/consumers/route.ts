@@ -560,6 +560,23 @@ export async function POST(request: Request) {
     };
     if (referredBy) consumerFields['Referred By'] = referredBy;
 
+    // ── Ad attribution write-through (per-field UTM + click-ids) ─────────────
+    // Parity with the funnel branch above: the legacy/non-funnel signup path
+    // also persists per-field UTM columns + click-ids from the `attribution`
+    // payload so organic/rancher/manychat signups don't lose attribution.
+    // Only writes non-empty values so a missing/empty payload never clobbers
+    // an existing value. Signup always completes even when attribution is absent.
+    const legacyAttrRaw = body.attribution && typeof body.attribution === 'object' ? body.attribution as Record<string, unknown> : {};
+    const legacyAttrStr = (k: string): string => (typeof legacyAttrRaw[k] === 'string' && (legacyAttrRaw[k] as string).trim() ? (legacyAttrRaw[k] as string).trim() : '');
+    if (legacyAttrStr('utm_source'))   consumerFields['utm_source']   = legacyAttrStr('utm_source');
+    if (legacyAttrStr('utm_medium'))   consumerFields['utm_medium']   = legacyAttrStr('utm_medium');
+    if (legacyAttrStr('utm_campaign')) consumerFields['utm_campaign'] = legacyAttrStr('utm_campaign');
+    if (legacyAttrStr('utm_content'))  consumerFields['utm_content']  = legacyAttrStr('utm_content');
+    if (legacyAttrStr('utm_term'))     consumerFields['utm_term']     = legacyAttrStr('utm_term');
+    if (legacyAttrStr('fbclid'))       consumerFields['fbclid']       = legacyAttrStr('fbclid');
+    if (legacyAttrStr('fbclid_ts'))    consumerFields['fbclid_ts']    = legacyAttrStr('fbclid_ts');
+    if (legacyAttrStr('gclid'))        consumerFields['gclid']        = legacyAttrStr('gclid');
+
     // G15 — rancher deep-link leads get linked to the rancher who shared the link
     // (Preferred Rancher field is a linked record).
     if (isRancherDeepLink && rancherRecord) {
