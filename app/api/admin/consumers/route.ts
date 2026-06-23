@@ -24,7 +24,7 @@ export async function GET(request: Request) {
       order_type: record['Order Type'] || '',
       budget_range: record['Budget'] || '',
       notes: record['Notes'] || '',
-      lead_source: record['Lead Source'] || record['Source'] || '',
+      lead_source: record['Source'] || '',
       intent_score: record['Intent Score'] || 0,
       intent_classification: record['Intent Classification'] || '',
       referral_status: record['Referral Status'] || 'Unmatched',
