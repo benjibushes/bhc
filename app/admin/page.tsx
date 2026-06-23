@@ -5,6 +5,7 @@ import Container from '../components/Container';
 import Divider from '../components/Divider';
 import Button from '../components/Button';
 import AdminAuthGuard from '../components/AdminAuthGuard';
+import CommandCenter from './components/CommandCenter';
 
 type Tab = 'consumers' | 'ranchers' | 'brands' | 'landDeals';
 
@@ -577,6 +578,12 @@ export default function AdminPage() {
             </div>
           ) : (
             <>
+              {/* Command Center — lifeblood overview (money / funnel / channel /
+                  touchpoints / where-to-unlock). Composes existing admin
+                  endpoints; sits on top of the detail views below, which stay
+                  fully reachable. */}
+              <CommandCenter />
+
               <Divider />
 
               {/* Stats Overview */}
