@@ -3,6 +3,7 @@ import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { getAdminConfig } from '@/lib/adminConfig';
 
 export const maxDuration = 60;
 
@@ -10,6 +11,7 @@ export async function GET(request: Request) {
   try {
     const __authResp = await requireAdmin(request);
     if (__authResp) return __authResp;
+    const adminCfg = await getAdminConfig();
     const [consumers, ranchers] = await Promise.all([
       getAllRecords(TABLES.CONSUMERS),
       getAllRecords(TABLES.RANCHERS),
@@ -54,8 +56,19 @@ export async function GET(request: Request) {
     });
 
     const totalCommission = closedThisMonth.reduce(
-      (sum: number, r: any) => sum + (r['Commission Due'] || 0), 0
+      (sum: number, r: any) => sum + (r['Commission Paid'] === true ? 0 : (r['Commission Due'] || 0)), 0
     );
+
+    // Stalled leads — mirror /api/admin/today logic: Intro Sent for longer than
+    // the operator-tunable stall threshold and not yet closed. Status is still
+    // 'Intro Sent' here (a replied/closed lead would no longer be in that state).
+    const DAY = 24 * 60 * 60 * 1000;
+    const stalledLeads = referrals.filter((r: any) => {
+      if (r['Status'] !== 'Intro Sent') return false;
+      const t = r['Intro Sent At'] || r['Approved At'];
+      if (!t) return false;
+      return (now.getTime() - new Date(t).getTime()) >= adminCfg.stallThresholdDays * DAY;
+    }).length;
 
     const statusCounts: Record<string, number> = {};
     referrals.forEach((r: any) => {
@@ -68,6 +81,7 @@ export async function GET(request: Request) {
       totalRanchers: ranchers.length,
       totalReferrals: referrals.length,
       pendingApproval,
+      stalledLeads,
       buyersByState: buyersByStateArr,
       activeReferralsByRancher,
       closedDealsThisMonth: {

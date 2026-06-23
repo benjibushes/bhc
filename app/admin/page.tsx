@@ -13,6 +13,7 @@ interface ReferralStats {
   totalRanchers: number;
   totalReferrals: number;
   pendingApproval: number;
+  stalledLeads: number;
   closedDealsThisMonth: { count: number; totalCommission: number };
 }
 
@@ -405,13 +406,13 @@ export default function AdminPage() {
 
   // Helper: ranchers ready to go live
   const readyToGoLiveCount = ranchers.filter(r =>
-    (r.onboarding_status === 'Verification Complete' || (r.agreement_signed && r.verification_status === 'Complete'))
+    (r.onboarding_status === 'Verification Complete' || (r.agreement_signed && r.verification_status === 'Verified'))
     && r.page_live !== true
     && r.slug
   ).length;
 
   // Helper: stalled leads count
-  const stalledLeadsCount = 0; // From refStats if available in future
+  const stalledLeadsCount = refStats?.stalledLeads ?? 0;
 
   // Search filtering
   const searchLower = searchQuery.toLowerCase().trim();
@@ -903,11 +904,7 @@ export default function AdminPage() {
                                         <div>
                                           {consumer.notes && <p className="text-saddle italic">&quot;{consumer.notes}&quot;</p>}
                                           {consumer.sequence_stage && <p className="text-saddle">Sequence: {consumer.sequence_stage}</p>}
-                                          {consumer.ai_recommended_action && (
-                                            <p className="px-2 py-1 bg-amber/10 border-l-2 border-amber/60 text-amber-dark text-xs">
-                                              AI: {consumer.ai_recommended_action}
-                                            </p>
-                                          )}
+                                          {/* AI Recommended Action hidden — no writer yet (audit 2026-06-22); re-add when the AI qualifier writes it */}
                                           {consumer.admin_notes && (
                                             <p className="px-2 py-1 bg-amber/10 border-l-2 border-amber/60 text-amber-dark text-xs">
                                               Notes: {consumer.admin_notes}
@@ -922,15 +919,7 @@ export default function AdminPage() {
                                       </div>
 
                                       <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-dust/30">
-                                        <select
-                                          value={consumer.membership}
-                                          onChange={(e) => updateConsumerStatus(consumer.id, consumer.status, e.target.value)}
-                                          className="px-3 py-1 border border-dust bg-bone text-sm"
-                                        >
-                                          <option value="none">No Access</option>
-                                          <option value="active">Active Member</option>
-                                          <option value="inactive">Inactive</option>
-                                        </select>
+                                        {/* Membership hidden — empty until consumer subscriptions exist (audit 2026-06-22) */}
                                         <button
                                           onClick={() => { setNotesModal(consumer); setNotesText(consumer.admin_notes || ''); }}
                                           className="px-3 py-1 text-xs border border-dust hover:bg-dust hover:text-white"
