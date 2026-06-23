@@ -56,6 +56,9 @@ function RancherBillingContent() {
   const [data, setData] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Add-on purchase error — kept separate from `error` (which is page-fatal and
+  // swaps the whole view for an error screen). Renders inline in the add-on shop.
+  const [purchaseErr, setPurchaseErr] = useState('');
   const justOnboarded = search.get('onboarding') === 'done';
 
   useEffect(() => {
@@ -241,6 +244,7 @@ function RancherBillingContent() {
                   <div className="text-charcoal mb-3">{fmtCurrency(a.priceCents)}</div>
                   <button
                     onClick={async () => {
+                      setPurchaseErr('');
                       const res = await fetch('/api/rancher/addons/purchase', {
                         method: 'POST',
                         credentials: 'include',
@@ -249,7 +253,7 @@ function RancherBillingContent() {
                       });
                       const j = await res.json();
                       if (j?.invoiceUrl) window.location.href = j.invoiceUrl;
-                      else alert(j?.error || 'Purchase failed');
+                      else setPurchaseErr(j?.error || 'Purchase failed');
                     }}
                     className="text-saddle text-sm underline hover:text-charcoal"
                   >
@@ -258,6 +262,12 @@ function RancherBillingContent() {
                 </div>
               ))}
             </div>
+            {purchaseErr && (
+              <div className="p-3 mb-4 border-l-4 border-red-500 bg-red-50 text-sm text-red-900 flex items-center justify-between gap-3">
+                <span>{purchaseErr}</span>
+                <button type="button" onClick={() => setPurchaseErr('')} className="text-lg leading-none hover:opacity-70">×</button>
+              </div>
+            )}
             {data.addOns.length > 0 && (
               <>
                 <div className="text-xs text-saddle uppercase tracking-wider mb-2">Your add-on history</div>
