@@ -10,8 +10,13 @@ import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import BHCPromiseBadge from '../../components/BHCPromiseBadge';
 import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import RancherOrderForm from './RancherOrderForm';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
+import RanchHeroCover, { RanchCoverFallback } from './RanchHeroCover';
+import CertificationBadges from './CertificationBadges';
+import FaqSection, { parseFaq, type FaqItem } from './FaqSection';
+import FulfillmentSection, { parseFulfillment } from './FulfillmentSection';
 
 // Public rancher landing page — the unit of conversion. Verified partners
 // get full pricing + lead capture; prospects get the same shell with pricing
@@ -237,6 +242,17 @@ export default async function RancherPage(
     if (r['Custom Products']) customProducts = JSON.parse(r['Custom Products']);
   } catch (e) { logBadJson('Custom Products', e); }
 
+  // FAQ — long-text JSON array of {q,a}. parseFaq is defensive (bad JSON →
+  // []) and logs via the shared logBadJson so operators can fix bad rows.
+  // The same parsed list drives both the visible accordion AND the FAQPage
+  // JSON-LD below, so structured data can never drift from what's rendered.
+  const faqItems: FaqItem[] = parseFaq(r['FAQ'], (e) => logBadJson('FAQ', e));
+
+  // Fulfillment — normalize the setup-wizard fields into a single object (or
+  // null when the rancher filled none of them). Drives the "How you get your
+  // order" section + lets the hardcoded "How it works" reference real methods.
+  const fulfillment = parseFulfillment(r);
+
   const quarterPrice = r['Quarter Price'];
   const quarterLbs = r['Quarter lbs'] || '';
   // NOTE: Payment Links below are IGNORED for Connected ranchers (tier_v2 +
@@ -262,6 +278,31 @@ export default async function RancherPage(
   // Cover photo — first gallery photo if available, else null. We layer a
   // dark gradient over it so hero text stays readable on any image.
   const coverPhoto = galleryPhotos[0] || '';
+
+  // Hero rating summary (P1 #7) — reuse the buyerReviews query above. Show
+  // "★ 4.9 · 12 reviews" only when there's at least one review. avg is
+  // rounded to 1 decimal; an integer average renders cleanly (5 → "5.0").
+  const reviewCount = buyerReviews.length;
+  const avgRating =
+    reviewCount > 0
+      ? Math.round((buyerReviews.reduce((sum, rev) => sum + rev.rating, 0) / reviewCount) * 10) / 10
+      : 0;
+
+  // Scarcity (P1 #6) — remaining capacity this round = max active referrals −
+  // current active referrals. Only meaningful for verified ranchers with a
+  // real capacity signal AND remaining headroom; otherwise null so every
+  // scarcity UI hides. We clamp at 0 and treat a non-positive remainder as
+  // "no signal" (a full round shouldn't scream "0 left" on a storefront we
+  // want converting — the order form/capacity gate handles the sold-out path).
+  const sharesLeft: number | null = (() => {
+    if (isProspect) return null;
+    const maxRef = getMaxActiveReferrals(r);
+    const currentRaw = r['Current Active Referrals'];
+    if (currentRaw === undefined || currentRaw === null || currentRaw === '') return null;
+    if (!Number.isFinite(maxRef) || maxRef <= 0) return null;
+    const remaining = maxRef - (Number(currentRaw) || 0);
+    return remaining > 0 && remaining <= maxRef ? remaining : null;
+  })();
 
   const lat = Number(r['Latitude']);
   const lng = Number(r['Longitude']);
@@ -323,7 +364,32 @@ export default async function RancherPage(
       : {}),
   };
 
+  // FAQPage structured data (P1 #3) — emitted as a SECOND JSON-LD script
+  // alongside LocalBusiness so search engines can surface FAQ rich results.
+  // Built from the exact same faqItems the accordion renders. Null when there
+  // are no questions, so we never emit an empty FAQPage.
+  const faqJsonLd: Record<string, unknown> | null =
+    faqItems.length > 0
+      ? {
+          '@context': 'https://schema.org',
+          '@type': 'FAQPage',
+          mainEntity: faqItems.map((item) => ({
+            '@type': 'Question',
+            name: item.q,
+            acceptedAnswer: { '@type': 'Answer', text: item.a },
+          })),
+        }
+      : null;
+
   const processingDateDisplay = formatProcessingDate(nextProcessingDate);
+
+  // P2 #8 — is the Processing Facility a real, distinct plant (vs. just the
+  // ranch name echoed back)? Normalize both sides (case/whitespace) before
+  // comparing so "Bar M Ranch" === "bar m ranch ". Only a genuine third-party
+  // facility earns the "USDA inspected" quick-fact.
+  const normName = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  const hasRealProcessingFacility =
+    !!processingFacility && normName(processingFacility) !== normName(name);
 
   const locationLine = [city, state].filter(Boolean).join(', ');
 
@@ -333,6 +399,12 @@ export default async function RancherPage(
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
+      {faqJsonLd && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+        />
+      )}
 
       {/* Audit 6 P1 — paid-scale tracking: fires rancher_page_view on mount
           with rancherId/slug/state custom_data for per-rancher Meta + GA
@@ -354,20 +426,14 @@ export default async function RancherPage(
          ───────────────────────────────────────────────────────────────────── */}
       <section className="relative isolate overflow-hidden">
         <div className="absolute inset-0 -z-10">
+          {/* P0 #1 — bulletproof cover. With a URL, RanchHeroCover renders the
+              photo + onError-falls-back to a branded gradient + ranch motif
+              (never a broken-image icon). With no URL, we render the identical
+              fallback directly so the hero always reads as intentional. */}
           {coverPhoto ? (
-            <>
-              <Image
-                src={coverPhoto}
-                alt={`${name} cover`}
-                fill
-                className="object-cover"
-                priority
-                sizes="100vw"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-charcoal/85 via-charcoal/50 to-charcoal/30" />
-            </>
+            <RanchHeroCover src={coverPhoto} alt={`${name} cover`} />
           ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-charcoal via-divider to-saddle" />
+            <RanchCoverFallback />
           )}
         </div>
 
@@ -389,12 +455,31 @@ export default async function RancherPage(
                 {beefTypes && (
                   <Pill tone="inverted">{beefTypes}</Pill>
                 )}
-                {certifications && (
-                  <Pill tone="inverted" icon={<span aria-hidden>★</span>}>
-                    {certifications}
-                  </Pill>
+                {/* Hero rating summary (P1 #7) — only when ≥1 real review. */}
+                {reviewCount > 0 && (
+                  <a
+                    href="#reviews"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] uppercase tracking-widest font-semibold bg-bone/15 text-bone border border-bone/25 transition-base hover:bg-bone/25"
+                  >
+                    <span aria-hidden className="text-amber">★</span>
+                    {avgRating.toFixed(1)} · {reviewCount} {reviewCount === 1 ? 'review' : 'reviews'}
+                  </a>
+                )}
+                {/* Scarcity (P1 #6) — remaining capacity this round. */}
+                {sharesLeft !== null && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] uppercase tracking-widest font-semibold bg-amber/20 text-amber border border-amber/40">
+                    <span aria-hidden>●</span>
+                    {sharesLeft} {sharesLeft === 1 ? 'share' : 'shares'} left this round
+                  </span>
                 )}
               </div>
+
+              {/* Certifications as badges (P1 #4) — replaces the old single
+                  plain pill that crammed all certs into one chip. Known terms
+                  get an icon + sage chip; unknown terms render as plain chips. */}
+              {certifications && (
+                <CertificationBadges raw={certifications} />
+              )}
 
               {/* Logo + name */}
               <div className="flex items-center gap-5">
@@ -505,7 +590,7 @@ export default async function RancherPage(
           for processing date + USDA facility + states served. Replaces the
           old "social proof" section that was floating awkwardly mid-page.
          ───────────────────────────────────────────────────────────────────── */}
-      {(processingDateDisplay || processingFacility || statesServed) && (
+      {(processingDateDisplay || hasRealProcessingFacility || statesServed) && (
         <section className="bg-bone-warm border-b border-dust">
           <Container>
             <div className="py-5 md:py-6 flex flex-wrap items-center justify-center gap-x-8 gap-y-2 text-sm text-charcoal/85">
@@ -515,7 +600,12 @@ export default async function RancherPage(
                   <strong>{processingDateDisplay}</strong>
                 </span>
               )}
-              {processingFacility && (
+              {/* P2 #8 — only claim "USDA inspected: <facility>" when the
+                  facility is a real, distinct processing plant. When the
+                  Processing Facility field just echoes the ranch name (no
+                  separate plant on record), rendering it would be a circular
+                  claim ("USDA inspected: <this ranch>"), so we hide it. */}
+              {hasRealProcessingFacility && (
                 <span>
                   <span className="text-saddle">USDA inspected</span>{' '}
                   <strong>{processingFacility}</strong>
@@ -584,6 +674,14 @@ export default async function RancherPage(
                 <p className="text-saddle max-w-xl mx-auto">
                   All prices include processing. {operatorName ? operatorName.split(' ')[0] : name} reaches back out within 48h to confirm timing + payment.
                 </p>
+                {/* Scarcity (P1 #6) — surfaces remaining capacity right at the
+                    point of decision. Hidden when there's no capacity signal. */}
+                {sharesLeft !== null && (
+                  <p className="inline-flex items-center gap-2 mx-auto px-4 py-2 bg-amber/15 border border-amber/40 text-sm font-semibold text-amber-dark">
+                    <span aria-hidden>●</span>
+                    Only {sharesLeft} {sharesLeft === 1 ? 'share' : 'shares'} left this processing round
+                  </p>
+                )}
               </div>
 
               <RancherOrderForm
@@ -635,8 +733,15 @@ export default async function RancherPage(
       {/* ── ABOUT + VIDEO ────────────────────────────────────────────────────
           Two-column on desktop (text left, video right) — gives both equal
           weight without the old stacked layout that hid the video.
+
+          P0 #2 (never-empty): when a verified rancher has NO about text and NO
+          video, we still render a short, intentional intro built from the
+          name + location + beef types, so the page reads as a complete story
+          (hero → about → how-it-works → CTA) instead of jumping from hero
+          straight to "How it works" with a visible gap. Prospects keep the
+          old behavior (their page is a thin claim shell by design).
          ───────────────────────────────────────────────────────────────────── */}
-      {(aboutText || embedUrl) && (
+      {(aboutText || embedUrl) ? (
         <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
           <Container>
             <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-10 lg:gap-14 items-start">
@@ -673,7 +778,30 @@ export default async function RancherPage(
             </div>
           </Container>
         </section>
-      )}
+      ) : !isProspect ? (
+        // Never-empty fallback (P0 #2): no about text, no video. Build a warm,
+        // honest intro from the fields we DO have so the page still tells a
+        // story. Every clause is conditional, so this reads naturally whether
+        // or not location / beef types are set.
+        <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
+          <Container>
+            <div className="max-w-3xl mx-auto text-center space-y-5">
+              <Pill tone="neutral" className="mx-auto">About</Pill>
+              <h2 className="font-serif text-3xl md:text-4xl">
+                Meet {operatorName ? operatorName.split(' ')[0] : name}
+              </h2>
+              <p className="text-saddle leading-relaxed text-lg">
+                {name} is a direct-to-consumer cattle ranch
+                {locationLine ? ` in ${locationLine}` : ''}
+                {beefTypes ? `, raising ${beefTypes.toLowerCase()} beef` : ''}
+                {' '}for families who want to know exactly where their meat comes
+                from. Order direct, skip the grocery-store middleman, and fill
+                your freezer with beef raised the way it should be.
+              </p>
+            </div>
+          </Container>
+        </section>
+      ) : null}
 
       {/* ── GALLERY ──────────────────────────────────────────────────────────
           Slips coverPhoto (idx 0) since it's already the hero. Remaining
@@ -715,12 +843,22 @@ export default async function RancherPage(
           Testimonial/Quote fields. Now real reviews surface here.
           ───────────────────────────────────────────────────────────────────── */}
       {buyerReviews.length > 0 && (
-        <section className="py-16 md:py-20 bg-bone-warm border-y border-dust/60">
+        <section id="reviews" className="py-16 md:py-20 bg-bone-warm border-y border-dust/60 scroll-mt-12">
           <Container>
             <div className="max-w-5xl mx-auto space-y-10">
-              <div className="text-center space-y-2">
+              <div className="text-center space-y-3">
                 <Pill tone="neutral" className="mx-auto">Verified buyers</Pill>
                 <h2 className="font-serif text-3xl md:text-4xl">What buyers say</h2>
+                {/* Aggregate summary mirrors the hero badge (P1 #7). */}
+                <p className="flex items-center justify-center gap-2 text-saddle">
+                  <span className="text-amber" aria-hidden>
+                    {'★'.repeat(Math.round(avgRating))}
+                    <span className="opacity-30">{'★'.repeat(5 - Math.round(avgRating))}</span>
+                  </span>
+                  <span className="font-semibold text-charcoal">{avgRating.toFixed(1)}</span>
+                  <span className="text-dust">·</span>
+                  <span>{reviewCount} verified {reviewCount === 1 ? 'review' : 'reviews'}</span>
+                </p>
               </div>
               <div className="grid md:grid-cols-2 gap-5 md:gap-6">
                 {buyerReviews.map((rev, i) => (
@@ -835,8 +973,15 @@ export default async function RancherPage(
                 },
                 {
                   num: '03',
-                  title: 'Pickup or delivery',
-                  blurb: 'Custom butchered and vacuum-sealed on processing day. Pickup or delivery is worked out direct with the ranch.',
+                  // P2 #9 — point at the real fulfillment section when the
+                  // rancher has filled it in (so we describe THEIR actual
+                  // options), and soften to a non-committal line when they
+                  // haven't, instead of asserting both pickup AND delivery for
+                  // every ranch.
+                  title: fulfillment ? 'Get your beef' : 'Pickup or delivery',
+                  blurb: fulfillment
+                    ? 'Custom butchered and vacuum-sealed on processing day. See your delivery and pickup options below.'
+                    : 'Custom butchered and vacuum-sealed on processing day. You and the ranch arrange how it gets to you.',
                 },
               ].map((step) => (
                 <Card key={step.num} variant="default" padding="lg" className="space-y-3">
@@ -849,6 +994,20 @@ export default async function RancherPage(
           </div>
         </Container>
       </section>
+
+      {/* ── HOW YOU GET YOUR BEEF (P1 #5) ────────────────────────────────────
+          Concrete per-rancher fulfillment — pickup / delivery / shipping —
+          from the setup-wizard fields. Renders nothing when the rancher
+          filled none of them (parseFulfillment → null). Grounds the generic
+          "How it works" step 3 above with real options.
+         ───────────────────────────────────────────────────────────────────── */}
+      {fulfillment && <FulfillmentSection data={fulfillment} />}
+
+      {/* ── FAQ (P1 #3) ──────────────────────────────────────────────────────
+          Accordion from rancher['FAQ']. FAQPage JSON-LD emitted up top from
+          the same parsed list. Renders nothing when there are no questions.
+         ───────────────────────────────────────────────────────────────────── */}
+      <FaqSection items={faqItems} />
 
       {/* ── CUSTOM PRODUCTS ──────────────────────────────────────────────── */}
       {!isProspect && customProducts.length > 0 && (
@@ -918,6 +1077,13 @@ export default async function RancherPage(
                 <p className="text-bone/85">
                   Next processing date{' '}
                   <strong className="text-bone">{processingDateDisplay}</strong>
+                </p>
+              )}
+              {/* Scarcity (P1 #6) in the reserve CTA — concrete urgency. */}
+              {sharesLeft !== null && (
+                <p className="inline-flex items-center gap-2 mx-auto px-4 py-2 bg-amber/20 border border-amber/40 text-sm font-semibold text-amber">
+                  <span aria-hidden>●</span>
+                  {sharesLeft} {sharesLeft === 1 ? 'share' : 'shares'} left this round
                 </p>
               )}
               <p className="text-bone/75 text-sm leading-relaxed max-w-md mx-auto">
