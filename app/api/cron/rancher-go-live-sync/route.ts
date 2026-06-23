@@ -36,6 +36,52 @@ async function realHandler(
 ): Promise<{ status: 'success' | 'partial'; recordsTouched: number; notes: string }> {
   const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
 
+  // ── CONNECT STATUS SELF-HEAL (2026-06-20) ─────────────────────────────────
+  // The candidates filter below intentionally EXCLUDES Active / Paused /
+  // At-Capacity ranchers, and the live-Connect reconcile only runs inside that
+  // candidates loop. So a tier_v2 rancher who reached Active Status='Active'
+  // with a Live page while their Stripe Connect Status is STILL the stale
+  // 'onboarding' the webhook never advanced (STRIPE_CONNECT_WEBHOOK_SECRET
+  // unset → account.updated 400s) is INVISIBLE to the heal — permanently. Those
+  // ranchers are Live but the deposit endpoint 409s them and matching excludes
+  // them (isRancherOperationalForBuyers gates tier_v2 on Connect='active'), so
+  // they silently can't take money. (The Katie Hunter / Linda Anspach report,
+  // 2026-06-20 — both Active, both Stripe charges_enabled, both stuck at
+  // 'onboarding'.) This pass reconciles Connect status from a LIVE Stripe read
+  // for EVERY tier_v2 rancher with an account whose cached status isn't already
+  // active/detached — independent of go-live state. Status-only write (mirrors
+  // the webhook + resync-connect); no go-live, money, or capacity side effects.
+  // 'detached' is skipped so a deliberately-removed account isn't resurrected.
+  let connectHealed = 0;
+  try {
+    const { getConnectAccountStatus } = await import('@/lib/stripeConnect');
+    for (const r of ranchers) {
+      if (String(r['Pricing Model'] || 'legacy').toLowerCase() !== 'tier_v2') continue;
+      const acct = String(r['Stripe Connect Account Id'] || r['Stripe Account Id'] || '').trim();
+      if (!acct) continue;
+      const cached = String(r['Stripe Connect Status'] || '').toLowerCase();
+      if (cached === 'active' || cached === 'detached') continue;
+      try {
+        const live = await getConnectAccountStatus(acct);
+        const liveStatus = String(live.status || '').toLowerCase();
+        if (liveStatus && liveStatus !== cached) {
+          const wf: any = { 'Stripe Connect Status': live.status };
+          if (liveStatus === 'active' && !r['Stripe Connect Connected At']) {
+            wf['Stripe Connect Connected At'] = new Date().toISOString();
+          }
+          await updateRecord(TABLES.RANCHERS, r.id, wf);
+          // Reflect locally so the candidates loop below sees the fresh status.
+          r['Stripe Connect Status'] = live.status;
+          connectHealed++;
+        }
+      } catch (e: any) {
+        console.warn(`[rancher-go-live-sync] connect self-heal read failed for ${r['Operator Name'] || r.id}:`, e?.message);
+      }
+    }
+  } catch (e: any) {
+    console.warn('[rancher-go-live-sync] connect self-heal pass skipped:', e?.message);
+  }
+
   // Pre-live onboarding statuses. A rancher who already went Live and was then
   // deliberately Paused / At Capacity carries Onboarding Status='Live', so this
   // guard EXCLUDES them — without it the cron would re-activate paused or
@@ -182,7 +228,7 @@ async function realHandler(
   }
 
   const notes =
-    `flipped=${flipped.length} skipped=${skipped.length} errors=${errors}` +
+    `flipped=${flipped.length} connectHealed=${connectHealed} skipped=${skipped.length} errors=${errors}` +
     (flipped.length > 0 ? ` | went-live: ${flipped.join(', ')}` : '') +
     (skipped.length > 0
       ? ` | not-ready: ${skipped
@@ -193,7 +239,7 @@ async function realHandler(
 
   return {
     status: errors > 0 ? 'partial' : 'success',
-    recordsTouched: flipped.length,
+    recordsTouched: flipped.length + connectHealed,
     notes,
   };
 }

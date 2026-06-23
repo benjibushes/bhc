@@ -246,6 +246,14 @@ export async function POST(request: Request) {
       // event_id=consumerId (metaEventId = raw record id, no prefix). Both
       // surfaces MUST use the same id or Meta sees two Leads → double-count.
       // Fire-and-forget — never block the 201 response.
+      // Match-quality signals — read ip/userAgent/fbp/fbc off the request the
+      // same way the legacy /access-form Lead does (~613-633). Since /access is
+      // the single front door, nearly every paid Lead flows through THIS branch;
+      // omitting these dropped match quality (weaker ad attribution) on the
+      // hottest cohort. event_id/dedup unchanged.
+      const capiIpQ = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+      const capiUserAgentQ = request.headers.get('user-agent') || undefined;
+      const { fbp: capiFbpQ, fbc: capiFbcQ } = getMetaCookiesFromRequest(request);
       (async () => {
         try {
           fireCapi([{
@@ -258,6 +266,10 @@ export async function POST(request: Request) {
               phone: phoneQ,
               firstName: fullNameQ.split(/\s+/)[0] || undefined,
               state: normalizeState(stateQ) || stateQ.toUpperCase() || undefined,
+              ip: capiIpQ,
+              userAgent: capiUserAgentQ,
+              fbp: capiFbpQ,
+              fbc: capiFbcQ,
             }),
             custom_data: {
               value: 0,

@@ -5,6 +5,7 @@ import { normalizeStates, stringifyStates } from '@/lib/states';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { MAX_ACTIVE_REFERRALS_FIELD, getLiveCapacity } from '@/lib/rancherCapacity';
 import { requireRancher } from '@/lib/rancherAuth';
+import { MIN_TIER_PRICE } from '@/lib/pricing';
 
 // PATCH /api/rancher/landing-page — rancher updates their own landing page fields
 export async function PATCH(request: Request) {
@@ -381,6 +382,22 @@ export async function PATCH(request: Request) {
           return NextResponse.json({ error: `${key} must be a valid positive number` }, { status: 400 });
         }
         fields[key] = num;
+      }
+    }
+
+    // Per-lb mis-entry floor. A positive tier PRICE below MIN_TIER_PRICE is almost
+    // certainly a per-pound value typed into a total field (DD Ranch published a
+    // $7.40 "whole cow" this way — the buyer would be charged ~$7.40 for a whole
+    // animal). Reject so broken pricing can never publish from the dashboard. 0/
+    // blank was normalized to null above (= "not set", allowed). Mirrors the floor
+    // in app/api/rancher/setup/route.ts; shares the MIN_TIER_PRICE constant with
+    // the wizard helper + the deposit charge guard (lib/pricing.ts).
+    for (const priceKey of priceFields) {
+      const v = fields[priceKey];
+      if (typeof v === 'number' && v > 0 && v < MIN_TIER_PRICE) {
+        return NextResponse.json({
+          error: `${priceKey} of $${v} looks like a per-pound price, not a total. Whole/half/quarter shares start around $${MIN_TIER_PRICE}+. If you price per pound, multiply by the hanging weight to get the total.`,
+        }, { status: 400 });
       }
     }
 

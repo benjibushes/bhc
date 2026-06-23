@@ -20,7 +20,19 @@ function slugToTier(slug: string): Tier | null {
   return null;
 }
 
-interface Cut { slug: string; label: string; price: number | null; lbs: string; }
+interface Cut {
+  slug: string;
+  label: string;
+  price: number | null;
+  lbs: string;
+  // Money breakdown (cents) from GET /api/checkout/deposit. The buyer's card is
+  // charged dueNowCents = depositCents + feeCents (fee ADDED ON TOP of deposit).
+  // balanceCents is paid rancher-direct at pickup. Null on legacy/unpriced cuts.
+  depositCents?: number | null;
+  feeCents?: number | null;
+  dueNowCents?: number | null;
+  balanceCents?: number | null;
+}
 interface DepositInfo {
   rancher: { name: string; ranchName: string; slug: string; state: string };
   pricingModel: string;
@@ -155,6 +167,12 @@ function DepositPageContent() {
 
   const selectedCutData = info.cuts.find((c) => c.slug === selectedCut);
   const fmtUsd = (price: number | null) => price == null ? '' : `$${price.toLocaleString()}`;
+  // Round-dollar formatter for the cents fields from the API (deposit/fee/
+  // balance/dueNow). Brand rule: clean round dollars, never .99 — round to the
+  // nearest dollar then reuse fmtUsd's comma grouping. Stays free of any new
+  // helper import.
+  const fmtCents = (cents: number | null | undefined) =>
+    cents == null ? '' : fmtUsd(Math.round(cents / 100));
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
@@ -297,12 +315,42 @@ function DepositPageContent() {
             </div>
           )}
 
-          {/* How payment works */}
+          {/* What you pay today — itemized. Buyer's card is charged
+              deposit + BHC service fee (fee ADDED ON TOP, mirrors the API +
+              Stripe line items). Balance is paid rancher-direct at pickup.
+              Replaces the old "commission off the top" copy, which was false:
+              the fee is added on top, so the card is charged MORE than the
+              share price, not less. */}
           <div className="bg-white border border-dust p-3 md:p-4">
-            <div className="text-xs uppercase tracking-wider text-saddle mb-2">How the payment works</div>
-            <p className="text-sm">
-              Your {selectedCutData ? fmtUsd(selectedCutData.price) : ''} routes to {info.rancher.name} through Stripe. BuyHalfCow takes its commission off the top — that&apos;s how we stay free for buyers. {info.rancher.name} handles pickup, delivery, or shipping; you two coordinate the details in your message thread.
-            </p>
+            <div className="text-xs uppercase tracking-wider text-saddle mb-3">What you pay today</div>
+            {selectedCutData && selectedCutData.dueNowCents != null ? (
+              <>
+                <div className="text-sm space-y-2">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span>Reserve your {selectedCutData.label.toLowerCase()}</span>
+                    <span className="font-medium whitespace-nowrap">{fmtCents(selectedCutData.depositCents)}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span>BuyHalfCow service fee</span>
+                    <span className="font-medium whitespace-nowrap">{fmtCents(selectedCutData.feeCents)}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3 border-t border-dust pt-2 font-serif text-lg">
+                    <span>Due today</span>
+                    <span className="whitespace-nowrap">{fmtCents(selectedCutData.dueNowCents)}</span>
+                  </div>
+                </div>
+                <p className="text-sm text-saddle mt-3 leading-relaxed">
+                  Remaining <strong className="text-charcoal">{fmtCents(selectedCutData.balanceCents)}</strong> is paid directly to {info.rancher.name} at pickup — not now.
+                </p>
+                <p className="text-xs text-saddle mt-3 leading-relaxed">
+                  Your {fmtCents(selectedCutData.depositCents)} reserve routes to {info.rancher.name} through Stripe; the {fmtCents(selectedCutData.feeCents)} service fee is BuyHalfCow&apos;s commission, added on top so the rancher keeps their full price. That&apos;s how we stay free for buyers — the rancher pays the commission, never you on top of the beef. {info.rancher.name} handles pickup, delivery, or shipping; you two coordinate the details in your message thread.
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-saddle leading-relaxed">
+                Your reserve routes to {info.rancher.name} through Stripe, plus a small BuyHalfCow service fee shown at checkout. The rancher pays our commission — that&apos;s how we stay free for buyers. {info.rancher.name} handles pickup, delivery, or shipping; you two coordinate the details in your message thread.
+              </p>
+            )}
           </div>
         </div>
 

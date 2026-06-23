@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { geocodeRancher } from '@/lib/geocode';
+import { MIN_TIER_PRICE } from '@/lib/pricing';
 
 // Same cookie the magic-link verify flow uses (lib/rancherAuth.ts line 17).
 // We mint this when GET succeeds so the wizard URL ALSO bootstraps the
@@ -238,23 +239,41 @@ export async function PATCH(req: Request) {
     }
     updates['Refund Policy'] = policy;
   }
+  // NOTE on the null guards below: the wizard ALWAYS sends both keys, using
+  // `null` when the matching fulfillment type isn't selected (e.g. no Local
+  // Delivery → Delivery Radius = null; no Cold-Chain Shipping → Lead Time =
+  // null — RancherSetupWizard.tsx ~L3016). Without the null short-circuit,
+  // `Number(null)` coerces to 0, `0 <= 0` trips the "positive whole number"
+  // check, and the WHOLE Step-8 save 400s — blocking every rancher who doesn't
+  // offer that fulfillment type (the DD Ranch / Linda Anspach report,
+  // 2026-06-20). null means "type not offered": clear the field, don't validate.
   if ('Delivery Radius Miles' in updates) {
-    const v = Number(updates['Delivery Radius Miles']);
-    if (!Number.isInteger(v) || v <= 0 || v > 500) {
-      return NextResponse.json({
-        error: 'Delivery Radius Miles must be a positive whole number ≤ 500.',
-      }, { status: 400 });
+    const raw = updates['Delivery Radius Miles'];
+    if (raw === null || raw === undefined || raw === '') {
+      updates['Delivery Radius Miles'] = null;
+    } else {
+      const v = Number(raw);
+      if (!Number.isInteger(v) || v <= 0 || v > 500) {
+        return NextResponse.json({
+          error: 'Delivery Radius Miles must be a positive whole number ≤ 500.',
+        }, { status: 400 });
+      }
+      updates['Delivery Radius Miles'] = v;
     }
-    updates['Delivery Radius Miles'] = v;
   }
   if ('Shipping Lead Time Days' in updates) {
-    const v = Number(updates['Shipping Lead Time Days']);
-    if (!Number.isInteger(v) || v <= 0 || v > 180) {
-      return NextResponse.json({
-        error: 'Shipping Lead Time Days must be a positive whole number ≤ 180.',
-      }, { status: 400 });
+    const raw = updates['Shipping Lead Time Days'];
+    if (raw === null || raw === undefined || raw === '') {
+      updates['Shipping Lead Time Days'] = null;
+    } else {
+      const v = Number(raw);
+      if (!Number.isInteger(v) || v <= 0 || v > 180) {
+        return NextResponse.json({
+          error: 'Shipping Lead Time Days must be a positive whole number ≤ 180.',
+        }, { status: 400 });
+      }
+      updates['Shipping Lead Time Days'] = v;
     }
-    updates['Shipping Lead Time Days'] = v;
   }
   if ('Fulfillment Cost Notes' in updates) {
     const notes = String(updates['Fulfillment Cost Notes'] || '').trim().slice(0, 500);
@@ -299,10 +318,15 @@ export async function PATCH(req: Request) {
   // negative price (no min on the wizard inputs before this) would either make
   // Airtable choke or publish broken/negative pricing that 409s checkout. Same
   // gate the landing-page editor route already enforces.
+  // NOTE: 'Quarter/Half/Whole lbs' are NOT money — they're free-text weight
+  // strings (the wizard's own placeholder is "~150 lbs"). They were in this list
+  // and run through parseFloat, so a rancher typing "~150 lbs" produced NaN and
+  // 400'd the ENTIRE Step-3 save (same class as the Step-8 null bug). Removed —
+  // they pass through as strings via the general whitelist.
   const MONEY_FIELDS = [
-    'Quarter Price', 'Quarter Deposit', 'Quarter Processing Fee', 'Quarter lbs',
-    'Half Price', 'Half Deposit', 'Half Processing Fee', 'Half lbs',
-    'Whole Price', 'Whole Deposit', 'Whole Processing Fee', 'Whole lbs',
+    'Quarter Price', 'Quarter Deposit', 'Quarter Processing Fee',
+    'Half Price', 'Half Deposit', 'Half Processing Fee',
+    'Whole Price', 'Whole Deposit', 'Whole Processing Fee',
   ];
   for (const key of MONEY_FIELDS) {
     if (key in updates && updates[key] !== null && updates[key] !== '') {
@@ -318,6 +342,21 @@ export async function PATCH(req: Request) {
       // Empty string from a cleared input → null so Airtable clears the cell
       // instead of rejecting a blank number.
       updates[key] = null;
+    }
+  }
+
+  // Per-lb mis-entry floor. A positive tier PRICE below MIN_TIER_PRICE is almost
+  // certainly a per-pound value typed into a total field (DD Ranch published a
+  // $7.40 "whole cow" this way — the buyer would be charged ~$7.40 for a whole
+  // animal). Reject so broken pricing can never publish. 0/empty was normalized
+  // to null above (= "not set", allowed). Shares the MIN_TIER_PRICE constant with
+  // the wizard helper + the deposit charge guard (lib/pricing.ts).
+  for (const priceKey of ['Quarter Price', 'Half Price', 'Whole Price']) {
+    const v = updates[priceKey];
+    if (typeof v === 'number' && v > 0 && v < MIN_TIER_PRICE) {
+      return NextResponse.json({
+        error: `${priceKey} of $${v} looks like a per-pound price, not a total. Whole/half/quarter shares start around $${MIN_TIER_PRICE}+. If you price per pound, switch the price input to "$ / lb".`,
+      }, { status: 400 });
     }
   }
 
