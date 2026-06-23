@@ -104,19 +104,53 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         console.error('[drip] setup token mint failed:', e);
       }
 
+      // MISMATCH FIX (P0 2026-06-23): stamp the stage BEFORE the send (with
+      // rollback on send failure), mirroring rancher-launch-warmup's Phase 1
+      // pattern. The prior order was send-then-flip inside this try: a good
+      // send followed by a thrown stage `updateRecord` left the stage at
+      // welcome-sent/day2-sent/day5-sent, so the SAME drip re-sent on EVERY
+      // daily run until the write landed (no date sub-guard — purely
+      // stage+elapsed-days). Flip-first means worst-case we skip one drip on a
+      // send failure (recoverable: the rollback restores the prior stage), not
+      // spam the rancher daily.
+      //
+      // dripStep: advance the stage first, fire the email, restore the prior
+      // stage if the send throws. Returns true if the email was sent.
+      const dripStep = async (
+        nextStage: string,
+        send: () => Promise<unknown>,
+        label: string,
+      ): Promise<void> => {
+        try {
+          await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': nextStage });
+        } catch (stampErr) {
+          // Couldn't advance the stage — do NOT send (sending now would
+          // re-send next run since the stage never moved). Skip this run.
+          console.error(`[drip] stage pre-stamp failed for ${r.id} (${ranchName}) — skipping send:`, stampErr);
+          return;
+        }
+        try {
+          await send();
+          sent.push({ id: r.id, ranch: ranchName, sent: label });
+        } catch (sendErr) {
+          // Best-effort rollback so the next run retries this same step
+          // instead of skipping ahead with no email delivered.
+          console.error(`[drip] send failed for ${r.id} (${ranchName}) after stage flip — rolling back stage:`, sendErr);
+          try {
+            await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': stage });
+          } catch (rollbackErr) {
+            console.error(`[drip] stage rollback failed for ${r.id} (${ranchName}):`, rollbackErr);
+          }
+        }
+      };
+
       try {
         if (stage === 'welcome-sent' && elapsedDays >= 2) {
-          await sendRancherOnboardingDripDay2({ to: email, ranchName, operatorName, setupUrl, state });
-          await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': 'day2-sent' });
-          sent.push({ id: r.id, ranch: ranchName, sent: 'day2' });
+          await dripStep('day2-sent', () => sendRancherOnboardingDripDay2({ to: email, ranchName, operatorName, setupUrl, state }), 'day2');
         } else if (stage === 'day2-sent' && elapsedDays >= 5) {
-          await sendRancherOnboardingDripDay5({ to: email, ranchName, operatorName, setupUrl, state });
-          await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': 'day5-sent' });
-          sent.push({ id: r.id, ranch: ranchName, sent: 'day5' });
+          await dripStep('day5-sent', () => sendRancherOnboardingDripDay5({ to: email, ranchName, operatorName, setupUrl, state }), 'day5');
         } else if (stage === 'day5-sent' && elapsedDays >= 14) {
-          await sendRancherOnboardingDripDay14({ to: email, ranchName, operatorName, setupUrl, state });
-          await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': 'day14-sent' });
-          sent.push({ id: r.id, ranch: ranchName, sent: 'day14' });
+          await dripStep('day14-sent', () => sendRancherOnboardingDripDay14({ to: email, ranchName, operatorName, setupUrl, state }), 'day14');
         } else if (stage === 'day14-sent') {
           // Day 14 already fired — close out the drip.
           await updateRecord(TABLES.RANCHERS, r.id, { 'Self-Submit Drip Stage': 'completed' });

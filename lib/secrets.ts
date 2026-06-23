@@ -156,7 +156,7 @@ export function getFounding100PriceLabel(): string {
 // MEMBER MAGIC-LINK TOKEN HELPER
 // =============================================================================
 //
-// Signs a 7-day member-login JWT — used in any email that needs to deep-link
+// Signs a 14-day member-login JWT — used in any email that needs to deep-link
 // the buyer into an authed page (deposit checkout, member dashboard, etc).
 // The verify endpoint at /api/auth/member/verify accepts this token via GET
 // (302 redirect flow) or POST (JSON flow) and sets the bhc-member-auth cookie.
@@ -170,6 +170,7 @@ export function generateMemberLoginToken(consumerId: string, email: string): str
   return jwt.sign(
     { type: 'member-login', consumerId, email: email.trim().toLowerCase() },
     JWT_SECRET,
-    { expiresIn: '7d' }
+    // 14d so emailed deep-links (deposit/dashboard) survive a days-later click.
+    { expiresIn: '14d' }
   );
 }

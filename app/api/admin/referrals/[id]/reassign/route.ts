@@ -165,7 +165,7 @@ export async function POST(
       try {
         await sendEmail({
           to: rancherEmail,
-          subject: `BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+          subject: `BuyHalfCow Introduction: ${buyerName}${buyerState ? ` in ${buyerState}` : ''}`,
           html: `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
 <h1 style="font-family:Georgia,serif;">New Qualified Buyer Lead</h1>
 <p>Hi ${esc(rancherName)},</p>

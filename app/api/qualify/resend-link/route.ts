@@ -63,11 +63,16 @@ export async function POST(req: Request) {
     // tokenless submit with 401. Without this the "resend my link" recovery
     // just looped the buyer straight back into the expired-link error.
     // Same shape every other qualify link uses (/api/consumers, warmup/engage):
-    // { type: 'qualify-access', consumerId, email }, 24h expiry.
+    // { type: 'qualify-access', consumerId, email }.
+    // Expiry 30d (was 24h): this is an EMAILED clickable recovery link — the
+    // buyer may open it days later, and a 24h window put them right back in the
+    // expired-link loop this resend flow exists to fix (Email QA, Audit B P1).
+    // /api/qualify only checks type==='qualify-access' + consumerId, so a wider
+    // window is safe.
     const qualifyToken = jwt.sign(
       { type: 'qualify-access', consumerId: consumer.id, email },
       JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: '30d' }
     );
     const quizUrl = `${SITE_URL}/qualify/${encodeURIComponent(consumer.id)}?token=${encodeURIComponent(qualifyToken)}`;
     const subject = `${firstName}, your fresh quiz link`;

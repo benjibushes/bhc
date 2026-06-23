@@ -95,7 +95,7 @@ export async function PATCH(
       try {
       await sendEmail({
         to: rancherEmail,
-        subject: `BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+        subject: `BuyHalfCow Introduction: ${buyerName}${buyerState ? ` in ${buyerState}` : ''}`,
         html: `
           <!DOCTYPE html>
           <html>

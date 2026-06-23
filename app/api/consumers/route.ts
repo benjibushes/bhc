@@ -714,10 +714,15 @@ export async function POST(request: Request) {
         let qualifyUrl: string | null = null;
         let redirectToQualify = false;
         if (consumerSegment === 'Beef Buyer' && (hasInStateRancher || isRancherPageLead)) {
+          // 30d expiry (was 24h): this qualifyUrl is also EMAILED as a backup
+          // via sendQuizInvite below, so the buyer may click it days later. A
+          // 24h window stranded those late clicks in the expired-link loop
+          // (Email QA, Audit B P1). /api/qualify only checks
+          // type==='qualify-access' + consumerId, so the wider window is safe.
           const qualifyToken = jwt.sign(
             { type: 'qualify-access', consumerId: record.id, email: email.trim().toLowerCase() },
             JWT_SECRET,
-            { expiresIn: '24h' }
+            { expiresIn: '30d' }
           );
           // PERFECT-C: preserve campaign in URL for rancher-page leads so the
           // quiz page can forward it back to /api/qualify → matching/suggest.

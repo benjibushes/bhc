@@ -235,6 +235,13 @@ export function segmentRanchers(allRanchers: any[], now: Date = new Date()): Seg
     const onboarding = readEnumOrString(r['Onboarding Status']);
     const active = readEnumOrString(r['Active Status']);
 
+    // Never reactivate ranchers we've intentionally paused / flagged / removed
+    // (covers the first-touch path; the reminder path is guarded in the cron).
+    if (active === 'Paused' || active === 'Non-Compliant' || active === 'Removed') {
+      counts.suppressed++;
+      continue;
+    }
+
     let tier: 'A' | 'B' | null = null;
     if (TIER_A_ONBOARDING.has(onboarding)) {
       // Tier A — warm. Exclude any that are already Active + Live (getting

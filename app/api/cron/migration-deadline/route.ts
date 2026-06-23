@@ -160,6 +160,20 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
     // ── NUDGE WINDOWS ────────────────────────────────────────────────
     if (NUDGE_DAYS.has(daysLeft) && email) {
+      // DEDUP (P0 2026-06-23): this cron previously had NO idempotency guard
+      // beyond "runs once per UTC day" — a Vercel retry or manual ?secret=
+      // replay in the same day recomputed the identical daysLeft and re-fired
+      // the same nudge to the same rancher. Stamp a per-daysLeft marker in
+      // Notes ([mig-nudge dN]) and SKIP if this rancher already got the dN
+      // nudge. Notes-stamp (vs a new schema field) mirrors abandoned-quiz-nudge
+      // and survives without an Airtable migration. The stamp is written on
+      // successful send below.
+      const notes = String(r['Notes'] || '');
+      const nudgeMarker = `[mig-nudge d${daysLeft}]`;
+      if (notes.includes(nudgeMarker)) {
+        // Already nudged this rancher at this exact day-count — don't re-send.
+        continue;
+      }
       // Mint a fresh wizard token per nudge (rancher may have lost the
       // original email). 60-day expiry matches send-v2-upgrade.
       const token = jwt.sign({ type: 'rancher-setup', rancherId: id }, JWT_SECRET, { expiresIn: '60d' });
@@ -186,6 +200,17 @@ async function realHandler(_request: Request): Promise<CronResult> {
           nudgeFailures.push(`${name}: nudge suppressed — ${sendRes.reason || 'unknown'}`);
         } else {
           nudged++;
+          // Write the dedup marker so a same-day retry/replay won't re-send
+          // this exact dN nudge. Prepend to Notes (cap length). Stamp failure
+          // is non-fatal — worst case a retry re-sends once, which is strictly
+          // better than the prior unbounded behavior; logged for visibility.
+          try {
+            await updateRecord(TABLES.RANCHERS, id, {
+              'Notes': `${nudgeMarker} ${new Date().toISOString().slice(0, 10)}\n${notes}`.slice(0, 100000),
+            });
+          } catch (stampErr: any) {
+            nudgeFailures.push(`${name}: nudge sent but dedup-stamp failed — ${stampErr?.message || 'unknown'}`);
+          }
         }
       } catch (e: any) {
         nudgeFailures.push(`${name}: nudge send failed — ${e?.message || 'unknown'}`);

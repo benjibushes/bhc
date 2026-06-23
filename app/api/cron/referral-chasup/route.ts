@@ -290,6 +290,18 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
           const introAt = ref['Intro Sent At'] || ref['Approved At'];
           const days = Math.floor((now - new Date(introAt).getTime()) / DAY_MS);
 
+          // MISMATCH FIX (P0 2026-06-23): stamp the 4-day throttle BEFORE the
+          // send, matching the stale-prompt block below (line ~543). Prior
+          // order sent the reminder then stamped Rancher Reminded At; if the
+          // Airtable write threw after a good send, the next cron run saw no
+          // throttle stamp and re-sent the same reminder. Stamp-first means at
+          // worst we drop one reminder if the email send throws (the throttle
+          // naturally expires after 4 days and the next run retries) — far
+          // safer than duplicate rancher emails.
+          await updateRecord(TABLES.REFERRALS, ref.id, {
+            'Rancher Reminded At': new Date().toISOString(),
+          });
+
           await sendRancherLeadReminder({
             rancherEmail,
             operatorName: rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher',
@@ -301,10 +313,6 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
             budgetRange: ref['Budget Range'] || '',
             daysSinceIntro: days,
             dashboardUrl: `${SITE_URL}/rancher`,
-          });
-
-          await updateRecord(TABLES.REFERRALS, ref.id, {
-            'Rancher Reminded At': new Date().toISOString(),
           });
 
           rancherReminders++;
@@ -652,17 +660,45 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
 
         if (!buyerEmail) continue;
 
+        // HALLUCINATION GUARD (P1 2026-06-23): the chase body is LLM-drafted
+        // and sent with NO human review, so the prompt must forbid inventing
+        // anything not passed in here. No prices, no delivery/pickup dates, no
+        // commitments — only the buyer name, rancher name, and order interest
+        // below are real. (autoRespond.ts uses the same fail-closed pattern.)
         const draftPrompt = `Draft a friendly, concise re-engagement email for a beef buyer who was introduced to a rancher ${daysStale} days ago and we haven't heard back. This is follow-up #${chaseCount} of ${MAX_CHASE_UPS}. 2-3 short paragraphs. Warm, not pushy. ${chaseCount === MAX_CHASE_UPS ? 'Mention this is your last follow-up.' : ''} Do NOT include a subject line — just the body paragraphs. Sign as Benjamin from BuyHalfCow.
+
+Only reference the facts below. Do NOT state or invent any prices, dollar amounts, discounts, delivery dates, pickup dates, processing timelines, or any promise/guarantee — you do not have that information and must not make it up.
 
 Buyer: ${buyerName}, ${referral['Buyer State'] || ''}
 Rancher introduced: ${rancherName}
 Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Budget Range'] || 'not specified'}`;
 
-        const draft = await callClaude({
-          system: `You are Ben's AI business assistant for BuyHalfCow, a private beef brokerage. Write warm, direct emails that feel personal.`,
-          user: draftPrompt,
-          maxTokens: 500,
-        });
+        // LLM-FAILURE FALLBACK (P1 2026-06-23): callClaude was previously
+        // unwrapped — a thrown call OR an undefined/empty draft propagated to
+        // the outer catch (errors++) AND `draft.split('\n')` threw on undefined,
+        // producing a SILENT miss (no email, no fallback). Wrap the call,
+        // guard the output, and SKIP this buyer gracefully on failure/empty —
+        // never throw, never send an email built from a bad draft.
+        let draft: string;
+        try {
+          const raw = await callClaude({
+            system: `You are Ben's AI business assistant for BuyHalfCow, a private beef brokerage. Write warm, direct emails that feel personal. Never invent prices, dates, discounts, or promises — only use facts the user gives you.`,
+            user: draftPrompt,
+            maxTokens: 500,
+          });
+          draft = (raw || '').toString().trim();
+        } catch (llmErr: any) {
+          console.warn(`[chasup] LLM draft failed for referral ${referral.id} — skipping (no email):`, llmErr?.message);
+          skipReasons['llm-draft-failed'] = (skipReasons['llm-draft-failed'] || 0) + 1;
+          continue;
+        }
+        if (!draft || draft.length < 20) {
+          console.warn(`[chasup] LLM returned empty/too-short draft for referral ${referral.id} — skipping (no email).`);
+          skipReasons['llm-draft-empty'] = (skipReasons['llm-draft-empty'] || 0) + 1;
+          continue;
+        }
+        // Defensive length cap (maxTokens bounds tokens, not chars).
+        if (draft.length > 4000) draft = draft.slice(0, 4000);
 
         // Send immediately (no Telegram approval needed)
         const firstName = buyerName.split(' ')[0] || 'there';
@@ -671,6 +707,18 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
           : chaseCount === MAX_CHASE_UPS
           ? `Last follow-up — ${rancherName} on BuyHalfCow`
           : `Following up — ${rancherName} on BuyHalfCow`;
+
+        // MISMATCH FIX (P0 2026-06-23): stamp Chase Count + Last Chased At
+        // BEFORE the send (mirrors the stale-prompt block at ~543). Prior order
+        // sent the AI email then stamped; an Airtable write failure after a good
+        // send left Chase Count unincremented and re-sent the same AI chase on
+        // the next run. Stamp-first means at worst this buyer loses one chase if
+        // the send throws — far safer than re-emailing.
+        await updateRecord(TABLES.REFERRALS, referral.id, {
+          'AI Chase Draft': draft,
+          'Chase Count': chaseCount,
+          'Last Chased At': new Date().toISOString(),
+        });
 
         await sendEmail({
           to: buyerEmail,
@@ -683,13 +731,6 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
             </div>
             <p style="font-size:12px;color:#A7A29A;margin-top:30px;">You're receiving this because you signed up on BuyHalfCow. <a href="${SITE_URL}/unsubscribe?email=${encodeURIComponent(buyerEmail)}" style="color:#A7A29A;">Unsubscribe</a></p>
           </div>`,
-        });
-
-        // Update referral
-        await updateRecord(TABLES.REFERRALS, referral.id, {
-          'AI Chase Draft': draft,
-          'Chase Count': chaseCount,
-          'Last Chased At': new Date().toISOString(),
         });
 
         // Info-only Telegram notification
@@ -745,8 +786,14 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
             : '';
           const loginUrl = token ? `${SITE_URL}/member/verify?token=${token}` : `${SITE_URL}/member`;
 
-          await sendRepeatPurchaseEmail({ firstName, email: buyerEmail, rancherName, loginUrl });
+          // MISMATCH FIX (P0 2026-06-23): set the one-shot flag BEFORE the send.
+          // Prior order sent the repeat-purchase email then set Repeat Outreach
+          // Sent=true; a flag-write failure after a good send re-sent the same
+          // email on the next daily run. Flag-first means worst-case a single
+          // buyer misses one repeat-purchase nudge if the send throws (the flag
+          // is set, so we won't retry) — acceptable vs re-emailing past buyers.
           await updateRecord(TABLES.REFERRALS, referral.id, { 'Repeat Outreach Sent': true });
+          await sendRepeatPurchaseEmail({ firstName, email: buyerEmail, rancherName, loginUrl });
           repeatSent++;
         } catch (e: any) {
           console.error('Repeat purchase email error:', e.message);

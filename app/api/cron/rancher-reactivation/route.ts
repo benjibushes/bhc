@@ -27,7 +27,7 @@
 // sequential per-record try/catch, Telegram digest, GET+POST, maxDuration).
 
 import { NextResponse } from 'next/server';
-import { updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import {
   sendRancherReactivationWarm,
   sendRancherReactivationCold,
@@ -43,6 +43,26 @@ export const maxDuration = 180;
 // Max FIRST-TOUCH sends per daily tick (sanity pace). Reminders + dormant
 // marking are not subject to this cap.
 const DAILY_SEND_CAP = 8;
+
+// STATUS GUARD (P1 2026-06-23). The segmentation (lib/rancherReactivationSegment)
+// reads Active Status ONLY for tier assignment — it never excludes Paused /
+// Non-Compliant / Removed ranchers, so a paused legacy rancher (not in the
+// hardcoded EXCLUDE_RANCHER_IDS allowlist) can still receive a reminder. The
+// ReactivationRancher objects the segment returns DON'T carry Active Status, so
+// we re-read it from Airtable here (one fetch) and skip those ids on the
+// route-reachable send path (reminders). Mirrors the
+// ['Paused','Non-Compliant'] guard used in rancher-followup/onboarding-drip,
+// plus 'Removed' per this fix's spec.
+const BLOCKED_ACTIVE_STATUSES = new Set(['Paused', 'Non-Compliant', 'Removed']);
+
+function readActiveStatus(v: unknown): string {
+  if (!v) return '';
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'object' && v !== null && 'name' in v) {
+    return String((v as { name?: unknown }).name || '').trim();
+  }
+  return String(v).trim();
+}
 
 interface CronResult {
   status: 'success' | 'partial' | 'error';
@@ -124,6 +144,23 @@ async function realHandler(_request: Request): Promise<CronResult> {
   let dormantMarked = 0;
   const failures: string[] = [...run.failures];
 
+  // STATUS GUARD (P1): build the set of rancher ids whose Active Status is
+  // Paused / Non-Compliant / Removed so we can skip reminder sends to them.
+  // (Non-fatal if the fetch fails — we fall back to the prior behavior rather
+  // than block the whole reminder pass.)
+  const blockedRancherIds = new Set<string>();
+  try {
+    const allRanchersForGuard = (await getAllRecords(TABLES.RANCHERS)) as any[];
+    for (const r of allRanchersForGuard) {
+      if (BLOCKED_ACTIVE_STATUSES.has(readActiveStatus(r['Active Status']))) {
+        blockedRancherIds.add(r.id);
+      }
+    }
+  } catch (e: any) {
+    console.warn('[rancher-reactivation] status-guard rancher fetch failed (non-fatal):', e?.message);
+  }
+  let remindersBlockedByStatus = 0;
+
   // Stamp Airtable after a successful (non-suppressed) send. nextTouchCount is
   // the value to write (reminder → 2). Used by the reminder pass below; the
   // first-touch stamping happens inside runReactivationSend.
@@ -157,6 +194,13 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // ── REMINDERS (+5d, no booking; bumps Touch Count → 2) ──────────────
   for (const r of seg.reminders) {
     try {
+      // STATUS GUARD (P1): never re-email a Paused / Non-Compliant / Removed
+      // rancher. The segment doesn't filter these (it reads Active Status only
+      // for tier assignment), so enforce it here on the route-reachable path.
+      if (blockedRancherIds.has(r.id)) {
+        remindersBlockedByStatus++;
+        continue;
+      }
       const res = await sendByTier(r);
       if (res?.suppressed) {
         failures.push(`${r.ranchName}: reminder suppressed — ${res.reason || 'unknown'}`);
@@ -207,7 +251,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
         '🐄 <b>RANCHER REACTIVATION DAILY</b>',
         '',
         `First touches sent: ${sent} (cap ${DAILY_SEND_CAP})`,
-        `Reminders sent: ${remindersSent}`,
+        `Reminders sent: ${remindersSent}${remindersBlockedByStatus > 0 ? ` (${remindersBlockedByStatus} skipped: paused/non-compliant/removed)` : ''}`,
         `Marked dormant: ${dormantMarked}`,
         '',
         `Eligible — Tier A: ${seg.counts.tierAEligible} · Tier B: ${seg.counts.tierBEligible}`,
@@ -224,7 +268,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status,
     recordsTouched: sent + remindersSent + dormantMarked,
-    notes: `sent=${sent} reminders=${remindersSent} dormant=${dormantMarked} failures=${failures.length} (Aelig=${seg.counts.tierAEligible} Belig=${seg.counts.tierBEligible})`,
+    notes: `sent=${sent} reminders=${remindersSent} dormant=${dormantMarked} statusBlocked=${remindersBlockedByStatus} failures=${failures.length} (Aelig=${seg.counts.tierAEligible} Belig=${seg.counts.tierBEligible})`,
   };
 }
 

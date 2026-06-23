@@ -57,7 +57,7 @@ export async function POST(
       try {
         await sendEmail({
           to: rancherEmail,
-          subject: `[Resend] BuyHalfCow Introduction: ${buyerName} in ${buyerState}`,
+          subject: `[Resend] BuyHalfCow Introduction: ${buyerName}${buyerState ? ` in ${buyerState}` : ''}`,
           // P0 hotfix (2026-06-02): pin templateName to whitelisted value so
           // the rolling 3/week cap doesn't drop the resend on a rancher who
           // already received multiple matches this week. Operator-initiated
