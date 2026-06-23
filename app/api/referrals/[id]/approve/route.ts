@@ -95,7 +95,7 @@ export async function PATCH(
       try {
       await sendEmail({
         to: rancherEmail,
-        subject: `BuyHalfCow Introduction: ${buyerName}${buyerState ? ` in ${buyerState}` : ''}`,
+        subject: `i routed you a buyer${buyerState ? ` in ${buyerState}` : ''} — ${buyerName}`,
         html: `
           <!DOCTYPE html>
           <html>
@@ -112,9 +112,9 @@ export async function PATCH(
           </head>
           <body>
             <div class="container">
-              <h1>New Qualified Buyer Lead</h1>
+              <h1>A buyer for you</h1>
               <p>Hi ${esc(rancherName)},</p>
-              <p>You have a new qualified buyer lead from BuyHalfCow:</p>
+              <p>I routed you a buyer${buyerState ? ` in ${esc(buyerState)}` : ''} — a real, in-state family who's ready. They're yours to close. Reply to this email and reach out to them today.</p>
               <div class="divider"></div>
               <div class="field"><span class="label">Buyer:</span> ${esc(buyerName)}</div>
               <div class="field"><span class="label">Email:</span> ${esc(buyerEmail)}</div>
@@ -124,10 +124,9 @@ export async function PATCH(
               <div class="field"><span class="label">Budget:</span> ${esc(budgetRange)}</div>
               ${buyerNotes ? `<div class="field"><span class="label">Notes:</span> ${esc(buyerNotes)}</div>` : ''}
               <div class="divider"></div>
-              <p>Please reach out to them directly to discuss availability and pricing.</p>
-              <p><strong>Reply-all to this email to keep me in the loop.</strong></p>
+              <p>Call or email them, talk cut and timing, get them on the books. Reply here to keep me in the loop.</p>
               <div class="footer">
-                <p>— Benjamin, BuyHalfCow<br>Remember: 10% commission applies to sales made through BuyHalfCow referrals.</p>
+                <p>— Ben<br>your tier's rate applies on referred sales — a 1.5% floor on every tier. this buyer stays your customer.</p>
               </div>
             </div>
           </body>
