@@ -6,6 +6,70 @@ import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { MAX_ACTIVE_REFERRALS_FIELD, getLiveCapacity } from '@/lib/rancherCapacity';
 import { requireRancher } from '@/lib/rancherAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
+import { normalizeImageUrl } from '@/lib/imageUrl';
+
+// Fulfillment Types option values — mirrors FULFILLMENT_OPTIONS in the setup
+// wizard + the dashboard editor so all three agree on the exact strings the
+// Airtable multipleSelects field stores.
+const FULFILLMENT_TYPE_VALUES = ['Local Pickup', 'Local Delivery', 'Cold-Chain Shipping'];
+
+// Reject obviously-broken image links (Google Drive / Dropbox / OneDrive share
+// URLs) server-side too, so a corrupt Gallery Photos array can never reach
+// Airtable even if a client skips the ImageUploader gate. Direct image URLs +
+// our own Vercel Blob URLs pass through (after normalizeImageUrl tidy-up).
+function isRejectedShareImageUrl(url: string): boolean {
+  const u = String(url || '').toLowerCase();
+  if (!u) return true;
+  return (
+    u.includes('drive.google.com') ||
+    u.includes('docs.google.com') ||
+    u.includes('dropbox.com') ||
+    u.includes('1drv.ms') ||
+    u.includes('onedrive.live.com') ||
+    u.includes('photos.app.goo.gl') ||
+    u.includes('photos.google.com')
+  );
+}
+
+// GET /api/rancher/landing-page — hydrate the "My Page" editor with the
+// landing-page fields the main dashboard payload doesn't return (Refund
+// Policy, social URLs, Processing Facility, the fulfillment block, FAQ).
+// Keeps the read inside this route so the editor agent never has to touch the
+// shared dashboard endpoint. Returns the raw stored strings; the client owns
+// parsing the JSON arrays (Testimonials / FAQ).
+export async function GET(request: Request) {
+  try {
+    const r = await requireRancher(request);
+    if (r instanceof NextResponse) return r;
+    const { session } = r;
+    const rancher = (await getRecordById(TABLES.RANCHERS, session.rancherId)) as any;
+    if (!rancher) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+    const ft = rancher['Fulfillment Types'];
+    return NextResponse.json({
+      'Refund Policy': rancher['Refund Policy'] || '',
+      'Google Reviews URL': rancher['Google Reviews URL'] || '',
+      'Facebook URL': rancher['Facebook URL'] || '',
+      'Instagram URL': rancher['Instagram URL'] || '',
+      'Processing Facility': rancher['Processing Facility'] || '',
+      // Airtable returns multipleSelects as string[] (or [{name}]) — coerce to
+      // a flat array of strings for the checkbox editor.
+      'Fulfillment Types': Array.isArray(ft)
+        ? ft.map((t: any) => (t && typeof t === 'object' ? t.name : String(t)))
+        : [],
+      'Pickup City': rancher['Pickup City'] || '',
+      'Delivery Radius Miles': rancher['Delivery Radius Miles'] ?? '',
+      'Shipping Lead Time Days': rancher['Shipping Lead Time Days'] ?? '',
+      'Fulfillment Cost Notes': rancher['Fulfillment Cost Notes'] || '',
+      // Raw JSON strings — client parses (tolerant of empty/missing).
+      'Testimonials': rancher['Testimonials'] || '',
+      'FAQ': rancher['FAQ'] || '',
+    });
+  } catch (error: any) {
+    console.error('Landing page GET error:', error);
+    return NextResponse.json({ error: 'Failed to load' }, { status: 500 });
+  }
+}
 
 // PATCH /api/rancher/landing-page — rancher updates their own landing page fields
 export async function PATCH(request: Request) {
@@ -57,6 +121,18 @@ export async function PATCH(request: Request) {
       'Facebook URL',
       'Instagram URL',
       'Processing Facility',
+      // Page-completeness / fulfillment fields — previously wizard-only or
+      // trapped in the Submit-Verification modal; now editable from the
+      // dashboard "My Page" tab (editor↔page parity, 2026-06-23).
+      'Refund Policy',
+      'Fulfillment Types',
+      'Pickup City',
+      'Delivery Radius Miles',
+      'Shipping Lead Time Days',
+      'Fulfillment Cost Notes',
+      // FAQ — JSON array of {q,a}. New long-text field; repeater editor in
+      // the dashboard serializes to valid JSON (parsed by the public page).
+      'FAQ',
       // Multi-user: comma/newline list of additional emails allowed to log
       // into this rancher's dashboard. Login flow matches against this.
       'Team Emails',
@@ -399,6 +475,128 @@ export async function PATCH(request: Request) {
           error: `${priceKey} of $${v} looks like a per-pound price, not a total. Whole/half/quarter shares start around $${MIN_TIER_PRICE}+. If you price per pound, multiply by the hanging weight to get the total.`,
         }, { status: 400 });
       }
+    }
+
+    // ── Refund Policy (20–500 chars) ─────────────────────────────────────
+    // Buyers see this verbatim on the public page. Mirrors the setup-wizard
+    // gate so the dashboard can't save a too-short/too-long policy. Blank was
+    // normalized to null above (= "not set", allowed — the field is optional
+    // until go-live, where the completeness meter nudges it).
+    if (typeof fields['Refund Policy'] === 'string') {
+      const len = fields['Refund Policy'].trim().length;
+      if (len > 0 && len < 20) {
+        return NextResponse.json({ error: 'Refund policy must be at least 20 characters — buyers see this verbatim.' }, { status: 400 });
+      }
+      if (len > 500) {
+        return NextResponse.json({ error: 'Refund policy must be 500 characters or fewer.' }, { status: 400 });
+      }
+      fields['Refund Policy'] = fields['Refund Policy'].trim();
+    }
+
+    // ── Fulfillment Types (multipleSelects) ──────────────────────────────
+    // Accept an array of option strings OR a comma-separated string; keep only
+    // the known option values (Airtable rejects unknown choices). Empty → null.
+    if ('Fulfillment Types' in fields && fields['Fulfillment Types'] !== null) {
+      const raw = fields['Fulfillment Types'];
+      const arr: string[] = Array.isArray(raw)
+        ? raw.map((s) => String(s).trim())
+        : String(raw).split(',').map((s) => s.trim());
+      const clean = arr.filter((v) => FULFILLMENT_TYPE_VALUES.includes(v));
+      fields['Fulfillment Types'] = clean.length ? clean : null;
+    }
+
+    // ── Fulfillment numerics ─────────────────────────────────────────────
+    for (const numKey of ['Delivery Radius Miles', 'Shipping Lead Time Days']) {
+      if (fields[numKey] !== undefined && fields[numKey] !== null) {
+        const n = parseFloat(fields[numKey]);
+        if (isNaN(n) || n < 0) {
+          return NextResponse.json({ error: `${numKey} must be a valid positive number` }, { status: 400 });
+        }
+        fields[numKey] = n;
+      }
+    }
+
+    // ── Gallery Photos — sanitize URLs server-side ───────────────────────
+    // Defense-in-depth for the broken-cover bug: normalize known share-link
+    // forms, then DROP any entry that's still a rejected share link or not a
+    // string. The first photo is the public-page cover hero, so a single bad
+    // URL here is what produced the broken hero. Accepts a JSON-string array
+    // (what the dashboard sends) or a real array.
+    if ('Gallery Photos' in fields && fields['Gallery Photos'] !== null) {
+      let arr: any[] = [];
+      const raw = fields['Gallery Photos'];
+      if (Array.isArray(raw)) arr = raw;
+      else if (typeof raw === 'string' && raw.trim().startsWith('[')) {
+        try { const p = JSON.parse(raw); if (Array.isArray(p)) arr = p; } catch { arr = []; }
+      }
+      const clean = arr
+        .map((s) => normalizeImageUrl(String(s || '')))
+        .filter((s) => s && !isRejectedShareImageUrl(s));
+      fields['Gallery Photos'] = clean.length ? JSON.stringify(clean) : null;
+    }
+
+    // ── Logo URL — normalize share links to a direct form ────────────────
+    if (typeof fields['Logo URL'] === 'string' && fields['Logo URL'].trim()) {
+      const normalized = normalizeImageUrl(fields['Logo URL']);
+      if (isRejectedShareImageUrl(normalized)) {
+        return NextResponse.json({
+          error: 'That logo link is a Google Drive / cloud share page, not a direct image. Upload the actual image file from the dashboard instead.',
+        }, { status: 400 });
+      }
+      fields['Logo URL'] = normalized;
+    }
+
+    // ── Testimonials — must be a VALID JSON array ────────────────────────
+    // BUGFIX (2026-06-23): the dashboard previously wrote Testimonials as a
+    // raw string, corrupting the JSON the public page parses (JSON.parse threw
+    // → testimonials silently dropped). Now we require a JSON array of
+    // {name, location?, quote} objects; anything else is rejected so a corrupt
+    // value can never persist. Empty array → null (clears the field).
+    if ('Testimonials' in fields && fields['Testimonials'] !== null) {
+      const raw = fields['Testimonials'];
+      let arr: any[] | null = null;
+      if (Array.isArray(raw)) arr = raw;
+      else if (typeof raw === 'string') {
+        const t = raw.trim();
+        if (!t) arr = [];
+        else {
+          try { const p = JSON.parse(t); if (Array.isArray(p)) arr = p; } catch { arr = null; }
+        }
+      }
+      if (arr === null) {
+        return NextResponse.json({ error: 'Testimonials must be a valid list. Use the add/remove rows editor in My Page.' }, { status: 400 });
+      }
+      const clean = arr
+        .filter((r) => r && typeof r === 'object')
+        .map((r: any) => ({
+          name: String(r.name || '').trim(),
+          location: String(r.location || '').trim(),
+          quote: String(r.quote || '').trim(),
+        }))
+        .filter((r) => r.quote || r.name);
+      fields['Testimonials'] = clean.length ? JSON.stringify(clean) : null;
+    }
+
+    // ── FAQ — must be a VALID JSON array of {q,a} ────────────────────────
+    if ('FAQ' in fields && fields['FAQ'] !== null) {
+      const raw = fields['FAQ'];
+      let arr: any[] | null = null;
+      if (Array.isArray(raw)) arr = raw;
+      else if (typeof raw === 'string') {
+        const t = raw.trim();
+        if (!t) arr = [];
+        else {
+          try { const p = JSON.parse(t); if (Array.isArray(p)) arr = p; } catch { arr = null; }
+        }
+      }
+      if (arr === null) {
+        return NextResponse.json({ error: 'FAQ must be a valid list. Use the add/remove rows editor in My Page.' }, { status: 400 });
+      }
+      const clean = arr
+        .filter((r) => r && typeof r === 'object')
+        .map((r: any) => ({ q: String(r.q || '').trim(), a: String(r.a || '').trim() }))
+        .filter((r) => r.q || r.a);
+      fields['FAQ'] = clean.length ? JSON.stringify(clean) : null;
     }
 
     // Normalize States Served — accept array of codes from new multi-select UI,

@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
 import { getAllRecords, TABLES } from '@/lib/airtable';
+import { normalizeImageUrl } from '@/lib/imageUrl';
 import Container from '../components/Container';
 import StickyMobileCTA from '../components/StickyMobileCTA';
 import DiscoverMapClient from './components/DiscoverMapClient';
+import RancherList from './components/RancherList';
 
 // Revalidate the public map every 30 minutes — fresh enough for new
 // prospects + claimed flips, slow enough to keep Airtable load tame.
@@ -54,7 +56,20 @@ export type MapPin = {
   primaryProduct: string;
   lat: number;
   lng: number;
-  city?: string;
+  // City — surfaced in popups + the SSR list so two ranchers in the same
+  // state are distinguishable ("Weatherford, TX" vs "Lubbock, TX").
+  city: string;
+  // Conversion fields (mirror app/api/public/ranchers/route.ts). Only the
+  // pin card needs these — a logo + a "from $X" hook + a Reserve button turn
+  // the popup from a label into a storefront. Prices are raw numbers or null.
+  logoUrl: string;
+  quarterPrice: number | null;
+  halfPrice: number | null;
+  wholePrice: number | null;
+  // Lowest available tier price — the "from $X" anchor. The label tracks which
+  // tier that price is (half/quarter/whole) so the card reads "from $X/half".
+  fromPrice: number | null;
+  fromLabel: 'half' | 'quarter' | 'whole' | '';
 };
 
 const ONBOARDING_STAGES = [
@@ -128,6 +143,29 @@ async function fetchPins(): Promise<MapPin[]> {
       }
 
       const ranchName = (r['Ranch Name'] || r['Operator Name'] || 'Ranch').toString();
+
+      // Prices — Airtable stores these as numbers. Coerce defensively (a
+      // stray "$1,800" string or empty cell must become null, never NaN).
+      const toPrice = (v: unknown): number | null => {
+        if (v === null || v === undefined || v === '') return null;
+        const n = Number(typeof v === 'string' ? v.replace(/[^0-9.]/g, '') : v);
+        return isFinite(n) && n > 0 ? n : null;
+      };
+      const quarterPrice = toPrice(r['Quarter Price']);
+      const halfPrice = toPrice(r['Half Price']);
+      const wholePrice = toPrice(r['Whole Price']);
+
+      // "from $X" anchor — cheapest entry point wins (almost always the
+      // quarter, then half, then whole). The label tracks the tier so the
+      // card can read "from $X/quarter". Only verified pins carry pricing on
+      // the card (non-verified ranchers haven't set/confirmed prices), but we
+      // compute it for all so the SSR list can show it where present.
+      let fromPrice: number | null = null;
+      let fromLabel: MapPin['fromLabel'] = '';
+      if (quarterPrice) { fromPrice = quarterPrice; fromLabel = 'quarter'; }
+      else if (halfPrice) { fromPrice = halfPrice; fromLabel = 'half'; }
+      else if (wholePrice) { fromPrice = wholePrice; fromLabel = 'whole'; }
+
       return {
         id: r.id,
         ranchName,
@@ -138,6 +176,15 @@ async function fetchPins(): Promise<MapPin[]> {
         primaryProduct: (r['Primary Product'] || 'Beef').toString(),
         lat,
         lng,
+        city: (r['City'] || '').toString(),
+        // Same normalize the public API applies — rewrites Dropbox/Drive
+        // sharing URLs to raw image bytes so <img src> renders the logo.
+        logoUrl: normalizeImageUrl((r['Logo URL'] || '').toString()),
+        quarterPrice,
+        halfPrice,
+        wholePrice,
+        fromPrice,
+        fromLabel,
       };
     })
     .filter((x): x is MapPin => x !== null);
@@ -167,82 +214,71 @@ export default async function MapPage() {
       <section className="py-16 md:py-20 border-b border-divider/10">
         <Container>
           <div className="max-w-3xl space-y-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-saddle">discover map</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-saddle">find a rancher near you</p>
             <h1 className="font-serif text-4xl md:text-6xl leading-tight lowercase">
-              every direct-to-consumer rancher in america
+              {stats.verified > 0 ? (
+                <>
+                  {stats.verified} rancher{stats.verified === 1 ? '' : 's'} shipping
+                  beef today
+                </>
+              ) : (
+                <>every direct-to-consumer rancher in america</>
+              )}
             </h1>
             <p className="text-lg text-charcoal/80 leading-relaxed">
-              The public hit list. Pin color shows where each rancher sits in the
-              pipeline — from verified partner shipping today, to one we&rsquo;re
-              actively cold-emailing this week.
+              Drop a pin in your state and reserve a quarter, half, or whole direct
+              from the rancher who raised it. Green pins are verified partners
+              shipping right now — orange and grey show who&rsquo;s coming next.
             </p>
-            <ul className="text-sm text-charcoal/85 leading-relaxed pt-1 space-y-1">
-              <li>
-                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full bg-sage mr-2 align-middle" />
-                <strong>Green</strong> — verified partner shipping today
-              </li>
-              <li>
-                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full bg-rust mr-2 align-middle" />
-                <strong>Orange</strong> — being onboarded right now (call · docs · agreement · verification)
-              </li>
-              <li>
-                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full bg-amber mr-2 align-middle" />
-                <strong>Yellow</strong> — raised their hand or flagged by a fan
-              </li>
-              <li>
-                <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full bg-dust mr-2 align-middle" />
-                <strong>Grey</strong> — discovered, not yet engaged
-              </li>
-            </ul>
-            <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-saddle pt-1">
-              <span>
-                <strong className="text-charcoal">{stats.verified}</strong> verified
+            {/* Lead with what a buyer can act on TODAY (verified + states).
+                Pipeline-vanity counts (onboarding/self-submitted/prospect) are
+                demoted to a quieter second line so the hero sells availability,
+                not a CRM funnel. */}
+            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 pt-1">
+              <span className="text-saddle text-sm">
+                <strong className="text-charcoal text-xl align-baseline">{stats.verified}</strong>{' '}
+                shipping today
               </span>
-              <span aria-hidden className="text-dust">·</span>
-              <span>
-                <strong className="text-charcoal">{stats.onboarding}</strong> onboarding
-              </span>
-              <span aria-hidden className="text-dust">·</span>
-              <span>
-                <strong className="text-charcoal">{stats.selfSubmitted}</strong> self-submitted
-              </span>
-              <span aria-hidden className="text-dust">·</span>
-              <span>
-                <strong className="text-charcoal">{stats.prospects}</strong> prospects
-              </span>
-              <span aria-hidden className="text-dust">·</span>
-              <span>
-                <strong className="text-charcoal">{stats.statesCovered}</strong> states
+              <span className="text-saddle text-sm">
+                <strong className="text-charcoal text-xl align-baseline">{stats.statesCovered}</strong>{' '}
+                states on the map
               </span>
             </div>
+            <p className="text-xs text-dust">
+              Pipeline: {stats.onboarding} onboarding · {stats.selfSubmitted} self-submitted ·{' '}
+              {stats.prospects} prospects we&rsquo;re working to bring in.
+            </p>
             <div className="flex flex-wrap gap-3 pt-3">
               <a
-                href="/map/add-a-rancher"
+                href="/access"
                 className="inline-flex items-center gap-2 px-6 py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+              >
+                Find a rancher near you
+                <span aria-hidden>→</span>
+              </a>
+              <a
+                href="/map/add-a-rancher"
+                className="inline-flex items-center gap-2 px-6 py-3 border-2 border-charcoal text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
               >
                 Add a rancher
                 <span aria-hidden>→</span>
               </a>
-              <a
-                href="/access"
-                className="inline-flex items-center gap-2 px-6 py-3 border-2 border-charcoal text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
-              >
-                Get matched in your state
-                <span aria-hidden>→</span>
-              </a>
             </div>
-            <p className="text-xs text-saddle pt-1">
-              Don&rsquo;t see a rancher in your state? Drop your zip on{' '}
-              <a href="/access" className="underline hover:text-charcoal">/access</a>
-              {' '}— we&rsquo;ll waitlist you and prioritize scouting your area.
-            </p>
           </div>
         </Container>
       </section>
 
       <section className="py-10 md:py-12">
         <Container>
-          <DiscoverMapClient pins={pins} />
+          {/* The map module is ssr:false (Leaflet touches `window`), so Google
+              would otherwise index an empty <div>. We pass a fully server-
+              rendered, crawlable <ul> of ranchers (name · City, ST · from $X ·
+              link) as `listSlot`; the client wrapper toggles list/map view but
+              the list markup is always in the initial HTML for SEO. */}
+          <DiscoverMapClient
+            pins={pins}
+            listSlot={<RancherList pins={pins} />}
+          />
           <p className="mt-6 text-xs text-dust">
             Are you on this map and want it removed? Use the &ldquo;remove me&rdquo; link on
             your listing&rsquo;s page.
@@ -251,9 +287,9 @@ export default async function MapPage() {
       </section>
 
       <StickyMobileCTA
-        href="/map/add-a-rancher"
-        label="Add a rancher to the map"
-        subLabel={`${stats.verified + stats.onboarding + stats.selfSubmitted + stats.prospects} pins · ${stats.statesCovered} states`}
+        href="/access"
+        label="Find a rancher near you"
+        subLabel={`${stats.verified} shipping today · ${stats.statesCovered} states`}
       />
     </main>
   );

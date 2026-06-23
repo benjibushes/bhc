@@ -256,6 +256,15 @@ export default function RancherDashboardPage() {
   const [customProducts, setCustomProducts] = useState<{ name: string; price: number | string; description: string; link: string }[]>([]);
   const [galleryPhotos, setGalleryPhotos] = useState<string[]>([]);
   const [newProduct, setNewProduct] = useState({ name: '', price: '', description: '', link: '' });
+  // Editor↔page parity (2026-06-23): fields that previously lived only in the
+  // setup wizard / Submit-Verification modal, now first-class in My Page.
+  //   - Testimonials + FAQ are REPEATERS → kept as typed arrays, serialized to
+  //     valid JSON on save (the dashboard used to write Testimonials as a raw
+  //     string, corrupting the JSON the public page parses — this fixes that).
+  //   - Fulfillment Types is a checkbox multi-select → string[] of option values.
+  const [testimonials, setTestimonials] = useState<{ name: string; location: string; quote: string }[]>([]);
+  const [faqItems, setFaqItems] = useState<{ q: string; a: string }[]>([]);
+  const [fulfillmentTypes, setFulfillmentTypes] = useState<string[]>([]);
   // Capacity editor
   const [editingCapacity, setEditingCapacity] = useState(false);
   const [capacityValue, setCapacityValue] = useState('');
@@ -366,6 +375,17 @@ export default function RancherDashboardPage() {
         'Cal.com Slug': r.calComSlug || '',
         'Certifications': r.certifications || '',
         'Team Emails': (r as any).teamEmails || '',
+        // Parity fields — defaults blank here; hydrated from the landing-page
+        // GET endpoint below (the shared dashboard payload doesn't return them).
+        'Refund Policy': '',
+        'Google Reviews URL': '',
+        'Facebook URL': '',
+        'Instagram URL': '',
+        'Processing Facility': '',
+        'Pickup City': '',
+        'Delivery Radius Miles': '',
+        'Shipping Lead Time Days': '',
+        'Fulfillment Cost Notes': '',
       });
       // Seed touched-derived: any tier price/deposit that already has a stored
       // value loads as a manual override so it's preserved verbatim. Derivation
@@ -389,6 +409,67 @@ export default function RancherDashboardPage() {
         const parsed = raw ? JSON.parse(raw) : [];
         setGalleryPhotos(Array.isArray(parsed) ? parsed.filter((s: any) => typeof s === 'string') : []);
       } catch { setGalleryPhotos([]); }
+      // Parse Testimonials — tolerant of the legacy raw-string corruption: only
+      // a valid JSON array of objects hydrates the repeater; anything else
+      // starts empty (the rancher re-enters once, and we now save valid JSON).
+      try {
+        const raw = (r as any).testimonials;
+        const parsed = raw ? JSON.parse(raw) : [];
+        setTestimonials(
+          Array.isArray(parsed)
+            ? parsed
+                .filter((t: any) => t && typeof t === 'object')
+                .map((t: any) => ({ name: String(t.name || ''), location: String(t.location || ''), quote: String(t.quote || '') }))
+            : []
+        );
+      } catch { setTestimonials([]); }
+      // Hydrate the parity fields the main dashboard payload omits (Refund
+      // Policy, social URLs, Processing Facility, fulfillment block, FAQ) from
+      // this route's own GET. Degrades silently — a slow/failed read just
+      // leaves those fields blank, never blocks the dashboard paint.
+      try {
+        const lpRes = await fetch('/api/rancher/landing-page', { credentials: 'include' });
+        if (lpRes.ok) {
+          const lp = await lpRes.json();
+          setPageForm((f) => ({
+            ...f,
+            'Refund Policy': lp['Refund Policy'] || '',
+            'Google Reviews URL': lp['Google Reviews URL'] || '',
+            'Facebook URL': lp['Facebook URL'] || '',
+            'Instagram URL': lp['Instagram URL'] || '',
+            'Processing Facility': lp['Processing Facility'] || '',
+            'Pickup City': lp['Pickup City'] || '',
+            'Delivery Radius Miles': lp['Delivery Radius Miles'] !== '' && lp['Delivery Radius Miles'] != null ? String(lp['Delivery Radius Miles']) : '',
+            'Shipping Lead Time Days': lp['Shipping Lead Time Days'] !== '' && lp['Shipping Lead Time Days'] != null ? String(lp['Shipping Lead Time Days']) : '',
+            'Fulfillment Cost Notes': lp['Fulfillment Cost Notes'] || '',
+          }));
+          setFulfillmentTypes(Array.isArray(lp['Fulfillment Types']) ? lp['Fulfillment Types'] : []);
+          // Testimonials from the dedicated route override the dashboard copy
+          // (same data, but this is the canonical read once parity ships).
+          try {
+            const tRaw = lp['Testimonials'];
+            const tParsed = tRaw ? JSON.parse(tRaw) : [];
+            if (Array.isArray(tParsed)) {
+              setTestimonials(
+                tParsed
+                  .filter((t: any) => t && typeof t === 'object')
+                  .map((t: any) => ({ name: String(t.name || ''), location: String(t.location || ''), quote: String(t.quote || '') }))
+              );
+            }
+          } catch { /* keep dashboard-derived testimonials */ }
+          try {
+            const fRaw = lp['FAQ'];
+            const fParsed = fRaw ? JSON.parse(fRaw) : [];
+            setFaqItems(
+              Array.isArray(fParsed)
+                ? fParsed
+                    .filter((q: any) => q && typeof q === 'object')
+                    .map((q: any) => ({ q: String(q.q || ''), a: String(q.a || '') }))
+                : []
+            );
+          } catch { setFaqItems([]); }
+        }
+      } catch { /* parity fields stay blank — non-fatal */ }
     } catch {
       router.push('/rancher/login');
     } finally {
@@ -828,6 +909,26 @@ export default function RancherDashboardPage() {
       // Include custom products as JSON
       body['Custom Products'] = JSON.stringify(customProducts);
       body['Gallery Photos'] = JSON.stringify(galleryPhotos);
+      // Repeaters → VALID JSON arrays. Drop fully-blank rows so we never persist
+      // empty {name:'',quote:''} objects. CRITICAL: Testimonials is now always
+      // valid JSON (was a raw string before → corrupted the public-page parse).
+      body['Testimonials'] = JSON.stringify(
+        testimonials
+          .map((t) => ({ name: t.name.trim(), location: t.location.trim(), quote: t.quote.trim() }))
+          .filter((t) => t.quote || t.name)
+      );
+      body['FAQ'] = JSON.stringify(
+        faqItems
+          .map((f) => ({ q: f.q.trim(), a: f.a.trim() }))
+          .filter((f) => f.q || f.a)
+      );
+      // Fulfillment Types → array of option strings (Airtable multipleSelects).
+      body['Fulfillment Types'] = fulfillmentTypes;
+      // Coerce fulfillment numerics (blank → null clears the cell).
+      for (const numKey of ['Delivery Radius Miles', 'Shipping Lead Time Days']) {
+        if (body[numKey]) body[numKey] = parseFloat(body[numKey]) || null;
+        else body[numKey] = null;
+      }
       const res = await fetch('/api/rancher/landing-page', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -2212,22 +2313,105 @@ export default function RancherDashboardPage() {
                 )}
               </div>
 
-              {!rancherInfo.pageLive && (
-                <div className="p-4 bg-yellow-50 border border-yellow-400 text-sm text-saddle flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                  <p>Your page is not live yet. Fill out the fields below and request to go live when you&apos;re ready.</p>
-                  {goLiveRequested ? (
-                    <span className="text-xs bg-green-100 text-green-800 px-3 py-1.5 whitespace-nowrap">Request sent!</span>
-                  ) : (
-                    <button
-                      onClick={handleRequestGoLive}
-                      disabled={goLiveLoading || !rancherInfo.slug}
-                      className="px-4 py-2 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors whitespace-nowrap disabled:opacity-50"
-                    >
-                      {goLiveLoading ? 'Requesting...' : 'Request Go Live'}
-                    </button>
-                  )}
-                </div>
-              )}
+              {/* ── Page-completeness meter + GO-LIVE GATE ──────────────────
+                  Checklist of what a buyer-ready page needs. The publish action
+                  is gated on the ESSENTIALS (cover photo + about + ≥1 price) so
+                  a rancher can never publish a blank page — previously go-live
+                  only checked that a slug existed. The remaining items (≥3
+                  photos, refund policy) are "recommended" nudges, not blockers. */}
+              {(() => {
+                const hasCover = galleryPhotos.length > 0 && !!galleryPhotos[0];
+                const hasAbout = (pageForm['About Text'] || '').trim().length >= 20;
+                const hasPrice = !!(
+                  (Number(pageForm['Quarter Price']) > 0) ||
+                  (Number(pageForm['Half Price']) > 0) ||
+                  (Number(pageForm['Whole Price']) > 0)
+                );
+                const hasThreePhotos = galleryPhotos.filter(Boolean).length >= 3;
+                const refundLen = (pageForm['Refund Policy'] || '').trim().length;
+                const hasRefund = refundLen >= 20;
+                const checklist: { label: string; done: boolean; essential: boolean }[] = [
+                  { label: 'Cover photo', done: hasCover, essential: true },
+                  { label: 'About your ranch', done: hasAbout, essential: true },
+                  { label: 'At least one price', done: hasPrice, essential: true },
+                  { label: '3+ gallery photos', done: hasThreePhotos, essential: false },
+                  { label: 'Refund policy', done: hasRefund, essential: false },
+                ];
+                const doneCount = checklist.filter((c) => c.done).length;
+                const pct = Math.round((doneCount / checklist.length) * 100);
+                // Gate ONLY on essentials (cover + about + ≥1 price).
+                const essentialsMet = hasCover && hasAbout && hasPrice;
+                const missingEssentials = checklist.filter((c) => c.essential && !c.done).map((c) => c.label);
+
+                if (rancherInfo.pageLive) {
+                  // Live already — show a compact completeness bar (no gate) so
+                  // ranchers still see what's left to round out their page.
+                  if (doneCount === checklist.length) return null;
+                  return (
+                    <div className="p-4 bg-white border border-dust space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">Page completeness</span>
+                        <span className="text-saddle">{doneCount} / {checklist.length}</span>
+                      </div>
+                      <div className="h-2 bg-bone-warm border border-dust overflow-hidden">
+                        <div className="h-full bg-green-600 transition-all" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs pt-1">
+                        {checklist.map((c) => (
+                          <span key={c.label} className={c.done ? 'text-green-700' : 'text-dust'}>
+                            {c.done ? '✓' : '○'} {c.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="p-4 bg-yellow-50 border border-yellow-400 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-charcoal">Your page is not live yet</p>
+                      <span className="text-xs text-saddle whitespace-nowrap">{doneCount} / {checklist.length} complete</span>
+                    </div>
+                    <div className="h-2 bg-white border border-yellow-300 overflow-hidden">
+                      <div className={`h-full transition-all ${essentialsMet ? 'bg-green-600' : 'bg-saddle'}`} style={{ width: `${pct}%` }} />
+                    </div>
+                    <ul className="space-y-1 text-sm">
+                      {checklist.map((c) => (
+                        <li key={c.label} className="flex items-center gap-2">
+                          <span className={c.done ? 'text-green-700' : (c.essential ? 'text-red-600' : 'text-dust')}>
+                            {c.done ? '✓' : '○'}
+                          </span>
+                          <span className={c.done ? 'text-charcoal' : 'text-saddle'}>
+                            {c.label}
+                            {!c.essential && <span className="text-dust text-xs"> (recommended)</span>}
+                            {c.essential && !c.done && <span className="text-red-600 text-xs"> · required to publish</span>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-1">
+                      <p className="text-xs text-saddle">
+                        {essentialsMet
+                          ? 'Looks good — save first, then publish.'
+                          : `Add ${missingEssentials.join(', ')} below, then save, before you can publish.`}
+                      </p>
+                      {goLiveRequested ? (
+                        <span className="text-xs bg-green-100 text-green-800 px-3 py-1.5 whitespace-nowrap">Request sent!</span>
+                      ) : (
+                        <button
+                          onClick={handleRequestGoLive}
+                          disabled={goLiveLoading || !rancherInfo.slug || !essentialsMet}
+                          title={!essentialsMet ? `Still needed: ${missingEssentials.join(', ')}` : (!rancherInfo.slug ? 'Set your page URL slug first' : undefined)}
+                          className="px-4 py-2 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {goLiveLoading ? 'Requesting...' : 'Request Go Live'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Page Click Stats */}
               {rancherInfo.pageLive && (rancherInfo.quarterClicks > 0 || rancherInfo.halfClicks > 0 || rancherInfo.wholeClicks > 0) && (
@@ -2567,6 +2751,76 @@ export default function RancherDashboardPage() {
                     />
                     <label htmlFor="shipsNationwide" className="text-sm">We ship nationwide</label>
                   </div>
+
+                  {/* ── Trust & Policies ──────────────────────────────────────
+                      Refund policy + USDA processor + social proof links. These
+                      render on the public page but were previously editable only
+                      in the setup wizard / Submit-Verification modal — now first
+                      class here so a rancher can edit them anytime. */}
+                  <h3 className="font-serif text-lg border-b border-dust pb-2 pt-4">Trust &amp; Policies</h3>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Refund / Satisfaction Policy <span className="text-dust font-normal">(buyers see this verbatim — 20–500 characters)</span></label>
+                    <textarea
+                      rows={4}
+                      value={pageForm['Refund Policy'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Refund Policy': e.target.value }))}
+                      placeholder="e.g. If you're not happy with your beef, call us within 7 days and we'll make it right — replace the cut or refund it. We stand behind every animal we raise."
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                    />
+                    {(() => {
+                      const len = (pageForm['Refund Policy'] || '').trim().length;
+                      if (len === 0) return <p className="text-xs text-dust">A clear policy is one of the biggest trust signals for first-time buyers.</p>;
+                      if (len < 20) return <p className="text-xs text-red-700">{20 - len} more characters needed (minimum 20).</p>;
+                      if (len > 500) return <p className="text-xs text-red-700">{len - 500} characters over the 500 limit.</p>;
+                      return <p className="text-xs text-green-700">{len} / 500 characters.</p>;
+                    })()}
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">USDA Processing Facility</label>
+                    <input
+                      type="text"
+                      value={pageForm['Processing Facility'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Processing Facility': e.target.value }))}
+                      placeholder="e.g. Ranchland Packing Co. (Bozeman, MT)"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                    />
+                    <p className="text-xs text-dust">The real name of the USDA-inspected plant that processes your beef — <strong>not</strong> your ranch name. Buyers trust a named processor.</p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Instagram <span className="text-dust font-normal">(profile URL)</span></label>
+                    <input
+                      type="url"
+                      value={pageForm['Instagram URL'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Instagram URL': e.target.value }))}
+                      placeholder="https://instagram.com/your-ranch"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Facebook <span className="text-dust font-normal">(page URL)</span></label>
+                    <input
+                      type="url"
+                      value={pageForm['Facebook URL'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Facebook URL': e.target.value }))}
+                      placeholder="https://facebook.com/your-ranch"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">Google Reviews <span className="text-dust font-normal">(link to your reviews)</span></label>
+                    <input
+                      type="url"
+                      value={pageForm['Google Reviews URL'] || ''}
+                      onChange={e => setPageForm(p => ({ ...p, 'Google Reviews URL': e.target.value }))}
+                      placeholder="https://g.page/your-ranch/review"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                    />
+                  </div>
                 </div>
 
                 {/* Right column: Pricing — ONE input. Rancher enters the Whole
@@ -2840,6 +3094,180 @@ export default function RancherDashboardPage() {
                     + Add
                   </button>
                 </div>
+              </div>
+
+              {/* ── Fulfillment ──────────────────────────────────────────────
+                  How the rancher gets beef to buyers. Mirrors the setup-wizard
+                  step; checkbox multi-select drives which sub-fields show. */}
+              <div className="space-y-4">
+                <h3 className="font-serif text-lg border-b border-dust pb-2">Fulfillment</h3>
+                <p className="text-xs text-dust">How do buyers get their beef? Pick all that apply — buyers see these options on your listing.</p>
+                <div className="space-y-2">
+                  {([
+                    ['Local Pickup', 'Local pickup at my ranch'],
+                    ['Local Delivery', 'Local delivery (within driving distance)'],
+                    ['Cold-Chain Shipping', 'Cold-chain shipping (FedEx/UPS)'],
+                  ] as const).map(([val, label]) => {
+                    const checked = fulfillmentTypes.includes(val);
+                    return (
+                      <label key={val} className="flex items-center gap-3 cursor-pointer text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setFulfillmentTypes((cur) =>
+                              cur.includes(val) ? cur.filter((v) => v !== val) : [...cur, val]
+                            );
+                          }}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-charcoal">{label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {fulfillmentTypes.includes('Local Pickup') && (
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium">Pickup City</label>
+                      <input
+                        type="text"
+                        value={pageForm['Pickup City'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Pickup City': e.target.value }))}
+                        placeholder="Bozeman, MT"
+                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                      />
+                    </div>
+                  )}
+                  {fulfillmentTypes.includes('Local Delivery') && (
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium">Delivery Radius (miles)</label>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        value={pageForm['Delivery Radius Miles'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Delivery Radius Miles': e.target.value }))}
+                        placeholder="50"
+                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                      />
+                    </div>
+                  )}
+                  {fulfillmentTypes.includes('Cold-Chain Shipping') && (
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium">Shipping Lead Time (days)</label>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        value={pageForm['Shipping Lead Time Days'] || ''}
+                        onChange={e => setPageForm(p => ({ ...p, 'Shipping Lead Time Days': e.target.value }))}
+                        placeholder="7"
+                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium">Fulfillment Cost Notes <span className="text-dust font-normal">(optional)</span></label>
+                  <textarea
+                    rows={2}
+                    value={pageForm['Fulfillment Cost Notes'] || ''}
+                    onChange={e => setPageForm(p => ({ ...p, 'Fulfillment Cost Notes': e.target.value }))}
+                    placeholder="e.g. Delivery is free within 30 miles, $1/mile beyond. Shipping flat $75 per box."
+                    className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* ── Testimonials (repeater → valid JSON array) ───────────────
+                  add/remove rows of name / location / quote. Serialized to a
+                  valid JSON array on save (the public page JSON.parses this;
+                  the old dashboard path wrote a raw string and corrupted it). */}
+              <div className="space-y-4">
+                <h3 className="font-serif text-lg border-b border-dust pb-2">Testimonials</h3>
+                <p className="text-xs text-dust">Real quotes from happy buyers. These show as social proof on your public page.</p>
+                {testimonials.map((t, i) => (
+                  <div key={i} className="p-3 border border-dust bg-white space-y-2">
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={t.name}
+                        onChange={e => setTestimonials(arr => arr.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x))}
+                        placeholder="Buyer name (e.g. Sarah M.)"
+                        className="px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
+                      />
+                      <input
+                        type="text"
+                        value={t.location}
+                        onChange={e => setTestimonials(arr => arr.map((x, idx) => idx === i ? { ...x, location: e.target.value } : x))}
+                        placeholder="Location (e.g. Billings, MT)"
+                        className="px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
+                      />
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={t.quote}
+                      onChange={e => setTestimonials(arr => arr.map((x, idx) => idx === i ? { ...x, quote: e.target.value } : x))}
+                      placeholder="What they said about your beef…"
+                      className="w-full px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setTestimonials(arr => arr.filter((_, idx) => idx !== i))}
+                      className="text-red-500 text-xs hover:underline"
+                    >
+                      Remove testimonial
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setTestimonials(arr => [...arr, { name: '', location: '', quote: '' }])}
+                  className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+                >
+                  + Add testimonial
+                </button>
+              </div>
+
+              {/* ── FAQ (repeater → valid JSON array) ────────────────────────
+                  add/remove question/answer rows. Serialized to a JSON array
+                  written to the FAQ Airtable field. */}
+              <div className="space-y-4">
+                <h3 className="font-serif text-lg border-b border-dust pb-2">Frequently Asked Questions</h3>
+                <p className="text-xs text-dust">Answer the questions buyers ask most — cuts, timing, pickup, storage. Fewer back-and-forth emails for you.</p>
+                {faqItems.map((f, i) => (
+                  <div key={i} className="p-3 border border-dust bg-white space-y-2">
+                    <input
+                      type="text"
+                      value={f.q}
+                      onChange={e => setFaqItems(arr => arr.map((x, idx) => idx === i ? { ...x, q: e.target.value } : x))}
+                      placeholder="Question (e.g. How much freezer space do I need?)"
+                      className="w-full px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal font-medium"
+                    />
+                    <textarea
+                      rows={2}
+                      value={f.a}
+                      onChange={e => setFaqItems(arr => arr.map((x, idx) => idx === i ? { ...x, a: e.target.value } : x))}
+                      placeholder="Answer…"
+                      className="w-full px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setFaqItems(arr => arr.filter((_, idx) => idx !== i))}
+                      className="text-red-500 text-xs hover:underline"
+                    >
+                      Remove question
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setFaqItems(arr => [...arr, { q: '', a: '' }])}
+                  className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+                >
+                  + Add question
+                </button>
               </div>
 
               {/* Save button */}
