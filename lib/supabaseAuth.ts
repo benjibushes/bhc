@@ -11,8 +11,16 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+// Accept BOTH the bare names and Supabase's canonical Next.js NEXT_PUBLIC_*
+// names for the URL + anon key — whichever convention was set in Vercel works
+// (these two are public-by-design, so the NEXT_PUBLIC_ prefix is safe). The
+// service-role key is a SECRET — bare name only, never NEXT_PUBLIC_.
+const SUPABASE_URL =
+  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY =
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 // Memoize so we don't spin up a fresh client per request. Module-level cache
