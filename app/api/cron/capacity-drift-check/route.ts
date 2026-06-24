@@ -44,6 +44,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { peekRedisCapacity, setCapacityCounter } from '@/lib/rancherCapacity';
+import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
 import { withCronRun } from '@/lib/cronRun';
 
 export const maxDuration = 180;
@@ -54,17 +55,10 @@ interface DriftResult {
   notes: string;
 }
 
-// Held-slot statuses: a capacity slot is occupied from the Intro Sent INCR
-// until the Closed Won/Lost DECR. Statuses BETWEEN those bookends hold the
-// slot too (no INCR/DECR fires at those transitions). Pending Approval is
-// excluded (pre-Intro-Sent, no INCR yet); Closed Won/Lost are terminal.
-const HELD_STATUSES = new Set([
-  'Intro Sent',
-  'Rancher Contacted',
-  'Negotiation',
-  'Awaiting Payment',
-  'Slot Locked',
-]);
+// Held-slot statuses come from the canonical capacityCount module so this cron,
+// batch-approve's self-heal, the admin-health drift readout, and the Redis
+// bootstrap ALL use the SAME set (they used to differ and overwrite each other).
+const HELD_STATUSES = HELD_REFERRAL_STATUSES;
 
 // Count held referrals per rancher id, in memory.
 //

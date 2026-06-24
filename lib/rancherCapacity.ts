@@ -31,9 +31,26 @@
  */
 
 import { Redis } from '@upstash/redis';
-import { getRecordById, updateRecord, TABLES } from './airtable';
+import { getAllRecords, getRecordById, updateRecord, TABLES } from './airtable';
+// Canonical held-count lives in the zero-dep, unit-tested module. Re-export so
+// existing importers of THIS module keep working, and use it below.
+import { HELD_REFERRAL_STATUSES, countHeldReferrals } from './capacityCount';
+export { HELD_REFERRAL_STATUSES, countHeldReferrals };
 
 const DEFAULT_MAX = 5;
+
+// Ground-truth held count for ONE rancher, read live from the Referrals table.
+// Pulls only held-status rows (a small slice — ~the active pipeline) and counts
+// by the `Rancher` link. This is what Redis is seeded from on a key-miss —
+// NEVER the Airtable mirror field, which can be drifted low and would re-poison
+// the counter (that mirror-seeding loop is the root cause of the daily drift).
+export async function liveHeldCountForRancher(rancherId: string): Promise<number> {
+  const formula = `OR(${[...HELD_REFERRAL_STATUSES]
+    .map((s) => `{Status}='${s}'`)
+    .join(',')})`;
+  const held = (await getAllRecords(TABLES.REFERRALS, formula)) as any[];
+  return countHeldReferrals(rancherId, held);
+}
 
 export function getMaxActiveReferrals(rancher: any): number {
   if (!rancher) return DEFAULT_MAX;
@@ -90,10 +107,13 @@ export async function incrementCapacity(rancherId: string): Promise<number> {
     const key = capacityKey(rancherId);
     const n = await redis.incr(key);
     if (n === 1) {
-      // First-ever incr — bootstrap from Airtable so a fresh Redis key
-      // doesn't reset a rancher who's already at e.g. 7/10 back to 1.
+      // First-ever incr — bootstrap from the REFERRAL-derived truth (not the
+      // Airtable mirror, which can be drifted low) so a fresh Redis key doesn't
+      // reset a rancher who's already at e.g. 7/10 back to 1. The not-yet-
+      // Intro-Sent referral that triggered this incr isn't in the held set yet,
+      // so truth + 1 is the correct post-claim count.
       try {
-        const live = await currentAirtableCount(rancherId);
+        const live = await liveHeldCountForRancher(rancherId);
         if (live >= 1) {
           const bootstrapped = live + 1;
           await redis.set(key, bootstrapped);
@@ -132,8 +152,17 @@ export async function decrementCapacity(rancherId: string): Promise<number> {
     // bootstrap from Airtable so we start at the right base before DECR.
     const exists = await redis.exists(key);
     if (!exists) {
-      const live = await currentAirtableCount(rancherId);
+      // Key missing — recompute the authoritative held count from referrals and
+      // use it DIRECTLY (don't also decrement). The referral that triggered this
+      // close is already, or imminently, reflected in the referral table, so the
+      // fresh truth is the correct current count. Seeding from truth (not the
+      // possibly-drifted mirror) is what stops a low mirror pinning the counter
+      // at 0; skipping the extra decr errs toward "1 too high" — the safe
+      // direction (never over-routes) — rather than over-decrementing to a
+      // false low that re-grants capacity.
+      const live = await liveHeldCountForRancher(rancherId);
       await redis.set(key, live);
+      return live;
     }
     const n = await redis.decr(key);
     if (n < 0) {
@@ -195,7 +224,10 @@ export async function getLiveCapacity(rancherId: string): Promise<number> {
     const key = capacityKey(rancherId);
     const exists = await redis.exists(key);
     if (!exists) {
-      const live = await currentAirtableCount(rancherId);
+      // Seed from referral-truth, not the Airtable mirror (which can be drifted
+      // low). This is a read, so there's no operation-timing subtlety — truth is
+      // simply the correct current count.
+      const live = await liveHeldCountForRancher(rancherId);
       await redis.set(key, live);
       return live;
     }
