@@ -189,6 +189,15 @@ export default function RancherDashboardPage() {
   // Secondary nav ("More" dropdown) holds marketing / earnings / benefits so
   // the spine stays at 5 items without deleting any tab content.
   const [moreOpen, setMoreOpen] = useState(false);
+  // Set/Change-password modal. Lets a magic-link-logged-in rancher set a
+  // password (stored in Supabase Auth) for next time. Email is taken from the
+  // server session in the API — never sent from here.
+  const [pwModalOpen, setPwModalOpen] = useState(false);
+  const [pwValue, setPwValue] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwSaved, setPwSaved] = useState(false);
+  const [pwModalError, setPwModalError] = useState('');
   // Stripe payouts ("you got paid $X") — fetched separately so a slow/needs-
   // Connect Stripe read never blocks the dashboard render. Null until loaded.
   const [payouts, setPayouts] = useState<PayoutsInfo | null>(null);
@@ -826,6 +835,40 @@ export default function RancherDashboardPage() {
     router.push('/');
   };
 
+  // Set / change the rancher's password. The endpoint reads the email from
+  // the authed session, so we only send {password}. On 503 (Supabase not
+  // configured) we surface a friendly "not available yet" message.
+  const handleSavePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwModalError('');
+    if (pwValue.length < 8) {
+      setPwModalError('Password must be at least 8 characters.');
+      return;
+    }
+    if (pwValue !== pwConfirm) {
+      setPwModalError('Passwords do not match.');
+      return;
+    }
+    setPwSaving(true);
+    try {
+      const res = await fetch('/api/auth/rancher/set-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ password: pwValue }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not set password.');
+      setPwSaved(true);
+      setPwValue('');
+      setPwConfirm('');
+    } catch (err: any) {
+      setPwModalError(err.message || 'Could not set password.');
+    } finally {
+      setPwSaving(false);
+    }
+  };
+
   // ── One-input pricing derivation (mirrors RancherSetupWizard Step-3) ────────
   // The rancher types ONE number — the Whole price — and lib/pricing derives the
   // Half (~0.55×) / Quarter (~0.28×) ladder + every tier's 25% reserve deposit.
@@ -1165,11 +1208,85 @@ export default function RancherDashboardPage() {
                   View public page →
                 </a>
               )}
+              <button
+                onClick={() => { setPwModalOpen(true); setPwSaved(false); setPwModalError(''); setPwValue(''); setPwConfirm(''); }}
+                className="text-sm text-dust hover:text-charcoal transition-colors"
+              >
+                Set password
+              </button>
               <button onClick={handleLogout} className="text-sm text-dust hover:text-charcoal transition-colors">
                 Log out
               </button>
             </div>
           </div>
+
+          {/* Set / change password modal. A magic-link-logged-in rancher can
+              set a Supabase Auth password here for faster login next time. */}
+          {pwModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 p-4" onClick={() => setPwModalOpen(false)}>
+              <div className="bg-bone border border-dust max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                  <h2 className="font-serif text-2xl">Set a password</h2>
+                  <button onClick={() => setPwModalOpen(false)} className="text-dust hover:text-charcoal" aria-label="Close">✕</button>
+                </div>
+                {pwSaved ? (
+                  <div className="space-y-4">
+                    <div className="p-4 border border-green-300 bg-green-50 text-green-800 text-sm">
+                      Password saved. You can log in with your email and password next time.
+                    </div>
+                    <button
+                      onClick={() => setPwModalOpen(false)}
+                      className="w-full px-6 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium tracking-wider uppercase"
+                    >
+                      Done
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleSavePassword} className="space-y-4">
+                    <p className="text-sm text-saddle">
+                      Set a password so you can log in without waiting for an email link. Your email login link keeps working either way.
+                    </p>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 uppercase tracking-wider">New password</label>
+                      <input
+                        type="password"
+                        value={pwValue}
+                        onChange={(e) => setPwValue(e.target.value)}
+                        placeholder="At least 8 characters"
+                        required
+                        minLength={8}
+                        autoComplete="new-password"
+                        className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2 uppercase tracking-wider">Confirm password</label>
+                      <input
+                        type="password"
+                        value={pwConfirm}
+                        onChange={(e) => setPwConfirm(e.target.value)}
+                        placeholder="Re-enter password"
+                        required
+                        minLength={8}
+                        autoComplete="new-password"
+                        className="w-full px-4 py-3 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal transition-colors"
+                      />
+                    </div>
+                    {pwModalError && (
+                      <div className="p-3 border border-weathered text-weathered text-sm">{pwModalError}</div>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={pwSaving}
+                      className="w-full px-6 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium tracking-wider uppercase disabled:opacity-50"
+                    >
+                      {pwSaving ? 'Saving...' : 'Save password'}
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+          )}
 
           <Divider />
 
