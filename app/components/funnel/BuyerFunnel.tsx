@@ -71,6 +71,11 @@ interface QualifyResult {
     state: string;
     slug?: string;
   } | null;
+  // 'tier_v2' | 'legacy'. For tier_v2 matches /api/qualify fires with
+  // skipBuyerIntro=true — the rancher does NOT text the buyer; Ben (the
+  // operator) runs the sales call and emails a Cal link. Drives the reveal
+  // copy so we never promise a rancher text that won't come (see Mode 2).
+  pricingModel?: string;
   operatorCalLink?: string;
   buyerName?: string;
   buyerEmail?: string;
@@ -760,10 +765,15 @@ function ErrorBox({ children }: { children: React.ReactNode }) {
 }
 
 // ── Step 5 reveal ─────────────────────────────────────────────────────────────
-// Three honest outcomes:
+// Honest outcomes:
 //   1. offerOperatorCall ON  → "Book your 15-min call with Ben" (CalInlineBooker).
-//   2. matched rancher       → named rancher + "they'll text you today".
-//   3. no in-state match     → honest waitlist ("you're first in line"), NOT a
+//   2. matched rancher, tier_v2 → named rancher, but Ben sets up the call + locks
+//      the share. /api/qualify suppresses the rancher intro for tier_v2 (sends
+//      skipBuyerIntro=true) and emails the buyer Ben's Cal link, so the rancher
+//      does NOT text the buyer — promising that here was a misleading dead-end.
+//   3. matched rancher, legacy → named rancher + "they'll text you today" (legacy
+//      ranchers are handled off-platform and DO reach out directly).
+//   4. no in-state match     → honest waitlist ("you're first in line"), NOT a
 //      fake match.
 function Reveal({
   result,
@@ -778,6 +788,11 @@ function Reveal({
 }) {
   const matched = !!(result?.routingOk && result?.rancher && result.rancher.name);
   const rancher = result?.rancher;
+  // tier_v2 match → the rancher intro was suppressed server-side (/api/qualify
+  // sends skipBuyerIntro=true for tier_v2) and Ben emails the buyer his Cal
+  // link. So for these, the buyer should expect BEN to reach out — not a text
+  // from the rancher. Legacy matches still get a direct rancher reach-out.
+  const tierV2Match = matched && (result?.pricingModel || 'legacy') === 'tier_v2';
   // Live "family #N" line — familiesMatched + 1 (rounded, comma-formatted). Hides
   // if stats failed.
   const familyNumber = stats && stats.familiesMatched > 0 ? commas(stats.familiesMatched + 1) : null;
@@ -834,11 +849,17 @@ function Reveal({
               className="mt-4 rounded-md px-4 py-3 text-sm font-medium text-bone"
               style={{ backgroundColor: FUNNEL_ACCENT }}
             >
-              They&apos;ll text you today.
+              {/* tier_v2: rancher intro is suppressed; Ben runs the call. Don't
+                  promise a rancher text that won't come. Legacy: rancher texts. */}
+              {tierV2Match
+                ? <>ben reaches out today to set it up.</>
+                : <>They&apos;ll text you today.</>}
             </div>
           </div>
           <p className="text-xs text-saddle">
-            Keep an eye on your phone — your rancher reaches out directly, no middleman.
+            {tierV2Match
+              ? <>check your email — ben gets in touch to lock in your share with {rancher.name} and book a quick call. no payment now.</>
+              : <>Keep an eye on your phone — your rancher reaches out directly, no middleman.</>}
           </p>
         </div>
       ) : (

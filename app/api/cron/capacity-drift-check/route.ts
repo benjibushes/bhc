@@ -16,24 +16,32 @@
 //   3. Manual operator edit in Airtable bumps `Current Active Referrals`
 //      without touching Redis (rare but happens during incident response).
 //
-// The query against the Referrals table — Rancher=<id> AND Status='Intro Sent'
-// — is the GROUND TRUTH for how many active referrals a rancher actually has.
-// It's the count we'd compute from scratch if everything else burned down.
-// This cron uses it as the canonical reconciliation source.
+// The held-slot referrals attached to a rancher (Rancher link = <id> AND a
+// non-terminal Status) are the GROUND TRUTH for how many active referrals a
+// rancher actually has. It's the count we'd compute from scratch if everything
+// else burned down. This cron uses it as the canonical reconciliation source.
+//
+// NOTE (2026-06-23 fix): the count is computed in memory by matching the
+// {Rancher} link array against the rancher's record id. The previous
+// `FIND("<recId>", ARRAYJOIN({Rancher}))` formula was broken — ARRAYJOIN of a
+// link field emits the linked records' NAMES, not their rec… ids, so it matched
+// nothing and the cron force-wrote 0 to every Active rancher. See
+// buildHeldCountsByRancher below.
 //
 // Daily flow:
-//   1. Pull all Active ranchers.
-//   2. For each: count actual Intro Sent referrals via Airtable query.
+//   1. Pull all Active ranchers + all referrals (one read each).
+//   2. For each rancher: held-slot count = referrals whose {Rancher} link
+//      contains this rancher id AND whose Status is non-terminal.
 //   3. Read Redis counter (raw, no bootstrap) + Airtable mirror.
 //   4. If any of the three disagree → force-write Redis + Airtable mirror
-//      to the query count. Fire one Telegram per drift.
+//      to the held-slot count. Fire one Telegram per drift.
 //
 // Conservative scope: ONLY repairs ranchers with Active Status='Active'. A
 // paused/inactive rancher isn't receiving leads so drift is cosmetic and
 // will self-heal on reactivation via the lazy-bootstrap paths.
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { getAllRecords, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { peekRedisCapacity, setCapacityCounter } from '@/lib/rancherCapacity';
 import { withCronRun } from '@/lib/cronRun';
@@ -46,9 +54,62 @@ interface DriftResult {
   notes: string;
 }
 
+// Held-slot statuses: a capacity slot is occupied from the Intro Sent INCR
+// until the Closed Won/Lost DECR. Statuses BETWEEN those bookends hold the
+// slot too (no INCR/DECR fires at those transitions). Pending Approval is
+// excluded (pre-Intro-Sent, no INCR yet); Closed Won/Lost are terminal.
+const HELD_STATUSES = new Set([
+  'Intro Sent',
+  'Rancher Contacted',
+  'Negotiation',
+  'Awaiting Payment',
+  'Slot Locked',
+]);
+
+// Count held referrals per rancher id, in memory.
+//
+// WHY NOT a per-rancher filterByFormula: the previous implementation used
+// `FIND("<recId>", ARRAYJOIN({Rancher}))`. ARRAYJOIN of a linked-record field
+// emits the linked records' PRIMARY-FIELD display values (Ranch Names), NOT
+// their rec… ids — so FIND(recId, "...") never matched and queryCount was 0
+// for EVERY rancher. The cron then force-wrote Current Active Referrals=0 to
+// every Active rancher (and 0'd Redis), stomping the correct counts written by
+// matching/suggest + batch-approve and reporting "fixed=N" each run. The SDK
+// returns the {Rancher} link as an array of rec… id strings, so an in-memory
+// `.includes(rancherId)` is the correct id match (same approach batch-approve
+// uses). This also drops N per-rancher Airtable calls.
+function buildHeldCountsByRancher(referrals: any[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const ref of referrals) {
+    if (!HELD_STATUSES.has(ref['Status'])) continue;
+    const link = ref['Rancher'];
+    if (!Array.isArray(link)) continue;
+    for (const rid of link) {
+      if (typeof rid === 'string') counts[rid] = (counts[rid] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
 async function realHandler(_request: Request): Promise<DriftResult> {
   const ranchers = (await getAllRecords(TABLES.RANCHERS)) as any[];
   const active = ranchers.filter(r => (r['Active Status'] || '') === 'Active');
+
+  // Single ground-truth read of all referrals, bucketed by rancher id in
+  // memory. Pulled ONCE up front (not per-rancher) so the held-slot count is
+  // computed by id match, not by the broken ARRAYJOIN-of-names formula.
+  let heldCounts: Record<string, number>;
+  try {
+    const allReferrals = (await getAllRecords(TABLES.REFERRALS)) as any[];
+    heldCounts = buildHeldCountsByRancher(allReferrals);
+  } catch (e: any) {
+    console.error('[capacity-drift-check] Referrals read failed:', e?.message);
+    return {
+      status: 'error',
+      recordsTouched: 0,
+      notes: `referrals read failed: ${e?.message || 'unknown'}`,
+    };
+  }
 
   let driftFixed = 0;
   let alreadyConsistent = 0;
@@ -59,33 +120,10 @@ async function realHandler(_request: Request): Promise<DriftResult> {
     const name = rancher['Operator Name'] || rancher['Ranch Name'] || rancherId;
     const airtableCount = Number(rancher['Current Active Referrals'] || 0);
 
-    // Ground-truth count: every NON-TERMINAL referral attached to this rancher.
-    // A slot is held from the Intro Sent INCR until the Closed Won/Lost DECR.
-    // Statuses BETWEEN those bookends (Rancher Contacted, Negotiation,
-    // Awaiting Payment, Slot Locked) hold the slot too — there's no INCR/DECR
-    // at those transitions. 'Slot Locked' (tier_v2 paid-deposit accepted, post
-    // Awaiting Payment, pre Closed Won) was omitted originally → the cron freed
-    // the held slot the instant a deposit landed → over-allocation. Counting
-    // only 'Intro Sent' was wrong (2026-06-02 audit):
-    // when a rancher progressed buyers PAST Intro Sent (real sales work),
-    // the cron read queryCount=N-1 and "fixed" airtableCount=N down to N-1
-    // → silently freed a held slot → matching/suggest then over-allocated
-    // that rancher. The 15-of-16 fix-every-run pattern was the drift cron
-    // destroying live capacity holds, not catching real drift.
-    //
-    // Pending Approval is intentionally excluded — those are pre-Intro-Sent
-    // and haven't fired the INCR. Closed Won/Lost are terminal post-DECR.
-    let queryCount = 0;
-    try {
-      const escapedId = escapeAirtableValue(rancherId);
-      const formula = `AND(FIND("${escapedId}", ARRAYJOIN({Rancher})) > 0, OR({Status}="Intro Sent", {Status}="Rancher Contacted", {Status}="Negotiation", {Status}="Awaiting Payment", {Status}="Slot Locked"))`;
-      const refs = (await getAllRecords(TABLES.REFERRALS, formula)) as any[];
-      queryCount = refs.length;
-    } catch (e: any) {
-      console.error(`[capacity-drift-check] Referrals query failed for ${name}:`, e?.message);
-      failedRepairs.push(`${name}: query failed (${e?.message || 'unknown'})`);
-      continue;
-    }
+    // Ground-truth count: every held-slot referral linked to this rancher,
+    // matched by record id against the {Rancher} link array (see
+    // buildHeldCountsByRancher for why the prior ARRAYJOIN formula was broken).
+    const queryCount = heldCounts[rancherId] || 0;
 
     const redisCount = await peekRedisCapacity(rancherId);
     const redisDisplay = redisCount === null ? 'null' : String(redisCount);

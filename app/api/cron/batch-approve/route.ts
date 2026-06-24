@@ -5,7 +5,8 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
-import { bulkRouteStateToRancher, getRancherServedStates } from '@/lib/bulkRoute';
+import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
+import { getOperationalServedStates } from '@/lib/rancherEligibility';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import { withCronRun } from '@/lib/cronRun';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
@@ -44,7 +45,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     try {
       const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
       const allReferrals = await getAllRecords(TABLES.REFERRALS) as any[];
-      const activeStatuses = ['Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Negotiation'];
+      // Match the live Redis counter semantics (INCR at Intro Sent, held through
+      // Slot Locked) + capacity-drift-check's HELD_STATUSES, so the two
+      // reconcilers agree and stop overwriting each other. Pending Approval is
+      // NOT counted (no INCR fires at suggest-time; capacity is consumed at
+      // intro/approval, not when a match is suggested).
+      const activeStatuses = ['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Awaiting Payment', 'Slot Locked'];
 
       // Count actual active referrals per rancher.
       // Orphan-aware: skip Pending Approval rows with no Rancher AND no
@@ -324,7 +330,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           // For every state this rancher serves, find stuck buyers and connect them.
           // Schedules emails for 9am MT next morning so we never spam buyers at 3am.
           try {
-            const servedStates = getRancherServedStates({ ...rancher, 'Active Status': 'Active' });
+            // Admin-gated served states (home-only by default; multi-state only
+            // when Admin Approved Multi-State=true) — NOT the rancher-editable
+            // States Served, which would let a rancher self-route cross-state.
+            const servedStates = getOperationalServedStates(rancher);
             const tomorrow9amMT = (() => {
               const d = new Date();
               // 9am MT = 15:00 UTC (MDT) or 16:00 UTC (MST). Use 15:00 UTC as the safe slot.

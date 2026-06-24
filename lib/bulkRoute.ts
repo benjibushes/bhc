@@ -2,6 +2,7 @@ import { getAllRecords, updateRecord, createRecord, escapeAirtableValue, TABLES 
 import { sendEmail, sendBuyerIntroNotification } from './email';
 import { normalizeState, normalizeStates } from './states';
 import { isQualifiedForRouting } from './qualification';
+import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
@@ -65,9 +66,15 @@ export async function bulkRouteStateToRancher(opts: {
   const rancherPhone = rancher['Phone'] || '';
   const rancherSlug = rancher['Slug'] || '';
 
-  // Validate the rancher is actually live
-  if (rancher['Active Status'] !== 'Active') {
-    return { ok: false, error: `Rancher "${rancherName}" is not Active`, status: 400 };
+  // Validate the rancher is actually operational for buyers. Use the single-
+  // source gate the matcher uses (lib/rancherEligibility) instead of a bare
+  // Active Status check. The old check let bulkRoute (go-live auto-router +
+  // admin/Telegram manual routes) send buyers to a tier_v2 rancher whose
+  // deposit endpoint 409s (Connect not active / past_due / onboarding not
+  // Live / agreement unsigned) — a dead-end conversion. This mirrors the
+  // gate at app/api/matching/suggest/route.ts (isEligibleBase).
+  if (!isRancherOperationalForBuyers(rancher)) {
+    return { ok: false, error: `Rancher "${rancherName}" is not operational for buyers`, status: 400 };
   }
 
   // 2. Find all consumers in the state with Status=Approved
@@ -176,8 +183,17 @@ export async function bulkRouteStateToRancher(opts: {
       // Skip cross-state mismatches with a loud Telegram alert — operator
       // must explicitly fix the rancher's Routing States OR pass an
       // explicit operatorOverride flag (not yet exposed in bulkRoute API).
+      //
+      // SERVED-STATES RESOLUTION (fix): use getOperationalServedStates — the
+      // SAME admin-controlled gate the matcher uses
+      // (app/api/matching/suggest/route.ts ~:567-582). Home-state-only by
+      // default; multi-state requires `Admin Approved Multi-State === true`
+      // AND admin `Routing States`. The old getRancherServedStates read the
+      // rancher-editable `States Served` field, so a rancher could silently
+      // route cross-state by editing their own profile — defeating the
+      // 2026-05-13 admin gate and causing cross-state misroutes.
       const buyerStateNorm = String(buyerState || '').toUpperCase().trim();
-      const rancherServedStates = getRancherServedStates(rancher);
+      const rancherServedStates = getOperationalServedStates(rancher);
       const stateAllowed = rancherServedStates.includes(buyerStateNorm) ||
                            rancherServedStates.includes(state.toUpperCase());
       if (!stateAllowed) {
