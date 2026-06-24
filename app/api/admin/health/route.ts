@@ -153,9 +153,23 @@ export async function GET(request: Request) {
   };
   supabaseAuth.configured = supabaseAuth.url_present && supabaseAuth.anon_present && supabaseAuth.service_role_present;
 
+  // Stripe Connect rail env presence — the deposit rail AND the auto-activation
+  // of rancher Connect status depend on these. STRIPE_CONNECT_WEBHOOK_SECRET
+  // unset is the silent killer: a rancher finishes Stripe but never flips to
+  // 'active' (stuck on 'onboarding') until someone clicks 🔄 Resync. Booleans
+  // only, never the secret values.
+  const connectRail: Record<string, any> = {
+    connect_enabled: process.env.STRIPE_CONNECT_ENABLED === 'true',
+    webhook_secret_present: !!process.env.STRIPE_CONNECT_WEBHOOK_SECRET,
+    stripe_secret_present: !!process.env.STRIPE_SECRET_KEY,
+  };
+  connectRail.deposit_rail_ready =
+    connectRail.connect_enabled && connectRail.webhook_secret_present && connectRail.stripe_secret_present;
+
   return NextResponse.json({
     generated_at: new Date().toISOString(),
     supabase_auth: supabaseAuth,
+    connect_rail: connectRail,
     ranchers: {
       total: ranchers.length,
       live: live.length,

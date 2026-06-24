@@ -3261,11 +3261,26 @@ function TierPickStep({
               setPolledStatus(String(r['Subscription Status'] || ''));
             }
           }
+        } else {
+          // Surface the failure (this used to stay silent). Connect-ACCOUNT
+          // creation happens inside this call, so a silent failure left the
+          // rancher with NO Stripe account — the single biggest cause of stuck
+          // migrations (they proceeded believing they were set). Show a
+          // retryable notice so they pick a plan card to try again.
+          const eb = await res.json().catch(() => ({}));
+          if (!cancelled) {
+            setTierErr(
+              eb?.error ||
+                "We couldn't set up your plan automatically — pick a plan below to continue.",
+            );
+          }
         }
-        // On failure we stay silent — the rancher can still click the free
-        // card manually; we just don't pop an alert for a background action.
       } catch {
-        /* non-fatal — manual card pick still works */
+        if (!cancelled) {
+          setTierErr(
+            "We couldn't reach the server to set up your plan — pick a plan below, or refresh and try again.",
+          );
+        }
       }
     })();
     return () => {
