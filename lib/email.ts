@@ -900,6 +900,10 @@ export async function sendPostPurchaseWelcome(data: {
   email: string;
   rancherName: string;
   orderType: string; // "Quarter" | "Half" | "Whole" | "Not Sure"
+  // When set (the deposit-settlement path), the email leads with an explicit
+  // deposit confirmation + balance instead of the legacy "closing day" framing.
+  depositAmount?: number; // dollars paid as the reservation deposit
+  balanceDue?: number; // dollars owed at fulfillment, paid direct to the rancher
 }): Promise<{ success: boolean; error?: any }> {
   const first = data.firstName || 'there';
   const tier = data.orderType?.toLowerCase().includes('quarter') ? 'quarter'
@@ -909,7 +913,25 @@ export async function sendPostPurchaseWelcome(data: {
   const lbsApprox = tier === 'quarter' ? '~85 lbs' : tier === 'half' ? '~170 lbs' : tier === 'whole' ? '~340 lbs' : '85–340 lbs';
   const cuFt = tier === 'quarter' ? '~3–4 cu ft' : tier === 'half' ? '~6–8 cu ft' : tier === 'whole' ? '~12–16 cu ft' : '3–16 cu ft';
 
-  const subject = `welcome to your first ranch order — what to expect`;
+  const isDeposit = typeof data.depositAmount === 'number' && data.depositAmount > 0;
+  const fmtUsd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
+  const subject = isDeposit
+    ? `your deposit's confirmed — here's what happens next`
+    : `welcome to your first ranch order — what to expect`;
+  const headline = isDeposit ? `Your deposit's in, ${esc(first)}.` : `You did it, ${esc(first)}.`;
+  const intro = isDeposit
+    ? `Your slot with ${esc(data.rancherName)} is reserved. Here's your confirmation, and exactly what happens next.`
+    : `Closing day with ${esc(data.rancherName)} is officially in the books. Welcome to ranch-direct beef.`;
+  const confirmationBox = isDeposit
+    ? `<div class="box" style="border-left-color:#2E7D32;">
+    <p style="margin:0 0 6px;"><strong>✅ Deposit received: ${fmtUsd(data.depositAmount!)}</strong></p>
+    <p style="margin:0;">Your ${tier} with ${esc(data.rancherName)} is reserved.${
+        typeof data.balanceDue === 'number' && data.balanceDue > 0
+          ? ` The balance — about ${fmtUsd(data.balanceDue)} — is due when your beef is ready for pickup, paid directly to your rancher.`
+          : ''
+      }</p>
+  </div>`
+    : '';
   return guardedSend({
     templateName: 'sendPostPurchaseWelcome',
     recipientEmail: data.email,
@@ -922,8 +944,9 @@ export async function sendPostPurchaseWelcome(data: {
       html: `<!DOCTYPE html><html><head>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
 </head><body><div class="container">
-  <h1>You did it, ${esc(first)}.</h1>
-  <p>Closing day with ${esc(data.rancherName)} is officially in the books. Welcome to ranch-direct beef.</p>
+  <h1>${headline}</h1>
+  <p>${intro}</p>
+  ${confirmationBox}
   <p>Here's what's next, in order:</p>
   <div class="box">
     <p style="margin:0;"><strong>Now → 2-4 weeks:</strong> ${esc(data.rancherName)} processes your ${tier}. Cattle goes to the USDA-certified processor, hangs to age, gets cut to your specs, vacuum-sealed, frozen.</p>

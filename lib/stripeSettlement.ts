@@ -148,6 +148,11 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
           email: String(buyer['Email']),
           rancherName: String(rancherForEmail['Operator Name'] || rancherForEmail['Ranch Name'] || 'your rancher'),
           orderType: String(referralRow?.['Order Type'] || ''),
+          // Deposit-path: lead with an explicit "deposit received: $X · balance ~$Y"
+          // confirmation (the buyer's biggest-intent moment) instead of the
+          // legacy "closing day" framing.
+          depositAmount: depositCents / 100,
+          balanceDue: fulfillmentBalanceCents / 100,
         });
       }
     }

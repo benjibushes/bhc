@@ -74,6 +74,12 @@ export async function GET(request: Request) {
       verification_method: record['Verification Method'] || '',
       verification_notes: record['Verification Notes'] || '',
       ships_nationwide: record['Ships Nationwide'] || false,
+      // Multi-state routing (the "serve these states" flip). Routing States only
+      // takes effect when Admin Approved Multi-State is true. State Capacity
+      // Override is the per-state slot map that prevents the sub-cap flooring to 0.
+      routing_states: record['Routing States'] || '',
+      admin_approved_multi_state: record['Admin Approved Multi-State'] || false,
+      state_capacity_override: record['State Capacity Override'] || '',
       // Pricing Model + tier + Stripe Connect status — surfaced so admin UI
       // can show v2 upgrade button for legacy ranchers + adoption funnel.
       pricing_model: record['Pricing Model'] || 'legacy',
