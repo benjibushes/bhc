@@ -24,7 +24,7 @@ import {
   getRecordById,
   TABLES,
 } from '@/lib/airtable';
-import { sendPostPurchaseWelcome } from '@/lib/email';
+import { sendPostPurchaseWelcome, sendDepositConfirmation } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { markDepositSucceeded } from '@/lib/contracts/payments';
 import { claimOnce } from '@/lib/rancherCapacity';
@@ -154,6 +154,26 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
           depositAmount: depositCents / 100,
           balanceDue: fulfillmentBalanceCents / 100,
         });
+      }
+
+      // New deposit-confirmation email. Fires once per deposit — this block is
+      // already gated behind the markDepositSucceeded(pi.id) idempotency flip
+      // above (depositFlipped), so it never double-sends on a replay/dual
+      // webhook. Independent try/catch: a send failure here must NOT break the
+      // post-purchase-welcome above OR the settlement money path below.
+      try {
+        const orderType = String(referralRow?.['Order Type'] || '').trim();
+        await sendDepositConfirmation({
+          buyerName: fullName || nameParts[0] || 'there',
+          buyerEmail: String(buyer['Email']),
+          ranchName: String(rancherForEmail?.['Ranch Name'] || rancherForEmail?.['Operator Name'] || 'your rancher'),
+          state: String(buyer['State'] || '').trim() || undefined,
+          shareSize: orderType || tier || undefined,
+          depositAmount: depositCents / 100,
+          operatorName: String(rancherForEmail?.['Operator Name'] || '').trim() || undefined,
+        });
+      } catch (e: any) {
+        console.warn('[stripe webhook] sendDepositConfirmation failed:', e?.message);
       }
     }
   } catch (e: any) {

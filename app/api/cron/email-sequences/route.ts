@@ -355,11 +355,11 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                   // Rancher-side intro
                   await sendEmail({
                     to: rancherEmail,
-                    subject: `BuyHalfCow Introduction: ${stuckRef['Buyer Name'] || firstName} in ${stuckRef['Buyer State'] || ''}`,
+                    subject: `a buyer in ${stuckRef['Buyer State'] || 'your state'} is yours — ${stuckRef['Buyer Name'] || firstName}`,
                     html: `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
-<h1 style="font-family:Georgia,serif;">New buyer lead</h1>
+<h1 style="font-family:Georgia,serif;">A buyer I routed to you</h1>
 <p>Hi ${rancherName},</p>
-<p>You have a new buyer matched to you on BuyHalfCow. Reach out today:</p>
+<p>I bring you in-state families ready to buy and the rails to close — here's one. They asked for ranch-direct beef and I matched them to you. They're your customer: reach out today, close it direct, get paid direct.</p>
 <div style="background:#F4F1EC;padding:20px;margin:20px 0;">
   <p><strong>Buyer:</strong> ${stuckRef['Buyer Name'] || firstName}</p>
   <p><strong>Email:</strong> ${stuckRef['Buyer Email'] || consumer['Email']}</p>
@@ -369,7 +369,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   <p><strong>Budget:</strong> ${stuckRef['Budget Range'] || ''}</p>
   ${stuckRef['Notes'] ? `<p><strong>Notes:</strong> ${stuckRef['Notes']}</p>` : ''}
 </div>
-<p>— Ben, BuyHalfCow</p>
+<p>Reply here if you want me to make a warm intro instead of you reaching out cold.</p>
+<p>— Ben</p>
 </body></html>`,
                   }).catch((e: any) => console.warn('[promote-pa] rancher intro failed:', e?.message));
                 }
@@ -534,9 +535,9 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         // → close-the-loop. After 3 sends, drops to drip-only nurture.
         else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 3 && daysSinceSegmentSend >= 14) {
           const subjectVariants = [
-            'two questions on your beef — 30 seconds',
-            'still want beef from your area? — quick check',
-            "last note from me — close your loop or i'll stop",
+            'two questions and i can route you to a real ranch',
+            'still want beef raised near you? — quick check',
+            'last note from me — finish and i route you to your rancher',
           ];
           const subject = subjectVariants[Math.min(segmentCount, 2)];
           await updateRecord(TABLES.CONSUMERS, consumerId, {
@@ -609,8 +610,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               subject: `last call — ${rancherName} is open in ${stateLabel}`,
               html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:36px;border:1px solid #A7A29A;background:#fff;line-height:1.7;">
                 <p>Hey ${firstName},</p>
-                <p>I introduced you to <strong>${rancherName}</strong> last week — didn't hear back, so this is my last nudge.</p>
-                <p><strong>Are you ready to buy in the next 1–2 months?</strong> If yes, click below and I'll send their full info. If not, I'll drop you off the active list and check back when timing fits.</p>
+                <p>I routed you to <strong>${rancherName}</strong> last week — a ranch in ${stateLabel} I vetted myself. No middleman, no markup, real beef raised on their pasture. Didn't hear back, so this is my last nudge.</p>
+                <p><strong>Ready to fill your freezer in the next 1–2 months?</strong> Tap below and I'll send their full info and make the intro direct. If the timing's off, I'll take you off the active list and check back when it fits.</p>
                 <p style="text-align:center;margin:28px 0;"><a href="${engageUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;">Yes — Ready to Buy</a></p>
                 <p style="font-size:12px;color:#A7A29A;">— Ben</p>
               </div>`,
@@ -751,28 +752,28 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         if (daysSinceDocsSent >= 3 && daysSinceDocsSent < 7 && stage === 'none') {
           shouldSend = true;
           newStage = 'reminder_day3';
-          subject = `${firstName}, your agreement is ready to sign`;
+          subject = `${firstName}, sign and i start routing buyers to ${ranchName}`;
           bodyHtml = `<p>Hi ${firstName},</p>
-            <p>Just a quick reminder — your BuyHalfCow Commission Agreement for <strong>${ranchName}</strong> is ready for your signature.</p>
-            <p>Once signed, you can immediately start setting up your ranch page and we can begin sending buyers your way.</p>
-            <p><strong>Quick recap:</strong> 10% commission on referred sales only. No upfront fees. Buyers pay you directly.</p>
-            <p>If you have any questions, just reply to this email.</p>`;
+            <p>Quick one — your BuyHalfCow partner agreement for <strong>${ranchName}</strong> is ready to sign.</p>
+            <p>The day it's signed, I turn on your ranch page and start routing in-state families to you. They're your customers — they pay you direct, you close direct.</p>
+            <p><strong>How I get paid:</strong> a commission on the sales I send you, never on the ones you already had. The floor is 1.5%. No upfront fees, no markup on your beef.</p>
+            <p>Any questions, just reply to this email.</p>`;
         } else if (daysSinceDocsSent >= 7 && daysSinceDocsSent < 14 && stage === 'reminder_day3') {
           shouldSend = true;
           newStage = 'reminder_day7';
-          subject = `Need help with your agreement, ${firstName}?`;
+          subject = `anything in the way of signing, ${firstName}?`;
           bodyHtml = `<p>Hi ${firstName},</p>
-            <p>I noticed you haven't signed the BuyHalfCow agreement yet for <strong>${ranchName}</strong>. No pressure — just want to make sure everything makes sense.</p>
-            <p>If you have questions about the commission structure, the process, or anything else, just reply to this email and I'll get back to you personally.</p>
-            <p>We have buyers actively looking for ranch-direct beef${rancherState ? ` in ${rancherState}` : ''}, and I'd love to get you connected with them.</p>`;
+            <p>The partner agreement for <strong>${ranchName}</strong> isn't signed yet — no pressure, I just want to make sure it's clear.</p>
+            <p>If there's a question on how I get paid, how the routing works, or anything else, reply here and I'll answer you direct.</p>
+            <p>I've got families${rancherState ? ` in ${rancherState}` : ' near you'} ready to buy ranch-direct beef right now, and I want to route them to you.</p>`;
         } else if (daysSinceDocsSent >= 14 && stage === 'reminder_day7') {
           shouldSend = true;
           newStage = 'reminder_day14';
-          subject = `Last check-in — buyers waiting in ${rancherState || 'your area'}`;
+          subject = `last check-in — families waiting in ${rancherState || 'your area'}`;
           bodyHtml = `<p>Hi ${firstName},</p>
-            <p>This is my last follow-up about the BuyHalfCow partnership for <strong>${ranchName}</strong>.</p>
-            <p>We currently have buyers looking for ranch-direct beef${rancherState ? ` in ${rancherState}` : ''} and your operation would be a great fit. The agreement takes about 2 minutes to review and sign.</p>
-            <p>If now isn't the right time, no worries at all. Just reply and let me know, and I'll reach out again when it makes sense.</p>`;
+            <p>Last note from me on partnering <strong>${ranchName}</strong> with BuyHalfCow.</p>
+            <p>I've got real families${rancherState ? ` in ${rancherState}` : ' near you'} ready to buy ranch-direct beef, and your operation is a fit. The agreement takes about 2 minutes to read and sign, and then I start routing them to you — your customers, paid direct.</p>
+            <p>If now's not the time, no worries at all. Reply and tell me, and I'll come back when it fits.</p>`;
         }
 
         if (shouldSend) {
@@ -786,7 +787,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               subject,
               html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
                 ${bodyHtml}
-                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, Founder<br>BuyHalfCow</p>
+                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
               </div>`,
               templateName: `rancher_docs_reminder_${newStage}`,
               _replyContext: { type: 'rnc', recordId: rancher.id },

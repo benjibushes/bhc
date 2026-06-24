@@ -165,11 +165,11 @@ export async function POST(
       try {
         await sendEmail({
           to: rancherEmail,
-          subject: `BuyHalfCow Introduction: ${buyerName}${buyerState ? ` in ${buyerState}` : ''}`,
+          subject: `i routed you a buyer${buyerState ? ` in ${buyerState}` : ''} — ${buyerName}`,
           html: `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
-<h1 style="font-family:Georgia,serif;">New Qualified Buyer Lead</h1>
+<h1 style="font-family:Georgia,serif;">A buyer for you</h1>
 <p>Hi ${esc(rancherName)},</p>
-<p>You have a new qualified buyer lead from BuyHalfCow:</p>
+<p>I routed you a buyer${buyerState ? ` in ${esc(buyerState)}` : ''} — a real, in-state family who's ready. They're yours to close. Reply to this email and reach out to them today.</p>
 <div style="background:#F4F1EC;padding:20px;margin:20px 0;">
   <p><strong>Buyer:</strong> ${esc(buyerName)}</p>
   <p><strong>Email:</strong> ${esc(buyerEmail)}</p>
@@ -179,8 +179,8 @@ export async function POST(
   <p><strong>Budget:</strong> ${esc(budgetRange)}</p>
   ${buyerNotes ? `<p><strong>Notes:</strong> ${esc(buyerNotes)}</p>` : ''}
 </div>
-<p>Please reach out to them directly to discuss availability and pricing.</p>
-<p style="font-size:12px;color:#6B4F3F;margin-top:30px;">— Benjamin, BuyHalfCow · 10% commission applies to sales made through referrals.</p>
+<p>Call or email them, talk cut and timing, get them on the books. Reply here to keep me in the loop.</p>
+<p style="font-size:12px;color:#6B4F3F;margin-top:30px;">— Ben · your tier's rate applies on referred sales (1.5% floor) · this buyer stays your customer.</p>
 </body></html>`,
         });
       } catch (e) {

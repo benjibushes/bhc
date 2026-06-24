@@ -57,16 +57,16 @@ export async function POST(
       try {
         await sendEmail({
           to: rancherEmail,
-          subject: `[Resend] BuyHalfCow Introduction: ${buyerName}${buyerState ? ` in ${buyerState}` : ''}`,
+          subject: `resending — your buyer${buyerState ? ` in ${buyerState}` : ''}, ${buyerName}`,
           // P0 hotfix (2026-06-02): pin templateName to whitelisted value so
           // the rolling 3/week cap doesn't drop the resend on a rancher who
           // already received multiple matches this week. Operator-initiated
           // resend is intentional and must always fire.
           templateName: 'sendRancherIntroNotification',
           html: `<!DOCTYPE html><html><body style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
-<h1 style="font-family:Georgia,serif;">Buyer Lead — Resent</h1>
+<h1 style="font-family:Georgia,serif;">A buyer for you</h1>
 <p>Hi ${esc(rancherName)},</p>
-<p>Resending this introduction in case the first email got lost. Please reach out to them today:</p>
+<p>Resending this in case the first one got lost. I routed you a buyer${buyerState ? ` in ${esc(buyerState)}` : ''} — a real, in-state family who's ready. They're yours to close. Reply to this email and reach out to them today.</p>
 <div style="background:#F4F1EC;padding:20px;margin:20px 0;">
   <p><strong>Buyer:</strong> ${esc(buyerName)}</p>
   <p><strong>Email:</strong> ${esc(buyerEmail)}</p>
@@ -76,7 +76,8 @@ export async function POST(
   <p><strong>Budget:</strong> ${esc(budgetRange)}</p>
   ${buyerNotes ? `<p><strong>Notes:</strong> ${esc(buyerNotes)}</p>` : ''}
 </div>
-<p>— Benjamin, BuyHalfCow</p>
+<p>Call or email them, talk cut and timing, get them on the books. Reply here to keep me in the loop.</p>
+<p style="font-size:12px;color:#6B4F3F;margin-top:30px;">— Ben, BuyHalfCow</p>
 </body></html>`,
         });
         rancherSent = true;
