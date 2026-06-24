@@ -182,11 +182,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
     const quizUrl = `${SITE_URL}/qualify/${encodeURIComponent(c.id)}?token=${encodeURIComponent(quizToken)}`;
 
     try {
-      const { subject, html } = buildEmail(touchNum, firstName, quizUrl, state);
-      await sendEmail({ to: email, subject, html, templateName: 'sendAbandonedQuizNudge' });
+      // Claim BEFORE sending so a crash between the send + the stamp can't
+      // double-send this touch on the next hourly run. A failed send after the
+      // claim just burns one drip touch (acceptable for a multi-touch drip);
+      // a duplicate send is worse.
       await updateRecord(TABLES.CONSUMERS, c.id, {
         Notes: `[quiz-nudge ${today} t${touchNum}] sent. ${notes}`.slice(0, 2000),
       });
+      const { subject, html } = buildEmail(touchNum, firstName, quizUrl, state);
+      await sendEmail({ to: email, subject, html, templateName: 'sendAbandonedQuizNudge' });
       touched++;
       byTouch[touchNum] = (byTouch[touchNum] || 0) + 1;
     } catch (e: any) {

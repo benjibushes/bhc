@@ -128,6 +128,21 @@ async function realHandler(_request: Request): Promise<CronResult> {
       continue;
     }
 
+    // Claim BEFORE sending: stamp the dedup note first so a stamp failure skips
+    // + retries next run rather than re-nudging. This cron runs every 30 min
+    // with a ~3.5h eligibility window (~7 ticks), and the template isn't
+    // frequency-capped against itself — so a stamp-after-send (the old order)
+    // would double-nudge by email AND SMS on any stamp hiccup.
+    try {
+      const existing = String(c['Notes'] || '');
+      await updateRecord(TABLES.CONSUMERS, buyerId, {
+        'Notes': `[no-action-nudge ${new Date().toISOString().slice(0, 10)}] ${existing}`.slice(0, 2000),
+      });
+    } catch (e: any) {
+      failures.push(`${email}: stamp ${e?.message || 'unknown'} (skipped send to avoid dup)`);
+      continue;
+    }
+
     // Email
     try {
       const { subject, html } = buildEmailHtml({ firstName, rancherName, state });
@@ -157,14 +172,6 @@ async function realHandler(_request: Request): Promise<CronResult> {
         failures.push(`${email}: sms ${e?.message || 'unknown'}`);
       }
     }
-
-    // Stamp Notes for dedup so we don't re-nudge same buyer
-    try {
-      const existing = String(c['Notes'] || '');
-      await updateRecord(TABLES.CONSUMERS, buyerId, {
-        'Notes': `[no-action-nudge ${new Date().toISOString().slice(0, 10)}] ${existing}`.slice(0, 2000),
-      });
-    } catch {}
   }
 
   // Operator visibility — only fire Telegram if we actually nudged
