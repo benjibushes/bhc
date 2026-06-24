@@ -14,7 +14,33 @@ export async function GET(request: Request) {
     const records = await getAllRecords(TABLES.RANCHERS);
     
     // Transform Airtable field names to frontend-friendly names
-    const ranchers = records.map((record: any) => ({
+    const ranchers = records.map((record: any) => {
+      // Deposit-collection readiness — can this rancher actually collect a deposit
+      // through the Stripe Connect rail RIGHT NOW? Surfaces flip-and-collect-ready
+      // vs blocked (legacy = off-platform; Connect not active; price typo; paused).
+      const _pricingModel = String(record['Pricing Model'] || 'legacy').toLowerCase();
+      const _connectStatus = String(record['Stripe Connect Status'] || '').toLowerCase();
+      const _connectAcct = record['Stripe Account Id'] || record['Stripe Connect Account Id'] || '';
+      const _activeStatus = String(record['Active Status'] || '');
+      const _maxPrice = Math.max(
+        0,
+        Number(record['Quarter Price']) || 0,
+        Number(record['Half Price']) || 0,
+        Number(record['Whole Price']) || 0,
+      );
+      const _collectBlockers: string[] = [];
+      if (_pricingModel !== 'tier_v2') {
+        _collectBlockers.push('legacy — collects off-platform via Payment Links, not the deposit rail');
+      } else {
+        if (_connectStatus !== 'active') _collectBlockers.push('Stripe Connect not active');
+        if (!_connectAcct) _collectBlockers.push('no Connect account id');
+        if (_maxPrice < 100) {
+          _collectBlockers.push(_maxPrice > 0 ? `price too low ($${_maxPrice} — likely a per-lb typo)` : 'no cut price set');
+        }
+        if (_activeStatus !== 'Active') _collectBlockers.push(`Active Status = ${_activeStatus || 'empty'}`);
+      }
+      const _collectReady = _pricingModel === 'tier_v2' && _collectBlockers.length === 0;
+      return {
       id: record.id,
       ranch_name: record['Ranch Name'] || '',
       operator_name: record['Operator Name'] || '',
@@ -99,8 +125,11 @@ export async function GET(request: Request) {
       half_clicks: record['Half Clicks'] || 0,
       whole_clicks: record['Whole Clicks'] || 0,
       created_at: record['Created'] || record.createdTime || record._createdTime || new Date().toISOString(),
-    }));
-    
+      collect_ready: _collectReady,
+      collect_blockers: _collectBlockers,
+      };
+    });
+
     return NextResponse.json(ranchers);
   } catch (error: any) {
     console.error('API error fetching ranchers:', error);
