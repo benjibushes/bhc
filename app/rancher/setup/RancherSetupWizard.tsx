@@ -882,7 +882,26 @@ export default function RancherSetupWizard() {
   // bumped to "Docs Sent" instead of "Call Complete" was being asked to
   // book a SECOND call when they revisited the wizard. Real bug — Anna
   // Gajewski (Renick Valley) hit it on 2026-05-13.
+  // HYBRID call-gate (Ben, 2026-06-24): the onboarding call stays the DEFAULT +
+  // recommended path — most new ranchers sign up confused and need the
+  // conversation. But a pre-sold rancher who knows the ropes can choose "set up
+  // myself" to bypass the booking gate. Persisted to localStorage (keyed on the
+  // setup token) so a refresh doesn't re-clamp them back to the call step.
+  const [selfServeChosen, setSelfServeChosen] = useState(false);
+  const selfServeKey = `bhc-selfserve-${token.slice(0, 32)}`;
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(selfServeKey) === '1') setSelfServeChosen(true);
+    } catch { /* localStorage unavailable */ }
+  }, [selfServeKey]);
+  const chooseSelfServe = () => {
+    setSelfServeChosen(true);
+    try { localStorage.setItem(selfServeKey, '1'); } catch { /* ignore */ }
+    setStep(1);
+  };
+
   function canSkipBooking(): boolean {
+    if (selfServeChosen) return true;
     const status = (rancher?.onboardingStatus || '').toString();
     if (
       status === 'Call Complete' ||
@@ -2216,6 +2235,7 @@ export default function RancherSetupWizard() {
             callDone={canSkipBooking()}
             onContinue={() => setStep(1)}
             onBack={() => setStep(0)}
+            onSelfServe={chooseSelfServe}
           />
         )}
 
@@ -3032,11 +3052,13 @@ function CallStep({
   callDone,
   onContinue,
   onBack,
+  onSelfServe,
 }: {
   rancher: Rancher;
   callDone: boolean;
   onContinue: () => void;
   onBack: () => void;
+  onSelfServe?: () => void;
 }) {
   const status = (rancher.onboardingStatus || '').toString();
   const calBookingUrl =
@@ -3150,11 +3172,10 @@ function CallStep({
         </div>
       )}
 
-      {/* CLOSE-FIRST: this gate is REQUIRED. There is NO self-skip / "proceed
-          anyway" for a not-yet-called rancher — setup stays locked until the
-          call is done (the parent flips canSkipBooking → true after Ben marks
-          Call Complete, at which point the callDone branch above lets them in).
-          The only control here is Back to the intro. */}
+      {/* HYBRID gate: the call is the DEFAULT (above). But a pre-sold rancher
+          who knows the ropes can self-serve via onSelfServe — the parent persists
+          that choice so a refresh doesn't re-clamp them here. Kept visually
+          secondary so the call stays the recommended path. */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center pt-2 border-t border-dust">
         <button
           type="button"
@@ -3163,6 +3184,15 @@ function CallStep({
         >
           ← Back
         </button>
+        {onSelfServe && (
+          <button
+            type="button"
+            onClick={onSelfServe}
+            className="text-sm text-saddle hover:text-charcoal underline underline-offset-4 sm:ml-auto"
+          >
+            Already know the ropes? Set up myself →
+          </button>
+        )}
       </div>
     </section>
   );
