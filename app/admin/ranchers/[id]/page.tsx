@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Container from '../../../components/Container';
 import AdminAuthGuard from '../../../components/AdminAuthGuard';
-import { normalizeStates, stringifyStates } from '@/lib/states';
+import { normalizeStates, stringifyStates, US_STATES } from '@/lib/states';
 
 interface Testimonial {
   name: string;
@@ -435,6 +435,20 @@ export default function AdminRancherDetailPage() {
                 </div>
               </div>
 
+              {/* ── Deposit-collection readiness — can this rancher collect NOW? ── */}
+              {rancher && (
+                <div style={{
+                  padding: '10px 12px',
+                  border: `1px solid ${rancher.collect_ready ? '#2E7D32' : '#B45309'}`,
+                  background: rancher.collect_ready ? '#E8F5E9' : '#FEF3C7',
+                  fontSize: '13px',
+                }}>
+                  {rancher.collect_ready
+                    ? '✅ Ready to collect deposits — tier_v2 · Connect active · priced. Flip the states below and demand routes + collects.'
+                    : `🔴 Can't collect deposits yet: ${(rancher.collect_blockers || []).join(' · ')}`}
+                </div>
+              )}
+
               {/* ── Multi-State Routing — the "serve these states" flip ── */}
               <div className="border border-dust p-3 bg-bone">
                 <label className="flex items-center gap-2 text-sm font-medium mb-1">
@@ -446,18 +460,37 @@ export default function AdminRancherDetailPage() {
                   Multi-State Routing — route buyers from other states to this rancher
                 </label>
                 <p className="text-xs text-dust mb-2">
-                  Routing States only take effect when this is ON. Home state always routes regardless.
+                  Routing States only take effect when this is ON. Home state always routes regardless. Click states to toggle.
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="sm:col-span-2">
-                    <label className="text-xs text-dust block mb-1">Routing States (codes or names, comma-separated)</label>
-                    <input
-                      value={form.routing_states}
-                      onChange={e => updateForm('routing_states', e.target.value)}
-                      className="w-full px-3 py-2 border border-dust text-sm bg-bone"
-                      placeholder="TX, OK, NM, CO"
-                    />
-                  </div>
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {US_STATES.map((s) => {
+                    const selected = normalizeStates(form.routing_states).includes(s.code);
+                    return (
+                      <button
+                        key={s.code}
+                        type="button"
+                        title={s.name}
+                        onClick={() => {
+                          const cur = new Set(normalizeStates(form.routing_states));
+                          if (cur.has(s.code)) cur.delete(s.code);
+                          else cur.add(s.code);
+                          updateForm('routing_states', stringifyStates([...cur]));
+                        }}
+                        style={{
+                          fontSize: '11px',
+                          padding: '3px 7px',
+                          border: `1px solid ${selected ? '#0E0E0E' : '#A7A29A'}`,
+                          background: selected ? '#0E0E0E' : 'transparent',
+                          color: selected ? '#F4F1EC' : '#6B6B6B',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {s.code}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-end gap-4 flex-wrap">
                   <div>
                     <label className="text-xs text-dust block mb-1">Slots / state</label>
                     <input
@@ -465,24 +498,31 @@ export default function AdminRancherDetailPage() {
                       min={1}
                       value={form.slots_per_state}
                       onChange={e => updateForm('slots_per_state', e.target.value)}
-                      className="w-full px-3 py-2 border border-dust text-sm bg-bone"
+                      className="w-24 px-3 py-2 border border-dust text-sm bg-bone"
                     />
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => updateForm('routing_states', form.states_served)}
+                    className="text-xs underline text-dust"
+                  >
+                    copy from States Served
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateForm('routing_states', '')}
+                    className="text-xs underline text-dust"
+                  >
+                    clear all
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => updateForm('routing_states', form.states_served)}
-                  className="text-xs underline text-dust mt-1"
-                >
-                  copy from States Served
-                </button>
                 <p className="text-xs mt-2 text-dust">
                   {(() => {
                     const codes = normalizeStates(form.routing_states);
-                    if (!form.admin_approved_multi_state) return '⚠️ Toggle ON for these states to actually route.';
-                    if (codes.length === 0) return 'No valid states entered yet.';
+                    if (!form.admin_approved_multi_state) return '⚠️ Toggle Multi-State ON for these states to actually route.';
+                    if (codes.length === 0) return 'No states selected yet.';
                     const per = Math.max(1, parseInt(String(form.slots_per_state), 10) || 5);
-                    return `✅ Will route ${codes.length} state${codes.length === 1 ? '' : 's'}: ${codes.join(', ')} · ${per} slots each. (To COLLECT deposits, also confirm Stripe Connect = active + prices set.)`;
+                    return `✅ Will route ${codes.length} state${codes.length === 1 ? '' : 's'}: ${codes.join(', ')} · ${per} slots each. (To COLLECT, confirm the readiness banner above is green.)`;
                   })()}
                 </p>
               </div>
