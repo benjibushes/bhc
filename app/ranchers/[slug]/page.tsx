@@ -672,7 +672,10 @@ export default async function RancherPage(
                 <Pill tone="neutral" className="mx-auto">Available shares</Pill>
                 <h2 className="font-serif text-3xl md:text-5xl">Choose your share</h2>
                 <p className="text-saddle max-w-xl mx-auto">
-                  All prices include processing. {operatorName ? operatorName.split(' ')[0] : name} reaches back out within 48h to confirm timing + payment.
+                  All prices include processing.{' '}
+                  {onConnect
+                    ? `Reserve yours now with a small deposit — you're matched to ${operatorName ? operatorName.split(' ')[0] : name} and pay securely on-platform.`
+                    : `${operatorName ? operatorName.split(' ')[0] : name} reaches back out within 48h to confirm timing + payment.`}
                 </p>
                 {/* Scarcity (P1 #6) — surfaces remaining capacity right at the
                     point of decision. Hidden when there's no capacity signal. */}
@@ -684,14 +687,52 @@ export default async function RancherPage(
                 )}
               </div>
 
-              <RancherOrderForm
-                slug={slug}
-                rancherName={operatorName || name}
-                ranchName={name}
-                quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs } : undefined}
-                half={halfPrice ? { price: halfPrice, lbs: halfLbs } : undefined}
-                whole={wholePrice ? { price: wholePrice, lbs: wholeLbs } : undefined}
-              />
+              {/* Collect-ready (tier_v2 + Connect active) ranchers route the
+                  PRIMARY CTA straight onto the deposit rail (/access?rancher=
+                  → qualify → match → on-platform deposit) instead of the
+                  lead-capture form's 48h manual callback. Legacy / non-collect
+                  ranchers keep the lead form (they collect off-platform). */}
+              {onConnect ? (
+                <div className="space-y-6">
+                  <div className="grid sm:grid-cols-3 gap-4">
+                    {[
+                      quarterPrice ? { label: 'Quarter', price: quarterPrice, lbs: quarterLbs } : null,
+                      halfPrice ? { label: 'Half', price: halfPrice, lbs: halfLbs } : null,
+                      wholePrice ? { label: 'Whole', price: wholePrice, lbs: wholeLbs } : null,
+                    ]
+                      .filter((c): c is { label: string; price: number; lbs: any } => Boolean(c))
+                      .map((cut) => (
+                        <div key={cut.label} className="border border-dust bg-bone p-5 text-center">
+                          <p className="text-xs uppercase tracking-widest text-saddle">{cut.label}</p>
+                          <p className="font-serif text-3xl text-charcoal mt-1">
+                            ${Number(cut.price).toLocaleString()}
+                          </p>
+                          {cut.lbs ? <p className="text-xs text-dust mt-1">~{cut.lbs} lbs</p> : null}
+                        </div>
+                      ))}
+                  </div>
+                  <div className="text-center">
+                    <Link
+                      href={`/access?rancher=${slug}`}
+                      className="inline-flex items-center gap-2 px-8 py-4 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+                    >
+                      Reserve your share →
+                    </Link>
+                    <p className="text-xs text-dust mt-3">
+                      A small deposit holds your share. You pay securely on-platform; {operatorName ? operatorName.split(' ')[0] : name} ships it straight to you.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <RancherOrderForm
+                  slug={slug}
+                  rancherName={operatorName || name}
+                  ranchName={name}
+                  quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs } : undefined}
+                  half={halfPrice ? { price: halfPrice, lbs: halfLbs } : undefined}
+                  whole={wholePrice ? { price: wholePrice, lbs: wholeLbs } : undefined}
+                />
+              )}
 
               <p className="text-center text-xs text-dust">
                 Prices in USD. Questions?{' '}
