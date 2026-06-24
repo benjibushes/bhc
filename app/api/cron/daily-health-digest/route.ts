@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
+import { CRON_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 60;
 
@@ -30,19 +31,31 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const cutoff24h = new Date(now - 24 * 60 * 60 * 1000).toISOString();
   const cutoffToday = new Date().toISOString().slice(0, 10);
 
-  // Parallel pulls
+  // Parallel pulls. This cron's JOB is to report platform health — so if its
+  // OWN reads fail it must SAY so, not render a green "all healthy" with zeros
+  // (the old `.catch(() => [])` + always-`success` made a total Airtable outage
+  // look like "0 signups, ✅ crons healthy"). Track each failure + downgrade.
+  const readErrors: string[] = [];
+  const safeRead = async (label: string, p: Promise<any[]>): Promise<any[]> => {
+    try {
+      return await p;
+    } catch (e: any) {
+      readErrors.push(`${label}: ${e?.message || 'failed'}`);
+      return [];
+    }
+  };
   const [cronRuns, ranchers, consumers, referrals, emailSends] = await Promise.all([
-    getAllRecords('Cron Runs', `IS_AFTER({Started At}, '${cutoff24h}')`).catch(() => [] as any[]),
-    getAllRecords(TABLES.RANCHERS, `{Active Status}='Active'`).catch(() => [] as any[]),
-    getAllRecords(
+    safeRead('cronRuns', getAllRecords('Cron Runs', `IS_AFTER({Started At}, '${cutoff24h}')`) as Promise<any[]>),
+    safeRead('ranchers', getAllRecords(TABLES.RANCHERS, `{Active Status}='Active'`) as Promise<any[]>),
+    safeRead('consumers', getAllRecords(
       TABLES.CONSUMERS,
       `AND({Status}='Approved', IS_AFTER(CREATED_TIME(), '${cutoff24h}'))`
-    ).catch(() => [] as any[]),
-    getAllRecords(TABLES.REFERRALS).catch(() => [] as any[]),
-    getAllRecords(
+    ) as Promise<any[]>),
+    safeRead('referrals', getAllRecords(TABLES.REFERRALS) as Promise<any[]>),
+    safeRead('emailSends', getAllRecords(
       TABLES.EMAIL_SENDS,
       `IS_AFTER({Sent At}, '${cutoff24h}')`
-    ).catch(() => [] as any[]),
+    ) as Promise<any[]>),
   ]);
 
   // Cron health
@@ -122,17 +135,43 @@ async function realHandler(_request: Request): Promise<CronResult> {
       : `✅ <b>Crons healthy</b> — 0 failures in 24h`,
   ];
 
+  // Surface read failures IN the digest so a blind monitor is impossible.
+  if (readErrors.length > 0) {
+    lines.push(
+      '',
+      `⚠️ <b>Health read errors:</b> ${readErrors.length}/5 Airtable reads failed (${readErrors.map((e) => e.split(':')[0]).join(', ')}) — numbers above are incomplete.`
+    );
+  }
+
   await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, lines.join('\n')).catch((e: any) =>
     console.warn('[daily-health-digest] telegram fire failed:', e?.message)
   );
 
+  // The monitor must not report green when its own reads broke. All 5 failed →
+  // error; some failed → partial; clean → success. This makes the outage the
+  // Cron Runs row is meant to catch visible instead of self-concealed.
+  const status: CronResult['status'] =
+    readErrors.length === 0 ? 'success' : readErrors.length >= 5 ? 'error' : 'partial';
+
   return {
-    status: 'success',
+    status,
     recordsTouched: 1,
-    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} cronErrors=${cronErrorRuns.length}`,
+    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} cronErrors=${cronErrorRuns.length} readErrors=${readErrors.length}`,
   };
 }
 
+// Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. Also accept
+// `?secret=` for manual triggers. Was previously unauthenticated.
+function isAuthedCron(request: Request): boolean {
+  const authHeader = request.headers.get('authorization');
+  if (authHeader === `Bearer ${CRON_SECRET}`) return true;
+  const { searchParams } = new URL(request.url);
+  return searchParams.get('secret') === CRON_SECRET;
+}
+
 export async function GET(request: Request) {
+  if (!isAuthedCron(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   return withCronRun('daily-health-digest', realHandler)(request);
 }

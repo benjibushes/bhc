@@ -20,6 +20,7 @@ import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
+import { CRON_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 120;
 
@@ -118,6 +119,22 @@ async function realHandler(_request: Request): Promise<CronResult> {
     const startTime = String(b['Sales Call Start At'] || '');
     const calLink = ''; // not stored on Referral; user can find via email
 
+    // Stamp the dedup claim BEFORE sending. The send path (email + SMS) can't
+    // be made idempotent, but the stamp can — so claim first. If the stamp
+    // write fails, skip the send and let the next tick retry. Better a slightly
+    // delayed reminder than a double email+SMS (this cron fires every 10 min
+    // and the template is on the transactional whitelist, so the frequency cap
+    // would NOT catch a duplicate).
+    try {
+      await updateRecord(TABLES.REFERRALS, b.id, {
+        Notes: `[cal-reminder-1h ${new Date().toISOString().slice(0, 16)}] ${notes}`.slice(0, 2000),
+      });
+    } catch (e: any) {
+      console.warn(`[cal-reminder-1h] stamp failed for ${b.id}, skipping send to avoid a duplicate:`, e?.message);
+      skipped++;
+      continue;
+    }
+
     try {
       const { subject, html } = buildEmail(firstName, startTime, calLink);
       await sendEmail({
@@ -148,15 +165,6 @@ async function realHandler(_request: Request): Promise<CronResult> {
     } catch (e: any) {
       console.warn(`[cal-reminder-1h] SMS lookup failed for ${attendeeEmail}:`, e?.message);
     }
-
-    // Stamp dedup on Referral.Notes
-    try {
-      await updateRecord(TABLES.REFERRALS, b.id, {
-        Notes: `[cal-reminder-1h ${new Date().toISOString().slice(0, 16)}] ${notes}`.slice(0, 2000),
-      });
-    } catch (e: any) {
-      console.warn(`[cal-reminder-1h] stamp failed for ${b.id}:`, e?.message);
-    }
     touched++;
   }
 
@@ -174,6 +182,20 @@ async function realHandler(_request: Request): Promise<CronResult> {
   };
 }
 
+// Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. Also accept
+// `?secret=` for manual/admin triggers. This was the ONLY mutating cron with
+// no auth gate — it fires buyer email + SMS, so an unauthenticated caller
+// could spam booked buyers. CRON_SECRET is requireEnv (fail-loud) in lib/secrets.
+function isAuthedCron(request: Request): boolean {
+  const authHeader = request.headers.get('authorization');
+  if (authHeader === `Bearer ${CRON_SECRET}`) return true;
+  const { searchParams } = new URL(request.url);
+  return searchParams.get('secret') === CRON_SECRET;
+}
+
 export async function GET(request: Request) {
+  if (!isAuthedCron(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   return withCronRun('cal-reminder-1h', realHandler)(request);
 }
