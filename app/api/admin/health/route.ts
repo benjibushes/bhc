@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
+import { countHeldReferrals } from '@/lib/capacityCount';
 
 // GET /api/admin/health
 //
@@ -76,13 +77,11 @@ export async function GET(request: Request) {
   const driftDetails: Array<{ name: string; stored: number; actual: number }> = [];
   for (const r of ranchers) {
     if (!r['Page Live']) continue;
-    const myActive = refs.filter((x) => {
-      if (!['Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(x['Status'])) return false;
-      const a = x['Rancher'] || [];
-      const b = x['Suggested Rancher'] || [];
-      if (!a.length && !b.length) return false;
-      return a.includes(r.id) || b.includes(r.id);
-    }).length;
+    // Canonical held count (lib/capacityCount) — the SAME rule the reconcilers
+    // and the Redis bootstrap use, so this drift readout matches what they
+    // compute (it previously used a different status set + counted Suggested
+    // Rancher, so it reported "drift" that the reconcilers didn't see).
+    const myActive = countHeldReferrals(r.id, refs);
     const stored = Number(r['Current Active Referrals'] || 0);
     if (myActive !== stored) {
       drift++;

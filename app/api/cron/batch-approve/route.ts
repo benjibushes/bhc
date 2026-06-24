@@ -8,6 +8,7 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { getOperationalServedStates } from '@/lib/rancherEligibility';
 import { isQualifiedForRouting } from '@/lib/qualification';
+import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
 import { withCronRun } from '@/lib/cronRun';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import jwt from 'jsonwebtoken';
@@ -45,29 +46,23 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     try {
       const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
       const allReferrals = await getAllRecords(TABLES.REFERRALS) as any[];
-      // Match the live Redis counter semantics (INCR at Intro Sent, held through
-      // Slot Locked) + capacity-drift-check's HELD_STATUSES, so the two
-      // reconcilers agree and stop overwriting each other. Pending Approval is
-      // NOT counted (no INCR fires at suggest-time; capacity is consumed at
-      // intro/approval, not when a match is suggested).
-      const activeStatuses = ['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Awaiting Payment', 'Slot Locked'];
-
-      // Count actual active referrals per rancher.
-      // Orphan-aware: skip Pending Approval rows with no Rancher AND no
-      // Suggested Rancher link. The 452-cleanup deleted historical orphans but
-      // any new orphan that sneaks past matching/suggest would otherwise be
-      // ignored entirely (good) — this check just makes intent explicit and
-      // protects against accidentally counting a row with EMPTY links.
+      // Count held referrals per rancher using the CANONICAL rule (shared via
+      // lib/capacityCount with capacity-drift-check, the admin-health readout,
+      // and the Redis bootstrap): Status ∈ HELD_REFERRAL_STATUSES AND the
+      // `Rancher` link includes the rancher id. Previously this billed
+      // `(Rancher||Suggested)[0]` over a local status list — a DIFFERENT rule
+      // than drift-check, so on any Suggested-linked or multi-id referral the
+      // two reconcilers computed different numbers and overwrote each other
+      // daily. Now they compute identically. Pending Approval stays excluded
+      // (pre-INCR); Suggested-only rows are not billed (a held referral has
+      // `Rancher` set once introduced).
       const actualCounts: Record<string, number> = {};
       for (const ref of allReferrals) {
-        if (!activeStatuses.includes(ref['Status'])) continue;
-        const ranchered = Array.isArray(ref['Rancher']) && ref['Rancher'].length > 0;
-        const suggested = Array.isArray(ref['Suggested Rancher']) && ref['Suggested Rancher'].length > 0;
-        if (!ranchered && !suggested) continue; // orphan — don't bill capacity to anyone
-        const rIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
-        const rId = Array.isArray(rIds) ? rIds[0] : null;
-        if (rId) {
-          actualCounts[rId] = (actualCounts[rId] || 0) + 1;
+        if (!HELD_REFERRAL_STATUSES.has(ref['Status'])) continue;
+        const link = ref['Rancher'];
+        if (!Array.isArray(link)) continue;
+        for (const rId of link) {
+          if (typeof rId === 'string') actualCounts[rId] = (actualCounts[rId] || 0) + 1;
         }
       }
 
