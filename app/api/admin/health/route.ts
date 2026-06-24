@@ -141,8 +141,22 @@ export async function GET(request: Request) {
   }).length;
   const activeRefs = (byRefStatus['Intro Sent'] || 0) + (byRefStatus['Rancher Contacted'] || 0) + (byRefStatus['Negotiation'] || 0);
 
+  // Supabase Auth env presence — for diagnosing rancher password login (#98).
+  // BOOLEANS + matched NAMES only, never the values. Mirrors the accept-both-
+  // conventions logic in lib/supabaseAuth.ts so this reflects what the route
+  // actually sees. configured=false ⇒ password routes 503 (magic-link unaffected).
+  const supabaseAuth: Record<string, any> = {
+    url_present: !!(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL),
+    anon_present: !!(process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+    service_role_present: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    url_name: process.env.SUPABASE_URL ? 'SUPABASE_URL' : process.env.NEXT_PUBLIC_SUPABASE_URL ? 'NEXT_PUBLIC_SUPABASE_URL' : null,
+    anon_name: process.env.SUPABASE_ANON_KEY ? 'SUPABASE_ANON_KEY' : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? 'NEXT_PUBLIC_SUPABASE_ANON_KEY' : null,
+  };
+  supabaseAuth.configured = supabaseAuth.url_present && supabaseAuth.anon_present && supabaseAuth.service_role_present;
+
   return NextResponse.json({
     generated_at: new Date().toISOString(),
+    supabase_auth: supabaseAuth,
     ranchers: {
       total: ranchers.length,
       live: live.length,
