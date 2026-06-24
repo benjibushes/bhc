@@ -79,6 +79,14 @@ export async function PATCH(
     else if (body.page_live === false) fields['Page Live'] = false;
     if (body.ships_nationwide === true) fields['Ships Nationwide'] = true;
     else if (body.ships_nationwide === false) fields['Ships Nationwide'] = false;
+    // Multi-state routing flip. Routing States is the enumerated served-states
+    // list; it ONLY routes when Admin Approved Multi-State is true. State
+    // Capacity Override is the per-state slot map (JSON) the client computes so
+    // a wide enumeration doesn't floor the per-state sub-cap to 0.
+    if (body.admin_approved_multi_state === true) fields['Admin Approved Multi-State'] = true;
+    else if (body.admin_approved_multi_state === false) fields['Admin Approved Multi-State'] = false;
+    if (body.routing_states !== undefined) fields['Routing States'] = body.routing_states;
+    if (body.state_capacity_override !== undefined) fields['State Capacity Override'] = body.state_capacity_override;
 
     let shouldSendApproval = false;
     let shouldSendGoLive = false;

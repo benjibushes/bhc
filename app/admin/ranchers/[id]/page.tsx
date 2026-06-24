@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Container from '../../../components/Container';
 import AdminAuthGuard from '../../../components/AdminAuthGuard';
+import { normalizeStates, stringifyStates } from '@/lib/states';
 
 interface Testimonial {
   name: string;
@@ -63,6 +64,9 @@ export default function AdminRancherDetailPage() {
     page_live: false,
     ships_nationwide: false,
     states_served: '',
+    routing_states: '',
+    admin_approved_multi_state: false,
+    slots_per_state: '5',
     onboarding_status: '',
     active_status: '',
   });
@@ -119,6 +123,9 @@ export default function AdminRancherDetailPage() {
         page_live: r.page_live || false,
         ships_nationwide: r.ships_nationwide || false,
         states_served: r.states_served || '',
+        routing_states: r.routing_states || '',
+        admin_approved_multi_state: r.admin_approved_multi_state || false,
+        slots_per_state: '5',
         onboarding_status: r.onboarding_status || '',
         active_status: r.active_status || '',
       });
@@ -149,8 +156,23 @@ export default function AdminRancherDetailPage() {
     setSaving(true);
     setSaved(false);
     try {
+      // Multi-state flip: normalize the routing states + auto-size the per-state
+      // cap. Without an override, the matcher splits the global cap across the N
+      // routed states (floor(max/N)) — so a wide enumeration silently floors to 0
+      // and rejects every cold lead. Writing State Capacity Override = {ST: slots}
+      // per routed state guarantees each state gets its slots regardless of N.
+      const routedCodes = form.admin_approved_multi_state ? normalizeStates(form.routing_states) : [];
+      const perState = Math.max(1, parseInt(String(form.slots_per_state), 10) || 5);
+      const stateCapacityOverride =
+        routedCodes.length > 1
+          ? JSON.stringify(Object.fromEntries(routedCodes.map((c) => [c, perState])))
+          : '';
+      // slots_per_state is a UI-only helper; the PATCH endpoint has no mapping
+      // for it, so it rides along in the payload harmlessly (unmapped = ignored).
       const payload = {
         ...form,
+        routing_states: routedCodes.length ? stringifyStates(routedCodes) : form.routing_states,
+        state_capacity_override: stateCapacityOverride,
         testimonials: JSON.stringify(testimonials),
         gallery_photos: JSON.stringify(galleryPhotos),
         custom_products: JSON.stringify(customProducts),
@@ -412,6 +434,59 @@ export default function AdminRancherDetailPage() {
                     className="w-full px-3 py-2 border border-dust text-sm bg-bone" placeholder="CO, WY, MT" />
                 </div>
               </div>
+
+              {/* ── Multi-State Routing — the "serve these states" flip ── */}
+              <div className="border border-dust p-3 bg-bone">
+                <label className="flex items-center gap-2 text-sm font-medium mb-1">
+                  <input
+                    type="checkbox"
+                    checked={form.admin_approved_multi_state}
+                    onChange={e => updateForm('admin_approved_multi_state', e.target.checked)}
+                  />
+                  Multi-State Routing — route buyers from other states to this rancher
+                </label>
+                <p className="text-xs text-dust mb-2">
+                  Routing States only take effect when this is ON. Home state always routes regardless.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="sm:col-span-2">
+                    <label className="text-xs text-dust block mb-1">Routing States (codes or names, comma-separated)</label>
+                    <input
+                      value={form.routing_states}
+                      onChange={e => updateForm('routing_states', e.target.value)}
+                      className="w-full px-3 py-2 border border-dust text-sm bg-bone"
+                      placeholder="TX, OK, NM, CO"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-dust block mb-1">Slots / state</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={form.slots_per_state}
+                      onChange={e => updateForm('slots_per_state', e.target.value)}
+                      className="w-full px-3 py-2 border border-dust text-sm bg-bone"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateForm('routing_states', form.states_served)}
+                  className="text-xs underline text-dust mt-1"
+                >
+                  copy from States Served
+                </button>
+                <p className="text-xs mt-2 text-dust">
+                  {(() => {
+                    const codes = normalizeStates(form.routing_states);
+                    if (!form.admin_approved_multi_state) return '⚠️ Toggle ON for these states to actually route.';
+                    if (codes.length === 0) return 'No valid states entered yet.';
+                    const per = Math.max(1, parseInt(String(form.slots_per_state), 10) || 5);
+                    return `✅ Will route ${codes.length} state${codes.length === 1 ? '' : 's'}: ${codes.join(', ')} · ${per} slots each. (To COLLECT deposits, also confirm Stripe Connect = active + prices set.)`;
+                  })()}
+                </p>
+              </div>
+
               <div>
                 <label className="text-xs text-dust block mb-1">About Text</label>
                 <textarea value={form.about_text} onChange={e => updateForm('about_text', e.target.value)}
