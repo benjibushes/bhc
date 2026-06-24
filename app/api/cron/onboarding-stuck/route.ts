@@ -167,6 +167,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
 
     if (!email) continue;
     try {
+      // Claim BEFORE sending: stamp the throttle first so a stamp failure skips
+      // + retries rather than re-nudging. (A suppressed/failed send after the
+      // claim simply won't retry — fine for a 1-step-from-live nudge.)
+      await updateRecord(TABLES.RANCHERS, r.id, {
+        'Last Onboarding Nudge At': new Date().toISOString(),
+      });
       const setupUrl = mintSetupUrl(r.id);
       const result: any = await sendEmail({
         to: email,
@@ -174,14 +180,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         html: emailHtml(name, missing, setupUrl, bucket),
         _replyContext: { type: 'rnc', recordId: r.id },
       } as any);
-      const hasErr = result?.suppressed;
-      if (hasErr) {
+      if (result?.suppressed) {
         console.error('Stuck-onboarding send suppressed:', result.reason ?? 'no reason');
         continue;
       }
-      await updateRecord(TABLES.RANCHERS, r.id, {
-        'Last Onboarding Nudge At': new Date().toISOString(),
-      });
       sent++;
       results.push({ id: r.id, name, action: `sent-${bucket}`, bucket: bucketLabel });
     } catch (e: any) {

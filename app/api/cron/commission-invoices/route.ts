@@ -152,6 +152,23 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         console.warn(`[commission-invoices] dedup check failed for ${rancherEmail}:`, e?.message);
       }
 
+      // ATOMIC idempotency backstop — claim a once-per-month key right before the
+      // send. The Email Sends dedup above fails OPEN (proceeds on read error);
+      // this claim does NOT, so a Vercel retry while Airtable is slow can't
+      // double-invoice a rancher (money-facing). 3h TTL covers the same-day
+      // retry window (the cron only fires on the 1st); the persisted Email Sends
+      // row is the month-long backstop. Degrades open only if Redis is entirely
+      // absent (it's configured in prod).
+      const { claimOnce } = await import('@/lib/rancherCapacity');
+      const invoiceClaimed = await claimOnce(
+        `commission-invoice:${rancherId}:${monthYear}`,
+        3 * 60 * 60,
+      );
+      if (!invoiceClaimed) {
+        summaryLines.push(`🤠 ${ranchName}: skipped (invoice already claimed this run)`);
+        continue;
+      }
+
       await sendMonthlyCommissionInvoice({
         operatorName,
         ranchName,

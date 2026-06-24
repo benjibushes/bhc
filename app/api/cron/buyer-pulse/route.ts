@@ -134,6 +134,22 @@ p{margin:14px 0;color:#2A2A2A;font-size:15px}
 <div class="foot"><p style="margin:0;">BuyHalfCow · 1001 S. Main St. Ste 600, Kalispell, MT 59901</p></div>
 </div></body></html>`;
 
+        // Claim BEFORE sending: stamp the pulse marker first so a missing or
+        // failed stamp SKIPS the pulse rather than re-firing it every run. The
+        // old order sent first, then stamped — and if the field was missing it
+        // swallowed the error and re-pulsed the same buyer on every run.
+        try {
+          await updateRecord(TABLES.REFERRALS, ref.id, {
+            'Buyer Pulse Sent At': new Date().toISOString(),
+          });
+        } catch (fieldErr: any) {
+          if (skippedReasons.length === 0) {
+            skippedReasons.push(`Add "Buyer Pulse Sent At" datetime field to Referrals table — until then pulses are SKIPPED (not sent) to avoid re-firing each run. (${fieldErr?.message})`);
+          }
+          failed++;
+          continue;
+        }
+
         await sendEmail({
           to: buyerEmail,
           subject: `${firstName}, did ${rancherName} reach out?`,
@@ -145,27 +161,13 @@ p{margin:14px 0;color:#2A2A2A;font-size:15px}
         // G14: SMS day-4-ish check-in alongside the email. Higher open rate
         // than email; lifts pulse-response rate which feeds ghosting signal.
         // Fire-and-forget — never block the per-referral loop on a Twilio
-        // hiccup, and never re-pulse (gated above by Buyer Pulse Sent At).
-        // F-3 / P4-D audit fix: routed through sendSMSToConsumer which gates
-        // on SMS Opt-In + Unsubscribed. Note the email branch above already
-        // skipped this record if Unsubscribed=true, but the helper double-
-        // gates so future refactors can't slip past.
+        // hiccup. F-3 / P4-D audit fix: routed through sendSMSToConsumer which
+        // gates on SMS Opt-In + Unsubscribed.
         sendSMSToConsumer({
           consumer: buyer,
           body: `hey ${firstName} — quick check in. did ${rancherName} text you yet? reply 1=yes 2=no 3=need help. reply STOP to opt out. — Ben`,
           reason: 'buyer-pulse day-5 check-in',
         }).catch(() => {});
-
-        // Mark pulsed so we don't re-ask
-        try {
-          await updateRecord(TABLES.REFERRALS, ref.id, {
-            'Buyer Pulse Sent At': new Date().toISOString(),
-          });
-        } catch (fieldErr: any) {
-          if (skippedReasons.length === 0) {
-            skippedReasons.push(`Add "Buyer Pulse Sent At" datetime field to Referrals table — until then, pulses re-fire each run. (${fieldErr?.message})`);
-          }
-        }
 
         sent++;
         await new Promise((r) => setTimeout(r, 600));
