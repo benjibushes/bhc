@@ -372,23 +372,43 @@ export async function POST(request: Request) {
       // the signup gate + warmup cron. Don't inline a copy here — drift is
       // exactly how 48 buyers got stranded in TN/OR waitlists.
       if (!isRancherOperationalForBuyers(r)) return false;
-      // ── tier_v2 sub-floor / no-price guard (2026-06-22) ──────────────────
-      // A tier_v2 rancher whose every cut price is missing OR below
-      // MIN_TIER_PRICE cannot accept a deposit: /api/checkout/deposit enforces
-      // the same floor and 409s on EVERY cut (route.ts ~193, the DD-Ranch
-      // $7.40-whole-cow class of mis-entry), so a paid-ad buyer routed here
-      // dead-ends at checkout. Refuse to match them until they publish a real
-      // price ≥ MIN_TIER_PRICE on at least one cut. Mirrors the deposit route's
-      // floor exactly. Legacy / Payment-Link ranchers use a DIFFERENT checkout
-      // (their own links on /ranchers/[slug]) that doesn't enforce this floor,
-      // so the guard is scoped to tier_v2 only — never applied to legacy.
+      // ── tier_v2 sub-floor / no-price guard (2026-06-22, cut-specific 2026-06-23) ─
+      // A tier_v2 rancher who hasn't validly priced the buyer's SPECIFIC cut
+      // cannot accept that buyer's deposit: /api/checkout/deposit derives the
+      // deposit from the requested cut's price and 409s when THAT cut is missing
+      // or below MIN_TIER_PRICE (route.ts ~193, the DD-Ranch $7.40-whole-cow
+      // class of mis-entry). The old guard only required *some* cut to clear the
+      // floor — so a Half (or Whole) buyer routed to a rancher who priced ONLY a
+      // different cut sailed past matching and dead-ended at the deposit 409.
+      // FIX: when we know the buyer's tier, require THAT cut to be priced
+      // ≥ MIN_TIER_PRICE. When the tier is ambiguous/unset (buyerTier === null,
+      // e.g. "Not Sure"/blank Order Type), keep the original any-cut behavior so
+      // we don't over-exclude a buyer whose cut isn't pinned down yet — they can
+      // still land on any validly-priced cut at checkout. Mirrors the deposit
+      // route's floor exactly. Legacy / Payment-Link ranchers use a DIFFERENT
+      // checkout (their own links on /ranchers/[slug]) that doesn't enforce this
+      // floor, so the guard is scoped to tier_v2 only — never applied to legacy.
       if (String(r['Pricing Model'] || 'legacy') === 'tier_v2') {
-        const tierPrices = [r['Quarter Price'], r['Half Price'], r['Whole Price']];
-        const hasFloorPrice = tierPrices.some((p) => {
+        const hasFloorPrice = (p: any) => {
           const n = Number(p);
           return Number.isFinite(n) && n >= MIN_TIER_PRICE;
-        });
-        if (!hasFloorPrice) return false;
+        };
+        // Map the buyer's requested cut → the matching tier price field.
+        // buyerTier (Quarter|Half|Whole|null) is derived from Order Type below.
+        const requestedCutPrice =
+          buyerTier === 'Quarter' ? r['Quarter Price']
+          : buyerTier === 'Half' ? r['Half Price']
+          : buyerTier === 'Whole' ? r['Whole Price']
+          : null;
+        if (buyerTier) {
+          // Specific cut known — the rancher must have validly priced THAT cut.
+          if (!hasFloorPrice(requestedCutPrice)) return false;
+        } else {
+          // Ambiguous/unset tier — fall back to any-cut (don't over-exclude).
+          const anyCutPriced = [r['Quarter Price'], r['Half Price'], r['Whole Price']]
+            .some(hasFloorPrice);
+          if (!anyCutPriced) return false;
+        }
       }
       const maxReferrals = getMaxActiveReferrals(r);
       const currentReferrals = r['Current Active Referrals'] || 0;

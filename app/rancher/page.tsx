@@ -272,6 +272,10 @@ export default function RancherDashboardPage() {
   // Go-live request
   const [goLiveRequested, setGoLiveRequested] = useState(false);
   const [goLiveLoading, setGoLiveLoading] = useState(false);
+  // Why the SERVER blocked go-live (e.g. Stripe Connect not active), shown
+  // inline in the go-live gate. The server returns 200 with {success:false}
+  // on ineligibility, so res.ok alone can't be trusted — we read this instead.
+  const [goLiveError, setGoLiveError] = useState('');
   // Verification
   const [verificationRefs, setVerificationRefs] = useState('');
   const [verificationReviewsLink, setVerificationReviewsLink] = useState('');
@@ -977,21 +981,40 @@ export default function RancherDashboardPage() {
 
   const handleRequestGoLive = async () => {
     setGoLiveLoading(true);
-    setUpdateError('');
+    setGoLiveError('');
     try {
       const res = await fetch('/api/rancher/landing-page', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ _action: 'request-go-live' }),
       });
-      if (res.ok) {
+      const data = await res.json().catch(() => ({} as any));
+      // CRITICAL: this endpoint returns HTTP 200 even when the rancher is
+      // INELIGIBLE (e.g. Stripe Connect not active, agreement unsigned), with
+      // a body of { success:false, live:false, message:"…what's left…" }. The
+      // old code trusted res.ok and showed a false "Request sent!", leaving the
+      // rancher stuck with no idea why. Honor the SERVER's verdict instead:
+      // only a genuine success flips goLiveRequested; a blocker shows the reason.
+      const succeeded = res.ok && data?.success !== false;
+      if (succeeded) {
         setGoLiveRequested(true);
+        // If we self-published, reflect "live" without a full reload — the
+        // completeness bar + preview link key off pageLive.
+        if (data?.live) {
+          setRancherInfo((prev: any) => (prev ? { ...prev, pageLive: true } : prev));
+        }
       } else {
-        const data = await res.json().catch(() => ({}));
-        setUpdateError(data.error || 'Go-live request failed. Try again or email hello@buyhalfcow.com.');
+        // Surface the actual blocker. Prefer the server's human message (it
+        // already spells out exactly what to fix, e.g. "finish Stripe Connect"),
+        // then any error field, then a safe fallback.
+        setGoLiveError(
+          data?.message ||
+            data?.error ||
+            "We couldn't publish your page yet. Finish the remaining setup steps (including connecting your bank for payouts), then try again — or email hello@buyhalfcow.com.",
+        );
       }
     } catch {
-      setUpdateError('Network error — check your connection and try again.');
+      setGoLiveError('Network error — check your connection and try again.');
     } finally {
       setGoLiveLoading(false);
     }
@@ -2390,6 +2413,11 @@ export default function RancherDashboardPage() {
                         </li>
                       ))}
                     </ul>
+                    {goLiveError && (
+                      <div className="p-3 border border-red-400 bg-red-50 text-red-800 text-sm">
+                        {goLiveError}
+                      </div>
+                    )}
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-1">
                       <p className="text-xs text-saddle">
                         {essentialsMet
