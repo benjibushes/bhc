@@ -166,10 +166,29 @@ export async function GET(request: Request) {
   connectRail.deposit_rail_ready =
     connectRail.connect_enabled && connectRail.webhook_secret_present && connectRail.stripe_secret_present;
 
+  // Paid-tier subscription env presence — the Pasture/Ranch/Operator UPGRADE
+  // depends on these. STRIPE_PASTURE_PRICE_ID unset → the Pasture checkout
+  // THROWS (lib/stripeSubscription.ts:48) → rancher gets a 500 on upgrade.
+  // STRIPE_WEBHOOK_SECRET (platform, NOT the Connect one) unset → subscription
+  // lifecycle events (created/updated/payment_failed) silently 400 → the Tier
+  // never flips to Pasture. Booleans only, never values.
+  const tierSubs: Record<string, any> = {
+    pasture_price_present: !!process.env.STRIPE_PASTURE_PRICE_ID,
+    ranch_price_present: !!process.env.STRIPE_RANCH_PRICE_ID,
+    operator_price_present: !!process.env.STRIPE_OPERATOR_PRICE_ID,
+    platform_webhook_secret_present: !!process.env.STRIPE_WEBHOOK_SECRET,
+  };
+  tierSubs.pasture_upgrade_ready =
+    tierSubs.pasture_price_present &&
+    tierSubs.platform_webhook_secret_present &&
+    connectRail.connect_enabled &&
+    connectRail.stripe_secret_present;
+
   return NextResponse.json({
     generated_at: new Date().toISOString(),
     supabase_auth: supabaseAuth,
     connect_rail: connectRail,
+    tier_subscriptions: tierSubs,
     ranchers: {
       total: ranchers.length,
       live: live.length,
