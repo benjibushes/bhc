@@ -11,6 +11,7 @@ import BHCPromiseBadge from '../../components/BHCPromiseBadge';
 import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
+import { normalizeImageUrl } from '@/lib/imageUrl';
 import RancherOrderForm from './RancherOrderForm';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
 import RanchHeroCover, { RanchCoverFallback } from './RanchHeroCover';
@@ -65,7 +66,7 @@ export async function generateMetadata(
     || (isProspect
         ? `${name}${stateLabel ? ` (${stateLabel})` : ''} — direct-to-consumer rancher. Unclaimed listing on BuyHalfCow.`
         : `Buy direct from ${name} on BuyHalfCow`);
-  const logo = rancher['Logo URL'] || '';
+  const logo = normalizeImageUrl((rancher['Logo URL'] || '').toString());
 
   return {
     title: isProspect ? `${name} — Unclaimed Listing` : name,
@@ -128,8 +129,16 @@ export default async function RancherPage(
   const isProspect = r['Verification Status'] === 'Prospect';
   const name = r['Ranch Name'] || r['Operator Name'] || 'Ranch';
   const operatorName = r['Operator Name'] || '';
+  // Display name(s) for the operator without the surname — so a couple-run
+  // ranch reads "Meet Matt & Kelsey" (not just "Matt"); a single "John Smith"
+  // still renders "John". Falls back to the full operator name.
+  const operatorFirst = (() => {
+    const parts = operatorName.trim().split(/\s+/).filter(Boolean);
+    if (parts.length <= 1) return parts[0] || '';
+    return parts.slice(0, -1).join(' ');
+  })();
   const tagline = r['Tagline'] || '';
-  const logoUrl = r['Logo URL'] || '';
+  const logoUrl = normalizeImageUrl((r['Logo URL'] || '').toString());
   const aboutText = r['About Text'] || '';
   const videoUrl = r['Video URL'] || '';
   const state = r['State'] || '';
@@ -576,7 +585,7 @@ export default async function RancherPage(
                     href={`/ranchers/${slug}/contact`}
                     className="text-sm text-saddle hover:text-charcoal underline underline-offset-2 transition-colors"
                   >
-                    Have a question? Ask {operatorName ? operatorName.split(' ')[0] : 'the ranch'} →
+                    Have a question? Ask {operatorFirst || 'the ranch'} →
                   </Link>
                 </div>
               )}
@@ -674,8 +683,8 @@ export default async function RancherPage(
                 <p className="text-saddle max-w-xl mx-auto">
                   All prices include processing.{' '}
                   {onConnect
-                    ? `Reserve yours now with a small deposit — you're matched to ${operatorName ? operatorName.split(' ')[0] : name} and pay securely on-platform.`
-                    : `${operatorName ? operatorName.split(' ')[0] : name} reaches back out within 48h to confirm timing + payment.`}
+                    ? `Reserve yours now with a small deposit — you're matched to ${operatorFirst || name} and pay securely on-platform.`
+                    : `${operatorFirst || name} reaches back out within 48h to confirm timing + payment.`}
                 </p>
                 {/* Scarcity (P1 #6) — surfaces remaining capacity right at the
                     point of decision. Hidden when there's no capacity signal. */}
@@ -719,7 +728,7 @@ export default async function RancherPage(
                       Reserve your share →
                     </Link>
                     <p className="text-xs text-dust mt-3">
-                      A small deposit holds your share. You pay securely on-platform; {operatorName ? operatorName.split(' ')[0] : name} ships it straight to you.
+                      A small deposit holds your share. You pay securely on-platform; {operatorFirst || name} ships it straight to you.
                     </p>
                   </div>
                 </div>
@@ -749,7 +758,7 @@ export default async function RancherPage(
                   <h3 className="font-serif text-2xl text-charcoal mb-3">
                     {isOperatorTier
                       ? `Schedule a 15-min call with Ben`
-                      : `Schedule a 15-min call with ${operatorName ? operatorName.split(' ')[0] : 'the rancher'}`}
+                      : `Schedule a 15-min call with ${operatorFirst || 'the rancher'}`}
                   </h3>
                   <p className="text-sm text-saddle mb-5 max-w-xl mx-auto">
                     {isOperatorTier
@@ -790,7 +799,7 @@ export default async function RancherPage(
                 <div className="space-y-5">
                   <Pill tone="neutral">About</Pill>
                   <h2 className="font-serif text-3xl md:text-4xl">
-                    Meet {operatorName ? operatorName.split(' ')[0] : name}
+                    Meet {operatorFirst || name}
                   </h2>
                   <div className="prose-bhc whitespace-pre-line">{aboutText}</div>
                 </div>
@@ -829,7 +838,7 @@ export default async function RancherPage(
             <div className="max-w-3xl mx-auto text-center space-y-5">
               <Pill tone="neutral" className="mx-auto">About</Pill>
               <h2 className="font-serif text-3xl md:text-4xl">
-                Meet {operatorName ? operatorName.split(' ')[0] : name}
+                Meet {operatorFirst || name}
               </h2>
               <p className="text-saddle leading-relaxed text-lg">
                 {name} is a direct-to-consumer cattle ranch
@@ -1010,7 +1019,7 @@ export default async function RancherPage(
                 {
                   num: '02',
                   title: 'Reserve & confirm',
-                  blurb: `Hold your share with a deposit. ${operatorName ? operatorName.split(' ')[0] : name} reaches out to confirm cut sheet, timing, and logistics.`,
+                  blurb: `Hold your share with a deposit. ${operatorFirst || name} reaches out to confirm cut sheet, timing, and logistics.`,
                 },
                 {
                   num: '03',
