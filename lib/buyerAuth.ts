@@ -13,6 +13,7 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
+import { mintBuyerSessionToken, type BuyerSessionClaims } from './buyerSession';
 
 const BHC_MEMBER_COOKIE = 'bhc-member-auth';
 
@@ -70,4 +71,26 @@ export async function requireBuyer(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   return { session };
+}
+
+const BHC_MEMBER_COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days, matches /api/qualify
+
+// Re-export the pure minter (defined in ./buyerSession, which has no secrets.ts
+// dependency so it's unit-testable) so callers keep importing from '@/lib/buyerAuth'.
+export { mintBuyerSessionToken, type BuyerSessionClaims };
+
+/**
+ * Set the bhc-member-auth cookie on a NextResponse. Mirrors the cookie options
+ * at app/api/qualify/route.ts:509-515 EXACTLY so resolveBuyerSession works on
+ * both the quiz path and the direct-deposit path.
+ */
+export function setBuyerSessionCookie(res: NextResponse, claims: BuyerSessionClaims): NextResponse {
+  res.cookies.set(BHC_MEMBER_COOKIE, mintBuyerSessionToken(claims), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: BHC_MEMBER_COOKIE_MAX_AGE,
+    path: '/',
+  });
+  return res;
 }
