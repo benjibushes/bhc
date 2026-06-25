@@ -93,7 +93,7 @@ function DepositPageContent() {
     fetch(`/api/checkout/deposit?refId=${encodeURIComponent(refId)}`, { credentials: 'include' })
       .then((r) => r.json())
       .then((j) => {
-        if (j?.error) setError(j.error);
+        if (j?.error) setError(j.message || j.error);
         else {
           setInfo(j);
           // Auto-redirect if legacy
@@ -128,7 +128,7 @@ function DepositPageContent() {
           window.location.href = j.redirectUrl;
           return;
         }
-        setError(j?.error || 'Checkout failed');
+        setError(j?.message || j?.error || 'Checkout failed');
         setSubmitting(false);
         return;
       }

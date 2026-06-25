@@ -19,6 +19,18 @@ const CUT_PRICE_FIELD: Record<Cut, string> = {
   whole: 'Whole Price',
 };
 
+// Mirrors lib/tiers.ts tierFor() normalization, inlined so this module stays
+// hermetic — importing @/lib/tiers transitively pulls lib/secrets, which throws
+// at module load when prod env is absent and breaks the unit test. A rancher
+// with no valid Tier 409s at the deposit endpoint (route.ts:120-123), so the
+// reserve gate must reject it too (else the buyer dead-ends at deposit).
+const VALID_TIER_NAMES = new Set(['pasture', 'ranch', 'operator', 'legacy connect', 'legacy_connect']);
+function hasValidTier(rancher: any): boolean {
+  const raw = rancher?.['Tier'];
+  const tierStr = raw && typeof raw === 'object' && 'name' in raw ? String(raw.name) : (raw ?? '');
+  return VALID_TIER_NAMES.has(String(tierStr).toLowerCase().trim());
+}
+
 export type ReserveEligibility =
   | { ok: true }
   | { ok: false; status: number; error: string; fallback?: boolean };
@@ -45,6 +57,18 @@ export function assertReserveEligible(rancher: any, cut: Cut): ReserveEligibilit
       ok: false,
       status: 409,
       error: 'This rancher is not taking orders right now.',
+      fallback: true,
+    };
+  }
+  // The deposit endpoint 409s when the rancher has no Tier (route.ts:120-123).
+  // The Connect webhook flips Pricing Model=tier_v2 on activation but does NOT
+  // set Tier, so a Connect-active rancher can have a blank Tier — reserve would
+  // otherwise succeed then dead-end at deposit. Gate it so the client falls back.
+  if (!hasValidTier(rancher)) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'This rancher is not set up for online deposit yet.',
       fallback: true,
     };
   }

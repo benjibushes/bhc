@@ -10,6 +10,7 @@ const activeRancher = {
   'Stripe Connect Status': 'active',
   'Active Status': 'Active',
   'Agreement Signed': true,
+  'Tier': 'Pasture',
   'Quarter Price': 1250,
   'Half Price': 2400,
   'Whole Price': 4600,
@@ -31,6 +32,14 @@ test('connect not active → 409', () => {
   const res = assertReserveEligible(r, 'half');
   assert.equal(res.ok, false);
   if (!res.ok) assert.equal(res.status, 409);
+});
+
+test('connect-active but Tier unset → 409 fallback (deposit would dead-end)', () => {
+  const r: any = { ...activeRancher };
+  delete r.Tier;
+  const res = assertReserveEligible(r, 'half');
+  assert.equal(res.ok, false);
+  if (!res.ok) { assert.equal(res.status, 409); assert.equal(res.fallback, true); }
 });
 
 test('cut not priced / below MIN_TIER_PRICE → 409', () => {
