@@ -105,7 +105,9 @@ export async function GET(
           console.error('Rancher click email error (Connect path):', e);
         }
       }
-      return NextResponse.redirect(`${siteUrl}/access?rancher=${slug}`, { status: 302 });
+      // Connect-active rancher: send the pay-intent buyer straight to the
+      // on-page self-serve deposit form (#reserve), not the /access quiz.
+      return NextResponse.redirect(`${siteUrl}/ranchers/${slug}#reserve`, { status: 302 });
     }
 
     // ── LEGACY (non-Connect) path — Payment Link redirect ─────────────────

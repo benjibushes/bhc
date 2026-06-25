@@ -13,6 +13,7 @@ import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import RancherOrderForm from './RancherOrderForm';
+import DepositReserveForm from './DepositReserveForm';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
 import RanchHeroCover, { RanchCoverFallback } from './RanchHeroCover';
 import CertificationBadges from './CertificationBadges';
@@ -702,36 +703,15 @@ export default async function RancherPage(
                   lead-capture form's 48h manual callback. Legacy / non-collect
                   ranchers keep the lead form (they collect off-platform). */}
               {onConnect ? (
-                <div className="space-y-6">
-                  <div className="grid sm:grid-cols-3 gap-4">
-                    {[
-                      quarterPrice ? { label: 'Quarter', price: quarterPrice, lbs: quarterLbs } : null,
-                      halfPrice ? { label: 'Half', price: halfPrice, lbs: halfLbs } : null,
-                      wholePrice ? { label: 'Whole', price: wholePrice, lbs: wholeLbs } : null,
-                    ]
-                      .filter((c): c is { label: string; price: number; lbs: any } => Boolean(c))
-                      .map((cut) => (
-                        <div key={cut.label} className="border border-dust bg-bone p-5 text-center">
-                          <p className="text-xs uppercase tracking-widest text-saddle">{cut.label}</p>
-                          <p className="font-serif text-3xl text-charcoal mt-1">
-                            ${Number(cut.price).toLocaleString()}
-                          </p>
-                          {cut.lbs ? <p className="text-xs text-dust mt-1">~{cut.lbs} lbs</p> : null}
-                        </div>
-                      ))}
-                  </div>
-                  <div className="text-center">
-                    <Link
-                      href={`/access?rancher=${slug}`}
-                      className="inline-flex items-center gap-2 px-8 py-4 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
-                    >
-                      Reserve your share →
-                    </Link>
-                    <p className="text-xs text-dust mt-3">
-                      A small deposit holds your share. You pay securely on-platform; {operatorFirst || name} ships it straight to you.
-                    </p>
-                  </div>
-                </div>
+                <DepositReserveForm
+                  slug={slug}
+                  ranchName={name}
+                  operatorFirst={operatorFirst || name}
+                  bookingUrl={showCalCta ? calCtaUrl : ''}
+                  quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs } : undefined}
+                  half={halfPrice ? { price: halfPrice, lbs: halfLbs } : undefined}
+                  whole={wholePrice ? { price: wholePrice, lbs: wholeLbs } : undefined}
+                />
               ) : (
                 <RancherOrderForm
                   slug={slug}
@@ -1085,10 +1065,10 @@ export default async function RancherPage(
                     {/* Connected ranchers: suppress raw product link; route to commission path instead */}
                     {onConnect ? (
                       <Link
-                        href={`/access?rancher=${slug}`}
+                        href="#reserve"
                         className="block w-full text-center mt-5 px-6 py-3 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
                       >
-                        Buy now
+                        Reserve a share →
                       </Link>
                     ) : product.link ? (
                       <a
@@ -1154,7 +1134,7 @@ export default async function RancherPage(
                   </a>
                 ) : (
                   <Link
-                    href={onConnect ? `/access?rancher=${slug}` : '/access'}
+                    href={onConnect ? '#reserve' : '/access'}
                     className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
                   >
                     {onConnect ? 'Reserve your share' : 'Get in touch'}
