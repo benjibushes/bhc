@@ -55,10 +55,20 @@ export async function POST(req: Request) {
   const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId);
   if (!rancher) return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
 
-  // Refuse if subscription already active. legacy_connect has no
-  // subscription so this gate doesn't apply.
+  // Refuse only if a REAL paid subscription is already active. legacy_connect
+  // has no subscription so this gate doesn't apply.
+  //
+  // CRITICAL (Legacy Connect → Pasture deadlock fix): Legacy Connect ranchers
+  // carry a SYNTHETIC 'active' Subscription Status with NO `Stripe Subscription
+  // Id`. Without the hasRealSubscription guard below, they 409 here ("use
+  // tier/change") while tier/change 409s them back ("no subscription → use
+  // tier/select") — so they can NEVER start a real paid tier. Gate on a real
+  // Stripe Subscription Id so a synthetic-active Legacy Connect rancher can
+  // start a genuine Pasture/Ranch/Operator subscription through this route.
+  const hasRealSubscription = !!String(rancher['Stripe Subscription Id'] || '').trim();
   if (
     tier !== 'legacy_connect' &&
+    hasRealSubscription &&
     (rancher['Subscription Status'] === 'active' || rancher['Subscription Status'] === 'trialing')
   ) {
     return NextResponse.json(
