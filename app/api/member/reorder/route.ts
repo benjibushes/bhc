@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getRecordById, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { depositPathFor, type Cut } from '@/lib/reserveDeposit';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { funnelRecord } from '@/lib/funnelMetrics';
@@ -200,10 +201,22 @@ export async function POST(request: Request) {
       console.error('Reorder: telegram alert error:', e);
     }
 
+    // tier_v2 + Connect-active rancher → the returning buyer (already authed,
+    // referral pinned) goes straight to a 1-tap deposit instead of waiting on
+    // another re-intro email. Legacy/ineligible → depositUrl null, existing
+    // re-intro path stands.
+    const { isRancherOnConnect } = await import('@/lib/rancherEligibility');
+    const reorderCut: Cut = /whole/i.test(orderType) ? 'whole' : /quarter/i.test(orderType) ? 'quarter' : 'half';
+    const depositUrl =
+      matchOk && referralId && isRancherOnConnect(rancher)
+        ? depositPathFor(referralId, reorderCut)
+        : null;
+
     return NextResponse.json({
       success: true,
       matched: matchOk,
       referralId,
+      depositUrl,
       rancherName: rancher['Operator Name'] || rancher['Ranch Name'],
     });
   } catch (error: any) {
