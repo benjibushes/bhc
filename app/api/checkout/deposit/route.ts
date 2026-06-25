@@ -78,14 +78,22 @@ export async function POST(req: Request) {
   // and trigger a second Telegram celebration. Block both POST + GET so
   // the deposit page surfaces "already paid" state via the 409.
   const refStatus = String(referral['Status'] || '');
-  if (refStatus === 'Closed Won' || refStatus === 'Closed Lost') {
+  // Re-pay guard. A settled deposit stamps `Deposit Paid At` and flips Status to
+  // `Awaiting Payment` (NOT Closed Won). Without keying on those, a buyer who
+  // returns to the deposit page (back button, re-clicked magic link, reorder,
+  // funnel CTA) passes this gate and is charged a SECOND deposit — a fresh
+  // PaymentIntent is not deduped by the pi.id idempotency anchors. `Deposit Paid
+  // At` is the reliable signal (a date field, immune to select-option stripping).
+  const depositAlreadyPaid =
+    !!referral['Deposit Paid At'] || refStatus === 'Awaiting Payment' || refStatus === 'Slot Locked';
+  if (refStatus === 'Closed Won' || refStatus === 'Closed Lost' || depositAlreadyPaid) {
     return NextResponse.json(
       {
         error: 'referral_closed',
         status: refStatus,
-        message: refStatus === 'Closed Won'
-          ? 'This referral is already paid. Check your email for the confirmation.'
-          : 'This referral is closed and can\'t be reopened — contact us to re-route.',
+        message: refStatus === 'Closed Lost'
+          ? 'This referral is closed and can\'t be reopened — contact us to re-route.'
+          : 'This reservation is already paid. Check your email for the confirmation.',
       },
       { status: 409 },
     );
@@ -382,14 +390,22 @@ export async function GET(req: Request) {
   // and trigger a second Telegram celebration. Block both POST + GET so
   // the deposit page surfaces "already paid" state via the 409.
   const refStatus = String(referral['Status'] || '');
-  if (refStatus === 'Closed Won' || refStatus === 'Closed Lost') {
+  // Re-pay guard. A settled deposit stamps `Deposit Paid At` and flips Status to
+  // `Awaiting Payment` (NOT Closed Won). Without keying on those, a buyer who
+  // returns to the deposit page (back button, re-clicked magic link, reorder,
+  // funnel CTA) passes this gate and is charged a SECOND deposit — a fresh
+  // PaymentIntent is not deduped by the pi.id idempotency anchors. `Deposit Paid
+  // At` is the reliable signal (a date field, immune to select-option stripping).
+  const depositAlreadyPaid =
+    !!referral['Deposit Paid At'] || refStatus === 'Awaiting Payment' || refStatus === 'Slot Locked';
+  if (refStatus === 'Closed Won' || refStatus === 'Closed Lost' || depositAlreadyPaid) {
     return NextResponse.json(
       {
         error: 'referral_closed',
         status: refStatus,
-        message: refStatus === 'Closed Won'
-          ? 'This referral is already paid. Check your email for the confirmation.'
-          : 'This referral is closed and can\'t be reopened — contact us to re-route.',
+        message: refStatus === 'Closed Lost'
+          ? 'This referral is closed and can\'t be reopened — contact us to re-route.'
+          : 'This reservation is already paid. Check your email for the confirmation.',
       },
       { status: 409 },
     );
