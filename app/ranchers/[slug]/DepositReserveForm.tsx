@@ -35,6 +35,7 @@ export default function DepositReserveForm({
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [sent, setSent] = useState('');
 
   const cd = (c: Cut) => data[c];
   const depositOf = (c: Cut) => {
@@ -70,11 +71,23 @@ export default function DepositReserveForm({
         setLoading(false);
         return;
       }
+      // Returning buyer (existing email, not logged in): the server emailed a
+      // secure magic link instead of minting a session. Confirm + stop.
+      if (j.requiresEmailVerification) {
+        setSent(j.message || 'Check your email for a secure link to finish your deposit.');
+        setLoading(false);
+        return;
+      }
       track('InitiateCheckout', {
         content_name: ranchName, ranchSlug: slug,
         value: cd(cut)?.price || 0, currency: 'USD',
       });
-      window.location.href = j.depositUrl; // → /checkout/[refId]/deposit?cut=…
+      if (j.depositUrl) {
+        window.location.href = j.depositUrl; // → /checkout/[refId]/deposit?cut=…
+      } else {
+        setError('Could not start checkout — try again.');
+        setLoading(false);
+      }
     } catch {
       setError('Network error — try again.');
       setLoading(false);
@@ -82,6 +95,15 @@ export default function DepositReserveForm({
   }
 
   const order: Cut[] = ['whole', 'half', 'quarter'];
+
+  if (sent) {
+    return (
+      <div id="reserve" className="scroll-mt-12 rounded-lg border border-dust bg-white p-6 text-center space-y-2">
+        <p className="text-xs uppercase tracking-widest text-saddle">Check your email</p>
+        <p className="text-sm text-charcoal">{sent}</p>
+      </div>
+    );
+  }
 
   return (
     <div id="reserve" className="space-y-6 scroll-mt-12">
