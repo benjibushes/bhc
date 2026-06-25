@@ -286,7 +286,15 @@ export default function AdminRancherDetailPage() {
                   <button
                     onClick={async () => {
                       if (!confirm(`Send v2 upgrade invite to ${rancher.operator_name || rancher.ranch_name}? Email explains the deposit standardization + opens wizard for tier subscription + Stripe Connect.`)) return;
-                      const res = await fetch(`/api/admin/ranchers/${id}/send-v2-upgrade`, { method: 'POST' });
+                      // Target plan: a paid tier (pasture/ranch/operator) lands the
+                      // rancher PRE-SELECTED on that plan + sent straight to its
+                      // checkout. Blank = the free Legacy Connect default.
+                      const targetTier = (prompt('Target plan? Type "pasture", "ranch", or "operator" for a PAID tier (lands them straight on that plan). Leave blank for free Legacy Connect.', 'pasture') || '').trim().toLowerCase();
+                      const res = await fetch(`/api/admin/ranchers/${id}/send-v2-upgrade`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ targetTier }),
+                      });
                       if (!res.ok) {
                         const t = await res.text();
                         alert('Upgrade invite failed — check console');

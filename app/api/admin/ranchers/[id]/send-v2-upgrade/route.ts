@@ -92,7 +92,21 @@ export async function POST(
     // resume hooks. Lands at Step 0 by default; the wizard auto-skips
     // confirmed steps based on data already in Airtable.
     const token = jwt.sign({ type: 'rancher-setup', rancherId: id }, JWT_SECRET, { expiresIn: '60d' });
-    const setupUrl = `${SITE_URL}/rancher/setup?token=${token}`;
+    // Optional target tier (pasture/ranch/operator) from the admin trigger —
+    // threaded into the wizard link so the rancher lands PRE-SELECTED on that
+    // paid plan and gets sent straight to its checkout. Without it the tier-pick
+    // auto-selects the FREE tier, so a Pasture-intended upgrade could end up free.
+    // legacy_connect (free) needs no param.
+    let targetTier = '';
+    try {
+      const reqBody = await request.json().catch(() => ({} as any));
+      targetTier = String(reqBody?.targetTier || '').toLowerCase();
+    } catch { /* no body — defaults to the free path */ }
+    const tierParam =
+      targetTier === 'pasture' || targetTier === 'ranch' || targetTier === 'operator'
+        ? `&tier=${targetTier}`
+        : '';
+    const setupUrl = `${SITE_URL}/rancher/setup?token=${token}${tierParam}`;
 
     // Migration deadline = invite send + 14 days. Soft cutover: ranchers
     // who don't complete the upgrade by this date get auto-paused (no

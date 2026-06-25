@@ -2243,6 +2243,7 @@ export default function RancherSetupWizard() {
         {step === 7 && (
           <TierPickStep
             token={token}
+            targetTier={searchParams.get('tier') || ''}
             currentTier={tierSlugFromRancher(rancher)}
             subscriptionStatus={String((rancher as any)['Subscription Status'] || '')}
             onBack={() => setStep(3)}
@@ -3219,12 +3220,17 @@ function CallStep({
 // Continue to stay in control.
 function TierPickStep({
   token,
+  targetTier,
   currentTier,
   subscriptionStatus,
   onBack,
   onContinue,
 }: {
   token: string;
+  // Optional paid tier from the upgrade link (?tier=pasture) — when set, the
+  // auto-select sends the rancher straight to that plan's checkout instead of
+  // defaulting to the free tier.
+  targetTier?: string;
   currentTier: 'pasture' | 'ranch' | 'operator' | 'legacy_connect' | null;
   subscriptionStatus: string;
   onBack: () => void;
@@ -3267,18 +3273,36 @@ function TierPickStep({
     // (returning rancher, or mid-checkout paid pick) leave their choice alone.
     if (currentTier || polledTier) return;
     autoSelectedRef.current = true;
+    // If the upgrade link targeted a PAID tier (?tier=pasture), select THAT and
+    // redirect straight to its subscription checkout — so the rancher lands on
+    // the exact plan they were invited to, with no chance of proceeding on the
+    // free tier by accident. Otherwise auto-select the free tier ($0 default).
+    const paidTarget =
+      targetTier === 'pasture' || targetTier === 'ranch' || targetTier === 'operator'
+        ? targetTier
+        : null;
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch('/api/rancher/tier/select', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tier: 'legacy_connect' }),
+          body: JSON.stringify(
+            paidTarget
+              ? { tier: paidTarget, from: 'wizard', wizardToken: token }
+              : { tier: 'legacy_connect' },
+          ),
         });
         if (cancelled) return;
         if (res.ok) {
-          // Locked onto the free path — Continue is now enabled. Reconcile
-          // persisted state so the status copy + card ✓ reflect the record.
+          const data = await res.json().catch(() => ({} as any));
+          // Paid target → tier/select returns a Stripe subscription Checkout URL
+          // → redirect the rancher straight to payment for that exact plan.
+          if (paidTarget && data?.url) {
+            window.location.href = data.url;
+            return;
+          }
+          // Free path — lock in + reconcile (status copy + card ✓).
           setFreeTierSelected(true);
           setPolledTier('legacy_connect');
           const fresh = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
