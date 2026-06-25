@@ -40,6 +40,27 @@ export async function GET(request: Request) {
         if (_activeStatus !== 'Active') _collectBlockers.push(`Active Status = ${_activeStatus || 'empty'}`);
       }
       const _collectReady = _pricingModel === 'tier_v2' && _collectBlockers.length === 0;
+
+      // Public-page completeness — does this listing look FINISHED? (separate from
+      // collect_ready, which is about money). page_gaps = the critical missing
+      // pieces that make a page look half-baked; page_polish = nice-to-haves.
+      // Drives the /admin/page-readiness scorecard so every marketplace page can
+      // be driven to all-green.
+      const _gallery = record['Gallery Photos'];
+      const _hasHero = Array.isArray(_gallery) ? _gallery.length > 0 : !!String(_gallery || '').trim();
+      const _pageGaps: string[] = [];
+      if (!record['Logo URL']) _pageGaps.push('logo');
+      if (!_hasHero) _pageGaps.push('hero photo');
+      if (_maxPrice < 100) _pageGaps.push('price');
+      if (!record['About Text']) _pageGaps.push('about');
+      if (!record['Tagline']) _pageGaps.push('tagline');
+      if (!record['Certifications']) _pageGaps.push('certifications');
+      const _pagePolish: string[] = [];
+      if (!record['FAQ']) _pagePolish.push('FAQ');
+      if (!record['Testimonials']) _pagePolish.push('testimonials');
+      if (!record['Video URL']) _pagePolish.push('video');
+      const _pageComplete = _pageGaps.length === 0;
+
       return {
       id: record.id,
       ranch_name: record['Ranch Name'] || '',
@@ -127,6 +148,9 @@ export async function GET(request: Request) {
       created_at: record['Created'] || record.createdTime || record._createdTime || new Date().toISOString(),
       collect_ready: _collectReady,
       collect_blockers: _collectBlockers,
+      page_complete: _pageComplete,
+      page_gaps: _pageGaps,
+      page_polish: _pagePolish,
       };
     });
 
