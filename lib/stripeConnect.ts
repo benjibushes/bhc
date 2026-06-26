@@ -317,6 +317,14 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       },
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
+      // WALLETS/LINK: do NOT add `automatic_payment_methods` here — that is a
+      // PaymentIntent-only param and 400s a Checkout Session. Omitting
+      // `payment_method_types` (as we do) already enables DYNAMIC payment
+      // methods, so Apple Pay / Google Pay / Link render automatically once the
+      // connected account has them on + the Apple Pay domain is registered for
+      // the direct-charge funds flow. `customer_email` (above) lets Link
+      // recognize returning buyers for a one-tap deposit. (Verified vs Stripe
+      // docs 2026-06-25.)
       // 2026-06-09 fix: previously had `customer_update: { address: 'auto' }`
       // alongside `customer_email` only. Stripe rejects `customer_update`
       // when no `customer` parameter is set on the session (customer_email

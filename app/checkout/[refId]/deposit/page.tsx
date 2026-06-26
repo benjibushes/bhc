@@ -63,6 +63,7 @@ function DepositPageContent() {
   const search = useSearchParams();
   const refId = params.refId;
   const canceled = search.get('canceled') === '1';
+  const cutParam = search.get('cut'); // pre-select cut from the reserve fast-path
 
   const [info, setInfo] = useState<DepositInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -92,7 +93,7 @@ function DepositPageContent() {
     fetch(`/api/checkout/deposit?refId=${encodeURIComponent(refId)}`, { credentials: 'include' })
       .then((r) => r.json())
       .then((j) => {
-        if (j?.error) setError(j.error);
+        if (j?.error) setError(j.message || j.error);
         else {
           setInfo(j);
           // Auto-redirect if legacy
@@ -100,14 +101,16 @@ function DepositPageContent() {
             window.location.href = j.legacyRedirectUrl;
             return;
           }
-          // Default cut: half if available
-          if (j.cuts?.find((c: Cut) => c.slug === 'half')) setSelectedCut('half');
+          // Pre-select the cut passed via ?cut= (reserve fast-path) so the buyer
+          // doesn't re-pick; else default to half, else first available.
+          if (cutParam && j.cuts?.find((c: Cut) => c.slug === cutParam)) setSelectedCut(cutParam);
+          else if (j.cuts?.find((c: Cut) => c.slug === 'half')) setSelectedCut('half');
           else if (j.cuts?.length) setSelectedCut(j.cuts[0].slug);
         }
         setLoading(false);
       })
       .catch((e) => { setError(e?.message || 'Load failed'); setLoading(false); });
-  }, [refId]);
+  }, [refId, cutParam]);
 
   const continueToCheckout = async () => {
     setSubmitting(true);
@@ -125,7 +128,7 @@ function DepositPageContent() {
           window.location.href = j.redirectUrl;
           return;
         }
-        setError(j?.error || 'Checkout failed');
+        setError(j?.message || j?.error || 'Checkout failed');
         setSubmitting(false);
         return;
       }

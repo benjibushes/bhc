@@ -849,18 +849,37 @@ function Reveal({
               className="mt-4 rounded-md px-4 py-3 text-sm font-medium text-bone"
               style={{ backgroundColor: FUNNEL_ACCENT }}
             >
-              {/* tier_v2: rancher intro is suppressed; Ben runs the call. Don't
-                  promise a rancher text that won't come. Legacy: rancher texts. */}
-              {tierV2Match
+              {/* tier_v2 w/ a referral → self-serve deposit (button below).
+                  tier_v2 w/o referral → Ben sets it up. Legacy → rancher texts. */}
+              {tierV2Match && result?.referralId
+                ? <>your share is ready to reserve.</>
+                : tierV2Match
                 ? <>ben reaches out today to set it up.</>
                 : <>They&apos;ll text you today.</>}
             </div>
           </div>
-          <p className="text-xs text-saddle">
-            {tierV2Match
-              ? <>check your email — ben gets in touch to lock in your share with {rancher.name} and book a quick call. no payment now.</>
-              : <>Keep an eye on your phone — your rancher reaches out directly, no middleman.</>}
-          </p>
+          {tierV2Match && result?.referralId ? (
+            /* Self-serve deposit — the matched tier_v2 buyer pays their deposit
+               now instead of dead-ending at "ben reaches out". */
+            <div className="space-y-2">
+              <a
+                href={`/checkout/${result.referralId}/deposit`}
+                className="block w-full rounded-md px-6 py-4 text-center text-sm font-medium uppercase tracking-wide text-bone"
+                style={{ backgroundColor: FUNNEL_ACCENT }}
+              >
+                Reserve your share — pay your deposit →
+              </a>
+              <p className="text-[11px] text-dust text-center">
+                Deposit fully refundable for 7 days. No full payment now.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-saddle">
+              {tierV2Match
+                ? <>check your email — ben gets in touch to lock in your share with {rancher.name}. no payment now.</>
+                : <>Keep an eye on your phone — your rancher reaches out directly, no middleman.</>}
+            </p>
+          )}
         </div>
       ) : (
         /* ── Mode 3: honest waitlist (no in-state rancher / no match) ────────── */
