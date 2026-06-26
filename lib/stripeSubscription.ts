@@ -58,13 +58,10 @@ export async function createTierCheckoutSession(input: TierCheckoutInput): Promi
       cancel_url: input.cancelUrl,
       metadata: { rancherId: input.rancherId, tier: input.tier },
       subscription_data: { metadata: { rancherId: input.rancherId, tier: input.tier } },
-      // BHC (the platform) is the merchant of record for the tier subscription,
-      // so declare self-liability. Without it, Stripe loads tax config from the
-      // `customer_account` (the rancher's connected acct — which has no head-office
-      // address) and 500s: "valid head office address ... in live mode". Platform
-      // Tax is configured (Kalispell MT), so `self` uses it and checkout succeeds.
-      automatic_tax: { enabled: true, liability: { type: 'self' } },
-      customer_update: { address: 'auto' },
+      // No sales tax collected. BHC is based in Montana (no state sales tax) and
+      // does not collect tax on tier subscriptions, so Stripe Tax stays OFF — it
+      // never needs a tax origin/registration and this checkout can't 500 on tax.
+      automatic_tax: { enabled: false },
     } as any,  // customer_account is V2 — types may lag in SDK 20.4.1
     {
       // 2026-06-09 fix: was `sub-${rancherId}-${tier}` — if rancher cancels
