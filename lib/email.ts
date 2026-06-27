@@ -904,8 +904,14 @@ export async function sendPostPurchaseWelcome(data: {
   // deposit confirmation + balance instead of the legacy "closing day" framing.
   depositAmount?: number; // dollars paid as the reservation deposit
   balanceDue?: number; // dollars owed at fulfillment, paid direct to the rancher
+  // Referral id — when present on the deposit path, the email becomes a HANDOFF
+  // tool: it links the buyer to the preferences form so the rancher gets their
+  // delivery/pickup + cut-sheet wishes before the first call.
+  refId?: string;
 }): Promise<{ success: boolean; error?: any }> {
   const first = data.firstName || 'there';
+  // Rancher's first name for a warmer, more personal "they'll reach out" line.
+  const rancherFirst = String(data.rancherName || '').trim().split(/\s+/)[0] || 'your rancher';
   const tier = data.orderType?.toLowerCase().includes('quarter') ? 'quarter'
     : data.orderType?.toLowerCase().includes('half') ? 'half'
     : data.orderType?.toLowerCase().includes('whole') ? 'whole'
@@ -932,6 +938,28 @@ export async function sendPostPurchaseWelcome(data: {
       }</p>
   </div>`
     : '';
+
+  // Handoff block (deposit path only). Two parts:
+  //   1. a TRUE "your rancher will reach out" line — true now that the deposit
+  //      settlement notifies the rancher by email + text (lib/rancherNotify).
+  //   2. a preferences CTA so the buyer tells the rancher how they want it
+  //      (delivery vs pickup, timing, cut sheet) BEFORE that first call.
+  // Only render the CTA when we have a refId to link to.
+  const prefsUrl = data.refId ? `${SITE_URL}/checkout/${data.refId}/preferences` : '';
+  const handoffBlock = isDeposit
+    ? `<div class="box" style="border-left-color:#6B4F3F;">
+    <p style="margin:0 0 6px;"><strong>${esc(rancherFirst)} will reach out</strong></p>
+    <p style="margin:0;">${esc(rancherFirst)} just got your deposit by email and text and will be in touch — usually same day — to set up pickup or delivery.${
+        prefsUrl
+          ? ` Want to get ahead of it? Tell ${esc(rancherFirst)} how you'd like your beef and they'll have it ready for the call.`
+          : ''
+      }</p>${
+        prefsUrl
+          ? `\n    <p style="margin:14px 0 0;"><a href="${prefsUrl}" style="display:inline-block;background:#0E0E0E;color:#fff;text-decoration:none;padding:13px 26px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Set your preferences →</a></p>`
+          : ''
+      }
+  </div>`
+    : '';
   return guardedSend({
     templateName: 'sendPostPurchaseWelcome',
     recipientEmail: data.email,
@@ -947,6 +975,7 @@ export async function sendPostPurchaseWelcome(data: {
   <h1>${headline}</h1>
   <p>${intro}</p>
   ${confirmationBox}
+  ${handoffBlock}
   <p>Here's what's next, in order:</p>
   <div class="box">
     <p style="margin:0;"><strong>Now → 2-4 weeks:</strong> ${esc(data.rancherName)} processes your ${tier}. Cattle goes to the USDA-certified processor, hangs to age, gets cut to your specs, vacuum-sealed, frozen.</p>
@@ -968,6 +997,77 @@ export async function sendPostPurchaseWelcome(data: {
 </div></body></html>`,
     }),
   });
+}
+
+// ── RANCHER: deposit paid — your buyer is waiting ────────────────────────────
+// Fires the instant a buyer's Stripe deposit settles (lib/stripeSettlement.ts)
+// AND from the deposit-accept-sla cron re-ping. Before this, the rancher was
+// NEVER told a deposit landed — the success page falsely promised the buyer a
+// reply, and the deal sat until the rancher happened to open their dashboard.
+// This is the rancher's highest-urgency operational alert: real money is in,
+// a customer is expecting a call TODAY, and one tap (Accept Slot) locks it.
+//
+// Goes through sendEmail (same wrapper the accept route uses) so it inherits
+// the suppression check + tagged Reply-To. _replyContext type 'rnc' so a
+// rancher reply lands against their record in the inbound pipeline.
+export async function sendRancherDepositPaid(data: {
+  rancherEmail: string;
+  rancherFirstName?: string;
+  buyerFirstName: string;
+  buyerEmail: string;
+  buyerPhone?: string;
+  state?: string;
+  cut?: string; // "Quarter" | "Half" | "Whole" | freeform order type
+  depositAmount?: number; // dollars
+  rancherId?: string; // for tagged Reply-To
+  /** Re-ping from the SLA cron — softens the lead-in to "still waiting". */
+  isReminder?: boolean;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const rFirst = data.rancherFirstName || 'there';
+  const buyer = esc(data.buyerFirstName || 'A buyer');
+  const cut = (data.cut || '').trim() || 'beef share';
+  const where = data.state ? ` in ${esc(data.state)}` : '';
+  const amtStr =
+    typeof data.depositAmount === 'number' && data.depositAmount > 0
+      ? `$${Math.round(data.depositAmount).toLocaleString('en-US')}`
+      : '';
+  const dashUrl = `${SITE_URL}/rancher`;
+  const subject = data.isReminder
+    ? `still waiting — ${buyer} paid a deposit and needs your call`
+    : `💰 ${buyer} just paid a deposit — they're expecting your call`;
+  const leadIn = data.isReminder
+    ? `Quick nudge — ${buyer}${where} paid a deposit for a ${esc(cut)}${amtStr ? ` (${amtStr} in)` : ''} and hasn't heard from you yet. They're waiting on a call.`
+    : `${buyer}${where} just paid a deposit for a ${esc(cut)}${amtStr ? ` (${amtStr} in)` : ''}. The money's in your Stripe account. They're expecting to hear from you today.`;
+
+  const buyerEmailEsc = esc(data.buyerEmail || '');
+  const buyerPhoneEsc = esc(data.buyerPhone || '');
+
+  // Route through sendEmail (NOT a fresh guardedSend) — sendEmail already wraps
+  // the send in the frequency guard + suppression check using the templateName
+  // we pass. 'sendRancherDepositPaid' is in TRANSACTIONAL_WHITELIST so the SLA
+  // re-ping is never dropped by the 3/week cap.
+  const r = await sendEmail({
+    to: data.rancherEmail,
+    subject,
+    templateName: 'sendRancherDepositPaid',
+    _replyContext: data.rancherId ? { type: 'rnc', recordId: data.rancherId } : undefined,
+    html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #2E7D32;padding:16px 20px;margin:18px 0}.cta{display:inline-block;background:#0E0E0E;color:#fff;text-decoration:none;padding:14px 28px;margin:8px 0;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:14px}a.contact{color:#0E0E0E;font-weight:700}</style>
+</head><body><div class="container">
+  <h1>Deposit paid, ${esc(rFirst)}.</h1>
+  <p>${leadIn}</p>
+  <div class="box">
+    <p style="margin:0 0 6px;"><strong>Reach ${buyer} now:</strong></p>
+    <p style="margin:0;">✉️ ${data.buyerEmail ? `<a class="contact" href="mailto:${buyerEmailEsc}">${buyerEmailEsc}</a>` : '—'}${
+          data.buyerPhone ? ` &nbsp;·&nbsp; 📞 <a class="contact" href="tel:${buyerPhoneEsc}">${buyerPhoneEsc}</a>` : ''
+        }</p>
+  </div>
+  <p>When you've got it, tap <strong>Accept Slot</strong> in your dashboard to lock the deposit in (it stays refundable to the buyer until you do):</p>
+  <p><a class="cta" href="${dashUrl}">Accept + view in dashboard →</a></p>
+  <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Questions? Reply right here. — Ben, BuyHalfCow</p>
+</div></body></html>`,
+  });
+  return { success: !!r.success, suppressed: r.suppressed, reason: r.reason };
 }
 
 // ── CLOSED Day 14: cuts education + first-cook playbook ──────────────────────

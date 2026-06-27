@@ -153,6 +153,9 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
           // legacy "closing day" framing.
           depositAmount: depositCents / 100,
           balanceDue: fulfillmentBalanceCents / 100,
+          // refId turns the confirmation into a handoff tool — links the buyer
+          // to the preferences form (delivery/pickup + cut sheet) for the rancher.
+          refId: referralId,
         });
       }
     }
@@ -198,6 +201,29 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
     );
   } catch (e: any) {
     console.warn('[stripe webhook] telegram deposit alert failed:', e?.message);
+  }
+
+  // ── Rancher instant-notify (email + SMS) ────────────────────────────────
+  // Flawless-handoff (2026-06-27): the rancher was NEVER told a deposit landed
+  // — only Ben's admin Telegram fired above, and the buyer success page falsely
+  // promised the rancher had been notified "by email and text". Notify the
+  // rancher now so that promise is true and they call the waiting buyer today.
+  // Best-effort: each channel wraps its own try/catch inside notifyRancher; a
+  // failure here must not roll back the settled deposit.
+  try {
+    const refRow: any = await getRecordById(TABLES.REFERRALS, referralId).catch(() => null);
+    const rancherRow: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
+    if (refRow && rancherRow) {
+      const { notifyRancherDepositPaid } = await import('@/lib/rancherNotify');
+      const r = await notifyRancherDepositPaid(refRow, rancherRow, { depositAmount: depositCents / 100 });
+      if (!r.emailSent && !r.smsSent) {
+        console.warn(`[stripe webhook] rancher deposit notify reached no channel (ref=${referralId}): ${r.skipped || 'send failed'}`);
+      }
+    } else {
+      console.warn('[stripe webhook] rancher deposit notify skipped — referral or rancher row unreadable');
+    }
+  } catch (e: any) {
+    console.warn('[stripe webhook] rancher deposit notify failed:', e?.message);
   }
 
   // H-3 audit fix: audit row on the deposit-paid webhook mutation.
