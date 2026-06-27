@@ -42,8 +42,14 @@ async function realHandler(
 
   // Pull deposits that landed but aren't accepted yet. Keying on Deposit Paid At
   // being present catches BOTH the canonical Awaiting Payment state and any
-  // referral that drifted to Slot Locked without an accept stamp. The pure
-  // selector then applies the SLA window + re-ping cooldown.
+  // referral that drifted to Slot Locked without an accept stamp.
+  //
+  // NOTE: we deliberately do NOT reference {Refunded At} in this formula —
+  // restoreReferralAfterRefund has a schema fallback implying that field may not
+  // exist on the Referrals table, and an unknown field name makes Airtable error
+  // the whole query. Refund/dispute exclusion is enforced AFTER enrichment via
+  // the linked Payments row (authoritative) + the selector's JS-side Referral
+  // field reads (safe when the field is absent).
   let candidates: any[] = [];
   try {
     candidates = (await getAllRecords(
@@ -56,6 +62,35 @@ async function realHandler(
       recordsTouched: 0,
       notes: `query failed: ${e?.message?.slice(0, 200) || 'unknown'}`,
     };
+  }
+
+  // Enrich each candidate with its linked Payments row BEFORE the eligibility
+  // filter. A deposit refunded/disputed while still Awaiting Payment is NOT
+  // reflected on the Referral (restoreReferralAfterRefund only flips Closed
+  // Won; markDepositDisputed writes only the Payments row) — the Payments row
+  // is the authoritative signal. Without this the cron re-pings refunded /
+  // disputed deposits forever. Best-effort per row: a lookup failure leaves
+  // __payment null and the row is still gated by the Referral-side checks.
+  for (const ref of candidates) {
+    try {
+      const safeId = String(ref.id).replace(/"/g, '\\"');
+      const payments = (await getAllRecords(
+        TABLES.PAYMENTS,
+        `SEARCH("${safeId}", ARRAYJOIN({Referral}))`,
+      )) as any[];
+      // Prefer a refunded/disputed row if any exists so a partial-refund or
+      // dispute on one of several Payments rows still excludes the referral.
+      ref.__payment =
+        payments.find(
+          (p) =>
+            p['Refunded At'] ||
+            String(p['Status'] || '').toLowerCase() === 'refunded' ||
+            String(p['Dispute Status'] || '').trim(),
+        ) || payments[0] || null;
+    } catch (e: any) {
+      ref.__payment = null;
+      console.warn(`[deposit-accept-sla] payments lookup failed for ${ref.id} (non-fatal):`, e?.message);
+    }
   }
 
   const eligible = selectSlaEligible(candidates, { now, slaHours });

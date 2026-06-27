@@ -4,6 +4,7 @@ import {
   isSlaEligible,
   selectSlaEligible,
   hoursSinceDeposit,
+  isRefundedOrDisputed,
   DEFAULT_SLA_HOURS,
   DEFAULT_REPING_COOLDOWN_HOURS,
 } from './depositSla';
@@ -151,4 +152,97 @@ test('selectSlaEligible handles empty / malformed input without throwing', () =>
 test('hoursSinceDeposit computes whole hours', () => {
   assert.equal(hoursSinceDeposit({ 'Deposit Paid At': hoursAgo(7) }, NOW), 7);
   assert.equal(hoursSinceDeposit({}, NOW), 0);
+});
+
+// ── BLOCKER fix: refunded / disputed deposits must never be re-pinged ────────
+
+test('BLOCKER: refunded Awaiting-Payment deposit (Payments Refunded At set) is NOT eligible', () => {
+  // The exact failure case from review: refund in the NRD window leaves the
+  // Referral as Awaiting Payment with Deposit Paid At still set (the Referral
+  // is NOT flipped — only the Payments row records the refund).
+  const ref = {
+    id: 'recRefunded',
+    'Deposit Paid At': hoursAgo(10),
+    Status: 'Awaiting Payment',
+    __payment: { 'Refunded At': hoursAgo(2), Status: 'refunded' },
+  };
+  assert.equal(isSlaEligible(ref, { now: NOW }), false);
+});
+
+test('refunded via Payments Status=refunded only (no Refunded At) is NOT eligible', () => {
+  const ref = {
+    'Deposit Paid At': hoursAgo(10),
+    Status: 'Awaiting Payment',
+    __payment: { Status: 'refunded' },
+  };
+  assert.equal(isSlaEligible(ref, { now: NOW }), false);
+});
+
+test('partial refund (Payments Refunded At set, Status still succeeded) is NOT eligible', () => {
+  const ref = {
+    'Deposit Paid At': hoursAgo(10),
+    Status: 'Awaiting Payment',
+    __payment: { 'Refunded At': hoursAgo(1), Status: 'succeeded' },
+  };
+  assert.equal(isSlaEligible(ref, { now: NOW }), false);
+});
+
+test('disputed deposit (Payments Dispute Status set) is NOT eligible', () => {
+  const ref = {
+    'Deposit Paid At': hoursAgo(10),
+    Status: 'Awaiting Payment',
+    __payment: { Status: 'succeeded', 'Dispute Status': 'needs_response' },
+  };
+  assert.equal(isSlaEligible(ref, { now: NOW }), false);
+});
+
+test('referral-side Refunded At (Closed Won refund path) is NOT eligible', () => {
+  // Defense-in-depth: even with no __payment attached, the Referral-side stamp
+  // (set by restoreReferralAfterRefund on the Closed Won path) excludes it.
+  assert.equal(
+    isSlaEligible(
+      { 'Deposit Paid At': hoursAgo(10), Status: 'Awaiting Payment', 'Refunded At': hoursAgo(3) },
+      { now: NOW },
+    ),
+    false,
+  );
+});
+
+test('Status Refunded / Cancelled / Expired are excluded', () => {
+  for (const status of ['Refunded', 'Cancelled', 'Canceled', 'Expired']) {
+    assert.equal(
+      isSlaEligible({ 'Deposit Paid At': hoursAgo(10), Status: status }, { now: NOW }),
+      false,
+      `status ${status} should be excluded`,
+    );
+  }
+});
+
+test('clean (not refunded/disputed) deposit with a succeeded payment IS still eligible', () => {
+  const ref = {
+    'Deposit Paid At': hoursAgo(10),
+    Status: 'Awaiting Payment',
+    __payment: { Status: 'succeeded' },
+  };
+  assert.equal(isSlaEligible(ref, { now: NOW }), true);
+});
+
+test('isRefundedOrDisputed: direct unit coverage', () => {
+  assert.equal(isRefundedOrDisputed({ __payment: { 'Refunded At': hoursAgo(1) } }), true);
+  assert.equal(isRefundedOrDisputed({ __payment: { Status: 'refunded' } }), true);
+  assert.equal(isRefundedOrDisputed({ __payment: { 'Dispute Status': 'lost' } }), true);
+  assert.equal(isRefundedOrDisputed({ 'Refunded At': hoursAgo(1) }), true);
+  assert.equal(isRefundedOrDisputed({ 'Dispute Status': 'won' }), true);
+  assert.equal(isRefundedOrDisputed({ __payment: { Status: 'succeeded' } }), false);
+  assert.equal(isRefundedOrDisputed({ __payment: null }), false);
+  assert.equal(isRefundedOrDisputed({}), false);
+});
+
+test('selectSlaEligible filters out a refunded row in a mixed list', () => {
+  const refs = [
+    { id: 'clean', 'Deposit Paid At': hoursAgo(6), Status: 'Awaiting Payment', __payment: { Status: 'succeeded' } },
+    { id: 'refunded', 'Deposit Paid At': hoursAgo(6), Status: 'Awaiting Payment', __payment: { 'Refunded At': hoursAgo(1) } },
+    { id: 'disputed', 'Deposit Paid At': hoursAgo(6), Status: 'Awaiting Payment', __payment: { 'Dispute Status': 'needs_response' } },
+  ];
+  assert.deepEqual(selectSlaEligible(refs, { now: NOW }).map((r) => r.id), ['clean']);
 });

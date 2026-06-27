@@ -62,7 +62,9 @@ function PreferencesContent() {
     };
   }, [refId]);
 
-  const rancherFirst = rancherName.split(' ')[0];
+  // Special-case the "your rancher" default so a missing name reads cleanly
+  // ("Tell your rancher how you want it" — not "Tell your how you want it").
+  const rancherFirst = rancherName === 'your rancher' ? 'your rancher' : rancherName.split(' ')[0];
 
   const submit = async () => {
     if (!fulfillment) {

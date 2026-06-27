@@ -15,10 +15,24 @@ export const DEFAULT_SLA_HOURS = 4;
 export const DEFAULT_REPING_COOLDOWN_HOURS = 20;
 
 // Terminal / already-resolved statuses that must never be re-pinged.
+// Refunded / Cancelled / Expired added (review fix): a refund/cancel/expire
+// resolves the deal — re-pinging the rancher about it would be wrong.
 export const SLA_EXCLUDED_STATUSES: ReadonlySet<string> = new Set([
   'Closed Won',
   'Closed Lost',
+  'Refunded',
+  'Cancelled',
+  'Canceled', // tolerate both spellings of the singleSelect option
+  'Expired',
 ]);
+
+// Payments-row shape we care about for refund/dispute exclusion. The cron
+// attaches the linked Payments row as `__payment` so this module stays pure.
+export interface SlaPaymentLike {
+  'Refunded At'?: unknown;
+  Status?: unknown;            // 'refunded' on a full refund
+  'Dispute Status'?: unknown;  // any non-empty value = active/closed dispute
+}
 
 export interface SlaReferralLike {
   id?: string;
@@ -26,6 +40,37 @@ export interface SlaReferralLike {
   'Deposit Paid At'?: unknown;
   'Rancher Accepted At'?: unknown;
   'Rancher Re-pinged At'?: unknown;
+  // Referral-side refund signal — only stamped on the Closed-Won refund path
+  // (lib/contracts/payments.ts::restoreReferralAfterRefund). Checked for
+  // defense-in-depth; the authoritative signal for Awaiting-Payment refunds
+  // (the blocker case) is on __payment below.
+  'Refunded At'?: unknown;
+  'Dispute Status'?: unknown;
+  // Linked Payments row, attached by the cron. THIS is where a refund of an
+  // Awaiting-Payment deposit (and every dispute) is recorded — the Referral
+  // itself is NOT flipped in those cases, so without this the cron would re-ping
+  // a refunded/disputed deposit forever.
+  __payment?: SlaPaymentLike | null;
+}
+
+/**
+ * Has this deposit been refunded or disputed? Checks BOTH the Referral (Closed
+ * Won refund path) and its linked Payments row (Awaiting-Payment refunds + all
+ * disputes, which only ever land on the Payments row).
+ */
+export function isRefundedOrDisputed(ref: SlaReferralLike): boolean {
+  // Referral-side (Closed Won refund path / defense-in-depth).
+  if (ref['Refunded At']) return true;
+  if (String(ref['Dispute Status'] || '').trim()) return true;
+
+  // Payments-side — the authoritative signal for the blocker case.
+  const p = ref.__payment;
+  if (p) {
+    if (p['Refunded At']) return true;                       // full OR partial refund stamps this
+    if (String(p.Status || '').toLowerCase() === 'refunded') return true;
+    if (String(p['Dispute Status'] || '').trim()) return true;
+  }
+  return false;
 }
 
 export interface SlaOptions {
@@ -49,9 +94,10 @@ function toMs(v: unknown): number {
  * Eligible when ALL hold:
  *   1. Deposit Paid At is set (a real deposit landed).
  *   2. Rancher Accepted At is NOT set (rancher hasn't locked the slot).
- *   3. Status is not terminal (Closed Won / Closed Lost).
- *   4. The deposit landed more than `slaHours` ago.
- *   5. Not re-pinged within the last `repingCooldownHours` (dedupe).
+ *   3. Status is not terminal (Closed Won / Closed Lost / Refunded / etc).
+ *   4. The deposit was NOT refunded or disputed (Referral OR Payments row).
+ *   5. The deposit landed more than `slaHours` ago.
+ *   6. Not re-pinged within the last `repingCooldownHours` (dedupe).
  */
 export function isSlaEligible(ref: SlaReferralLike, opts: SlaOptions = {}): boolean {
   const slaHours = opts.slaHours ?? DEFAULT_SLA_HOURS;
@@ -67,6 +113,12 @@ export function isSlaEligible(ref: SlaReferralLike, opts: SlaOptions = {}): bool
 
   const status = String(ref.Status || '');
   if (SLA_EXCLUDED_STATUSES.has(status)) return false;
+
+  // Refunded/disputed — resolved, never re-ping. This is the BLOCKER fix: an
+  // Awaiting-Payment deposit refunded in the NRD window keeps Deposit Paid At +
+  // status Awaiting Payment (restoreReferralAfterRefund only reverts Closed
+  // Won), so without this it would re-ping the rancher forever.
+  if (isRefundedOrDisputed(ref)) return false;
 
   // Not old enough yet.
   if (now - depositPaidAt < slaHours * HOUR) return false;

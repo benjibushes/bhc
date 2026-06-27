@@ -180,7 +180,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ refId: 
               <div style="background:#F4F1EC;padding:16px;border-left:3px solid #6B4F3F;margin:16px 0;">${safeBody}</div>
               <p style="margin-top:24px;font-size:12px;color:#A7A29A;">Reply to this email to respond — it lands in the BuyHalfCow thread for both of you.</p>
             </div>`,
-            templateName: 'sendEmail',
+            // Dedicated whitelisted template (NOT generic 'sendEmail') so this
+            // customer-driven handoff mirror is never silently dropped by the
+            // 3/week frequency cap — the rancher may have had other emails this
+            // week (intro, deposit-paid alert).
+            templateName: 'sendRancherBuyerPreferences',
             _replyContext: { type: 'thread', recordId: id },
           });
         }

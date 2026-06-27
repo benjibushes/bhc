@@ -52,6 +52,10 @@ function DepositSuccessContent() {
   }, [refId]);
 
   const rancherName = info?.rancher?.name || 'your rancher';
+  // First name for friendly inline mentions. Special-case the "your rancher"
+  // default so a missing name reads "your rancher" (not "your"), which would
+  // otherwise produce "Tell your how you want it".
+  const rancherFirst = rancherName === 'your rancher' ? 'your rancher' : rancherName.split(' ')[0];
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
@@ -66,9 +70,9 @@ function DepositSuccessContent() {
         {/* Primary handoff CTA — the buyer's one action right now. Tell the
             rancher how they want it so the first call is productive. */}
         <div className="bg-white border-2 border-charcoal p-4 md:p-6 mb-6">
-          <h2 className="font-serif text-lg md:text-xl mb-2">Tell {rancherName.split(' ')[0]} how you want it</h2>
+          <h2 className="font-serif text-lg md:text-xl mb-2">Tell {rancherFirst} how you want it</h2>
           <p className="text-sm md:text-base text-charcoal mb-4">
-            Delivery or pickup, when you&rsquo;d like it, and anything for the cut sheet. 30 seconds &mdash; and {rancherName.split(' ')[0]} has it before they call you.
+            Delivery or pickup, when you&rsquo;d like it, and anything for the cut sheet. 30 seconds &mdash; and {rancherFirst} has it before they call you.
           </p>
           <Link
             href={`/checkout/${refId}/preferences`}
@@ -112,7 +116,7 @@ function DepositSuccessContent() {
             href={`/checkout/${refId}/ask`}
             className="flex-1 text-center bg-charcoal text-bone px-6 py-3 min-h-[48px] flex items-center justify-center uppercase tracking-wider text-sm hover:bg-saddle transition"
           >
-            Open thread with {rancherName.split(' ')[0]} &rarr;
+            Open thread with {rancherFirst} &rarr;
           </Link>
           <Link
             href="/member"

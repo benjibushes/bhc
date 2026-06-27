@@ -123,6 +123,11 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // cap would silently swallow the safety-net nudge. Cadence is owned by the
   // SLA cron's own dedupe (Rancher Re-pinged At), not the frequency guard.
   'sendRancherDepositPaid',
+  // Flawless-handoff (2026-06-27): buyer-preferences handoff mirror to the
+  // rancher (POST /api/checkout/[refId]/preferences). Customer-driven, 1:1,
+  // and the rancher likely already got intro + deposit-paid emails this week,
+  // so the 3/week cap would silently drop the buyer's stated wishes.
+  'sendRancherBuyerPreferences',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage
