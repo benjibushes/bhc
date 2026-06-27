@@ -54,6 +54,7 @@ export default function WholesaleForm() {
   const [cutsOfInterest, setCutsOfInterest] = useState<string[]>([]);
   const [timeline, setTimeline] = useState('');
   const [notes, setNotes] = useState('');
+  const [website, setWebsite] = useState(''); // honeypot — hidden; bots fill it
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -106,6 +107,7 @@ export default function WholesaleForm() {
           cutsOfInterest,
           timeline,
           notes: notes.trim(),
+          website, // honeypot — empty for real users; server drops if filled
         }),
       });
 
@@ -161,6 +163,20 @@ export default function WholesaleForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5 max-w-xl">
+      {/* Honeypot — off-screen, aria-hidden, no tab stop, no autofill. Humans
+          never see or fill it; bots do, and the server silently drops them. */}
+      <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', overflow: 'hidden' }}>
+        <label htmlFor="company-website">Website</label>
+        <input
+          id="company-website"
+          type="text"
+          name="website"
+          tabIndex={-1}
+          autoComplete="off"
+          value={website}
+          onChange={(e) => setWebsite(e.target.value)}
+        />
+      </div>
       {/* 1. Business name */}
       <div>
         <label htmlFor="businessName" className="block text-sm text-charcoal mb-1">
