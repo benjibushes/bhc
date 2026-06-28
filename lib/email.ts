@@ -1725,6 +1725,57 @@ export async function sendRancherReactivationCold(data: {
 }
 
 // =====================================================
+// DEMAND ROUTER — capacity-gated backfill campaign sends.
+//
+// The copy lives, verbatim + tokenized, in lib/demandRouter.ts
+// (renderMessage). This sender just takes the already-rendered subject + HTML
+// and pushes it through guardedSend with:
+//   - the per-wave templateName (whitelisted in emailFrequencyGuard so the
+//     campaign engine — not the 3/week cap — owns cadence; the wave-gap +
+//     capacity gate in demandRouter already bound the volume), and
+//   - the 'demand-router-backfill' campaign tag for Email Sends attribution.
+//
+// Suppression (Unsubscribed/Bounced/Complained) is still enforced inside the
+// resend wrapper. The DRY-RUN safety gate lives in the cron, NOT here — this
+// function only ever runs on a LIVE send.
+//
+// templateName MUST be one of CAMPAIGN_TEMPLATE_NAMES from demandRouter
+// (demandRouterMsg1 / demandRouterMsg2 / demandRouterMsg3). Passing an
+// unwhitelisted name would (correctly) subject the send to the 3/week cap.
+// =====================================================
+
+export async function sendDemandRouterCampaign(data: {
+  email: string;
+  subject: string;
+  html: string;
+  templateName: string;
+  recipientConsumerId?: string;
+  /** Email Sends.Campaign tag — defaults to the backfill campaign name. */
+  campaign?: string;
+  /** Tagged Reply-To so buyer replies thread into the inbound pipeline. */
+  replyConsumerId?: string;
+}) {
+  return guardedSend({
+    templateName: data.templateName,
+    recipientEmail: data.email,
+    recipientConsumerId: data.recipientConsumerId,
+    subject: data.subject,
+    campaign: data.campaign || 'demand-router-backfill',
+    send: () =>
+      resend.emails.send({
+        from: getFromEmail(),
+        to: data.email,
+        subject: data.subject,
+        headers: getUnsubscribeHeaders(data.email),
+        html: data.html,
+        ...(data.replyConsumerId
+          ? { _replyContext: { type: 'usr', recordId: data.replyConsumerId } }
+          : {}),
+      }),
+  });
+}
+
+// =====================================================
 // RANCHER GO LIVE EMAIL
 // =====================================================
 
