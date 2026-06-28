@@ -262,3 +262,19 @@ test('recovery SMS angle differs from the recovery EMAIL (ADD new info, not a re
   // The email leads with "we held your spot"; the SMS leads with urgency.
   assert.doesNotMatch(sms, /we held your spot/);
 });
+
+// A2 — recovery email social proof must NOT glue to the next sentence.
+test('A2 recovery email with proof: no glue into "it\'s still here"', () => {
+  const m = renderRecoveryEmail({ ...ctx, socialProof: '6 families reserved their share this week.' });
+  assert.doesNotMatch(m.text, /this week\.it's still here/, 'no glued sentence');
+  assert.match(m.text, /this week\.\n\nit's still here/, 'proof on its own paragraph');
+  assert.doesNotMatch(m.text, /\{socialProof\}/);
+});
+
+test('A2 recovery email omit: clean collapse, no empty paragraph, no glue', () => {
+  const m = renderRecoveryEmail({ ...ctx, socialProof: '' });
+  assert.doesNotMatch(m.text, /\{socialProof\}/);
+  assert.doesNotMatch(m.text, /\n{3,}/, 'no empty paragraph');
+  // The sentence before the (omitted) proof flows straight into the CTA line.
+  assert.match(m.text, /we held your spot\.\n\nit's still here/);
+});

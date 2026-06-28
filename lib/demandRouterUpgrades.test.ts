@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   countRecentDeposits,
   socialProofLine,
+  fillSocialProof,
+  buildCampaignPlan,
   SOCIAL_PROOF_MIN,
   SOCIAL_PROOF_DAYS,
   isSmsRecoveryEligible,
@@ -12,6 +14,7 @@ import {
   FOODSTEAD,
   SILVERLINE,
   DAY_MS,
+  type CampaignBuyer,
 } from './demandRouter';
 
 const NOW = Date.parse('2026-06-27T12:00:00Z');
@@ -212,4 +215,107 @@ test('renderSmsRecovery angle differs from the Msg2 email body it follows', () =
   // The SMS must not be a verbatim slice of the email (research: ADD new info).
   assert.notEqual(sms.trim(), email.trim());
   assert.doesNotMatch(sms, /quick one/, 'not the Msg2 opener');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// A2 — social-proof must NOT glue to the next sentence (customer-visible copy)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('A2 fillSocialProof: present → own paragraph, no glue; absent → clean collapse', () => {
+  const tmpl = 'line one.\n\n{socialProof}\n\nline three.';
+  const present = fillSocialProof(tmpl, '5 families reserved their share this week.');
+  assert.equal(present, 'line one.\n\n5 families reserved their share this week.\n\nline three.');
+  const absent = fillSocialProof(tmpl, '');
+  assert.equal(absent, 'line one.\n\nline three.', 'token + its blank line collapse, single break remains');
+});
+
+test('A2 fillSocialProof: never leaves a glued token or an empty paragraph', () => {
+  for (const proof of ['', '   ', '9 families reserved their share this week.']) {
+    const out = fillSocialProof('a.\n\n{socialProof}\n\nb.', proof);
+    assert.doesNotMatch(out, /\{socialProof\}/, 'token always removed');
+    assert.doesNotMatch(out, /\n{3,}/, 'no empty paragraph');
+    assert.doesNotMatch(out, /\.\S/, 'no sentence glued directly after a period');
+  }
+});
+
+test('A2 Msg2 with proof: the proof sentence ends with a break before "if you want one"', () => {
+  const m = renderMessage('Msg2', { ...baseCtx, socialProof: '7 families reserved their share this week.' });
+  // The exact glue regression: "...this week.if you want one:" must NOT appear.
+  assert.doesNotMatch(m.text, /this week\.if you want one/);
+  assert.match(m.text, /this week\.\n\nif you want one/);
+});
+
+test('A2 Msg3 with proof: no glue into the "until your local rancher" sentence', () => {
+  const m = renderMessage('Msg3', { ...baseCtx, socialProof: '4 families reserved their share this week.' });
+  assert.doesNotMatch(m.text, /this week\.until your local rancher/);
+  assert.match(m.text, /this week\.\n\nuntil your local rancher/);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// A4 — buyers owned by reserve-recovery are excluded from the wave arc
+// ═══════════════════════════════════════════════════════════════════════════
+
+const daysAgoCreated = (n: number) => new Date(NOW - n * DAY_MS).toISOString();
+
+test('A4 excludeBuyerIds: an excluded buyer is skipped + tallied under in-reserve-recovery', () => {
+  const buyers: CampaignBuyer[] = [
+    { id: 'recKeep', fields: { Email: 'k@x.com', State: 'CA', 'Ready to Buy': true, Created: daysAgoCreated(20) } },
+    { id: 'recReserve', fields: { Email: 'r@x.com', State: 'CA', 'Ready to Buy': true, Created: daysAgoCreated(20) } },
+  ];
+  const plan = buildCampaignPlan(buyers, {
+    now: NOW,
+    capacity: { west: 50, eastCentral: 0 },
+    excludeBuyerIds: new Set(['recReserve']),
+  });
+  assert.deepEqual(plan.sends.map((s) => s.buyerId), ['recKeep'], 'reserve buyer not in the wave arc');
+  assert.equal(plan.suppressed['in-reserve-recovery'], 1);
+  assert.ok(plan.sends.every((s) => s.buyerId !== 'recReserve'), 'no double-touch');
+});
+
+test('A4 exclusion takes precedence over every wave/tier (even a continuation)', () => {
+  // A buyer mid-arc (due for Msg2) who is ALSO an open reserve → excluded, no Msg2.
+  const buyers: CampaignBuyer[] = [
+    {
+      id: 'recDue',
+      fields: {
+        Email: 'd@x.com', State: 'CA', 'Ready to Buy': true,
+        'Campaign Stage': 'Msg1 Sent', 'Campaign Last Sent At': daysAgoCreated(4), Created: daysAgoCreated(20),
+      },
+    },
+  ];
+  const without = buildCampaignPlan(buyers, { now: NOW, capacity: { west: 50, eastCentral: 0 } });
+  assert.equal(without.byWave.Msg2, 1, 'normally this buyer gets Msg2');
+  const withExclude = buildCampaignPlan(buyers, {
+    now: NOW, capacity: { west: 50, eastCentral: 0 }, excludeBuyerIds: new Set(['recDue']),
+  });
+  assert.equal(withExclude.sends.length, 0, 'excluded even mid-arc');
+  assert.equal(withExclude.suppressed['in-reserve-recovery'], 1);
+});
+
+test('A4 empty exclude set → no behavior change (default)', () => {
+  const buyers: CampaignBuyer[] = [
+    { id: 'recA', fields: { Email: 'a@x.com', State: 'CA', 'Ready to Buy': true, Created: daysAgoCreated(20) } },
+  ];
+  const a = buildCampaignPlan(buyers, { now: NOW, capacity: { west: 50, eastCentral: 0 } });
+  const b = buildCampaignPlan(buyers, { now: NOW, capacity: { west: 50, eastCentral: 0 }, excludeBuyerIds: new Set() });
+  assert.deepEqual(a.sends.map((s) => s.buyerId), b.sends.map((s) => s.buyerId));
+  assert.equal(b.suppressed['in-reserve-recovery'], 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// A6 — SMS-recovery opt-in must be STRICT === true (match the sender)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('A6 isSmsRecoveryEligible: loose-truthy opt-in is NOT eligible (sender requires === true)', () => {
+  const base = {
+    Phone: '5551234567',
+    'Campaign Stage': 'Msg1 Sent',
+    'Campaign Last Sent At': new Date(NOW - (DEFAULT_SMS_RECOVERY_HOURS + 1) * 60 * 60 * 1000).toISOString(),
+  };
+  // The exact values that would pass a loose asBool() but FAIL the sender's === true.
+  assert.equal(isSmsRecoveryEligible({ ...base, 'SMS Opt-In': 'true' }, NOW), false, 'string "true"');
+  assert.equal(isSmsRecoveryEligible({ ...base, 'SMS Opt-In': 1 }, NOW), false, 'number 1');
+  assert.equal(isSmsRecoveryEligible({ ...base, 'SMS Opt-In': 'yes' }, NOW), false, 'string "yes"');
+  // Only a real boolean true passes (matches sendSMSToConsumer).
+  assert.equal(isSmsRecoveryEligible({ ...base, 'SMS Opt-In': true }, NOW), true, 'boolean true');
 });

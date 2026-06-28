@@ -67,7 +67,6 @@ import {
   CAMPAIGN_TEMPLATE_NAMES,
   CAMPAIGN_STAGE_FOR_WAVE,
   CAMPAIGN_NAME,
-  SMS_RECOVERY_CAMPAIGN_NAME,
   CAMPAIGN_SMS_RECOVERY_FIELD,
   DEFAULT_SMS_RECOVERY_HOURS,
   SOCIAL_PROOF_DAYS,
@@ -77,7 +76,6 @@ import {
   type PlannedSend,
   type CampaignPlan,
   type RancherTarget,
-  type Wave,
 } from '@/lib/demandRouter';
 import { isEmailWindow, isSmsWindow } from '@/lib/sendWindow';
 import { normalizeState } from '@/lib/states';
@@ -519,7 +517,11 @@ async function runSmsRecovery(
       deferred++;
       continue;
     }
-    if (!live) continue; // dry-run: counted as planned, nothing sent/stamped
+    // A5: ENABLE_SMS check BEFORE any stamp — if SMS is off (launch default) or
+    // this is a dry-run, SKIP ENTIRELY without stamping, so the one-shot
+    // Campaign SMS Recovery Sent At field isn't burned and the buyer is still
+    // recoverable once SMS turns on.
+    if (!smsOn || !live) continue;
 
     // Build the 1-tap link (same resolver as the email arc).
     const cut = cutLabelToCut(f['Order Type']);
@@ -562,7 +564,7 @@ async function runSmsRecovery(
       continue;
     }
 
-    if (!smsOn) continue; // ENABLE_SMS off → stamped (so we don't re-plan) but not sent
+    // Only reached when smsOn (A5) — a stamp always corresponds to a real send.
     try {
       const ok = await sendSMSToConsumer({
         consumer: f as Record<string, any>,
@@ -597,6 +599,12 @@ interface RecoveryRow extends RecoveryReferralLike {
   Buyer?: unknown;
 }
 
+// BLAST-RADIUS BOUND (A7): the campaign ranchers this recovery flow is allowed
+// to touch. The first LIVE run must NEVER email a platform-wide historical
+// backlog of every abandoned reserve ever — only reserves pinned to the two
+// campaign ranchers, created within the recent window. Env-tunable.
+const CAMPAIGN_RANCHER_IDS: ReadonlySet<string> = new Set([FOODSTEAD.id, SILVERLINE.id]);
+
 async function readRecoveryReferrals(nowMs: number): Promise<RecoveryRow[]> {
   // Pull deposit-intent referrals that have NOT paid a deposit. Keep the formula
   // permissive (the pure selector enforces status/refund/age) and refund-field-
@@ -613,15 +621,25 @@ async function readRecoveryReferrals(nowMs: number): Promise<RecoveryRow[]> {
     return [];
   }
 
-  // Enrich with the linked Payments row (authoritative refund/dispute signal),
-  // exactly like deposit-accept-sla — only for rows that survive the cheap age +
-  // status pre-filter so we don't N+1 the whole table.
   const recoveryHours = Number(process.env.RESERVE_RECOVERY_HOURS || DEFAULT_RESERVE_RECOVERY_HOURS);
-  const ageCutoff = nowMs - recoveryHours * 60 * 60 * 1000;
+  // A7: max-age cap (created within N days, default 14) so a first LIVE run can't
+  // blast a huge historical backlog, AND rancher scope to the campaign ranchers.
+  const maxAgeDays = Number(process.env.RESERVE_RECOVERY_MAX_AGE_DAYS || 14);
+  const minCreated = nowMs - maxAgeDays * 24 * 60 * 60 * 1000; // not older than this
+  const maxCreated = nowMs - recoveryHours * 60 * 60 * 1000; // old enough to consider
+
   const prelim = rows.filter((r) => {
     const created = r._createdTime ? new Date(String(r._createdTime)).getTime() : 0;
-    return created > 0 && created <= ageCutoff; // old enough to consider
+    if (!(created > 0 && created <= maxCreated && created >= minCreated)) return false;
+    // Rancher scope — only reserves pinned to the campaign ranchers (A7).
+    const links = (r.Rancher || r['Suggested Rancher']) as unknown;
+    const ids = Array.isArray(links) ? links.map(String) : [];
+    return ids.some((id) => CAMPAIGN_RANCHER_IDS.has(id));
   });
+
+  // Enrich with the linked Payments row (authoritative refund/dispute signal),
+  // exactly like deposit-accept-sla — only for the scoped, in-window survivors so
+  // we don't N+1 the whole table.
   for (const ref of prelim) {
     try {
       const safeId = String(ref.id).replace(/"/g, '\\"');
@@ -691,7 +709,24 @@ function recoveryLink(
   return `${base}/ranchers/${rancher.slug}`;
 }
 
+// Fetch the linked Consumer for a recovery referral (the authoritative source of
+// the buyer's State for TZ/window-gating — A1 — and opt-in/phone for SMS). The
+// reserve flow does NOT write {Buyer State} on the referral, so we MUST read the
+// Consumer's State; trusting the referral's blank Buyer State would fall back to
+// Central for every reserve buyer (a Hawaii reserver could get a 4am text).
+async function consumerForReferral(ref: RecoveryRow): Promise<any | null> {
+  const links = ref.Buyer as unknown;
+  const consumerId = Array.isArray(links) ? String(links[0] || '') : '';
+  if (!consumerId) return null;
+  try {
+    return (await getRecordById(TABLES.CONSUMERS, consumerId)) as any;
+  } catch {
+    return null;
+  }
+}
+
 async function runReserveRecovery(
+  rows: RecoveryRow[],
   now: Date,
   live: boolean,
   smsOn: boolean,
@@ -710,7 +745,6 @@ async function runReserveRecovery(
   const smsHours = Number(process.env.RESERVE_RECOVERY_SMS_HOURS || DEFAULT_RESERVE_RECOVERY_SMS_HOURS);
   const opts = { now: nowMs, recoveryHours, smsHours };
 
-  const rows = await readRecoveryReferrals(nowMs);
   const emailEligible = selectRecoveryEmail(rows, opts);
   const smsEligible = selectRecoverySms(rows, opts);
 
@@ -725,11 +759,13 @@ async function runReserveRecovery(
   for (const ref of emailEligible) {
     const rancher = await rancherForReferral(ref);
     if (!rancher) continue;
-    const consumerLinks = ref.Buyer as unknown;
-    const consumerId = Array.isArray(consumerLinks) ? String(consumerLinks[0] || '') : '';
-    const email = String(ref['Buyer Email'] || '').trim();
+    // A1: pull the Consumer — authoritative State (window gate) + identity.
+    const consumer = await consumerForReferral(ref);
+    if (!consumer) continue;
+    const consumerId = String(consumer.id || '');
+    const email = String(consumer['Email'] || ref['Buyer Email'] || '').trim();
     if (!email) continue;
-    const state = ref['Buyer State'];
+    const state = consumer['State']; // A1: NOT ref['Buyer State']
     emailPlanned++;
 
     // EMAIL send-window gate — defer (no stamp) outside the local email window.
@@ -739,9 +775,9 @@ async function runReserveRecovery(
     }
     if (!live) continue;
 
-    const cut = cutLabelToCut(ref['Order Type']);
+    const cut = cutLabelToCut(ref['Order Type'] || consumer['Order Type']);
     const link = recoveryLink(consumerId, rancher, cut);
-    const firstName = String(ref['Buyer Name'] || email).trim().split(/[ @]/)[0] || 'there';
+    const firstName = String(ref['Buyer Name'] || consumer['Full Name'] || email).trim().split(/[ @]/)[0] || 'there';
     const msg = renderRecoveryEmail({
       firstName,
       cut: cut || 'beef',
@@ -781,10 +817,11 @@ async function runReserveRecovery(
   for (const ref of smsEligible) {
     const rancher = await rancherForReferral(ref);
     if (!rancher) continue;
-    const consumerLinks = ref.Buyer as unknown;
-    const consumerId = Array.isArray(consumerLinks) ? String(consumerLinks[0] || '') : '';
-    if (!consumerId) continue;
-    const state = ref['Buyer State'];
+    // A1: pull the Consumer — authoritative State (window gate) + opt-in/phone.
+    const consumer = await consumerForReferral(ref);
+    if (!consumer) continue;
+    const consumerId = String(consumer.id || '');
+    const state = consumer['State']; // A1: NOT ref['Buyer State']
     smsPlanned++;
 
     // SMS send-window gate — defer (no stamp) outside the local SMS window.
@@ -792,18 +829,12 @@ async function runReserveRecovery(
       smsDeferred++;
       continue;
     }
-    if (!live) continue;
+    // A5: ENABLE_SMS check BEFORE any stamp — if SMS is off (launch default),
+    // SKIP ENTIRELY without stamping, so the one-shot recovery field isn't
+    // burned and the buyer is still recoverable when SMS turns on.
+    if (!smsOn || !live) continue;
 
-    // Need the consumer record for TCPA opt-in + phone (sendSMSToConsumer gates).
-    let consumer: any = null;
-    try {
-      consumer = await getRecordById(TABLES.CONSUMERS, consumerId);
-    } catch {
-      consumer = null;
-    }
-    if (!consumer) continue;
-
-    const cut = cutLabelToCut(ref['Order Type']);
+    const cut = cutLabelToCut(ref['Order Type'] || consumer['Order Type']);
     const link = recoveryLink(consumerId, rancher, cut);
     const firstName = String(ref['Buyer Name'] || consumer['Full Name'] || '').trim().split(/[ @]/)[0] || 'there';
     const body = renderRecoverySms({
@@ -814,7 +845,8 @@ async function runReserveRecovery(
       socialProof: proofForRancher(proof, rancher.id),
     });
 
-    // CLAIM BEFORE SEND — stamp the SMS-recovery field first (idempotent).
+    // CLAIM BEFORE SEND — stamp the SMS-recovery field first (idempotent). Only
+    // reached when smsOn (A5), so a stamp always corresponds to a real attempt.
     try {
       await updateRecord(TABLES.REFERRALS, ref.id, {
         [RESERVE_RECOVERY_SMS_FIELD]: now.toISOString(),
@@ -823,7 +855,6 @@ async function runReserveRecovery(
       failures.push(`reserve-recovery-sms ${ref.id}: stamp failed, skipped — ${e?.message?.slice(0, 80) || 'unknown'}`);
       continue;
     }
-    if (!smsOn) continue;
     try {
       const ok = await sendSMSToConsumer({
         consumer,
@@ -861,12 +892,25 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const now = new Date();
   const nowMs = now.getTime();
 
-  // 1. Capacity + 2. buyers + Upgrade B social proof (parallel reads).
-  const [cap, buyers, proof] = await Promise.all([
+  // 1. Capacity + 2. buyers + Upgrade B social proof + Upgrade A recovery
+  // referrals (parallel reads). Recovery rows are read BEFORE the plan so their
+  // buyers can be excluded from the wave arc (A4 double-touch fix).
+  const [cap, buyers, proof, recoveryRows] = await Promise.all([
     readCapacity(),
     readBuyers(),
     readSocialProof(nowMs),
+    readRecoveryReferrals(nowMs),
   ]);
+
+  // A4: consumer ids that have an OPEN abandoned-reserve referral → owned by
+  // reserve-recovery this run, so the wave arc must skip them (no buyer gets BOTH
+  // a wave email and a reserve-recovery email in the same window).
+  const excludeBuyerIds = new Set<string>();
+  for (const ref of recoveryRows) {
+    const links = (ref.Buyer as unknown);
+    const cid = Array.isArray(links) ? String(links[0] || '') : '';
+    if (cid) excludeBuyerIds.add(cid);
+  }
 
   // 3. PURE PLAN — selection + tiering + capacity gating + wave decisions +
   // suppression + sunset. EMAIL-LED: smsWaves empty so the planner does NOT fire
@@ -877,6 +921,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
     dailyCap: Number(process.env.CAMPAIGN_DAILY_CAP || 25),
     conversionBuffer: Number(process.env.CAMPAIGN_CONVERSION_BUFFER || 3),
     smsWaves: new Set(), // email-led; SMS handled by runSmsRecovery
+    excludeBuyerIds, // A4: skip buyers owned by reserve-recovery this run
   });
 
   const failures: string[] = [];
@@ -926,8 +971,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // 4. Upgrade C — SMS recovery touch (runs in dry-run as a plan count too).
   const smsRec = await runSmsRecovery(buyers, now, live, smsOn, proof, failures);
 
-  // 5. Upgrade A — abandoned-reserve recovery (email then later SMS).
-  const recovery = await runReserveRecovery(now, live, smsOn, proof, failures);
+  // 5. Upgrade A — abandoned-reserve recovery (email then later SMS). Reuses the
+  // already-read recoveryRows (scoped + age-bounded — A7) so no double read.
+  const recovery = await runReserveRecovery(recoveryRows, now, live, smsOn, proof, failures);
 
   // 6. Telegram report (always — dry-run reports the plan; live reports results).
   try {

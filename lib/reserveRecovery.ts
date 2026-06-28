@@ -32,6 +32,7 @@
 // read, the stamp-before-side-effect, and the send.
 
 import { isRefundedOrDisputed, type SlaPaymentLike } from './depositSla';
+import { fillSocialProof } from './demandRouter';
 
 // ── Tunable timings (cron overrides via env) ─────────────────────────────────
 export const DEFAULT_RESERVE_RECOVERY_HOURS = 3; // wait after reserve before email
@@ -229,24 +230,29 @@ function esc(s: string): string {
 }
 
 function fillRecoveryTokens(s: string, ctx: RecoveryRenderCtx): string {
-  const proof = ctx.socialProof || '';
-  return s
-    .replace(/\{first\}/g, ctx.firstName)
-    .replace(/\{cut\}/g, ctx.cut)
-    .replace(/\{rancher\}/g, ctx.rancher)
-    .replace(/\{link\}/g, ctx.link)
-    .replace(/\{socialProof\}\n\n?/g, proof ? `${proof}\n\n` : '')
-    .replace(/\{socialProof\}/g, proof);
+  return fillSocialProof(
+    s
+      .replace(/\{first\}/g, ctx.firstName)
+      .replace(/\{cut\}/g, ctx.cut)
+      .replace(/\{rancher\}/g, ctx.rancher)
+      .replace(/\{link\}/g, ctx.link),
+    ctx.socialProof,
+  );
 }
 
 const RECOVERY_EMAIL_SUBJECT = 'your {cut} share is still held, {first}';
 
+// {socialProof} on its OWN line (blank lines both sides) so it reads as its own
+// sentence when present and collapses cleanly when omitted (fillSocialProof) —
+// never "…this week.it's still here".
 const RECOVERY_EMAIL_BODY = `hey {first},
 
 you started reserving a {cut} share from {rancher} — but didn't finish, so the
 deposit never went through. good news: we held your spot.
 
-{socialProof}it's still here if you want it. one tap finishes the reservation:
+{socialProof}
+
+it's still here if you want it. one tap finishes the reservation:
 {link}
 
 if you've changed your mind, no worries — just ignore this and the hold releases.

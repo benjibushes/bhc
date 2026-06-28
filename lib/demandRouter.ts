@@ -219,7 +219,10 @@ export type SuppressReason =
   | 'synthetic-test'
   | 'recent-contact'
   | '18-month-dead'
-  | 'already-sunset';
+  | 'already-sunset'
+  // Buyer has an OPEN abandoned-reserve referral → owned by reserve-recovery
+  // this run, skipped in the backfill wave arc (A4 double-touch fix).
+  | 'in-reserve-recovery';
 
 // RFC 2606 / RFC 6761 reserved TLDs — these can NEVER be real, deliverable
 // domains. Matched on the domain SUFFIX so subdomains count too
@@ -623,6 +626,14 @@ export interface BuildPlanOpts {
   conversionBuffer?: number;
   /** Waves that have an SMS variant (only Msg2 per CAMPAIGN-SENDS.md). */
   smsWaves?: ReadonlySet<Wave>;
+  /**
+   * Consumer ids that have an OPEN abandoned-reserve referral and are owned by
+   * the reserve-recovery flow this run. They are skipped in the backfill wave
+   * arc so a buyer never gets BOTH a wave email AND a reserve-recovery email in
+   * the same window (A4 double-touch fix). The cron derives this set from the
+   * recovery referrals it reads; tallied under suppressed['in-reserve-recovery'].
+   */
+  excludeBuyerIds?: ReadonlySet<string>;
 }
 
 const DEFAULT_SMS_WAVES: ReadonlySet<Wave> = new Set<Wave>(['Msg2']);
@@ -642,6 +653,7 @@ function emptySuppressed(): Record<SuppressReason, number> {
     'recent-contact': 0,
     '18-month-dead': 0,
     'already-sunset': 0,
+    'in-reserve-recovery': 0,
   };
 }
 
@@ -672,6 +684,7 @@ export function buildCampaignPlan(
 ): CampaignPlan {
   const { now, capacity } = opts;
   const smsWaves = opts.smsWaves ?? DEFAULT_SMS_WAVES;
+  const excludeBuyerIds = opts.excludeBuyerIds ?? new Set<string>();
   const suppressed = emptySuppressed();
   const sunset: PlannedSunset[] = [];
 
@@ -694,6 +707,15 @@ export function buildCampaignPlan(
 
   for (const b of buyers) {
     const f = b.fields;
+
+    // 0. Owned by reserve-recovery this run → skip the wave arc (A4): a buyer
+    // with an open abandoned-reserve referral must not get BOTH a wave email and
+    // a reserve-recovery email in the same window. Checked FIRST so it takes
+    // precedence over wave/tier selection. Tallied for the report.
+    if (excludeBuyerIds.has(b.id)) {
+      suppressed['in-reserve-recovery']++;
+      continue;
+    }
 
     // 1. Suppression.
     const sr = suppressionReason(f, now);
@@ -927,18 +949,34 @@ export interface RenderedMessage {
 }
 
 function tok(s: string, ctx: RenderCtx): string {
-  const proof = ctx.socialProof || '';
+  return fillSocialProof(
+    s
+      .replace(/\{first\}/g, ctx.firstName)
+      .replace(/\{state\}/g, ctx.state)
+      .replace(/\{rancher\}/g, ctx.rancher.name)
+      .replace(/\{ranchstate\}/g, ctx.rancher.ranchState)
+      .replace(/\{link\}/g, ctx.link),
+    ctx.socialProof,
+  );
+}
+
+/**
+ * Replace the `{socialProof}` token (which always sits on its OWN line in the
+ * templates, blank lines both sides) with the proof sentence — or, when omitted,
+ * swallow the token AND its trailing blank line so the body has no empty
+ * paragraph and no "…this week.if you want one:" glue. Shared by the wave copy
+ * (here) and the reserve-recovery copy (lib/reserveRecovery). Final pass
+ * collapses any stray 3+ newline run to a clean paragraph break.
+ */
+export function fillSocialProof(s: string, proof?: string): string {
+  const line = (proof || '').trim();
   return s
-    .replace(/\{first\}/g, ctx.firstName)
-    .replace(/\{state\}/g, ctx.state)
-    .replace(/\{rancher\}/g, ctx.rancher.name)
-    .replace(/\{ranchstate\}/g, ctx.rancher.ranchState)
-    .replace(/\{link\}/g, ctx.link)
-    // {socialProof} on its own line. When omitted (''), swallow the token AND
-    // the blank line that follows it so the body has no empty paragraph / no
-    // double blank. When present, leave it inline.
-    .replace(/\{socialProof\}\n\n?/g, proof ? `${proof}\n\n` : '')
-    .replace(/\{socialProof\}/g, proof);
+    // Token + its trailing blank line → the proof (own paragraph) or nothing.
+    .replace(/\{socialProof\}\n\n?/g, line ? `${line}\n\n` : '')
+    // Any bare token left (no trailing newline, e.g. inline use) → proof or ''.
+    .replace(/\{socialProof\}/g, line)
+    // Defense-in-depth: never leave an empty paragraph behind.
+    .replace(/\n{3,}/g, '\n\n');
 }
 
 function esc(s: string): string {
@@ -992,24 +1030,30 @@ limited shares this round. reserve yours:
 — Ben`;
 
 // Msg2 ADDS scarcity + live social proof (Upgrade B) over Msg1's intro. The
-// {socialProof} line is omitted gracefully when the recent-reservation count is
-// below SOCIAL_PROOF_MIN (never "0 families").
+// {socialProof} line sits on its OWN line (blank lines both sides) so when
+// present it reads as its own sentence, and when omitted the whole line + one
+// surrounding blank collapse cleanly (never "…this week.if you want one:" and
+// never a double blank). Omitted gracefully below SOCIAL_PROOF_MIN.
 const BODY_MSG2 = `{first} — quick one. {rancher} has only a few shares left this round — shipped to
 {state}, grass-fed, raised right.
 
-{socialProof}if you want one:
+{socialProof}
+
+if you want one:
 {link}
 — Ben`;
 
-// Msg3 ADDS the mission angle. Social proof reinforces "it's working" — omitted
-// gracefully below SOCIAL_PROOF_MIN.
+// Msg3 ADDS the mission angle. Social proof (own line) reinforces "it's working"
+// — omitted gracefully below SOCIAL_PROOF_MIN.
 const BODY_MSG3 = `quick one, {first}.
 
 the mission is a real local rancher in every community — beef raised right, sold
 direct, families over feedlots. we're locking that in state by state, and it's
 working.
 
-{socialProof}until your local rancher is live, {rancher} has you covered — same standard,
+{socialProof}
+
+until your local rancher is live, {rancher} has you covered — same standard,
 shipped to your door.
 
 this is the start of something big. glad you're in it.
@@ -1112,7 +1156,11 @@ export function isSmsRecoveryEligible(
 ): boolean {
   const smsRecoveryHours = opts.smsRecoveryHours ?? DEFAULT_SMS_RECOVERY_HOURS;
 
-  if (!asBool(buyer['SMS Opt-In'])) return false;
+  // STRICT === true to MATCH sendSMSToConsumer's gate exactly. A loose-truthy
+  // value (e.g. the string "false", 1, "yes") would pass asBool here but be
+  // rejected by the sender — stamping the one-shot recovery field with nothing
+  // sent, permanently burning the buyer's SMS recovery. (A6)
+  if (buyer['SMS Opt-In'] !== true) return false;
   if (!String(buyer['Phone'] || '').trim()) return false;
   if (buyer['Campaign SMS Recovery Sent At']) return false; // already recovered via SMS
   if (buyer['Campaign Sunset At']) return false; // sunset → don't chase
