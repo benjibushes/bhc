@@ -82,6 +82,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // to non-refundable so they must receive this. Capping = silent loss of
   // the disclosure that protects BHC against future chargeback disputes.
   'sendBuyerSlotLocked',
+  // Deposit-paid confirmation: the buyer's payment-success email. A fresh
+  // deposit buyer also receives welcome + quiz-invite + intro in the same
+  // window, so without whitelisting this the #1 money-moment confirmation
+  // can be silently frequency-capped -> "did my payment go through?" anxiety,
+  // refund requests, and chargebacks on the deposit.
+  'sendPostPurchaseWelcome',
   // Sales-floor pivot 2026-06-09: 4 new minimal-pipeline templates. All
   // are 1:1 transactional triggered by buyer state changes (signup, quiz
   // complete, sales-call close, rancher accept). Capping any of these
