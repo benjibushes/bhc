@@ -13,18 +13,18 @@ interface Info {
 
 // Pure: build the share deep-link a buyer sends to the neighbor they want to
 // split the cow with. Points at the rancher's public page (where the neighbor
-// can reserve their own share) and carries a ref param attributing the invite
-// back to the buyer. Falls back to /access when the rancher slug is unknown so
-// the link is never dead. Exported for unit testing.
-export function buildShareLink(slug: string | undefined, refId: string, origin = ''): string {
+// can reserve their own share). Falls back to /access when the rancher slug is
+// unknown so the link is never dead. We deliberately do NOT append a ?ref
+// attribution param: the rancher page consumes no such param (the existing
+// ?ref pipeline is for affiliate CODES on the homepage, not buyer referral
+// IDs), so adding one promised tracking that never happened. Exported for
+// unit testing.
+export function buildShareLink(slug: string | undefined, _refId: string, origin = ''): string {
   const base = origin.replace(/\/+$/, '');
   const path = slug
     ? `/ranchers/${encodeURIComponent(slug)}`
     : '/access';
-  const qs = new URLSearchParams();
-  if (refId) qs.set('ref', refId);
-  const query = qs.toString();
-  return `${base}${path}${query ? `?${query}` : ''}`;
+  return `${base}${path}`;
 }
 
 export default function DepositSuccessPage() {
@@ -64,7 +64,20 @@ function DepositSuccessContent() {
   useEffect(() => {
     fetch(`/api/checkout/deposit?refId=${encodeURIComponent(refId)}`, { credentials: 'include' })
       .then((r) => r.json())
-      .then((j) => { if (!j?.error) setInfo(j); })
+      .then((j) => {
+        if (!j) return;
+        // Happy path: the GET returns full rancher info (name/ranchName/slug).
+        if (!j.error) { setInfo(j); return; }
+        // Already-paid path: by the time the buyer lands here the referral has
+        // flipped to a paid/closed status, so the GET returns a 409 with
+        // `error: 'referral_closed'`. That branch now carries the rancher slug
+        // so the refer-a-friend link can still build a real /ranchers/<slug>
+        // deep-link instead of falling back to /access. name/ranchName aren't
+        // included there, so they keep their friendly "your rancher" defaults.
+        if (j.error === 'referral_closed' && j.rancher?.slug) {
+          setInfo({ rancher: { name: '', ranchName: '', slug: j.rancher.slug } });
+        }
+      })
       .catch(() => {});
   }, [refId]);
 
