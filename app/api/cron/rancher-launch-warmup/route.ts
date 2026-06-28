@@ -103,6 +103,12 @@ function priorityScore(buyer: any): number {
 //
 // Phase 2 (Day-7 nudge) runs after Phase 1 regardless of mode and
 // is unchanged from the pre-throttle implementation.
+// AUDIT 2026-06-28 (rancher-lifecycle pass): verified this fires the buyer warmup
+// for newly-live ranchers. Phase 1 selects ranchers via isRancherOperationalForBuyers
+// (canonical live gate) + getOperationalServedStates (same source matching uses, so
+// newly-live ranchers' states aren't missed), enforces the funnel+quiz qualification
+// gate, and stamps dedup BEFORE send with rollback on failure (no double-warm, no
+// silent loss). Phase 2 day-7 nudge is correctly gated. No fix needed — left as-is.
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'partial' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
