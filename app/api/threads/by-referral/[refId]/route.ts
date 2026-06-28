@@ -6,16 +6,18 @@
 import { NextResponse } from 'next/server';
 import { getOrCreateThreadForReferral, listThreadMessages } from '@/lib/contracts/threads';
 import { getRecordById, TABLES } from '@/lib/airtable';
-import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { resolveDepositAuth } from '@/lib/buyerAuth';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 export async function GET(req: Request, { params }: { params: Promise<{ refId: string }> }) {
-  const session = await resolveBuyerSession(req);
+  const { refId } = await params;
+  // Member session OR this referral's deposit grant (campaign 1-tap link). The
+  // ask thread is part of the post-deposit flow a campaign buyer lands in.
+  const session = await resolveDepositAuth(req, refId);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { refId } = await params;
   let ref: any;
   try {
     ref = await getRecordById(TABLES.REFERRALS, refId);

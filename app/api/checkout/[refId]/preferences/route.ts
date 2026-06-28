@@ -23,7 +23,7 @@
 
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { resolveDepositAuth } from '@/lib/buyerAuth';
 import { getOrCreateThreadForReferral, postMessage } from '@/lib/contracts/threads';
 import { sendEmail } from '@/lib/email';
 import { rateLimit } from '@/lib/rateLimit';
@@ -40,10 +40,11 @@ export const maxDuration = 30;
 // preferences (so a returning buyer sees their last answers). Buyer-session +
 // ownership gated, identical to the POST.
 export async function GET(req: Request, { params }: { params: Promise<{ refId: string }> }) {
-  const session = await resolveBuyerSession(req);
+  const { refId } = await params;
+  // Member session OR this referral's deposit grant (campaign 1-tap link).
+  const session = await resolveDepositAuth(req, refId);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { refId } = await params;
   let ref: any;
   try {
     ref = await getRecordById(TABLES.REFERRALS, refId);
@@ -80,10 +81,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ refId: s
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ refId: string }> }) {
-  const session = await resolveBuyerSession(req);
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
   const { refId } = await params;
+  // Member session OR this referral's deposit grant (campaign 1-tap link).
+  const session = await resolveDepositAuth(req, refId);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   // Anti-spam: 6 submits / 60s per buyer. Generous (this is a one-shot form)
   // but stops a runaway client from flooding the thread/rancher inbox.
@@ -153,7 +154,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ refId: 
     try {
       const { id } = await getOrCreateThreadForReferral(refId, session.consumerId, rancherId);
       threadId = id;
-      const firstName = String(session.name || '').trim().split(/\s+/)[0] || '';
+      // Prefer the session name; fall back to the referral's Buyer Name so the
+      // deposit-grant path (campaign link — session.name is empty) still
+      // personalizes the rancher-facing message.
+      const nameForGreeting = String(session.name || ref['Buyer Name'] || '').trim();
+      const firstName = nameForGreeting.split(/\s+/)[0] || '';
       const messageBody = formatPreferencesMessage(prefs, { buyerFirstName: firstName });
       await postMessage({
         threadId: id,

@@ -15,7 +15,7 @@ import { createDepositCheckout, getConnectAccountStatus } from '@/lib/stripeConn
 import { recordDeposit } from '@/lib/contracts/payments';
 import { MIN_TIER_PRICE, deriveDeposit } from '@/lib/pricing';
 import { tierFor, TIERS, commissionRateForTier } from '@/lib/tiers';
-import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { resolveDepositAuth } from '@/lib/buyerAuth';
 import { checkOriginGuard } from '@/lib/csrfGuard';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
@@ -46,9 +46,6 @@ export async function POST(req: Request) {
   const originCheck = checkOriginGuard(req);
   if (!originCheck.ok && originCheck.response) return originCheck.response;
 
-  const session = await resolveBuyerSession(req);
-  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-
   let body: any = {};
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
@@ -57,6 +54,13 @@ export async function POST(req: Request) {
   const cutSize = String(body.cutSize || '').toLowerCase();
   if (!referralId) return NextResponse.json({ error: 'referralId required' }, { status: 400 });
   if (!CUT_LABELS[cutSize]) return NextResponse.json({ error: 'cutSize must be quarter|half|whole' }, { status: 400 });
+
+  // Auth: full member session OR the referral-scoped deposit grant (campaign
+  // 1-tap link). resolveDepositAuth pins the grant to THIS referralId, so a
+  // forwarded link's grant can't pay a different referral. Ownership is still
+  // re-checked below against referral.Buyer.
+  const session = await resolveDepositAuth(req, referralId);
+  if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   // Look up referral + verify buyer ownership
   let referral: any;
@@ -371,7 +375,8 @@ export async function GET(req: Request) {
   const referralId = url.searchParams.get('refId') || '';
   if (!referralId) return NextResponse.json({ error: 'refId required' }, { status: 400 });
 
-  const session = await resolveBuyerSession(req);
+  // Member session OR referral-scoped deposit grant (campaign 1-tap link).
+  const session = await resolveDepositAuth(req, referralId);
   if (!session) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 
   let referral: any;
