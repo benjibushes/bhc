@@ -325,15 +325,17 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       // the direct-charge funds flow. `customer_email` (above) lets Link
       // recognize returning buyers for a one-tap deposit. (Verified vs Stripe
       // docs 2026-06-25.)
-      // 2026-06-09 fix: previously had `customer_update: { address: 'auto' }`
-      // alongside `customer_email` only. Stripe rejects `customer_update`
-      // when no `customer` parameter is set on the session (customer_email
-      // alone is insufficient — customer_update requires the customer object
-      // to already exist). Dropping customer_update lets automatic_tax still
-      // function (Stripe collects address during Checkout for tax calc).
-      // Without this fix EVERY tier_v2 buyer deposit attempt 400'd at the
-      // Stripe API layer, silently breaking the buyer-side checkout flow.
-      automatic_tax: { enabled: true },
+      // No sales tax on deposits. BHC is Montana-based (no state sales tax) and
+      // a deposit is a refundable reservation, not the final taxable sale.
+      // Mirrors createTierCheckoutSession (#118). Keeping automatic_tax ON
+      // previously ADDED tax on top of the deposit + the BHC service-fee line at
+      // the hosted page, so the card was charged MORE than the "due now" the
+      // deposit page quotes (deposit + fee, no tax line) → surprise-tax at the
+      // final step = a top cause of deposit-checkout abandonment under paid ads.
+      // (Note: `customer_update` must NOT be set without a `customer` param —
+      // customer_email alone is insufficient — so we omit it. Disabling tax also
+      // removes Stripe's address-collection requirement entirely.)
+      automatic_tax: { enabled: false },
     },
     {
       stripeAccount: input.rancherConnectAccountId,
