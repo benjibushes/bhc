@@ -143,7 +143,19 @@ export async function POST(
   // partial refunds cannot exceed the original. Fall back to 0 if the field
   // is absent (older schema rows / first refund). Defensive — never throw on
   // missing field.
-  const originalAmountCents = Number(payment['Amount Cents'] || 0);
+  // Cap against the TRUE charged total, not the deposit-only 'Amount Cents'.
+  // The buyer's card was charged deposit + platform fee (+ tax), captured as
+  // 'Total Charged Cents' at settlement. Capping on the deposit alone would
+  // reject valid refunds of the fee portion and mis-detect full refunds.
+  // Fallbacks for older rows settled before Total Charged Cents existed:
+  // deposit + fee, then deposit alone.
+  const depositAmountCents = Number(payment['Amount Cents'] || 0);
+  const platformFeeCents = Number(payment['Platform Fee Cents'] || 0);
+  const totalChargedCents = Number(payment['Total Charged Cents'] || 0);
+  const originalAmountCents =
+    totalChargedCents > 0
+      ? totalChargedCents
+      : (depositAmountCents + platformFeeCents) || depositAmountCents;
   const alreadyRefundedCents = Number(payment['Refunded Amount Cents'] || 0);
   const netRefundableCents = Math.max(0, originalAmountCents - alreadyRefundedCents);
 
