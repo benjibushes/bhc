@@ -13,6 +13,7 @@ import {
   inviteCapacity,
   newInviteBudget,
   countOutstandingInvites,
+  cutForBuyer,
   openSlotsFor,
   buildCampaignPlan,
   renderMessage,
@@ -569,4 +570,29 @@ test('a converted outstanding buyer RELEASES invite budget (frees a slot for a n
   assert.equal(plan.capacity.west.outstanding, 5, 'converted buyer not counted as outstanding invite');
   assert.equal(plan.capacity.west.newBudget, 1, 'ceiling 6 − 5 outstanding = 1 new');
   assert.ok(plan.sends.some((s) => s.buyerId === 'recFresh' && s.wave === 'Msg1'), 'the freed budget admits the fresh buyer');
+});
+
+// ─── cut derivation (1-tap reserve token requires a cut) ─────────────────────
+
+test('cutForBuyer maps Order Type → quarter|half|whole, null when unsure/blank', () => {
+  assert.equal(cutForBuyer({ 'Order Type': 'Quarter' }), 'quarter');
+  assert.equal(cutForBuyer({ 'Order Type': 'Half' }), 'half');
+  assert.equal(cutForBuyer({ 'Order Type': 'Whole' }), 'whole');
+  assert.equal(cutForBuyer({ 'Order Type': 'Quarter Cow' }), 'quarter'); // label form
+  assert.equal(cutForBuyer({ 'Order Type': { name: 'Half' } }), 'half'); // singleSelect object
+  assert.equal(cutForBuyer({ 'Order Type': 'Not Sure' }), null);
+  assert.equal(cutForBuyer({ 'Order Type': '' }), null);
+  assert.equal(cutForBuyer({}), null);
+});
+
+test('plan carries cut per send (drives the 1-tap link; null → rancher-page fallback)', () => {
+  const old = new Date(NOW - 20 * DAY_MS).toISOString();
+  const buyers: CampaignBuyer[] = [
+    { id: 'recQ', fields: { Email: 'q@x.com', State: 'CA', 'Ready to Buy': true, 'Order Type': 'Quarter', Created: old } },
+    { id: 'recUnsure', fields: { Email: 'u@x.com', State: 'CA', 'Ready to Buy': true, 'Order Type': 'Not Sure', Created: old } },
+  ];
+  const plan = buildCampaignPlan(buyers, { now: NOW, capacity: { west: 50, eastCentral: 0 } });
+  const byId = Object.fromEntries(plan.sends.map((s) => [s.buyerId, s]));
+  assert.equal(byId['recQ'].cut, 'quarter');
+  assert.equal(byId['recUnsure'].cut, null);
 });

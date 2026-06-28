@@ -42,6 +42,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { logAuditEntry } from '@/lib/auditLog';
 import { getMaxActiveReferrals, getLiveCapacity } from '@/lib/rancherCapacity';
+import { mintCampaignReserveToken } from '@/lib/campaignReserve';
 import {
   buildCampaignPlan,
   renderMessage,
@@ -84,22 +85,31 @@ interface CronResult {
 }
 
 /**
- * Resolve the buyer-facing reserve link for a planned send.
+ * Resolve the buyer-facing {link} for a planned send.
  *
- * Spec: personalize {link} with the 1-tap campaign link via
- * `mintCampaignReserveToken` IF that helper exists (feat/campaign-1tap-links);
- * if absent, fall back to the rancher page URL `/ranchers/<slug>`.
- *
- * On THIS branch (origin/main) that helper does not exist, so we use the
- * documented fallback. When feat/campaign-1tap-links merges, wire the 1-tap
- * mint here — flagged below so it's a one-line upgrade. We deliberately do NOT
- * attempt a dynamic import of a non-existent module (it can't resolve through
- * the build-time `@/` alias at runtime, and a fragile import is riskier than a
- * correct, honest fallback for a money-adjacent send path).
+ * Personalizes the 1-tap deposit link via mintCampaignReserveToken (#122):
+ * a scoped token pinning {consumerId, rancherSlug, cut} → /r/d/<token>, which
+ * the /r/d route exchanges for a cut-prefilled deposit checkout (eligibility-
+ * gated server-side). Falls back to the rancher's public page `/ranchers/<slug>`
+ * ONLY if minting can't proceed — i.e. the buyer has no usable cut (Order Type
+ * blank/"Not Sure") or mint throws (mint requires a valid cut + slug). The
+ * fallback keeps the campaign honest for buyers we can't 1-tap.
  */
-async function resolveLink(rancher: RancherTarget, _send: PlannedSend): Promise<string> {
-  // TODO(feat/campaign-1tap-links): when lib/campaignReserve.ts lands, mint a
-  // per-buyer 1-tap token here and return `${SITE_URL}/r/${token}`.
+async function resolveLink(rancher: RancherTarget, send: PlannedSend): Promise<string> {
+  const base = SITE_URL.replace(/\/+$/, '');
+  if (send.cut) {
+    try {
+      const token = mintCampaignReserveToken({
+        consumerId: send.buyerId,
+        rancherSlug: rancher.slug,
+        cut: send.cut,
+      });
+      if (token) return `${base}/r/d/${token}`;
+    } catch (e: any) {
+      // mint throws on a bad cut/slug — fall back rather than ship a broken link.
+      console.warn(`[demand-router] mint failed for ${send.buyerId}, using rancher-page fallback:`, e?.message);
+    }
+  }
   return rancherPageUrl(SITE_URL, rancher);
 }
 

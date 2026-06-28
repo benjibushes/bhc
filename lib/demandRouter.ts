@@ -183,6 +183,21 @@ export function classifyTier(
   return null;
 }
 
+/**
+ * Derive the buyer's cut ('quarter'|'half'|'whole') from the Order Type field
+ * (values like "Quarter", "Half", "Whole", or "Quarter Cow"). Returns null for
+ * "Not Sure"/blank/unrecognized — the 1-tap reserve token requires a real cut,
+ * so a null means the cron must use the rancher-page fallback instead.
+ * Pure + deterministic. Mirrors CUT_LABELS keys in lib/reserveDeposit.
+ */
+export function cutForBuyer(buyer: Record<string, unknown>): 'quarter' | 'half' | 'whole' | null {
+  const raw = readEnumOrString(buyer['Order Type']).trim().toLowerCase();
+  if (!raw) return null;
+  const first = raw.split(/\s+/)[0]; // "quarter cow" → "quarter"
+  if (first === 'quarter' || first === 'half' || first === 'whole') return first;
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // SUPPRESSION  (deliverability + compliance + anti-spam)
 //   - unsubscribed / bounced / complained          → excluded forever
@@ -522,6 +537,12 @@ export interface PlannedSend {
   /** True only if the buyer is SMS-opted-in (TCPA) AND this wave has an SMS variant. */
   sms: boolean;
   phone: string;
+  /**
+   * The buyer's chosen cut ('quarter'|'half'|'whole') derived from Order Type,
+   * or null if unknown/unsure. Drives the 1-tap reserve token (the deposit
+   * checkout needs a cut). When null, the cron falls back to the rancher page.
+   */
+  cut: 'quarter' | 'half' | 'whole' | null;
 }
 
 export interface PlannedWaitlist {
@@ -671,6 +692,7 @@ export function buildCampaignPlan(
       wave,
       sms: smsOptIn && !!phone && smsWaves.has(wave),
       phone,
+      cut: cutForBuyer(f),
       sortIntent: num(f['Intent Score']) + num(f['Qualification Score']),
     };
     // Split by NEW (Msg1) vs CONTINUATION (Msg2/Msg3). Only Msg1 is bound by
