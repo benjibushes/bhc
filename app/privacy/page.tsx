@@ -29,7 +29,7 @@ export default function PrivacyPage() {
           </h1>
           
           <p className="text-sm text-saddle">
-            Last Updated: January 27, 2026
+            Last Updated: June 28, 2026
           </p>
 
           <Divider />
@@ -210,7 +210,36 @@ export default function PrivacyPage() {
 
             <section className="space-y-4">
               <h2 className="font-serif text-2xl">
-                11. Contact Us
+                11. SMS / Text Messaging
+              </h2>
+              <p>
+                If you provide your mobile number and opt in, BuyHalfCow may send you text
+                messages related to your reservations and orders &mdash; such as confirmations,
+                share availability, and follow-ups from the rancher fulfilling your order &mdash;
+                as well as occasional offers. You opt in by checking the SMS consent box on our
+                forms or by otherwise giving express written consent. Consent to receive text
+                messages is not a condition of any purchase.
+              </p>
+              <p>
+                <strong>
+                  We do not sell, rent, or share your mobile phone number or your SMS opt-in
+                  consent with any third parties or affiliates for their own marketing or
+                  promotional purposes.
+                </strong>{' '}
+                Mobile information collected for text messaging is used solely by BuyHalfCow to
+                deliver the messages described above.
+              </p>
+              <p>
+                <strong>Message frequency varies.</strong> Message and data rates may apply.
+                Reply <strong>STOP</strong> to any message to unsubscribe at any time, or reply{' '}
+                <strong>HELP</strong> for help. You can also opt out of marketing communications
+                as described in Section 5 (Your Rights).
+              </p>
+            </section>
+
+            <section className="space-y-4">
+              <h2 className="font-serif text-2xl">
+                12. Contact Us
               </h2>
               <p>
                 For questions about this Privacy Policy or to exercise your privacy rights, contact us at:
