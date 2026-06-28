@@ -10,6 +10,9 @@ import {
   decideWave,
   shouldSunset,
   sizeBatch,
+  inviteCapacity,
+  newInviteBudget,
+  countOutstandingInvites,
   openSlotsFor,
   buildCampaignPlan,
   renderMessage,
@@ -19,6 +22,7 @@ import {
   WAVE_GAP_DAYS,
   DAY_MS,
   type CampaignBuyer,
+  type Coast,
 } from './demandRouter';
 
 const NOW = Date.parse('2026-06-27T12:00:00Z');
@@ -438,4 +442,131 @@ test('rancherPageUrl builds the fallback link', () => {
 test('wave gaps encode day0→+3→+7', () => {
   assert.equal(WAVE_GAP_DAYS.Msg2, 3);
   assert.equal(WAVE_GAP_DAYS.Msg2 + WAVE_GAP_DAYS.Msg3, 7);
+});
+
+// ─── CUMULATIVE INVITE CAP (the over-invite fix) ─────────────────────────────
+// A Msg1 invite does NOT consume an open slot. A per-RUN ceiling resets every
+// hourly run → ~24× over-invite. These tests pin the cumulative invariant:
+// the invited-but-unconverted population can never exceed openSlots × buffer,
+// no matter how many runs execute with zero conversions.
+
+test('inviteCapacity = openSlots × buffer (the absolute ceiling, not per-run)', () => {
+  assert.equal(inviteCapacity(2, { conversionBuffer: 3 }), 6);
+  assert.equal(inviteCapacity(0, { conversionBuffer: 3 }), 0);
+  assert.equal(inviteCapacity(-1, { conversionBuffer: 3 }), 0);
+});
+
+test('newInviteBudget subtracts outstanding (cumulative), clamped to dailyCap', () => {
+  // ceiling 6, none outstanding → 6 (but daily cap 25 doesn't bind)
+  assert.equal(newInviteBudget(2, 0, { dailyCap: 25, conversionBuffer: 3 }), 6);
+  // ceiling 6, 4 already outstanding → only 2 new
+  assert.equal(newInviteBudget(2, 4, { dailyCap: 25, conversionBuffer: 3 }), 2);
+  // ceiling 6, 6 outstanding → 0 (full)
+  assert.equal(newInviteBudget(2, 6, { dailyCap: 25, conversionBuffer: 3 }), 0);
+  // ceiling 6, 10 outstanding (over) → 0, never negative
+  assert.equal(newInviteBudget(2, 10, { dailyCap: 25, conversionBuffer: 3 }), 0);
+  // daily cap still paces a cold-start burst: ceiling 60, 0 outstanding, cap 10 → 10
+  assert.equal(newInviteBudget(20, 0, { dailyCap: 10, conversionBuffer: 3 }), 10);
+});
+
+test('countOutstandingInvites: in-arc, unconverted, non-sunset only — bucketed by coast', () => {
+  const coastOf = (f: Record<string, unknown>): Coast | null => coastForState(f['State']);
+  const buyers: CampaignBuyer[] = [
+    { id: 'a', fields: { State: 'CA', 'Campaign Stage': 'Msg1 Sent' } },                 // WEST, counts
+    { id: 'b', fields: { State: 'CA', 'Campaign Stage': 'Msg3 Sent' } },                 // WEST, counts
+    { id: 'c', fields: { State: 'FL', 'Campaign Stage': 'Msg2 Sent' } },                 // EAST, counts
+    { id: 'd', fields: { State: 'TX', 'Campaign Stage': 'Msg1 Sent' } },                 // CENTRAL→E/C, counts
+    { id: 'e', fields: { State: 'CA', 'Campaign Stage': 'Sunset', 'Campaign Sunset At': '2026-06-01T00:00:00Z' } }, // sunset, excluded
+    { id: 'f', fields: { State: 'CA', 'Campaign Stage': 'Msg2 Sent', 'Referral Status': 'Slot Locked' } },          // converted, excluded
+    { id: 'g', fields: { State: 'CA' } },                                                // never invited, excluded
+    { id: 'h', fields: { State: 'ZZ', 'Campaign Stage': 'Msg1 Sent' } },                 // unroutable, excluded
+  ];
+  const out = countOutstandingInvites(buyers, coastOf);
+  assert.equal(out.west, 2, 'a + b');
+  assert.equal(out.eastCentral, 2, 'c + d');
+});
+
+test('CUMULATIVE CAP: N hourly runs, zero conversions → total Msg1 invites ≤ openSlots×buffer (NOT N×)', () => {
+  // 100 fresh HOT WEST buyers, only 2 open slots, buffer 3 → ceiling 6.
+  // Simulate 24 hourly runs. Between runs we apply the SAME disposition the live
+  // cron writes (stamp Msg1 Sent + last-sent) to every buyer the plan chose —
+  // and NO conversions (slots stay at 2). The cumulative budget must drain to 0
+  // after the ceiling is hit, so the GRAND TOTAL of distinct Msg1 invites ≤ 6.
+  const ceiling = 6;
+  const buyers: CampaignBuyer[] = Array.from({ length: 100 }, (_, i) => ({
+    id: `recW${String(i).padStart(3, '0')}`,
+    fields: { Email: `w${i}@x.com`, State: 'CA', 'Ready to Buy': true, 'Intent Score': 100 - i, Created: new Date(NOW - 20 * DAY_MS).toISOString() } as Record<string, unknown>,
+  }));
+  const invitedIds = new Set<string>();
+  const RUNS = 24;
+  for (let run = 0; run < RUNS; run++) {
+    const runNow = NOW + run * 60 * 60 * 1000; // hourly
+    const plan = buildCampaignPlan(buyers, {
+      now: runNow,
+      capacity: { west: 2, eastCentral: 0 }, // slots NEVER decrement (no conversions)
+      dailyCap: 25,
+      conversionBuffer: 3,
+    });
+    // Every Msg1 send this run is a NEW distinct invite — assert no double-send.
+    for (const s of plan.sends) {
+      assert.equal(s.wave, 'Msg1', 'only Msg1 in this all-fresh pool');
+      assert.equal(invitedIds.has(s.buyerId), false, `buyer ${s.buyerId} invited twice across runs`);
+      invitedIds.add(s.buyerId);
+      // Apply the live cron's disposition stamp so the NEXT run sees them as
+      // outstanding (this is what makes the cumulative term work).
+      const b = buyers.find((x) => x.id === s.buyerId)!;
+      b.fields['Campaign Stage'] = 'Msg1 Sent';
+      b.fields['Campaign Last Sent At'] = new Date(runNow).toISOString();
+    }
+  }
+  assert.ok(
+    invitedIds.size <= ceiling,
+    `cumulative Msg1 invites (${invitedIds.size}) must be ≤ ceiling ${ceiling}, NOT ${RUNS}× the per-run budget`,
+  );
+  assert.equal(invitedIds.size, ceiling, 'exactly the ceiling gets invited, then the budget is exhausted');
+});
+
+test('CONTINUATIONS send OUTSIDE the new-invite budget (arcs complete even at 0 budget)', () => {
+  // Ceiling is fully consumed by outstanding invites (6 already at Msg1 Sent,
+  // due for Msg2). A fresh Msg1 buyer must NOT send (budget 0 → waitlist), but
+  // the 6 continuations MUST send (Msg2) — completing arcs is unbounded.
+  const old = new Date(NOW - 20 * DAY_MS).toISOString();
+  const dueForMsg2 = new Date(NOW - 4 * DAY_MS).toISOString(); // past the +3 gap
+  const buyers: CampaignBuyer[] = [
+    ...Array.from({ length: 6 }, (_, i) => ({
+      id: `recCont${i}`,
+      fields: { Email: `cont${i}@x.com`, State: 'CA', 'Ready to Buy': true, 'Campaign Stage': 'Msg1 Sent', 'Campaign Last Sent At': dueForMsg2, Created: old } as Record<string, unknown>,
+    })),
+    { id: 'recFresh', fields: { Email: 'fresh@x.com', State: 'CA', 'Ready to Buy': true, 'Intent Score': 100, Created: old } },
+  ];
+  const plan = buildCampaignPlan(buyers, { now: NOW, capacity: { west: 2, eastCentral: 0 }, dailyCap: 25, conversionBuffer: 3 });
+  // 6 outstanding fills the ceiling of 6 → 0 new budget.
+  assert.equal(plan.capacity.west.outstanding, 6);
+  assert.equal(plan.capacity.west.newBudget, 0);
+  // All 6 continuations send (Msg2); the fresh Msg1 buyer does NOT.
+  assert.equal(plan.byWave.Msg2, 6, 'all continuations complete their arc');
+  assert.equal(plan.byWave.Msg1, 0, 'no new invite when budget is exhausted');
+  assert.ok(plan.sends.every((s) => s.buyerId !== 'recFresh'), 'fresh buyer not invited');
+  // The fresh HOT buyer is held as a state-waitlist signal instead.
+  assert.ok(plan.waitlist.some((w) => w.buyerId === 'recFresh'));
+});
+
+test('a converted outstanding buyer RELEASES invite budget (frees a slot for a new invite)', () => {
+  // 6 at Msg1 Sent, but one converted (active referral) → outstanding drops to
+  // 5 → 1 new invite becomes available again.
+  const old = new Date(NOW - 20 * DAY_MS).toISOString();
+  const buyers: CampaignBuyer[] = [
+    ...Array.from({ length: 5 }, (_, i) => ({
+      id: `recOut${i}`,
+      fields: { Email: `out${i}@x.com`, State: 'CA', 'Ready to Buy': true, 'Campaign Stage': 'Msg1 Sent', 'Campaign Last Sent At': new Date(NOW - 1 * DAY_MS).toISOString(), Created: old } as Record<string, unknown>,
+    })),
+    // converted — in a deal, no longer an outstanding invite
+    { id: 'recConverted', fields: { Email: 'conv@x.com', State: 'CA', 'Campaign Stage': 'Msg1 Sent', 'Referral Status': 'Slot Locked', Created: old } },
+    // fresh HOT buyer wants in
+    { id: 'recFresh', fields: { Email: 'fresh@x.com', State: 'CA', 'Ready to Buy': true, 'Intent Score': 100, Created: old } },
+  ];
+  const plan = buildCampaignPlan(buyers, { now: NOW, capacity: { west: 2, eastCentral: 0 }, dailyCap: 25, conversionBuffer: 3 });
+  assert.equal(plan.capacity.west.outstanding, 5, 'converted buyer not counted as outstanding invite');
+  assert.equal(plan.capacity.west.newBudget, 1, 'ceiling 6 − 5 outstanding = 1 new');
+  assert.ok(plan.sends.some((s) => s.buyerId === 'recFresh' && s.wave === 'Msg1'), 'the freed budget admits the fresh buyer');
 });

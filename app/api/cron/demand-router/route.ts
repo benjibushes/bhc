@@ -112,21 +112,51 @@ async function readCapacity(): Promise<{
   west: number;
   eastCentral: number;
   detail: { foodsteadMax: number; foodsteadCur: number; silverlineMax: number; silverlineCur: number };
+  degraded: string[];
 }> {
   const [foodstead, silverline] = await Promise.all([
     getRecordById(TABLES.RANCHERS, FOODSTEAD.id).catch(() => null) as Promise<any>,
     getRecordById(TABLES.RANCHERS, SILVERLINE.id).catch(() => null) as Promise<any>,
   ]);
-  const foodsteadMax = getMaxActiveReferrals(foodstead);
-  const silverlineMax = getMaxActiveReferrals(silverline);
-  const [foodsteadCur, silverlineCur] = await Promise.all([
-    getLiveCapacity(FOODSTEAD.id).catch(() => Number(foodstead?.['Current Active Referrals'] || 0)),
-    getLiveCapacity(SILVERLINE.id).catch(() => Number(silverline?.['Current Active Referrals'] || 0)),
+
+  // FAIL-CLOSED on a missing/failed rancher record. getMaxActiveReferrals(null)
+  // returns DEFAULT_MAX=5 — a transient fetch failure would otherwise INVENT 5
+  // open slots and trigger unintended live sends. For a money-adjacent sender we
+  // must never fabricate capacity: a null record → 0 slots for that coast (skip
+  // it this run). The `degraded` list surfaces the skip in the report.
+  const degraded: string[] = [];
+
+  async function coastSlots(
+    rec: any,
+    rancherId: string,
+    label: string,
+  ): Promise<{ open: number; max: number; cur: number }> {
+    if (!rec) {
+      degraded.push(`${label}: rancher record unavailable → capacity forced to 0 (skipped)`);
+      return { open: 0, max: 0, cur: 0 };
+    }
+    const max = getMaxActiveReferrals(rec);
+    const cur = await getLiveCapacity(rancherId).catch(
+      () => Number(rec?.['Current Active Referrals'] || 0),
+    );
+    return { open: openSlotsFor({ max, current: cur }), max, cur };
+  }
+
+  const [fs, sl] = await Promise.all([
+    coastSlots(foodstead, FOODSTEAD.id, 'Foodstead (WEST)'),
+    coastSlots(silverline, SILVERLINE.id, 'Silverline (EAST+CENTRAL)'),
   ]);
+
   return {
-    west: openSlotsFor({ max: foodsteadMax, current: foodsteadCur }),
-    eastCentral: openSlotsFor({ max: silverlineMax, current: silverlineCur }),
-    detail: { foodsteadMax, foodsteadCur, silverlineMax, silverlineCur },
+    west: fs.open,
+    eastCentral: sl.open,
+    detail: {
+      foodsteadMax: fs.max,
+      foodsteadCur: fs.cur,
+      silverlineMax: sl.max,
+      silverlineCur: sl.cur,
+    },
+    degraded,
   };
 }
 
@@ -181,9 +211,12 @@ function buildReport(plan: CampaignPlan, opts: {
   capDetail: { foodsteadMax: number; foodsteadCur: number; silverlineMax: number; silverlineCur: number };
   smsPlanned: number;
   failures: string[];
+  degraded: string[];
 }): string {
   const mode = opts.live ? '🟢 LIVE' : '🟡 DRY-RUN (nothing sent)';
   const d = opts.capDetail;
+  const w = plan.capacity.west;
+  const ec = plan.capacity.eastCentral;
   const suppressedTotal = Object.values(plan.suppressed).reduce((a, b) => a + b, 0);
   const suppressedBreak = Object.entries(plan.suppressed)
     .filter(([, n]) => n > 0)
@@ -197,19 +230,24 @@ function buildReport(plan: CampaignPlan, opts: {
   const lines: string[] = [
     `🐄 <b>DEMAND ROUTER</b> · ${mode}`,
     '',
-    '<b>Capacity (open / cap)</b>',
-    `• Foodstead (WEST): ${plan.capacity.west.open} open / ${d.foodsteadMax} cap → filling ${plan.capacity.west.planned}`,
-    `• Silverline (EAST+CENTRAL): ${plan.capacity.eastCentral.open} open / ${d.silverlineMax} cap → filling ${plan.capacity.eastCentral.planned}`,
+    '<b>Capacity</b> (open slots / cap · outstanding-invited / new-invite budget)',
+    `• Foodstead (WEST): ${w.open} open / ${d.foodsteadMax} cap · ${w.outstanding} out / ${w.newBudget} new-budget → filling ${w.planned}`,
+    `• Silverline (EAST+CENTRAL): ${ec.open} open / ${d.silverlineMax} cap · ${ec.outstanding} out / ${ec.newBudget} new-budget → filling ${ec.planned}`,
+  ];
+  if (opts.degraded.length > 0) {
+    lines.push('', '⚠️ <b>Capacity degraded (fail-closed):</b>', ...opts.degraded.map((g) => `• ${g}`));
+  }
+  lines.push(
     '',
     '<b>Sends by wave</b>',
-    `• Msg1: ${plan.byWave.Msg1} · Msg2: ${plan.byWave.Msg2} · Msg3: ${plan.byWave.Msg3}`,
+    `• Msg1 (new): ${plan.byWave.Msg1} · Msg2: ${plan.byWave.Msg2} · Msg3: ${plan.byWave.Msg3}`,
     `• Total ${opts.live ? 'sent' : 'WOULD send'}: ${plan.sends.length} email${plan.sends.length === 1 ? '' : 's'}` +
       `${opts.smsOn ? ` + ${opts.smsPlanned} SMS` : ` (SMS off — ${opts.smsPlanned} opted-in skipped)`}`,
     '',
     `<b>Waitlisted by state:</b> ${plan.waitlist.length} (${waitlistBreak})`,
     `<b>Sunset (full arc, no engagement):</b> ${plan.sunset.length}`,
     `<b>Suppressed:</b> ${suppressedTotal} (${suppressedBreak})`,
-  ];
+  );
   if (opts.failures.length > 0) {
     lines.push('', '<b>Failures:</b>', ...opts.failures.slice(0, 8).map((f) => `• ${f}`));
   }
@@ -399,7 +437,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   try {
     await sendTelegramMessage(
       TELEGRAM_ADMIN_CHAT_ID,
-      buildReport(plan, { live, smsOn, capDetail: cap.detail, smsPlanned, failures }),
+      buildReport(plan, { live, smsOn, capDetail: cap.detail, smsPlanned, failures, degraded: cap.degraded }),
     );
   } catch {
     /* non-fatal */
