@@ -10,6 +10,7 @@ import { getOperationalServedStates } from '@/lib/rancherEligibility';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import jwt from 'jsonwebtoken';
 
@@ -540,17 +541,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      const { searchParams } = new URL(request.url);
-      const secret = searchParams.get('secret');
-      if (secret !== cronSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('batch-approve', realHandler)(request);
 }
 

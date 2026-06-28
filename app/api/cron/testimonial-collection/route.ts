@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { sendTestimonialAsk } from '@/lib/email';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 60;
 
@@ -161,17 +162,8 @@ async function realHandler(_request: Request): Promise<Result> {
 }
 
 async function authedHandler(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      const { searchParams } = new URL(request.url);
-      const secret = searchParams.get('secret');
-      if (secret !== cronSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('testimonial-collection', realHandler)(request);
 }
 

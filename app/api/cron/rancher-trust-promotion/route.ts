@@ -4,6 +4,7 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 60;
 
@@ -135,17 +136,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    const ok = authHeader === `Bearer ${cronSecret}`;
-    if (!ok) {
-      const { searchParams } = new URL(request.url);
-      if (searchParams.get('secret') !== cronSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('rancher-trust-promotion', realHandler)(request);
 }
 
