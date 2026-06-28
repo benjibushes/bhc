@@ -58,8 +58,10 @@ export async function createTierCheckoutSession(input: TierCheckoutInput): Promi
       cancel_url: input.cancelUrl,
       metadata: { rancherId: input.rancherId, tier: input.tier },
       subscription_data: { metadata: { rancherId: input.rancherId, tier: input.tier } },
-      automatic_tax: { enabled: true },
-      customer_update: { address: 'auto' },
+      // No sales tax collected. BHC is based in Montana (no state sales tax) and
+      // does not collect tax on tier subscriptions, so Stripe Tax stays OFF — it
+      // never needs a tax origin/registration and this checkout can't 500 on tax.
+      automatic_tax: { enabled: false },
     } as any,  // customer_account is V2 — types may lag in SDK 20.4.1
     {
       // 2026-06-09 fix: was `sub-${rancherId}-${tier}` — if rancher cancels

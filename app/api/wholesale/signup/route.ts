@@ -38,7 +38,30 @@ function isValidEmail(email: string): boolean {
   return !throwaway.includes(domain);
 }
 
+// Bots fill free-text fields with random strings like "YATRlOaQRyoLOyrpRMQn".
+// Real names/businesses use spaces or normal casing; a single long token with
+// many mid-word upper↔lower flips is gibberish. Thresholds are conservative
+// (≥12 chars, ≥4 case flips in one token) so real submissions are never caught.
+function looksLikeGibberish(s: string): boolean {
+  for (const token of s.trim().split(/\s+/)) {
+    if (token.length < 12) continue;
+    let flips = 0;
+    for (let i = 1; i < token.length; i++) {
+      const a = token[i - 1];
+      const b = token[i];
+      if (!/[A-Za-z]/.test(a) || !/[A-Za-z]/.test(b)) continue;
+      if ((a !== a.toLowerCase()) !== (b !== b.toLowerCase())) flips++;
+    }
+    if (flips >= 4) return true;
+  }
+  return false;
+}
+
+const BOT_OK_MESSAGE =
+  "We've received your application. Ben will personally reach out within 24-48 hours.";
+
 interface WholesaleSignupBody {
+  website?: string; // honeypot — hidden in the form; real users never fill it
   businessName?: string;
   businessType?: string;
   contactName?: string;
@@ -89,6 +112,14 @@ export async function POST(request: Request) {
     const timeline = (body.timeline || '').toString().trim();
     const notes = (body.notes || '').toString().trim().slice(0, 500);
 
+    // ── Bot gate 1: honeypot ────────────────────────────────────────────
+    // A hidden field real users can't see. If it's filled, this is a bot.
+    // Return success so the bot thinks it worked, but create NOTHING and send
+    // NO email — the whole point is to never spam a stranger's inbox.
+    if ((body.website || '').toString().trim() !== '') {
+      return NextResponse.json({ ok: true, message: BOT_OK_MESSAGE });
+    }
+
     if (!businessName) {
       return NextResponse.json({ error: 'Business name is required.' }, { status: 400 });
     }
@@ -98,12 +129,24 @@ export async function POST(request: Request) {
     if (!email || !isValidEmail(email)) {
       return NextResponse.json({ error: 'Valid email is required.' }, { status: 400 });
     }
-    if (!phone) {
-      return NextResponse.json({ error: 'Phone number is required.' }, { status: 400 });
+    // ── Bot gate 2: phone must contain real digits ──────────────────────
+    // Bots submit gibberish here ("RsZOGykSaBQYYIWcOZAiWiKm"). Real phones have
+    // digits; this rejects the bots without losing a real (typo'd) submission,
+    // since a real user always types at least a few digits.
+    if (phone.replace(/\D/g, '').length < 7) {
+      return NextResponse.json({ error: 'A valid phone number is required.' }, { status: 400 });
     }
     const state = normalizeState(stateRaw);
     if (!state) {
       return NextResponse.json({ error: 'Valid state is required.' }, { status: 400 });
+    }
+
+    // ── Bot gate 3: gibberish name/business ─────────────────────────────
+    // Catches bots that pass the digit check. Silently succeed (no row, no
+    // email, no CAPI) so a slipped bot still never emails a stranger or
+    // pollutes Meta ad attribution.
+    if (looksLikeGibberish(contactName) || looksLikeGibberish(businessName)) {
+      return NextResponse.json({ ok: true, message: BOT_OK_MESSAGE });
     }
 
     // Idempotency check — Wholesale rows in Inquiries are scoped by
