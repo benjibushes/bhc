@@ -31,6 +31,22 @@ function hasValidTier(rancher: any): boolean {
   return VALID_TIER_NAMES.has(String(tierStr).toLowerCase().trim());
 }
 
+/**
+ * Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns '' when it can't be
+ * coerced into a plausible number. Inlined (not imported from lib/twilio) so
+ * this module stays hermetic — importing lib/twilio instantiates the SMS
+ * client at module load and would break the unit test in a bare env.
+ * Mirrors lib/twilio.ts::normalizeToE164.
+ */
+export function normalizeReservePhone(input: unknown): string {
+  if (!input) return '';
+  const digits = String(input).replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  if (digits.length >= 11 && digits.length <= 15) return `+${digits}`;
+  return '';
+}
+
 export type ReserveEligibility =
   | { ok: true }
   | { ok: false; status: number; error: string; fallback?: boolean };
@@ -94,11 +110,13 @@ export function buildReserveReferralFields(args: {
   consumerId: string;
   buyerName: string;
   buyerEmail: string;
+  buyerPhone?: string;
+  buyerState?: string;
   cut: Cut;
 }): Record<string, any> {
   const ranchName = String(args.rancher['Ranch Name'] || args.rancher['Operator Name'] || 'Rancher');
   const who = args.buyerName || args.buyerEmail;
-  return {
+  const fields: Record<string, any> = {
     Name: `${who} → ${ranchName} · ${CUT_LABELS[args.cut]}`,
     Status: 'Pending',
     'Match Type': 'Direct (Rancher Page) — Deposit',
@@ -110,6 +128,34 @@ export function buildReserveReferralFields(args: {
     Notes: '[Source] Self-serve deposit (rancher page, no quiz)',
     Rancher: [args.rancher.id],
     Buyer: [args.consumerId],
+  };
+  // Denormalize the buyer's phone + state onto the referral so the rancher can
+  // call the moment the deposit lands (the whole promise of this rail). Only
+  // write when present so we never blank an existing value on re-create.
+  const phone = String(args.buyerPhone || '').trim();
+  if (phone) fields['Buyer Phone'] = phone;
+  const state = String(args.buyerState || '').trim();
+  if (state) fields['Buyer State'] = state;
+  return fields;
+}
+
+/**
+ * Resolve the buyer's best phone + state for a rancher notification. Prefers the
+ * values denormalized onto the referral; falls back to the linked Consumer
+ * record so historical referrals (created before phone/state capture) still
+ * surface a click-to-call number. Pure — callers pass already-fetched rows.
+ */
+export function resolveBuyerContact(
+  referral: Record<string, any> | null | undefined,
+  consumer?: Record<string, any> | null,
+): { phone: string; state: string } {
+  const refPhone = String(referral?.['Buyer Phone'] || '').trim();
+  const refState = String(referral?.['Buyer State'] || '').trim();
+  const conPhone = String(consumer?.['Phone'] || '').trim();
+  const conState = String(consumer?.['State'] || '').trim();
+  return {
+    phone: refPhone || conPhone,
+    state: refState || conState,
   };
 }
 

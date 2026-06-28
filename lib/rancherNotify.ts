@@ -19,6 +19,7 @@
 
 import { sendRancherDepositPaid } from '@/lib/email';
 import { fireRancherSMSEvent } from '@/lib/smsEvents';
+import { resolveBuyerContact } from '@/lib/reserveDeposit';
 
 export interface RancherNotifyResult {
   emailSent: boolean;
@@ -60,11 +61,14 @@ export function rancherFirstName(rancher: Record<string, any> | null | undefined
  * @param rancher   already-fetched Ranchers row (for email/phone/name)
  * @param opts.isReminder  true when called from the SLA re-ping cron
  * @param opts.depositAmount  dollars (falls back to referral's Deposit Amount)
+ * @param opts.consumer  already-fetched linked Consumer row; when supplied, the
+ *   buyer's phone/state fall back to it if the referral lacks them (so the
+ *   click-to-call number always rides the alert, even for older referrals).
  */
 export async function notifyRancherDepositPaid(
   referral: Record<string, any>,
   rancher: Record<string, any>,
-  opts: { isReminder?: boolean; depositAmount?: number } = {},
+  opts: { isReminder?: boolean; depositAmount?: number; consumer?: Record<string, any> | null } = {},
 ): Promise<RancherNotifyResult> {
   const result: RancherNotifyResult = {
     emailSent: false,
@@ -78,8 +82,10 @@ export async function notifyRancherDepositPaid(
   const buyerName = String(referral['Buyer Name'] || '').trim();
   const buyerFirstName = buyerName.split(/\s+/)[0] || 'A buyer';
   const buyerEmail = String(referral['Buyer Email'] || '').trim();
-  const buyerPhone = String(referral['Buyer Phone'] || '').trim();
-  const state = String(referral['Buyer State'] || '').trim();
+  // Phone/State: prefer the referral's denormalized values, fall back to the
+  // linked Consumer (when supplied) so the alert always carries a click-to-call
+  // number even for referrals created before phone/state capture shipped.
+  const { phone: buyerPhone, state } = resolveBuyerContact(referral, opts.consumer);
   const cut = String(referral['Order Type'] || '').trim();
   const depositAmount =
     typeof opts.depositAmount === 'number' && opts.depositAmount > 0
