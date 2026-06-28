@@ -327,16 +327,63 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
         continue;
       }
 
-      const selectErr = msg.match(/Insufficient permissions to create new select option/);
-      if (selectErr && attempt < maxRetries) {
+      // Mirror createRecord's precise handler. The OLD updateRecord code stripped
+      // the FIRST non-empty string field on this error — which on a money-path
+      // write like {Status, Deposit Paid At, ...} could silently drop
+      // "Deposit Paid At" when it was actually "Status" whose option didn't
+      // exist, corrupting the deal record + capacity. Instead: identify the
+      // offending field by the bad VALUE in the error, strip exactly that;
+      // fall back to a denylist that protects free-text data fields; and if we
+      // still can't identify it, FAIL LOUD rather than strip-and-corrupt.
+      const selectValErr = msg.match(/Insufficient permissions to create new select option "([^"]*)"/) ||
+                           msg.match(/Insufficient permissions to create new select option ""([^"]*)""/);
+      if (selectValErr && attempt < maxRetries) {
+        const badValue = selectValErr[1];
+        const badKey = Object.keys(currentFields).find(k => String(currentFields[k]) === badValue);
+        if (badKey) {
+          console.warn(`Airtable: stripping field "${badKey}" with invalid select value from ${tableName} update`);
+          try {
+            const { sendOperatorSignal } = await import('./operatorSignal');
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'system-error',
+              summary: `Airtable bad-choice strip ${tableName}.${badKey} (update)`,
+              detail: `updateRecord wrote value "${badValue}" but it isn't a valid singleSelect option and the key can't create it. Add the choice to ${tableName}.${badKey} (e.g. the deposit-rail Status options "Awaiting Payment"/"Slot Locked") or fix the write. Data for this field was dropped this write.`,
+              dedupeKey: `airtable-badchoice-upd:${tableName}:${badKey}:${badValue}`,
+              dedupeWindowMs: 24 * 60 * 60 * 1000,
+            });
+          } catch {}
+          delete currentFields[badKey];
+          continue;
+        }
+      }
+
+      if (msg.includes('Insufficient permissions') && msg.includes('select option') && attempt < maxRetries) {
+        // Couldn't match the value to a field. Strip a suspected select field but
+        // NEVER a known free-text data field (those carry buyer/rancher data).
         const fieldWithIssue = Object.keys(currentFields).find(k =>
-          typeof currentFields[k] === 'string' && currentFields[k].length > 0
+          typeof currentFields[k] === 'string' && currentFields[k].length > 0 &&
+          !['Full Name', 'Email', 'Phone', 'State', 'Notes', 'Ranch Name', 'Operator Name',
+            'Buyer Name', 'Buyer Email', 'Buyer Phone', 'Buyer State', 'Suggested Rancher Name',
+            'Suggested Rancher State', 'Description', 'Operation Details', 'Certifications'].includes(k)
         );
         if (fieldWithIssue) {
-          console.warn(`Airtable: stripping select field "${fieldWithIssue}" from ${tableName} update`);
+          console.warn(`Airtable: stripping suspected select field "${fieldWithIssue}" from ${tableName} update`);
+          try {
+            const { sendOperatorSignal } = await import('./operatorSignal');
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'system-error',
+              summary: `Airtable select-perm strip ${tableName}.${fieldWithIssue} (update)`,
+              detail: `updateRecord hit "cannot create select option" but the value wasn't matchable to a field; stripped suspected select field "${fieldWithIssue}". Add the missing option or grant the API key create-option permission.`,
+              dedupeKey: `airtable-selectperm-upd:${tableName}:${fieldWithIssue}`,
+              dedupeWindowMs: 24 * 60 * 60 * 1000,
+            });
+          } catch {}
           delete currentFields[fieldWithIssue];
           continue;
         }
+        // Nothing safe to strip — fail loud instead of corrupting the record.
       }
 
       console.error(`Error updating record ${recordId} in ${tableName}:`, error);
