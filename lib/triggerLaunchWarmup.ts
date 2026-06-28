@@ -8,8 +8,9 @@
 // 24h cooldown via Warmup Last Batch At), so multiple back-to-back
 // triggers are safe.
 //
-// Auth: passes CRON_SECRET via query param (same path the cron header
-// also accepts).
+// Auth: sends `Authorization: Bearer <CRON_SECRET>` — the only auth the
+// route accepts (the ?secret= query fallback was removed in the cron-auth
+// fail-closed pass).
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
@@ -20,9 +21,12 @@ export function triggerLaunchWarmup(reason: string): void {
     return;
   }
   try {
-    fetch(`${SITE_URL}/api/cron/rancher-launch-warmup?secret=${encodeURIComponent(cronSecret)}`, {
+    fetch(`${SITE_URL}/api/cron/rancher-launch-warmup`, {
       method: 'GET',
-      headers: { 'x-trigger-reason': reason.slice(0, 100) },
+      headers: {
+        'Authorization': `Bearer ${cronSecret}`,
+        'x-trigger-reason': reason.slice(0, 100),
+      },
     }).catch((e) => {
       console.error(`[triggerLaunchWarmup] background fetch error (${reason}):`, e?.message);
     });
