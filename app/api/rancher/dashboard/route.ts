@@ -8,6 +8,25 @@ export const maxDuration = 60;
 
 import { getRancherCommissionRate } from '@/lib/commission';
 
+// Pure: total commission the rancher still owes BHC on closed-won deals.
+// tier_v2 ranchers NEVER owe a post-close invoice — BHC's cut was taken at
+// deposit time via Stripe Connect application_fee_amount, and the close handler
+// (referrals/[id]/route.ts) deliberately SKIPS createCommissionInvoice for them.
+// Counting their Closed Won rows here surfaces a phantom "Invoice pending"
+// balance + a dead "Pay now" link the rancher can never satisfy. So tier_v2
+// always returns 0; legacy sums the unpaid Commission Due across closed-won.
+// Exported (non-handler export — ignored by the Next router) so it can be
+// unit-tested without spinning the route.
+export function computeUnpaidCommission(
+  closedWon: Array<Record<string, any>>,
+  pricingModel: string,
+): number {
+  if (pricingModel === 'tier_v2') return 0;
+  return closedWon
+    .filter((r) => !r['Commission Paid'])
+    .reduce((sum, r) => sum + (Number(r['Commission Due']) || 0), 0);
+}
+
 export async function GET(request: Request) {
   try {
     const r = await requireRancher(request);
@@ -48,9 +67,11 @@ export async function GET(request: Request) {
 
     const totalRevenue = closedWon.reduce((sum: number, r: any) => sum + (r['Sale Amount'] || 0), 0);
     const totalCommission = closedWon.reduce((sum: number, r: any) => sum + (r['Commission Due'] || 0), 0);
-    const unpaidCommission = closedWon
-      .filter((r: any) => !r['Commission Paid'])
-      .reduce((sum: number, r: any) => sum + (r['Commission Due'] || 0), 0);
+    // tier_v2 ranchers never owe a post-close commission invoice (see
+    // computeUnpaidCommission). Forced to 0 so the dashboard doesn't show a
+    // phantom "Invoice pending" balance + dead "Pay now" link.
+    const pricingModel = String(rancher['Pricing Model'] || 'legacy');
+    const unpaidCommission = computeUnpaidCommission(closedWon, pricingModel);
 
     // Parity with admin desk F12 — compute days-since-activity per referral
     // so rancher cards can show rot badges. Source of truth: max of

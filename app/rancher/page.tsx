@@ -240,6 +240,13 @@ export default function RancherDashboardPage() {
   // sale price — so balance = listed − processingFee, NOT listed − deposit.
   const [finalInvoiceModal, setFinalInvoiceModal] = useState<Referral | null>(null);
   const [acceptModal, setAcceptModal] = useState<Referral | null>(null);
+  // CONFIRM-PAYMENT modal: off-platform close for Awaiting Payment rows. Rancher
+  // enters the actual amount received + method; POSTs /confirm-payment which flips
+  // the deal to Closed Won and fires the (legacy-only) commission invoice.
+  const [confirmPayModal, setConfirmPayModal] = useState<Referral | null>(null);
+  const [confirmPayAmount, setConfirmPayAmount] = useState('');
+  const [confirmPayMethod, setConfirmPayMethod] = useState('cash');
+  const [confirmPaySubmitting, setConfirmPaySubmitting] = useState(false);
   const [finalInvoiceTotalSale, setFinalInvoiceTotalSale] = useState('');
   const [finalInvoiceProcessingFee, setFinalInvoiceProcessingFee] = useState('');
   const [finalInvoiceProcessingDate, setFinalInvoiceProcessingDate] = useState('');
@@ -550,6 +557,54 @@ export default function RancherDashboardPage() {
     } catch {
       setUpdateError('Network error. Please check your connection.');
     } finally {
+      setUpdating(null);
+    }
+  };
+
+  // CONFIRM-PAYMENT (off-platform close). Opens the branded modal for an
+  // Awaiting Payment referral. The actual POST happens in submitConfirmPayment.
+  const handleConfirmPayment = (referral: Referral) => {
+    setUpdateError('');
+    setConfirmPayAmount(
+      referral.sale_amount && referral.sale_amount > 0 ? String(referral.sale_amount) : '',
+    );
+    setConfirmPayMethod('cash');
+    setConfirmPayModal(referral);
+  };
+
+  // POST /confirm-payment → Closed Won + commission invoice (legacy ranchers;
+  // tier_v2 skips the invoice server-side since BHC's cut was taken at deposit).
+  const submitConfirmPayment = async () => {
+    if (!confirmPayModal) return;
+    const amount = parseFloat(confirmPayAmount);
+    if (!amount || amount <= 0) {
+      setUpdateError('Enter the amount you actually received (greater than $0).');
+      return;
+    }
+    setConfirmPaySubmitting(true);
+    setUpdating(confirmPayModal.id);
+    setUpdateError('');
+    try {
+      const res = await fetch(
+        `/api/rancher/referrals/${confirmPayModal.id}/confirm-payment`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ saleAmount: amount, method: confirmPayMethod }),
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setUpdateError(data.error || 'Could not confirm payment. Try again.');
+        return;
+      }
+      setConfirmPayModal(null);
+      setConfirmPayAmount('');
+      await fetchDashboard();
+    } catch {
+      setUpdateError('Network error. Please check your connection.');
+    } finally {
+      setConfirmPaySubmitting(false);
       setUpdating(null);
     }
   };
@@ -1080,16 +1135,32 @@ export default function RancherDashboardPage() {
 
   const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r.status));
   const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost'].includes(r.status));
-  // Collect Balance: deposit-paid + not fully paid + not terminal. Same predicate
-  // as showFinalInvoice (ReferralRow). Sorted oldest deposit first so ranchers
-  // collect in the right priority order. This filter is purely client-side —
-  // no new API endpoint; reuses the existing referrals payload.
+  // Awaiting Payment = off-platform close where the buyer pays on delivery / by
+  // cash / Venmo etc. The deal is parked here until the rancher confirms the
+  // money actually landed via /confirm-payment (which then flips it Closed Won +
+  // fires the commission invoice). Previously these rows had NO actionable UI —
+  // the confirm-payment endpoint existed but had zero callers, so the rancher
+  // could never finish the close from the dashboard. Surface them here. Exclude
+  // deposit-paid rows that the Collect Balance section already handles.
+  const awaitingPaymentRefs = referrals.filter(
+    (r) => r.status === 'Awaiting Payment' && !(r.deposit_paid_at && (r.deposit_amount || 0) > 0),
+  );
+  // Collect Balance: deposit-paid + final balance not yet collected. Sorted
+  // oldest deposit first so ranchers collect in the right priority order. Purely
+  // client-side — reuses the existing referrals payload, no new API endpoint.
+  //
+  // MONEY-UX FIX: previously this excluded ALL terminal rows, so a deposit-paid
+  // deal that was (mistakenly) closed Won before the balance was collected
+  // STRANDED that balance — the Send Final Invoice button vanished with no way
+  // back. We now still surface Closed Won rows whose final balance is unpaid so
+  // the rancher can always collect. (Closed Lost is excluded — that deal is
+  // dead; the deposit is handled by the refund flow.)
   const collectBalanceRefs = referrals
     .filter((r) => {
       const depositPaid = !!r.deposit_paid_at && (r.deposit_amount || 0) > 0;
       const finalPaid = !!r.final_paid_at;
-      const isTerminal = r.status === 'Closed Won' || r.status === 'Closed Lost';
-      return depositPaid && !finalPaid && !isTerminal;
+      const isDead = r.status === 'Closed Lost';
+      return depositPaid && !finalPaid && !isDead;
     })
     .sort((a, b) =>
       new Date(a.deposit_paid_at || 0).getTime() - new Date(b.deposit_paid_at || 0).getTime()
@@ -1870,6 +1941,7 @@ export default function RancherDashboardPage() {
                         onLost={() => handleMarkLost(ref)}
                         onSendFinal={() => openFinalInvoiceModal(ref)}
                         onAccept={() => handleAcceptSlot(ref)}
+                        onConfirmPayment={() => handleConfirmPayment(ref)}
                         updating={updating}
                       />
                     ))}
@@ -1957,6 +2029,7 @@ export default function RancherDashboardPage() {
                         onLost={() => handleMarkLost(ref)}
                         onSendFinal={() => openFinalInvoiceModal(ref)}
                         onAccept={() => handleAcceptSlot(ref)}
+                        onConfirmPayment={() => handleConfirmPayment(ref)}
                         updating={updating}
                       />
                     ))}
@@ -1979,6 +2052,40 @@ export default function RancherDashboardPage() {
                 <div className="p-8 border border-dust text-center bg-white">
                   <p className="text-saddle">No active leads right now. New buyer introductions will appear here.</p>
                 </div>
+              )}
+
+              {/* ── Awaiting Payment ────────────────────────────────────────
+                  Off-platform closes parked until the rancher confirms the money
+                  landed. The /confirm-payment endpoint flips them Closed Won +
+                  (for legacy ranchers) fires the commission invoice. Before this
+                  these rows were invisible on the dashboard — the only way to
+                  finish the close was a manual Airtable edit. */}
+              {awaitingPaymentRefs.length > 0 && (
+                <>
+                  <Divider />
+                  <div className="flex flex-col sm:flex-row sm:items-baseline gap-2">
+                    <h2 className="font-serif text-2xl">Awaiting Payment</h2>
+                    <span className="text-sm text-saddle">
+                      {awaitingPaymentRefs.length} {awaitingPaymentRefs.length === 1 ? 'deal' : 'deals'} — confirm payment to close
+                    </span>
+                  </div>
+                  <div className="space-y-4">
+                    {awaitingPaymentRefs.map((ref) => (
+                      <ReferralCard
+                        key={ref.id}
+                        referral={ref}
+                        onUpdate={updateReferralStatus}
+                        onClose={() => setCloseModal(ref)}
+                        onPass={() => setPassModal(ref)}
+                        onLost={() => handleMarkLost(ref)}
+                        onSendFinal={() => openFinalInvoiceModal(ref)}
+                        onAccept={() => handleAcceptSlot(ref)}
+                        onConfirmPayment={() => handleConfirmPayment(ref)}
+                        updating={updating}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
 
               {/* ── Collect Balance ─────────────────────────────────────────
@@ -2321,7 +2428,15 @@ export default function RancherDashboardPage() {
                 <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
                 <StatCard label={`Commission (${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}%)`} value={`$${stats.totalCommission.toLocaleString()}`} />
                 <StatCard label="Your Net" value={`$${stats.netEarnings.toLocaleString()}`} />
-                <StatCard label="Unpaid Commission" value={`$${stats.unpaidCommission.toLocaleString()}`} sub={stats.unpaidCommission > 0 ? 'Invoice pending' : ''} />
+                {/* tier_v2 ranchers never owe a post-close invoice — BHC's cut is
+                    taken at deposit time. unpaidCommission is forced to 0 server-
+                    side; show "collected at deposit" so the card isn't a confusing
+                    $0/"Invoice pending". Legacy ranchers see the real balance. */}
+                {rancherInfo.pricingModel === 'tier_v2' ? (
+                  <StatCard label="Commission" value="Collected" sub="taken at deposit" />
+                ) : (
+                  <StatCard label="Unpaid Commission" value={`$${stats.unpaidCommission.toLocaleString()}`} sub={stats.unpaidCommission > 0 ? 'Invoice pending' : ''} />
+                )}
               </div>
 
               <Divider />
@@ -2347,18 +2462,29 @@ export default function RancherDashboardPage() {
                           <td className="py-3 pr-4">${ref.commission_due.toLocaleString()}</td>
                           <td className="py-3 pr-4 font-medium">${(ref.sale_amount - ref.commission_due).toLocaleString()}</td>
                           <td className="py-3">
-                            <span className={`px-2 py-0.5 text-xs ${ref.commission_paid ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                              {ref.commission_paid ? 'Paid' : 'Pending'}
-                            </span>
-                            {!ref.commission_paid && ref.stripe_invoice_url && (
-                              <a
-                                href={ref.stripe_invoice_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="ml-2 text-xs text-saddle hover:text-charcoal underline underline-offset-2"
-                              >
-                                Pay now →
-                              </a>
+                            {/* tier_v2: commission was collected at deposit time —
+                                no invoice to pay. Show "Collected" instead of the
+                                legacy Paid/Pending + "Pay now" invoice flow. */}
+                            {rancherInfo.pricingModel === 'tier_v2' ? (
+                              <span className="px-2 py-0.5 text-xs bg-green-100 text-green-800">
+                                Collected
+                              </span>
+                            ) : (
+                              <>
+                                <span className={`px-2 py-0.5 text-xs ${ref.commission_paid ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                  {ref.commission_paid ? 'Paid' : 'Pending'}
+                                </span>
+                                {!ref.commission_paid && ref.stripe_invoice_url && (
+                                  <a
+                                    href={ref.stripe_invoice_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="ml-2 text-xs text-saddle hover:text-charcoal underline underline-offset-2"
+                                  >
+                                    Pay now →
+                                  </a>
+                                )}
+                              </>
                             )}
                           </td>
                         </tr>
@@ -3612,6 +3738,101 @@ export default function RancherDashboardPage() {
         </div>
       )}
 
+      {/* Confirm Payment Modal — off-platform close for Awaiting Payment rows.
+          Rancher enters the amount they actually received + how. POSTs
+          /confirm-payment which flips the deal Closed Won and (for legacy
+          ranchers only) fires the commission invoice. tier_v2 ranchers already
+          paid BHC's cut at deposit — no invoice copy shown for them. */}
+      {confirmPayModal && (() => {
+        const isTierV2 = rancherInfo.pricingModel === 'tier_v2';
+        const rate = rancherInfo.commissionRate ?? 0.10;
+        const amt = parseFloat(confirmPayAmount);
+        const validAmt = !!amt && amt > 0;
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-start">
+                <h2 className="font-serif text-2xl">Confirm payment received</h2>
+                <button onClick={() => { setConfirmPayModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle">×</button>
+              </div>
+              <p className="text-sm text-saddle">
+                Buyer: <strong className="text-charcoal">{confirmPayModal.buyer_name}</strong>
+                {confirmPayModal.order_type ? ` · ${confirmPayModal.order_type}` : ''}
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Amount received ($)</label>
+                  <input
+                    type="number"
+                    value={confirmPayAmount}
+                    onChange={(e) => setConfirmPayAmount(e.target.value)}
+                    placeholder="e.g. 2500"
+                    min="1"
+                    step="0.01"
+                    className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                  />
+                  {validAmt && !isTierV2 && (
+                    <p className="text-xs text-saddle mt-1">
+                      Commission ({(rate * 100).toFixed(1)}%): ${(amt * rate).toFixed(2)} &middot; You keep: ${(amt * (1 - rate)).toFixed(2)}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">How were you paid?</label>
+                  <select
+                    value={confirmPayMethod}
+                    onChange={(e) => setConfirmPayMethod(e.target.value)}
+                    className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="check">Check</option>
+                    <option value="venmo">Venmo</option>
+                    <option value="square">Square</option>
+                    <option value="stripe">Stripe</option>
+                    <option value="wire">Wire / bank transfer</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                {validAmt && (
+                  <div className="border border-saddle/40 bg-bone-warm p-4 text-xs leading-relaxed text-saddle">
+                    {isTierV2 ? (
+                      <>Confirming marks this deal <strong>Closed Won</strong>. You keep 100% — BHC&rsquo;s commission was already collected at deposit time, so no invoice is generated.</>
+                    ) : (
+                      <>Confirming marks this deal <strong>Closed Won</strong> and generates a Stripe commission invoice for <strong>${(amt * rate).toFixed(2)}</strong> ({(rate * 100).toFixed(1)}%), emailed to your account.</>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {updateError && (
+                <div className="p-3 border border-weathered text-weathered text-sm">
+                  {updateError}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setConfirmPayModal(null); setUpdateError(''); }}
+                  className="flex-1 px-4 py-3 border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium uppercase text-sm tracking-wider"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitConfirmPayment}
+                  disabled={confirmPaySubmitting || !validAmt}
+                  className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+                >
+                  {confirmPaySubmitting ? 'Confirming...' : 'Confirm & close'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Final Invoice Modal — FINAL-5 (2026-05-31). For tier_v2 Stripe Connect
           ranchers — after the buyer's deposit lands + processing date is set,
           rancher sends the final balance invoice via Stripe Connect direct
@@ -3811,17 +4032,26 @@ export default function RancherDashboardPage() {
                     )}
                   </div>
 
-                  {/* Confirmation + commission auto-invoice disclaimer.
-                      Required by the rancher closing the deal so we don't
-                      mint Stripe invoices on a typo or accidental click. */}
+                  {/* Confirmation disclaimer. tier_v2 ranchers paid BHC's cut
+                      at deposit time via Stripe Connect, so the close handler
+                      SKIPS the commission invoice for them — show net-only copy
+                      with no invoice language. Legacy ranchers get the Stripe
+                      auto-invoice disclaimer so we don't mint an invoice on a
+                      typo or accidental click. */}
                   {closeForm.saleAmount && parseFloat(closeForm.saleAmount) > 0 && (
                     <div className="border border-saddle/40 bg-bone-warm p-4 space-y-3">
                       <p className="text-sm leading-relaxed text-charcoal">
                         <strong>Confirm before submitting:</strong> ${parseFloat(closeForm.saleAmount).toFixed(2)} is the final sale price the buyer agreed to.
                       </p>
-                      <p className="text-xs leading-relaxed text-saddle">
-                        Submitting auto-generates a Stripe invoice for <strong>${(parseFloat(closeForm.saleAmount) * (rancherInfo.commissionRate ?? 0.10)).toFixed(2)}</strong> ({((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}% commission), emailed to your account. Pay by card or ACH on the hosted invoice page within 30 days. The deal won&rsquo;t mark Commission Paid until Stripe confirms payment.
-                      </p>
+                      {rancherInfo.pricingModel === 'tier_v2' ? (
+                        <p className="text-xs leading-relaxed text-saddle">
+                          You keep <strong>100%</strong> of this — BHC&rsquo;s commission was already collected at deposit time, so no invoice is generated. Submitting just marks the deal Closed Won.
+                        </p>
+                      ) : (
+                        <p className="text-xs leading-relaxed text-saddle">
+                          Submitting auto-generates a Stripe invoice for <strong>${(parseFloat(closeForm.saleAmount) * (rancherInfo.commissionRate ?? 0.10)).toFixed(2)}</strong> ({((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}% commission), emailed to your account. Pay by card or ACH on the hosted invoice page within 30 days. The deal won&rsquo;t mark Commission Paid until Stripe confirms payment.
+                        </p>
+                      )}
                       <label className="flex items-start gap-2 cursor-pointer">
                         <input
                           type="checkbox"
@@ -3830,7 +4060,9 @@ export default function RancherDashboardPage() {
                           className="mt-1 cursor-pointer"
                         />
                         <span className="text-sm text-charcoal">
-                          Yes, ${parseFloat(closeForm.saleAmount).toFixed(2)} is the final agreed price. Generate the commission invoice.
+                          {rancherInfo.pricingModel === 'tier_v2'
+                            ? `Yes, $${parseFloat(closeForm.saleAmount).toFixed(2)} is the final agreed price. Mark this deal Closed Won.`
+                            : `Yes, $${parseFloat(closeForm.saleAmount).toFixed(2)} is the final agreed price. Generate the commission invoice.`}
                         </span>
                       </label>
                     </div>
@@ -3872,7 +4104,11 @@ export default function RancherDashboardPage() {
                 }
                 className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
               >
-                {updating ? 'Saving...' : closeForm.status === 'Closed Won' ? 'Submit + Send Invoice' : 'Confirm'}
+                {updating
+                  ? 'Saving...'
+                  : closeForm.status === 'Closed Won'
+                    ? (rancherInfo.pricingModel === 'tier_v2' ? 'Mark Closed Won' : 'Submit + Send Invoice')
+                    : 'Confirm'}
               </button>
             </div>
           </div>
@@ -4341,7 +4577,7 @@ function ResponseDeadline({ referral }: { referral: Referral }) {
   );
 }
 
-function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, onAccept, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; onAccept?: () => void; updating: string | null }) {
+function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, onAccept, onConfirmPayment, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; onAccept?: () => void; onConfirmPayment?: () => void; updating: string | null }) {
   // FINAL-5 (2026-05-31): show "Send Final Invoice" when deposit landed +
   // referral isn't yet Closed Won / Closed Lost / fully paid. Re-send label
   // if invoice already sent (final_invoice_url present).
@@ -4355,6 +4591,15 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
   // non-refundable per BHC policy.
   const rancherAcceptedAt = referral.rancher_accepted_at || '';
   const showAccept = !!onAccept && depositPaid && !rancherAcceptedAt && !isTerminal;
+  // COCKPIT MONEY-UX: for a deposit-paid deal the rest of the money comes via
+  // "Send Final Invoice" (Collect Balance), NOT "Close as Won". Closing as Won
+  // here strands the uncollected balance. So when a deposit is in and the final
+  // balance hasn't been paid yet, hide "Close as Won" and steer to the invoice.
+  const balanceOutstanding = depositPaid && !finalPaid;
+  const showClose = !balanceOutstanding;
+  // Awaiting Payment rows fire the off-platform commission invoice through the
+  // /confirm-payment endpoint, not the regular close. Surface that as its own CTA.
+  const showConfirmPayment = !!onConfirmPayment && referral.status === 'Awaiting Payment';
 
   return (
     <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -4411,12 +4656,24 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
             {finalSent ? 'Re-send invoice' : 'Send Final Invoice'}
           </button>
         )}
-        <button
-          onClick={onClose}
-          className="px-3 py-1.5 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors"
-        >
-          Close as Won
-        </button>
+        {showConfirmPayment && (
+          <button
+            onClick={onConfirmPayment}
+            disabled={updating === referral.id}
+            className="px-3 py-1.5 text-xs bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+            title="Confirm the off-platform payment you received — closes the deal + fires the commission invoice"
+          >
+            Confirm payment received
+          </button>
+        )}
+        {showClose && (
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors"
+          >
+            Close as Won
+          </button>
+        )}
         <button
           onClick={onLost}
           className="px-3 py-1.5 text-xs border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
@@ -4470,6 +4727,7 @@ function ReferralCard({
   onLost,
   onSendFinal,
   onAccept,
+  onConfirmPayment,
   updating,
 }: {
   referral: Referral;
@@ -4479,6 +4737,7 @@ function ReferralCard({
   onLost: () => void;
   onSendFinal?: () => void;
   onAccept?: () => void;
+  onConfirmPayment?: () => void;
   updating: string | null;
 }) {
   // FINAL-5 (2026-05-31): see ReferralRow for parity logic + button intent.
@@ -4490,6 +4749,13 @@ function ReferralCard({
   // NRD-2: Accept Slot button parity with ReferralRow.
   const rancherAcceptedAt = referral.rancher_accepted_at || '';
   const showAccept = !!onAccept && depositPaid && !rancherAcceptedAt && !isTerminal;
+  // COCKPIT MONEY-UX (parity with ReferralRow): hide "Close as Won" while a
+  // deposit balance is still outstanding — the balance is collected via "Send
+  // Final Invoice", not by closing the deal. Surface "Confirm payment received"
+  // for Awaiting Payment rows (off-platform pay → /confirm-payment endpoint).
+  const balanceOutstanding = depositPaid && !finalPaid;
+  const showClose = !balanceOutstanding;
+  const showConfirmPayment = !!onConfirmPayment && referral.status === 'Awaiting Payment';
   return (
     <div className="p-6 border border-dust bg-white space-y-4">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
@@ -4561,12 +4827,24 @@ function ReferralCard({
             {finalSent ? 'Re-send Final Invoice' : 'Send Final Invoice'}
           </button>
         )}
-        <button
-          onClick={onClose}
-          className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors"
-        >
-          Close as Won
-        </button>
+        {showConfirmPayment && (
+          <button
+            onClick={onConfirmPayment}
+            disabled={updating === referral.id}
+            className="px-4 py-2 text-sm bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+            title="Confirm the off-platform payment you received — closes the deal + fires the commission invoice"
+          >
+            Confirm payment received
+          </button>
+        )}
+        {showClose && (
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors"
+          >
+            Close as Won
+          </button>
+        )}
         <button
           onClick={onLost}
           className="px-4 py-2 text-sm border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
