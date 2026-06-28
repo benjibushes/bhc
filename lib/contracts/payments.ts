@@ -28,6 +28,37 @@ export interface CreateDepositInput {
   stripePaymentIntentId: string;
 }
 
+/**
+ * Pure dedup decision for recordDeposit. Given the candidate Payments rows
+ * returned by the by-PI-or-by-referral lookup and the live PaymentIntent id,
+ * decide which (if any) existing row may be reused. Extracted as a pure function
+ * so the money-loss guards can be unit-tested without mocking Airtable.
+ *
+ * Reuse ONLY a row that is BOTH:
+ *   - Status === 'pending' (excludes 'requires_webhook_replay' — a row the
+ *     orphan-reaper flagged after seeing a SUCCEEDED PI that never settled; real
+ *     money awaiting manual replay, recycling it masks an unreconciled charge),
+ *     AND every terminal status (succeeded/refunded/abandoned/failed).
+ *   - Stripe Payment Intent Id === the live PI (exact match). A pending row for
+ *     the SAME referral but a DIFFERENT PI is a genuinely new live PI
+ *     (quarter→half re-quote → new idempotencyKey → new PI). Overwriting its PI
+ *     would orphan the older PI on completion. Caller creates a new row instead.
+ *
+ * Returns the reusable row, or null when the caller should create a new row.
+ */
+export function selectReusablePaymentRow(
+  candidates: Array<{ id: string; [k: string]: any }>,
+  stripePaymentIntentId: string,
+): { id: string; [k: string]: any } | null {
+  return (
+    candidates.find(
+      (r) =>
+        r['Status'] === 'pending' &&
+        r['Stripe Payment Intent Id'] === stripePaymentIntentId,
+    ) ?? null
+  );
+}
+
 export async function recordDeposit(input: CreateDepositInput): Promise<{ id: string }> {
   const fields = {
     'Referral': [input.referralId],
@@ -48,30 +79,42 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
   // but the duplicate ledger rows confuse refund/abandon/replay lookups (each
   // queries by PI and takes existing[0]).
   //
-  // Reuse an existing non-terminal row when one already exists for this PI (the
-  // common retry — same session re-submitted) OR a still-pending row for this
-  // referral (a fresh session for an in-flight reservation). Re-stamp it with
-  // the latest charge details so the row tracks the live Session. Best-effort:
-  // a lookup failure falls through to create (the orphan-prevention path in the
-  // deposit route still gates on the create succeeding).
+  // Reuse an existing pending row ONLY on an EXACT PaymentIntent match (the
+  // common retry — same Checkout Session re-submitted via back button, double-
+  // click, or retried fetch). Re-stamp it with the latest charge details so the
+  // row tracks the live Session. Best-effort: a lookup failure falls through to
+  // create (the orphan-prevention path in the deposit route still gates on the
+  // create succeeding).
+  //
+  // CRITICAL — never reuse a pending row that belongs to a DIFFERENT PI, even
+  // when it's for the same referral. Two checkout sessions for one referral can
+  // carry DIFFERENT PaymentIntents (e.g. quarter→half cow re-quote → different
+  // idempotencyKey at stripeConnect.ts → new PI). Overwriting old→new PI would
+  // orphan the older PI: completing that older session calls
+  // markDepositSucceeded(oldPI), which finds NO row → silent orphan deposit
+  // (money in the rancher Connect acct, no settle, no email). For a different
+  // PI we leave the existing row alone and CREATE A NEW row so every live PI
+  // has its own settle-able row.
   try {
     const piEscaped = input.stripePaymentIntentId.replace(/"/g, '\\"');
     const refEscaped = input.referralId.replace(/"/g, '\\"');
     // Match by PI (the same-session resubmit) OR by a still-pending row for this
-    // referral (a fresh session for an in-flight reservation). SEARCH over
-    // ARRAYJOIN({Referral}) is the established Payments-by-referral pattern in
-    // this repo (see app/api/rancher/fulfillment/confirm/route.ts) — the
-    // Referral link's primary value is the record ID, unlike {Rancher} which
-    // emits names (the capacity-drift gotcha) and would silently never match.
+    // referral. The referral clause only WIDENS the candidate set so we can see
+    // an in-flight row — the reuse decision below still requires an exact PI
+    // match. SEARCH over ARRAYJOIN({Referral}) is the established
+    // Payments-by-referral pattern in this repo (see
+    // app/api/rancher/fulfillment/confirm/route.ts) — the Referral link's
+    // primary value is the record ID, unlike {Rancher} which emits names (the
+    // capacity-drift gotcha) and would silently never match.
     const existing: any[] = await getAllRecords(
       PAYMENTS_TABLE,
       `OR({Stripe Payment Intent Id} = "${piEscaped}", AND(SEARCH("${refEscaped}", ARRAYJOIN({Referral})), {Status} = "pending"))`,
     );
-    // Only reuse a non-terminal row. A succeeded/refunded/abandoned/failed row
-    // is settled history — never overwrite it; this deposit is genuinely new.
-    const reusable = existing.find(
-      (r) => r['Status'] === 'pending' || r['Status'] === 'requires_webhook_replay',
-    );
+    // Reuse ONLY a Status==='pending' row whose PI is exactly this PI (see
+    // selectReusablePaymentRow): excludes 'requires_webhook_replay' (masks an
+    // unreconciled charge) and any different-PI-same-referral row (would orphan
+    // the older PI on completion → create a new row instead).
+    const reusable = selectReusablePaymentRow(existing, input.stripePaymentIntentId);
     if (reusable) {
       await updateRecord(PAYMENTS_TABLE, reusable.id, {
         'Tier': input.tier,
