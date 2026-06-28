@@ -32,6 +32,10 @@ export const ADMIN_NAV: AdminNavItem[] = [
     group: 'PIPELINE', icon: '🎛', label: 'Sales desk', href: '/admin/desk', shortcut: 'g k',
     visibleTo: ['admin', 'onboarding'],
   },
+  {
+    group: 'PIPELINE', icon: '☀️', label: 'Today', href: '/admin/today/v2', shortcut: 'g t',
+    visibleTo: ['admin', 'onboarding'],
+  },
   { group: 'PIPELINE', icon: '📨', label: 'All deals', href: '/admin/referrals', shortcut: 'g r' },
   { group: 'PIPELINE', icon: '📬', label: 'Inquiries', href: '/admin/inquiries' },
   { group: 'PIPELINE', icon: '📋', label: 'Full Dashboard', href: '/admin', shortcut: 'g d' },
@@ -57,6 +61,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
 
   // SYSTEM — migration open to onboarding partner; others admin-only
   { group: 'SYSTEM', icon: '🩺', label: 'Health', href: '/admin/health' },
+  { group: 'SYSTEM', icon: '📄', label: 'Page readiness', href: '/admin/page-readiness' },
   { group: 'SYSTEM', icon: '🗃', label: 'Backfill', href: '/admin/backfill' },
   {
     group: 'SYSTEM', icon: '🚚', label: 'Migration', href: '/admin/migration',

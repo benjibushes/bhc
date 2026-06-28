@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 300;
 
@@ -12,17 +13,16 @@ export const maxDuration = 300;
 //   else                                              → "Community"
 //
 // Outside /api/admin/* on purpose so middleware doesn't gate it.
-// Password-gated. Add ?dry=1 for a no-op preview.
+// Auth via requireAdmin (cookie or x-admin-password header; constant-time).
+// Add ?dry=1 for a no-op preview.
 //
-// Usage: GET /api/maintenance-backfill-segment?password=ADMIN_PASSWORD[&dry=1]
+// Usage: GET /api/maintenance-backfill-segment[?dry=1]  (with admin cookie or x-admin-password header)
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const password = searchParams.get('password');
-  const dry = searchParams.get('dry') === '1';
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
 
-  if (!process.env.ADMIN_PASSWORD || password !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { searchParams } = new URL(request.url);
+  const dry = searchParams.get('dry') === '1';
 
   const consumers = await getAllRecords(TABLES.CONSUMERS) as any[];
   const blank = consumers.filter((c: any) => {
