@@ -240,26 +240,33 @@ async function realHandler(_request: Request): Promise<DunningResult> {
     }
 
     // Re-send the buyer their final invoice (whitelisted template, existing pay
-    // link — NO new charge created).
-    try {
-      await sendBuyerFinalInvoice({
-        buyerEmail,
-        buyerName,
-        ranchName,
-        orderType,
-        balanceAmount,
-        totalSaleAmount,
-        depositAmount,
-        processingDate: ref['Processing Date'] ? String(ref['Processing Date']) : undefined,
-        notes: `Friendly reminder — your final balance with ${ranchName} is still open. Tap the link below to complete your order.`,
-        checkoutUrl,
-      });
-      touched++;
-      bump('buyer_reminded');
-    } catch (e: any) {
-      bump('buyer_email_failed');
-      errors.push(`${referralId}: buyer email (${e?.message?.slice(0, 60)})`);
-      // Don't continue — still attempt escalation below if warranted.
+    // link — NO new charge created). STOP emailing the buyer once we've hit the
+    // escalation threshold (ESCALATE_AFTER_TOUCHES): from that point on a human
+    // takes over via Telegram/rancher, so we never dun the buyer forever. The
+    // throttle stamp above still fires every run, keeping the interval honest.
+    if (!escalate) {
+      try {
+        await sendBuyerFinalInvoice({
+          buyerEmail,
+          buyerName,
+          ranchName,
+          orderType,
+          balanceAmount,
+          totalSaleAmount,
+          depositAmount,
+          processingDate: ref['Processing Date'] ? String(ref['Processing Date']) : undefined,
+          notes: `Friendly reminder — your final balance with ${ranchName} is still open. Tap the link below to complete your order.`,
+          checkoutUrl,
+        });
+        touched++;
+        bump('buyer_reminded');
+      } catch (e: any) {
+        bump('buyer_email_failed');
+        errors.push(`${referralId}: buyer email (${e?.message?.slice(0, 60)})`);
+        // Don't continue — still attempt escalation below if warranted.
+      }
+    } else {
+      bump('buyer_send_suppressed');
     }
 
     // ESCALATION — after N touches, surface to a human (Telegram) + ping the
