@@ -21,6 +21,7 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
@@ -40,7 +41,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const NUDGE_DAYS = new Set([7, 4, 2, 1]);
 
 interface CronResult {
-  status: 'success' | 'partial' | 'error';
+  status: 'success' | 'partial' | 'error' | 'maintenance-blocked';
   recordsTouched: number;
   notes: string;
 }
@@ -86,6 +87,12 @@ function buildNudgeEmail({ firstName, ranchName, daysLeft, setupUrl, bookUrl, fu
 }
 
 async function realHandler(_request: Request): Promise<CronResult> {
+  // Maintenance gate — while the platform is paused, fire no rancher nudges and
+  // perform no deadline-driven auto-pauses (both are downstream side effects).
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
+
   // Resolve the operator booking link once per run (single source of truth;
   // cached 1h inside calBooking). Never throws; falls back to /contact.
   const bookUrl = await getOperatorBookingUrl('rancher');

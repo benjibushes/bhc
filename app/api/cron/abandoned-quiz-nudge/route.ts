@@ -26,6 +26,7 @@
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
@@ -47,7 +48,7 @@ const MAX_NUDGE_DAYS = Number(process.env.QUIZ_NUDGE_MAX_DAYS) || 21;
 const MAX_SENDS_PER_RUN = Number(process.env.QUIZ_NUDGE_MAX_PER_RUN) || 50;
 
 interface CronResult {
-  status: 'success' | 'partial' | 'error';
+  status: 'success' | 'partial' | 'error' | 'maintenance-blocked';
   recordsTouched: number;
   notes: string;
 }
@@ -102,6 +103,11 @@ function buildEmail(touchNum: number, firstName: string, quizUrl: string, state:
 }
 
 async function realHandler(_request: Request): Promise<CronResult> {
+  // Maintenance gate — no sends while the platform is paused.
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
+
   const now = Date.now();
   const today = new Date().toISOString().slice(0, 10);
   // Window: signed up between MAX_NUDGE_DAYS ago and 1h ago (give the signup
