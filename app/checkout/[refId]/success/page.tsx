@@ -8,7 +8,23 @@ import Link from 'next/link';
 import { trackEvent, metaEventId } from '@/lib/analytics';
 
 interface Info {
-  rancher: { name: string; ranchName: string };
+  rancher: { name: string; ranchName: string; slug?: string };
+}
+
+// Pure: build the share deep-link a buyer sends to the neighbor they want to
+// split the cow with. Points at the rancher's public page (where the neighbor
+// can reserve their own share) and carries a ref param attributing the invite
+// back to the buyer. Falls back to /access when the rancher slug is unknown so
+// the link is never dead. Exported for unit testing.
+export function buildShareLink(slug: string | undefined, refId: string, origin = ''): string {
+  const base = origin.replace(/\/+$/, '');
+  const path = slug
+    ? `/ranchers/${encodeURIComponent(slug)}`
+    : '/access';
+  const qs = new URLSearchParams();
+  if (refId) qs.set('ref', refId);
+  const query = qs.toString();
+  return `${base}${path}${query ? `?${query}` : ''}`;
 }
 
 export default function DepositSuccessPage() {
@@ -26,6 +42,7 @@ function DepositSuccessContent() {
   const sessionId = search.get('session_id') || '';
 
   const [info, setInfo] = useState<Info | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // G4 — deposit_completed client Pixel fire on success landing.
   // Server-side CAPI InitiateCheckout fires from the buyer_deposit branch of
@@ -56,6 +73,30 @@ function DepositSuccessContent() {
   // default so a missing name reads "your rancher" (not "your"), which would
   // otherwise produce "Tell your how you want it".
   const rancherFirst = rancherName === 'your rancher' ? 'your rancher' : rancherName.split(' ')[0];
+
+  // Refer-a-friend ("split your cow with a neighbor"). The share link points at
+  // the rancher's public page and is attributed back to this buyer via ?ref.
+  // origin is only known client-side, so compute it lazily.
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const shareLink = buildShareLink(info?.rancher?.slug, refId, origin);
+  const ranchLabel = info?.rancher?.ranchName || rancherName;
+  const shareMessage =
+    `I just reserved a share of beef from ${ranchLabel} on BuyHalfCow — want to split a cow? Grab your half here: ${shareLink}`;
+  const smsHref = `sms:?&body=${encodeURIComponent(shareMessage)}`;
+  const emailHref =
+    `mailto:?subject=${encodeURIComponent('Want to split a cow?')}&body=${encodeURIComponent(shareMessage)}`;
+
+  const copyShareLink = async () => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareLink);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    } catch {
+      /* clipboard blocked — the link is still visible/selectable in the field */
+    }
+  };
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
@@ -101,6 +142,47 @@ function DepositSuccessContent() {
               <span>You pick up or {rancherName} delivers. {rancherName} confirms fulfillment and gets paid out by Stripe.</span>
             </li>
           </ol>
+        </div>
+
+        {/* Refer-a-friend — the core "split half a cow with a neighbor" use case.
+            A buyer who just reserved is the best moment to ask them to bring the
+            other half. Pre-filled deep-link attributed back via ?ref. */}
+        <div className="bg-white border-2 border-saddle p-4 md:p-6 mb-6">
+          <h2 className="font-serif text-lg md:text-xl mb-2">Split your cow &mdash; invite your other half</h2>
+          <p className="text-sm md:text-base text-charcoal mb-4">
+            A whole or half cow is a lot of beef. Send a neighbor, friend, or family member your link &mdash; they reserve their share from {rancherFirst}, and you split the haul.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2 mb-3">
+            <input
+              type="text"
+              readOnly
+              value={shareLink}
+              onFocus={(e) => e.currentTarget.select()}
+              aria-label="Your share link"
+              className="flex-1 min-w-0 border border-dust bg-bone px-3 py-2.5 text-sm text-charcoal font-mono truncate"
+            />
+            <button
+              type="button"
+              onClick={copyShareLink}
+              className="flex-shrink-0 bg-charcoal text-bone px-5 py-2.5 min-h-[44px] uppercase tracking-wider text-sm hover:bg-saddle transition"
+            >
+              {copied ? 'Copied!' : 'Copy link'}
+            </button>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <a
+              href={smsHref}
+              className="flex-1 text-center bg-bone border border-charcoal text-charcoal px-5 py-2.5 min-h-[44px] flex items-center justify-center uppercase tracking-wider text-sm hover:bg-divider hover:text-bone transition"
+            >
+              Share by text
+            </a>
+            <a
+              href={emailHref}
+              className="flex-1 text-center bg-bone border border-charcoal text-charcoal px-5 py-2.5 min-h-[44px] flex items-center justify-center uppercase tracking-wider text-sm hover:bg-divider hover:text-bone transition"
+            >
+              Share by email
+            </a>
+          </div>
         </div>
 
         {/* BHC Promise reminder — paid-ad buyers landing here for the first time

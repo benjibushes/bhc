@@ -1062,10 +1062,20 @@ export default async function RancherPage(
                         </p>
                       )}
                     </div>
-                    {/* Connected ranchers: suppress raw product link; route to commission path instead */}
-                    {onConnect ? (
+                    {/* Connected ranchers: suppress raw product link; route to commission path instead.
+                        The #reserve anchor only exists when hasPricing renders the deposit form;
+                        a Connect rancher with no prices set would otherwise produce a dead anchor,
+                        so fall back to the on-platform /access flow. */}
+                    {onConnect && hasPricing ? (
                       <Link
                         href="#reserve"
+                        className="block w-full text-center mt-5 px-6 py-3 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
+                      >
+                        Reserve a share →
+                      </Link>
+                    ) : onConnect ? (
+                      <Link
+                        href={`/access?rancher=${slug}`}
                         className="block w-full text-center mt-5 px-6 py-3 border border-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
                       >
                         Reserve a share →
@@ -1134,7 +1144,13 @@ export default async function RancherPage(
                   </a>
                 ) : (
                   <Link
-                    href={onConnect ? '#reserve' : '/access'}
+                    href={
+                      onConnect
+                        ? hasPricing
+                          ? '#reserve'
+                          : `/access?rancher=${slug}`
+                        : '/access'
+                    }
                     className="inline-flex items-center gap-2 px-7 py-3.5 bg-bone text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-bone-warm"
                   >
                     {onConnect ? 'Reserve your share' : 'Get in touch'}
