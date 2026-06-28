@@ -36,6 +36,57 @@ import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// ── Per-sequence revive allowlist ───────────────────────────────────────────
+// The whole engine was parked 2026-06-09 (EMAIL_SEQUENCES_ENABLED!=='true').
+// Re-enabling the flag used to wake ALL ~22 built sends at once. Instead we
+// revive only the 3-4 highest-ROI buyer sequences and keep the rest dark until
+// each is explicitly opted back in.
+//
+// Behavior when EMAIL_SEQUENCES_ENABLED=true:
+//   • EMAIL_SEQUENCES_ALLOW unset  → the SEQ_DEFAULT_ON high-ROI set fires.
+//   • EMAIL_SEQUENCES_ALLOW="*"    → every sequence fires (full legacy engine).
+//   • EMAIL_SEQUENCES_ALLOW="a,b"  → only the named keys fire.
+// Keys are the per-branch labels below (e.g. 'abandoned_recovery',
+// 'incomplete_profile', 'closed_repeat', 'warm_lead_check').
+export const SEQ_KEYS = {
+  abandonedRecovery: 'abandoned_recovery',
+  incompleteProfile: 'incomplete_profile',
+  closedRepeat: 'closed_repeat',
+  warmLeadCheck: 'warm_lead_check',
+  matchNow: 'match_now',
+  nudgeToEngage: 'nudge_to_engage',
+  noBudgetFounderPitch: 'no_budget_founder_pitch',
+  stateWaitlist: 'state_waitlist',
+  waitingLetters: 'waiting_letters',
+  readyNudge: 'ready_nudge',
+  matchedD4: 'matched_d4',
+  closedCuts: 'closed_cuts',
+  closedMonthly: 'closed_monthly',
+  rancherDocsReminder: 'rancher_docs_reminder',
+} as const;
+
+// The high-ROI buyer sequences revived by default. Everything else stays dark
+// until the operator adds it to EMAIL_SEQUENCES_ALLOW.
+export const SEQ_DEFAULT_ON: ReadonlySet<string> = new Set([
+  SEQ_KEYS.abandonedRecovery, // 8-15% recapture on entered-but-didn't-finish
+  SEQ_KEYS.incompleteProfile, // ~69% of buyers sat here — biggest funnel leak
+  SEQ_KEYS.closedRepeat,      // repeat-purchase ask = cheapest revenue we have
+  SEQ_KEYS.warmLeadCheck,     // R2B ready-check keeps hot leads from going cold
+]);
+
+// Pure: parse the allowlist env into a predicate. Exported for unit tests.
+export function buildSeqGate(allowRaw: string | undefined): (key: string) => boolean {
+  const trimmed = (allowRaw || '').trim();
+  if (trimmed === '*') return () => true;
+  if (!trimmed) {
+    return (key: string) => SEQ_DEFAULT_ON.has(key);
+  }
+  const allowed = new Set(
+    trimmed.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+  );
+  return (key: string) => allowed.has(key);
+}
+
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -59,13 +110,17 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   const skipReasons: Record<string, number> = {};
   const now = Date.now();
 
+  // Per-sequence revive gate. Defaults to the high-ROI buyer set; widen via
+  // EMAIL_SEQUENCES_ALLOW (comma-separated keys, or "*" for the full engine).
+  const seqOn = buildSeqGate(process.env.EMAIL_SEQUENCES_ALLOW);
+
     // ── ABANDONED APPLICATION RECOVERY ────────────────────────────────────
     // 3-email recapture sequence for visitors who entered email on /access
     // but didn't complete the form. Industry recovery rate: 8-15%.
     // Records are created by /api/abandoned-app with Source='abandoned_application'
     // and Sequence Stage='abandoned_pending'.
     let abandonedRecovered = 0;
-    try {
+    if (seqOn(SEQ_KEYS.abandonedRecovery)) try {
       const abandoned = await getAllRecords(
         TABLES.CONSUMERS,
         `AND({Source} = "abandoned_application", {Status} != "Approved")`
@@ -271,7 +326,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         const daysSinceSegmentSend = segmentLastSent ? (now - segmentLastSent) / DAY_MS : Infinity;
         const buyerStateNorm = (consumer['State'] || '').toString().toUpperCase().slice(0, 2);
 
-        if (segment === 'MATCH_NOW' && segmentCount < 1) {
+        if (segment === 'MATCH_NOW' && segmentCount < 1 && seqOn(SEQ_KEYS.matchNow)) {
           // LOCK pre-check (2026-06-06): if buyer has a locked active
           // referral (Rancher Contacted / Negotiation / Awaiting Payment)
           // elsewhere, skip MATCH_NOW entirely. They're already in real
@@ -488,7 +543,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             segmentCounters.match_now_rescue++; totalSent++; fired = true;
           }
         }
-        else if (segment === 'NUDGE_TO_ENGAGE' && segmentCount < 2 && daysSinceSegmentSend >= 7) {
+        else if (segment === 'NUDGE_TO_ENGAGE' && segmentCount < 2 && daysSinceSegmentSend >= 7 && seqOn(SEQ_KEYS.nudgeToEngage)) {
           const engageToken = jwt.sign({ type: 'warmup-engage', consumerId }, JWT_SECRET, { expiresIn: '30d' });
           const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
           await updateRecord(TABLES.CONSUMERS, consumerId, {
@@ -499,7 +554,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           await sendNudgeToEngage({ email, firstName, buyerState: buyerStateNorm || stateLabel, engageUrl });
           segmentCounters.nudge_to_engage++; totalSent++; fired = true;
         }
-        else if (segment === 'WARM_LEAD' && segmentCount < 4 && daysSinceSegmentSend >= 14) {
+        else if (segment === 'WARM_LEAD' && segmentCount < 4 && daysSinceSegmentSend >= 14 && seqOn(SEQ_KEYS.warmLeadCheck)) {
           const engageToken = jwt.sign({ type: 'warmup-engage', consumerId, r2b: true }, JWT_SECRET, { expiresIn: '30d' });
           const engageUrl = `${SITE_URL}/api/warmup/engage?token=${engageToken}`;
           await updateRecord(TABLES.CONSUMERS, consumerId, {
@@ -510,7 +565,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           await sendWarmLeadReadyCheck({ email, firstName, buyerState: buyerStateNorm || stateLabel, engageUrl });
           segmentCounters.warm_lead_check++; totalSent++; fired = true;
         }
-        else if (segment === 'NO_BUDGET_FOUNDER_PITCH' && segmentCount < 1) {
+        else if (segment === 'NO_BUDGET_FOUNDER_PITCH' && segmentCount < 1 && seqOn(SEQ_KEYS.noBudgetFounderPitch)) {
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
@@ -519,7 +574,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           await sendNoBudgetFounderPitch({ email, firstName, buyerState: buyerStateNorm || stateLabel });
           segmentCounters.no_budget_founder_pitch++; totalSent++; fired = true;
         }
-        else if (segment === 'STATE_WAITLIST' && segmentCount < 1) {
+        else if (segment === 'STATE_WAITLIST' && segmentCount < 1 && seqOn(SEQ_KEYS.stateWaitlist)) {
           await updateRecord(TABLES.CONSUMERS, consumerId, {
             'Routing Segment Send Count': segmentCount + 1,
             'Routing Segment Last Sent At': new Date().toISOString(),
@@ -533,7 +588,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         // w/ a 1-email-lifetime cap → funnel hemorrhage. Now 3 progressive
         // letters over 28d (d0, d14, d28). Subject escalates: gentle → check
         // → close-the-loop. After 3 sends, drops to drip-only nurture.
-        else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 3 && daysSinceSegmentSend >= 14) {
+        else if (segment === 'INCOMPLETE_PROFILE' && segmentCount < 3 && daysSinceSegmentSend >= 14 && seqOn(SEQ_KEYS.incompleteProfile)) {
           const subjectVariants = [
             'two questions on your beef — 30 seconds',
             'still want beef from your area? — quick check',
@@ -558,7 +613,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         // run. Each buyer gets at most one automated email per day.
         if (fired) continue;
 
-        if (buyerStage === 'WAITING') {
+        if (buyerStage === 'WAITING' && seqOn(SEQ_KEYS.waitingLetters)) {
           // Letter 1 at Day 7
           if (daysInStage >= 7 && !seqStage.startsWith('WAITING_')) {
             await updateRecord(TABLES.CONSUMERS, consumerId, {
@@ -592,7 +647,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           }
         }
 
-        else if (buyerStage === 'READY') {
+        else if (buyerStage === 'READY' && seqOn(SEQ_KEYS.readyNudge)) {
           // Day 7 last-call nudge (uses existing rancher-launch nudge template — same
           // single-CTA YES button mechanic, fires once per READY tenure)
           if (daysInStage >= 7 && seqStage !== 'READY_NUDGE') {
@@ -605,22 +660,28 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
               'Sequence Stage': 'READY_NUDGE',
               'Sequence Sent At': new Date().toISOString(),
             });
+            // Pass templateName + _replyContext so guardedSend's suppression
+            // check, frequency cap, and Email Sends audit log all fire — same
+            // safety wiring as the rancher docs reminders below (2026-06-09
+            // audit). Without it this buyer nudge bypassed every gate.
             await sendEmail({
               to: email,
               subject: `last call — ${rancherName} is open in ${stateLabel}`,
               html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:36px;border:1px solid #A7A29A;background:#fff;line-height:1.7;">
-                <p>Hey ${firstName},</p>
-                <p>I introduced you to <strong>${rancherName}</strong> last week — didn't hear back, so this is my last nudge.</p>
-                <p><strong>Are you ready to buy in the next 1–2 months?</strong> If yes, click below and I'll send their full info. If not, I'll drop you off the active list and check back when timing fits.</p>
-                <p style="text-align:center;margin:28px 0;"><a href="${engageUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;">Yes — Ready to Buy</a></p>
-                <p style="font-size:12px;color:#A7A29A;">— Ben</p>
+                <p>hey ${firstName},</p>
+                <p>i introduced you to <strong>${rancherName}</strong> last week and didn't hear back — so this is my last nudge, no hard feelings either way.</p>
+                <p><strong>still want beef in the next month or two?</strong> if yes, tap below and i'll send their full info. if not, i'll quietly take you off the active list and check back when the timing's better.</p>
+                <p style="text-align:center;margin:28px 0;"><a href="${engageUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px;">yes — i'm ready</a></p>
+                <p style="font-size:12px;color:#A7A29A;">— ben</p>
               </div>`,
+              templateName: 'buyer_ready_nudge',
+              _replyContext: { type: 'usr', recordId: consumerId },
             });
             counters.ready_nudge++; fired = true;
           }
         }
 
-        else if (buyerStage === 'MATCHED') {
+        else if (buyerStage === 'MATCHED' && seqOn(SEQ_KEYS.matchedD4)) {
           // Day 4 check-in
           if (daysInStage >= 4 && seqStage !== 'MATCHED_D4') {
             const rancherName = buyerActiveRancher.get(consumerId) || 'your rancher';
@@ -646,7 +707,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
           // Day 14 cuts education (Day 0 fires from the close-handler event,
           // not from this cron — see app/api/rancher/referrals/[id]/route.ts)
-          if (daysInStage >= 14 && seqStage !== 'CLOSED_CUTS' && !seqStage.startsWith('CLOSED_M') && seqStage !== 'CLOSED_REPEAT') {
+          if (seqOn(SEQ_KEYS.closedCuts) && daysInStage >= 14 && seqStage !== 'CLOSED_CUTS' && !seqStage.startsWith('CLOSED_M') && seqStage !== 'CLOSED_REPEAT') {
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_CUTS',
               'Sequence Sent At': new Date().toISOString(),
@@ -655,7 +716,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             counters.closed_cuts++; fired = true;
           }
           // Monthly letters at Day 60, 90, 120 (months 2, 3, 4 post-purchase)
-          else if (seqStage === 'CLOSED_CUTS' && daysInStage >= 60) {
+          else if (seqOn(SEQ_KEYS.closedMonthly) && seqStage === 'CLOSED_CUTS' && daysInStage >= 60) {
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_M2',
               'Sequence Sent At': new Date().toISOString(),
@@ -663,7 +724,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             await sendClosedMonthlyLetter({ firstName, email, monthNumber: 2 });
             counters.closed_monthly++; fired = true;
           }
-          else if (seqStage === 'CLOSED_M2' && daysInStage >= 90) {
+          else if (seqOn(SEQ_KEYS.closedMonthly) && seqStage === 'CLOSED_M2' && daysInStage >= 90) {
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_M3',
               'Sequence Sent At': new Date().toISOString(),
@@ -671,7 +732,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             await sendClosedMonthlyLetter({ firstName, email, monthNumber: 3 });
             counters.closed_monthly++; fired = true;
           }
-          else if (seqStage === 'CLOSED_M3' && daysInStage >= 120) {
+          else if (seqOn(SEQ_KEYS.closedMonthly) && seqStage === 'CLOSED_M3' && daysInStage >= 120) {
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_M4',
               'Sequence Sent At': new Date().toISOString(),
@@ -679,8 +740,19 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
             await sendClosedMonthlyLetter({ firstName, email, monthNumber: 4 });
             counters.closed_monthly++; fired = true;
           }
-          // Month 5 re-engagement ask
-          else if ((seqStage === 'CLOSED_M4' || seqStage === 'CLOSED_M3') && daysInStage >= 150) {
+          // Month 5 re-engagement ask — the highest-ROI post-purchase send.
+          // Default-on, so it must be reachable even when the cuts/monthly
+          // nurture stages stay dark. Two paths: (a) the normal chain from
+          // CLOSED_M3/M4, and (b) a direct day-150+ fire for any purchased
+          // buyer who never got the repeat ask, regardless of intermediate
+          // stage (covers the revive-repeat-only config). Idempotent via the
+          // CLOSED_REPEAT stamp.
+          else if (
+            seqOn(SEQ_KEYS.closedRepeat) &&
+            daysInStage >= 150 &&
+            seqStage !== 'CLOSED_REPEAT' &&
+            (seqStage === 'CLOSED_M4' || seqStage === 'CLOSED_M3' || !seqOn(SEQ_KEYS.closedMonthly))
+          ) {
             await updateRecord(TABLES.CONSUMERS, consumerId, {
               'Sequence Stage': 'CLOSED_REPEAT',
               'Sequence Sent At': new Date().toISOString(),
@@ -727,7 +799,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // ── Rancher agreement reminder drip ─────────────────────────────────────
     // Day 3, 7, 14 after docs sent — nudge to sign agreement
     let rancherReminders = 0;
-    try {
+    if (seqOn(SEQ_KEYS.rancherDocsReminder)) try {
       const pipelineRanchers = await getAllRecords(TABLES.RANCHERS, '{Onboarding Status} = "Docs Sent"') as any[];
 
       for (const rancher of pipelineRanchers) {
@@ -825,7 +897,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   return {
     status: errors > 0 ? 'partial' : 'success',
     recordsTouched: grandTotal,
-    notes: `sent=${grandTotal} (stage=${total} rancherReminders=${rancherReminders} abandoned=${abandonedRecovered}${segmentNote}) errors=${errors}`,
+    notes: `sent=${grandTotal} (stage=${total} rancherReminders=${rancherReminders} abandoned=${abandonedRecovered}${segmentNote}) errors=${errors} allow=${process.env.EMAIL_SEQUENCES_ALLOW || 'default'}`,
     skipReasonBreakdown: Object.keys(skipReasons).length ? skipReasons : undefined,
   };
 }
