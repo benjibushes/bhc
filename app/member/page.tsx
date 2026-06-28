@@ -756,6 +756,12 @@ function PastOrdersSection({
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        // tier_v2 + Connect-active rancher → straight to a 1-tap deposit
+        // instead of waiting on a re-intro email (highest-intent path).
+        if (data.depositUrl) {
+          window.location.href = data.depositUrl;
+          return;
+        }
         setResultByOrderId(prev => ({
           ...prev,
           [order.id]: {
