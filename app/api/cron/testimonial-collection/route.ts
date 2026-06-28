@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, TABLES, escapeAirtableValue } from '@/lib/airtable';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTestimonialAsk } from '@/lib/email';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
@@ -49,13 +50,18 @@ function daysSince(iso: string): number {
 }
 
 interface Result {
-  status: 'success' | 'partial' | 'error';
+  status: 'success' | 'partial' | 'error' | 'maintenance-blocked';
   recordsTouched: number;
   notes: string;
   skipReasonBreakdown?: Record<string, number>;
 }
 
 async function realHandler(_request: Request): Promise<Result> {
+  // Maintenance gate — no sends while the platform is paused.
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
+
   // Pull all Closed Won refs.
   const refs = (await getAllRecords(
     TABLES.REFERRALS,

@@ -6,6 +6,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail, sendBuyerIntroNotification, sendStateWaitlistLetter } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
+import { isSmsWindow } from '@/lib/sendWindow';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
@@ -122,6 +123,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Buyer record not found: ${buyerId}` }, { status: 404 });
     }
 
+    // QUIZ-REQUIRED QUALIFICATION (locked rule, confirmed 2026-06-28): routing
+    // selects ONLY on `Qualified At` (the /qualify quiz stamp) + score, NEVER on
+    // Buyer Stage='READY'. This is deliberate — there are ~846 legacy READY-but-
+    // unquizzed consumers that must never be routed; gating on `Qualified At`
+    // (below) excludes them by construction. Do not relax this to Buyer Stage.
     const buyerLabel = buyerRecForGate['Full Name'] || buyerRecForGate['Email'] || buyerId;
     const qualScore = Number(buyerRecForGate['Qualification Score'] || 0);
     const hasQualified = !!buyerRecForGate['Qualified At'] && qualScore >= 75;
@@ -1270,7 +1276,15 @@ export async function POST(request: Request) {
           // explicit SMS Opt-In + Unsubscribed mirror. Pre-fix, every buyer w/
           // phone got SMS — TCPA exposure when TWILIO_* env vars flip on.
           // Now: no opt-in OR unsubscribed, no SMS, no exposure.
-          if (buyerPhone) {
+          //
+          // TCPA QUIET-HOURS GATE (8pm-8am local): only send the SMS touchpoint
+          // inside the buyer's local SMS window (isSmsWindow mirrors the
+          // demand-router gate — lib/sendWindow.ts). Outside the window the
+          // intro email still fires and the buyer's /member dashboard carries
+          // the rancher contact; we simply skip the SMS rather than risk a
+          // quiet-hours text. (This is a fresh real-time intro, not a deferred
+          // wave, so there's no later run to pick it up — skipping is correct.)
+          if (buyerPhone && isSmsWindow(buyerState, Date.now())) {
             try {
               const consumerForSms: any = await getRecordById(TABLES.CONSUMERS, buyerId);
               sendSMSToConsumer({

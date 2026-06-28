@@ -26,6 +26,7 @@ import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtab
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
+import { isSmsWindow } from '@/lib/sendWindow';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import jwt from 'jsonwebtoken';
@@ -163,11 +164,20 @@ p{margin:14px 0;color:#2A2A2A;font-size:15px}
         // Fire-and-forget — never block the per-referral loop on a Twilio
         // hiccup. F-3 / P4-D audit fix: routed through sendSMSToConsumer which
         // gates on SMS Opt-In + Unsubscribed.
-        sendSMSToConsumer({
-          consumer: buyer,
-          body: `hey ${firstName} — quick check in. did ${rancherName} text you yet? reply 1=yes 2=no 3=need help. reply STOP to opt out. — Ben`,
-          reason: 'buyer-pulse day-5 check-in',
-        }).catch(() => {});
+        //
+        // TCPA QUIET-HOURS GATE (8pm-8am local): only text inside the buyer's
+        // local SMS window (isSmsWindow — lib/sendWindow.ts, same gate the
+        // demand-router uses). The pulse EMAIL already fired above, so skipping
+        // the SMS outside the window just forgoes the bonus channel — no
+        // quiet-hours text. The pulse is stamped once, so this referral won't
+        // re-pulse later; SMS is best-effort by design.
+        if (isSmsWindow(buyer['State'], Date.now())) {
+          sendSMSToConsumer({
+            consumer: buyer,
+            body: `hey ${firstName} — quick check in. did ${rancherName} text you yet? reply 1=yes 2=no 3=need help. reply STOP to opt out. — Ben`,
+            reason: 'buyer-pulse day-5 check-in',
+          }).catch(() => {});
+        }
 
         sent++;
         await new Promise((r) => setTimeout(r, 600));

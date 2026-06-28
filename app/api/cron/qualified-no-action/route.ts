@@ -14,8 +14,10 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
+import { isSmsWindow } from '@/lib/sendWindow';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
@@ -25,7 +27,7 @@ export const maxDuration = 120;
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
 interface CronResult {
-  status: 'success' | 'partial' | 'error';
+  status: 'success' | 'partial' | 'error' | 'maintenance-blocked';
   recordsTouched: number;
   notes: string;
 }
@@ -57,6 +59,11 @@ function buildEmailHtml(args: {
 }
 
 async function realHandler(_request: Request): Promise<CronResult> {
+  // Maintenance gate — no sends while the platform is paused.
+  if (isMaintenanceMode()) {
+    return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
+  }
+
   // Kill-switch gate
   if (process.env.MATCHING_ENABLED === 'false') {
     return { status: 'partial', recordsTouched: 0, notes: 'skipped — MATCHING_ENABLED=false' };
@@ -161,7 +168,13 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
     // SMS (opt-in only — sendSMSToConsumer re-checks SMS Opt-In + Unsub
     // internally, but we gate here too so we don't waste the call).
-    if (c['SMS Opt-In']) {
+    //
+    // TCPA QUIET-HOURS GATE (8pm-8am local): only text inside the buyer's local
+    // SMS window (isSmsWindow — lib/sendWindow.ts, same gate the demand-router
+    // uses). The nudge EMAIL already fired above and the dedup note is stamped,
+    // so outside the window we simply forgo the bonus SMS channel rather than
+    // risk a quiet-hours text.
+    if (c['SMS Opt-In'] && isSmsWindow(state, Date.now())) {
       try {
         const ok = await sendSMSToConsumer({
           consumer: c,
