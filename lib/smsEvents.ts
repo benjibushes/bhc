@@ -20,7 +20,7 @@
 // Each template: 160 chars max, single SMS segment, no emojis
 // that break GSM-7 encoding.
 
-import { sendSMSToConsumer } from './twilio';
+import { sendSMSToConsumer, sendSMS } from './twilio';
 
 export type SMSEventType =
   | 'signup'
@@ -30,6 +30,14 @@ export type SMSEventType =
   | 'slot_locked'
   | 'refund'
   | 'fulfillment';
+
+// Rancher-facing (operational/B2B) events. Kept separate from the buyer
+// SMSEventType union because they ride a DIFFERENT gate: a rancher is a
+// business partner who signed up to sell + receive deal alerts, not a
+// marketing consumer. These skip the buyer TCPA SMS-Opt-In consent gate
+// (which applies to consumers) and use the raw transactional sender — still
+// flag-gated by ENABLE_SMS so nothing fires until Twilio is live.
+export type RancherSMSEventType = 'deposit_paid_rancher';
 
 const SMS_FEATURE_FLAG = 'ENABLE_SMS';
 
@@ -91,4 +99,49 @@ export async function fireSMSEvent(input: {
     body,
     reason: `event=${input.type}`,
   });
+}
+
+interface RancherSMSEventVars {
+  buyerFirstName?: string;
+  state?: string;
+  cut?: string;        // "Quarter" | "Half" | "Whole" | freeform
+  amount?: number;     // dollars paid as deposit
+}
+
+// Body builder for rancher operational SMS. Pulled out (mirrors buildBody) so
+// the copy lives in one place and the deposit-paid notify + the SLA re-ping
+// cron emit identical text. GSM-7 safe (no emoji), single segment target.
+function buildRancherBody(type: RancherSMSEventType, vars: RancherSMSEventVars): string {
+  const who = vars.buyerFirstName || 'A buyer';
+  const where = vars.state ? ` in ${vars.state}` : '';
+  const cut = vars.cut ? vars.cut.toLowerCase() : 'share';
+  const amt = typeof vars.amount === 'number' && vars.amount > 0
+    ? ` ($${Math.round(vars.amount).toLocaleString('en-US')} deposit)`
+    : '';
+  switch (type) {
+    case 'deposit_paid_rancher':
+      return `BuyHalfCow: ${who}${where} just PAID a deposit for a ${cut}${amt}. They're expecting your call today. Accept + details in your dashboard: ${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/rancher`;
+  }
+}
+
+/**
+ * Fire a rancher-facing operational SMS gated by ENABLE_SMS feature flag.
+ * Uses the raw transactional sender (a rancher consented to deal alerts at
+ * onboarding — this is not a marketing message), so it does NOT require the
+ * consumer TCPA SMS-Opt-In gate. No-op when the flag is off.
+ *
+ * Stacked gates (any false = skip):
+ *   1. ENABLE_SMS=1            (feature flag — nothing fires until Twilio live)
+ *   2. phone present + valid   (normalized E.164 inside sendSMS)
+ */
+export async function fireRancherSMSEvent(input: {
+  type: RancherSMSEventType;
+  phone: string | null | undefined;
+  vars?: RancherSMSEventVars;
+}): Promise<boolean> {
+  if (!isSMSEnabled()) return false;
+  const to = (input.phone || '').toString().trim();
+  if (!to) return false;
+  const body = buildRancherBody(input.type, input.vars || {});
+  return sendSMS({ to, body });
 }

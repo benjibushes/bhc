@@ -152,6 +152,10 @@
     {
       "path": "/api/cron/rancher-go-live-sync",
       "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/api/cron/deposit-accept-sla",
+      "schedule": "15 * * * *"
     }
   ]
 }

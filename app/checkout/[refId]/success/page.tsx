@@ -52,6 +52,10 @@ function DepositSuccessContent() {
   }, [refId]);
 
   const rancherName = info?.rancher?.name || 'your rancher';
+  // First name for friendly inline mentions. Special-case the "your rancher"
+  // default so a missing name reads "your rancher" (not "your"), which would
+  // otherwise produce "Tell your how you want it".
+  const rancherFirst = rancherName === 'your rancher' ? 'your rancher' : rancherName.split(' ')[0];
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
@@ -63,14 +67,30 @@ function DepositSuccessContent() {
           Your payment to <strong>{rancherName}</strong> went through. A receipt is in your email.
         </p>
 
+        {/* Primary handoff CTA — the buyer's one action right now. Tell the
+            rancher how they want it so the first call is productive. */}
+        <div className="bg-white border-2 border-charcoal p-4 md:p-6 mb-6">
+          <h2 className="font-serif text-lg md:text-xl mb-2">Tell {rancherFirst} how you want it</h2>
+          <p className="text-sm md:text-base text-charcoal mb-4">
+            Delivery or pickup, when you&rsquo;d like it, and anything for the cut sheet. 30 seconds &mdash; and {rancherFirst} has it before they call you.
+          </p>
+          <Link
+            href={`/checkout/${refId}/preferences`}
+            className="inline-flex items-center justify-center bg-charcoal text-bone px-6 py-3 min-h-[48px] uppercase tracking-wider text-sm hover:bg-saddle transition"
+          >
+            Set your preferences &rarr;
+          </Link>
+        </div>
+
         {/* What's next — honest, day-by-day. No tracking promise; rancher
-            coordinates directly. */}
+            coordinates directly. The "today" line is now TRUE: deposit
+            settlement notifies the rancher by email + text (lib/rancherNotify). */}
         <div className="bg-white border border-dust p-4 md:p-6 mb-6">
           <h2 className="font-serif text-lg md:text-xl mb-4">What happens next</h2>
           <ol className="space-y-4 text-sm md:text-base text-charcoal">
             <li className="flex gap-3">
               <span className="text-saddle font-medium flex-shrink-0">Today:</span>
-              <span>{rancherName} got the deposit notification by email and text. Expect a reply within 24&ndash;48 hours.</span>
+              <span>We let {rancherName} know your deposit landed &mdash; by email and text. They reach out directly to set things up, usually the same day.</span>
             </li>
             <li className="flex gap-3">
               <span className="text-saddle font-medium flex-shrink-0">This week:</span>
@@ -96,7 +116,7 @@ function DepositSuccessContent() {
             href={`/checkout/${refId}/ask`}
             className="flex-1 text-center bg-charcoal text-bone px-6 py-3 min-h-[48px] flex items-center justify-center uppercase tracking-wider text-sm hover:bg-saddle transition"
           >
-            Open thread with {rancherName.split(' ')[0]} &rarr;
+            Open thread with {rancherFirst} &rarr;
           </Link>
           <Link
             href="/member"
