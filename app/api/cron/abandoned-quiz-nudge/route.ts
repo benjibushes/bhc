@@ -29,6 +29,7 @@ import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 import { JWT_SECRET } from '@/lib/secrets';
 import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
 import { normalizeState } from '@/lib/states';
@@ -211,19 +212,8 @@ async function realHandler(_request: Request): Promise<CronResult> {
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      const { searchParams } = new URL(request.url);
-      if (searchParams.get('secret') !== cronSecret) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-          status: 401,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('abandoned-quiz-nudge', realHandler)(request);
 }
 

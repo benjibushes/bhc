@@ -25,6 +25,7 @@ import { getRecordById, deleteRecord, TABLES } from '@/lib/airtable';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 120;
 
@@ -232,17 +233,8 @@ async function realHandler(_request: Request): Promise<E2EResult> {
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    const ok = authHeader === `Bearer ${cronSecret}`;
-    if (!ok) {
-      const { searchParams } = new URL(request.url);
-      if (searchParams.get('secret') !== cronSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('synthetic-e2e', realHandler)(request);
 }
 

@@ -46,6 +46,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { peekRedisCapacity, setCapacityCounter } from '@/lib/rancherCapacity';
 import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 180;
 
@@ -170,17 +171,8 @@ async function realHandler(_request: Request): Promise<DriftResult> {
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    const ok = authHeader === `Bearer ${cronSecret}`;
-    if (!ok) {
-      const { searchParams } = new URL(request.url);
-      if (searchParams.get('secret') !== cronSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('capacity-drift-check', realHandler)(request);
 }
 
