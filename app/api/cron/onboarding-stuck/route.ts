@@ -132,6 +132,21 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       continue;
     }
 
+    // GO-LIVE-READY GUARD (silent-skip fix): the `signed-no-page` bucket fires on
+    // (Agreement Signed && !Page Live). But a rancher who signed AND already has
+    // slug + price (+ Connect active for tier_v2 / payment link for legacy) has
+    // NOTHING left to do — they're fully eligible and the rancher-go-live-sync
+    // cron (06:30 UTC daily) will flip them Active/Live. Nudging them anyway sends
+    // a self-contradicting "you're 1 step from live, finish setup" email with an
+    // EMPTY checklist, burning sender reputation on a rancher who did everything
+    // right. Skip them here and let go-live-sync own the flip. (connect-stuck and
+    // the call-complete/docs-sent buckets always have a concrete missing item, so
+    // this only short-circuits the genuinely-done signed-no-page case.)
+    if (bucketLabel === 'signed-no-page' && missing.length === 0) {
+      console.log(`[onboarding-stuck] skip go-live-ready rancher ${r.id} — go-live-sync will flip`);
+      continue;
+    }
+
     const days = daysSince(anchorISO || undefined);
     if (days === null || days < 3) continue;
     const bucket = pickNudgeBucket(days);

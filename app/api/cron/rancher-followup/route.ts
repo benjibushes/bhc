@@ -28,6 +28,13 @@ const MAX_PER_RUN = 25;
 // Monday guard on the Monday-only loops ensures the weekly work fires on
 // Mondays + Cron Runs has a row every day proving we DID check, while the
 // daily prospect-nudge loop runs every UTC day.
+// AUDIT 2026-06-28 (rancher-lifecycle pass): verified this nudges ranchers sitting
+// on leads + stalled prospects. Daily new-applicant reminder (≥2d old, throttled by
+// Last Onboarding Nudge At, stamp-before-send), Monday stalled-mid-funnel digest, and
+// Monday stale-lead nudge (per-referral 7d throttle + re-applied Active-Status guard
+// on the find()-resolved rancher so Paused/Non-Compliant/Removed aren't nudged). The
+// daily wrapper + in-code Monday guard correctly works around Vercel Hobby dropping
+// day-of-week cron schedules. No silent-skip or double-nudge found — left as-is.
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string }> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };

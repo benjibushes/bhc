@@ -31,6 +31,14 @@ export const maxDuration = 120;
 // Then fire launch warmup (fire-and-forget, idempotent) + Telegram note.
 // ─────────────────────────────────────────────────────────────────────────
 
+// AUDIT 2026-06-28 (rancher-lifecycle pass): verified this advances ranchers
+// correctly. Candidate filter (signed + not Active/Paused/At-Capacity + pre-live
+// Onboarding Status) matches the only statuses sign-agreement actually writes
+// (Agreement Signed / Verification Complete / Live), so no signed+ready rancher
+// is silently stranded. The tier_v2 fork gates on Connect='active' + slug + price
+// (content gate prevents flipping a blank page Live) with a live-Stripe reconcile
+// that removes the webhook dependency; legacy gates on slug + price + payment link.
+// No silent-skip or wrong-field issues found — left as-is.
 async function realHandler(
   _request: Request,
 ): Promise<{ status: 'success' | 'partial'; recordsTouched: number; notes: string }> {
