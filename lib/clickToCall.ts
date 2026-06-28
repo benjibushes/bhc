@@ -29,6 +29,26 @@ export function isClickToCallEnabled(): boolean {
   return process.env[CTC_FEATURE_FLAG] === '1';
 }
 
+/**
+ * SSRF guard for the recording fetch. transcribeRecording sends the Twilio
+ * Basic-auth header (ACCOUNT_SID:AUTH_TOKEN) with the request, so the URL
+ * MUST be a Twilio-hosted https endpoint — otherwise an attacker-supplied
+ * RecordingUrl (e.g. via a spoofed webhook) would exfiltrate our Twilio
+ * credentials or reach internal services (cloud metadata endpoints, etc).
+ * Only twilio.com / *.twilio.com over https are allowed.
+ */
+export function isAllowedTwilioRecordingUrl(recordingUrl: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(recordingUrl);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:') return false;
+  const host = u.hostname.toLowerCase();
+  return host === 'twilio.com' || host.endsWith('.twilio.com');
+}
+
 const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const FROM_NUMBER = process.env.TWILIO_FROM_NUMBER;
@@ -100,6 +120,13 @@ export async function transcribeRecording(recordingUrl: string): Promise<string>
     return '';
   }
   if (!recordingUrl) return '';
+
+  // SSRF / credential-exfiltration guard: we attach Twilio Basic auth to this
+  // fetch, so only ever fetch Twilio-hosted URLs.
+  if (!isAllowedTwilioRecordingUrl(recordingUrl)) {
+    console.warn('[transcribe] refusing non-Twilio recording URL');
+    return '';
+  }
 
   try {
     // Fetch the audio file from Twilio (basic auth)
