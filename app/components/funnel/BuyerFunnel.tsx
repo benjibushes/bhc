@@ -52,6 +52,9 @@ interface BuyerFunnelProps {
   token?: string;
   rancherSlug?: string;
   offerOperatorCall: boolean;
+  // Geo-landing passthrough (/access/[state] → /access?state=XX). Seeds the
+  // state <select> with the visitor's region. Always overridable by the user.
+  initialState?: string;
 }
 
 // ── Live social-proof stats (GET /api/funnel/stats) ──────────────────────────
@@ -115,6 +118,7 @@ export default function BuyerFunnel({
   token: initialToken,
   rancherSlug,
   offerOperatorCall,
+  initialState,
 }: BuyerFunnelProps) {
   // resume mode jumps straight to Storage — size/timing/contact already exist
   // on the record (props carry consumerId + token).
@@ -129,7 +133,17 @@ export default function BuyerFunnel({
   const [firstName, setFirstName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [state, setState] = useState('');
+  // Geo-landing seed (/access?state=XX). Normalized server-side to a valid
+  // 2-letter code before it reaches here, so it's safe to seed directly. The
+  // user can still change it via the <select>; the geo-prefill effect below
+  // won't clobber a non-empty value.
+  const [state, setState] = useState(initialState || '');
+
+  // TCPA-compliant SMS consent. UNCHECKED by default and NOT a condition of
+  // purchase — completing the funnel never depends on this box. When false,
+  // /api/consumers stores `SMS Opt-In` = false and no marketing/transactional
+  // SMS is ever sent (sendSMSToConsumer gates on the field).
+  const [smsOptIn, setSmsOptIn] = useState(false);
 
   // Lead identity — seeded from props in resume mode; minted at Contact in fresh.
   const [consumerId, setConsumerId] = useState(initialConsumerId || '');
@@ -331,6 +345,10 @@ export default function BuyerFunnel({
           fullName: name,
           email: email.trim().toLowerCase(),
           phone: phone.trim(),
+          // TCPA explicit opt-in (unchecked by default). The server still
+          // requires a non-empty phone to store it true, so a stray true with
+          // no number can't enable sends.
+          smsOptIn,
           state,
           tier,
           timing,
@@ -584,6 +602,29 @@ export default function BuyerFunnel({
                 </select>
               </Field>
             </div>
+
+            {/* TCPA / 10DLC SMS consent — UNCHECKED by default, never gates the
+                submit. Disclosure mirrors /privacy §11 so the consent we claim
+                there actually exists at the point of collection. */}
+            <label className="flex items-start gap-2.5 text-left">
+              <input
+                type="checkbox"
+                checked={smsOptIn}
+                onChange={(e) => setSmsOptIn(e.target.checked)}
+                className="mt-0.5 h-4 w-4 flex-shrink-0"
+                style={{ accentColor: FUNNEL_ACCENT }}
+              />
+              <span className="text-xs leading-relaxed text-saddle">
+                Text me updates about my match. By checking this box I agree to receive
+                recurring automated marketing &amp; transactional text messages from
+                BuyHalfCow at the number provided. Msg &amp; data rates may apply. Reply
+                STOP to cancel, HELP for help. Consent is not a condition of purchase. See
+                our{' '}
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline">
+                  Privacy Policy
+                </a>.
+              </span>
+            </label>
 
             {/* Trust line at the exact point of peak hesitation. */}
             <p className="text-center text-xs text-saddle">
