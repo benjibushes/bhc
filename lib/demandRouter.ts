@@ -216,9 +216,44 @@ export type SuppressReason =
   | 'bounced'
   | 'complained'
   | 'no-email'
+  | 'synthetic-test'
   | 'recent-contact'
   | '18-month-dead'
   | 'already-sunset';
+
+// RFC 2606 / RFC 6761 reserved TLDs — these can NEVER be real, deliverable
+// domains. Matched on the domain SUFFIX so subdomains count too
+// (e.g. foo@e2e.reserved.invalid → ".invalid"). Kept deliberately tight so a
+// real buyer is never caught.
+const RESERVED_TLDS: readonly string[] = ['.invalid', '.test', '.local', '.example'];
+
+// Local-part prefixes used by internal synthetic/test harnesses. The BHC audit
+// skill mints probe addresses like `probe-audit-...@...` — never a real buyer.
+const SYNTHETIC_LOCAL_PREFIXES: readonly string[] = ['probe-audit'];
+
+/**
+ * True iff the email is a synthetic / non-deliverable TEST address that must
+ * never receive a campaign send. PRECISE on purpose (reserved TLDs + a known
+ * audit-probe local-part prefix) so it can't false-positive a real buyer.
+ * Pure + case-insensitive.
+ */
+export function isSyntheticTestEmail(email: string): boolean {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e || !e.includes('@')) return false;
+  const at = e.lastIndexOf('@');
+  const local = e.slice(0, at);
+  const domain = e.slice(at + 1);
+  if (RESERVED_TLDS.some((tld) => domain === tld.slice(1) || domain.endsWith(tld))) return true;
+  // Prefix must be a WHOLE local-part token — either the entire local-part, or
+  // immediately followed by a delimiter (`-` `_` `.` `+`). So `probe-audit-123`
+  // / `probe-audit` match, but a real `probe-audithon` does NOT. Maximally
+  // precise so a real buyer is never caught.
+  for (const p of SYNTHETIC_LOCAL_PREFIXES) {
+    if (local === p) return true;
+    if (local.startsWith(p) && /[-_.+]/.test(local.charAt(p.length))) return true;
+  }
+  return false;
+}
 
 /**
  * The most-recent "we last touched / heard from this buyer" timestamp across
@@ -268,6 +303,11 @@ export function suppressionReason(
 
   const email = String(buyer['Email'] || '').trim();
   if (!email) return 'no-email';
+
+  // Synthetic / non-deliverable test addresses (E2E records, audit probes) must
+  // NEVER be emailed. Checked right after the email-presence guard so it short-
+  // circuits before any send decision.
+  if (isSyntheticTestEmail(email)) return 'synthetic-test';
 
   // Already sunset by this campaign → never re-enter.
   const stage = readEnumOrString(buyer['Campaign Stage']);
@@ -598,6 +638,7 @@ function emptySuppressed(): Record<SuppressReason, number> {
     bounced: 0,
     complained: 0,
     'no-email': 0,
+    'synthetic-test': 0,
     'recent-contact': 0,
     '18-month-dead': 0,
     'already-sunset': 0,

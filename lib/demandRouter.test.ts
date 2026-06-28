@@ -14,6 +14,7 @@ import {
   newInviteBudget,
   countOutstandingInvites,
   cutForBuyer,
+  isSyntheticTestEmail,
   openSlotsFor,
   buildCampaignPlan,
   renderMessage,
@@ -595,4 +596,49 @@ test('plan carries cut per send (drives the 1-tap link; null → rancher-page fa
   const byId = Object.fromEntries(plan.sends.map((s) => [s.buyerId, s]));
   assert.equal(byId['recQ'].cut, 'quarter');
   assert.equal(byId['recUnsure'].cut, null);
+});
+
+// ─── synthetic / test-record suppression (never email a non-deliverable addr) ─
+
+test('isSyntheticTestEmail: reserved TLDs + audit-probe prefix, but NOT real addrs', () => {
+  // RFC-reserved TLDs (incl. subdomains) → synthetic
+  assert.equal(isSyntheticTestEmail('e2e@e2e.reserved.invalid'), true);
+  assert.equal(isSyntheticTestEmail('x@foo.test'), true);
+  assert.equal(isSyntheticTestEmail('x@server.local'), true);
+  assert.equal(isSyntheticTestEmail('x@anything.example'), true);
+  // audit-probe local-part prefix → synthetic
+  assert.equal(isSyntheticTestEmail('probe-audit-123@gmail.com'), true);
+  // real, deliverable addresses → NOT synthetic
+  assert.equal(isSyntheticTestEmail('x@gmail.com'), false);
+  assert.equal(isSyntheticTestEmail('person@buyhalfcow.com'), false);
+  // lookalikes that are STILL real TLDs must not be caught (precision guard)
+  assert.equal(isSyntheticTestEmail('x@invalid.com'), false);      // "invalid" in local domain, real .com
+  assert.equal(isSyntheticTestEmail('x@testlab.io'), false);       // not a .test TLD
+  assert.equal(isSyntheticTestEmail('probe-audit-7@x.com'), true);   // prefix + delimiter → synthetic
+  assert.equal(isSyntheticTestEmail('probe-audithon@x.com'), false); // prefix not a whole token (no delimiter) → real
+  assert.equal(isSyntheticTestEmail(''), false);
+  assert.equal(isSyntheticTestEmail('no-at-sign'), false);
+});
+
+test('suppressionReason returns synthetic-test for an E2E address; real addr NOT suppressed by this rule', () => {
+  // E2E synthetic record → suppressed synthetic-test (active, would otherwise send)
+  assert.equal(
+    suppressionReason({ Email: 'e2e@e2e.reserved.invalid', 'Ready to Buy': true, State: 'MT', Created: daysAgo(10) }, NOW),
+    'synthetic-test',
+  );
+  // Normal gmail buyer, fresh + active → NOT suppressed (null)
+  assert.equal(
+    suppressionReason({ Email: 'x@gmail.com', 'Ready to Buy': true, State: 'CA', Created: daysAgo(10), 'Last Email Opened At': daysAgo(10) }, NOW),
+    null,
+  );
+});
+
+test('synthetic records never appear in plan sends + are tallied under synthetic-test', () => {
+  const buyers: CampaignBuyer[] = [
+    { id: 'recE2E', fields: { Email: 'e2e@e2e.reserved.invalid', State: 'MT', 'Ready to Buy': true, 'Order Type': 'Half', Created: daysAgo(10) } },
+    { id: 'recReal', fields: { Email: 'real@gmail.com', State: 'CA', 'Ready to Buy': true, 'Order Type': 'Quarter', Created: daysAgo(10) } },
+  ];
+  const plan = buildCampaignPlan(buyers, { now: NOW, capacity: { west: 50, eastCentral: 0 } });
+  assert.deepEqual(plan.sends.map((s) => s.buyerId), ['recReal'], 'only the real buyer is selected');
+  assert.equal(plan.suppressed['synthetic-test'], 1);
 });
