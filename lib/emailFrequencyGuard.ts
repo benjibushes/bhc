@@ -128,6 +128,16 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // and the rancher likely already got intro + deposit-paid emails this week,
   // so the 3/week cap would silently drop the buyer's stated wishes.
   'sendRancherBuyerPreferences',
+  // Demand Router backfill campaign (2026-06-27): the capacity-gated 3-wave
+  // re-activation drip (Msg1 day0 / Msg2 +3 / Msg3 +7). Cadence + volume are
+  // owned by lib/demandRouter (per-buyer wave-gap dedupe + openSlots×buffer
+  // capacity gate + 7d non-campaign recency suppression + 18mo-dead exclusion),
+  // so the generic 3/week cap would only ever drop a legitimately-scheduled
+  // wave. Whitelist all three so the campaign engine owns cadence. Unsub/bounce
+  // suppression still applies (resend wrapper). DRY-RUN gate lives in the cron.
+  'demandRouterMsg1',
+  'demandRouterMsg2',
+  'demandRouterMsg3',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage

@@ -6,6 +6,10 @@
   },
   "crons": [
     {
+      "path": "/api/cron/demand-router",
+      "schedule": "20 * * * *"
+    },
+    {
       "path": "/api/cron/auto-verify-stale",
       "schedule": "30 8 * * *"
     },
