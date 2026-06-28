@@ -74,7 +74,11 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
   // it degrades open if Redis is down (the flip-gate still protects).
   if (!(await claimOnce(`settle-deposit:${pi.id}`, 60))) return;
 
-  const depositFlipped = await markDepositSucceeded(pi.id);
+  // Pass the TRUE charged total (deposit + platform fee = pi.amount) so the
+  // Payments row records the real charge ceiling. The refund route caps
+  // net-refundable + detects full refunds against this, not the deposit-only
+  // 'Amount Cents' (which would reject valid refunds of the fee portion).
+  const depositFlipped = await markDepositSucceeded(pi.id, { totalChargedCents });
   if (!depositFlipped) return;
 
   // S1 (2026-06-10): NRD policy — deposit pay flips Referral to

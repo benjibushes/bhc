@@ -75,11 +75,14 @@ export function deriveDeposit(tierPrice: number, pct = DEPOSIT_PCT, min = DEPOSI
   if (!Number.isFinite(p) || p <= 0) return 0;
   const raw = roundTo50(p * pct);
   const floored = Math.max(raw, min);
-  // Cap at price minus one rounding step so the deposit is never the full price
-  // (a full-price "deposit" defeats the reserve model). For tiny prices at/below
-  // the floor this can collapse to the price itself — those are blocked upstream
-  // by MIN_TIER_PRICE anyway.
-  return Math.min(floored, p);
+  // Cap at price minus one rounding step ($50) so the deposit is STRICTLY less
+  // than the price — a deposit EQUAL to the price defeats the reserve model
+  // (balance due would be $0, the "<price" invariant breaks). At the boundary
+  // p==100 the floor (100) would otherwise collapse the deposit to the full
+  // price; capping at p-50 keeps a real partial. Tiny prices at/below
+  // MIN_TIER_PRICE (=100) are blocked upstream, so on any chargeable price
+  // p-50 stays >= 50 and the deposit never goes non-positive.
+  return Math.min(floored, p - 50);
 }
 
 /** Implied $/lb for a total price given hanging weight (0 if no weight given). */
