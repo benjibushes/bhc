@@ -138,6 +138,14 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'demandRouterMsg1',
   'demandRouterMsg2',
   'demandRouterMsg3',
+  // Demand Router abandoned-reserve recovery (2026-06-27): the recovery email
+  // for buyers who reserved a deposit but never paid. Cadence is owned by
+  // lib/reserveRecovery's own per-referral stamp (Reserve Recovery Sent At),
+  // so the generic 3/week cap would only ever silently drop a legitimately-
+  // scheduled recovery — AND the cron stamps BEFORE the send, so a cap-suppress
+  // would mark the buyer recovered with nothing sent. Whitelist it. Unsub/bounce
+  // suppression still applies (resend wrapper). DRY-RUN gate lives in the cron.
+  'reserveRecoveryEmail',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage
