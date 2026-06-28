@@ -404,10 +404,26 @@ export async function GET(req: Request) {
   const depositAlreadyPaid =
     !!referral['Deposit Paid At'] || refStatus === 'Awaiting Payment' || refStatus === 'Slot Locked';
   if (refStatus === 'Closed Won' || refStatus === 'Closed Lost' || depositAlreadyPaid) {
+    // Resolve the linked rancher's slug even on the already-paid branch. The
+    // success page renders AFTER payment (Status flips to Awaiting Payment),
+    // so EVERY success-page GET hits this 409 — without surfacing the slug,
+    // the refer-a-friend share link could never build a real /ranchers/<slug>
+    // deep-link and always fell back to /access. Best-effort: a lookup failure
+    // just omits the slug (link degrades to the /access fallback, never dead).
+    let paidSlug = '';
+    try {
+      const paidRancherId = (referral['Rancher'] || referral['Suggested Rancher'] || [])[0];
+      if (paidRancherId) {
+        const paidRancher: any = await getRecordById(TABLES.RANCHERS, paidRancherId);
+        paidSlug = String(paidRancher?.['Slug'] || '');
+      }
+    } catch {}
     return NextResponse.json(
       {
         error: 'referral_closed',
         status: refStatus,
+        // Surfaced so the success page can deep-link the share to the rancher.
+        rancher: { slug: paidSlug },
         message: refStatus === 'Closed Lost'
           ? 'This referral is closed and can\'t be reopened — contact us to re-route.'
           : 'This reservation is already paid. Check your email for the confirmation.',
