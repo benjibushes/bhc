@@ -114,6 +114,14 @@
       "schedule": "30 18 * * *"
     },
     {
+      "path": "/api/cron/final-invoice-dunning",
+      "schedule": "45 16 * * *"
+    },
+    {
+      "path": "/api/cron/stuck-referral-reaper",
+      "schedule": "50 16 * * *"
+    },
+    {
       "path": "/api/cron/capacity-drift-check",
       "schedule": "0 */6 * * *"
     },
