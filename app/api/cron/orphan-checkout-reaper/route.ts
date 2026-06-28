@@ -41,12 +41,14 @@
 //   - still_processing   — PI mid-flight, recheck next run
 //   - abandoned_flipped  — successfully flipped to abandoned
 //   - webhook_missed     — succeeded PI w/ pending row → flagged + Telegram alerted
-//   - rewarm_sent        — opt-in rewarm email fired
+//   - rewarm_sent        — opt-in rewarm email fired (+ dedup-stamped)
+//   - rewarm_sms_sent    — opt-in rewarm SMS fired (ENABLE_SMS + TCPA opt-in)
+//   - rewarm_already_sent— Rewarm Sent At stamp present, skipped (one-shot guard)
 //   - rewarm_disabled    — opt-in flag off, skipped rewarm
 //   - already_flipped    — row no longer pending (concurrent webhook race)
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { getStripe } from '@/lib/stripe';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { CRON_SECRET } from '@/lib/secrets';
@@ -54,6 +56,7 @@ import { withCronRun } from '@/lib/cronRun';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendOrphanCheckoutRewarm } from '@/lib/email';
+import { sendSMSToConsumer } from '@/lib/twilio';
 import {
   markDepositAbandoned,
   markDepositRequiresReplay,
@@ -77,6 +80,16 @@ const MAX_PER_RUN = Number(process.env.ORPHAN_REAPER_MAX_PER_RUN || 25);
 // operator has eyeballed the first run's Skip Reason Breakdown.
 const REWARM_ENABLED =
   String(process.env.ORPHAN_REAPER_REWARM_ENABLED || 'false').toLowerCase() === 'true';
+// Optional SMS rewarm — double-gated: ENABLE_SMS env (platform-wide SMS kill
+// switch, default OFF) AND the per-consumer TCPA opt-in enforced inside
+// sendSMSToConsumer. Even with REWARM_ENABLED on, SMS stays silent unless
+// ENABLE_SMS=true. The email is the primary touch; SMS is belt-and-suspenders.
+const SMS_ENABLED = process.env.ENABLE_SMS === 'true';
+// Dedup stamp field on the Payments row — guarantees the rewarm fires at most
+// once per orphaned checkout even if a row is somehow re-swept (defensive: the
+// row is flipped to 'abandoned' in the same pass so it normally drops out of
+// the pending query, but the stamp makes the one-shot guarantee explicit).
+const REWARM_STAMP_FIELD = 'Rewarm Sent At';
 
 interface ReaperResult {
   status: 'success' | 'partial' | 'maintenance-blocked';
@@ -275,36 +288,79 @@ async function realHandler(_request: Request): Promise<ReaperResult> {
           });
         } catch {}
 
-        // Opt-in rewarm — gated by env so the operator can ship the cron and
-        // eyeball the first run's classification before mass-emailing.
+        // Opt-in, one-shot, dedup-stamped buyer recovery — gated by env so the
+        // operator can ship the cron and eyeball the first run's classification
+        // before mass-emailing. The Rewarm Sent At stamp guarantees at most one
+        // recovery touch per orphaned checkout.
         if (REWARM_ENABLED) {
-          try {
-            const referralIds: string[] = (row['Referral'] || []) as string[];
-            const referralId = Array.isArray(referralIds) ? referralIds[0] : null;
-            const buyerIds: string[] = (row['Buyer'] || []) as string[];
-            const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
-            if (referralId && buyerId) {
-              const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null);
-              const buyerEmail = String(buyer?.['Email'] || '').trim();
-              if (buyerEmail) {
-                const fullName = String(buyer?.['Full Name'] || '').trim();
-                const firstName = fullName.split(/\s+/)[0] || '';
-                await sendOrphanCheckoutRewarm({
-                  firstName,
-                  email: buyerEmail,
-                  rancherName: String(
-                    rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'your rancher',
-                  ),
-                  referralId,
-                });
-                bump('rewarm_sent');
+          if (row[REWARM_STAMP_FIELD]) {
+            // Already rewarmed on a prior pass — never double-touch.
+            bump('rewarm_already_sent');
+          } else {
+            try {
+              const referralIds: string[] = (row['Referral'] || []) as string[];
+              const referralId = Array.isArray(referralIds) ? referralIds[0] : null;
+              const buyerIds: string[] = (row['Buyer'] || []) as string[];
+              const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
+              if (referralId && buyerId) {
+                const buyer: any = await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null);
+                const buyerEmail = String(buyer?.['Email'] || '').trim();
+                const rancherName = String(
+                  rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'your rancher',
+                );
+                if (buyerEmail) {
+                  const fullName = String(buyer?.['Full Name'] || '').trim();
+                  const firstName = fullName.split(/\s+/)[0] || '';
+                  await sendOrphanCheckoutRewarm({
+                    firstName,
+                    email: buyerEmail,
+                    rancherName,
+                    referralId,
+                  });
+                  bump('rewarm_sent');
+
+                  // Stamp the dedup field IMMEDIATELY after a successful email so a
+                  // crash before the (optional) SMS can't cause a re-email next run.
+                  // Best-effort: the field may not exist in older schemas — typecast
+                  // creates it; a write failure is non-fatal (the row is already
+                  // flipped to 'abandoned' so it won't be re-queried anyway).
+                  try {
+                    await updateRecord(PAYMENTS_TABLE, paymentRowId, {
+                      [REWARM_STAMP_FIELD]: new Date().toISOString(),
+                    });
+                  } catch (stampErr: any) {
+                    console.warn(
+                      `[orphan-checkout-reaper] rewarm stamp failed for ${paymentRowId}: ${stampErr?.message?.slice(0, 80)}`,
+                    );
+                  }
+
+                  // Optional SMS — double-gated (ENABLE_SMS + per-consumer TCPA
+                  // opt-in inside sendSMSToConsumer). Non-fatal on failure.
+                  if (SMS_ENABLED) {
+                    try {
+                      const depositUrl = `${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/checkout/${referralId}/deposit`;
+                      const sent = await sendSMSToConsumer({
+                        consumer: buyer,
+                        body:
+                          `Hey${firstName ? ' ' + firstName : ''}, it's BuyHalfCow — you started checkout with ${rancherName} but didn't finish. ` +
+                          `Pick up where you left off: ${depositUrl}  Reply STOP to opt out.`,
+                        reason: 'orphan-checkout-rewarm',
+                      });
+                      if (sent) bump('rewarm_sms_sent');
+                    } catch (smsErr: any) {
+                      console.warn(
+                        `[orphan-checkout-reaper] rewarm SMS failed for ${paymentRowId}: ${smsErr?.message?.slice(0, 80)}`,
+                      );
+                    }
+                  }
+                }
               }
+            } catch (e: any) {
+              // Rewarm failure is non-fatal — the row is already flipped.
+              console.warn(
+                `[orphan-checkout-reaper] rewarm failed for ${paymentRowId}: ${e?.message?.slice(0, 80)}`,
+              );
             }
-          } catch (e: any) {
-            // Rewarm failure is non-fatal — the row is already flipped.
-            console.warn(
-              `[orphan-checkout-reaper] rewarm failed for ${paymentRowId}: ${e?.message?.slice(0, 80)}`,
-            );
           }
         } else {
           bump('rewarm_disabled');
