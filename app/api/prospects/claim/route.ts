@@ -10,6 +10,7 @@ import { sendProspectClaimMagicLink } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 // Project 1 — Discover Map · prospect claim flow.
 //
@@ -64,6 +65,15 @@ export async function POST(req: Request) {
   const operatorName = String(body.operatorName || '').trim();
   const submittedEmail = String(body.email || '').trim().toLowerCase();
   const phone = String(body.phone || '').trim();
+  // Honeypot — bots fill hidden fields; humans never see them. Silent success
+  // so the bot believes it worked but no Airtable write / email / Telegram fires.
+  // Convention matches self-submit (`website2`). Form (ClaimForm.tsx, out of
+  // this lane) should add the hidden field; until then this is a free no-op.
+  const honeypot = String(body.website2 || body.company || '');
+
+  if (honeypot) {
+    return NextResponse.json({ success: true, manualReview: false, sentTo: maskEmail(submittedEmail) });
+  }
 
   if (!slug) {
     return NextResponse.json({ error: 'Missing slug' }, { status: 400 });
@@ -73,6 +83,27 @@ export async function POST(req: Request) {
   }
   if (!isValidEmail(submittedEmail)) {
     return NextResponse.json({ error: 'Please enter a valid email address' }, { status: 400 });
+  }
+
+  // Rate limit BEFORE any Airtable write / email / Telegram. This endpoint
+  // had no auth and emails the prospect's (often scraped) address — an open
+  // email-bomb / Telegram-spam vector. Two buckets: per-IP (stops a single
+  // attacker hammering many slugs) and per-slug (stops a distributed flood
+  // from bombing one prospect's inbox). Fails open if Upstash is unset.
+  const ip = getRequestIp(req);
+  const ipLimit = await rateLimit(`prospect-claim:ip:${ip}`, { requests: 5, window: '1h' });
+  if (!ipLimit.ok) {
+    return NextResponse.json(
+      { error: 'Too many attempts. Please try again later.' },
+      { status: 429 },
+    );
+  }
+  const slugLimit = await rateLimit(`prospect-claim:slug:${slug}`, { requests: 3, window: '1h' });
+  if (!slugLimit.ok) {
+    return NextResponse.json(
+      { error: 'This listing was just sent a claim link. Please check the email on file or try again later.' },
+      { status: 429 },
+    );
   }
 
   const prospect = await findProspect(slug);

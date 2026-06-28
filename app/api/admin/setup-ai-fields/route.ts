@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // One-time setup endpoint to create all AI automation fields in Airtable.
 // Call GET /api/admin/setup-ai-fields after deploying the AI skills update.
@@ -52,12 +53,9 @@ async function createField(tableId: string, field: any): Promise<{ created: bool
 }
 
 export async function GET(request: Request) {
-  // Admin auth via cookie or password param
-  const { searchParams } = new URL(request.url);
-  const pw = searchParams.get('password');
-  if (pw !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // Admin auth via cookie or x-admin-password header (constant-time).
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
 
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
     return NextResponse.json({ error: 'AIRTABLE_API_KEY or AIRTABLE_BASE_ID not configured' }, { status: 500 });

@@ -16,6 +16,8 @@ interface ReferralStats {
   pendingApproval: number;
   stalledLeads: number;
   closedDealsThisMonth: { count: number; totalCommission: number };
+  // All-time unpaid commission across every Closed Won referral.
+  commissionUnpaid?: number;
 }
 
 interface Consumer {
@@ -632,9 +634,9 @@ export default function AdminPage() {
                     <span className="text-xs text-dust mt-0.5 inline-block">&gt;7 days old</span>
                   </button>
                   <a href="/admin/commissions" className="p-3 border border-amber/60 bg-white text-center hover:bg-amber/20 transition-colors block">
-                    <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">${refStats?.closedDealsThisMonth?.totalCommission?.toLocaleString() || 0}</div>
+                    <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">${(refStats?.commissionUnpaid ?? 0).toLocaleString()}</div>
                     <div className="text-xs text-saddle mt-1">Unpaid Commission</div>
-                    <span className="text-xs text-amber-dark underline mt-1 inline-block">Review</span>
+                    <span className="text-xs text-dust mt-0.5 inline-block">all-time</span>
                   </a>
                   <div className="p-3 border border-amber/60 bg-white text-center">
                     <div className="font-[family-name:var(--font-serif)] text-2xl font-bold">{stalledLeadsCount}</div>

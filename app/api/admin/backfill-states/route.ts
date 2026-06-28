@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { normalizeState, normalizeStates, stringifyStates } from '@/lib/states';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
@@ -10,15 +11,13 @@ export const maxDuration = 60;
 //
 // Idempotent — re-running is safe (already-normalized values stay the same).
 //
-// Auth: ?password=ADMIN_PASSWORD (matches existing setup endpoint convention)
+// Auth: requireAdmin (cookie or x-admin-password header; constant-time).
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const password = url.searchParams.get('password');
-  const dryRun = url.searchParams.get('dry') === '1';
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
 
-  if (!password || password !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const url = new URL(request.url);
+  const dryRun = url.searchParams.get('dry') === '1';
 
   const summary = {
     dryRun,

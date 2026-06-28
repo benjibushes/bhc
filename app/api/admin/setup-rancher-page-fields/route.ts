@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/adminAuth';
 
 // One-time setup endpoint to create all rancher landing page fields in Airtable.
-// Call GET /api/admin/setup-rancher-page-fields?password=ADMIN_PASSWORD after deploying.
+// Call GET /api/admin/setup-rancher-page-fields after deploying (admin cookie or x-admin-password header).
 // Requires AIRTABLE_API_KEY to have schema:bases:write scope.
 
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY || '';
@@ -36,11 +37,8 @@ async function createField(tableId: string, field: any): Promise<{ created: bool
 }
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const pw = searchParams.get('password');
-  if (pw !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
 
   if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
     return NextResponse.json({ error: 'AIRTABLE_API_KEY or AIRTABLE_BASE_ID not configured' }, { status: 500 });

@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { getAdminConfig } from '@/lib/adminConfig';
+import { computeUnpaidCommission } from '@/lib/commissionStats';
 
 export const maxDuration = 60;
 
@@ -49,15 +50,24 @@ export async function GET(request: Request) {
 
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    const closedThisMonth = referrals.filter((r: any) => {
-      if (r['Status'] !== 'Closed Won') return false;
+
+    // Single source of truth for "Closed Won" + commission math. The dashboard
+    // "Unpaid Commission" tile must show ALL unpaid commission (any month), not
+    // just this-month closes — mirrors command-center's commissionUnpaid.
+    const closedWonAll = referrals.filter((r: any) => r['Status'] === 'Closed Won');
+    const closedThisMonth = closedWonAll.filter((r: any) => {
       const closedAt = r['Closed At'];
       return closedAt && closedAt >= startOfMonth;
     });
 
+    // This-month commission still owed (kept for any caller that wants the
+    // monthly slice). The unpaid-commission TILE uses commissionUnpaid below.
     const totalCommission = closedThisMonth.reduce(
       (sum: number, r: any) => sum + (r['Commission Paid'] === true ? 0 : (r['Commission Due'] || 0)), 0
     );
+
+    // All-time unpaid commission across every Closed Won referral.
+    const commissionUnpaid = computeUnpaidCommission(referrals);
 
     // Stalled leads — mirror /api/admin/today logic: Intro Sent for longer than
     // the operator-tunable stall threshold and not yet closed. Status is still
@@ -88,6 +98,8 @@ export async function GET(request: Request) {
         count: closedThisMonth.length,
         totalCommission: Math.round(totalCommission * 100) / 100,
       },
+      // All-time unpaid commission (every Closed Won, not just this month).
+      commissionUnpaid,
       statusCounts,
     });
   } catch (error: any) {

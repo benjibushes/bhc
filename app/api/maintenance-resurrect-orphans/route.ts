@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 120;
 
@@ -19,19 +20,17 @@ export const maxDuration = 120;
 // sends regular nurture emails (Day 3 "we're finding your rancher", etc.)
 // to gradually re-engage without a mass blast.
 //
-// Auth: ?password=ADMIN_PASSWORD
+// Auth: requireAdmin (cookie or x-admin-password header; constant-time).
 // Safe to re-run — idempotent (only acts on Pending Approval referrals with
 // no rancher linked, which shrinks to zero after a successful pass).
 //
 // Dry run: add &dry=1 to see what would change without writing.
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const password = url.searchParams.get('password');
-  const dryRun = url.searchParams.get('dry') === '1';
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
 
-  if (!password || password !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const url = new URL(request.url);
+  const dryRun = url.searchParams.get('dry') === '1';
 
   const nowIso = new Date().toISOString();
   const summary = {

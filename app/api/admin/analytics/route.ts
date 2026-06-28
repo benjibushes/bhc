@@ -118,11 +118,19 @@ export async function GET(request: Request) {
     };
 
     // Index Consumers by id to map referrals back to their Source.
+    // ROAS fix: the source map must cover ALL consumers (all-time), not just
+    // those created in-range. A close inside the range whose buyer signed up
+    // BEFORE the window would otherwise be dropped (consumerSourceById.get
+    // returns undefined → the close is silently uncounted → ROAS under-reports).
+    // Mirrors command-center route (~232-237). Signups still count in-range only.
     const consumerSourceById = new Map<string, string>();
+    consumers.forEach((c: any) => {
+      const source = (c['Source'] || 'organic').toString().trim() || 'organic';
+      if (c.id) consumerSourceById.set(c.id, source);
+    });
     consumersInRange.forEach((c: any) => {
       const source = (c['Source'] || 'organic').toString().trim() || 'organic';
       bucket(source).signups++;
-      if (c.id) consumerSourceById.set(c.id, source);
     });
 
     // Walk Referrals — link to Buyer to get Source. If a referral has no
