@@ -24,7 +24,12 @@ import {
   escapeAirtableValue,
 } from '@/lib/airtable';
 import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
-import { buildReserveReferralFields, CUT_LABELS, type Cut } from '@/lib/reserveDeposit';
+import {
+  assertReserveEligible,
+  buildReserveReferralFields,
+  CUT_LABELS,
+  type Cut,
+} from '@/lib/reserveDeposit';
 
 // Statuses that mean "this deposit intent is dead / already settled" — never
 // reuse one of these; the buyer needs a fresh referral. Mirrors the deposit
@@ -33,12 +38,19 @@ const REUSABLE_BLOCKED = new Set(['Closed Won', 'Closed Lost', 'Awaiting Payment
 
 export type CampaignReferralResult =
   | { ok: true; referralId: string; created: boolean; rancher: any }
-  | { ok: false; reason: 'rancher-not-found' | 'consumer-not-found' | 'io-error' };
+  | { ok: false; reason: 'rancher-not-found' | 'consumer-not-found' | 'ineligible' | 'io-error' };
 
 /**
  * Resolve (find or create) the referral a campaign deposit link should land on.
  *
  *  - Looks up the rancher by slug (the link's rancherSlug). Missing → fallback.
+ *  - GATES on assertReserveEligible BEFORE touching any other table: a legacy /
+ *    non-Connect / unpriced / ineligible rancher would only dead-end at the
+ *    deposit step (409) AND a fresh referral would needlessly bump the capacity
+ *    counter — so we reject here ({ ok:false, reason:'ineligible' }) and the /r
+ *    route sends the buyer to the rancher's public page instead. Applied before
+ *    BOTH reuse and create so a rancher that went ineligible after an old
+ *    referral was made doesn't get reused into the same dead end.
  *  - Confirms the consumer row still exists (the token names consumerId; if the
  *    record was deleted we must not create an orphan referral) → fallback.
  *  - Reuses an existing OPEN referral pinning this buyer↔rancher with a deposit
@@ -69,6 +81,14 @@ export async function findOrCreateCampaignReferral(args: {
     return { ok: false, reason: 'io-error' };
   }
   if (!rancher) return { ok: false, reason: 'rancher-not-found' };
+
+  // 1b) Eligibility gate — the SAME gate the self-serve reserve path uses
+  //     (reserve/route.ts:94-97). Reject ineligible ranchers BEFORE creating a
+  //     referral or bumping capacity, so a valid token pointed at a legacy /
+  //     non-Connect / unpriced rancher can't manufacture dead-end referrals or
+  //     nudge the slot counter. The /r route falls back to the public page.
+  const gate = assertReserveEligible(rancher, cut);
+  if (!gate.ok) return { ok: false, reason: 'ineligible' };
 
   // 2) Consumer must still exist (token names it; guard against a deleted row).
   let buyer: any = null;

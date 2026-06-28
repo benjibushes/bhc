@@ -180,7 +180,10 @@ test('decide: valid token + resolved referral → deposit path with cut pre-sele
   }
 });
 
-test('decide: valid token but referral resolution FAILED → rancher public page', () => {
+// Covers BOTH "referral I/O failed" AND "rancher ineligible" — in both cases
+// findOrCreateCampaignReferral returns ok:false so the route passes resolved=null,
+// and the buyer must land on the rancher's OWN public page (not a dead referral).
+test('decide: valid token but referral unresolved (ineligible / I/O fail) → rancher public page', () => {
   const d = decideCampaignRedirect(okVerify, null, 'renick-valley');
   assert.equal(d.kind, 'fallback');
   if (d.kind === 'fallback') assert.equal(d.path, '/ranchers/renick-valley');

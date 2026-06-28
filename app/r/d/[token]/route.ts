@@ -35,6 +35,7 @@ import {
 } from '@/lib/campaignReserve';
 import { findOrCreateCampaignReferral } from '@/lib/campaignReferral';
 import { setDepositGrantCookie } from '@/lib/buyerAuth';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -60,6 +61,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
   try {
     ({ token } = await params);
   } catch {
+    return safeFallback();
+  }
+
+  // Light per-IP rate limit. This GET creates/finds a referral + bumps capacity,
+  // so it's the abuse surface even though each hit still needs a valid signed
+  // token. 10/min/IP is far above any human tap rate. rateLimit fails OPEN
+  // (Redis absent/erroring → ok:true), so a real buyer is never wrongly bounced;
+  // this only caps a genuine burst. On a hit we 302 to the storefront rather
+  // than 500/429 — the browser is the only caller and expects a redirect.
+  const ip = getRequestIp(req);
+  const rl = await rateLimit(`r-deposit-link:${ip}`, { requests: 10, window: '1m' });
+  if (!rl.ok) {
     return safeFallback();
   }
 
