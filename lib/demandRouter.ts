@@ -825,8 +825,80 @@ export function buildCampaignPlan(
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// UPGRADE B — LIVE SOCIAL PROOF
+//
+// Research (Attentive/Bloomreach/Omnisend 2025-26 + the broader 2025
+// social-proof literature): a recent, specific, true peer-count
+// ("N families reserved their share this week") lifts conversion on a
+// scarcity/urgency message — it answers "is anyone else actually doing
+// this?" right at the decision point. It belongs on the MIDDLE/LATE waves
+// (Msg2 scarcity, Msg3 mission), NOT the cold Msg1 intro.
+//
+// HARD RULE (the omit path): never render a weak or zero number. "0 families
+// reserved this week" or "1 family" is anti-proof — it signals a dead drop.
+// Below SOCIAL_PROOF_MIN the whole line is OMITTED and the copy reads clean
+// (no dangling token, no empty sentence). This is unit-tested.
+//
+// Pure: countRecentDeposits is a deterministic count over already-fetched
+// Referral rows (the cron does the Airtable read); socialProofLine formats.
+// ─────────────────────────────────────────────────────────────────────
+
+/** Don't show social proof below this many recent reservations (anti-proof). */
+export const SOCIAL_PROOF_MIN = 3;
+
+/** Window for "this week" — the recency that makes the proof feel live. */
+export const SOCIAL_PROOF_DAYS = 7;
+
+/**
+ * Count referrals that booked a deposit within the last `days` days. A booked
+ * deposit = a non-empty `Deposit Paid At` timestamp within the window. Optionally
+ * scope to one rancher (by linked Rancher id) — cheap because the caller already
+ * holds the rows. Pure + deterministic (now injected).
+ *
+ * `referrals` are plain Airtable-shaped rows ({ 'Deposit Paid At', Rancher }).
+ * Rows with no/blank/garbage `Deposit Paid At` are ignored.
+ */
+export function countRecentDeposits(
+  referrals: Array<Record<string, unknown>>,
+  now: number,
+  opts: { days?: number; rancherId?: string } = {},
+): number {
+  const days = opts.days ?? SOCIAL_PROOF_DAYS;
+  const cutoff = now - days * DAY_MS;
+  let n = 0;
+  for (const r of referrals || []) {
+    const paid = r['Deposit Paid At'];
+    if (!paid) continue;
+    const t = new Date(paid as string).getTime();
+    if (!Number.isFinite(t)) continue;
+    if (t < cutoff || t > now) continue; // within [cutoff, now]
+    if (opts.rancherId) {
+      // Rancher is a linked-record array of ids; only count this rancher's.
+      const links = r['Rancher'] || r['Suggested Rancher'];
+      const ids = Array.isArray(links) ? links.map(String) : [];
+      if (!ids.includes(opts.rancherId)) continue;
+    }
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Format the social-proof sentence for a given count, or '' when the count is
+ * below SOCIAL_PROOF_MIN (the OMIT path — never render "0 families" / "1 family").
+ * Pluralizes correctly. Lowercase + on-brand. Pure.
+ */
+export function socialProofLine(count: number, opts: { min?: number } = {}): string {
+  const min = opts.min ?? SOCIAL_PROOF_MIN;
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (n < min) return ''; // omit — a weak number is anti-proof
+  const noun = n === 1 ? 'family' : 'families';
+  return `${n} ${noun} reserved their share this week.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // MESSAGE RENDERING  (copy verbatim from docs/CAMPAIGN-SENDS.md)
-// Tokens: {first} {state} {rancher} {ranchstate} {link}
+// Tokens: {first} {state} {rancher} {ranchstate} {link} {socialProof}
 // On-brand: lowercase, honest scarcity, "— Ben". No hype.
 // ─────────────────────────────────────────────────────────────────────
 
@@ -836,6 +908,12 @@ export interface RenderCtx {
   rancher: RancherTarget;
   /** Personalized 1-tap deposit link, or the rancher-page fallback URL. */
   link: string;
+  /**
+   * Pre-formatted social-proof sentence (from socialProofLine) or '' to omit.
+   * Injected into Msg2/Msg3 only. When '', the {socialProof} token + its
+   * surrounding blank line collapse cleanly (no empty paragraph).
+   */
+  socialProof?: string;
 }
 
 export interface RenderedMessage {
@@ -849,12 +927,18 @@ export interface RenderedMessage {
 }
 
 function tok(s: string, ctx: RenderCtx): string {
+  const proof = ctx.socialProof || '';
   return s
     .replace(/\{first\}/g, ctx.firstName)
     .replace(/\{state\}/g, ctx.state)
     .replace(/\{rancher\}/g, ctx.rancher.name)
     .replace(/\{ranchstate\}/g, ctx.rancher.ranchState)
-    .replace(/\{link\}/g, ctx.link);
+    .replace(/\{link\}/g, ctx.link)
+    // {socialProof} on its own line. When omitted (''), swallow the token AND
+    // the blank line that follows it so the body has no empty paragraph / no
+    // double blank. When present, leave it inline.
+    .replace(/\{socialProof\}\n\n?/g, proof ? `${proof}\n\n` : '')
+    .replace(/\{socialProof\}/g, proof);
 }
 
 function esc(s: string): string {
@@ -907,18 +991,25 @@ limited shares this round. reserve yours:
 
 — Ben`;
 
+// Msg2 ADDS scarcity + live social proof (Upgrade B) over Msg1's intro. The
+// {socialProof} line is omitted gracefully when the recent-reservation count is
+// below SOCIAL_PROOF_MIN (never "0 families").
 const BODY_MSG2 = `{first} — quick one. {rancher} has only a few shares left this round — shipped to
-{state}, grass-fed, raised right. if you want one:
+{state}, grass-fed, raised right.
+
+{socialProof}if you want one:
 {link}
 — Ben`;
 
+// Msg3 ADDS the mission angle. Social proof reinforces "it's working" — omitted
+// gracefully below SOCIAL_PROOF_MIN.
 const BODY_MSG3 = `quick one, {first}.
 
 the mission is a real local rancher in every community — beef raised right, sold
 direct, families over feedlots. we're locking that in state by state, and it's
 working.
 
-until your local rancher is live, {rancher} has you covered — same standard,
+{socialProof}until your local rancher is live, {rancher} has you covered — same standard,
 shipped to your door.
 
 this is the start of something big. glad you're in it.
@@ -973,3 +1064,86 @@ export const CAMPAIGN_TEMPLATE_NAMES: Record<Wave, string> = {
 
 /** The Email Sends `Campaign` tag for this campaign (analytics linkage). */
 export const CAMPAIGN_NAME = 'demand-router-backfill';
+
+// ─────────────────────────────────────────────────────────────────────
+// UPGRADE C — COMBINED EMAIL+SMS ORCHESTRATION (SMS as a RECOVERY channel)
+//
+// RESEARCH (Attentive / Bloomreach / Omnisend 2025-26):
+//   • Email+SMS combined ≈ +127% conversion vs email-only.
+//   • SMS works best as a RECOVERY channel fired AFTER an email goes UNengaged
+//     (~4-8h later) — NOT a simultaneous blast alongside the email.
+//   • Every touch must ADD something new (73% reject pure repeats) — so the
+//     recovery SMS uses a DIFFERENT angle than the email it follows.
+//
+// So the backfill arc is EMAIL-LED: the planner sends the email each wave, and
+// SMS is a SEPARATE, LATER recovery touch driven by this selector. The cron
+// passes `smsWaves: new Set()` to buildCampaignPlan so the planner does NOT
+// also fire a simultaneous Msg2 SMS (that simultaneous capability + its tests
+// remain intact for any caller that wants it; the cron just opts out in favor
+// of recovery-triggered SMS).
+//
+// We approximate "the email went unengaged" without per-message open/click
+// tracking: emailed (`Campaign Last Sent At`) ≥ N hours ago AND the buyer has
+// NOT converted/engaged since. One SMS recovery per buyer for the whole arc
+// (stamped on `Campaign SMS Recovery Sent At`) so we never nag.
+// ─────────────────────────────────────────────────────────────────────
+
+export const DEFAULT_SMS_RECOVERY_HOURS = 8; // wait after an email before the SMS
+
+/**
+ * Is this buyer due a backfill SMS-recovery touch right now? Pure (now injected).
+ *
+ * Eligible when ALL hold:
+ *   1. Opted-in (TCPA) with a phone — also re-checked by sendSMSToConsumer.
+ *   2. They received a campaign email (`Campaign Last Sent At` set) and it's been
+ *      ≥ `smsRecoveryHours` since (the email had time to land + go unengaged).
+ *   3. They are in the arc but NOT sunset and NOT yet SMS-recovered
+ *      (`Campaign SMS Recovery Sent At` empty) — at most one SMS per buyer.
+ *   4. They have NOT converted/engaged since (no active referral, not Ready to
+ *      Buy, no campaign-era click) — a converted/engaged buyer needs no recovery.
+ *
+ * The cron additionally requires a routable state + the SMS send-window; this
+ * stays a pure eligibility gate.
+ */
+export function isSmsRecoveryEligible(
+  buyer: Record<string, unknown>,
+  now: number,
+  opts: { smsRecoveryHours?: number } = {},
+): boolean {
+  const smsRecoveryHours = opts.smsRecoveryHours ?? DEFAULT_SMS_RECOVERY_HOURS;
+
+  if (!asBool(buyer['SMS Opt-In'])) return false;
+  if (!String(buyer['Phone'] || '').trim()) return false;
+  if (buyer['Campaign SMS Recovery Sent At']) return false; // already recovered via SMS
+  if (buyer['Campaign Sunset At']) return false; // sunset → don't chase
+
+  const stage = readEnumOrString(buyer['Campaign Stage']);
+  const inArc = stage === 'Msg1 Sent' || stage === 'Msg2 Sent' || stage === 'Msg3 Sent';
+  if (!inArc) return false; // never emailed by the campaign → nothing to recover
+
+  const lastSent = buyer['Campaign Last Sent At'];
+  const lastSentMs = lastSent ? new Date(lastSent as string).getTime() : 0;
+  if (!lastSentMs) return false;
+  if (now - lastSentMs < smsRecoveryHours * 60 * 60 * 1000) return false; // too soon after email
+
+  // Converted / engaged since → no recovery needed.
+  if (engagedSinceCampaign(buyer)) return false;
+  return true;
+}
+
+// Distinct SMS-recovery copy — a DIFFERENT angle than any email wave (research:
+// ADD new info, don't repeat). Speaks to the limited-shares scarcity directly.
+// Always carries STOP (TCPA). Tokens: {first} {rancher} {state} {link}.
+const SMS_RECOVERY_BODY = `BuyHalfCow: {first}, shares from {rancher} are going fast and we don't want you to miss out — grass-fed, shipped to {state}. reserve yours: {link}
+reply STOP to opt out`;
+
+/** Render the backfill SMS-recovery body. Pure. */
+export function renderSmsRecovery(ctx: RenderCtx): string {
+  return tok(SMS_RECOVERY_BODY, ctx);
+}
+
+/** Email Sends Campaign tag for the SMS-recovery touches. */
+export const SMS_RECOVERY_CAMPAIGN_NAME = 'demand-router-sms-recovery';
+
+/** Airtable Consumer field stamped after an SMS-recovery (idempotency). NEW. */
+export const CAMPAIGN_SMS_RECOVERY_FIELD = 'Campaign SMS Recovery Sent At';
