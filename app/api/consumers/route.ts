@@ -162,6 +162,14 @@ export async function POST(request: Request) {
       const nowIsoQ = new Date().toISOString();
       const todayDateQ = nowIsoQ.slice(0, 10); // YYYY-MM-DD (Date field type)
 
+      // TCPA explicit SMS opt-in. Stored true ONLY when the buyer ticked the
+      // funnel consent box AND supplied a phone — mirrors the legacy path's
+      // gate (line ~515) so the two signup surfaces can never drift. Without
+      // this, smsOptIn was never sent and `SMS Opt-In` was hard-false for
+      // every funnel signup → SMS reached 0 buyers despite /privacy claiming
+      // a consent box.
+      const smsOptInQ = body.smsOptIn === true && phoneQ.trim().length > 0;
+
       // UPSERT on email (spec: "don't create a second record"). Reuse the
       // file's existing duplicate-lookup query shape (LOWER({Email}) match).
       // Unlike the legacy path (which 409s a non-stub duplicate), the funnel
@@ -215,6 +223,23 @@ export async function POST(request: Request) {
       if (attrStr('fbclid'))       funnelFields['fbclid']       = attrStr('fbclid');
       if (attrStr('fbclid_ts'))    funnelFields['fbclid_ts']    = attrStr('fbclid_ts');
       if (attrStr('gclid'))        funnelFields['gclid']        = attrStr('gclid');
+
+      // ── SMS opt-in write (TCPA) ──────────────────────────────────────────────
+      // Write semantics chosen so the funnel can never silently REVOKE a prior
+      // opt-in (or wipe its consent timestamp) when a buyer re-enters the wizard
+      // without re-ticking the box:
+      //   • opting in  → always write true + stamp the consent timestamp.
+      //   • new record → explicitly seed false so the default is correct and the
+      //                  Twilio gate (sendSMSToConsumer) starts closed.
+      //   • re-entry w/o tick → leave the existing value untouched (don't clobber).
+      // The dedicated inbound STOP webhook (twilio-sms) is the authoritative way
+      // a buyer turns SMS off, mirroring the legacy /access path's gate at ~515.
+      if (smsOptInQ) {
+        funnelFields['SMS Opt-In'] = true;
+        funnelFields['SMS Opt-In At'] = nowIsoQ;
+      } else if (!existingIdQ) {
+        funnelFields['SMS Opt-In'] = false;
+      }
 
       let funnelRec: any;
       try {
