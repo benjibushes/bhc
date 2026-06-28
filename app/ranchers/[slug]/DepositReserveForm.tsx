@@ -25,6 +25,13 @@ interface Props {
 
 const CUT_LABEL: Record<Cut, string> = { quarter: 'Quarter', half: 'Half', whole: 'Whole' };
 
+const US_STATES = [
+  'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
+  'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ',
+  'NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT',
+  'VA','WA','WV','WI','WY','DC',
+];
+
 export default function DepositReserveForm({
   slug, ranchName, operatorFirst, bookingUrl, quarter, half, whole,
 }: Props) {
@@ -33,6 +40,8 @@ export default function DepositReserveForm({
   const defaultCut: Cut = half ? 'half' : whole ? 'whole' : 'quarter';
   const [cut, setCut] = useState<Cut>(defaultCut);
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [stateCode, setStateCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
@@ -61,7 +70,7 @@ export default function DepositReserveForm({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ slug, cut, email }),
+        body: JSON.stringify({ slug, cut, email, phone, state: stateCode }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -133,6 +142,28 @@ export default function DepositReserveForm({
           onChange={(e) => setEmail(e.target.value)}
           className="w-full px-4 py-3 border border-dust bg-white text-sm"
         />
+        <div className="grid grid-cols-2 gap-3">
+          <input
+            type="tel"
+            required
+            placeholder="Phone"
+            autoComplete="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            className="w-full px-4 py-3 border border-dust bg-white text-sm"
+          />
+          <select
+            required
+            value={stateCode}
+            onChange={(e) => setStateCode(e.target.value)}
+            className="w-full px-4 py-3 border border-dust bg-white text-sm"
+          >
+            <option value="">State</option>
+            {US_STATES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
         {error && <p className="text-sm text-weathered">{error}</p>}
         <button
           type="submit"

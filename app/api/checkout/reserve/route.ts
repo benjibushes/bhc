@@ -30,9 +30,11 @@ import {
   assertReserveEligible,
   buildReserveReferralFields,
   depositPathFor,
+  normalizeReservePhone,
   CUT_LABELS,
   type Cut,
 } from '@/lib/reserveDeposit';
+import { normalizeState } from '@/lib/states';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -76,9 +78,17 @@ export async function POST(req: Request) {
   const cut = String(body.cut || '').toLowerCase() as Cut;
   const nameInput = String(body.name || '').trim();
   const emailInput = String(body.email || '').trim().toLowerCase();
+  // Phone is REQUIRED on the self-serve rail — the rancher's whole promise is to
+  // call the buyer the moment the deposit lands. State is captured for routing/
+  // context; normalized to a 2-letter code (may be blank if unrecognized).
+  const phoneInput = normalizeReservePhone(body.phone);
+  const stateInput = normalizeState(body.state);
 
   if (!slug) return NextResponse.json({ error: 'Rancher slug required' }, { status: 400 });
   if (!CUT_LABELS[cut]) return NextResponse.json({ error: 'cut must be quarter|half|whole' }, { status: 400 });
+  if (!phoneInput) {
+    return NextResponse.json({ error: 'A valid phone number is required so the rancher can reach you.' }, { status: 400 });
+  }
 
   const existingSession = await resolveBuyerSession(req);
   if (!existingSession && !isValidEmail(emailInput)) {
@@ -100,7 +110,8 @@ export async function POST(req: Request) {
   // existing one — only a created consumer may be auto-sessioned (see SECURITY).
   let buyerEmail = existingSession?.email || emailInput;
   let buyerName = existingSession?.name || nameInput;
-  let buyerState = existingSession?.state || '';
+  let buyerState = existingSession?.state || stateInput || '';
+  const buyerPhone = phoneInput;
   let consumerId = existingSession?.consumerId || '';
   let adoptedExisting = false;
 
@@ -113,10 +124,21 @@ export async function POST(req: Request) {
         consumerId = existing[0].id;
         buyerName = buyerName || existing[0]['Full Name'] || '';
         buyerState = buyerState || existing[0]['State'] || '';
+        // Backfill Phone/State on the existing Consumer when blank so the
+        // rancher always has a number to call (never overwrite a real value).
+        const patch: Record<string, any> = {};
+        if (buyerPhone && !String(existing[0]['Phone'] || '').trim()) patch['Phone'] = buyerPhone;
+        if (buyerState && !String(existing[0]['State'] || '').trim()) patch['State'] = buyerState;
+        if (Object.keys(patch).length > 0) {
+          try { await updateRecord(TABLES.CONSUMERS, consumerId, patch); }
+          catch (e: any) { console.warn('[checkout/reserve] consumer backfill skipped:', e?.message); }
+        }
       } else {
         const created: any = await createRecord(TABLES.CONSUMERS, {
           'Full Name': buyerName || '',
           'Email': buyerEmail,
+          'Phone': buyerPhone,
+          ...(buyerState ? { 'State': buyerState } : {}),
           'Segment': 'Beef Buyer',
           'Source': `rancher-page-deposit:${slug}`,
           'Order Type': CUT_LABELS[cut],
@@ -137,7 +159,7 @@ export async function POST(req: Request) {
   try {
     referral = await createRecord(
       TABLES.REFERRALS,
-      buildReserveReferralFields({ rancher, consumerId, buyerName, buyerEmail, cut }),
+      buildReserveReferralFields({ rancher, consumerId, buyerName, buyerEmail, buyerPhone, buyerState, cut }),
     );
   } catch (e: any) {
     console.error('[checkout/reserve] referral create failed:', e?.message);
