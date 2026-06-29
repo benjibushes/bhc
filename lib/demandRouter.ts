@@ -18,6 +18,7 @@
 // the flag and the same buyers get the same waves.
 
 import { normalizeState } from './states';
+import { BEN_SALES_CAL_URL } from './salesContact';
 
 // ─────────────────────────────────────────────────────────────────────
 // COAST → RANCHER ROUTING
@@ -1027,6 +1028,8 @@ arrives frozen, raised right.
 limited shares this round. reserve yours:
 {link}
 
+or if you'd rather talk it through first, grab 15 min with ben: ${BEN_SALES_CAL_URL}
+
 — Ben`;
 
 // Msg2 ADDS scarcity + live social proof (Upgrade B) over Msg1's intro. The
@@ -1041,6 +1044,8 @@ const BODY_MSG2 = `{first} — quick one. {rancher} has only a few shares left t
 
 if you want one:
 {link}
+
+or if you'd rather talk it through first, grab 15 min with ben: ${BEN_SALES_CAL_URL}
 — Ben`;
 
 // Msg3 ADDS the mission angle. Social proof (own line) reinforces "it's working"
@@ -1058,6 +1063,8 @@ shipped to your door.
 
 this is the start of something big. glad you're in it.
 {link}
+
+or if you'd rather talk it through first, grab 15 min with ben: ${BEN_SALES_CAL_URL}
 — Ben`;
 
 const BODIES: Record<Wave, string> = {
