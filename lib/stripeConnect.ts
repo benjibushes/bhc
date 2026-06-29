@@ -154,7 +154,17 @@ export async function createOnboardingLink(input: OnboardingLinkInput): Promise<
   return { url: link.url };
 }
 
-export type ConnectAccountStatus = 'not_connected' | 'onboarding' | 'active' | 'restricted';
+// Status classification lives in a zero-import module so it can be unit-tested
+// without dragging in the Stripe client or the secrets chain. Re-exported here
+// so existing callers (`import { ConnectAccountStatus } from '@/lib/stripeConnect'`)
+// keep working unchanged.
+import {
+  classifyConnectStatus,
+  type ConnectAccountStatus,
+  type ConnectStatusSignals,
+} from './connectStatusClassify';
+export { classifyConnectStatus };
+export type { ConnectAccountStatus, ConnectStatusSignals };
 
 export interface ConnectStatusReadResult {
   cardPaymentsActive: boolean;
@@ -167,20 +177,29 @@ export async function getConnectAccountStatus(accountId: string): Promise<Connec
   const stripe = getStripeClient();
   // V2 retrieve w/ include — Stripe returns the full configuration +
   // requirements blocks needed to compute live status without a second
-  // round-trip. The legacy minimum_deadline field is the canonical
-  // requirements-status indicator on V2; capability_status_updated webhook
-  // events drive incremental refresh.
+  // round-trip. The minimum_deadline field is one requirements-status
+  // indicator on V2; capability_status_updated webhook events drive
+  // incremental refresh.
   const account = await (stripe.v2.core.accounts as any).retrieve(accountId, {
     include: ['configuration.merchant', 'requirements'],
   });
   const cardPaymentsActive =
     (account as any)?.configuration?.merchant?.capabilities?.card_payments?.status === 'active';
-  const reqStatus = (account as any)?.requirements?.summary?.minimum_deadline?.status ?? null;
-  const onboardingComplete = reqStatus !== 'currently_due' && reqStatus !== 'past_due';
-  const status: ConnectAccountStatus =
-    cardPaymentsActive && onboardingComplete ? 'active' :
-    reqStatus === 'past_due' ? 'restricted' :
-    'onboarding';
+  const summary = (account as any)?.requirements?.summary ?? {};
+  const reqStatus = summary?.minimum_deadline?.status ?? null;
+  const disabledReason = summary?.disabled_reason ?? null;
+  // currently_due can come back as an array of entries; count its length.
+  const currentlyDueRaw = summary?.currently_due;
+  const currentlyDueCount = Array.isArray(currentlyDueRaw) ? currentlyDueRaw.length : 0;
+
+  const { status, onboardingComplete } = classifyConnectStatus({
+    cardPaymentsActive,
+    requirementsStatus: reqStatus,
+    disabledReason,
+    chargesEnabled: cardPaymentsActive,
+    currentlyDueCount,
+  });
+
   return { cardPaymentsActive, onboardingComplete, requirementsStatus: reqStatus, status };
 }
 
