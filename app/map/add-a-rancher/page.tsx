@@ -35,7 +35,7 @@ export default function AddRancherPage() {
         <Container>
           <div className="max-w-3xl space-y-5">
             <Pill tone="amber">Discover Map · Add a Rancher</Pill>
-            <h1 className="font-serif text-4xl md:text-6xl leading-tight">
+            <h1 className="font-serif text-4xl md:text-6xl leading-tight lowercase">
               Put a rancher on the map
             </h1>
             <p className="text-lg text-charcoal/80 leading-relaxed">

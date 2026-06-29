@@ -340,7 +340,7 @@ export default async function FoundersPage({
             <p className="text-xs uppercase tracking-[0.2em] text-saddle">
               The Founding Herd
             </p>
-            <h1 className="font-serif text-4xl md:text-6xl leading-tight">
+            <h1 className="font-serif text-4xl md:text-6xl leading-tight lowercase">
               100 spots. {founding100PriceLabel} early bird.
             </h1>
             <Divider />
@@ -404,7 +404,7 @@ export default async function FoundersPage({
             <p className="text-xs uppercase tracking-widest text-saddle">
               Why I'm doing this
             </p>
-            <h2 className="font-serif text-3xl md:text-4xl leading-snug">
+            <h2 className="font-serif text-3xl md:text-4xl leading-snug lowercase">
               Four companies own American beef. The ranchers raising it can't
               make rent.
             </h2>
@@ -493,7 +493,7 @@ export default async function FoundersPage({
               <p className="text-xs uppercase tracking-widest text-saddle">
                 Tiers
               </p>
-              <h2 className="font-serif text-3xl md:text-4xl">
+              <h2 className="font-serif text-3xl md:text-4xl lowercase">
                 Pick the level that fits.
               </h2>
               <p className="text-saddle max-w-2xl mx-auto">
@@ -681,7 +681,7 @@ export default async function FoundersPage({
               <p className="text-xs uppercase tracking-widest text-saddle">
                 Common questions
               </p>
-              <h2 className="font-serif text-3xl md:text-4xl">
+              <h2 className="font-serif text-3xl md:text-4xl lowercase">
                 FAQ
               </h2>
             </div>
