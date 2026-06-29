@@ -134,10 +134,15 @@ export default function DepositReserveForm({
       </div>
 
       <form onSubmit={reserve} className="max-w-md mx-auto space-y-3">
+        <label htmlFor="reserve-email" className="sr-only">Your email</label>
         <input
+          id="reserve-email"
           type="email"
           required
           placeholder="Your email"
+          aria-label="Your email"
+          autoComplete="email"
+          inputMode="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           className="w-full px-4 py-3 border border-dust bg-white text-sm"
