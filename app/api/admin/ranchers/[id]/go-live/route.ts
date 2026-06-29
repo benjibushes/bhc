@@ -37,6 +37,46 @@ export async function POST(
     let prevRancher: any = null;
     try { prevRancher = await getRecordById(TABLES.RANCHERS, id); } catch { /* non-fatal */ }
 
+    // ── tier_v2 Connect-active gate ─────────────────────────────────────────
+    // Refuse to flip a tier_v2 rancher Live unless their Stripe Connect account
+    // is 'active'. A tier_v2 rancher takes deposits via Connect; if Connect
+    // isn't active (restricted / onboarding incomplete) the deposit endpoint
+    // 409s them and matching excludes them, so marking them "Live" would
+    // display a rancher who can't transact. Mirrors the eligibility fork in
+    // app/api/cron/rancher-go-live-sync/route.ts. Legacy (non-tier_v2) ranchers
+    // are unaffected — their Stripe Connect Status is irrelevant to go-live.
+    // Force is supported (?force=1 / { force: true }) for the rare case where an
+    // admin must override (e.g. legacy-Connect rancher mis-tagged tier_v2).
+    if (prevRancher) {
+      const pricingModel = String(prevRancher['Pricing Model'] || 'legacy').toLowerCase();
+      const connectStatus = String(prevRancher['Stripe Connect Status'] || '').toLowerCase();
+      let force = false;
+      try {
+        const url = new URL(request.url);
+        force = url.searchParams.get('force') === '1' || url.searchParams.get('force') === 'true';
+      } catch { /* ignore */ }
+      if (!force) {
+        try {
+          const body = await request.clone().json();
+          if (body && (body.force === true || body.force === '1')) force = true;
+        } catch { /* no/!json body — fine */ }
+      }
+      if (pricingModel === 'tier_v2' && connectStatus !== 'active' && !force) {
+        const rancherName = prevRancher['Operator Name'] || prevRancher['Ranch Name'] || id;
+        return NextResponse.json(
+          {
+            error:
+              `${rancherName} can't go live yet — Stripe Connect status is "${prevRancher['Stripe Connect Status'] || 'unset'}", not "active". ` +
+              `tier_v2 ranchers take deposits via Stripe Connect, so they'd display as Live but couldn't accept money. ` +
+              `Have them finish Stripe Connect onboarding (or use Resync), then retry. Pass force=true to override.`,
+            code: 'connect_not_active',
+            connectStatus: prevRancher['Stripe Connect Status'] || null,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     // BUG FIX (RW-6 audit): prior version only flipped Page Live. matching/
     // suggest filters by Active Status='Active' — so newly-live rancher
     // would NOT receive routed buyers because Active Status stayed at

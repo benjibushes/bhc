@@ -135,6 +135,34 @@ export async function GET(request: Request) {
       );
     }
 
+    // ── tier_v2 Connect-active gate ─────────────────────────────────────────
+    // A tier_v2 rancher collects buyer deposits via Stripe Connect. If their
+    // Connect account isn't 'active' (restricted / onboarding incomplete) they
+    // physically cannot take a deposit — the deposit endpoint 409s them and
+    // matching excludes them. Flipping them "Live" here would display a rancher
+    // who can't actually transact. Refuse to go Live and tell them to finish
+    // Stripe Connect first. Mirrors the gate in
+    // app/api/ranchers/sign-agreement/route.ts (~146-148). Legacy
+    // (non-tier_v2) ranchers are unaffected — Stripe Connect Status is
+    // irrelevant to them and must NOT block their go-live.
+    const pricingModel = String(rancher['Pricing Model'] || 'legacy').toLowerCase();
+    const isTierV2 = pricingModel === 'tier_v2';
+    const connectStatus = String(rancher['Stripe Connect Status'] || '').toLowerCase();
+    if (isTierV2 && connectStatus !== 'active') {
+      return new NextResponse(
+        htmlPage({
+          title: 'Finish Stripe Connect first',
+          heading: '🔒',
+          body:
+            `<h1>One more step, ${operatorFirst}</h1>` +
+            `<p>Your agreement is in, but ${ranchName} can't go live until your Stripe Connect account is fully active — that's what lets buyers pay their deposit straight to you.</p>` +
+            `<div class="box"><p style="margin:0;">Finish (or re-open) your Stripe onboarding from your rancher dashboard, then click this link again. The moment Stripe shows you as active, you'll go live instantly.</p></div>` +
+            `<p>Reply to my email if you're stuck and I'll jump on a call to finish it with you.</p>`,
+        }),
+        { status: 409, headers: { 'Content-Type': 'text/html' } }
+      );
+    }
+
     // Compute fields to set, preserving existing values where present
     const today = new Date().toISOString().split('T')[0];
     const fields: Record<string, any> = {
