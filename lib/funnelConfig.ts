@@ -13,11 +13,11 @@ export interface FunnelStepCopy {
 export const FUNNEL_STEPS: StepKey[] = ['size', 'timing', 'contact', 'storage', 'reveal'];
 
 export const FUNNEL_COPY: Record<StepKey, FunnelStepCopy> = {
-  size: { title: 'How much beef are you after?', sub: 'Pick the closest — your rancher helps you dial it in.' },
-  timing: { title: 'When do you want the freezer full?', sub: 'No wrong answer.' },
-  contact: { title: 'Claim your match', sub: 'Private & approval-only. No spam, never resold.' },
-  storage: { title: 'How will you store it?', sub: 'Almost there — last one.' },
-  reveal: { title: "You're in.", sub: '' },
+  size: { title: 'how much beef are you after?', sub: 'pick the closest — your rancher helps you dial it in.' },
+  timing: { title: 'when do you want the freezer full?', sub: 'no wrong answer.' },
+  contact: { title: 'claim your match', sub: 'private & approval-only. no spam, never resold.' },
+  storage: { title: 'how will you store it?', sub: 'almost there — last one.' },
+  reveal: { title: "you're in.", sub: '' },
 };
 
 export interface FunnelOption {
@@ -29,19 +29,19 @@ export interface FunnelOption {
 
 // `value` strings match VALID_TIERS in app/api/qualify/route.ts.
 export const SIZE_OPTIONS: FunnelOption[] = [
-  { value: 'Quarter', label: 'Quarter', detail: '~85 lbs · feeds 1–2 · $1,000–1,500', icon: 'ti-meat' },
-  { value: 'Half', label: 'Half', detail: '~170 lbs · feeds 3–5 · $2,000–2,500', icon: 'ti-meat' },
-  { value: 'Whole', label: 'Whole', detail: '~340 lbs · feeds 6+ · $4,000–5,000', icon: 'ti-meat' },
-  { value: 'Not Sure', label: 'Not sure yet', detail: 'Talk me through it', icon: 'ti-help-circle' },
+  { value: 'Quarter', label: 'quarter', detail: '~85 lbs · feeds 1–2 · $1,000–1,500', icon: 'ti-meat' },
+  { value: 'Half', label: 'half', detail: '~170 lbs · feeds 3–5 · $2,000–2,500', icon: 'ti-meat' },
+  { value: 'Whole', label: 'whole', detail: '~340 lbs · feeds 6+ · $4,000–5,000', icon: 'ti-meat' },
+  { value: 'Not Sure', label: 'not sure yet', detail: 'talk me through it', icon: 'ti-help-circle' },
 ];
 
 // `value` strings match the timing cases in the server scorer (ASAP / Within 30
 // days / Within 60 days / Within 90 days / Just exploring). "1–3 months" maps to
 // "Within 60 days" (15 pts) so the score is correct.
 export const TIMING_OPTIONS: FunnelOption[] = [
-  { value: 'Within 30 days', label: 'Within a month', detail: 'Ready to go', icon: 'ti-bolt' },
-  { value: 'Within 60 days', label: '1–3 months', detail: 'Planning ahead', icon: 'ti-calendar' },
-  { value: 'Just exploring', label: 'Just browsing', detail: 'Curious for now', icon: 'ti-eye' },
+  { value: 'Within 30 days', label: 'within a month', detail: 'ready to go', icon: 'ti-bolt' },
+  { value: 'Within 60 days', label: '1–3 months', detail: 'planning ahead', icon: 'ti-calendar' },
+  { value: 'Just exploring', label: 'just browsing', detail: 'curious for now', icon: 'ti-eye' },
 ];
 
 // `value` strings match VALID_STORAGE in app/api/qualify/route.ts.
@@ -51,5 +51,6 @@ export const STORAGE_OPTIONS: FunnelOption[] = [
   { value: 'rancher_holds', label: 'Rancher holds it', detail: 'Pick up in batches', icon: 'ti-clock' },
 ];
 
-// On-brand accent used across the flow (saddle). Keep in sync with the wizard CSS.
-export const FUNNEL_ACCENT = '#92632F';
+// On-brand accent used across the flow — the brand saddle (--color-saddle).
+// Matches the state landing pages so /access/[state] → funnel doesn't shift brown.
+export const FUNNEL_ACCENT = '#6B4F3F';

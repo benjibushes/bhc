@@ -5,7 +5,7 @@
 // One cohesive, game-like, mobile-first wizard that replaces both the /access
 // signup form and the /qualify quiz. Five steps, one question per screen,
 // auto-advance on single-select, a goal-gradient progress bar, founder-voice
-// copy, the saddle accent (#92632F) and Playfair serif headers.
+// copy, the brand saddle accent (#6B4F3F) and Playfair serif headers.
 //
 // Two entry modes:
 //   • fresh  → starts at Size (step 1). Lead is created mid-flow at Contact.
@@ -42,6 +42,7 @@ import {
   type FunnelOption,
 } from '@/lib/funnelConfig';
 import { US_STATES } from '@/lib/states';
+import Button from '@/app/components/Button';
 import CalInlineBooker from '@/app/qualify/[consumerId]/CalInlineBooker';
 import { trackEvent, metaEventId } from '@/lib/analytics';
 
@@ -329,11 +330,11 @@ export default function BuyerFunnel({
   async function submitContact() {
     setError('');
     const name = firstName.trim();
-    if (name.length < 2) { setError('Please enter your first name.'); return; }
-    if (!emailValid) { setError('Please enter a valid email address.'); return; }
-    if (!phone.trim()) { setError('Phone is required so your rancher can reach you.'); return; }
-    if (!phoneValid) { setError('Please enter a valid phone number (at least 10 digits).'); return; }
-    if (!state) { setError('Please pick your state.'); return; }
+    if (name.length < 2) { setError('please enter your first name.'); return; }
+    if (!emailValid) { setError('please enter a valid email address.'); return; }
+    if (!phone.trim()) { setError('phone is required so your rancher can reach you.'); return; }
+    if (!phoneValid) { setError('please enter a valid phone number (at least 10 digits).'); return; }
+    if (!state) { setError('please pick your state.'); return; }
 
     setSubmitting(true);
     try {
@@ -479,7 +480,7 @@ export default function BuyerFunnel({
                 style={{ backgroundColor: 'var(--accent)' }}
                 aria-hidden="true"
               />
-              Private network
+              private network
             </span>
             {stats && (stats.familiesMatched > 0 || stats.verifiedRanches > 0) && (
               <span className="max-w-[55%] text-right text-[11px] leading-tight text-saddle">
@@ -537,7 +538,13 @@ export default function BuyerFunnel({
 
         {/* ── STEP 3 — CONTACT ─────────────────────────────────────────────── */}
         {stepKey === 'contact' && (
-          <div className="space-y-4">
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitContact();
+            }}
+          >
             {/* Reward line — only when there's a real in-state count (>0). */}
             {stats && stats.ranchesInState > 0 && (
               <div
@@ -548,7 +555,7 @@ export default function BuyerFunnel({
                   color: 'var(--accent)',
                 }}
               >
-                You match {commas(stats.ranchesInState)}{' '}
+                you match {commas(stats.ranchesInState)}{' '}
                 {stats.ranchesInState === 1 ? 'ranch' : 'ranches'} near you.
               </div>
             )}
@@ -639,16 +646,17 @@ export default function BuyerFunnel({
 
             {error && <ErrorBox>{error}</ErrorBox>}
 
-            <button
-              type="button"
-              onClick={submitContact}
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={submitting}
               disabled={submitting}
-              className="w-full rounded-md px-6 py-4 text-sm font-semibold uppercase tracking-wider text-bone transition-opacity disabled:opacity-50"
-              style={{ backgroundColor: 'var(--accent)' }}
             >
-              {submitting ? 'Finding your match…' : 'Show me my match'}
-            </button>
-          </div>
+              {submitting ? 'finding your match…' : 'show me my match'}
+            </Button>
+          </form>
         )}
 
         {/* ── STEP 4 — STORAGE ─────────────────────────────────────────────── */}
@@ -681,14 +689,15 @@ export default function BuyerFunnel({
         {/* ── Back nav (steps 2–4, not in resume-storage, not on reveal) ───── */}
         {canGoBack && (
           <div className="mt-7">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={back}
               disabled={submitting}
-              className="text-sm text-saddle transition-colors hover:text-charcoal disabled:opacity-40"
             >
-              ← Back
-            </button>
+              ← back
+            </Button>
           </div>
         )}
       </div>
@@ -852,10 +861,10 @@ function Reveal({
       </div>
 
       <header className="space-y-2">
-        <h1 className="font-serif text-4xl leading-tight text-charcoal">You&apos;re in.</h1>
+        <h1 className="font-serif text-4xl leading-tight text-charcoal">you&apos;re in.</h1>
         {familyNumber && (
           <p className="text-sm text-saddle">
-            You&apos;re family <strong className="text-charcoal">#{familyNumber}</strong>.
+            you&apos;re family <strong className="text-charcoal">#{familyNumber}</strong>.
           </p>
         )}
       </header>
@@ -864,12 +873,12 @@ function Reveal({
       {offerOperatorCall ? (
         <div className="space-y-4 text-left">
           <div className="space-y-1">
-            <p className="text-xs uppercase tracking-widest text-saddle">Next step · about 15 minutes</p>
-            <h2 className="font-serif text-2xl text-charcoal">Book your 15-min call with Ben</h2>
+            <p className="text-xs uppercase tracking-widest text-saddle">next step · about 15 minutes</p>
+            <h2 className="font-serif text-2xl text-charcoal">book your 15-min call with ben</h2>
             <p className="text-sm leading-relaxed text-saddle">
               {matched && rancher
-                ? <>Ben will confirm your cut, lock your processing date, and walk you through {rancher.name}. No payment now.</>
-                : <>Ben will confirm your cut, talk you through your options, and get you matched. No payment now.</>}
+                ? <>ben will confirm your cut, lock your processing date, and walk you through {rancher.name}. no payment now.</>
+                : <>ben will confirm your cut, talk you through your options, and get you matched. no payment now.</>}
             </p>
           </div>
           <CalInlineBooker
@@ -883,7 +892,7 @@ function Reveal({
         /* ── Mode 2: matched rancher reveal ─────────────────────────────────── */
         <div className="space-y-4">
           <div className="rounded-lg border border-dust bg-white p-6 text-left">
-            <p className="text-xs uppercase tracking-widest text-saddle">Your matched rancher</p>
+            <p className="text-xs uppercase tracking-widest text-saddle">your matched rancher</p>
             <h2 className="mt-1 font-serif text-3xl text-charcoal">{rancher.name}</h2>
             {rancher.state && <p className="mt-0.5 text-sm text-saddle">{rancher.state}</p>}
             <div
@@ -896,29 +905,30 @@ function Reveal({
                 ? <>your share is ready to reserve.</>
                 : tierV2Match
                 ? <>ben reaches out today to set it up.</>
-                : <>They&apos;ll text you today.</>}
+                : <>they&apos;ll text you today.</>}
             </div>
           </div>
           {tierV2Match && result?.referralId ? (
             /* Self-serve deposit — the matched tier_v2 buyer pays their deposit
                now instead of dead-ending at "ben reaches out". */
             <div className="space-y-2">
-              <a
+              <Button
                 href={`/checkout/${result.referralId}/deposit`}
-                className="block w-full rounded-md px-6 py-4 text-center text-sm font-medium uppercase tracking-wide text-bone"
-                style={{ backgroundColor: FUNNEL_ACCENT }}
+                variant="primary"
+                size="lg"
+                fullWidth
               >
-                Reserve your share — pay your deposit →
-              </a>
+                reserve your share — pay your deposit →
+              </Button>
               <p className="text-[11px] text-dust text-center">
-                Deposit fully refundable for 7 days. No full payment now.
+                deposit fully refundable for 7 days. no full payment now.
               </p>
             </div>
           ) : (
             <p className="text-xs text-saddle">
               {tierV2Match
                 ? <>check your email — ben gets in touch to lock in your share with {rancher.name}. no payment now.</>
-                : <>Keep an eye on your phone — your rancher reaches out directly, no middleman.</>}
+                : <>keep an eye on your phone — your rancher reaches out directly, no middleman.</>}
             </p>
           )}
         </div>
@@ -926,13 +936,13 @@ function Reveal({
         /* ── Mode 3: honest waitlist (no in-state rancher / no match) ────────── */
         <div className="space-y-4">
           <div className="rounded-lg border border-dust bg-white p-6 text-left">
-            <p className="text-xs uppercase tracking-widest text-saddle">You&apos;re first in line</p>
+            <p className="text-xs uppercase tracking-widest text-saddle">you&apos;re first in line</p>
             <h2 className="mt-1 font-serif text-2xl text-charcoal">
-              We&apos;re bringing ranches to {state || 'your state'}.
+              we&apos;re bringing ranches to {state || 'your state'}.
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-saddle">
-              You&apos;re a qualified buyer the moment a verified rancher opens up near you — and you&apos;ll
-              be the first we reach out to. We&apos;re working on it.
+              you&apos;re a qualified buyer the moment a verified rancher opens up near you — and you&apos;ll
+              be the first we reach out to. we&apos;re working on it.
             </p>
           </div>
         </div>
