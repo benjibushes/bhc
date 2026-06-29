@@ -169,16 +169,18 @@ interface PayoutsInfo {
   nextPayoutDateISO: string | null;
 }
 
+// Brand-token status colors. Semantic mapping preserved:
+// neutral/info → bone+saddle, caution → amber, positive → sage, dead → dust.
 const statusStyles: Record<string, string> = {
-  'Intro Sent': 'bg-blue-100 text-blue-800',
-  'Rancher Contacted': 'bg-indigo-100 text-indigo-800',
-  'Negotiation': 'bg-yellow-100 text-yellow-800',
-  'Closed Won': 'bg-green-100 text-green-800',
-  'Closed Lost': 'bg-gray-100 text-gray-600',
-  'Pending Approval': 'bg-orange-100 text-orange-800',
+  'Intro Sent': 'bg-bone-warm text-saddle',
+  'Rancher Contacted': 'bg-bone-warm text-charcoal',
+  'Negotiation': 'bg-amber/20 text-amber-dark',
+  'Closed Won': 'bg-sage/15 text-sage-dark',
+  'Closed Lost': 'bg-dust/20 text-saddle',
+  'Pending Approval': 'bg-amber/20 text-amber-dark',
   // Deposit-gate statuses — set by Airtable typecast on first write (no schema change needed).
-  'Awaiting Payment': 'bg-amber-100 text-amber-800',
-  'Slot Locked': 'bg-blue-100 text-blue-700',
+  'Awaiting Payment': 'bg-amber/20 text-amber-dark',
+  'Slot Locked': 'bg-bone-warm text-saddle',
 };
 
 export default function RancherDashboardPage() {
@@ -1297,7 +1299,7 @@ export default function RancherDashboardPage() {
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 p-4" onClick={() => setPwModalOpen(false)}>
               <div className="bg-bone border border-dust max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between">
-                  <h2 className="font-serif text-2xl">Set a password</h2>
+                  <h2 className="font-serif text-2xl">set a password</h2>
                   <button onClick={() => setPwModalOpen(false)} className="text-dust hover:text-charcoal" aria-label="Close">✕</button>
                 </div>
                 {pwSaved ? (
@@ -1716,8 +1718,8 @@ export default function RancherDashboardPage() {
               </div>
 
               {/* OPTIMIZATION CHECKLIST — drives ranchers to keep filling out
-                  their page after onboarding. Pages with all 6 boxes checked
-                  convert ~3× better. Only renders if they're missing at least
+                  their page after onboarding. A fully filled page earns more
+                  buyer trust. Only renders if they're missing at least
                   one item — disappears at 6/6 to reward completion. */}
               {(() => {
                 const checklist = [
@@ -1725,7 +1727,7 @@ export default function RancherDashboardPage() {
                     key: 'logo',
                     label: 'Add a ranch logo',
                     done: !!rancherInfo.logoUrl,
-                    hint: 'Pages with logos look 10× more legit. PNG/JPG URL.',
+                    hint: 'a logo makes your page look established. PNG/JPG URL.',
                   },
                   {
                     key: 'tagline',
@@ -1743,7 +1745,7 @@ export default function RancherDashboardPage() {
                     key: 'pricing',
                     label: 'Set at least one share price',
                     done: !!(rancherInfo.quarterPrice || rancherInfo.halfPrice || rancherInfo.wholePrice),
-                    hint: 'Pages with prices convert ~3× better than "contact for pricing".',
+                    hint: 'buyers skip pages without prices. list at least one.',
                   },
                   {
                     key: 'gallery',
@@ -1786,7 +1788,7 @@ export default function RancherDashboardPage() {
                           Optimize your page
                         </p>
                         <h3 className="font-serif text-xl text-charcoal mt-1">
-                          {doneCount}/{checklist.length} complete · pages with all 6 convert ~3× better
+                          {doneCount}/{checklist.length} complete · a full page earns more buyer trust
                         </h3>
                       </div>
                       <button
@@ -1841,7 +1843,7 @@ export default function RancherDashboardPage() {
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="p-6 border border-dust bg-white">
                   <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-serif text-xl">Capacity</h3>
+                    <h3 className="font-serif text-xl">capacity</h3>
                     {!editingCapacity && (
                       <button
                         onClick={() => { setEditingCapacity(true); setCapacityValue(String(rancherInfo.maxActiveReferrals)); }}
@@ -1900,7 +1902,7 @@ export default function RancherDashboardPage() {
                 </div>
 
                 <div className="p-6 border border-dust bg-white">
-                  <h3 className="font-serif text-xl mb-4">Your Operation</h3>
+                  <h3 className="font-serif text-xl mb-4">your operation</h3>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-saddle">State</span>
@@ -1929,7 +1931,7 @@ export default function RancherDashboardPage() {
               {/* Recent Active Leads */}
               {activeRefs.length > 0 && (
                 <>
-                  <h3 className="font-serif text-xl">Recent Leads</h3>
+                  <h3 className="font-serif text-xl">recent leads</h3>
                   <div className="space-y-3">
                     {activeRefs.slice(0, 3).map((ref) => (
                       <ReferralRow
@@ -1960,7 +1962,7 @@ export default function RancherDashboardPage() {
           {activeTab === 'referrals' && (
             <div className="space-y-8">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <h2 className="font-serif text-2xl">Active Leads</h2>
+                <h2 className="font-serif text-2xl">active leads</h2>
                 {activeRefs.length > 3 && (
                   <div className="flex flex-wrap gap-2 text-sm">
                     <select
@@ -2064,7 +2066,7 @@ export default function RancherDashboardPage() {
                 <>
                   <Divider />
                   <div className="flex flex-col sm:flex-row sm:items-baseline gap-2">
-                    <h2 className="font-serif text-2xl">Awaiting Payment</h2>
+                    <h2 className="font-serif text-2xl">awaiting payment</h2>
                     <span className="text-sm text-saddle">
                       {awaitingPaymentRefs.length} {awaitingPaymentRefs.length === 1 ? 'deal' : 'deals'} — confirm payment to close
                     </span>
@@ -2099,7 +2101,7 @@ export default function RancherDashboardPage() {
                 <>
                   <Divider />
                   <div className="flex flex-col sm:flex-row sm:items-baseline gap-2">
-                    <h2 className="font-serif text-2xl">Collect Balance</h2>
+                    <h2 className="font-serif text-2xl">collect balance</h2>
                     <span className="text-sm text-saddle">
                       {collectBalanceTotal > 0
                         ? `$${collectBalanceTotal.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} across `
@@ -2120,12 +2122,12 @@ export default function RancherDashboardPage() {
                         : null;
                       const slotLocked = !!ref.rancher_accepted_at;
                       const invoiceSent = !!ref.final_invoice_sent_at || !!ref.final_invoice_url;
-                      // Badge state: paid (green), sent (yellow), not sent (gray)
+                      // Badge state (brand tokens): paid → sage, sent → amber, not sent → dust.
                       const badgeClass = ref.final_paid_at
-                        ? 'bg-green-100 text-green-800'
+                        ? 'bg-sage/15 text-sage-dark'
                         : invoiceSent
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-gray-100 text-gray-600';
+                          ? 'bg-amber/20 text-amber-dark'
+                          : 'bg-dust/20 text-saddle';
                       const badgeLabel = ref.final_paid_at
                         ? 'Paid'
                         : invoiceSent
@@ -2137,18 +2139,18 @@ export default function RancherDashboardPage() {
                             {/* Left: buyer info + deposit details */}
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-gray-100 text-gray-600'}`}>
+                                <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-bone-warm text-saddle'}`}>
                                   {ref.status}
                                 </span>
                                 <span className={`inline-block px-2 py-0.5 text-xs font-medium ${badgeClass}`}>
                                   {badgeLabel}
                                 </span>
                                 {slotLocked ? (
-                                  <span className="inline-block px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800" title={`Slot accepted ${ref.rancher_accepted_at}`}>
+                                  <span className="inline-block px-2 py-0.5 text-xs font-medium bg-saddle/15 text-saddle" title={`Slot accepted ${ref.rancher_accepted_at}`}>
                                     🔒 Slot locked
                                   </span>
                                 ) : (
-                                  <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700">
+                                  <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber/20 text-amber-dark">
                                     Accept Slot first
                                   </span>
                                 )}
@@ -2177,7 +2179,7 @@ export default function RancherDashboardPage() {
                             <div className="flex-shrink-0">
                               <button
                                 onClick={() => openFinalInvoiceModal(ref)}
-                                className="px-4 py-2 text-sm bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+                                className="px-4 py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
                                 title={invoiceSent ? 'Re-send the final balance invoice to buyer' : 'Send final balance invoice to buyer (100% to you)'}
                               >
                                 {invoiceSent ? 'Re-send invoice' : 'Send Final Invoice'}
@@ -2194,13 +2196,13 @@ export default function RancherDashboardPage() {
               {closedRefs.length > 0 && (
                 <>
                   <Divider />
-                  <h2 className="font-serif text-2xl">Closed Deals</h2>
+                  <h2 className="font-serif text-2xl">closed deals</h2>
                   <div className="space-y-4">
                     {closedRefs.map((ref) => (
                       <div key={ref.id} className="border border-dust bg-white">
                         <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                           <div>
-                            <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-gray-100 text-gray-600'}`}>
+                            <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-bone-warm text-saddle'}`}>
                               {ref.status}
                             </span>
                             <p className="font-medium mt-1">{ref.buyer_name}</p>
@@ -2258,7 +2260,7 @@ export default function RancherDashboardPage() {
           {activeTab === 'marketing' && (
             <div className="space-y-6">
               <div>
-                <h2 className="font-serif text-2xl text-charcoal">Marketing engine</h2>
+                <h2 className="font-serif text-2xl text-charcoal">marketing engine</h2>
                 <p className="text-sm text-saddle mt-1">
                   What BHC is running on your behalf right now. We bring the buyers
                   to your state — you close them.
@@ -2422,7 +2424,7 @@ export default function RancherDashboardPage() {
           {/* Earnings Tab */}
           {activeTab === 'earnings' && (
             <div className="space-y-8">
-              <h2 className="font-serif text-2xl">Earnings Summary</h2>
+              <h2 className="font-serif text-2xl">earnings summary</h2>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
@@ -2441,7 +2443,7 @@ export default function RancherDashboardPage() {
 
               <Divider />
 
-              <h3 className="font-serif text-xl">Completed Sales</h3>
+              <h3 className="font-serif text-xl">completed sales</h3>
               {referrals.filter(r => r.status === 'Closed Won').length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -2504,7 +2506,7 @@ export default function RancherDashboardPage() {
           {activeTab === 'benefits' && (
             <div className="space-y-6">
               <div>
-                <h2 className="font-serif text-2xl">Network Benefits</h2>
+                <h2 className="font-serif text-2xl">network benefits</h2>
                 <p className="text-sm text-saddle mt-1">
                   Exclusive deals and partnerships available to BuyHalfCow ranchers.
                 </p>
@@ -2562,7 +2564,7 @@ export default function RancherDashboardPage() {
             <div className="space-y-8">
               <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
                 <div>
-                  <h2 className="font-serif text-2xl">My Landing Page</h2>
+                  <h2 className="font-serif text-2xl">my landing page</h2>
                   <p className="text-sm text-saddle mt-1">
                     Fill this out to publish your public ranch page on BuyHalfCow.
                   </p>
@@ -2707,7 +2709,7 @@ export default function RancherDashboardPage() {
                   is the brand mark. Same ImageUploader plumbing as before — just
                   moved up + given a preview + cover label. */}
               <div className="space-y-4">
-                <h3 className="font-serif text-lg border-b border-dust pb-2">Photos</h3>
+                <h3 className="font-serif text-lg border-b border-dust pb-2">photos</h3>
                 <p className="text-xs text-dust">The first photo is your cover — it&apos;s the big one buyers see at the top of your page. Add real shots of your cattle, your land, and your family.</p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -2806,7 +2808,7 @@ export default function RancherDashboardPage() {
 
                 {/* Left column: Brand & Story */}
                 <div className="space-y-5">
-                  <h3 className="font-serif text-lg border-b border-dust pb-2">Brand &amp; Story</h3>
+                  <h3 className="font-serif text-lg border-b border-dust pb-2">brand &amp; story</h3>
 
                   <div className="space-y-1">
                     <label className="block text-sm font-medium">Page URL Slug <span className="text-dust font-normal">(e.g. rocking-r-ranch)</span></label>
@@ -2866,7 +2868,7 @@ export default function RancherDashboardPage() {
                     />
                   </div>
 
-                  <h3 className="font-serif text-lg border-b border-dust pb-2 pt-4">Delivery &amp; Details</h3>
+                  <h3 className="font-serif text-lg border-b border-dust pb-2 pt-4">delivery &amp; details</h3>
 
                   <div className="space-y-1">
                     <label className="block text-sm font-medium">Beef Types <span className="text-dust font-normal">(e.g. Angus, Hereford, Wagyu)</span></label>
@@ -3028,7 +3030,7 @@ export default function RancherDashboardPage() {
                       render on the public page but were previously editable only
                       in the setup wizard / Submit-Verification modal — now first
                       class here so a rancher can edit them anytime. */}
-                  <h3 className="font-serif text-lg border-b border-dust pb-2 pt-4">Trust &amp; Policies</h3>
+                  <h3 className="font-serif text-lg border-b border-dust pb-2 pt-4">trust &amp; policies</h3>
 
                   <div className="space-y-1">
                     <label className="block text-sm font-medium">Refund / Satisfaction Policy <span className="text-dust font-normal">(buyers see this verbatim — 20–500 characters)</span></label>
@@ -3098,7 +3100,7 @@ export default function RancherDashboardPage() {
                     price (or $/lb × weight); Half/Quarter + every deposit derive
                     via lib/pricing. Mirrors the setup wizard Step-3 pattern. */}
                 <div className="space-y-5">
-                  <h3 className="font-serif text-lg border-b border-dust pb-2">Pricing</h3>
+                  <h3 className="font-serif text-lg border-b border-dust pb-2">pricing</h3>
                   <p className="text-xs text-dust">Enter your <strong>whole-cow</strong> price once — we fill in Half, Quarter, and each reserve deposit for you. Edit any number to override; the rest stay yours.</p>
 
                   {(() => {
@@ -3334,7 +3336,7 @@ export default function RancherDashboardPage() {
                   field here is misleading. Existing link data is preserved in the
                   saved object; we just stop collecting/showing it. */}
               <div className="space-y-4">
-                <h3 className="font-serif text-lg border-b border-dust pb-2">Other products (shown on your page)</h3>
+                <h3 className="font-serif text-lg border-b border-dust pb-2">other products (shown on your page)</h3>
                 <p className="text-xs text-dust">Extras beyond quarter/half/whole beef — sampler boxes, jerky, bones, and the like. These are <strong>displayed on your page</strong> so buyers know what else you offer; buyers contact you about them. Cow shares are sold through BuyHalfCow.</p>
                 {customProducts.map((p, i) => (
                   <div key={i} className="p-3 border border-dust bg-white flex justify-between items-start">
@@ -3371,7 +3373,7 @@ export default function RancherDashboardPage() {
                   How the rancher gets beef to buyers. Mirrors the setup-wizard
                   step; checkbox multi-select drives which sub-fields show. */}
               <div className="space-y-4">
-                <h3 className="font-serif text-lg border-b border-dust pb-2">Fulfillment</h3>
+                <h3 className="font-serif text-lg border-b border-dust pb-2">fulfillment</h3>
                 <p className="text-xs text-dust">How do buyers get their beef? Pick all that apply — buyers see these options on your listing.</p>
                 <div className="space-y-2">
                   {([
@@ -3456,7 +3458,7 @@ export default function RancherDashboardPage() {
                   valid JSON array on save (the public page JSON.parses this;
                   the old dashboard path wrote a raw string and corrupted it). */}
               <div className="space-y-4">
-                <h3 className="font-serif text-lg border-b border-dust pb-2">Testimonials</h3>
+                <h3 className="font-serif text-lg border-b border-dust pb-2">testimonials</h3>
                 <p className="text-xs text-dust">Real quotes from happy buyers. These show as social proof on your public page.</p>
                 {testimonials.map((t, i) => (
                   <div key={i} className="p-3 border border-dust bg-white space-y-2">
@@ -3505,7 +3507,7 @@ export default function RancherDashboardPage() {
                   add/remove question/answer rows. Serialized to a JSON array
                   written to the FAQ Airtable field. */}
               <div className="space-y-4">
-                <h3 className="font-serif text-lg border-b border-dust pb-2">Frequently Asked Questions</h3>
+                <h3 className="font-serif text-lg border-b border-dust pb-2">frequently asked questions</h3>
                 <p className="text-xs text-dust">Answer the questions buyers ask most — cuts, timing, pickup, storage. Fewer back-and-forth emails for you.</p>
                 {faqItems.map((f, i) => (
                   <div key={i} className="p-3 border border-dust bg-white space-y-2">
@@ -3581,7 +3583,7 @@ export default function RancherDashboardPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
-              <h2 className="font-serif text-2xl">Mark Closed Lost</h2>
+              <h2 className="font-serif text-2xl">mark closed lost</h2>
               <button onClick={() => { setLostModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle">×</button>
             </div>
             <p className="text-sm text-saddle">Buyer: <strong className="text-charcoal">{lostModal.buyer_name}</strong></p>
@@ -3648,7 +3650,7 @@ export default function RancherDashboardPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
-              <h2 className="font-serif text-2xl">Revive Lead</h2>
+              <h2 className="font-serif text-2xl">revive lead</h2>
               <button onClick={() => { setReviveModal(null); setUpdateError(''); }} className="text-2xl leading-none hover:text-saddle">×</button>
             </div>
             <p className="text-sm text-saddle">Buyer: <strong className="text-charcoal">{reviveModal.buyer_name}</strong></p>
@@ -3842,7 +3844,7 @@ export default function RancherDashboardPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
-              <h2 className="font-serif text-2xl">Send Final Invoice</h2>
+              <h2 className="font-serif text-2xl">send final invoice</h2>
               <button onClick={closeFinalInvoiceModal} className="text-2xl leading-none hover:text-saddle">×</button>
             </div>
             <p className="text-sm text-saddle">
@@ -3985,7 +3987,7 @@ export default function RancherDashboardPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
-              <h2 className="font-serif text-2xl">Close Deal</h2>
+              <h2 className="font-serif text-2xl">close deal</h2>
               <button onClick={() => setCloseModal(null)} className="text-2xl leading-none hover:text-saddle">×</button>
             </div>
             <p className="text-sm text-saddle">Buyer: <strong className="text-charcoal">{closeModal.buyer_name}</strong></p>
@@ -4120,7 +4122,7 @@ export default function RancherDashboardPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start">
-              <h2 className="font-serif text-2xl">Pass on Lead</h2>
+              <h2 className="font-serif text-2xl">pass on lead</h2>
               <button onClick={closePassModal} className="text-2xl leading-none hover:text-saddle">×</button>
             </div>
 
@@ -4364,7 +4366,7 @@ function HomeTab({
       {/* 1 — ACTION CARDS (or calm empty state) */}
       {cards.length > 0 ? (
         <div className="space-y-3">
-          <h2 className="font-serif text-2xl">What needs you</h2>
+          <h2 className="font-serif text-2xl">what needs you</h2>
           {cards.map((c) => (
             <button
               key={c.key}
@@ -4556,22 +4558,23 @@ function ResponseDeadline({ referral }: { referral: Referral }) {
   if (referral.status !== 'Intro Sent') return null;
   const hrs = hoursLeftToRespond(referral.intro_sent_at);
   if (hrs === null) return null;
+  // Brand tokens: comfortable → dust/bone, caution → amber, overdue → weathered.
   if (hrs > 24) {
     return (
-      <span className="inline-flex px-2 py-0.5 text-xs bg-blue-50 text-blue-700 border border-blue-200">
+      <span className="inline-flex px-2 py-0.5 text-xs bg-bone-warm text-saddle border border-dust">
         {hrs}h to respond
       </span>
     );
   }
   if (hrs > 0) {
     return (
-      <span className="inline-flex px-2 py-0.5 text-xs bg-yellow-50 text-yellow-800 border border-yellow-300 font-medium">
+      <span className="inline-flex px-2 py-0.5 text-xs bg-amber/20 text-amber-dark border border-amber-dark/30 font-medium">
         ⏰ {hrs}h left to respond
       </span>
     );
   }
   return (
-    <span className="inline-flex px-2 py-0.5 text-xs bg-red-50 text-red-700 border border-red-300 font-medium">
+    <span className="inline-flex px-2 py-0.5 text-xs bg-weathered/10 text-weathered border border-weathered/30 font-medium">
       🚨 Overdue — auto-reassigning soon
     </span>
   );
@@ -4605,34 +4608,36 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
     <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
       <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
+          <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-bone-warm text-saddle'}`}>
             {referral.status}
           </span>
           <FreshnessIndicator referral={referral} />
           <ResponseDeadline referral={referral} />
           {depositPaid && (
-            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800" title={`Deposit of $${(referral.deposit_amount || 0).toFixed(2)} paid ${referral.deposit_paid_at || ''}`}>
+            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-sage/15 text-sage-dark" title={`Deposit of $${(referral.deposit_amount || 0).toFixed(2)} paid ${referral.deposit_paid_at || ''}`}>
               Deposit ${(referral.deposit_amount || 0).toFixed(0)} ✓
             </span>
           )}
           {rancherAcceptedAt && (
-            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800" title={`Slot accepted ${rancherAcceptedAt}. Deposit non-refundable per BHC policy.`}>
+            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-saddle/15 text-saddle" title={`Slot accepted ${rancherAcceptedAt}. Deposit non-refundable per BHC policy.`}>
               🔒 Slot locked
             </span>
           )}
           {finalSent && !finalPaid && (
-            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800">Invoice sent</span>
+            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber/20 text-amber-dark">Invoice sent</span>
           )}
         </div>
         <p className="font-medium mt-1">{referral.buyer_name}</p>
         <p className="text-xs text-dust">{referral.buyer_state} &middot; {referral.order_type}</p>
       </div>
-      <div className="flex gap-2 flex-wrap">
+      {/* Mobile: primary actions stack full-width; Mark Lost / Pass demoted to a
+          compact secondary row. sm+: everything sits inline as before. */}
+      <div className="flex flex-col w-full sm:w-auto sm:flex-row sm:flex-wrap gap-2">
         {referral.status === 'Intro Sent' && (
           <button
             onClick={() => onUpdate(referral.id, 'Rancher Contacted')}
             disabled={updating === referral.id}
-            className="px-3 py-1.5 text-xs border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
           >
             Contacted ✓
           </button>
@@ -4641,7 +4646,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
           <button
             onClick={onAccept}
             disabled={updating === referral.id}
-            className="px-3 py-1.5 text-xs bg-purple-700 text-white hover:bg-purple-800 transition-colors disabled:opacity-50"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-50"
             title="Accept slot — buyer&apos;s deposit becomes non-refundable per BHC policy."
           >
             🔒 Accept Slot
@@ -4650,7 +4655,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
         {showFinalInvoice && (
           <button
             onClick={onSendFinal}
-            className="px-3 py-1.5 text-xs bg-green-700 text-white hover:bg-green-800 transition-colors"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-sage text-bone hover:bg-sage-dark transition-colors"
             title="Send final balance invoice to buyer (100% to you, no BHC fee)"
           >
             {finalSent ? 'Re-send invoice' : 'Send Final Invoice'}
@@ -4660,7 +4665,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
           <button
             onClick={onConfirmPayment}
             disabled={updating === referral.id}
-            className="px-3 py-1.5 text-xs bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
             title="Confirm the off-platform payment you received — closes the deal + fires the commission invoice"
           >
             Confirm payment received
@@ -4669,25 +4674,28 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
         {showClose && (
           <button
             onClick={onClose}
-            className="px-3 py-1.5 text-xs bg-charcoal text-bone hover:bg-saddle transition-colors"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-charcoal text-bone hover:bg-saddle transition-colors"
           >
             Close as Won
           </button>
         )}
-        <button
-          onClick={onLost}
-          className="px-3 py-1.5 text-xs border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
-          title="Mark Lost — closes deal without rerouting buyer"
-        >
-          Mark Lost
-        </button>
-        <button
-          onClick={onPass}
-          className="px-3 py-1.5 text-xs border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
-          title="Pass — we auto-reassign buyer to another rancher"
-        >
-          Pass
-        </button>
+        {/* Secondary, lower-stakes actions: side-by-side even on mobile, smaller weight. */}
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button
+            onClick={onLost}
+            className="flex-1 sm:flex-none px-3 py-1.5 text-xs border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
+            title="Mark Lost — closes deal without rerouting buyer"
+          >
+            Mark Lost
+          </button>
+          <button
+            onClick={onPass}
+            className="flex-1 sm:flex-none px-3 py-1.5 text-xs border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
+            title="Pass — we auto-reassign buyer to another rancher"
+          >
+            Pass
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -4702,10 +4710,11 @@ function FreshnessIndicator({ referral }: { referral: Referral }) {
   const daysSince = (Date.now() - new Date(last).getTime()) / 86_400_000;
   const days = Math.floor(daysSince);
   const tone = days < 7 ? 'green' : days < 14 ? 'yellow' : 'red';
+  // Brand tokens: fresh → sage, nudge → amber, stale → rust.
   const colors = {
-    green: 'bg-green-100 text-green-800',
-    yellow: 'bg-yellow-100 text-yellow-800',
-    red: 'bg-red-100 text-red-800',
+    green: 'bg-sage/15 text-sage-dark',
+    yellow: 'bg-amber/20 text-amber-dark',
+    red: 'bg-rust/15 text-rust-dark',
   };
   const label =
     days < 1 ? 'Active — today' :
@@ -4761,7 +4770,7 @@ function ReferralCard({
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-gray-100'}`}>
+            <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-bone-warm text-saddle'}`}>
               {referral.status}
             </span>
             <FreshnessIndicator referral={referral} />
@@ -4812,7 +4821,7 @@ function ReferralCard({
           <button
             onClick={onAccept}
             disabled={updating === referral.id}
-            className="px-4 py-2 text-sm bg-purple-700 text-white hover:bg-purple-800 transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-50"
             title="Accept slot — buyer&apos;s deposit becomes non-refundable per BHC policy."
           >
             🔒 Accept Slot
@@ -4821,7 +4830,7 @@ function ReferralCard({
         {showFinalInvoice && (
           <button
             onClick={onSendFinal}
-            className="px-4 py-2 text-sm bg-green-700 text-white hover:bg-green-800 transition-colors"
+            className="px-4 py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors"
             title="Send final balance invoice to buyer (100% to you, no BHC fee)"
           >
             {finalSent ? 'Re-send Final Invoice' : 'Send Final Invoice'}
@@ -4831,7 +4840,7 @@ function ReferralCard({
           <button
             onClick={onConfirmPayment}
             disabled={updating === referral.id}
-            className="px-4 py-2 text-sm bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+            className="px-4 py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
             title="Confirm the off-platform payment you received — closes the deal + fires the commission invoice"
           >
             Confirm payment received
@@ -5290,7 +5299,7 @@ function RancherRotBadge({ days }: { days: number | null }) {
   if (days === null || days === undefined) return null;
   const tier =
     days >= 14
-      ? 'bg-red-700 text-white'
+      ? 'bg-weathered text-bone'
       : days >= 7
         ? 'bg-saddle text-bone'
         : days >= 3
