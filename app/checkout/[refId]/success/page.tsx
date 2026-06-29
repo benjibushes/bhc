@@ -29,7 +29,7 @@ export function buildShareLink(slug: string | undefined, _refId: string, origin 
 
 export default function DepositSuccessPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-bg text-text-primary flex items-center justify-center"><p>Loading…</p></div>}>
+    <Suspense fallback={<div className="min-h-screen bg-bone text-charcoal flex items-center justify-center"><p>Loading…</p></div>}>
       <DepositSuccessContent />
     </Suspense>
   );
@@ -202,7 +202,7 @@ function DepositSuccessContent() {
             need the reassurance reinforced. */}
         <div className="border-l-4 border-sage-dark bg-white p-4 md:p-5 mb-6 md:mb-8">
           <p className="text-sm text-charcoal leading-relaxed">
-            <strong>BHC Promise still applies.</strong> If anything goes sideways &mdash; cold-chain failure, the beef isn&apos;t what you expected, anything &mdash; reply to your message thread or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a> within 7 days of receipt. We refund the deposit.
+            <strong>BHC Promise still applies.</strong> Your deposit is fully refundable until {rancherFirst} accepts your slot &mdash; usually within 24&ndash;48 hours. Once they commit your processing slot it&apos;s non-refundable, but the cold-chain guarantee never goes away: if your beef arrives thawed or short, BHC makes you whole. Anything goes sideways &mdash; reply to your message thread or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a> and we step in.
           </p>
         </div>
 

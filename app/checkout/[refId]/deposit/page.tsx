@@ -52,7 +52,7 @@ interface DepositInfo {
 
 export default function DepositPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-bg text-text-primary flex items-center justify-center"><p>Loading checkout…</p></div>}>
+    <Suspense fallback={<div className="min-h-screen bg-bone text-charcoal flex items-center justify-center"><p>Loading checkout…</p></div>}>
       <DepositPageContent />
     </Suspense>
   );
@@ -211,16 +211,27 @@ function DepositPageContent() {
 
         {/* Cut selector */}
         <div className="mb-6">
-          <div className="text-xs text-saddle uppercase tracking-wider mb-2">Pick your cut</div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-3">
+          <div id="cut-selector-label" className="text-xs text-saddle uppercase tracking-wider mb-2">Pick your cut</div>
+          <div role="radiogroup" aria-labelledby="cut-selector-label" className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-3">
             {info.cuts.map((c) => {
               const selected = selectedCut === c.slug;
               return (
                 <button
                   key={c.slug}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
                   onClick={() => setSelectedCut(c.slug)}
-                  className={`p-3 md:p-4 text-left border-2 ${selected ? 'border-charcoal' : 'border-dust'} bg-white hover:border-saddle transition`}
+                  className={`relative p-3 md:p-4 text-left border-2 ${selected ? 'border-charcoal ring-1 ring-charcoal' : 'border-dust'} bg-white hover:border-saddle transition`}
                 >
+                  {selected && (
+                    <span
+                      className="absolute top-2 right-2 w-5 h-5 flex items-center justify-center bg-charcoal text-bone text-xs leading-none"
+                      aria-hidden="true"
+                    >
+                      ✓
+                    </span>
+                  )}
                   <div className="text-sm">{c.label}</div>
                   <div className="text-lg md:text-xl font-serif">{fmtUsd(c.price)}</div>
                   {c.lbs && <div className="text-xs text-saddle">~{c.lbs}</div>}
