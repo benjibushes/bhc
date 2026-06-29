@@ -8,6 +8,7 @@ import Pill from '../../components/Pill';
 import Card from '../../components/Card';
 import ProspectClaimBanner from '../../components/ProspectClaimBanner';
 import BHCPromiseBadge from '../../components/BHCPromiseBadge';
+import StickyMobileCTA from '../../components/StickyMobileCTA';
 import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
@@ -477,7 +478,7 @@ export default async function RancherPage(
                 )}
                 {/* Scarcity (P1 #6) — remaining capacity this round. */}
                 {sharesLeft !== null && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] uppercase tracking-widest font-semibold bg-amber/20 text-amber border border-amber/40">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] uppercase tracking-widest font-semibold bg-amber text-charcoal">
                     <span aria-hidden>●</span>
                     {sharesLeft} {sharesLeft === 1 ? 'share' : 'shares'} left this round
                   </span>
@@ -690,7 +691,7 @@ export default async function RancherPage(
                 {/* Scarcity (P1 #6) — surfaces remaining capacity right at the
                     point of decision. Hidden when there's no capacity signal. */}
                 {sharesLeft !== null && (
-                  <p className="inline-flex items-center gap-2 mx-auto px-4 py-2 bg-amber/15 border border-amber/40 text-sm font-semibold text-amber-dark">
+                  <p className="inline-flex items-center gap-2 mx-auto px-4 py-2 bg-amber text-charcoal text-sm font-semibold">
                     <span aria-hidden>●</span>
                     Only {sharesLeft} {sharesLeft === 1 ? 'share' : 'shares'} left this processing round
                   </p>
@@ -1121,7 +1122,7 @@ export default async function RancherPage(
               )}
               {/* Scarcity (P1 #6) in the reserve CTA — concrete urgency. */}
               {sharesLeft !== null && (
-                <p className="inline-flex items-center gap-2 mx-auto px-4 py-2 bg-amber/20 border border-amber/40 text-sm font-semibold text-amber">
+                <p className="inline-flex items-center gap-2 mx-auto px-4 py-2 bg-amber text-charcoal text-sm font-semibold">
                   <span aria-hidden>●</span>
                   {sharesLeft} {sharesLeft === 1 ? 'share' : 'shares'} left this round
                 </p>
@@ -1233,6 +1234,17 @@ export default async function RancherPage(
           </div>
         </Container>
       </div>
+
+      {/* Sticky mobile reserve CTA — most ad traffic is mobile. Only when
+          there's actually something to reserve (Connect-active + priced), so
+          it jumps to the #reserve deposit form that those conditions render. */}
+      {onConnect && !!hasPricing && (
+        <StickyMobileCTA
+          href="#reserve"
+          label="Reserve your share"
+          subLabel="small refundable deposit holds it"
+        />
+      )}
     </main>
   );
 }
