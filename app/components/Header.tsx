@@ -10,6 +10,8 @@ import Image from 'next/image';
 const HATS_NAV_URL =
   'https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=nav&utm_campaign=hat-launch';
 
+// Full link set — every destination lives here so the mobile menu (and any
+// future "More" surface) stays exhaustive and nothing becomes unreachable.
 const NAV_LINKS = [
   { href: '/map', label: 'Map' },
   { href: '/ranchers', label: 'Ranchers' },
@@ -22,6 +24,12 @@ const NAV_LINKS = [
   { href: '/about', label: 'About' },
   { href: '/faq', label: 'FAQ' },
 ];
+
+// Desktop top-level nav — trimmed to the 6 highest-intent destinations so the
+// bar doesn't wrap/overflow before the CTAs. The rest (Brands, Wholesale,
+// About, Wins) stay reachable in the mobile menu + the site footer.
+const PRIMARY_NAV_LABELS = new Set(['Map', 'Ranchers', 'Sell Your Beef', 'Founders', 'Hats', 'FAQ']);
+const PRIMARY_NAV_LINKS = NAV_LINKS.filter((l) => PRIMARY_NAV_LABELS.has(l.label));
 
 export default function Header() {
   const [open, setOpen] = useState(false);
@@ -44,8 +52,8 @@ export default function Header() {
           </Link>
 
           {/* Desktop Nav */}
-          <nav className="hidden md:flex items-center gap-6">
-            {NAV_LINKS.map(link => (
+          <nav className="hidden lg:flex items-center gap-6">
+            {PRIMARY_NAV_LINKS.map(link => (
               link.external ? (
                 <a
                   key={link.href}
@@ -69,7 +77,7 @@ export default function Header() {
           </nav>
 
           {/* Desktop CTAs */}
-          <div className="hidden md:flex items-center gap-3">
+          <div className="hidden lg:flex items-center gap-3">
             <Link
               href="/member/login"
               className="text-sm text-saddle hover:text-charcoal transition-colors"
@@ -87,8 +95,9 @@ export default function Header() {
           {/* Mobile Menu Button */}
           <button
             onClick={() => setOpen(!open)}
-            className="md:hidden p-2 text-charcoal"
+            className="lg:hidden p-2 text-charcoal"
             aria-label="Toggle menu"
+            aria-expanded={open}
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               {open ? (
@@ -102,7 +111,7 @@ export default function Header() {
 
         {/* Mobile Menu */}
         {open && (
-          <div className="md:hidden border-t border-dust py-4 space-y-1">
+          <div className="lg:hidden border-t border-dust py-4 space-y-1">
             {NAV_LINKS.map(link => link.external ? (
               <a
                 key={link.href}

@@ -93,15 +93,12 @@ export default function FullHomepage() {
               {totalMembers ? ` Join ${totalMembers.toLocaleString()}+ members already sourcing direct.` : ''}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Button href="/access" className="text-base">
+              <Button href="/access" size="lg">
                 Get matched in 90 seconds
               </Button>
-              <a
-                href="/start"
-                className="inline-block px-8 py-4 border-2 border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium tracking-wider uppercase text-sm"
-              >
+              <Button href="/start" variant="secondary" size="lg">
                 Not sure? Start here
-              </a>
+              </Button>
             </div>
             <p className="text-xs text-saddle mt-8">
               Raise cattle?{' '}
@@ -115,21 +112,21 @@ export default function FullHomepage() {
             </p>
           </div>
 
-          {/* ── 5-STEP FUNNEL PREVIEW ──────────────────────────────────────
-              Sets expectations BEFORE the buyer hits /access. Every stage is
-              numbered so the same indicator can appear in /access, /qualify,
-              /matched, and the intro email — buyer always knows where they
-              are. Reduces drop-off at each gate by making the path visible.
+          {/* ── BUYER FUNNEL PREVIEW ───────────────────────────────────────
+              Sets expectations BEFORE the buyer hits /access. Uses the ONE
+              canonical 4-step buyer model (Apply → Get routed → Talk direct →
+              Beef in your freezer) — identical labels to the "for buyers"
+              track in the "how it works" section below, so the buyer sees the
+              same path twice, not two conflicting maps.
              ───────────────────────────────────────────────────────────────── */}
           <div className="mt-20 max-w-5xl mx-auto">
-            <p className="text-xs uppercase tracking-widest text-saddle text-center mb-6">How it works · 5 steps to stocked</p>
-            <ol className="grid grid-cols-1 sm:grid-cols-5 gap-4 md:gap-3">
+            <p className="text-xs uppercase tracking-widest text-saddle text-center mb-6">How it works · 4 steps to stocked</p>
+            <ol className="grid grid-cols-1 sm:grid-cols-4 gap-4 md:gap-3">
               {[
-                { n: '1', t: 'Apply', d: 'Tell us your state + cut size. Takes 90 seconds.' },
-                { n: '2', t: 'Qualify', d: 'Answer 4 questions to confirm your match.' },
-                { n: '3', t: 'Match', d: 'We match you to a verified rancher serving your area.' },
-                { n: '4', t: 'Connect', d: 'Book a call or pay your deposit on the platform.' },
-                { n: '5', t: 'Stock', d: 'Pick up at processing date. Freezer full.' },
+                { n: '1', t: 'Apply', d: '90-second quiz. We capture your state, household size, timing.' },
+                { n: '2', t: 'Get routed', d: 'We match you with a verified rancher serving your area within hours.' },
+                { n: '3', t: 'Talk direct', d: 'Rancher emails you direct with pricing, cuts, processing date.' },
+                { n: '4', t: 'Beef in your freezer', d: '2–4 weeks. No marketplace markup. BHC Promise on every match.' },
               ].map((step) => (
                 <li
                   key={step.n}
@@ -185,7 +182,7 @@ export default function FullHomepage() {
                 Every D2C rancher in America
               </h3>
               <p className="text-sm text-saddle group-hover:text-dust leading-relaxed mb-4">
-                Public hit list of ranchers shipping direct to families. Find one near you, or
+                A map of every D2C rancher shipping direct to families. Find one near you, or
                 add a rancher you know to the map.
               </p>
               <span className="text-sm font-bold uppercase tracking-widest">
@@ -267,17 +264,17 @@ export default function FullHomepage() {
               </p>
 
               <div className="pt-2">
-                <a
+                <Button
                   href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=homepage-hero&utm_campaign=hat-launch"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block px-12 py-5 bg-bone text-charcoal hover:bg-dust hover:text-bone transition-colors duration-300 font-medium tracking-wider uppercase text-base border-2 border-bone"
+                  external
+                  size="lg"
+                  className="bg-bone text-charcoal border-bone hover:bg-dust hover:border-dust hover:text-bone"
                 >
-                  Shop Hats →
-                </a>
+                  shop hats →
+                </Button>
               </div>
               <p className="text-sm text-dust">
-                HERD members only. Sells out fast.
+                HERD members only. Limited runs.
               </p>
             </div>
           </div>
@@ -454,26 +451,28 @@ export default function FullHomepage() {
                 : 'Take the 90-second quiz. Most buyers are matched within hours.'}
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-6">
-              <a
+              <Button
                 href="/access"
-                className="inline-block px-10 py-5 bg-bone text-charcoal hover:bg-white transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
+                size="lg"
+                className="bg-bone text-charcoal border-bone hover:bg-white hover:border-white"
               >
-                Join as a buyer
-              </a>
-              <a
+                join as a buyer
+              </Button>
+              <Button
                 href="/sell"
-                className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
+                size="lg"
+                className="bg-transparent text-bone border-bone hover:bg-bone hover:text-charcoal"
               >
-                Sell as a rancher
-              </a>
-              <a
+                sell as a rancher
+              </Button>
+              <Button
                 href="https://merch.buyhalfcow.com/collections/hats?utm_source=buyhalfcow&utm_medium=cta&utm_campaign=hat-launch"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
+                external
+                size="lg"
+                className="bg-transparent text-bone border-bone hover:bg-bone hover:text-charcoal"
               >
-                Shop hats
-              </a>
+                shop hats
+              </Button>
             </div>
             <p className="text-sm pt-4 text-dust">
               Questions? <a href="mailto:contact@buyhalfcow.com" className="underline">contact@buyhalfcow.com</a>
