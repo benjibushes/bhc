@@ -9,6 +9,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { trackEvent, metaEventId } from '@/lib/analytics';
 import { CutBreakdown, type Tier } from '@/app/components/CutBreakdown';
+import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 
 // Map deposit cut slug → CutBreakdown tier. Slug is lowercase from
 // Stripe Price metadata; tier is the capitalized human-readable label.
@@ -375,6 +376,17 @@ function DepositPageContent() {
         >
           {submitting ? 'Redirecting to Stripe…' : 'Continue to Secure Payment →'}
         </button>
+
+        <p className="text-center mt-3">
+          <a
+            href={BEN_SALES_CAL_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-saddle text-sm underline hover:text-charcoal"
+          >
+            prefer to talk it through first? book a 15-min call
+          </a>
+        </p>
 
         <p className="text-saddle text-xs mt-4 text-center">
           Powered by Stripe · BuyHalfCow doesn&apos;t store card data
