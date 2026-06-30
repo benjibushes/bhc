@@ -169,9 +169,10 @@ export default async function RancherPage(
       ? String(rancherTierRaw.name)
       : String(rancherTierRaw || '');
   const isOperatorTier = rancherTierName.toLowerCase() === 'operator';
-  const benSalesCalUrl =
-    process.env.NEXT_PUBLIC_BEN_SALES_CAL_URL ||
-    'https://cal.com/ben-beauchman-1itnsg/sales';
+  // Operator (BHC-handled-sales) default routes through the /book redirect so
+  // it resolves a LIVE Cal event (or /contact) and can never 404 — no hardcoded
+  // cal.com slug. See app/book/route.ts + lib/calBooking.
+  const benSalesCalUrl = `${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/book`;
   const showCalCta = isOperatorTier || !!calComSlug;
   const calCtaUrl = isOperatorTier
     ? benSalesCalUrl
