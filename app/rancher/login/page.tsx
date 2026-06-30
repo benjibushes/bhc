@@ -111,9 +111,12 @@ function RancherLoginInner() {
               </div>
             ) : null}
             <p className="text-saddle">
+              already have a ranch with us? log in below — this is your existing account, not a new signup.
+            </p>
+            <p className="text-sm text-dust">
               {mode === 'password'
-                ? 'Log in with your email and password.'
-                : 'Enter your email to receive a login link. No password needed.'}
+                ? 'log in with your email and password.'
+                : 'enter your email and we’ll send a one-click login link. no password needed.'}
             </p>
           </div>
 
@@ -163,14 +166,17 @@ function RancherLoginInner() {
                 {pwSubmitting ? 'Logging in...' : 'Log In'}
               </button>
 
-              <div className="text-center">
+              <div className="text-center space-y-2">
                 <button
                   type="button"
                   onClick={() => { setMode('link'); setPwError(''); }}
-                  className="text-saddle hover:text-charcoal transition-colors text-sm underline underline-offset-2"
+                  className="text-charcoal hover:text-saddle transition-colors text-sm underline underline-offset-2 font-medium"
                 >
-                  Forgot password? Email me a login link instead
+                  no password yet? get a one-click login link
                 </button>
+                <p className="text-xs text-dust">
+                  legacy ranchers never set a password — use the link instead.
+                </p>
               </div>
             </form>
           ) : (
@@ -201,7 +207,7 @@ function RancherLoginInner() {
                 disabled={sending}
                 className="w-full px-6 py-4 bg-charcoal text-bone hover:bg-saddle transition-colors duration-300 font-medium tracking-wider uppercase disabled:opacity-50"
               >
-                {sending ? 'Sending...' : 'Send Login Link'}
+                {sending ? 'Sending...' : 'Email Me a One-Click Login Link'}
               </button>
 
               <div className="text-center">
@@ -210,14 +216,14 @@ function RancherLoginInner() {
                   onClick={() => { setMode('password'); setError(''); }}
                   className="text-saddle hover:text-charcoal transition-colors text-sm underline underline-offset-2"
                 >
-                  Log in with a password instead
+                  already set a password? log in with it instead
                 </button>
               </div>
             </form>
           )}
 
           <div className="mt-8 text-center space-y-3">
-            <p className="text-sm text-dust">Not a registered rancher?</p>
+            <p className="text-sm text-dust">never partnered with us before?</p>
             <Link href="/partner" className="inline-block text-charcoal hover:text-saddle transition-colors text-sm font-medium">
               Apply to Join the Network →
             </Link>
