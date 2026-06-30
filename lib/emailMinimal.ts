@@ -15,6 +15,7 @@
 
 import { sendEmail } from './email';
 import { getOperatorBookingUrl } from './calBooking';
+import { BEN_SALES_CAL_URL } from './salesContact';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 // Operator booking link is resolved at send time via getOperatorBookingUrl()
@@ -71,6 +72,78 @@ export async function sendQuizCompleteCalInvite(opts: {
       <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'quiz_complete_cal_invite',
+  });
+}
+
+// 2b. Quiz complete → DEPOSIT-PRIMARY invite (tier_v2 / Stripe-Connect rancher).
+//     Deposit optionality fix (2026-06-30): a qualified buyer matched to a
+//     deposit-capable rancher should NEVER be call-only. The dominant CTA is a
+//     one-tap deposit (the magic-link lands them authed straight on the Stripe
+//     deposit page — zero new fields); the call is demoted to a quiet lowercase
+//     "or book a 15-min call with ben first" text link below it, framed as the
+//     lower-commitment fallback. Lowercase, honest brand voice throughout; the
+//     only emphasis is the single filled button (von Restorff isolation).
+export async function sendQuizCompleteDepositInvite(opts: {
+  to: string;
+  firstName: string;
+  score: number;
+  // Member-verify magic link → /checkout/<refId>/deposit. Buyer arrives authed
+  // and goes straight to Stripe (Apple/Google Pay one-tap on mobile).
+  depositMagicLinkUrl: string;
+  rancherName?: string;
+  depositAmount?: number | null;
+  nextProcessingDate?: string;
+  // Quiet secondary. Ben's sales Cal — single source of truth (lib/salesContact).
+  benCalUrl?: string;
+}) {
+  const cal = opts.benCalUrl || BEN_SALES_CAL_URL;
+  const rancher = (opts.rancherName || '').trim();
+  // Honest scarcity / context line above the button — only real, server-known
+  // facts (rancher name + next processing date). Never a fabricated countdown.
+  const processing = opts.nextProcessingDate
+    ? (() => {
+        try {
+          return new Date(opts.nextProcessingDate as string).toLocaleDateString(undefined, {
+            month: 'long',
+            day: 'numeric',
+          });
+        } catch {
+          return '';
+        }
+      })()
+    : '';
+  const scarcityBits: string[] = [];
+  if (rancher) scarcityBits.push(`${escape(rancher)} processes on a rolling cycle`);
+  if (processing) scarcityBits.push(`next slot: ${escape(processing)}`);
+  const scarcityLine = scarcityBits.length
+    ? `<p style="margin:4px 0 14px 0;font-size:13px;color:#6B4F3F">${scarcityBits.join(' · ')}</p>`
+    : '';
+  const depositAmt =
+    typeof opts.depositAmount === 'number' && opts.depositAmount > 0
+      ? `$${opts.depositAmount.toLocaleString()} `
+      : '';
+  const shareLabel = rancher ? `your share from ${escape(rancher)}` : 'your share';
+  return sendEmail({
+    to: opts.to,
+    subject: rancher
+      ? `you qualified — reserve your share from ${escape(rancher)}`
+      : `you qualified — reserve your share`,
+    html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+      <p>hey ${escape(opts.firstName)},</p>
+      <p>quiz score: <strong>${opts.score}/100</strong>. you're matched${rancher ? ` with <strong>${escape(rancher)}</strong>` : ''} — your share is ready to reserve.</p>
+      ${scarcityLine}
+      <p style="margin:24px 0 8px 0">
+        <a href="${opts.depositMagicLinkUrl}" style="display:block;width:100%;max-width:100%;box-sizing:border-box;padding:16px 24px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:16px;font-weight:600;text-align:center">
+          reserve ${shareLabel} — ${depositAmt}secure deposit →
+        </a>
+      </p>
+      <p style="margin:0 0 24px 0;font-size:12px;color:#6B4F3F;text-align:center">fully refundable until processing · payment secured by stripe</p>
+      <p style="margin:24px 0 0 0;font-size:14px;color:#6B4F3F;text-align:center">
+        not ready? <a href="${cal}" style="color:#6B4F3F;text-decoration:underline">or book a 15-min call with ben first</a>
+      </p>
+      <p style="font-size:12px;color:#A7A29A;margin-top:28px">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
+    </div>`,
+    templateName: 'quiz_complete_deposit_invite',
   });
 }
 
