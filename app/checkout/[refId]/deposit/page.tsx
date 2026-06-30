@@ -369,34 +369,57 @@ function DepositPageContent() {
           </div>
         </div>
 
-        <button
-          onClick={continueToCheckout}
-          disabled={submitting || !selectedCutData}
-          className="w-full bg-charcoal text-bone px-4 md:px-8 py-3 md:py-4 min-h-[48px] uppercase tracking-wider text-sm hover:bg-saddle transition disabled:opacity-50 flex items-center justify-center"
-        >
-          {submitting ? 'Redirecting to Stripe…' : 'Continue to Secure Payment →'}
-        </button>
+        {/* The deposit decision point. One thing looks like a button (the
+            deposit); the call is a recessive text link below it, never a peer.
+            Honest scarcity (real next-processing date) sits just above; the
+            trust line (refund + stripe) sits just below where anxiety peaks.
+            On mobile this whole block sticks to the thumb zone so the deposit
+            is always one reach away on a long page. */}
+        <div className="sticky bottom-0 -mx-4 md:mx-0 px-4 md:px-0 pt-3 pb-4 md:pb-0 md:static bg-bone md:bg-transparent border-t border-divider md:border-0">
+          {/* error surfaces here, above the button, so it's never hidden under
+              the sticky block on mobile */}
+          {error && <p className="text-red-700 mb-2 text-sm text-center">{error}</p>}
 
-        <p className="text-center mt-3">
-          <a
-            href={BEN_SALES_CAL_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-saddle text-sm underline hover:text-charcoal"
+          {/* honest scarcity — real processing date only, never a fake count */}
+          {info.fulfillment.nextProcessingDate && (
+            <p className="text-center text-sm text-charcoal mb-2">
+              next processing date: <strong>{info.fulfillment.nextProcessingDate}</strong> — reserve before it fills
+            </p>
+          )}
+
+          <button
+            onClick={continueToCheckout}
+            disabled={submitting || !selectedCutData}
+            className="w-full bg-charcoal text-bone px-4 md:px-8 py-4 min-h-[48px] text-base hover:bg-saddle transition disabled:opacity-50 flex items-center justify-center"
           >
-            prefer to talk it through first? book a 15-min call
-          </a>
-        </p>
+            {submitting
+              ? 'redirecting to stripe…'
+              : selectedCutData
+                ? `reserve your ${selectedCutData.label.toLowerCase()} — secure deposit →`
+                : 'reserve your share — secure deposit →'}
+          </button>
 
-        <p className="text-saddle text-xs mt-4 text-center">
-          Powered by Stripe · BuyHalfCow doesn&apos;t store card data
-        </p>
+          {/* trust line — directly under the button, where deposit anxiety peaks */}
+          <p className="text-saddle text-xs mt-2 text-center leading-relaxed">
+            fully refundable until {info.rancher.name} accepts · secured by stripe · we don&apos;t store card data
+          </p>
 
-        {error && <p className="text-red-700 mt-4 text-sm">{error}</p>}
+          {/* recessive escape hatch — plain text link, never a second button */}
+          <p className="text-center mt-3">
+            <a
+              href={BEN_SALES_CAL_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-saddle text-sm underline hover:text-charcoal"
+            >
+              or book a 15-min call with ben first
+            </a>
+          </p>
+        </div>
 
         <div className="mt-8 pt-6 border-t border-divider text-center">
           <Link href={`/checkout/${refId}/ask`} className="text-saddle text-sm hover:underline">
-            Have questions first? Message {info.rancher.name} →
+            have questions first? message {info.rancher.name} →
           </Link>
         </div>
       </div>
