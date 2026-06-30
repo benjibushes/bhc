@@ -8,6 +8,15 @@ import StateMultiSelect from '../components/StateMultiSelect';
 import ImageUploader from '../components/ImageUploader';
 import Link from 'next/link';
 import { deriveLadder, deriveDeposit, checkWholePrice, MIN_TIER_PRICE } from '@/lib/pricing';
+import {
+  groupReferralsByBuyer,
+  deriveActivityEvents,
+  countUnread,
+  matchesSearch,
+  type Customer,
+  type ActivityEvent,
+  type CrmReferral,
+} from '@/lib/rancherCrm';
 
 interface RancherInfo {
   id: string;
@@ -163,7 +172,13 @@ interface NetworkBenefit {
 // out to Messages (/rancher/inbox) + Money (/rancher/billing). The legacy
 // 'overview' folds into Home; 'marketing'/'earnings'/'benefits' stay fully
 // reachable under the secondary "More" affordance — no content deleted.
-type Tab = 'home' | 'overview' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page';
+type Tab = 'home' | 'overview' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers';
+
+// WAVE 3a (2026-06-30): localStorage key for activity-feed read-state. No
+// Airtable field exists for per-rancher read receipts, so mark-as-read is
+// client-local (per browser). Keyed by rancher id so impersonation / shared
+// devices don't bleed read-state across accounts.
+const ACTIVITY_READ_KEY = (rancherId: string) => `bhc-rancher-activity-read:${rancherId}`;
 
 // Shape returned by /api/rancher/payouts (Stripe Connect money surface).
 // All fields degrade to null build-dark / when no Connect account.
@@ -213,6 +228,18 @@ export default function RancherDashboardPage() {
   // "unread" when its latest message came from the buyer). Drives the Messages
   // nav badge + the Home "N unread" action card.
   const [unreadCount, setUnreadCount] = useState(0);
+  // WAVE 3a — global search (always available). A single query filters the
+  // already-loaded referrals + derived customers; results jump to the lead /
+  // customer. Client-side because the dashboard payload is the complete set of
+  // this rancher's referrals.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  // WAVE 3a — activity feed read-state (localStorage-backed; see ACTIVITY_READ_KEY).
+  const [activityReadIds, setActivityReadIds] = useState<Set<string>>(new Set());
+  const [activityOpen, setActivityOpen] = useState(false);
+  // WAVE 3a — CRM customers, loaded from the scoped /api/rancher/customers route.
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customerSearch, setCustomerSearch] = useState('');
   const [rancherInfo, setRancherInfo] = useState<RancherInfo | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [referrals, setReferrals] = useState<Referral[]>([]);
@@ -341,6 +368,7 @@ export default function RancherDashboardPage() {
       deals: 'referrals',
       referrals: 'referrals',
       my_page: 'my_page',
+      customers: 'customers',
       overview: 'overview',
       marketing: 'marketing',
       earnings: 'earnings',
@@ -375,6 +403,27 @@ export default function RancherDashboardPage() {
         if (!cancelled) setUnreadCount(n);
       } catch {
         /* leave unread at 0 — Messages badge + card simply hidden */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // WAVE 3a — load the CRM customers list from the scoped route. Kept separate
+  // from fetchDashboard so the customers grouping never delays the main paint.
+  // Degrades silently (stays empty) — the Customers tab falls back to deriving
+  // from already-loaded referrals if this read fails.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/customers', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data?.customers)) setCustomers(data.customers as Customer[]);
+      } catch {
+        /* leave customers empty — tab derives from loaded referrals as fallback */
       }
     })();
     return () => {
@@ -558,6 +607,36 @@ export default function RancherDashboardPage() {
       setUpdateError('Network error. Please check your connection.');
     } finally {
       setUpdating(null);
+    }
+  };
+
+  // WAVE 3a — hydrate activity-feed read-state from localStorage once we know
+  // the rancher id. Keyed per-rancher so a shared browser / admin impersonation
+  // never leaks one rancher's read receipts onto another.
+  useEffect(() => {
+    if (!rancherInfo?.id || typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(ACTIVITY_READ_KEY(rancherInfo.id));
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) setActivityReadIds(new Set(arr.map(String)));
+      }
+    } catch {
+      /* corrupt / unavailable storage → start with everything unread */
+    }
+  }, [rancherInfo?.id]);
+
+  // Persist + apply a new read set. Pure-ish: writes localStorage, updates state.
+  const persistActivityRead = (ids: Set<string>) => {
+    setActivityReadIds(ids);
+    if (!rancherInfo?.id || typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(
+        ACTIVITY_READ_KEY(rancherInfo.id),
+        JSON.stringify([...ids]),
+      );
+    } catch {
+      /* storage full / blocked — read-state simply won't persist this session */
     }
   };
 
@@ -1280,6 +1359,80 @@ export default function RancherDashboardPage() {
 
   const activeRefs = referrals.filter(r => ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r.status));
   const closedRefs = referrals.filter(r => ['Closed Won', 'Closed Lost'].includes(r.status));
+
+  // ── WAVE 3a: find/awareness layer (derived from already-loaded referrals) ──
+  // The dashboard payload IS the complete set of this rancher's referrals, so
+  // search + the activity feed compute client-side with no extra fetch. The
+  // CRM list prefers the scoped /api/rancher/customers route but falls back to
+  // the same pure grouping if that side-load hasn't landed / failed.
+  const crmReferrals = referrals as unknown as CrmReferral[];
+  const customersList: Customer[] =
+    customers.length > 0 ? customers : groupReferralsByBuyer(crmReferrals);
+  // Activity feed — every non-blank timestamp on the rancher's referrals becomes
+  // a readable, reverse-chron event (lib/rancherCrm.deriveActivityEvents).
+  const activityEvents: ActivityEvent[] = deriveActivityEvents(crmReferrals);
+  const unreadActivity = countUnread(activityEvents, activityReadIds);
+
+  // Global search results (always available — never gated on lead count). One
+  // query scans BOTH leads and customers; we de-dupe customers by key and cap
+  // the dropdown so a huge book of business never blows up the panel.
+  const trimmedQuery = searchQuery.trim();
+  const searchLeadResults =
+    trimmedQuery.length > 0
+      ? referrals.filter((r) =>
+          matchesSearch(
+            { name: r.buyer_name, email: r.buyer_email, phone: r.buyer_phone, state: r.buyer_state },
+            trimmedQuery,
+          ),
+        )
+      : [];
+  const searchCustomerResults =
+    trimmedQuery.length > 0
+      ? customersList.filter((c) =>
+          matchesSearch({ name: c.name, email: c.email, phone: c.phone, state: c.state }, trimmedQuery),
+        )
+      : [];
+
+  // Customers tab in-panel filter (separate from the global header search).
+  const filteredCustomers =
+    customerSearch.trim().length > 0
+      ? customersList.filter((c) =>
+          matchesSearch(
+            { name: c.name, email: c.email, phone: c.phone, state: c.state },
+            customerSearch,
+          ),
+        )
+      : customersList;
+
+  // Jump from a search/activity result to the lead's card (Deals tab). The
+  // referrals list already renders every active/closed row, so switching tabs +
+  // closing the search panel is enough; deep-scroll is a nice-to-have we skip.
+  const jumpToReferral = (referralId: string) => {
+    setActiveTab('referrals');
+    setSearchOpen(false);
+    setSearchQuery('');
+    setMoreOpen(false);
+    if (typeof window !== 'undefined' && referralId) {
+      // Defer to after the tab renders, then scroll the card into view.
+      setTimeout(() => {
+        const el = document.getElementById(`ref-${referralId}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
+    }
+  };
+
+  // Mark every currently-visible event as read (the feed's "mark all read").
+  const markAllActivityRead = () => {
+    const next = new Set(activityReadIds);
+    for (const e of activityEvents) next.add(e.id);
+    persistActivityRead(next);
+  };
+  const markActivityRead = (eventId: string) => {
+    if (activityReadIds.has(eventId)) return;
+    const next = new Set(activityReadIds);
+    next.add(eventId);
+    persistActivityRead(next);
+  };
   // Awaiting Payment = off-platform close where the buyer pays on delivery / by
   // cash / Venmo etc. The deal is parked here until the rancher confirms the
   // money actually landed via /confirm-payment (which then flips it Closed Won +
@@ -1337,6 +1490,7 @@ export default function RancherDashboardPage() {
   const spineTabs: { key: Tab; label: string }[] = [
     { key: 'home', label: 'Home' },
     { key: 'referrals', label: `Deals${activeRefs.length > 0 ? ` (${activeRefs.length})` : ''}` },
+    { key: 'customers', label: `Customers${customersList.length > 0 ? ` (${customersList.length})` : ''}` },
     { key: 'my_page', label: 'My Page' },
   ];
   const moreTabs: { key: Tab; label: string }[] = [
@@ -1418,6 +1572,123 @@ export default function RancherDashboardPage() {
               <p className="text-saddle mt-1">{rancherInfo.name} &middot; {rancherInfo.state}</p>
             </div>
             <div className="flex items-center gap-4 flex-wrap">
+              {/* WAVE 3a — global search. Always available (not gated on lead
+                  count). Filters already-loaded leads + customers by name /
+                  email / phone and jumps to the result. */}
+              <div className="relative">
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true); }}
+                  onFocus={() => setSearchOpen(true)}
+                  placeholder="search leads & customers"
+                  aria-label="Search leads and customers"
+                  className="w-44 sm:w-56 px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                />
+                {searchOpen && trimmedQuery.length > 0 && (
+                  <>
+                    {/* click-away backdrop */}
+                    <div className="fixed inset-0 z-30" onClick={() => setSearchOpen(false)} />
+                    <div className="absolute right-0 z-40 mt-1 w-80 max-w-[88vw] max-h-96 overflow-auto border border-dust bg-bone shadow-lg">
+                      {searchCustomerResults.length === 0 && searchLeadResults.length === 0 ? (
+                        <p className="px-4 py-3 text-sm text-saddle">no matches for &ldquo;{trimmedQuery}&rdquo;</p>
+                      ) : (
+                        <>
+                          {searchCustomerResults.length > 0 && (
+                            <div>
+                              <p className="px-4 pt-3 pb-1 text-[11px] uppercase tracking-widest text-dust">customers</p>
+                              {searchCustomerResults.slice(0, 6).map((c) => (
+                                <button
+                                  key={`s-c-${c.key}`}
+                                  onClick={() => jumpToReferral(c.latestReferralId)}
+                                  className="block w-full text-left px-4 py-2.5 min-h-[44px] text-sm hover:bg-bone-warm transition-colors"
+                                >
+                                  <span className="font-medium">{c.name}</span>
+                                  {c.isRepeat && <span className="ml-2 text-[10px] uppercase tracking-wider bg-sage/15 text-sage-dark px-1.5 py-0.5">repeat</span>}
+                                  <span className="block text-xs text-dust truncate">{c.email || c.phone} · {c.closedWonDeals} deal{c.closedWonDeals === 1 ? '' : 's'}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {searchLeadResults.length > 0 && (
+                            <div>
+                              <p className="px-4 pt-3 pb-1 text-[11px] uppercase tracking-widest text-dust">leads</p>
+                              {searchLeadResults.slice(0, 8).map((r) => (
+                                <button
+                                  key={`s-l-${r.id}`}
+                                  onClick={() => jumpToReferral(r.id)}
+                                  className="block w-full text-left px-4 py-2.5 min-h-[44px] text-sm hover:bg-bone-warm transition-colors"
+                                >
+                                  <span className="font-medium">{r.buyer_name || r.buyer_email || 'lead'}</span>
+                                  <span className="block text-xs text-dust truncate">{r.status} · {r.buyer_email || r.buyer_phone}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* WAVE 3a — activity / notification bell. In-app feed of what
+                  happened (new lead, deposit, close…), for ranchers not on
+                  Telegram. Mark-as-read is localStorage-backed (no Airtable
+                  field exists). */}
+              <div className="relative">
+                <button
+                  onClick={() => setActivityOpen((o) => !o)}
+                  aria-label={`Activity${unreadActivity > 0 ? `, ${unreadActivity} unread` : ''}`}
+                  aria-expanded={activityOpen}
+                  className="relative px-3 py-2 min-h-[44px] min-w-[44px] flex items-center justify-center border border-dust hover:bg-charcoal hover:text-bone transition-colors"
+                >
+                  <span aria-hidden className="text-base">🔔</span>
+                  {unreadActivity > 0 && (
+                    <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold bg-rust text-bone rounded-full">
+                      {unreadActivity > 99 ? '99+' : unreadActivity}
+                    </span>
+                  )}
+                </button>
+                {activityOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setActivityOpen(false)} />
+                    <div className="absolute right-0 z-40 mt-1 w-80 max-w-[88vw] max-h-96 overflow-auto border border-dust bg-bone shadow-lg">
+                      <div className="flex items-center justify-between px-4 py-2 border-b border-dust sticky top-0 bg-bone">
+                        <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">activity</p>
+                        {unreadActivity > 0 && (
+                          <button onClick={markAllActivityRead} className="text-xs text-saddle hover:text-charcoal underline underline-offset-2">
+                            mark all read
+                          </button>
+                        )}
+                      </div>
+                      {activityEvents.length === 0 ? (
+                        <p className="px-4 py-4 text-sm text-saddle">no activity yet. new leads and deposits will show up here.</p>
+                      ) : (
+                        activityEvents.slice(0, 40).map((e) => {
+                          const isUnread = !activityReadIds.has(e.id);
+                          return (
+                            <button
+                              key={e.id}
+                              onClick={() => { markActivityRead(e.id); jumpToReferral(e.referralId); setActivityOpen(false); }}
+                              className={`block w-full text-left px-4 py-2.5 border-b border-dust/50 hover:bg-bone-warm transition-colors ${isUnread ? 'bg-bone-warm/60' : ''}`}
+                            >
+                              <span className="flex items-start gap-2">
+                                {isUnread && <span aria-hidden className="mt-1.5 w-1.5 h-1.5 rounded-full bg-rust flex-shrink-0" />}
+                                <span className={isUnread ? '' : 'pl-3.5'}>
+                                  <span className="block text-sm text-charcoal">{e.title}</span>
+                                  <span className="block text-xs text-dust">{new Date(e.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
               <span className={`px-3 py-1 text-xs font-medium uppercase tracking-wider ${
                 rancherInfo.activeStatus === 'Active' ? 'bg-green-100 text-green-800' :
                 rancherInfo.activeStatus === 'At Capacity' ? 'bg-yellow-100 text-yellow-800' :
@@ -1859,6 +2130,95 @@ export default function RancherDashboardPage() {
               onGoToDeals={() => setActiveTab('referrals')}
               onGoToMyPage={() => setActiveTab('my_page')}
             />
+          )}
+
+          {/* Customers Tab — WAVE 3a CRM. Every buyer (past + present) grouped
+              from this rancher's own referrals: contact, total deals, lifetime
+              $, last deal, repeat flag, link to their deal(s). Read-only. */}
+          {activeTab === 'customers' && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                <div>
+                  <h2 className="font-serif text-2xl text-charcoal">customers</h2>
+                  <p className="text-sm text-saddle mt-1">
+                    everyone you&apos;ve worked with. repeat buyers are where the money is —
+                    these are the people to keep warm.
+                  </p>
+                </div>
+                {customersList.length > 0 && (
+                  <input
+                    type="search"
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    placeholder="filter by name, email, phone"
+                    aria-label="Filter customers"
+                    className="w-full sm:w-64 px-3 py-2 min-h-[44px] text-sm border border-dust bg-bone text-charcoal placeholder:text-dust focus:outline-none focus:border-charcoal transition-colors"
+                  />
+                )}
+              </div>
+
+              {customersList.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <StatCard label="Customers" value={customersList.length} />
+                  <StatCard label="Repeat Buyers" value={customersList.filter((c) => c.isRepeat).length} />
+                  <StatCard
+                    label="Lifetime $"
+                    value={`$${customersList.reduce((s, c) => s + c.lifetimeValue, 0).toLocaleString()}`}
+                  />
+                </div>
+              )}
+
+              {customersList.length === 0 ? (
+                <div className="p-8 border border-dust text-center bg-white">
+                  <p className="text-saddle">
+                    no customers yet. once buyers are introduced and you close deals,
+                    they&apos;ll show up here so you can keep them coming back.
+                  </p>
+                </div>
+              ) : filteredCustomers.length === 0 ? (
+                <div className="p-8 border border-dust text-center bg-white">
+                  <p className="text-saddle">no customers match &ldquo;{customerSearch}&rdquo;.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredCustomers.map((c) => (
+                    <button
+                      key={c.key}
+                      onClick={() => jumpToReferral(c.latestReferralId)}
+                      className="block w-full text-left p-4 border border-dust bg-white hover:border-charcoal transition-colors"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-charcoal truncate">{c.name}</span>
+                            {c.isRepeat && (
+                              <span className="text-[10px] uppercase tracking-wider bg-sage/15 text-sage-dark px-1.5 py-0.5">
+                                repeat buyer
+                              </span>
+                            )}
+                            {c.state && <span className="text-xs text-dust">{c.state}</span>}
+                          </div>
+                          <p className="text-xs text-dust truncate mt-0.5">
+                            {[c.email, c.phone].filter(Boolean).join(' · ') || 'no contact on file'}
+                          </p>
+                          <p className="text-xs text-saddle mt-0.5">
+                            {c.totalDeals} deal{c.totalDeals === 1 ? '' : 's'}
+                            {c.closedWonDeals > 0 ? ` · ${c.closedWonDeals} closed` : ''}
+                            {c.lastDealDate ? ` · last ${new Date(c.lastDealDate).toLocaleDateString()}` : ''}
+                          </p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="font-serif text-lg text-charcoal">
+                            ${c.lifetimeValue.toLocaleString()}
+                          </p>
+                          <p className="text-[11px] uppercase tracking-wider text-dust">lifetime</p>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
 
           {/* Overview Tab */}
@@ -5117,7 +5477,8 @@ function ReferralCard({
   const showClose = !balanceOutstanding;
   const showConfirmPayment = !!onConfirmPayment && referral.status === 'Awaiting Payment';
   return (
-    <div className="p-6 border border-dust bg-white space-y-4">
+    // id anchor lets global-search / activity-feed results scroll-jump to a card.
+    <div id={`ref-${referral.id}`} className="p-6 border border-dust bg-white space-y-4 scroll-mt-24">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">

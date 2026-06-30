@@ -10,14 +10,16 @@
 
 import Link from 'next/link';
 
-type SectionKey = 'home' | 'deals' | 'my_page' | 'messages' | 'money';
+type SectionKey = 'home' | 'deals' | 'customers' | 'my_page' | 'messages' | 'money';
 
 const SECTIONS: { key: SectionKey; label: string; href: string }[] = [
-  // The in-dashboard tabs are reached via ?tab= so a deep link lands on the
-  // right section (page.tsx reads the tab from the hash/return — these just
+  // The in-dashboard tabs are reached via the hash so a deep link lands on the
+  // right section (page.tsx reads the tab from the hash on mount — these just
   // route the rancher home to the cockpit).
   { key: 'home', label: 'Home', href: '/rancher' },
   { key: 'deals', label: 'Deals', href: '/rancher#deals' },
+  // WAVE 3a — Customers CRM tab.
+  { key: 'customers', label: 'Customers', href: '/rancher#customers' },
   { key: 'my_page', label: 'My Page', href: '/rancher#my_page' },
   { key: 'messages', label: 'Messages', href: '/rancher/inbox' },
   { key: 'money', label: 'Money', href: '/rancher/billing' },
