@@ -3303,6 +3303,32 @@ export async function sendPipelineUpdateEmail(data: {
   const ranchName = esc(data.ranchName);
   const status = data.onboardingStatus || '';
 
+  // One-click magic login fallback for the dashboard CTA. Legacy passwordless
+  // ranchers used to land on the bare /rancher/login password wall here and
+  // read it as "sign up" — a dead-end that cost migration/retainer revenue.
+  // Mint the SAME rancher-login JWT the magic-link flow uses (verify route
+  // only checks type==='rancher-login') so the link logs them straight into
+  // /rancher, no password. 14d expiry matches lib's canonical magic-link send;
+  // verify swaps it for a 30d session cookie. Only minted when the caller
+  // didn't already supply a dashboardLink, and only when we have the identity
+  // to mint against — otherwise we degrade to the plain login page.
+  const dashboardCta = (): string => {
+    if (data.dashboardLink) return data.dashboardLink;
+    if (data.rancherId && data.email) {
+      try {
+        const loginToken = jwt.sign(
+          { type: 'rancher-login', rancherId: data.rancherId, email: String(data.email).trim().toLowerCase() },
+          JWT_SECRET,
+          { expiresIn: '14d' },
+        );
+        return `${SITE_URL}/rancher/verify?token=${loginToken}`;
+      } catch {
+        // fall through to plain login page
+      }
+    }
+    return `${SITE_URL}/rancher/login`;
+  };
+
   // Stage-specific content
   let subject = '';
   let headline = '';
@@ -3359,7 +3385,7 @@ export async function sendPipelineUpdateEmail(data: {
       <p>Log in to your dashboard to set up your page and request verification — both can be done in under 10 minutes.</p>
     `;
     ctaText = 'SET UP YOUR RANCH PAGE';
-    ctaUrl = data.dashboardLink || `${SITE_URL}/rancher/login`;
+    ctaUrl = dashboardCta();
   } else if (status === 'Verification Pending') {
     // Waiting on verification — reassure and push page setup
     subject = `${firstName}, verification update for ${ranchName}`;
@@ -3375,7 +3401,7 @@ export async function sendPipelineUpdateEmail(data: {
       <p>If your page is already set up, sit tight — we're working on getting you live ASAP.</p>
     `;
     ctaText = 'CHECK YOUR DASHBOARD';
-    ctaUrl = data.dashboardLink || `${SITE_URL}/rancher/login`;
+    ctaUrl = dashboardCta();
   } else {
     // Fallback
     subject = `${firstName}, update from BuyHalfCow`;
@@ -3385,7 +3411,7 @@ export async function sendPipelineUpdateEmail(data: {
       <p>Just checking in on <strong>${esc(ranchName)}</strong>. Log in to your dashboard to see your current status and next steps.</p>
     `;
     ctaText = 'GO TO DASHBOARD';
-    ctaUrl = data.dashboardLink || `${SITE_URL}/rancher/login`;
+    ctaUrl = dashboardCta();
   }
 
   return guardedSend({
