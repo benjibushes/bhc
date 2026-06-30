@@ -7,6 +7,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import RancherSubNav from '../RancherSubNav';
 
 interface BillingData {
   pricingModel: string;
@@ -148,9 +149,11 @@ function RancherBillingContent() {
   }
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-bone text-charcoal p-8">
-        <p>Error: {error || 'No data'}</p>
-        <Link href="/rancher" className="underline text-saddle">← Back to dashboard</Link>
+      <div className="min-h-screen bg-bone text-charcoal">
+        <RancherSubNav active="money" />
+        <div className="max-w-4xl mx-auto px-6 py-10">
+          <p>Error: {error || 'No data'}</p>
+        </div>
       </div>
     );
   }
@@ -160,10 +163,12 @@ function RancherBillingContent() {
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
+      <RancherSubNav active="money" />
       <div className="max-w-4xl mx-auto px-6 py-10">
-        <Link href="/rancher" className="text-saddle text-sm hover:underline">← Back to dashboard</Link>
-
-        <h1 className="text-4xl mt-4 mb-6" style={{ fontFamily: 'Georgia, serif' }}>Billing</h1>
+        <h1 className="text-4xl mb-2" style={{ fontFamily: 'Georgia, serif' }}>money</h1>
+        <p className="text-sm text-saddle mb-6">
+          your plan, payouts, and the bank account we pay you into.
+        </p>
 
         {justOnboarded && data.connectStatus === 'active' && (
           <div className="border border-green-600 bg-green-50 p-4 mb-6">

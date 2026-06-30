@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import RancherSubNav from '../RancherSubNav';
 
 interface ThreadSummary {
   id: string;
@@ -83,14 +84,31 @@ export default function RancherInboxPage() {
     }
   };
 
+  // The currently-open thread, so the conversation pane can show which buyer /
+  // deal this is — context that was missing before (it was a reply-only list).
+  const openThread = threads.find((t) => t.id === openId) || null;
+
   if (loading) {
-    return <div className="p-8 bg-bone min-h-screen text-charcoal">Loading inbox…</div>;
+    return (
+      <div className="bg-bone min-h-screen text-charcoal">
+        <RancherSubNav active="messages" />
+        <div className="p-8">Loading messages…</div>
+      </div>
+    );
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-6 bg-bone min-h-screen text-charcoal">
+    <div className="bg-bone min-h-screen text-charcoal">
+      <RancherSubNav active="messages" />
+      <div className="max-w-4xl mx-auto px-6 pt-6 pb-2">
+        <h1 className="font-serif text-3xl">messages</h1>
+        <p className="text-sm text-saddle mt-1">
+          questions from buyers we introduced — each conversation is tied to one deal.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-6 max-w-4xl mx-auto">
       <aside className="md:col-span-1 border border-dust bg-white">
-        <h2 className="p-3 border-b border-divider font-serif text-lg">Inbox</h2>
+        <h2 className="p-3 border-b border-divider font-serif text-lg">conversations</h2>
         {threads.length === 0 ? (
           <p className="p-4 text-saddle text-sm">
             No buyer messages yet. When a buyer asks a question through their referral page, it lands here.
@@ -108,7 +126,12 @@ export default function RancherInboxPage() {
                   <span className="text-xs bg-charcoal text-bone px-2 py-0.5 uppercase tracking-wider">new</span>
                 )}
               </div>
-              <div className="text-xs text-saddle mb-1">
+              {/* Deal context — which deal this thread belongs to, not just a
+                  context-free reply list. */}
+              <div className="text-xs text-saddle mb-1 truncate">
+                {t.subject || 'pre-purchase questions'}
+              </div>
+              <div className="text-xs text-dust mb-1">
                 {t.lastSenderType} · {t.lastMessageAt ? new Date(t.lastMessageAt).toLocaleString() : ''}
               </div>
               <div className="text-sm text-saddle truncate">{t.lastMessage}</div>
@@ -120,6 +143,24 @@ export default function RancherInboxPage() {
       <section className="md:col-span-2 border border-dust bg-white p-4">
         {openId ? (
           <>
+            {/* Conversation context header — names the buyer + the deal so the
+                rancher always knows who/what they're replying about. */}
+            {openThread && (
+              <div className="mb-4 pb-3 border-b border-divider">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h3 className="font-serif text-lg">{openThread.buyerName || 'Buyer'}</h3>
+                  {openThread.status && (
+                    <span className="text-xs bg-bone-warm text-saddle px-2 py-0.5 uppercase tracking-wider">
+                      {openThread.status}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-saddle mt-0.5">{openThread.subject || 'pre-purchase questions'}</p>
+                <a href="/rancher#deals" className="text-xs text-saddle underline underline-offset-2 hover:text-charcoal mt-1 inline-block">
+                  view this deal →
+                </a>
+              </div>
+            )}
             <div className="max-h-96 overflow-y-auto mb-4 border border-divider p-3 bg-bone">
               {messages.length === 0 ? (
                 <p className="text-saddle text-sm">No messages yet.</p>
@@ -154,9 +195,10 @@ export default function RancherInboxPage() {
             {error && <p className="text-red-700 mt-3 text-sm">{error}</p>}
           </>
         ) : (
-          <p className="text-saddle">Pick a conversation on the left to open it.</p>
+          <p className="text-saddle">pick a conversation on the left to open it.</p>
         )}
       </section>
+      </div>
     </div>
   );
 }

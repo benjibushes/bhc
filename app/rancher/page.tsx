@@ -328,6 +328,28 @@ export default function RancherDashboardPage() {
     fetchDashboard();
   }, []);
 
+  // WAVE 2 (2026-06-30): land on the right tab when the rancher arrives from a
+  // sub-page nav link (RancherSubNav uses /rancher#deals, #my_page, etc). The
+  // sub-pages can't flip in-page tab state, so they deep-link via the hash and
+  // this reads it on mount. Maps the plain section name → the internal Tab key.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash.replace('#', '').toLowerCase();
+    if (!hash) return;
+    const hashToTab: Record<string, Tab> = {
+      home: 'home',
+      deals: 'referrals',
+      referrals: 'referrals',
+      my_page: 'my_page',
+      overview: 'overview',
+      marketing: 'marketing',
+      earnings: 'earnings',
+      benefits: 'benefits',
+    };
+    const next = hashToTab[hash];
+    if (next) setActiveTab(next);
+  }, []);
+
   // Cockpit side-loads — payouts + unread count. Kept out of fetchDashboard so
   // a slow Stripe read or inbox scan never delays the main dashboard paint.
   // Both degrade silently on any error (payouts → stays null, unread → 0).
@@ -1849,126 +1871,13 @@ export default function RancherDashboardPage() {
                 <StatCard label="Your Earnings" value={`$${stats.netEarnings.toLocaleString()}`} sub={`(after ${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}% commission)`} />
               </div>
 
-              {/* OPTIMIZATION CHECKLIST — drives ranchers to keep filling out
-                  their page after onboarding. A fully filled page earns more
-                  buyer trust. Only renders if they're missing at least
-                  one item — disappears at 6/6 to reward completion. */}
-              {(() => {
-                const checklist = [
-                  {
-                    key: 'logo',
-                    label: 'Add a ranch logo',
-                    done: !!rancherInfo.logoUrl,
-                    hint: 'a logo makes your page look established. PNG/JPG URL.',
-                  },
-                  {
-                    key: 'tagline',
-                    label: 'Write a tagline',
-                    done: !!rancherInfo.tagline && rancherInfo.tagline.length > 10,
-                    hint: 'One-sentence pitch. Goes under your name.',
-                  },
-                  {
-                    key: 'about',
-                    label: 'Add your story',
-                    done: !!rancherInfo.aboutText && rancherInfo.aboutText.length > 100,
-                    hint: 'A few paragraphs about your operation. The biggest conversion lever.',
-                  },
-                  {
-                    key: 'pricing',
-                    label: 'Set at least one share price',
-                    done: !!(rancherInfo.quarterPrice || rancherInfo.halfPrice || rancherInfo.wholePrice),
-                    hint: 'buyers skip pages without prices. list at least one.',
-                  },
-                  {
-                    key: 'gallery',
-                    label: 'Add gallery photos',
-                    done: (() => {
-                      try {
-                        const arr = rancherInfo.galleryPhotos
-                          ? JSON.parse(rancherInfo.galleryPhotos)
-                          : [];
-                        return Array.isArray(arr) && arr.length >= 3;
-                      } catch {
-                        return false;
-                      }
-                    })(),
-                    hint: '3+ photos of your ranch, cattle, or family.',
-                  },
-                  {
-                    key: 'testimonials',
-                    label: 'Add a customer testimonial',
-                    done: (() => {
-                      try {
-                        const arr = rancherInfo.testimonials
-                          ? JSON.parse(rancherInfo.testimonials)
-                          : [];
-                        return Array.isArray(arr) && arr.length >= 1;
-                      } catch {
-                        return false;
-                      }
-                    })(),
-                    hint: 'One quote from a real customer = massive trust boost.',
-                  },
-                ];
-                const doneCount = checklist.filter((c) => c.done).length;
-                if (doneCount === checklist.length) return null; // hide at 100%
-                return (
-                  <div className="border border-dust bg-bone-warm p-5 md:p-6 space-y-4">
-                    <div className="flex items-baseline justify-between flex-wrap gap-2">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
-                          Optimize your page
-                        </p>
-                        <h3 className="font-serif text-xl text-charcoal mt-1">
-                          {doneCount}/{checklist.length} complete · a full page earns more buyer trust
-                        </h3>
-                      </div>
-                      <button
-                        onClick={() => setActiveTab('my_page')}
-                        className="text-xs uppercase tracking-widest font-semibold text-charcoal underline underline-offset-2 hover:text-saddle"
-                      >
-                        Open page editor →
-                      </button>
-                    </div>
-                    {/* Progress bar */}
-                    <div className="w-full bg-bone h-2 border border-dust">
-                      <div
-                        className="h-full bg-sage transition-all"
-                        style={{ width: `${(doneCount / checklist.length) * 100}%` }}
-                      />
-                    </div>
-                    <ul className="space-y-2">
-                      {checklist.map((item) => (
-                        <li key={item.key} className="flex items-start gap-3">
-                          <span
-                            className={`inline-flex items-center justify-center w-5 h-5 text-[11px] font-bold shrink-0 mt-0.5 ${
-                              item.done
-                                ? 'bg-sage text-bone'
-                                : 'bg-bone border border-dust text-saddle'
-                            }`}
-                          >
-                            {item.done ? '✓' : ''}
-                          </span>
-                          <div className="flex-1">
-                            <p
-                              className={`text-sm ${
-                                item.done ? 'text-saddle line-through' : 'text-charcoal font-medium'
-                              }`}
-                            >
-                              {item.label}
-                            </p>
-                            {!item.done && (
-                              <p className="text-xs text-saddle mt-0.5 leading-relaxed">
-                                {item.hint}
-                              </p>
-                            )}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                );
-              })()}
+              {/* WAVE 2 (2026-06-30): the old "Optimize your page" 6-item
+                  checklist that lived here was removed — it was a 4th competing
+                  progress tracker that duplicated the Home "finish setup" card +
+                  the My Page completeness meter (the publish gate). One source of
+                  "what's left" now: Home for go-live setup, My Page for page
+                  completeness. Keeping the checklist scaffold out avoids the
+                  step-count mismatch ranchers found confusing. */}
 
               <Divider />
 
@@ -2096,7 +2005,7 @@ export default function RancherDashboardPage() {
           {activeTab === 'referrals' && (
             <div className="space-y-8">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <h2 className="font-serif text-2xl">active leads</h2>
+                <h2 className="font-serif text-2xl">deals</h2>
                 {activeRefs.length > 3 && (
                   <div className="flex flex-wrap gap-2 text-sm">
                     <select
@@ -2122,6 +2031,16 @@ export default function RancherDashboardPage() {
                   </div>
                 )}
               </div>
+
+              {/* WAVE 2 (2026-06-30): plain-language "how getting paid works"
+                  strip. The close pipeline used to be scattered jargon buttons
+                  (request deposit / accept slot / send final invoice) with no
+                  one place explaining the order. This compact strip lays out the
+                  money flow at a glance. Adapts to the rancher's flow:
+                    - deposit-eligible (tier_v2 + Connect): the deposit rail
+                    - everyone else: contact → close → confirm payment */}
+              <PipelineExplainer depositEligible={depositEligible} />
+
               {(() => {
                 // Apply filter + sort. Pure-function — no side effects.
                 let filtered = [...activeRefs];
@@ -2705,7 +2624,7 @@ export default function RancherDashboardPage() {
             <div className="space-y-8">
               <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
                 <div>
-                  <h2 className="font-serif text-2xl">my landing page</h2>
+                  <h2 className="font-serif text-2xl">my page</h2>
                   <p className="text-sm text-saddle mt-1">
                     Fill this out to publish your public ranch page on BuyHalfCow.
                   </p>
@@ -5028,6 +4947,58 @@ function FreshnessIndicator({ referral }: { referral: Referral }) {
 //   amber "deposit requested · {d}" → buyer has a link, hasn't paid
 //   sage  "deposit paid $X · {d}"   → money landed; close flow takes over
 // Brand tokens only (dust / amber / sage). Hidden once terminal.
+// WAVE 2 (2026-06-30): one short, plain-language explainer of the money flow,
+// shown at the top of the Deals area. Replaces "scattered jargon buttons with no
+// map" — a rancher can read the order of operations at a glance. Copy only; the
+// buttons it describes are the existing ReferralCard actions. Lowercase brand
+// voice, brand tokens only. Two flows:
+//   deposit-eligible → request deposit → buyer pays → accept slot → final invoice → deliver
+//   everyone else    → say hi → close the deal → confirm payment → done
+function PipelineExplainer({ depositEligible }: { depositEligible?: boolean }) {
+  const steps = depositEligible
+    ? [
+        { n: '1', label: 'request deposit', sub: 'send the buyer a card link to lock their slot' },
+        { n: '2', label: 'buyer pays', sub: 'the deposit lands straight in your stripe account' },
+        { n: '3', label: 'accept slot', sub: 'confirm you can fill it — deposit becomes non-refundable' },
+        { n: '4', label: 'send final invoice', sub: 'collect the rest of the balance (100% yours)' },
+        { n: '5', label: 'deliver', sub: 'mark the beef delivered and you’re done' },
+      ]
+    : [
+        { n: '1', label: 'say hi', sub: 'reach out to the buyer we introduced' },
+        { n: '2', label: 'work the deal', sub: 'sort out cut, price, and timing together' },
+        { n: '3', label: 'close as won', sub: 'mark it won once they commit' },
+        { n: '4', label: 'confirm payment', sub: 'tell us the money landed — that finishes the deal' },
+      ];
+  return (
+    <details className="border border-dust bg-bone-warm">
+      <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3 select-none">
+        <span className="text-[11px] uppercase tracking-widest text-saddle font-semibold">
+          how getting paid works
+        </span>
+        <span className="text-xs text-saddle">tap to expand →</span>
+      </summary>
+      <div className="px-4 pb-4 pt-1">
+        <ol className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
+          {steps.map((s, i) => (
+            <li key={s.n} className="flex-1 min-w-[140px] flex items-start gap-2">
+              <span className="inline-flex items-center justify-center w-5 h-5 shrink-0 text-[11px] font-bold bg-charcoal text-bone">
+                {s.n}
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm text-charcoal font-medium leading-snug">{s.label}</p>
+                <p className="text-xs text-saddle leading-snug mt-0.5">{s.sub}</p>
+              </div>
+              {i < steps.length - 1 && (
+                <span aria-hidden className="hidden sm:inline self-center text-dust">→</span>
+              )}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </details>
+  );
+}
+
 function DepositBadge({ referral }: { referral: Referral }) {
   const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
   if (isTerminal) return null;
