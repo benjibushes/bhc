@@ -165,13 +165,13 @@ function RancherBillingContent() {
     <main className="min-h-screen bg-bone text-charcoal">
       <RancherSubNav active="money" />
       <div className="max-w-4xl mx-auto px-6 py-10">
-        <h1 className="text-4xl mb-2" style={{ fontFamily: 'Georgia, serif' }}>money</h1>
+        <h1 className="font-serif text-4xl mb-2">money</h1>
         <p className="text-sm text-saddle mb-6">
           your plan, payouts, and the bank account we pay you into.
         </p>
 
         {justOnboarded && data.connectStatus === 'active' && (
-          <div className="border border-green-600 bg-green-50 p-4 mb-6">
+          <div className="border border-sage bg-sage/10 p-4 mb-6">
             <p className="text-sm">✅ Stripe onboarding complete — your bank is connected and payouts are active.</p>
           </div>
         )}
@@ -198,7 +198,7 @@ function RancherBillingContent() {
         {/* Tier badge + price */}
         <div className="border border-dust bg-white p-6 mb-4">
           <div className="text-xs text-saddle uppercase tracking-wider mb-1">Current plan</div>
-          <div className="text-2xl mb-1" style={{ fontFamily: 'Georgia, serif' }}>
+          <div className="font-serif text-2xl mb-1">
             {data.tierLabel || 'No tier selected'}
           </div>
           {data.monthlyCents != null && data.commissionRate != null && (
@@ -220,7 +220,7 @@ function RancherBillingContent() {
         <div className="border border-dust bg-white p-6 mb-4">
           <div className="text-xs text-saddle uppercase tracking-wider mb-2">Subscription</div>
           <div className="flex items-baseline gap-3">
-            <span className={`text-sm ${data.subscriptionStatus === 'active' ? 'text-green-700' : 'text-saddle'}`}>
+            <span className={`text-sm ${data.subscriptionStatus === 'active' ? 'text-sage-dark' : 'text-saddle'}`}>
               {data.subscriptionStatus === 'active' ? '✅ Active' : data.subscriptionStatus}
             </span>
             {data.subscriptionNext && (
@@ -267,10 +267,10 @@ function RancherBillingContent() {
               ? 'Fix payout setup →'
               : 'Finish payout setup →';
           return (
-            <div className={`border bg-white p-6 mb-4 ${data.connectStatus === 'restricted' ? 'border-red-600' : data.connectStatus === 'active' ? 'border-dust' : 'border-amber-dark'}`}>
+            <div className={`border bg-white p-6 mb-4 ${data.connectStatus === 'restricted' ? 'border-weathered' : data.connectStatus === 'active' ? 'border-dust' : 'border-amber-dark'}`}>
               <div className="text-xs text-saddle uppercase tracking-wider mb-2">Bank account (Stripe Connect)</div>
               <div className="flex items-baseline gap-3 mb-2">
-                <span className={`text-sm ${data.connectStatus === 'active' ? 'text-green-700' : data.connectStatus === 'restricted' ? 'text-red-700' : 'text-saddle'}`}>
+                <span className={`text-sm ${data.connectStatus === 'active' ? 'text-sage-dark' : data.connectStatus === 'restricted' ? 'text-weathered' : 'text-saddle'}`}>
                   {data.connectStatus === 'active' && '✅ Connected — payouts active'}
                   {data.connectStatus === 'onboarding' && '⏳ Payout setup unfinished'}
                   {data.connectStatus === 'restricted' && '⚠️ Payouts paused — action required'}
@@ -363,7 +363,7 @@ function RancherBillingContent() {
               ))}
             </div>
             {purchaseErr && (
-              <div className="p-3 mb-4 border-l-4 border-red-500 bg-red-50 text-sm text-red-900 flex items-center justify-between gap-3">
+              <div className="p-3 mb-4 border-l-4 border-weathered bg-weathered/10 text-sm text-weathered flex items-center justify-between gap-3">
                 <span>{purchaseErr}</span>
                 <button type="button" onClick={() => setPurchaseErr('')} className="text-lg leading-none hover:opacity-70">×</button>
               </div>
