@@ -19,6 +19,11 @@ interface BillingData {
   subscriptionNext: string | null;
   connectStatus: string;
   connectAccountId: string | null;
+  // How many KYC items Stripe is still waiting on (0 when none / unknown).
+  connectCurrentlyDueCount?: number;
+  // True when a fresh Stripe onboarding link can resume the rancher (the
+  // self-serve fix for accounts stuck mid-KYC: no bank / unaccepted TOS).
+  connectCanResumeOnboarding?: boolean;
   payouts: Array<{
     id: string;
     amountCents: number;
@@ -60,20 +65,61 @@ function RancherBillingContent() {
   // swaps the whole view for an error screen). Renders inline in the add-on shop.
   const [purchaseErr, setPurchaseErr] = useState('');
   const justOnboarded = search.get('onboarding') === 'done';
+  // While polling for the post-onboarding status flip (Stripe webhook → Airtable
+  // → live read can lag a few seconds), show a "still refreshing" hint.
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Single source of truth for loading billing data — reused by the initial
+  // mount AND the post-onboarding auto-refresh poll.
+  const loadData = async (): Promise<BillingData | null> => {
+    const r = await fetch('/api/rancher/billing/data', { credentials: 'include' });
+    const j = await r.json();
+    if (j?.error) {
+      setError(j.error);
+      return null;
+    }
+    setData(j);
+    return j as BillingData;
+  };
 
   useEffect(() => {
-    fetch('/api/rancher/billing/data', { credentials: 'include' })
-      .then((r) => r.json())
-      .then((j) => {
-        if (j?.error) setError(j.error);
-        else setData(j);
-        setLoading(false);
-      })
-      .catch((e) => {
-        setError(e?.message || 'Load failed');
-        setLoading(false);
-      });
+    loadData()
+      .catch((e) => setError(e?.message || 'Load failed'))
+      .finally(() => setLoading(false));
   }, []);
+
+  // Auto-refresh after returning from Stripe onboarding. Stripe redirects back
+  // with ?onboarding=done, but the connect status only flips once Stripe's
+  // webhook lands + the next live read picks it up. Without this the rancher
+  // returns "done" yet still sees "onboarding incomplete" and has to manually
+  // reload — a confusing dead-end. Poll every 4s (max ~40s) until the status
+  // reaches a terminal state (active or restricted) or the budget runs out.
+  useEffect(() => {
+    if (!justOnboarded || loading) return;
+    if (data && data.connectStatus !== 'onboarding') return; // already resolved
+    setRefreshing(true);
+    let tries = 0;
+    const timer = setInterval(async () => {
+      tries += 1;
+      try {
+        const fresh = await loadData();
+        if (!fresh || fresh.connectStatus !== 'onboarding' || tries >= 10) {
+          clearInterval(timer);
+          setRefreshing(false);
+        }
+      } catch {
+        if (tries >= 10) {
+          clearInterval(timer);
+          setRefreshing(false);
+        }
+      }
+    }, 4000);
+    return () => {
+      clearInterval(timer);
+      setRefreshing(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [justOnboarded, loading, data?.connectStatus]);
 
   const openPortal = async () => {
     try {
@@ -119,9 +165,18 @@ function RancherBillingContent() {
 
         <h1 className="text-4xl mt-4 mb-6" style={{ fontFamily: 'Georgia, serif' }}>Billing</h1>
 
-        {justOnboarded && (
+        {justOnboarded && data.connectStatus === 'active' && (
+          <div className="border border-green-600 bg-green-50 p-4 mb-6">
+            <p className="text-sm">✅ Stripe onboarding complete — your bank is connected and payouts are active.</p>
+          </div>
+        )}
+        {justOnboarded && data.connectStatus !== 'active' && (
           <div className="border border-dust bg-white p-4 mb-6">
-            <p className="text-sm">✅ Stripe onboarding complete. Status is refreshing — banner above will update within 30 seconds.</p>
+            <p className="text-sm">
+              {refreshing
+                ? '⏳ Checking with Stripe — your payout status will update here automatically in a few seconds.'
+                : "Thanks — we're back from Stripe. If anything's still outstanding it's shown below; you can pick up right where you left off."}
+            </p>
           </div>
         )}
 
@@ -179,29 +234,69 @@ function RancherBillingContent() {
           )}
         </div>
 
-        {/* Connect status */}
-        <div className="border border-dust bg-white p-6 mb-4">
-          <div className="text-xs text-saddle uppercase tracking-wider mb-2">Bank account (Stripe Connect)</div>
-          <div className="flex items-baseline gap-3 mb-2">
-            <span className={`text-sm ${data.connectStatus === 'active' ? 'text-green-700' : 'text-saddle'}`}>
-              {data.connectStatus === 'active' && '✅ Connected'}
-              {data.connectStatus === 'onboarding' && '⏳ Onboarding incomplete'}
-              {data.connectStatus === 'restricted' && '⚠️ Restricted — action required'}
-              {data.connectStatus === 'not_connected' && '❌ Not connected'}
-            </span>
-            {data.connectAccountId && (
-              <span className="text-saddle text-xs">· {data.connectAccountId}</span>
-            )}
-          </div>
-          {data.connectStatus !== 'active' && (
-            <button
-              onClick={startConnect}
-              className="bg-charcoal text-bone px-6 py-2 uppercase tracking-wider text-xs"
-            >
-              {data.connectStatus === 'not_connected' ? 'Connect bank →' : 'Continue onboarding →'}
-            </button>
-          )}
-        </div>
+        {/* Connect status — "finish your payout setup". For any non-active
+            account that still has Stripe requirements outstanding, the resume
+            action is the Stripe-hosted onboarding link (re-minted fresh every
+            time, so an expired link never dead-ends). A restricted account that
+            an onboarding link CAN'T fix (rare — e.g. a Stripe-side hold) routes
+            to the portal / support instead. */}
+        {(() => {
+          const dueCount = data.connectCurrentlyDueCount ?? 0;
+          const canResume = data.connectCanResumeOnboarding ?? (data.connectStatus !== 'active' && data.connectStatus !== 'not_connected');
+          // What's-left line, said plainly. The 4 stuck ranchers need to know it's
+          // their bank + identity (TOS), not something on our end.
+          let whatsLeft = '';
+          if (data.connectStatus === 'not_connected') {
+            whatsLeft = "Add your bank account and verify your identity so we can pay you. Takes about 5 minutes through Stripe.";
+          } else if (data.connectStatus === 'restricted' && !canResume) {
+            whatsLeft = "Stripe has placed a hold on your account that we can't clear from here. Open your Stripe dashboard or email hello@buyhalfcow.com and we'll sort it with you.";
+          } else if (dueCount > 0) {
+            whatsLeft = `Stripe still needs ${dueCount} more ${dueCount === 1 ? 'thing' : 'things'} from you${data.connectStatus === 'restricted' ? ' — payouts are paused until it’s done' : ''}. Usually your bank details and accepting Stripe’s terms.`;
+          } else if (data.connectStatus !== 'active') {
+            whatsLeft = "Pick up where you left off — Stripe will take you straight to the next required step (usually your bank details and accepting their terms).";
+          }
+          const resumeLabel =
+            data.connectStatus === 'not_connected'
+              ? 'Connect bank →'
+              : data.connectStatus === 'restricted'
+              ? 'Fix payout setup →'
+              : 'Finish payout setup →';
+          return (
+            <div className={`border bg-white p-6 mb-4 ${data.connectStatus === 'restricted' ? 'border-red-600' : data.connectStatus === 'active' ? 'border-dust' : 'border-amber-dark'}`}>
+              <div className="text-xs text-saddle uppercase tracking-wider mb-2">Bank account (Stripe Connect)</div>
+              <div className="flex items-baseline gap-3 mb-2">
+                <span className={`text-sm ${data.connectStatus === 'active' ? 'text-green-700' : data.connectStatus === 'restricted' ? 'text-red-700' : 'text-saddle'}`}>
+                  {data.connectStatus === 'active' && '✅ Connected — payouts active'}
+                  {data.connectStatus === 'onboarding' && '⏳ Payout setup unfinished'}
+                  {data.connectStatus === 'restricted' && '⚠️ Payouts paused — action required'}
+                  {data.connectStatus === 'not_connected' && '❌ Not connected'}
+                </span>
+                {data.connectAccountId && (
+                  <span className="text-saddle text-xs">· {data.connectAccountId}</span>
+                )}
+              </div>
+              {whatsLeft && (
+                <p className="text-sm text-saddle mb-3">{whatsLeft}</p>
+              )}
+              {data.connectStatus !== 'active' && canResume && (
+                <button
+                  onClick={startConnect}
+                  className="bg-charcoal text-bone px-6 py-2 uppercase tracking-wider text-xs"
+                >
+                  {resumeLabel}
+                </button>
+              )}
+              {data.connectStatus === 'restricted' && !canResume && (
+                <a
+                  href="mailto:hello@buyhalfcow.com?subject=Stripe%20payout%20account%20restricted"
+                  className="inline-block bg-charcoal text-bone px-6 py-2 uppercase tracking-wider text-xs"
+                >
+                  Email us to unblock →
+                </a>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Payouts table */}
         <div className="border border-dust bg-white p-6 mb-4">

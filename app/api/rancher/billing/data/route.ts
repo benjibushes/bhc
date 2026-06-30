@@ -32,15 +32,26 @@ export async function GET(req: Request) {
 
   // Live Connect status read (never cached, never trust Airtable field)
   let connectStatus: string = 'not_connected';
+  // How many KYC items Stripe is still blocking on + whether a fresh onboarding
+  // link can resume the rancher. Surfaced so the billing page can tell a stuck
+  // rancher EXACTLY what's left and route the resume action correctly (the
+  // Connect onboarding link clears requirements; the subscription portal can't).
+  let connectCurrentlyDueCount = 0;
+  let connectCanResumeOnboarding = false;
   const connectAccountId = String(rancher['Stripe Connect Account Id'] || '');
   if (connectAccountId) {
     try {
       const liveStatus = await getConnectAccountStatus(connectAccountId);
       connectStatus = liveStatus.status;
+      connectCurrentlyDueCount = liveStatus.currentlyDueCount;
+      connectCanResumeOnboarding = liveStatus.canResumeOnboarding;
     } catch (e: any) {
       console.warn('[billing/data] Connect status read failed:', e?.message);
       // Fall back to cached field if live read fails
       connectStatus = String(rancher['Stripe Connect Status'] || 'not_connected');
+      // Conservative resume hint on fallback: any non-active cached status can
+      // safely be resumed via the onboarding link (start re-mints / no-ops).
+      connectCanResumeOnboarding = connectStatus !== 'active' && connectStatus !== 'not_connected';
     }
   }
 
@@ -99,6 +110,8 @@ export async function GET(req: Request) {
     subscriptionNext,
     connectStatus,
     connectAccountId: connectAccountId || null,
+    connectCurrentlyDueCount,
+    connectCanResumeOnboarding,
     payouts,
     addOns,
   });

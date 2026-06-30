@@ -169,7 +169,27 @@ export async function GET(req: Request) {
   const wizardToken = url.searchParams.get('wizardToken') || '';
 
   const result = await mintOnboardingUrl(req, { fromWizard, wizardToken });
-  if (!result.ok) return result.response;
-  // 302 redirect — straight back into Stripe onboarding with a fresh link.
-  return NextResponse.redirect(result.url, 302);
+  if (result.ok) {
+    // 302 redirect — straight back into Stripe onboarding with a fresh link.
+    return NextResponse.redirect(result.url, 302);
+  }
+
+  // GET reaches here via Stripe's refresh_url browser redirect (or a stale
+  // email link). The shared mint path returns JSON errors aimed at the POST/API
+  // caller — but a browser navigating here would just see raw JSON, a dead-end.
+  // For a human-facing GET, turn the two recoverable cases into friendly
+  // redirects instead:
+  //   • 401 (session expired) → /rancher/login (password + "email me a link"
+  //     fallback both live there) so the rancher can re-auth, then pick up the
+  //     "finish payout setup" banner on the dashboard. No raw-JSON wall.
+  //   • anything else (Connect disabled, account-create failure) → /rancher/billing
+  //     where the Connect card explains what's left + offers the resume button.
+  const status = result.response.status;
+  if (status === 401) {
+    return NextResponse.redirect(
+      `${SITE_URL}/rancher/login?relogin=1&next=${encodeURIComponent('/rancher/billing')}`,
+      302,
+    );
+  }
+  return NextResponse.redirect(`${SITE_URL}/rancher/billing?onboarding=incomplete`, 302);
 }

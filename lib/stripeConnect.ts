@@ -160,10 +160,11 @@ export async function createOnboardingLink(input: OnboardingLinkInput): Promise<
 // keep working unchanged.
 import {
   classifyConnectStatus,
+  canResumeConnectOnboarding,
   type ConnectAccountStatus,
   type ConnectStatusSignals,
 } from './connectStatusClassify';
-export { classifyConnectStatus };
+export { classifyConnectStatus, canResumeConnectOnboarding };
 export type { ConnectAccountStatus, ConnectStatusSignals };
 
 export interface ConnectStatusReadResult {
@@ -171,6 +172,26 @@ export interface ConnectStatusReadResult {
   onboardingComplete: boolean;
   requirementsStatus: string | null;
   status: ConnectAccountStatus;
+  /** requirements.summary.currently_due length — how many KYC items Stripe is
+   *  still actively blocking on. Surfaced so the dashboard can tell a stuck
+   *  rancher EXACTLY how much is left ("Stripe still needs 2 things") instead of
+   *  a vague "incomplete". */
+  currentlyDueCount: number;
+  /**
+   * True when this account is NOT active because Stripe still has outstanding
+   * KYC requirements (currently_due / past_due) — i.e. the kind of block a
+   * fresh Stripe-hosted onboarding account-link resolves. This is the dominant
+   * case for ranchers stuck mid-KYC (no bank / unaccepted TOS).
+   *
+   * When this is true the correct resume action is /api/rancher/connect/start
+   * (which re-mints an onboarding link), NOT the subscription customer portal
+   * (which cannot clear identity/bank/TOS requirements). When it's false on a
+   * restricted account, the block is something an account-link can't fix (e.g.
+   * a Stripe-side hold) and the rancher needs the portal / support.
+   *
+   * Does NOT affect `status` or the deposit gate — purely a routing hint.
+   */
+  canResumeOnboarding: boolean;
 }
 
 export async function getConnectAccountStatus(accountId: string): Promise<ConnectStatusReadResult> {
@@ -200,7 +221,21 @@ export async function getConnectAccountStatus(accountId: string): Promise<Connec
     currentlyDueCount,
   });
 
-  return { cardPaymentsActive, onboardingComplete, requirementsStatus: reqStatus, status };
+  // Routing hint (does NOT change `status` / the deposit gate). Pure + shared
+  // with the classifier module so it's unit-tested in isolation.
+  const canResumeOnboarding = canResumeConnectOnboarding(status, {
+    requirementsStatus: reqStatus,
+    currentlyDueCount,
+  });
+
+  return {
+    cardPaymentsActive,
+    onboardingComplete,
+    requirementsStatus: reqStatus,
+    status,
+    currentlyDueCount,
+    canResumeOnboarding,
+  };
 }
 
 // ---------------------------------------------------------------------------
