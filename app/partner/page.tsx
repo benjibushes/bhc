@@ -226,7 +226,7 @@ function PartnerPageContent() {
                     set up to take orders.
                   </p>
                   <a
-                    href={process.env.NEXT_PUBLIC_CALENDLY_LINK || 'https://cal.com/ben-beauchman-1itnsg/30min'}
+                    href="/book?purpose=rancher"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-block w-full sm:w-auto px-8 py-4 bg-bone text-charcoal hover:bg-bone-warm transition-colors duration-300 font-medium tracking-wider uppercase text-sm"
