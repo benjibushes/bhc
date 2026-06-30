@@ -59,6 +59,29 @@ export function selectReusablePaymentRow(
   );
 }
 
+/**
+ * Pure settlement-row selector for markDepositSucceeded (Clover async-PI).
+ *
+ * On apiVersion 2026-02-25.clover the PaymentIntent is created when the buyer
+ * PAYS, not at checkout-create — so the Payments row was written with an EMPTY
+ * 'Stripe Payment Intent Id'. The webhook later knows the real PI id + the
+ * referral (pi.metadata.referralId). Settlement matching:
+ *   1. Prefer the row matched by the real PI id (pre-Clover behavior / repeat
+ *      delivery after a prior backfill) — settle it, no backfill needed.
+ *   2. Else fall back to the still-pending row for the referral and signal a
+ *      PI-id backfill so the ledger + future-delivery dedupe work.
+ *   3. Else nothing to settle (return null → caller treats as non-duplicate).
+ * `backfillPi` is true ONLY on the referral-fallback path.
+ */
+export function selectSettlementRow(
+  piMatched: Array<{ id: string; [k: string]: any }>,
+  referralPending: Array<{ id: string; [k: string]: any }>,
+): { row: { id: string; [k: string]: any } | null; backfillPi: boolean } {
+  if (piMatched.length > 0) return { row: piMatched[0], backfillPi: false };
+  if (referralPending.length > 0) return { row: referralPending[0], backfillPi: true };
+  return { row: null, backfillPi: false };
+}
+
 export async function recordDeposit(input: CreateDepositInput): Promise<{ id: string }> {
   const fields = {
     'Referral': [input.referralId],
@@ -141,15 +164,30 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
 // the return value keep working.
 export async function markDepositSucceeded(
   stripePaymentIntentId: string,
-  opts: { totalChargedCents?: number } = {},
+  opts: { totalChargedCents?: number; referralId?: string } = {},
 ): Promise<boolean> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
-  const existing: any[] = await getAllRecords(
+  const piMatched: any[] = await getAllRecords(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`
   );
-  if (existing.length === 0) return true;
-  const payment = existing[0];
+  // CLOVER async-PI fallback: under apiVersion 2026-02-25 the PaymentIntent
+  // doesn't exist at checkout-create, so recordDeposit stored the row with an
+  // EMPTY 'Stripe Payment Intent Id'. By the payment_intent.succeeded webhook
+  // we know both the real PI id AND the referral (pi.metadata.referralId). When
+  // no row matches the PI id, fall back to the still-pending row for that
+  // referral and backfill the PI id so the ledger settles + repeat deliveries
+  // dedupe by PI. Decision extracted to selectSettlementRow (pure, tested).
+  let referralPending: any[] = [];
+  if (piMatched.length === 0 && opts.referralId) {
+    const refEscaped = String(opts.referralId).replace(/"/g, '\\"');
+    referralPending = await getAllRecords(
+      PAYMENTS_TABLE,
+      `AND(SEARCH("${refEscaped}", ARRAYJOIN({Referral})), {Status} = "pending")`,
+    );
+  }
+  const { row: payment, backfillPi } = selectSettlementRow(piMatched, referralPending);
+  if (!payment) return true;
   // Idempotency: already-succeeded payments are a no-op on webhook retry.
   if (payment['Status'] === 'succeeded') return false;
 
@@ -163,6 +201,11 @@ export async function markDepositSucceeded(
     'Status': 'succeeded',
     'Captured At': new Date().toISOString(),
   };
+  // Backfill the real PI id onto the referral-matched row (Clover async-PI) so
+  // refund/abandon lookups + repeat-delivery dedup find it by PI from now on.
+  if (backfillPi) {
+    fields['Stripe Payment Intent Id'] = stripePaymentIntentId;
+  }
   if (typeof opts.totalChargedCents === 'number' && opts.totalChargedCents > 0) {
     fields['Total Charged Cents'] = Math.round(opts.totalChargedCents);
   }
@@ -170,10 +213,12 @@ export async function markDepositSucceeded(
     await updateRecord(PAYMENTS_TABLE, payment.id, fields);
   } catch (e: any) {
     console.warn('[markDepositSucceeded] schema fallback (retrying without Total Charged Cents):', e?.message);
-    await updateRecord(PAYMENTS_TABLE, payment.id, {
+    const retry: Record<string, any> = {
       'Status': 'succeeded',
       'Captured At': new Date().toISOString(),
-    });
+    };
+    if (backfillPi) retry['Stripe Payment Intent Id'] = stripePaymentIntentId;
+    await updateRecord(PAYMENTS_TABLE, payment.id, retry);
   }
   return true;
 }

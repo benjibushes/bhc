@@ -78,7 +78,10 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
   // Payments row records the real charge ceiling. The refund route caps
   // net-refundable + detects full refunds against this, not the deposit-only
   // 'Amount Cents' (which would reject valid refunds of the fee portion).
-  const depositFlipped = await markDepositSucceeded(pi.id, { totalChargedCents });
+  // Pass referralId so markDepositSucceeded can match the Payments row by
+  // referral when its PI id is empty (Clover async-PI: the PI didn't exist at
+  // checkout-create, so the row was stored without it) and backfill the PI id.
+  const depositFlipped = await markDepositSucceeded(pi.id, { totalChargedCents, referralId });
   if (!depositFlipped) return;
 
   // S1 (2026-06-10): NRD policy — deposit pay flips Referral to

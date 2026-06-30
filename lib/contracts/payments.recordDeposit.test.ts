@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectReusablePaymentRow } from './payments';
+import { selectReusablePaymentRow, selectSettlementRow } from './payments';
 
 // recordDeposit dedup correctness — money-loss regression guards (PR #131).
 //
@@ -65,4 +65,37 @@ test('mixed set: picks the exact-PI pending row, ignores different-PI + replay',
   ];
   const reusable = selectReusablePaymentRow(rows, PI);
   assert.equal(reusable?.id, 'recMatch');
+});
+
+// selectSettlementRow — Clover async-PI settlement matching (markDepositSucceeded).
+// The Payments row is created with an EMPTY PI id (the PI doesn't exist until
+// the buyer pays), so the webhook must fall back to matching by referral and
+// backfill the now-known PI id.
+
+test('PI-id match wins (no backfill) — pre-Clover / repeat delivery after backfill', () => {
+  const piMatched = [{ id: 'recPI', Status: 'pending', 'Stripe Payment Intent Id': 'pi_NEW' }];
+  const r = selectSettlementRow(piMatched, []);
+  assert.equal(r.row?.id, 'recPI');
+  assert.equal(r.backfillPi, false);
+});
+
+test('no PI row → fall back to the referral-pending row + signal backfill (Clover)', () => {
+  const referralPending = [{ id: 'recRef', Status: 'pending', 'Stripe Payment Intent Id': '' }];
+  const r = selectSettlementRow([], referralPending);
+  assert.equal(r.row?.id, 'recRef');
+  assert.equal(r.backfillPi, true, 'must backfill the real PI id onto the referral-matched row');
+});
+
+test('PI row present → never use the referral fallback (no double-settle)', () => {
+  const piMatched = [{ id: 'recPI', Status: 'pending', 'Stripe Payment Intent Id': 'pi_NEW' }];
+  const referralPending = [{ id: 'recRef', Status: 'pending', 'Stripe Payment Intent Id': '' }];
+  const r = selectSettlementRow(piMatched, referralPending);
+  assert.equal(r.row?.id, 'recPI');
+  assert.equal(r.backfillPi, false);
+});
+
+test('nothing to settle → null row, no backfill', () => {
+  const r = selectSettlementRow([], []);
+  assert.equal(r.row, null);
+  assert.equal(r.backfillPi, false);
 });

@@ -408,14 +408,20 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
   );
   const url = session.url;
   const paymentIntentId = session.payment_intent ? String(session.payment_intent) : '';
-  if (!url || !paymentIntentId) {
-    // Stripe should always populate both for a payment-mode Checkout Session.
-    // If either is missing the downstream Airtable + webhook lookup keys break.
-    throw new Error(`Stripe Checkout Session returned incomplete fields (url=${!!url}, payment_intent=${!!paymentIntentId})`);
+  // CLOVER (apiVersion 2026-02-25): Stripe creates the Checkout Session's
+  // PaymentIntent when the buyer PAYS, not at session create — so
+  // `session.payment_intent` is null here. That is EXPECTED, not an error.
+  // The old guard `if (!paymentIntentId) throw` killed every deposit before
+  // the buyer could pay (root cause of "0 deposits ever settled"). We now only
+  // require the url; settlement matches the Payments row by referral
+  // (pi.metadata.referralId) and backfills the real PI id on the
+  // payment_intent.succeeded webhook (see markDepositSucceeded referral fallback).
+  if (!url) {
+    throw new Error('Stripe Checkout Session returned no url');
   }
-  // 2026-06-09 fix: expose sessionId so caller can expire() the session if
-  // a downstream recordDeposit fails (otherwise orphan session = buyer
-  // completes → succeeded PI with no Payments row → webhook silent no-op).
+  // 2026-06-09: expose sessionId so caller can expire() the session if a
+  // downstream recordDeposit fails. The Payments row is keyed on the referral
+  // (PI id is empty until payment under Clover), so the webhook can still settle.
   return { url, paymentIntentId, sessionId: session.id, connectAccountId: input.rancherConnectAccountId };
 }
 
@@ -537,8 +543,12 @@ export async function createFinalInvoiceCheckout(
 
   const url = session.url;
   const paymentIntentId = session.payment_intent ? String(session.payment_intent) : '';
-  if (!url || !paymentIntentId) {
-    throw new Error(`Stripe Checkout (final invoice) returned incomplete fields (url=${!!url}, payment_intent=${!!paymentIntentId})`);
+  // CLOVER: PaymentIntent is null until the buyer pays (see createDepositCheckout).
+  // Final-invoice settlement anchors on Referral.Status='Closed Won' via
+  // pi.metadata.referralId (settleFinalInvoice), NOT the PI id at create, so a
+  // null PI here is fine — only the url is required to send the buyer to pay.
+  if (!url) {
+    throw new Error('Stripe Checkout (final invoice) returned no url');
   }
   return { url, paymentIntentId };
 }
