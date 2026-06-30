@@ -1704,9 +1704,9 @@ export default function RancherDashboardPage() {
               </div>
 
               <span className={`px-3 py-1 text-xs font-medium uppercase tracking-wider ${
-                rancherInfo.activeStatus === 'Active' ? 'bg-green-100 text-green-800' :
-                rancherInfo.activeStatus === 'At Capacity' ? 'bg-yellow-100 text-yellow-800' :
-                'bg-gray-100 text-gray-600'
+                rancherInfo.activeStatus === 'Active' ? 'bg-sage/15 text-sage-dark' :
+                rancherInfo.activeStatus === 'At Capacity' ? 'bg-amber/20 text-amber-dark' :
+                'bg-bone-warm text-saddle'
               }`}>
                 {rancherInfo.activeStatus || 'Pending'}
               </span>
@@ -1743,7 +1743,7 @@ export default function RancherDashboardPage() {
                 </div>
                 {pwSaved ? (
                   <div className="space-y-4">
-                    <div className="p-4 border border-green-300 bg-green-50 text-green-800 text-sm">
+                    <div className="p-4 border border-sage/40 bg-sage/10 text-sage-dark text-sm">
                       Password saved. You can log in with your email and password next time.
                     </div>
                     <button
@@ -1902,7 +1902,7 @@ export default function RancherDashboardPage() {
               { label: 'Go live — start receiving buyers', state: 'pending' },
             ];
             return (
-            <div className="p-4 border-2 border-yellow-400 bg-yellow-50 space-y-3">
+            <div className="p-4 border-2 border-amber-dark/40 bg-amber/10 space-y-3">
               <p className="font-medium">Your Onboarding Progress</p>
               <p className="text-sm text-saddle">
                 {status === 'Docs Sent' && "Your agreement is in your email inbox. Sign it whenever you're ready — that's the one thing holding up your go-live."}
@@ -1912,23 +1912,23 @@ export default function RancherDashboardPage() {
                 {status === 'Agreement Signed' && "Agreement signed! One step left: complete verification so we can get you live."}
                 {!['Docs Sent', 'Agreement Signed', 'Verification Complete', 'Verification Pending'].includes(status) && "Complete the steps below to start receiving qualified buyer leads."}
               </p>
-              <div className="pt-3 border-t border-yellow-300">
+              <div className="pt-3 border-t border-amber-dark/30">
                 <p className="text-xs font-medium text-saddle uppercase tracking-wider mb-3">Steps to go live</p>
                 <ol className="space-y-3">
                   {steps.map((step, i) => (
                     <li key={i} className="flex items-start gap-3">
                       <span className={`flex-shrink-0 w-6 h-6 flex items-center justify-center text-xs font-bold ${
-                        step.state === 'done' ? 'bg-green-600 text-white' :
-                        step.state === 'current' ? 'bg-yellow-500 text-white' :
-                        'bg-gray-200 text-gray-500'
+                        step.state === 'done' ? 'bg-sage text-bone' :
+                        step.state === 'current' ? 'bg-amber text-charcoal' :
+                        'bg-bone-deep text-dust'
                       }`} aria-hidden>
                         {step.state === 'done' ? '\u2713' : step.state === 'current' ? '!' : i + 1}
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm ${
-                          step.state === 'done' ? 'text-gray-500 line-through' :
+                          step.state === 'done' ? 'text-dust line-through' :
                           step.state === 'current' ? 'font-medium text-charcoal' :
-                          'text-gray-500'
+                          'text-dust'
                         }`}>{step.label}</p>
                         {step.cta && <div className="mt-1">{step.cta}</div>}
                       </div>
@@ -1939,7 +1939,7 @@ export default function RancherDashboardPage() {
 
               {/* Self-service verification form */}
               {['Agreement Signed', 'Verification Pending'].includes(rancherInfo.onboardingStatus) && !verificationSubmitted && (
-                <div className="mt-3 pt-3 border-t border-yellow-300 space-y-3">
+                <div className="mt-3 pt-3 border-t border-amber-dark/30 space-y-3">
                   <p className="text-sm font-medium">Complete Verification</p>
                   <p className="text-xs text-saddle">Provide at least 2 of the following to get verified and go live. This helps us build trust with buyers.</p>
 
@@ -1952,7 +1952,7 @@ export default function RancherDashboardPage() {
                         onChange={(e) => setVerificationRefs(e.target.value)}
                         className="w-full px-3 py-2 text-sm border border-dust min-h-[80px]"
                       />
-                      <p className="text-xs text-gray-400 mt-1">We may reach out to confirm. 2-3 references recommended.</p>
+                      <p className="text-xs text-dust mt-1">We may reach out to confirm. 2-3 references recommended.</p>
                     </div>
 
                     <div>
@@ -2001,7 +2001,7 @@ export default function RancherDashboardPage() {
                   </div>
 
                   {verificationError && (
-                    <div className="p-3 border border-red-300 bg-red-50 text-red-700 text-sm">
+                    <div className="p-3 border border-weathered/40 bg-weathered/10 text-weathered text-sm">
                       {verificationError}
                     </div>
                   )}
@@ -2273,7 +2273,7 @@ export default function RancherDashboardPage() {
                       <span className="text-saddle">Active Referrals</span>
                       <span className="font-medium">{rancherInfo.currentActiveReferrals} / {rancherInfo.maxActiveReferrals}</span>
                     </div>
-                    <div className="w-full bg-gray-200 h-2">
+                    <div className="w-full bg-bone-deep h-2">
                       <div
                         className={`h-2 transition-all ${rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals ? 'bg-weathered' : 'bg-charcoal'}`}
                         style={{ width: `${Math.min(100, (rancherInfo.currentActiveReferrals / rancherInfo.maxActiveReferrals) * 100)}%` }}
@@ -2911,7 +2911,7 @@ export default function RancherDashboardPage() {
                     </thead>
                     <tbody>
                       {referrals.filter(r => r.status === 'Closed Won').map((ref) => (
-                        <tr key={ref.id} className="border-b border-gray-100">
+                        <tr key={ref.id} className="border-b border-bone-deep">
                           <td className="py-3 pr-4">{ref.buyer_name}</td>
                           <td className="py-3 pr-4">${ref.sale_amount.toLocaleString()}</td>
                           <td className="py-3 pr-4">${ref.commission_due.toLocaleString()}</td>
@@ -2921,12 +2921,12 @@ export default function RancherDashboardPage() {
                                 no invoice to pay. Show "Collected" instead of the
                                 legacy Paid/Pending + "Pay now" invoice flow. */}
                             {rancherInfo.pricingModel === 'tier_v2' ? (
-                              <span className="px-2 py-0.5 text-xs bg-green-100 text-green-800">
+                              <span className="px-2 py-0.5 text-xs bg-sage/15 text-sage-dark">
                                 Collected
                               </span>
                             ) : (
                               <>
-                                <span className={`px-2 py-0.5 text-xs ${ref.commission_paid ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                <span className={`px-2 py-0.5 text-xs ${ref.commission_paid ? 'bg-sage/15 text-sage-dark' : 'bg-amber/20 text-amber-dark'}`}>
                                   {ref.commission_paid ? 'Paid' : 'Pending'}
                                 </span>
                                 {!ref.commission_paid && ref.stripe_invoice_url && (
@@ -2984,7 +2984,7 @@ export default function RancherDashboardPage() {
                       <div className="flex items-start justify-between">
                         <h3 className="font-serif text-lg">{benefit.brand_name}</h3>
                         {benefit.discount_offered > 0 && (
-                          <span className="px-2 py-1 text-xs font-bold bg-green-100 text-green-800">
+                          <span className="px-2 py-1 text-xs font-bold bg-sage/15 text-sage-dark">
                             {benefit.discount_offered}% OFF
                           </span>
                         )}
@@ -3087,11 +3087,11 @@ export default function RancherDashboardPage() {
                         <span className="text-saddle">{doneCount} / {checklist.length}</span>
                       </div>
                       <div className="h-2 bg-bone-warm border border-dust overflow-hidden">
-                        <div className="h-full bg-green-600 transition-all" style={{ width: `${pct}%` }} />
+                        <div className="h-full bg-sage transition-all" style={{ width: `${pct}%` }} />
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs pt-1">
                         {checklist.map((c) => (
-                          <span key={c.label} className={c.done ? 'text-green-700' : 'text-dust'}>
+                          <span key={c.label} className={c.done ? 'text-sage-dark' : 'text-dust'}>
                             {c.done ? '✓' : '○'} {c.label}
                           </span>
                         ))}
@@ -3101,30 +3101,30 @@ export default function RancherDashboardPage() {
                 }
 
                 return (
-                  <div className="p-4 bg-yellow-50 border border-yellow-400 space-y-3">
+                  <div className="p-4 bg-amber/10 border border-amber-dark/40 space-y-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-medium text-charcoal">Your page is not live yet</p>
                       <span className="text-xs text-saddle whitespace-nowrap">{doneCount} / {checklist.length} complete</span>
                     </div>
-                    <div className="h-2 bg-white border border-yellow-300 overflow-hidden">
-                      <div className={`h-full transition-all ${essentialsMet ? 'bg-green-600' : 'bg-saddle'}`} style={{ width: `${pct}%` }} />
+                    <div className="h-2 bg-white border border-amber-dark/30 overflow-hidden">
+                      <div className={`h-full transition-all ${essentialsMet ? 'bg-sage' : 'bg-saddle'}`} style={{ width: `${pct}%` }} />
                     </div>
                     <ul className="space-y-1 text-sm">
                       {checklist.map((c) => (
                         <li key={c.label} className="flex items-center gap-2">
-                          <span className={c.done ? 'text-green-700' : (c.essential ? 'text-red-600' : 'text-dust')}>
+                          <span className={c.done ? 'text-sage-dark' : (c.essential ? 'text-weathered' : 'text-dust')}>
                             {c.done ? '✓' : '○'}
                           </span>
                           <span className={c.done ? 'text-charcoal' : 'text-saddle'}>
                             {c.label}
                             {!c.essential && <span className="text-dust text-xs"> (recommended)</span>}
-                            {c.essential && !c.done && <span className="text-red-600 text-xs"> · required to publish</span>}
+                            {c.essential && !c.done && <span className="text-weathered text-xs"> · required to publish</span>}
                           </span>
                         </li>
                       ))}
                     </ul>
                     {goLiveError && (
-                      <div className="p-3 border border-red-400 bg-red-50 text-red-800 text-sm">
+                      <div className="p-3 border border-weathered/50 bg-weathered/10 text-weathered text-sm">
                         {goLiveError}
                       </div>
                     )}
@@ -3135,7 +3135,7 @@ export default function RancherDashboardPage() {
                           : `Add ${missingEssentials.join(', ')} below, then save, before you can publish.`}
                       </p>
                       {goLiveRequested ? (
-                        <span className="text-xs bg-green-100 text-green-800 px-3 py-1.5 whitespace-nowrap">Request sent!</span>
+                        <span className="text-xs bg-sage/15 text-sage-dark px-3 py-1.5 whitespace-nowrap">Request sent!</span>
                       ) : (
                         <button
                           onClick={handleRequestGoLive}
@@ -3455,13 +3455,13 @@ export default function RancherDashboardPage() {
                         <div className="mt-3 space-y-2 text-xs">
                           {live.length > 0 && (
                             <div className="flex items-start gap-2">
-                              <span className="font-bold text-green-700 shrink-0">✓ Routing live:</span>
+                              <span className="font-bold text-sage-dark shrink-0">✓ Routing live:</span>
                               <span className="font-mono text-charcoal">{live.join(', ')}</span>
                             </div>
                           )}
                           {pending.length > 0 && (
                             <div className="flex items-start gap-2">
-                              <span className="font-bold text-amber-700 shrink-0">⏳ Pending review:</span>
+                              <span className="font-bold text-amber-dark shrink-0">⏳ Pending review:</span>
                               <span className="font-mono text-charcoal">{pending.join(', ')}</span>
                             </div>
                           )}
@@ -3509,9 +3509,9 @@ export default function RancherDashboardPage() {
                     {(() => {
                       const len = (pageForm['Refund Policy'] || '').trim().length;
                       if (len === 0) return <p className="text-xs text-dust">A clear policy is one of the biggest trust signals for first-time buyers.</p>;
-                      if (len < 20) return <p className="text-xs text-red-700">{20 - len} more characters needed (minimum 20).</p>;
-                      if (len > 500) return <p className="text-xs text-red-700">{len - 500} characters over the 500 limit.</p>;
-                      return <p className="text-xs text-green-700">{len} / 500 characters.</p>;
+                      if (len < 20) return <p className="text-xs text-weathered">{20 - len} more characters needed (minimum 20).</p>;
+                      if (len > 500) return <p className="text-xs text-weathered">{len - 500} characters over the 500 limit.</p>;
+                      return <p className="text-xs text-sage-dark">{len} / 500 characters.</p>;
                     })()}
                   </div>
 
@@ -3809,7 +3809,7 @@ export default function RancherDashboardPage() {
                       <p className="text-sm font-medium">{p.name} — ${p.price}</p>
                       {p.description && <p className="text-xs text-saddle mt-0.5">{p.description}</p>}
                     </div>
-                    <button onClick={() => setCustomProducts(customProducts.filter((_, idx) => idx !== i))} className="text-red-500 text-xs hover:underline ml-2">Remove</button>
+                    <button onClick={() => setCustomProducts(customProducts.filter((_, idx) => idx !== i))} className="text-weathered text-xs hover:underline ml-2">Remove</button>
                   </div>
                 ))}
                 <div className="grid grid-cols-2 gap-2">
@@ -3953,7 +3953,7 @@ export default function RancherDashboardPage() {
                     <button
                       type="button"
                       onClick={() => setTestimonials(arr => arr.filter((_, idx) => idx !== i))}
-                      className="text-red-500 text-xs hover:underline"
+                      className="text-weathered text-xs hover:underline"
                     >
                       Remove testimonial
                     </button>
@@ -3993,7 +3993,7 @@ export default function RancherDashboardPage() {
                     <button
                       type="button"
                       onClick={() => setFaqItems(arr => arr.filter((_, idx) => idx !== i))}
-                      className="text-red-500 text-xs hover:underline"
+                      className="text-weathered text-xs hover:underline"
                     >
                       Remove question
                     </button>
@@ -4013,7 +4013,7 @@ export default function RancherDashboardPage() {
                 <div className="p-3 border border-weathered text-weathered text-sm">{pageError}</div>
               )}
               {pageSaved && (
-                <div className="p-3 border border-green-600 text-green-700 bg-green-50 text-sm">Changes saved! {rancherInfo.slug && <span>Your page: <a href={`/ranchers/${rancherInfo.slug}`} target="_blank" className="underline">/ranchers/{rancherInfo.slug}</a></span>}</div>
+                <div className="p-3 border border-sage text-sage-dark bg-sage/10 text-sm">Changes saved! {rancherInfo.slug && <span>Your page: <a href={`/ranchers/${rancherInfo.slug}`} target="_blank" className="underline">/ranchers/{rancherInfo.slug}</a></span>}</div>
               )}
               <div className="flex items-center gap-4">
                 <button
@@ -4320,11 +4320,11 @@ export default function RancherDashboardPage() {
             </p>
 
             {finalInvoiceResult ? (
-              <div className="border border-green-600 bg-green-50 p-4 space-y-3">
-                <p className="text-sm text-green-900">
+              <div className="border border-sage bg-sage/10 p-4 space-y-3">
+                <p className="text-sm text-sage-dark">
                   <strong>Invoice sent.</strong> Buyer received an email with the Stripe payment link for <strong>${finalInvoiceResult.balanceAmount.toFixed(2)}</strong>. 100% to your account when they pay — BHC takes nothing on the final balance.
                 </p>
-                <p className="text-xs text-green-800">
+                <p className="text-xs text-sage-dark">
                   Payment link:{' '}
                   <a href={finalInvoiceResult.url} target="_blank" rel="noopener noreferrer" className="underline break-all">
                     {finalInvoiceResult.url}
@@ -4333,7 +4333,7 @@ export default function RancherDashboardPage() {
                 <button
                   type="button"
                   onClick={closeFinalInvoiceModal}
-                  className="px-4 py-2 text-xs uppercase tracking-wider bg-green-700 text-white hover:bg-green-800"
+                  className="px-4 py-2 text-xs uppercase tracking-wider bg-sage text-bone hover:bg-sage-dark"
                 >
                   Done
                 </button>
@@ -4788,12 +4788,12 @@ export default function RancherDashboardPage() {
             {passResult && (
               <div className="space-y-4">
                 {passResult.rematchOutcome === 'rematched' && (
-                  <div className="p-4 border border-green-700 bg-green-50 text-green-900 text-sm">
+                  <div className="p-4 border border-sage bg-sage/10 text-sage-dark text-sm">
                     ✓ Lead reassigned to <strong>{passResult.newRancherName}</strong>. Buyer was notified.
                   </div>
                 )}
                 {passResult.rematchOutcome === 'waitlisted' && (
-                  <div className="p-4 border border-yellow-600 bg-yellow-50 text-yellow-900 text-sm">
+                  <div className="p-4 border border-amber-dark bg-amber/10 text-amber-dark text-sm">
                     No other rancher available in {passModal.buyer_state} right now. Buyer was waitlisted and put back into nurture so they stay engaged until a rancher opens up.
                   </div>
                 )}
@@ -5256,7 +5256,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
           <button
             onClick={() => onUpdate(referral.id, 'Rancher Contacted')}
             disabled={updating === referral.id}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
           >
             Contacted ✓
           </button>
@@ -5265,7 +5265,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
           <button
             onClick={onAccept}
             disabled={updating === referral.id}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-50"
             title="Accept slot — buyer&apos;s deposit becomes non-refundable per BHC policy."
           >
             🔒 Accept Slot
@@ -5274,7 +5274,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
         {showFinalInvoice && (
           <button
             onClick={onSendFinal}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-sage text-bone hover:bg-sage-dark transition-colors"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-sage text-bone hover:bg-sage-dark transition-colors"
             title="Send final balance invoice to buyer (100% to you, no BHC fee)"
           >
             {finalSent ? 'Re-send invoice' : 'Send Final Invoice'}
@@ -5284,7 +5284,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
           <button
             onClick={onConfirmPayment}
             disabled={updating === referral.id}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
             title="Confirm the off-platform payment you received — closes the deal + fires the commission invoice"
           >
             Confirm payment received
@@ -5293,7 +5293,7 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
         {showClose && (
           <button
             onClick={onClose}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[40px] sm:min-h-0 bg-charcoal text-bone hover:bg-saddle transition-colors"
+            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-charcoal text-bone hover:bg-saddle transition-colors"
           >
             Close as Won
           </button>
@@ -5302,14 +5302,14 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
         <div className="flex gap-2 w-full sm:w-auto">
           <button
             onClick={onLost}
-            className="flex-1 sm:flex-none px-3 py-1.5 text-xs border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
+            className="flex-1 sm:flex-none px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 text-xs border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
             title="Mark Lost — closes deal without rerouting buyer"
           >
             Mark Lost
           </button>
           <button
             onClick={onPass}
-            className="flex-1 sm:flex-none px-3 py-1.5 text-xs border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
+            className="flex-1 sm:flex-none px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 text-xs border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
             title="Pass — we auto-reassign buyer to another rancher"
           >
             Pass
@@ -5571,7 +5571,7 @@ function ReferralCard({
           <button
             onClick={() => onUpdate(referral.id, 'Rancher Contacted')}
             disabled={updating === referral.id}
-            className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
+            className="px-4 min-h-[44px] py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
             {updating === referral.id ? 'Updating...' : "I've Contacted This Buyer"}
           </button>
@@ -5580,7 +5580,7 @@ function ReferralCard({
           <button
             onClick={() => onUpdate(referral.id, 'Negotiation')}
             disabled={updating === referral.id}
-            className="px-4 py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
+            className="px-4 min-h-[44px] py-2 text-sm border border-charcoal hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
           >
             {updating === referral.id ? 'Updating...' : 'In Negotiation'}
           </button>
@@ -5589,7 +5589,7 @@ function ReferralCard({
           <button
             onClick={onAccept}
             disabled={updating === referral.id}
-            className="px-4 py-2 text-sm bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+            className="px-4 min-h-[44px] py-2 text-sm bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-50"
             title="Accept slot — buyer&apos;s deposit becomes non-refundable per BHC policy."
           >
             🔒 Accept Slot
@@ -5598,7 +5598,7 @@ function ReferralCard({
         {showFinalInvoice && (
           <button
             onClick={onSendFinal}
-            className="px-4 py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors"
+            className="px-4 min-h-[44px] py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors"
             title="Send final balance invoice to buyer (100% to you, no BHC fee)"
           >
             {finalSent ? 'Re-send Final Invoice' : 'Send Final Invoice'}
@@ -5608,7 +5608,7 @@ function ReferralCard({
           <button
             onClick={onConfirmPayment}
             disabled={updating === referral.id}
-            className="px-4 py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
+            className="px-4 min-h-[44px] py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
             title="Confirm the off-platform payment you received — closes the deal + fires the commission invoice"
           >
             Confirm payment received
@@ -5617,21 +5617,21 @@ function ReferralCard({
         {showClose && (
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors"
+            className="px-4 min-h-[44px] py-2 text-sm bg-charcoal text-bone hover:bg-saddle transition-colors"
           >
             Close as Won
           </button>
         )}
         <button
           onClick={onLost}
-          className="px-4 py-2 text-sm border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
+          className="px-4 min-h-[44px] py-2 text-sm border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
           title="Mark this lead as closed lost — they're out (price/timing/etc). Won't re-route."
         >
           Mark Lost
         </button>
         <button
           onClick={onPass}
-          className="px-4 py-2 text-sm border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
+          className="px-4 min-h-[44px] py-2 text-sm border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
           title="Pass on this lead — we'll auto-reassign the buyer to another rancher"
         >
           Pass on Lead
@@ -5699,7 +5699,7 @@ function EarningsCsvExport() {
           Export CSV ↓
         </button>
       </div>
-      {error && <p className="text-xs text-red-700">{error}</p>}
+      {error && <p className="text-xs text-weathered">{error}</p>}
     </div>
   );
 }
@@ -5820,7 +5820,7 @@ function AccountSettingsSection({
             </div>
           </div>
           {error && <div className="p-3 border border-weathered text-weathered text-sm">{error}</div>}
-          {saved && <div className="p-3 border border-green-300 bg-green-50 text-green-800 text-sm">Saved.</div>}
+          {saved && <div className="p-3 border border-sage/40 bg-sage/10 text-sage-dark text-sm">Saved.</div>}
           <button
             type="submit"
             disabled={saving}
@@ -6028,7 +6028,7 @@ function FulfillmentTracker({
           </div>
         </div>
       )}
-      {error && <p className="text-xs text-red-700">{error}</p>}
+      {error && <p className="text-xs text-weathered">{error}</p>}
       {saved && <p className="text-xs text-sage-dark">Saved.</p>}
     </div>
   );
@@ -6060,7 +6060,7 @@ function FulfillmentConfirmRow({
         <span
           role="status"
           aria-label={`Beef delivered ${when}`}
-          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-100 text-green-800"
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-sage/15 text-sage-dark"
         >
           <span aria-hidden="true">✓</span> Beef delivered {when}
         </span>
@@ -6098,7 +6098,7 @@ function FulfillmentConfirmRow({
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="bg-charcoal text-white px-4 py-2 text-xs font-semibold uppercase tracking-widest hover:bg-saddle transition-colors"
+          className="bg-charcoal text-bone px-4 py-2 text-xs font-semibold uppercase tracking-widest hover:bg-saddle transition-colors"
         >
           Mark beef delivered →
         </button>
@@ -6118,7 +6118,7 @@ function FulfillmentConfirmRow({
               type="button"
               onClick={submit}
               disabled={submitting}
-              className="bg-charcoal text-white px-4 py-2 text-xs font-semibold uppercase tracking-widest hover:bg-saddle transition-colors disabled:opacity-50"
+              className="bg-charcoal text-bone px-4 py-2 text-xs font-semibold uppercase tracking-widest hover:bg-saddle transition-colors disabled:opacity-50"
             >
               {submitting ? 'Sending…' : 'Send confirmation'}
             </button>
@@ -6134,7 +6134,7 @@ function FulfillmentConfirmRow({
           </div>
         </>
       )}
-      {error && <p className="text-xs text-red-700">{error}</p>}
+      {error && <p className="text-xs text-weathered">{error}</p>}
     </div>
   );
 }
@@ -6299,20 +6299,20 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
   return (
     <div className="space-y-3">
       {bannerErr && (
-        <div className="p-3 border-l-4 border-red-500 bg-red-50 text-sm text-red-900 flex items-center justify-between gap-3">
+        <div className="p-3 border-l-4 border-weathered bg-weathered/10 text-sm text-weathered flex items-center justify-between gap-3">
           <span>{bannerErr}</span>
           <button type="button" onClick={() => setBannerErr('')} className="text-lg leading-none hover:opacity-70">×</button>
         </div>
       )}
       {noTier && (
-        <div className="p-4 border-l-4 border-blue-500 bg-blue-50 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-sm text-blue-900">
+        <div className="p-4 border-l-4 border-saddle bg-bone-warm flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-charcoal">
             <strong>Pick your plan to start receiving buyers.</strong>{' '}
             Choose Pasture, Ranch, or Operator on /partner.
           </p>
           <a
             href="/partner"
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-blue-700 text-white hover:bg-blue-800 transition-colors"
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
           >
             See plans →
           </a>
@@ -6320,8 +6320,8 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
       )}
 
       {showConnectNotConnected && (
-        <div className="p-4 border-l-4 border-yellow-500 bg-yellow-50 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-sm text-yellow-900">
+        <div className="p-4 border-l-4 border-amber-dark/50 bg-amber/10 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-amber-dark">
             <strong>Connect your bank account so we can pay you.</strong>{' '}
             Add your bank + verify your identity with Stripe — about 5 minutes.
           </p>
@@ -6329,7 +6329,7 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
             type="button"
             onClick={openConnectOnboarding}
             disabled={resuming}
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors disabled:opacity-60"
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-60"
           >
             {resuming ? 'Opening…' : 'Connect bank →'}
           </button>
@@ -6337,8 +6337,8 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
       )}
 
       {showConnectOnboarding && (
-        <div className="p-4 border-l-4 border-yellow-500 bg-yellow-50 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-sm text-yellow-900">
+        <div className="p-4 border-l-4 border-amber-dark/50 bg-amber/10 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-amber-dark">
             <strong>Finish your payout setup with Stripe.</strong>{' '}
             Pick up where you left off — Stripe takes you straight to the next required step (usually your bank details and accepting their terms).
           </p>
@@ -6346,7 +6346,7 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
             type="button"
             onClick={openConnectOnboarding}
             disabled={resuming}
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors disabled:opacity-60"
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-60"
           >
             {resuming ? 'Opening…' : 'Finish payout setup →'}
           </button>
@@ -6354,8 +6354,8 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
       )}
 
       {showConnectRestricted && (
-        <div className="p-4 border-l-4 border-red-600 bg-red-50 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-sm text-red-900">
+        <div className="p-4 border-l-4 border-weathered bg-weathered/10 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-weathered">
             <strong>Payouts are paused — Stripe still needs a few things from you.</strong>{' '}
             Most often it&rsquo;s your bank details or accepting Stripe&rsquo;s terms. We&rsquo;ll take you straight to what&rsquo;s left.
           </p>
@@ -6363,7 +6363,7 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
             type="button"
             onClick={resolveRestricted}
             disabled={resuming}
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors disabled:opacity-60"
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-rust text-bone hover:bg-rust-dark transition-colors disabled:opacity-60"
           >
             {resuming ? 'Checking…' : 'Finish payout setup →'}
           </button>
@@ -6371,8 +6371,8 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
       )}
 
       {showSubBroken && (
-        <div className="p-4 border-l-4 border-red-600 bg-red-50 flex items-center justify-between gap-4 flex-wrap">
-          <p className="text-sm text-red-900">
+        <div className="p-4 border-l-4 border-weathered bg-weathered/10 flex items-center justify-between gap-4 flex-wrap">
+          <p className="text-sm text-weathered">
             <strong>
               {status === 'canceled'
                 ? 'Your tier subscription is canceled.'
@@ -6385,7 +6385,7 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
           <button
             type="button"
             onClick={openBillingPortal}
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors"
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-rust text-bone hover:bg-rust-dark transition-colors"
           >
             {status === 'canceled' ? 'Reactivate →' : 'Update card →'}
           </button>
@@ -6467,19 +6467,19 @@ function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
   if (ready) {
     return (
       <>
-        <div className="p-4 border-l-4 border-green-600 bg-green-50 flex items-center justify-between gap-4 flex-wrap">
-          <div className="text-sm text-green-900">
+        <div className="p-4 border-l-4 border-sage bg-sage/10 flex items-center justify-between gap-4 flex-wrap">
+          <div className="text-sm text-sage-dark">
             <p>
               <strong>You&rsquo;re set up to switch to the new plan.</strong>{' '}
               Your subscription is paying and your bank is connected. One click finishes the upgrade.
             </p>
-            {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
+            {error && <p className="mt-2 text-xs text-weathered">{error}</p>}
           </div>
           <button
             type="button"
             onClick={confirmUpgrade}
             disabled={submitting}
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-green-700 text-white hover:bg-green-800 transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
           >
             {submitting ? 'Switching…' : 'Switch to the new plan →'}
           </button>

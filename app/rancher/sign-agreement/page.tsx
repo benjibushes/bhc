@@ -314,7 +314,7 @@ function SignAgreementInner() {
 
               <div className="space-y-2">
                 <label className="block text-sm font-medium">
-                  Full Legal Name <span className="text-red-600">*</span>
+                  Full Legal Name <span className="text-weathered">*</span>
                 </label>
                 <input
                   type="text"
@@ -346,7 +346,7 @@ function SignAgreementInner() {
               </label>
 
               {error && (
-                <div className="p-3 border border-red-400 text-red-700 text-sm">
+                <div className="p-3 border border-weathered/50 text-weathered text-sm">
                   {error}
                 </div>
               )}
@@ -427,7 +427,7 @@ function ResendAgreementForm() {
         {status === 'sending' ? 'Sending…' : 'Send new link'}
       </button>
       {status === 'error' && (
-        <p className="text-xs text-red-600 w-full mt-1">{message}</p>
+        <p className="text-xs text-weathered w-full mt-1">{message}</p>
       )}
     </form>
   );

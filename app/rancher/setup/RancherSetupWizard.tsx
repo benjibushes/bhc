@@ -3420,7 +3420,7 @@ function TierPickStep({
       </header>
 
       {tierErr && (
-        <div className="p-3 border-l-4 border-red-500 bg-red-50 text-sm text-red-900 flex items-center justify-between gap-3">
+        <div className="p-3 border-l-4 border-weathered bg-weathered/10 text-sm text-weathered flex items-center justify-between gap-3">
           <span>{tierErr}</span>
           <button type="button" onClick={() => setTierErr('')} className="text-lg leading-none hover:opacity-70">×</button>
         </div>

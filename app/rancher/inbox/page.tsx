@@ -192,7 +192,7 @@ export default function RancherInboxPage() {
               </button>
               <span className="text-saddle text-xs">{draft.length}/5000</span>
             </div>
-            {error && <p className="text-red-700 mt-3 text-sm">{error}</p>}
+            {error && <p className="text-weathered mt-3 text-sm">{error}</p>}
           </>
         ) : (
           <p className="text-saddle">pick a conversation on the left to open it.</p>
