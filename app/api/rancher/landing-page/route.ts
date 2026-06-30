@@ -7,6 +7,7 @@ import { MAX_ACTIVE_REFERRALS_FIELD, getLiveCapacity } from '@/lib/rancherCapaci
 import { requireRancher } from '@/lib/rancherAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
 import { normalizeImageUrl } from '@/lib/imageUrl';
+import { validateAccountPatch, ACCOUNT_EDITABLE_KEYS } from '@/lib/accountProfile';
 
 // Fulfillment Types option values — mirrors FULFILLMENT_OPTIONS in the setup
 // wizard + the dashboard editor so all three agree on the exact strings the
@@ -136,6 +137,12 @@ export async function PATCH(request: Request) {
       // Multi-user: comma/newline list of additional emails allowed to log
       // into this rancher's dashboard. Login flow matches against this.
       'Team Emails',
+      // WAVE 3b (2026-06-30): account/profile fields — operator name, ranch
+      // name, login email, phone. Previously NOT editable (only a password
+      // modal existed). Allowed through here but their VALUES are validated +
+      // normalized below via validateAccountPatch (email format, phone digits,
+      // non-empty names) — they are NOT trusted as raw pass-through.
+      ...ACCOUNT_EDITABLE_KEYS,
     ];
 
     // Handle special actions
@@ -632,6 +639,21 @@ export async function PATCH(request: Request) {
       } catch {
         // Non-fatal — proceed without the alert.
       }
+    }
+
+    // ── Account / profile fields (WAVE 3b) ───────────────────────────────
+    // Operator Name / Ranch Name / Email / Phone are allowlisted above but
+    // must be validated + normalized, never written raw. Run the pure gate on
+    // the keys actually present in the body; on success, OVERWRITE the
+    // pass-through copies in `fields` with the normalized values. A blank email
+    // or malformed phone is a hard 400.
+    const accountInBody = ACCOUNT_EDITABLE_KEYS.some((k) => k in body);
+    if (accountInBody) {
+      const acct = validateAccountPatch(body);
+      if (!acct.ok) {
+        return NextResponse.json({ error: acct.error }, { status: 400 });
+      }
+      Object.assign(fields, acct.fields);
     }
 
     await updateRecord(TABLES.RANCHERS, session.rancherId, fields);
