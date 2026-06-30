@@ -45,6 +45,8 @@ import { US_STATES } from '@/lib/states';
 import Button from '@/app/components/Button';
 import CalInlineBooker from '@/app/qualify/[consumerId]/CalInlineBooker';
 import { trackEvent, metaEventId } from '@/lib/analytics';
+import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
+import { isDepositCapableMatch } from '@/lib/depositOptionality';
 
 // ── Props ──────────────────────────────────────────────────────────────────
 interface BuyerFunnelProps {
@@ -843,6 +845,16 @@ function Reveal({
   // link. So for these, the buyer should expect BEN to reach out — not a text
   // from the rancher. Legacy matches still get a direct rancher reach-out.
   const tierV2Match = matched && (result?.pricingModel || 'legacy') === 'tier_v2';
+  // DEPOSIT OPTIONALITY (2026-06-30): a tier_v2 (Stripe-Connect-active) rancher
+  // with a minted referralId is deposit-capable — the buyer can one-tap deposit
+  // straight to Stripe at /checkout/<refId>/deposit. For these, deposit is the
+  // dominant primary CTA and the call is demoted to a quiet secondary, EVEN when
+  // offerOperatorCall is on. Call-only is reserved strictly for ranchers that
+  // genuinely can't take a deposit (legacy / Operator-without-Connect, i.e. not
+  // depositCapable). This is the fix for the cash leak where a ready buyer
+  // matched to a Connect rancher was routed to "book a call" with no deposit.
+  const depositCapable =
+    matched && isDepositCapableMatch(result?.pricingModel, result?.referralId);
   // Live "family #N" line — familiesMatched + 1 (rounded, comma-formatted). Hides
   // if stats failed.
   const familyNumber = stats && stats.familiesMatched > 0 ? commas(stats.familiesMatched + 1) : null;
@@ -869,8 +881,50 @@ function Reveal({
         )}
       </header>
 
-      {/* ── Mode 1: operator sales call ──────────────────────────────────────── */}
-      {offerOperatorCall ? (
+      {/* ── Mode 0: DEPOSIT-CAPABLE match (tier_v2 + Connect) ─────────────────
+          deposit is the ONLY thing that looks like a button — full-width,
+          thumb-zone, ≥48px — straight to Stripe via /checkout/<refId>/deposit.
+          honest scarcity above, refund + stripe trust line below, and the call
+          demoted to a quiet recessive text link. wins over offerOperatorCall so
+          a ready buyer can always deposit now (never call-only). */}
+      {depositCapable && rancher ? (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-dust bg-white p-6 text-left">
+            <p className="text-xs uppercase tracking-widest text-saddle">your matched rancher</p>
+            <h2 className="mt-1 font-serif text-3xl text-charcoal">{rancher.name}</h2>
+            {rancher.state && <p className="mt-0.5 text-sm text-saddle">{rancher.state}</p>}
+            <div
+              className="mt-4 rounded-md px-4 py-3 text-sm font-medium text-bone"
+              style={{ backgroundColor: FUNNEL_ACCENT }}
+            >
+              your share is ready to reserve.
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Button
+              href={`/checkout/${result!.referralId}/deposit`}
+              variant="primary"
+              size="lg"
+              fullWidth
+            >
+              reserve your share — secure deposit →
+            </Button>
+            {/* trust line at the point of peak deposit anxiety */}
+            <p className="text-[11px] text-saddle text-center">
+              fully refundable until processing · payment secured by stripe
+            </p>
+          </div>
+          {/* recessive, separated secondary — the lower-commitment fallback,
+              never a peer button. extra top spacing prevents fat-finger mis-taps. */}
+          <p className="pt-2 text-center text-sm text-saddle">
+            not ready?{' '}
+            <a href={BEN_SALES_CAL_URL} className="underline">
+              or book a 15-min call with ben first
+            </a>
+          </p>
+        </div>
+      ) : offerOperatorCall ? (
+        /* ── Mode 1: operator sales call (non-deposit-capable only) ──────────── */
         <div className="space-y-4 text-left">
           <div className="space-y-1">
             <p className="text-xs uppercase tracking-widest text-saddle">next step · about 15 minutes</p>
@@ -889,7 +943,7 @@ function Reveal({
           />
         </div>
       ) : matched && rancher ? (
-        /* ── Mode 2: matched rancher reveal ─────────────────────────────────── */
+        /* ── Mode 2: matched rancher reveal (non-deposit-capable) ────────────── */
         <div className="space-y-4">
           <div className="rounded-lg border border-dust bg-white p-6 text-left">
             <p className="text-xs uppercase tracking-widest text-saddle">your matched rancher</p>
@@ -899,38 +953,18 @@ function Reveal({
               className="mt-4 rounded-md px-4 py-3 text-sm font-medium text-bone"
               style={{ backgroundColor: FUNNEL_ACCENT }}
             >
-              {/* tier_v2 w/ a referral → self-serve deposit (button below).
-                  tier_v2 w/o referral → Ben sets it up. Legacy → rancher texts. */}
-              {tierV2Match && result?.referralId
-                ? <>your share is ready to reserve.</>
-                : tierV2Match
+              {/* deposit-capable is handled above; here tier_v2 w/o referral →
+                  Ben sets it up; legacy → rancher texts. */}
+              {tierV2Match
                 ? <>ben reaches out today to set it up.</>
                 : <>they&apos;ll text you today.</>}
             </div>
           </div>
-          {tierV2Match && result?.referralId ? (
-            /* Self-serve deposit — the matched tier_v2 buyer pays their deposit
-               now instead of dead-ending at "ben reaches out". */
-            <div className="space-y-2">
-              <Button
-                href={`/checkout/${result.referralId}/deposit`}
-                variant="primary"
-                size="lg"
-                fullWidth
-              >
-                reserve your share — pay your deposit →
-              </Button>
-              <p className="text-[11px] text-dust text-center">
-                deposit fully refundable for 7 days. no full payment now.
-              </p>
-            </div>
-          ) : (
-            <p className="text-xs text-saddle">
-              {tierV2Match
-                ? <>check your email — ben gets in touch to lock in your share with {rancher.name}. no payment now.</>
-                : <>keep an eye on your phone — your rancher reaches out directly, no middleman.</>}
-            </p>
-          )}
+          <p className="text-xs text-saddle">
+            {tierV2Match
+              ? <>check your email — ben gets in touch to lock in your share with {rancher.name}. no payment now.</>
+              : <>keep an eye on your phone — your rancher reaches out directly, no middleman.</>}
+          </p>
         </div>
       ) : (
         /* ── Mode 3: honest waitlist (no in-state rancher / no match) ────────── */

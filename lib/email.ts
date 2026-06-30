@@ -1314,14 +1314,16 @@ export async function sendBuyerIntroNotification(data: {
     // The href is the verify endpoint, NOT the deposit page directly — verify
     // sets the cookie then 302s to /checkout/<refId>/deposit so the buyer
     // arrives authed. Without the cookie hop, the deposit page 401s.
+    // Lowercase brand voice — the only emphasis is the filled button (weight/
+    // fill/contrast), not caps. Trust line sits directly under the button where
+    // deposit anxiety peaks.
     reserveBlock = `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
-    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Reserve Your Share Now</p>
-    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — your deposit puts you on the books for the next available slot. Spots fill first-come, first-served.</p>
+    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;color:#0E0E0E;">reserve your share now</p>
+    <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} processes on a rolling cycle — your deposit puts you on the books for the next available slot. spots fill first-come, first-served.</p>
     <p style="margin:16px 0 4px 0;text-align:center;">
-      <a href="${data.depositMagicLinkUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Reserve your share — secure deposit &rarr;</a>
+      <a href="${data.depositMagicLinkUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;letter-spacing:0.5px;font-size:14px;">reserve your share — secure deposit &rarr;</a>
     </p>
-    <p style="margin:8px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;"><strong>No deposit, no slot held.</strong></p>
-    <p style="margin:10px 0 0 0;font-size:11px;color:#6B4F3F;text-align:center;line-height:1.5;">Refundable until ${esc(data.rancherName)} accepts your slot. Non-refundable after.<br>Cold-chain guarantee + BHC mediation always apply.</p>
+    <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">fully refundable until ${esc(data.rancherName)} accepts your slot · payment secured by stripe</p>
   </div>`;
   } else if (hasAnyPayLink) {
     reserveBlock = `<div style="border:2px solid #0E0E0E;background:#FAF8F4;padding:18px 22px;margin:20px 0;">
@@ -1396,14 +1398,26 @@ export async function sendBuyerIntroNotification(data: {
     const benSalesUrlWithPrefill = prefillQs
       ? `${benSalesCalUrl}${benSalesCalUrl.includes('?') ? '&' : '?'}${prefillQs}`
       : benSalesCalUrl;
-    calBlock = `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
-    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Lock in your share &mdash; 15 min with Ben</p>
+    if (hasMagicLink) {
+      // DEPOSIT OPTIONALITY (2026-06-30): this rancher is deposit-capable
+      // (a magic-link deposit deep-link was minted), so deposit is the dominant
+      // primary (reserveBlock, rendered first). The call must NOT be a second
+      // equal-weight button — that splits intent and depresses deposits. Demote
+      // it to a quiet lowercase text link beneath the deposit button: the
+      // lower-commitment fallback for the anxious minority, never a peer.
+      calBlock = `<p style="margin:14px 0 0 0;font-size:14px;color:#6B4F3F;text-align:center;">not ready? <a href="${benSalesUrlWithPrefill}" style="color:#6B4F3F;text-decoration:underline;">or book a 15-min call with ben first</a></p>`;
+    } else {
+      // No deposit deep-link → the call IS the primary action for this Operator-
+      // tier rancher (BHC runs the sales call). Keep the prominent button.
+      calBlock = `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
+    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;color:#0E0E0E;">lock in your share &mdash; 15 min with ben</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">${esc(data.rancherName)} works with us under our Operator program &mdash; that means I (Ben, BuyHalfCow founder) personally walk every buyer through pricing, processing dates, cuts, and delivery. Pick a time and I'll have your slot reserved.</p>
     <p style="margin:16px 0 4px 0;text-align:center;">
-      <a href="${benSalesUrlWithPrefill}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Book your 15-min call with Ben &rarr;</a>
+      <a href="${benSalesUrlWithPrefill}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;letter-spacing:0.5px;font-size:14px;">book your 15-min call with ben &rarr;</a>
     </p>
     <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Same beef. Same rancher. I just make sure both sides show up prepared.</p>
   </div>`;
+    }
   } else if (normalizedCalSlug) {
     // Send buyer to /book/<referralId> — the on-site booker that resolves the
     // rancher's Cal slug server-side and embeds it in an iframe. Buyer never
@@ -1420,14 +1434,21 @@ export async function sendBuyerIntroNotification(data: {
       ? `${SITE_URL}/book/${data.referralId}`
       : `${SITE_URL}/book`;
     const rancherCalUrlWithPrefill = rancherCalUrl;
-    calBlock = `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
-    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#0E0E0E;">Schedule a 15-min intro call</p>
+    if (hasMagicLink) {
+      // Deposit-capable rancher that also exposes a Cal slug → deposit stays the
+      // single primary button; the call drops to a quiet text link so the email
+      // never shows two competing buttons.
+      calBlock = `<p style="margin:14px 0 0 0;font-size:14px;color:#6B4F3F;text-align:center;">prefer to talk first? <a href="${rancherCalUrlWithPrefill}" style="color:#6B4F3F;text-decoration:underline;">book a 15-min intro call</a></p>`;
+    } else {
+      calBlock = `<div style="border:2px solid #0E0E0E;background:#F4F1EC;padding:20px 24px;margin:20px 0;">
+    <p style="margin:0 0 6px 0;font-family:Georgia,serif;font-size:16px;font-weight:700;letter-spacing:0.5px;color:#0E0E0E;">schedule a 15-min intro call</p>
     <p style="margin:8px 0;font-size:14px;color:#2A2A2A;">Pick a time that works for both of you. ${esc(data.rancherName)} sets their availability &mdash; book a slot and they'll be expecting your call. No phone tag.</p>
     <p style="margin:16px 0 4px 0;text-align:center;">
-      <a href="${rancherCalUrlWithPrefill}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Book your 15-min call &rarr;</a>
+      <a href="${rancherCalUrlWithPrefill}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FFFFFF!important;text-decoration:none;font-weight:600;letter-spacing:0.5px;font-size:14px;">book your 15-min call &rarr;</a>
     </p>
     <p style="margin:10px 0 0 0;font-size:12px;color:#6B4F3F;text-align:center;">Ben (BuyHalfCow founder) is CC'd on every booking &mdash; we make sure both sides show up prepared.</p>
   </div>`;
+    }
   }
 
   // Subject prefix when this buyer confirmed Ready-to-Buy. Tells the recipient

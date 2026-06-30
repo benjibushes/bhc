@@ -24,9 +24,10 @@
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { JWT_SECRET } from '@/lib/secrets';
+import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
+import { isDepositCapableMatch } from '@/lib/depositOptionality';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
 
@@ -337,23 +338,63 @@ export async function POST(request: Request) {
     console.error('[/api/qualify] path update failed:', e?.message);
   }
 
-  // 2026-06-09 sales-floor pivot: fire Cal-invite email ONLY for buyers
-  // matched to a tier_v2 rancher (Ben handles those sales calls). Legacy
-  // rancher buyers keep the original off-platform flow — matching/suggest
-  // already fired their rancher intro w/ contact info. Score guard: low
-  // scorers (<60) stay routed but no Cal invite — Ben follows up manually
-  // via /admin/today v2 if he wants to close them.
-  if (score >= 60 && consumer['Email'] && pricingModel === 'tier_v2') {
-    try {
-      const { sendQuizCompleteCalInvite } = await import('@/lib/emailMinimal');
-      await sendQuizCompleteCalInvite({
-        to: String(consumer['Email']),
-        firstName: String(consumer['Full Name'] || 'there').split(' ')[0],
-        score,
-      });
-    } catch (e: any) {
-      console.warn('[/api/qualify] cal invite fire failed:', e?.message);
+  // DEPOSIT OPTIONALITY (2026-06-30): for a tier_v2 / Stripe-Connect-active
+  // rancher the buyer is deposit-capable — so the qualified email leads with
+  // a one-tap deposit (reusing the bulkRoute member-verify magic-link pattern:
+  // mint a member-login token → /api/auth/member/verify?token=…&next=
+  // /checkout/<refId>/deposit so the buyer lands authed and goes straight to
+  // Stripe) and demotes the call to a quiet "or book a 15-min call with ben"
+  // secondary. NEVER call-only for a deposit-capable rancher — that was the
+  // cash leak (a ready buyer matched to a Connect rancher could only book Ben's
+  // Cal, with no way to deposit now).
+  //
+  // The deposit deep-link needs a referralId to point at /checkout/<refId>/
+  // deposit. When matching minted one (routingOk + referralId), send the
+  // deposit-primary email. If a tier_v2 match somehow has no referralId, fall
+  // back to the call-only invite rather than a dead deposit link.
+  //
+  // Non-tier_v2 (legacy / Operator-without-Connect) ranchers genuinely can't
+  // take a self-serve deposit, so they keep the call-only invite.
+  //
+  // Score guard unchanged: low scorers (<60) stay routed but get no email —
+  // Ben follows up manually via /admin/today v2.
+  if (score >= 60 && consumer['Email']) {
+    const buyerEmail = String(consumer['Email']);
+    const buyerFirstName = String(consumer['Full Name'] || 'there').split(' ')[0];
+    const depositCapable = isDepositCapableMatch(pricingModel, referralId);
+    if (depositCapable) {
+      try {
+        const magicToken = generateMemberLoginToken(consumerId, buyerEmail);
+        const nextPath = `/checkout/${referralId}/deposit`;
+        const depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+        const { sendQuizCompleteDepositInvite } = await import('@/lib/emailMinimal');
+        await sendQuizCompleteDepositInvite({
+          to: buyerEmail,
+          firstName: buyerFirstName,
+          score,
+          depositMagicLinkUrl,
+          rancherName: suggestedRancher?.name || '',
+          depositAmount,
+          nextProcessingDate: suggestedRancher?.nextProcessingDate || '',
+        });
+      } catch (e: any) {
+        console.warn('[/api/qualify] deposit invite fire failed:', e?.message);
+      }
+    } else if (pricingModel === 'tier_v2') {
+      // tier_v2 but no referralId to deposit against → call-only fallback.
+      try {
+        const { sendQuizCompleteCalInvite } = await import('@/lib/emailMinimal');
+        await sendQuizCompleteCalInvite({
+          to: buyerEmail,
+          firstName: buyerFirstName,
+          score,
+        });
+      } catch (e: any) {
+        console.warn('[/api/qualify] cal invite fire failed:', e?.message);
+      }
     }
+    // Non-tier_v2 (legacy) buyers: matching/suggest already fired their
+    // off-platform rancher intro with contact info — no qualify email here.
   }
 
   // F2 — Meta CAPI CompleteRegistration. Server fire deduped w/ client fire
