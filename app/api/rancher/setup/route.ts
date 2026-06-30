@@ -227,6 +227,23 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
   }
 
+  // Email — trim + validate shape. Email is the rancher's only delivery channel
+  // (agreement confirmation, dashboard magic-link, every lead notification), so
+  // a malformed value silently dead-ends them. The wizard gates this client-side
+  // now, but a stale client or a direct PATCH could still write garbage — reject
+  // it here too. Empty string clears the field (allowed); a present value must
+  // look like an address.
+  if ('Email' in updates) {
+    const email = String(updates['Email'] ?? '').trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json(
+        { error: 'Email looks invalid — we send your dashboard link and every lead there, so it has to be a real address.' },
+        { status: 400 },
+      );
+    }
+    updates['Email'] = email;
+  }
+
   // Stage-3 Task 11B — server-side validation for fulfillment fields. These
   // render verbatim on the buyer deposit page; the client-side gate alone is
   // not enough since a buggy or malicious client can still write garbage.

@@ -1520,13 +1520,23 @@ export default function RancherSetupWizard() {
                   setError('Email, City, State, and ZIP are required');
                   return;
                 }
+                // Email FORMAT gate. Email is the rancher's lifeblood: the
+                // agreement confirmation, the dashboard magic-link, and every
+                // lead notification go here. A typo ("jane@", "jane.com") used
+                // to pass the presence-only check, save silently, and then
+                // dead-end the rancher — they'd never get a single email and
+                // have no idea why. Validate the shape before we save it.
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(form.Email).trim())) {
+                  setError('That email doesn’t look right — double-check it (we send your dashboard link and every lead here).');
+                  return;
+                }
                 if (!/^\d{5}$/.test(String(form.Zip))) {
                   setError('ZIP must be 5 digits');
                   return;
                 }
                 setError('');
                 const ok = await saveStep({
-                  Email: form.Email,
+                  Email: String(form.Email).trim(),
                   Phone: form.Phone,
                   City: form.City,
                   State: form.State,
