@@ -11,6 +11,12 @@ const MONEY_MOMENT_CONFIRMATIONS = [
   'sendBuyerSlotLocked',
   'sendBuyerFinalInvoice',
   'sendRancherDepositPaid',
+  // The two quiz-complete invites are the #1 funnel conversion emails: a
+  // qualified buyer gets exactly one (deposit invite for tier_v2/Connect,
+  // cal invite for legacy). Either being frequency-capped = the qualified
+  // buyer is told nothing post-quiz. Must never be capped.
+  'quiz_complete_deposit_invite',
+  'quiz_complete_cal_invite',
 ];
 
 for (const template of MONEY_MOMENT_CONFIRMATIONS) {

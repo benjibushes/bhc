@@ -113,7 +113,7 @@ const sections: Section[] = [
             <p>
               Ranchers set their own pricing. You&apos;ll see exact prices per cut on each rancher&apos;s page
               before reserving. The deposit you pay at checkout goes to the rancher through Stripe &mdash;
-              BHC takes its 10% commission off the top, so the rancher gets paid faster and you get
+              BHC&apos;s commission comes out of that deposit, so the rancher gets paid faster and you get
               fraud-protection through Stripe.
             </p>
           </>
