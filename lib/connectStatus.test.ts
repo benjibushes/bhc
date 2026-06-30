@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyConnectStatus } from './connectStatusClassify';
+import { classifyConnectStatus, canResumeConnectOnboarding } from './connectStatusClassify';
 
 // ─── classifyConnectStatus: the deposit-gate truth ────────────────────────
 // 'active' is the ONLY status that opens the deposit gate / lets a tier_v2
@@ -91,6 +91,63 @@ test("empty-string disabled_reason does not trigger restricted", () => {
     chargesEnabled: false,
   });
   assert.equal(status, 'onboarding');
+});
+
+// ─── canResumeConnectOnboarding: the resume-routing truth ─────────────────
+// Decides whether the dashboard banner / billing page sends a stuck rancher
+// BACK into the Stripe onboarding link (clears bank/identity/TOS) vs the
+// subscription portal. The 4 ranchers stuck mid-KYC (no bank / unaccepted TOS)
+// MUST be resumable so they never dead-end in the wrong portal.
+
+test("resume: active account is NOT resumable (nothing to finish)", () => {
+  assert.equal(
+    canResumeConnectOnboarding('active', { requirementsStatus: null, currentlyDueCount: 0 }),
+    false,
+  );
+});
+
+test("resume: not_connected is NOT resumable here (handled by first-start path)", () => {
+  assert.equal(
+    canResumeConnectOnboarding('not_connected', { requirementsStatus: null, currentlyDueCount: 0 }),
+    false,
+  );
+});
+
+test("resume: plain onboarding account IS resumable", () => {
+  assert.equal(
+    canResumeConnectOnboarding('onboarding', { requirementsStatus: null, currentlyDueCount: 0 }),
+    true,
+  );
+});
+
+test("resume: restricted w/ currently_due IS resumable (stuck-KYC: no bank / TOS)", () => {
+  assert.equal(
+    canResumeConnectOnboarding('restricted', { requirementsStatus: 'currently_due', currentlyDueCount: 2 }),
+    true,
+  );
+});
+
+test("resume: restricted w/ past_due IS resumable", () => {
+  assert.equal(
+    canResumeConnectOnboarding('restricted', { requirementsStatus: 'past_due', currentlyDueCount: 0 }),
+    true,
+  );
+});
+
+test("resume: restricted by count alone (no reqStatus) IS resumable", () => {
+  assert.equal(
+    canResumeConnectOnboarding('restricted', { requirementsStatus: null, currentlyDueCount: 3 }),
+    true,
+  );
+});
+
+test("resume: restricted with NO outstanding requirements is NOT resumable (→ portal/support)", () => {
+  // e.g. a Stripe-side hold an onboarding link can't clear. Don't loop the
+  // rancher pointlessly — route them to the portal/support instead.
+  assert.equal(
+    canResumeConnectOnboarding('restricted', { requirementsStatus: null, currentlyDueCount: 0 }),
+    false,
+  );
 });
 
 test("anything != active keeps deposit gate closed (sweep)", () => {

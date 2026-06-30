@@ -29,6 +29,9 @@ export async function GET(req: Request) {
 
   try {
     const result = await getConnectAccountStatus(accountId);
+    // result already carries currentlyDueCount + canResumeOnboarding so callers
+    // (dashboard banner, billing page) can show exactly what's left and route
+    // the resume action correctly. Return verbatim.
     return NextResponse.json(result);
   } catch (e: any) {
     console.error('[connect/status] Stripe retrieve failed:', e?.message);

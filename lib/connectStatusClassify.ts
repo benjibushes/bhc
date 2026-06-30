@@ -82,3 +82,32 @@ export function classifyConnectStatus(signals: ConnectStatusSignals): {
 
   return { status: 'onboarding', onboardingComplete };
 }
+
+/**
+ * Routing hint: can this non-active account be resumed with a fresh Stripe
+ * onboarding account-link? True when Stripe still has outstanding KYC
+ * requirements (currently_due / past_due / any currently_due count) OR the
+ * account is simply mid-onboarding — all cases a hosted onboarding link
+ * resolves. This is the self-serve fix for ranchers stuck mid-KYC (missing
+ * bank / unaccepted TOS).
+ *
+ * False for an 'active' account (nothing to resume) and for a 'restricted'
+ * account whose block is NOT requirements-driven (e.g. a Stripe-side hold) —
+ * those need the portal / support, not another onboarding loop.
+ *
+ * Pure + zero-import so the dashboard banner and billing page can rely on a
+ * unit-tested routing decision. Does NOT affect the deposit gate (status alone
+ * drives that).
+ */
+export function canResumeConnectOnboarding(
+  status: ConnectAccountStatus,
+  signals: Pick<ConnectStatusSignals, 'requirementsStatus' | 'currentlyDueCount'>,
+): boolean {
+  if (status === 'active' || status === 'not_connected') return false;
+  if (status === 'onboarding') return true;
+  // status === 'restricted' → only resumable if the block is requirements-driven.
+  const reqStatus = signals.requirementsStatus ?? null;
+  const dueCount =
+    typeof signals.currentlyDueCount === 'number' ? signals.currentlyDueCount : 0;
+  return reqStatus === 'currently_due' || reqStatus === 'past_due' || dueCount > 0;
+}

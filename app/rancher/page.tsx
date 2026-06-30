@@ -5024,9 +5024,13 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
 
   // Opens Stripe Connect onboarding link from /api/rancher/connect/start in
   // a new tab. Same handler powers #2 + #3 (start auto-resumes existing
-  // onboarding when account already exists).
+  // onboarding when account already exists). start re-mints a FRESH account
+  // link every call, so a rancher who abandoned mid-KYC (no bank / unaccepted
+  // TOS) lands straight back at the next required step — no expired-link wall.
+  const [resuming, setResuming] = useState(false);
   async function openConnectOnboarding() {
     setBannerErr('');
+    setResuming(true);
     try {
       const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
       const data = await res.json();
@@ -5034,6 +5038,41 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
       else setBannerErr(data?.error || 'Could not start Stripe Connect onboarding.');
     } catch {
       setBannerErr('Network error — try again in a moment.');
+    } finally {
+      setResuming(false);
+    }
+  }
+
+  // Restricted-account router. The dashboard payload carries only the CACHED
+  // connect status (no requirements detail), so we do one live read to decide:
+  // if Stripe still has outstanding KYC requirements (the dominant stuck case —
+  // missing bank / unaccepted TOS), the fix is a fresh onboarding link, NOT the
+  // subscription customer portal (which can't clear identity/bank/TOS). Only a
+  // restriction an onboarding link can't resolve falls back to the portal.
+  async function resolveRestricted() {
+    setBannerErr('');
+    setResuming(true);
+    try {
+      const statusRes = await fetch('/api/rancher/connect/status', { credentials: 'include' });
+      const statusData = await statusRes.json().catch(() => ({} as any));
+      const canResume = statusRes.ok && statusData?.canResumeOnboarding === true;
+      if (canResume) {
+        const res = await fetch('/api/rancher/connect/start', { method: 'POST', credentials: 'include' });
+        const data = await res.json();
+        if (res.ok && data?.url) {
+          window.open(data.url, '_blank', 'noopener,noreferrer');
+          return;
+        }
+        setBannerErr(data?.error || 'Could not resume Stripe onboarding.');
+        return;
+      }
+      // Not resumable via onboarding link → open the portal so the rancher can
+      // see Stripe's detail / contact path.
+      await openBillingPortal();
+    } catch {
+      setBannerErr('Network error — try again in a moment.');
+    } finally {
+      setResuming(false);
     }
   }
 
@@ -5079,14 +5118,15 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
         <div className="p-4 border-l-4 border-yellow-500 bg-yellow-50 flex items-center justify-between gap-4 flex-wrap">
           <p className="text-sm text-yellow-900">
             <strong>Connect your bank account so we can pay you.</strong>{' '}
-            Stripe Connect onboarding takes ~5 minutes.
+            Add your bank + verify your identity with Stripe — about 5 minutes.
           </p>
           <button
             type="button"
             onClick={openConnectOnboarding}
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors"
+            disabled={resuming}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors disabled:opacity-60"
           >
-            Connect bank →
+            {resuming ? 'Opening…' : 'Connect bank →'}
           </button>
         </div>
       )}
@@ -5094,15 +5134,16 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
       {showConnectOnboarding && (
         <div className="p-4 border-l-4 border-yellow-500 bg-yellow-50 flex items-center justify-between gap-4 flex-wrap">
           <p className="text-sm text-yellow-900">
-            <strong>Finish identity verification with Stripe.</strong>{' '}
-            Resume where you left off — Stripe will pick up at the next required step.
+            <strong>Finish your payout setup with Stripe.</strong>{' '}
+            Pick up where you left off — Stripe takes you straight to the next required step (usually your bank details and accepting their terms).
           </p>
           <button
             type="button"
             onClick={openConnectOnboarding}
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors"
+            disabled={resuming}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-yellow-600 text-white hover:bg-yellow-700 transition-colors disabled:opacity-60"
           >
-            Resume verification →
+            {resuming ? 'Opening…' : 'Finish payout setup →'}
           </button>
         </div>
       )}
@@ -5110,15 +5151,16 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
       {showConnectRestricted && (
         <div className="p-4 border-l-4 border-red-600 bg-red-50 flex items-center justify-between gap-4 flex-wrap">
           <p className="text-sm text-red-900">
-            <strong>Stripe needs more info to keep payouts active.</strong>{' '}
-            Your Connect account is restricted — open the portal to clear the flag.
+            <strong>Payouts are paused — Stripe still needs a few things from you.</strong>{' '}
+            Most often it&rsquo;s your bank details or accepting Stripe&rsquo;s terms. We&rsquo;ll take you straight to what&rsquo;s left.
           </p>
           <button
             type="button"
-            onClick={openBillingPortal}
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors"
+            onClick={resolveRestricted}
+            disabled={resuming}
+            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-red-700 text-white hover:bg-red-800 transition-colors disabled:opacity-60"
           >
-            Open portal →
+            {resuming ? 'Checking…' : 'Finish payout setup →'}
           </button>
         </div>
       )}
