@@ -6,7 +6,7 @@
 // if rancher is auto-qualified (head/year > 0), else shows a "thanks, we'll
 // review" success state and triggers a manual-review Telegram alert.
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 const STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -29,6 +29,24 @@ export default function ApplyForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState<{ wizardUrl?: string; manualReview: boolean } | null>(null);
+
+  // Live discovery-call Cal link, resolved at runtime. The hardcoded slug and
+  // the 142d-old NEXT_PUBLIC_CALENDLY_LINK env are both stale (those events were
+  // deleted), so embedding either renders a dead booker. /api/book/link confirms
+  // a live event via the Cal API; env stays as a fallback.
+  const [resolvedDiscoveryCal, setResolvedDiscoveryCal] = useState('');
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/book/link?purpose=rancher')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (alive && d?.url) setResolvedDiscoveryCal(String(d.url));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const [form, setForm] = useState({
     operatorName: '',
@@ -113,9 +131,10 @@ export default function ApplyForm() {
     // for everyone else. Cal.com embed inline below CTA so they can book
     // without leaving the page.
     const DISCOVERY_CAL =
+      resolvedDiscoveryCal ||
       process.env.NEXT_PUBLIC_CALENDLY_DISCOVERY_LINK ||
       process.env.NEXT_PUBLIC_CALENDLY_LINK ||
-      'https://cal.com/ben-beauchman-1itnsg/15min';
+      'https://cal.com/ben-beauchman-1itnsg';
     const calEmbed = DISCOVERY_CAL.includes('?')
       ? `${DISCOVERY_CAL}&embed=true&theme=light`
       : `${DISCOVERY_CAL}?embed=true&theme=light`;

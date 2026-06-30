@@ -290,7 +290,7 @@ export default function DeskClient() {
             </p>
           </div>
           <a
-            href={process.env.NEXT_PUBLIC_BHC_OPERATOR_CAL_URL || 'https://cal.com/ben-beauchman-1itnsg/sales'}
+            href={process.env.NEXT_PUBLIC_BHC_OPERATOR_CAL_URL || 'https://app.cal.com/event-types'}
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs uppercase tracking-widest text-charcoal underline underline-offset-4"

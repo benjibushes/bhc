@@ -12,9 +12,17 @@
 import { getOperatorBookingUrl } from '@/lib/calBooking';
 import CalInlineBooker from '@/app/qualify/[consumerId]/CalInlineBooker';
 
-export default async function BookGenericPage() {
-  // Resolve the operator's live Cal event server-side (never hardcode a slug).
-  const bookingUrl = await getOperatorBookingUrl('sales');
+export default async function BookGenericPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ purpose?: string }>;
+}) {
+  // ?purpose=rancher routes this on-site keystone to the rancher-onboarding
+  // event (used by /apply, /partner, the setup wizard); default is the buyer
+  // sales call. Both resolve a LIVE Cal event server-side — never a dead slug.
+  const { purpose: rawPurpose } = await searchParams;
+  const purpose = rawPurpose === 'rancher' ? 'rancher' : 'sales';
+  const bookingUrl = await getOperatorBookingUrl(purpose);
   // Strip origin to get embed-ready 'username/slug'.
   const operatorCalLink = bookingUrl
     .replace(/^https?:\/\/cal\.com\//, '')

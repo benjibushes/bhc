@@ -211,7 +211,11 @@ function serializeGallery(urls: string[]): string {
   return clean.length ? JSON.stringify(clean) : '';
 }
 
-const CALENDLY_LINK = 'https://cal.com/ben-beauchman-1itnsg/30min';
+// Last-resort fallback only. The live onboarding event is resolved at runtime
+// via /api/book/link?purpose=rancher; this points at Ben's Cal PROFILE root
+// (lists his live events) rather than a specific /30min event that can be
+// deleted and 404 — see incidents 2026-06-14/15.
+const CALENDLY_LINK = 'https://cal.com/ben-beauchman-1itnsg';
 // Operator inbox surfaced to ranchers as the Cal "Additional Guest" so Ben sees
 // every booking. Extracted from inline JSX — value unchanged.
 const OPERATOR_NOTIFY_EMAIL = 'benibeauchman@gmail.com';
@@ -3072,7 +3076,27 @@ function CallStep({
   onSelfServe?: () => void;
 }) {
   const status = (rancher.onboardingStatus || '').toString();
+  // Resolve Ben's LIVE onboarding Cal event at runtime. The hardcoded slug and
+  // the 142d-old NEXT_PUBLIC_CALENDLY_LINK env are both stale (those events were
+  // deleted), so embedding either renders a dead booker. /api/book/link confirms
+  // a live event via the Cal API; env/const stay as a last-resort fallback so
+  // the gate iframe is never empty. URL source only — the booking-completion
+  // gate (Cal webhook → Onboarding Status → poll) is unchanged.
+  const [resolvedCal, setResolvedCal] = useState('');
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/book/link?purpose=rancher')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (alive && d?.url) setResolvedCal(String(d.url));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
   const calBookingUrl =
+    resolvedCal ||
     process.env.NEXT_PUBLIC_CALENDLY_LINK ||
     CALENDLY_LINK;
   // Cal.com inline embed URL — append `?embed=true&theme=light` for clean iframe
