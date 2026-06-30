@@ -564,11 +564,17 @@ export async function POST(request: Request) {
       // Lead came from this rancher's page — assign directly to them
       topMatch = directMatchRancher;
     } else {
-      // STATE-LOCAL ONLY. The nationwide-fallback path was removed by policy:
-      // every rancher routes only to buyers in their primary State or States
-      // Served. If no in-state rancher exists, the buyer is waitlisted —
-      // they'll be re-engaged when a rancher in their state goes live.
-      // The Ships Nationwide field is no longer read anywhere; ignore it.
+      // STATE-LOCAL FIRST. Default routing only considers a rancher's primary
+      // State or States Served. If no in-state rancher exists, the buyer falls
+      // through to the CONTROLLED nationwide fallback below (the `if (!topMatch)`
+      // block), which DOES route — but ONLY to a rancher the operator has
+      // double-flagged with BOTH `Admin Approved Multi-State` AND `Ships
+      // Nationwide`. (Correction 2026-06-30: an earlier comment here claimed
+      // "Ships Nationwide is no longer read" — it IS read at the fallback below,
+      // and is the deliberate per-rancher toggle that arms it. Zero ranchers
+      // have it set today, so the fallback never fires until an operator opts a
+      // Connect-active rancher in.) Otherwise the buyer is waitlisted and
+      // re-engaged when a rancher in their state goes live.
       const localEligibleAll = allRanchers.filter((r: any) => {
         if (!isEligibleBase(r)) return false;
         // Normalize rancher's primary state + every "Routing States" entry to
