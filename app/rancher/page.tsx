@@ -23,6 +23,10 @@ interface RancherInfo {
   name: string;
   ranchName: string;
   state: string;
+  // WAVE 3b — editable account contact fields (operator name = `name`, ranch
+  // name = `ranchName`). Email is login + lead destination; phone is contact.
+  email?: string;
+  phone?: string;
   activeStatus: string;
   onboardingStatus: string;
   agreementSigned: boolean;
@@ -130,6 +134,16 @@ interface Referral {
   // the buyer received their beef. Drives the Closed Deals card green pill
   // and gates the "Mark beef delivered" CTA visibility.
   fulfillment_confirmed_at?: string;
+  // WAVE 3b (2026-06-30) — richer per-order fulfillment tracker. NEW Airtable
+  // fields; absent (empty) until the founder creates them, so the tracker UI
+  // gates on presence + degrades to the binary confirm flow. status is one of
+  // scheduled|processing|ready|fulfilled.
+  fulfillment_status?: string;
+  cut_sheet_note?: string;
+  fulfillment_method?: string;
+  shipping_carrier?: string;
+  tracking_number?: string;
+  fulfillment_updated_at?: string;
   // Deposit + final invoice tracking (tier_v2 Stripe Connect flow).
   // Drives the "Send Final Invoice" button visibility on Awaiting Payment
   // referrals. deposit_paid_at present = buyer already paid deposit, rancher
@@ -2647,6 +2661,20 @@ export default function RancherDashboardPage() {
                             )}
                           </div>
                         </div>
+                        {/* WAVE 3b — richer per-order tracker (status / processing date /
+                            cut-sheet / pickup-vs-ship / carrier + tracking) on Closed Won deals.
+                            Sits above the binary confirm row; both write the rancher's own
+                            referral. Best-effort until the new Airtable fields exist. */}
+                        {ref.status === 'Closed Won' && (
+                          <FulfillmentTracker
+                            referral={ref}
+                            onSaved={(patch) => {
+                              setReferrals((prev) =>
+                                prev.map((rr) => (rr.id === ref.id ? { ...rr, ...patch } : rr)),
+                              );
+                            }}
+                          />
+                        )}
                         {/* Stage-3 Audit B4 — fulfillment confirm row. Gated on tier_v2 + Closed Won.
                             Legacy ranchers use the post-close commission invoice flow, not fulfillment confirm. */}
                         {ref.status === 'Closed Won' && rancherInfo.pricingModel === 'tier_v2' && (
@@ -2863,6 +2891,11 @@ export default function RancherDashboardPage() {
 
               <Divider />
 
+              {/* WAVE 3b — CSV export for taxes/bookkeeping. Date-range is
+                  optional (blank = all-time). Downloads from the rancher-scoped
+                  /api/rancher/earnings/export route. */}
+              <EarningsCsvExport />
+
               <h3 className="font-serif text-xl">completed sales</h3>
               {referrals.filter(r => r.status === 'Closed Won').length > 0 ? (
                 <div className="overflow-x-auto">
@@ -2919,6 +2952,18 @@ export default function RancherDashboardPage() {
                   <p className="text-saddle">No completed sales yet. Close your first deal to see earnings here.</p>
                 </div>
               )}
+
+              <Divider />
+
+              {/* WAVE 3b — account / profile settings. Operator name, ranch name,
+                  login email, phone — previously not editable from the dashboard. */}
+              <h3 className="font-serif text-xl">settings</h3>
+              <AccountSettingsSection
+                rancher={rancherInfo}
+                onSaved={(next) =>
+                  setRancherInfo((prev) => (prev ? { ...prev, ...next } : prev))
+                }
+              />
             </div>
           )}
 
@@ -5592,6 +5637,399 @@ function ReferralCard({
           Pass on Lead
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── WAVE 3b — Earnings CSV export ─────────────────────────────────────────
+// Optional date range (blank = all-time) + a download button hitting the
+// rancher-scoped /api/rancher/earnings/export route. Builds the query string
+// and navigates to the URL so the browser handles the file download via the
+// Content-Disposition header (no blob juggling needed).
+function EarningsCsvExport() {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [error, setError] = useState('');
+
+  function download() {
+    setError('');
+    if (from && to && from > to) {
+      setError('Start date must be on or before end date.');
+      return;
+    }
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    const qs = params.toString();
+    window.location.href = `/api/rancher/earnings/export${qs ? `?${qs}` : ''}`;
+  }
+
+  return (
+    <div className="border border-dust bg-white p-4 space-y-3">
+      <div>
+        <h3 className="font-serif text-xl">export for taxes &amp; bookkeeping</h3>
+        <p className="text-sm text-saddle mt-1">
+          download your closed sales as a CSV — buyer, cut, sale, commission, net, dates. leave dates blank for all-time.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">From</label>
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">To</label>
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={download}
+          className="px-5 min-h-[44px] bg-charcoal text-bone hover:bg-saddle transition-colors text-sm font-medium uppercase tracking-wider"
+        >
+          Export CSV ↓
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-700">{error}</p>}
+    </div>
+  );
+}
+
+// ── WAVE 3b — Account / profile settings ──────────────────────────────────
+// Ranchers previously could NOT edit operator name, ranch name, login email,
+// or phone (only a password modal existed). This section PATCHes the
+// landing-page route, which validates + normalizes these server-side
+// (lib/accountProfile). Saves rancherInfo back so the header reflects the
+// change without a full refetch.
+function AccountSettingsSection({
+  rancher,
+  onSaved,
+}: {
+  rancher: RancherInfo;
+  onSaved: (next: { name: string; ranchName: string; email: string; phone: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [operatorName, setOperatorName] = useState(rancher.name || '');
+  const [ranchName, setRanchName] = useState(rancher.ranchName || '');
+  const [email, setEmail] = useState(rancher.email || '');
+  const [phone, setPhone] = useState(rancher.phone || '');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    setSaved(false);
+    try {
+      const res = await fetch('/api/rancher/landing-page', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          'Operator Name': operatorName,
+          'Ranch Name': ranchName,
+          'Email': email,
+          'Phone': phone,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof data?.error === 'string' ? data.error : 'Could not save. Please try again.');
+        return;
+      }
+      setSaved(true);
+      onSaved({
+        name: operatorName.trim(),
+        ranchName: ranchName.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
+      });
+    } catch {
+      setError('Network error — try again in a moment.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="border border-dust bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 min-h-[44px] text-left hover:bg-bone transition-colors"
+        aria-expanded={open}
+      >
+        <span className="font-serif text-lg">account</span>
+        <span className="text-dust text-sm">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <form onSubmit={save} className="px-4 pb-4 pt-1 space-y-4 border-t border-dust">
+          <p className="text-sm text-saddle">
+            your contact details. email is your login and where new leads land — keep it current.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Your name</label>
+              <input
+                type="text"
+                value={operatorName}
+                onChange={(e) => setOperatorName(e.target.value)}
+                className="w-full px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Ranch name</label>
+              <input
+                type="text"
+                value={ranchName}
+                onChange={(e) => setRanchName(e.target.value)}
+                className="w-full px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Email (login)</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                className="w-full px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Phone</label>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="(406) 555-1234"
+                autoComplete="tel"
+                className="w-full px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+              />
+            </div>
+          </div>
+          {error && <div className="p-3 border border-weathered text-weathered text-sm">{error}</div>}
+          {saved && <div className="p-3 border border-green-300 bg-green-50 text-green-800 text-sm">Saved.</div>}
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-5 min-h-[44px] bg-charcoal text-bone hover:bg-saddle transition-colors text-sm font-medium uppercase tracking-wider disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save account'}
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+// ── WAVE 3b — Per-order fulfillment tracker ───────────────────────────────
+// Richer than the binary FulfillmentConfirmRow: a delivery status
+// (scheduled → processing → ready → fulfilled), processing date, cut-sheet
+// note, pickup-vs-ship choice, carrier + tracking number. POSTs to the
+// rancher-scoped /api/rancher/referrals/[id]/fulfillment route.
+//
+// GRACEFUL DEGRADATION: the backing Airtable fields are NEW. We can't detect
+// their existence from the client, so this always renders, but the write is
+// best-effort (the server strips unknown fields). The optimistic local update
+// + saved confirmation give the rancher feedback either way.
+const FULFILLMENT_STEPS: { value: string; label: string }[] = [
+  { value: 'scheduled', label: 'scheduled' },
+  { value: 'processing', label: 'at processor' },
+  { value: 'ready', label: 'ready' },
+  { value: 'fulfilled', label: 'delivered' },
+];
+
+function FulfillmentTracker({
+  referral,
+  onSaved,
+}: {
+  referral: Referral;
+  onSaved: (patch: Partial<Referral>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState(referral.fulfillment_status || 'scheduled');
+  const [method, setMethod] = useState(referral.fulfillment_method || '');
+  const [processingDate, setProcessingDate] = useState(
+    referral.processing_date ? String(referral.processing_date).slice(0, 10) : '',
+  );
+  const [cutSheetNote, setCutSheetNote] = useState(referral.cut_sheet_note || '');
+  const [carrier, setCarrier] = useState(referral.shipping_carrier || '');
+  const [trackingNumber, setTrackingNumber] = useState(referral.tracking_number || '');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  const currentStep = FULFILLMENT_STEPS.findIndex((s) => s.value === (referral.fulfillment_status || 'scheduled'));
+  const stepIdx = currentStep < 0 ? 0 : currentStep;
+
+  async function save() {
+    setSaving(true);
+    setError('');
+    setSaved(false);
+    try {
+      const res = await fetch(`/api/rancher/referrals/${referral.id}/fulfillment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          status,
+          method: method || '',
+          processingDate: processingDate || '',
+          cutSheetNote,
+          carrier,
+          trackingNumber,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof data?.error === 'string' ? data.error : 'Could not save. Please try again.');
+        return;
+      }
+      setSaved(true);
+      onSaved({
+        fulfillment_status: status,
+        fulfillment_method: method,
+        processing_date: processingDate,
+        cut_sheet_note: cutSheetNote,
+        shipping_carrier: carrier,
+        tracking_number: trackingNumber,
+      });
+    } catch {
+      setError('Network error — try again in a moment.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="px-4 py-3 border-t border-dust bg-bone space-y-3">
+      {/* Status progress pills */}
+      <div className="flex items-center gap-1 flex-wrap">
+        {FULFILLMENT_STEPS.map((s, i) => (
+          <span
+            key={s.value}
+            className={`px-2 py-1 text-xs font-medium ${
+              i <= stepIdx ? 'bg-sage/20 text-sage-dark' : 'bg-dust/20 text-saddle'
+            }`}
+          >
+            {i <= stepIdx ? '✓ ' : ''}{s.label}
+          </span>
+        ))}
+      </div>
+
+      {!open ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="px-4 py-2 min-h-[44px] text-xs font-semibold uppercase tracking-widest border border-dust text-saddle hover:bg-dust hover:text-bone transition-colors"
+        >
+          Update order tracking →
+        </button>
+      ) : (
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="w-full px-3 py-2 min-h-[44px] border border-dust bg-white text-charcoal text-sm focus:outline-none focus:border-charcoal"
+              >
+                {FULFILLMENT_STEPS.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Pickup or ship</label>
+              <select
+                value={method}
+                onChange={(e) => setMethod(e.target.value)}
+                className="w-full px-3 py-2 min-h-[44px] border border-dust bg-white text-charcoal text-sm focus:outline-none focus:border-charcoal"
+              >
+                <option value="">— choose —</option>
+                <option value="pickup">local pickup</option>
+                <option value="ship">ship</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Processing date</label>
+              <input
+                type="date"
+                value={processingDate}
+                onChange={(e) => setProcessingDate(e.target.value)}
+                className="w-full px-3 py-2 min-h-[44px] border border-dust bg-white text-charcoal text-sm focus:outline-none focus:border-charcoal"
+              />
+            </div>
+            {method === 'ship' && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Carrier</label>
+                  <input
+                    type="text"
+                    value={carrier}
+                    onChange={(e) => setCarrier(e.target.value)}
+                    placeholder="UPS, FedEx…"
+                    className="w-full px-3 py-2 min-h-[44px] border border-dust bg-white text-charcoal text-sm focus:outline-none focus:border-charcoal"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Tracking #</label>
+                  <input
+                    type="text"
+                    value={trackingNumber}
+                    onChange={(e) => setTrackingNumber(e.target.value)}
+                    className="w-full px-3 py-2 min-h-[44px] border border-dust bg-white text-charcoal text-sm focus:outline-none focus:border-charcoal"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Cut-sheet note</label>
+            <textarea
+              value={cutSheetNote}
+              onChange={(e) => setCutSheetNote(e.target.value.slice(0, 1000))}
+              rows={2}
+              maxLength={1000}
+              placeholder="e.g. ground 80/20, steaks 1in, keep the soup bones"
+              className="w-full px-3 py-2 border border-dust bg-white text-charcoal text-sm focus:outline-none focus:border-charcoal"
+            />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving}
+              className="px-4 py-2 min-h-[44px] bg-charcoal text-bone hover:bg-saddle transition-colors text-xs font-semibold uppercase tracking-widest disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save tracking'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setOpen(false); setError(''); }}
+              disabled={saving}
+              className="px-4 py-2 min-h-[44px] text-xs font-semibold uppercase tracking-widest border border-dust text-saddle hover:bg-dust hover:text-bone transition-colors disabled:opacity-50"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+      {error && <p className="text-xs text-red-700">{error}</p>}
+      {saved && <p className="text-xs text-sage-dark">Saved.</p>}
     </div>
   );
 }

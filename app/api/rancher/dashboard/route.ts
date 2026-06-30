@@ -121,6 +121,16 @@ export async function GET(request: Request) {
       // can render the green pill on already-confirmed Closed Won deals
       // and gate the "Mark beef delivered" CTA on the missing field.
       fulfillment_confirmed_at: r['Fulfillment Confirmed At'] || '',
+      // WAVE 3b (2026-06-30) — richer per-order fulfillment tracker fields.
+      // These are NEW Airtable fields the founder creates; until they exist
+      // Airtable returns undefined and these read as '' so the UI degrades to
+      // the binary confirm flow. See lib/fulfillmentTracking.
+      fulfillment_status: r['Fulfillment Status'] || '',
+      cut_sheet_note: r['Cut Sheet Note'] || '',
+      fulfillment_method: r['Fulfillment Method'] || '',
+      shipping_carrier: r['Shipping Carrier'] || '',
+      tracking_number: r['Tracking Number'] || '',
+      fulfillment_updated_at: r['Fulfillment Updated At'] || '',
       // FINAL-5 (2026-05-31) — deposit + final invoice tracking so the
       // "Send Final Invoice" button can render on Awaiting Payment rows
       // (tier_v2 Stripe Connect flow).
@@ -193,6 +203,11 @@ export async function GET(request: Request) {
         name: rancher['Operator Name'] || '',
         ranchName: rancher['Ranch Name'] || '',
         state: rancher['State'] || '',
+        // WAVE 3b (2026-06-30): surface the editable account contact fields so
+        // the dashboard "account" settings section can prefill them. Email is
+        // the rancher's login + where leads land; Phone is operator contact.
+        email: rancher['Email'] || '',
+        phone: rancher['Phone'] || '',
         activeStatus: rancher['Active Status'] || 'Pending',
         onboardingStatus: rancher['Onboarding Status'] || '',
         agreementSigned: rancher['Agreement Signed'] || false,
