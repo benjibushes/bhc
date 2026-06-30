@@ -41,7 +41,12 @@ export const SIZE_OPTIONS: FunnelOption[] = [
 export const TIMING_OPTIONS: FunnelOption[] = [
   { value: 'Within 30 days', label: 'within a month', detail: 'ready to go', icon: 'ti-bolt' },
   { value: 'Within 60 days', label: '1–3 months', detail: 'planning ahead', icon: 'ti-calendar' },
-  { value: 'Just exploring', label: 'just browsing', detail: 'curious for now', icon: 'ti-eye' },
+  // `value` MUST stay 'Just exploring' (the server scorer keys on it for +0 pts).
+  // Copy reframed 2026-06-30: was "just browsing / curious for now" — the softest,
+  // last-in-list card ~68% of buyers tapped as an easy out, dropping the whole
+  // cohort below the route gate. Reframed to a real timeframe so only genuinely
+  // not-ready buyers self-select it; no scoring change.
+  { value: 'Just exploring', label: 'still deciding', detail: 'a few months out', icon: 'ti-eye' },
 ];
 
 // `value` strings match VALID_STORAGE in app/api/qualify/route.ts.

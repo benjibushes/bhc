@@ -102,6 +102,15 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'quiz_complete_deposit_invite',
   'buyer_deposit_invoice',
   'slot_locked_confirmation',
+  // 2026-06-30 audit: two funnel-critical 1:1 triggers the buyer is actively
+  // waiting on. sendQuizInvite is the backup quiz link when the client redirect
+  // to /qualify stalls on a hot signup — capping it strands the buyer at the
+  // one moment it matters. sendRerouteNotification fires when a rancher
+  // passes/declines ("found you another rancher") — capping it makes the buyer
+  // think they were silently dropped. Both arrive in the same week as
+  // welcome+intro, i.e. exactly the cohort at/over the 3/week cap.
+  'sendQuizInvite',
+  'sendRerouteNotification',
   // T1 (2026-06-10): templates that were silently dropping at cap.
   // cron/cal-reminder-1h sends 1h-before-call notice — buyer typically
   // already got 3 emails (welcome+intro+cal-invite) this week.

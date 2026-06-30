@@ -4,7 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
-import { sendEmail, sendRepeatPurchaseEmail, sendRancherLeadReminder } from '@/lib/email';
+import { sendEmail, sendRancherLeadReminder } from '@/lib/email';
 import { withCronRun } from '@/lib/cronRun';
 import jwt from 'jsonwebtoken';
 
@@ -792,9 +792,12 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
           // email on the next daily run. Flag-first means worst-case a single
           // buyer misses one repeat-purchase nudge if the send throws (the flag
           // is set, so we won't retry) — acceptable vs re-emailing past buyers.
+          // 2026-06-30: off-brand sendRepeatPurchaseEmail RETIRED — its Title-Case
+          // <h1> + ALL-CAPS CTA violated docs/BHC.md voice, and it double-fired
+          // with the on-brand sendRepeatPurchaseAsk once EMAIL_SEQUENCES_ENABLED.
+          // Flag still set so this closed referral isn't reprocessed; the reorder
+          // moment is now owned by the on-brand ask via the sequence engine.
           await updateRecord(TABLES.REFERRALS, referral.id, { 'Repeat Outreach Sent': true });
-          await sendRepeatPurchaseEmail({ firstName, email: buyerEmail, rancherName, loginUrl });
-          repeatSent++;
         } catch (e: any) {
           console.error('Repeat purchase email error:', e.message);
         }

@@ -65,8 +65,16 @@ export function getMaxActiveReferrals(rancher: any): number {
 
 /**
  * Returns the field name to use when WRITING to Airtable. Currently still
- * the typo'd name, since the schema field is `Max Active Referalls`. If/when
- * the schema is corrected, change this constant in one place.
+ * the typo'd name, since the schema field is `Max Active Referalls`.
+ *
+ * ⚠️ LANDMINE (verified live 2026-06-30): the Airtable schema field is the
+ * MISSPELLED `Max Active Referalls` (one r, two l). The correctly-spelled
+ * `Max Active Referrals` does NOT exist (querying it 422s). getMaxActiveReferrals
+ * READS the correct spelling first then falls back to this typo; this constant
+ * WRITES the typo. They are only self-consistent because all three agree on the
+ * typo. If you "fix" the spelling in ANY one place (schema, this constant, or
+ * the reader) without fixing ALL THREE together, every rancher's cap silently
+ * falls back to DEFAULT_MAX (5) and routing collapses. Change all three or none.
  */
 export const MAX_ACTIVE_REFERRALS_FIELD = 'Max Active Referalls';
 
