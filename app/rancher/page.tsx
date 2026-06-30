@@ -5020,6 +5020,16 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
   // Branded inline error notice replaces native alert() in both handlers below.
   // Declared before the early return to keep hook order stable.
   const [bannerErr, setBannerErr] = useState('');
+  // "Re-check status" state for the self-serve Connect resync (below). Stuck
+  // ranchers who actually finished Stripe KYC can force a live re-read instead
+  // of waiting on the webhook. Hooks declared before the early return so hook
+  // order stays stable across renders.
+  const [recheckBusy, setRecheckBusy] = useState(false);
+  const [recheckMsg, setRecheckMsg] = useState('');
+  // A Connect banner is showing for any of the three Stripe-onboarding states
+  // (not a tier/subscription problem) → offer the self-serve re-check.
+  const connectBannerShowing =
+    showConnectNotConnected || showConnectOnboarding || showConnectRestricted;
   if (!anyBanner) return null;
 
   // Opens Stripe Connect onboarding link from /api/rancher/connect/start in
@@ -5049,6 +5059,40 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
       else setBannerErr(data?.error || 'Could not open billing portal.');
     } catch {
       setBannerErr('Network error — try again in a moment.');
+    }
+  }
+
+  // Self-serve Connect re-check. A rancher who finished Stripe KYC in the
+  // popup tab can return here and force a LIVE Stripe read that writes the true
+  // status back to Airtable — instead of being stranded on a stale banner until
+  // the webhook (maybe) fires. On a flip to active we reload so the cascade
+  // recomputes against the now-active status (the banner disappears). Otherwise
+  // we surface the live state inline so the rancher knows what's still missing.
+  async function recheckConnect() {
+    setBannerErr('');
+    setRecheckMsg('');
+    setRecheckBusy(true);
+    try {
+      const res = await fetch('/api/rancher/connect/status', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBannerErr(data?.error || 'Could not check your status — try again in a moment.');
+        return;
+      }
+      if (data?.depositReady) {
+        // Status is now active — reload so the banner clears and the rest of the
+        // dashboard reflects the connected bank.
+        window.location.reload();
+        return;
+      }
+      setRecheckMsg(data?.message || "Stripe hasn't finished verifying you yet — finish onboarding above.");
+    } catch {
+      setBannerErr('Network error — try again in a moment.');
+    } finally {
+      setRecheckBusy(false);
     }
   }
 
@@ -5142,6 +5186,28 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
           >
             {status === 'canceled' ? 'Reactivate →' : 'Update card →'}
           </button>
+        </div>
+      )}
+
+      {/* Self-serve re-check. The Connect banners above read the CACHED status,
+          which only the Stripe webhook flips to 'active'. If that event fired
+          early or never arrived, a rancher who actually finished KYC stays stuck
+          here forever. This forces a live Stripe read + write-back so they can
+          unstick themselves — the #1 dead-end for mid-KYC tier_v2 ranchers. */}
+      {connectBannerShowing && (
+        <div className="px-1 pt-1 flex flex-col gap-1">
+          <p className="text-xs text-saddle">
+            Already finished with Stripe?{' '}
+            <button
+              type="button"
+              onClick={recheckConnect}
+              disabled={recheckBusy}
+              className="underline underline-offset-2 hover:text-charcoal disabled:opacity-50"
+            >
+              {recheckBusy ? 'Checking…' : 'Re-check my status'}
+            </button>
+          </p>
+          {recheckMsg && <p className="text-xs text-saddle">{recheckMsg}</p>}
         </div>
       )}
     </div>
