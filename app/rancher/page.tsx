@@ -128,6 +128,11 @@ interface Referral {
   // present = invoice already created (don't re-send unless explicit).
   deposit_paid_at?: string;
   deposit_amount?: number;
+  // Stamped by /api/rancher/referrals/[id]/request-deposit when the rancher
+  // self-serves a deposit ask. Drives the amber "deposit requested" badge +
+  // the "re-request" button label. Present but no deposit_paid_at = waiting on
+  // the buyer to complete the checkout.
+  deposit_requested_at?: string;
   // NRD (2026-06-05): non-refundable lock cutoff. Stamped by /accept endpoint.
   // When present, deposit is locked; refund endpoint requires admin override.
   rancher_accepted_at?: string;
@@ -136,8 +141,9 @@ interface Referral {
   final_invoice_amount?: number;
   final_paid_at?: string;
   total_sale_amount?: number;
-  // Stamped by send-final-invoice; used by Collect Balance section to show
-  // balance = total_sale_amount - processing_fee without re-entering data.
+  // Recorded for the rancher's own books (their USDA out-of-pocket cost). It
+  // does NOT enter the buyer-balance math — balance = total_sale_amount −
+  // deposit_amount (the server charges total − deposit in send-final-invoice).
   processing_fee?: number;
   processing_date?: string;
 }
@@ -239,7 +245,9 @@ export default function RancherDashboardPage() {
   // lands + processing date is locked. Stripe Connect direct charge, app_fee=0,
   // 100% to rancher. Posts to /api/rancher/referrals/[id]/send-final-invoice.
   // Commission was collected upfront at deposit time on top of the listed
-  // sale price — so balance = listed − processingFee, NOT listed − deposit.
+  // sale price, so the buyer balance = listed − deposit (the rancher already
+  // received the deposit; the server charges total − deposit). processingFee is
+  // the rancher's own USDA cost — recorded for their books, NOT in this math.
   const [finalInvoiceModal, setFinalInvoiceModal] = useState<Referral | null>(null);
   const [acceptModal, setAcceptModal] = useState<Referral | null>(null);
   // CONFIRM-PAYMENT modal: off-platform close for Awaiting Payment rows. Rancher
@@ -255,6 +263,16 @@ export default function RancherDashboardPage() {
   const [finalInvoiceNotes, setFinalInvoiceNotes] = useState('');
   const [finalInvoiceSubmitting, setFinalInvoiceSubmitting] = useState(false);
   const [finalInvoiceResult, setFinalInvoiceResult] = useState<{ url: string; balanceAmount: number } | null>(null);
+  // REQUEST-DEPOSIT modal (Wave 1 2026-06-30): rancher self-serve deposit ask on
+  // a PRE-deposit lead. Mirrors admin SendDepositModal — pick a cut + edit the
+  // prefilled deposit → POST /api/rancher/referrals/[id]/request-deposit, which
+  // emails the buyer a Stripe deposit link. Once paid, the card flips to the
+  // existing Accept Slot → Send Final Invoice flow.
+  const [depositModal, setDepositModal] = useState<Referral | null>(null);
+  const [depositCut, setDepositCut] = useState<'Quarter' | 'Half' | 'Whole'>('Half');
+  const [depositAmountInput, setDepositAmountInput] = useState('');
+  const [depositSubmitting, setDepositSubmitting] = useState(false);
+  const [depositResult, setDepositResult] = useState<{ url: string; depositAmount: number; fullSaleAmount: number } | null>(null);
   const [pageForm, setPageForm] = useState<Record<string, string>>({});
   // One-input pricing (mirrors the setup wizard Step-3 pattern): rancher enters
   // the Whole price → Half/Quarter + each deposit derive via lib/pricing. Any
@@ -829,16 +847,19 @@ export default function RancherDashboardPage() {
       setUpdateError('Processing fee must be a positive number.');
       return;
     }
-    // Validate balance > 0 using new formula. processingFee preferred,
-    // depositAmount fallback (legacy).
-    const subtract = processingFee !== null ? processingFee : (finalInvoiceModal.deposit_amount || 0);
+    // MONEY-MATH PARITY (2026-06-30): the server charges the buyer
+    //   balance = totalSaleAmount − depositAmount   (send-final-invoice route)
+    // because the rancher already received the deposit. The client preview MUST
+    // subtract the SAME deposit so the rancher's quote == the buyer's charge.
+    // (Processing fee is the rancher's own USDA out-of-pocket cost — recorded
+    // for their books, but it does NOT change the buyer balance.)
+    const subtract = finalInvoiceModal.deposit_amount || 0;
     if (subtract <= 0) {
-      setUpdateError('Enter your processing fee (e.g. 1000) so we can compute the balance.');
+      setUpdateError('No deposit recorded yet — wait for the buyer to pay the deposit before sending the final balance.');
       return;
     }
     if (total <= subtract) {
-      const label = processingFee !== null ? 'processing fee' : 'deposit';
-      setUpdateError(`Listed sale ($${total}) must exceed ${label} ($${subtract}). Balance must be > $0.`);
+      setUpdateError(`Listed sale ($${total}) must exceed the deposit already paid ($${subtract}). Balance must be > $0.`);
       return;
     }
     // Processing date must parse and not be in the past (24h grace absorbs
@@ -884,6 +905,106 @@ export default function RancherDashboardPage() {
       setUpdateError('Network error. Please try again.');
     } finally {
       setFinalInvoiceSubmitting(false);
+    }
+  };
+
+  // ── Request-deposit modal helpers (Wave 1) ─────────────────────────────────
+  // Per-cut price / deposit pulled from the rancher's saved pricing. A cut with
+  // no saved price is "greyed" in the picker (no valid deposit can be requested)
+  // — exactly the gate the server enforces (prevents the 409 buyer dead-link).
+  const cutPrice = (cut: 'Quarter' | 'Half' | 'Whole'): number => {
+    if (!rancherInfo) return 0;
+    const raw = cut === 'Quarter' ? rancherInfo.quarterPrice
+      : cut === 'Half' ? rancherInfo.halfPrice
+      : rancherInfo.wholePrice;
+    return Number(raw || 0);
+  };
+  const cutDeposit = (cut: 'Quarter' | 'Half' | 'Whole'): number => {
+    if (!rancherInfo) return 0;
+    const raw = cut === 'Quarter' ? rancherInfo.quarterDeposit
+      : cut === 'Half' ? rancherInfo.halfDeposit
+      : rancherInfo.wholeDeposit;
+    const dep = Number(raw || 0);
+    // No separate deposit configured → default the deposit to the full price.
+    return dep > 0 ? dep : cutPrice(cut);
+  };
+
+  const openDepositModal = (referral: Referral) => {
+    // Seed the cut from the lead's order_type when it maps cleanly; else default
+    // to the first cut that actually has a price (so the modal opens actionable).
+    const ot = String(referral.order_type || '').toLowerCase();
+    let seed: 'Quarter' | 'Half' | 'Whole' =
+      ot.includes('quarter') ? 'Quarter' : ot.includes('whole') ? 'Whole' : 'Half';
+    if (cutPrice(seed) <= 0) {
+      seed = (['Quarter', 'Half', 'Whole'] as const).find((c) => cutPrice(c) > 0) || seed;
+    }
+    setDepositCut(seed);
+    setDepositAmountInput(cutDeposit(seed) > 0 ? String(cutDeposit(seed)) : '');
+    setDepositModal(referral);
+    setDepositResult(null);
+    setUpdateError('');
+  };
+
+  const closeDepositModal = () => {
+    setDepositModal(null);
+    setDepositAmountInput('');
+    setDepositResult(null);
+  };
+
+  // Switch cut in the modal → re-prefill the deposit from that cut's setup.
+  const selectDepositCut = (cut: 'Quarter' | 'Half' | 'Whole') => {
+    if (cutPrice(cut) <= 0) return; // greyed cut — no price set
+    setDepositCut(cut);
+    setDepositAmountInput(cutDeposit(cut) > 0 ? String(cutDeposit(cut)) : '');
+    setUpdateError('');
+  };
+
+  const submitRequestDeposit = async (resend = false) => {
+    if (!depositModal) return;
+    const full = cutPrice(depositCut);
+    if (full <= 0) {
+      setUpdateError(`No price set for the ${depositCut.toLowerCase()} — set it on your page first.`);
+      return;
+    }
+    const amount = parseFloat(depositAmountInput);
+    if (!isFinite(amount) || amount <= 0) {
+      setUpdateError('Enter a deposit amount (e.g. 500).');
+      return;
+    }
+    if (amount < 25) {
+      setUpdateError('Deposit must be at least $25.');
+      return;
+    }
+    if (amount > full) {
+      setUpdateError(`Deposit ($${amount.toFixed(0)}) can't exceed the full ${depositCut.toLowerCase()} price ($${full.toFixed(0)}).`);
+      return;
+    }
+    setDepositSubmitting(true);
+    setUpdateError('');
+    try {
+      const url = `/api/rancher/referrals/${depositModal.id}/request-deposit${resend ? '?resend=true' : ''}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ cutTier: depositCut, depositAmount: amount }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setUpdateError(data.error || 'Failed to request deposit.');
+        return;
+      }
+      setDepositResult({
+        url: data.url,
+        depositAmount: data.depositAmount ?? amount,
+        fullSaleAmount: data.fullSaleAmount ?? full,
+      });
+      // Refresh so the card flips to Awaiting Payment + the "requested" badge.
+      await fetchDashboard();
+    } catch {
+      setUpdateError('Network error. Please try again.');
+    } finally {
+      setDepositSubmitting(false);
     }
   };
 
@@ -1167,13 +1288,24 @@ export default function RancherDashboardPage() {
     .sort((a, b) =>
       new Date(a.deposit_paid_at || 0).getTime() - new Date(b.deposit_paid_at || 0).getTime()
     );
-  // Sum of known balances for the heading. If total_sale_amount is not yet set
-  // we treat that referral's balance as 0 for the aggregate (it shows "set in invoice").
+  // Sum of known balances for the heading. Balance = total sale − deposit
+  // already paid (parity with the send-final-invoice server charge). If
+  // total_sale_amount is not yet set we treat that referral's balance as 0 for
+  // the aggregate (it shows "set in invoice").
   const collectBalanceTotal = collectBalanceRefs.reduce((sum, r) => {
     if (!r.total_sale_amount || r.total_sale_amount <= 0) return sum;
-    const fee = r.processing_fee && r.processing_fee > 0 ? r.processing_fee : 0;
-    return sum + (r.total_sale_amount - fee);
+    const deposit = r.deposit_amount && r.deposit_amount > 0 ? r.deposit_amount : 0;
+    return sum + (r.total_sale_amount - deposit);
   }, 0);
+
+  // WAVE 1 (2026-06-30): can this rancher take card deposits? Gates the
+  // self-serve "request deposit" CTA + the deposit badge/pipeline on cards.
+  // Mirrors the server gate in lib/depositRequest.ts (tier_v2 + Connect active).
+  // A rancher who isn't eligible just never sees the deposit affordance — the
+  // legacy close flow (Confirm Payment / Close as Won) stays exactly as-is.
+  const depositEligible =
+    String(rancherInfo?.pricingModel || '').toLowerCase() === 'tier_v2' &&
+    String(rancherInfo?.connectStatus || '').toLowerCase() === 'active';
 
   // ── Cockpit nav spine (Wave A) ─────────────────────────────────────────
   // 5 persistent items. Home / Deals / My Page are in-page tabs; Messages and
@@ -1944,6 +2076,8 @@ export default function RancherDashboardPage() {
                         onSendFinal={() => openFinalInvoiceModal(ref)}
                         onAccept={() => handleAcceptSlot(ref)}
                         onConfirmPayment={() => handleConfirmPayment(ref)}
+                        onRequestDeposit={() => openDepositModal(ref)}
+                        depositEligible={depositEligible}
                         updating={updating}
                       />
                     ))}
@@ -2032,6 +2166,8 @@ export default function RancherDashboardPage() {
                         onSendFinal={() => openFinalInvoiceModal(ref)}
                         onAccept={() => handleAcceptSlot(ref)}
                         onConfirmPayment={() => handleConfirmPayment(ref)}
+                        onRequestDeposit={() => openDepositModal(ref)}
+                        depositEligible={depositEligible}
                         updating={updating}
                       />
                     ))}
@@ -2083,6 +2219,8 @@ export default function RancherDashboardPage() {
                         onSendFinal={() => openFinalInvoiceModal(ref)}
                         onAccept={() => handleAcceptSlot(ref)}
                         onConfirmPayment={() => handleConfirmPayment(ref)}
+                        onRequestDeposit={() => openDepositModal(ref)}
+                        depositEligible={depositEligible}
                         updating={updating}
                       />
                     ))}
@@ -2114,11 +2252,14 @@ export default function RancherDashboardPage() {
                       const depositPaidDate = ref.deposit_paid_at
                         ? new Date(ref.deposit_paid_at).toLocaleDateString()
                         : '';
+                      // Balance owed = total sale − deposit already paid. Mirrors
+                      // the send-final-invoice server charge so this preview
+                      // matches what the buyer is actually billed.
                       const hasTotal = ref.total_sale_amount && ref.total_sale_amount > 0;
-                      const hasFee = ref.processing_fee && ref.processing_fee > 0;
-                      const balanceKnown = hasTotal && hasFee;
+                      const depPaid = ref.deposit_amount && ref.deposit_amount > 0;
+                      const balanceKnown = hasTotal && depPaid;
                       const balanceAmt = balanceKnown
-                        ? (ref.total_sale_amount! - ref.processing_fee!)
+                        ? (ref.total_sale_amount! - ref.deposit_amount!)
                         : null;
                       const slotLocked = !!ref.rancher_accepted_at;
                       const invoiceSent = !!ref.final_invoice_sent_at || !!ref.final_invoice_url;
@@ -3910,14 +4051,14 @@ export default function RancherDashboardPage() {
                     </p>
                   </div>
 
-                  {finalInvoiceTotalSale && finalInvoiceProcessingFee && parseFloat(finalInvoiceTotalSale) > 0 && parseFloat(finalInvoiceProcessingFee) >= 0 && (
+                  {finalInvoiceTotalSale && parseFloat(finalInvoiceTotalSale) > 0 && (finalInvoiceModal.deposit_amount || 0) > 0 && (
                     <div className="bg-bone-warm border-l-4 border-charcoal p-4 space-y-1 text-sm">
                       <p className="font-medium">Balance owed by buyer:</p>
                       <p className="font-serif text-2xl text-charcoal">
-                        ${Math.max(0, parseFloat(finalInvoiceTotalSale) - parseFloat(finalInvoiceProcessingFee)).toFixed(2)}
+                        ${Math.max(0, parseFloat(finalInvoiceTotalSale) - (finalInvoiceModal.deposit_amount || 0)).toFixed(2)}
                       </p>
                       <p className="text-xs text-saddle">
-                        ${parseFloat(finalInvoiceTotalSale).toFixed(2)} listed sale &minus; ${parseFloat(finalInvoiceProcessingFee).toFixed(2)} processing fee already covered by deposit
+                        ${parseFloat(finalInvoiceTotalSale).toFixed(2)} listed sale &minus; ${(finalInvoiceModal.deposit_amount || 0).toFixed(2)} deposit already paid
                       </p>
                     </div>
                   )}
@@ -3974,6 +4115,142 @@ export default function RancherDashboardPage() {
                       : finalInvoiceModal.final_invoice_url
                         ? 'Re-send invoice'
                         : 'Send invoice'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Request Deposit Modal (Wave 1) — mirrors admin SendDepositModal:
+          segmented cut control (unpriced cuts greyed), prefilled+editable
+          deposit, live summary, one send button, result panel. */}
+      {depositModal && (
+        <div className="fixed inset-0 bg-charcoal/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-bone p-8 max-w-md w-full space-y-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start">
+              <h2 className="font-serif text-2xl">request deposit</h2>
+              <button onClick={closeDepositModal} className="text-2xl leading-none hover:text-saddle">×</button>
+            </div>
+            <p className="text-sm text-saddle">
+              Buyer: <strong className="text-charcoal">{depositModal.buyer_name}</strong>
+              {depositModal.buyer_state ? <> · {depositModal.buyer_state}</> : null}
+            </p>
+
+            {depositResult ? (
+              <div className="border border-sage bg-sage/10 p-4 space-y-3">
+                <p className="text-sm text-sage-dark">
+                  <strong>deposit link sent.</strong> {depositModal.buyer_name} got an email with the Stripe link to pay
+                  {' '}<strong>${depositResult.depositAmount.toFixed(0)}</strong> and lock their {depositCut.toLowerCase()}
+                  {' '}(full sale ${depositResult.fullSaleAmount.toFixed(0)}). money lands straight in your stripe account.
+                </p>
+                <p className="text-xs text-saddle">
+                  link:{' '}
+                  <a href={depositResult.url} target="_blank" rel="noopener noreferrer" className="underline break-all">
+                    {depositResult.url}
+                  </a>
+                </p>
+                <button
+                  type="button"
+                  onClick={closeDepositModal}
+                  className="px-4 min-h-[44px] text-xs uppercase tracking-wider bg-sage text-bone hover:bg-sage-dark transition-colors"
+                >
+                  done
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-widest text-saddle mb-2">cut</label>
+                    <div className="flex gap-2">
+                      {(['Quarter', 'Half', 'Whole'] as const).map((t) => {
+                        const priced = cutPrice(t) > 0;
+                        const active = depositCut === t;
+                        return (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => selectDepositCut(t)}
+                            disabled={!priced}
+                            title={priced ? `${t} — full sale $${cutPrice(t).toFixed(0)}` : 'no price set'}
+                            className={`flex-1 min-h-[44px] border text-sm transition-colors ${
+                              active
+                                ? 'bg-charcoal text-bone border-charcoal'
+                                : priced
+                                  ? 'border-dust bg-white text-charcoal hover:border-charcoal'
+                                  : 'border-dust bg-bone-warm text-dust cursor-not-allowed'
+                            }`}
+                          >
+                            {t}
+                            {!priced && <span className="block text-[10px] normal-case tracking-normal">no price set</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-widest text-saddle mb-2">deposit today ($)</label>
+                    <input
+                      type="number"
+                      value={depositAmountInput}
+                      onChange={(e) => setDepositAmountInput(e.target.value)}
+                      placeholder="e.g. 500"
+                      min="25"
+                      max="25000"
+                      step="0.01"
+                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
+                    />
+                    <p className="text-xs text-saddle mt-1">
+                      prefilled from your {depositCut.toLowerCase()} deposit — edit if you want. our service fee is added on top for the buyer; you keep this full amount.
+                    </p>
+                  </div>
+
+                  {parseFloat(depositAmountInput) > 0 && cutPrice(depositCut) > 0 && (
+                    <div className="bg-bone-warm border-l-4 border-sage p-4 space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-saddle">deposit today:</span>
+                        <strong className="text-charcoal">${parseFloat(depositAmountInput).toFixed(0)}</strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-saddle">full sale:</span>
+                        <strong className="text-charcoal">${cutPrice(depositCut).toFixed(0)}</strong>
+                      </div>
+                      <div className="flex justify-between text-xs text-saddle pt-1 border-t border-dust">
+                        <span>balance at pickup:</span>
+                        <span>${Math.max(0, cutPrice(depositCut) - parseFloat(depositAmountInput)).toFixed(0)}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="bg-bone-warm border border-dust p-4 text-xs text-charcoal/85 leading-relaxed">
+                    <strong>how this works:</strong> buyer gets an email with a stripe link to pay the deposit. the deposit is refundable until you accept the slot. once they pay, this card flips to <strong>accept slot → send final invoice</strong>.
+                  </div>
+                </div>
+
+                {updateError && (
+                  <div className="p-3 border border-weathered text-weathered text-sm">{updateError}</div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={closeDepositModal}
+                    className="flex-1 px-4 min-h-[44px] border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors font-medium uppercase text-sm tracking-wider"
+                  >
+                    cancel
+                  </button>
+                  <button
+                    onClick={() => submitRequestDeposit(!!depositModal.deposit_requested_at)}
+                    disabled={depositSubmitting || !depositAmountInput || parseFloat(depositAmountInput) <= 0 || cutPrice(depositCut) <= 0}
+                    className="flex-1 px-4 min-h-[44px] bg-sage text-bone hover:bg-sage-dark transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
+                  >
+                    {depositSubmitting
+                      ? 'sending…'
+                      : depositModal.deposit_requested_at
+                        ? 're-request deposit'
+                        : 'request deposit'}
                   </button>
                 </div>
               </>
@@ -4580,7 +4857,7 @@ function ResponseDeadline({ referral }: { referral: Referral }) {
   );
 }
 
-function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, onAccept, onConfirmPayment, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; onAccept?: () => void; onConfirmPayment?: () => void; updating: string | null }) {
+function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, onAccept, onConfirmPayment, onRequestDeposit, depositEligible, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; onAccept?: () => void; onConfirmPayment?: () => void; onRequestDeposit?: () => void; depositEligible?: boolean; updating: string | null }) {
   // FINAL-5 (2026-05-31): show "Send Final Invoice" when deposit landed +
   // referral isn't yet Closed Won / Closed Lost / fully paid. Re-send label
   // if invoice already sent (final_invoice_url present).
@@ -4603,6 +4880,8 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
   // Awaiting Payment rows fire the off-platform commission invoice through the
   // /confirm-payment endpoint, not the regular close. Surface that as its own CTA.
   const showConfirmPayment = !!onConfirmPayment && referral.status === 'Awaiting Payment';
+  // WAVE 1 (2026-06-30): self-serve "request deposit" on PRE-deposit leads.
+  const showRequestDeposit = !!onRequestDeposit && !!depositEligible && !depositPaid && !isTerminal;
 
   return (
     <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -4613,10 +4892,16 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
           </span>
           <FreshnessIndicator referral={referral} />
           <ResponseDeadline referral={referral} />
-          {depositPaid && (
-            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-sage/15 text-sage-dark" title={`Deposit of $${(referral.deposit_amount || 0).toFixed(2)} paid ${referral.deposit_paid_at || ''}`}>
-              Deposit ${(referral.deposit_amount || 0).toFixed(0)} ✓
-            </span>
+          {/* 3-state deposit badge for eligible ranchers; the sage "paid" state
+              supersedes the legacy paid-only pill below. */}
+          {depositEligible ? (
+            <DepositBadge referral={referral} />
+          ) : (
+            depositPaid && (
+              <span className="inline-block px-2 py-0.5 text-xs font-medium bg-sage/15 text-sage-dark" title={`Deposit of $${(referral.deposit_amount || 0).toFixed(2)} paid ${referral.deposit_paid_at || ''}`}>
+                Deposit ${(referral.deposit_amount || 0).toFixed(0)} ✓
+              </span>
+            )
           )}
           {rancherAcceptedAt && (
             <span className="inline-block px-2 py-0.5 text-xs font-medium bg-saddle/15 text-saddle" title={`Slot accepted ${rancherAcceptedAt}. Deposit non-refundable per BHC policy.`}>
@@ -4629,10 +4914,20 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
         </div>
         <p className="font-medium mt-1">{referral.buyer_name}</p>
         <p className="text-xs text-dust">{referral.buyer_state} &middot; {referral.order_type}</p>
+        {depositEligible && <PipelineNextStep referral={referral} />}
       </div>
       {/* Mobile: primary actions stack full-width; Mark Lost / Pass demoted to a
           compact secondary row. sm+: everything sits inline as before. */}
       <div className="flex flex-col w-full sm:w-auto sm:flex-row sm:flex-wrap gap-2">
+        {showRequestDeposit && (
+          <button
+            onClick={onRequestDeposit}
+            className="w-full sm:w-auto px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 text-xs font-medium bg-sage text-bone hover:bg-sage-dark transition-colors"
+            title="Send the buyer a deposit link to lock their slot."
+          >
+            {referral.deposit_requested_at ? 're-request deposit' : 'request deposit'}
+          </button>
+        )}
         {referral.status === 'Intro Sent' && (
           <button
             onClick={() => onUpdate(referral.id, 'Rancher Contacted')}
@@ -4728,6 +5023,79 @@ function FreshnessIndicator({ referral }: { referral: Referral }) {
   );
 }
 
+// WAVE 1 (2026-06-30): 3-state deposit badge for tier_v2 leads.
+//   grey  "deposit not requested"  → no ask sent yet
+//   amber "deposit requested · {d}" → buyer has a link, hasn't paid
+//   sage  "deposit paid $X · {d}"   → money landed; close flow takes over
+// Brand tokens only (dust / amber / sage). Hidden once terminal.
+function DepositBadge({ referral }: { referral: Referral }) {
+  const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
+  if (isTerminal) return null;
+  const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
+  if (depositPaid) {
+    const when = referral.deposit_paid_at ? new Date(referral.deposit_paid_at).toLocaleDateString() : '';
+    return (
+      <span className="inline-block px-2 py-0.5 text-xs font-medium bg-sage/15 text-sage-dark" title={`Deposit of $${(referral.deposit_amount || 0).toFixed(2)} paid ${when}`}>
+        deposit paid ${(referral.deposit_amount || 0).toFixed(0)}{when ? ` · ${when}` : ''}
+      </span>
+    );
+  }
+  if (referral.deposit_requested_at) {
+    const when = new Date(referral.deposit_requested_at).toLocaleDateString();
+    return (
+      <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber/20 text-amber-dark" title="Buyer has a deposit link — waiting on them to pay.">
+        deposit requested{when ? ` · ${when}` : ''}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-block px-2 py-0.5 text-xs font-medium bg-dust/20 text-saddle" title="No deposit link sent yet.">
+      deposit not requested
+    </span>
+  );
+}
+
+// WAVE 1 (2026-06-30): one plain-language "next step" line so the close
+// pipeline reads coherently on the card. Maps the deal's current state to the
+// ONE obvious next action:
+//   new lead → request deposit → [paid] accept slot → send final invoice → closed
+function PipelineNextStep({ referral }: { referral: Referral }) {
+  const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
+  if (isTerminal) return null;
+  const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
+  const accepted = !!referral.rancher_accepted_at;
+  const finalSent = !!referral.final_invoice_sent_at || !!referral.final_invoice_url;
+  const finalPaid = !!referral.final_paid_at;
+
+  let stage = '';
+  let next = '';
+  if (!depositPaid && !referral.deposit_requested_at) {
+    stage = 'new lead';
+    next = 'request a deposit to lock their slot';
+  } else if (!depositPaid && referral.deposit_requested_at) {
+    stage = 'deposit requested';
+    next = 'waiting on the buyer to pay the deposit';
+  } else if (depositPaid && !accepted) {
+    stage = 'deposit paid';
+    next = 'accept the slot to lock it in';
+  } else if (depositPaid && accepted && !finalSent) {
+    stage = 'slot locked';
+    next = 'send the final invoice for the balance';
+  } else if (finalSent && !finalPaid) {
+    stage = 'invoice sent';
+    next = 'waiting on the buyer to pay the balance';
+  } else {
+    return null;
+  }
+  return (
+    <p className="text-xs text-saddle mt-1">
+      <span className="uppercase tracking-wider text-dust">{stage}</span>
+      {' → '}
+      <span className="text-charcoal">{next}</span>
+    </p>
+  );
+}
+
 function ReferralCard({
   referral,
   onUpdate,
@@ -4737,6 +5105,8 @@ function ReferralCard({
   onSendFinal,
   onAccept,
   onConfirmPayment,
+  onRequestDeposit,
+  depositEligible,
   updating,
 }: {
   referral: Referral;
@@ -4747,10 +5117,16 @@ function ReferralCard({
   onSendFinal?: () => void;
   onAccept?: () => void;
   onConfirmPayment?: () => void;
+  onRequestDeposit?: () => void;
+  // True when the rancher can take card deposits (tier_v2 + Connect active).
+  // Gates the self-serve "request deposit" CTA so we never offer it to a
+  // rancher whose deposit request would 422 server-side.
+  depositEligible?: boolean;
   updating: string | null;
 }) {
   // FINAL-5 (2026-05-31): see ReferralRow for parity logic + button intent.
   const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
+  const depositRequestedAt = referral.deposit_requested_at || '';
   const finalSent = !!referral.final_invoice_sent_at || !!referral.final_invoice_url;
   const finalPaid = !!referral.final_paid_at;
   const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
@@ -4758,6 +5134,10 @@ function ReferralCard({
   // NRD-2: Accept Slot button parity with ReferralRow.
   const rancherAcceptedAt = referral.rancher_accepted_at || '';
   const showAccept = !!onAccept && depositPaid && !rancherAcceptedAt && !isTerminal;
+  // WAVE 1 (2026-06-30): self-serve "request deposit" on PRE-deposit leads.
+  // Show when the rancher can take card deposits, the deposit isn't paid yet,
+  // and the lead isn't terminal. Re-request label once already requested.
+  const showRequestDeposit = !!onRequestDeposit && !!depositEligible && !depositPaid && !isTerminal;
   // COCKPIT MONEY-UX (parity with ReferralRow): hide "Close as Won" while a
   // deposit balance is still outstanding — the balance is collected via "Send
   // Final Invoice", not by closing the deal. Surface "Confirm payment received"
@@ -4776,11 +5156,13 @@ function ReferralCard({
             <FreshnessIndicator referral={referral} />
             <ResponseDeadline referral={referral} />
             <RancherRotBadge days={referral.days_since_activity ?? null} />
+            {depositEligible && <DepositBadge referral={referral} />}
           </div>
           <h3 className="font-serif text-xl mt-2">{referral.buyer_name}</h3>
           <p className="text-sm text-dust">
             {referral.intro_sent_at ? `Introduced ${new Date(referral.intro_sent_at).toLocaleDateString()}` : ''}
           </p>
+          {depositEligible && <PipelineNextStep referral={referral} />}
         </div>
       </div>
 
@@ -4799,6 +5181,15 @@ function ReferralCard({
       )}
 
       <div className="flex flex-wrap gap-2 pt-2">
+        {showRequestDeposit && (
+          <button
+            onClick={onRequestDeposit}
+            className="px-4 min-h-[44px] text-sm font-medium bg-sage text-bone hover:bg-sage-dark transition-colors"
+            title="Send the buyer a deposit link to lock their slot. Card payment straight to your Stripe account."
+          >
+            {referral.deposit_requested_at ? 're-request deposit' : 'request deposit'}
+          </button>
+        )}
         {referral.status === 'Intro Sent' && (
           <button
             onClick={() => onUpdate(referral.id, 'Rancher Contacted')}

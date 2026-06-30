@@ -126,6 +126,10 @@ export async function GET(request: Request) {
       // (tier_v2 Stripe Connect flow).
       deposit_paid_at: r['Deposit Paid At'] || '',
       deposit_amount: Number(r['Deposit Amount'] || 0),
+      // WAVE 1 (2026-06-30) — stamped by /request-deposit when the rancher
+      // self-serves a deposit ask. Drives the amber "deposit requested" badge +
+      // the re-request label before the buyer pays.
+      deposit_requested_at: r['Deposit Requested At'] || '',
       // NRD (2026-06-05): non-refundable lock cutoff. Set when rancher hits
       // "Accept Slot" — POST /api/rancher/referrals/[id]/accept. Refund
       // endpoint guards against post-accept refunds without operator override.
@@ -136,8 +140,10 @@ export async function GET(request: Request) {
       final_paid_at: r['Final Paid At'] || '',
       total_sale_amount: Number(r['Total Sale Amount'] || 0),
       // Processing Fee is stamped per-referral by send-final-invoice when the
-      // rancher submits the invoice (Airtable field 'Processing Fee'). Used by
-      // the Collect Balance section: balance = total_sale_amount - processing_fee.
+      // rancher submits the invoice (Airtable field 'Processing Fee'). It's the
+      // rancher's own USDA out-of-pocket cost, recorded for their books — it is
+      // NOT part of the buyer balance (balance = total_sale_amount −
+      // deposit_amount, matching the send-final-invoice server charge).
       processing_fee: Number(r['Processing Fee'] || 0),
       processing_date: r['Processing Date'] || '',
       };
