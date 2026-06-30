@@ -922,6 +922,12 @@ function Reveal({
               or book a 15-min call with ben first
             </a>
           </p>
+          {/* third path: no action required — the rancher already has the lead and
+              will reach out. fills the funnel leak where a buyer who wants neither
+              self-serve deposit nor a call thought it dead-ended. */}
+          <p className="text-center text-xs text-saddle">
+            no rush either way — {rancher.name} has your details and will reach out within 24&ndash;48 hours.
+          </p>
         </div>
       ) : offerOperatorCall ? (
         /* ── Mode 1: operator sales call (non-deposit-capable only) ──────────── */

@@ -141,6 +141,7 @@ export async function sendQuizCompleteDepositInvite(opts: {
       <p style="margin:24px 0 0 0;font-size:14px;color:#6B4F3F;text-align:center">
         not ready? <a href="${cal}" style="color:#6B4F3F;text-decoration:underline">or book a 15-min call with ben first</a>
       </p>
+      <p style="margin:14px 0 0 0;font-size:13px;color:#6B4F3F;text-align:center">no rush either way — ${rancher ? escape(rancher) : 'your rancher'} already has your details and will reach out within 24–48 hours.</p>
       <p style="font-size:12px;color:#A7A29A;margin-top:28px">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'quiz_complete_deposit_invite',
