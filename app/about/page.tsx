@@ -49,7 +49,7 @@ export default function AboutPage() {
                 BuyHalfCow exists to fix both halves of that. Families get direct
                 access to verified ranchers in their state. Ranchers get
                 pre-screened buyers ready to commit to a quarter, half, or whole.
-                We take 10% on closed deals &mdash; nothing else.
+                We only earn when a deal actually closes &mdash; never a markup on your beef.
               </p>
             </section>
 
@@ -101,7 +101,7 @@ export default function AboutPage() {
                     <li>Apply with ranch details.</li>
                     <li>I visit the ranch, verify the operation.</li>
                     <li>Once certified, pre-screened buyers in your state get routed to you.</li>
-                    <li>You close the deal direct. We take 10% on closed sales.</li>
+                    <li>You sell and get paid direct. We only earn when a deal closes.</li>
                   </ol>
                 </div>
               </div>
@@ -134,7 +134,7 @@ export default function AboutPage() {
               <ul className="space-y-3">
                 <li className="flex items-start">
                   <span className="mr-3 text-weathered" aria-hidden="true">&times;</span>
-                  <span>Not a marketplace that takes a cut of every transaction. We take 10% on closed deals, that&apos;s it.</span>
+                  <span>Not a marketplace that takes a cut of every transaction. We only earn when a deal actually closes &mdash; never a markup on your beef.</span>
                 </li>
                 <li className="flex items-start">
                   <span className="mr-3 text-weathered" aria-hidden="true">&times;</span>

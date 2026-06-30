@@ -396,8 +396,8 @@ export default function FullHomepage() {
                 </div>
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
-                  <p className="font-medium">Keep 90%</p>
-                  <p className="text-sm text-saddle">10% only when you sell — nothing up front. Pause or leave anytime.</p>
+                  <p className="font-medium">Pick your plan</p>
+                  <p className="text-sm text-saddle">Start free and pay only when you sell, or pick a plan with commission as low as 0%. Nothing up front, pause or leave anytime.</p>
                 </div>
               </div>
             </div>

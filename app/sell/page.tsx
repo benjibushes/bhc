@@ -2,8 +2,9 @@
 //
 // Supply is the constraint: we're recruiting 100 ranchers and there was no
 // public landing page or nav link pointing them at the signup. This page is
-// the top-of-funnel surface for ranchers — it leads with the FREE model
-// ($0 up front, 10% commission only on closed deals) and drives to the
+// the top-of-funnel surface for ranchers — it leads with the FREE-to-start
+// model ($0 up front, pay only when you sell on Legacy Connect, or pick a
+// plan with commission as low as 0% — tier-based, lib/tiers.ts) and drives to the
 // rancher partner application at /apply (rancher-initiated, intent-rich,
 // mints a setup-wizard token). Secondary path is /map/add-a-rancher for
 // ranchers who'd rather just get on the map first.
@@ -21,11 +22,11 @@ import Button from '../components/Button';
 export const metadata: Metadata = {
   title: 'Sell your beef on BuyHalfCow — free to join',
   description:
-    'Ranchers: sell quarter, half, and whole cows direct to buyers in your state. Free to join, $0 up front. BuyHalfCow takes 10% only when you actually sell. You set your prices, get paid direct.',
+    'Ranchers: sell quarter, half, and whole cows direct to buyers in your state. Free to start, $0 up front — pay only when you sell, or pick a plan with commission as low as 0%. You set your prices, get paid direct.',
   openGraph: {
     title: 'Sell your beef on BuyHalfCow — free to join',
     description:
-      'Sell quarter, half, and whole cows direct to buyers in your state. Free to join. We take 10% only when you sell.',
+      'Sell quarter, half, and whole cows direct to buyers in your state. Free to start, $0 up front — pay only when you sell, or pick a plan with commission as low as 0%.',
     type: 'website',
     url: 'https://buyhalfcow.com/sell',
   },
@@ -64,8 +65,8 @@ const STEPS = [
 
 const TRUST = [
   {
-    t: 'Free to join',
-    d: 'No sign-up fee, no monthly bill, no catch. You only ever owe us when a deal closes.',
+    t: 'Free to start',
+    d: 'No sign-up fee, no catch. On the free plan you only owe us when a deal closes — or pick a monthly plan for a lower commission rate, as low as 0%. Your call.',
   },
   {
     t: 'You set the prices',
@@ -101,11 +102,11 @@ export default function SellPage() {
               paid direct.
             </p>
 
-            {/* The hook: the free model, stated plain. */}
+            {/* The hook: free to start, stated plain — tier-accurate. */}
             <p className="text-lg md:text-xl max-w-2xl mx-auto leading-relaxed text-charcoal">
-              <strong>Free to join. $0 up front.</strong> We earn{' '}
-              <strong>10% commission only when you actually sell</strong> —
-              nothing before that.
+              <strong>Free to start. $0 up front.</strong> Pay only when you
+              sell — or pick a plan with commission{' '}
+              <strong>as low as 0%</strong>. Either way, nothing before you do.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">

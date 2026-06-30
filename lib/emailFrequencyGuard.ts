@@ -94,6 +94,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // breaks the buyer journey silently.
   'buyer_signup_confirmation',
   'quiz_complete_cal_invite',
+  // tier_v2/Connect twin of quiz_complete_cal_invite (#160, shipped 2026-06-30):
+  // when a qualified buyer matches a Connect rancher they get the deposit-primary
+  // invite instead of the cal invite — same quiz-complete money-moment slot. A
+  // fresh buyer also gets welcome in the same window, so without whitelisting,
+  // the #1 funnel conversion email is silently frequency-capped.
+  'quiz_complete_deposit_invite',
   'buyer_deposit_invoice',
   'slot_locked_confirmation',
   // T1 (2026-06-10): templates that were silently dropping at cap.
