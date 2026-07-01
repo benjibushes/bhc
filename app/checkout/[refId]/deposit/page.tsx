@@ -235,17 +235,24 @@ function DepositPageContent() {
   }
 
   if (!info.tierConnected) {
+    // B3 — don't leave a ready-to-pay buyer at a message-only dead-end. Give
+    // them a reason to stay (we'll hold + email), plus two live forward paths.
     return (
-      <div className="min-h-screen bg-bone text-charcoal p-4 md:p-8">
-        <h1 className="text-xl md:text-2xl mb-4 font-serif">
-          {info.rancher.name} isn&apos;t quite ready to accept deposits here
-        </h1>
-        <p className="text-saddle mb-4">
-          They&apos;re finishing setting up payments. We&apos;ll email you the moment they&apos;re ready.
-        </p>
-        <Link href={`/checkout/${refId}/ask`} className="underline text-saddle">
-          Message {info.rancher.name} in the meantime →
-        </Link>
+      <div className="min-h-screen bg-bone text-charcoal flex items-center justify-center p-6">
+        <div className="w-full max-w-md text-center space-y-5">
+          <h1 className="font-serif text-2xl">
+            {info.rancher.name} is finishing their bank setup
+          </h1>
+          <p className="text-saddle">
+            usually a day or two. want us to hold your spot and email you the second
+            they can take your deposit? just reply to your intro email and we&apos;ve got you —
+            or lock it in faster on a quick call with ben.
+          </p>
+          <div className="flex flex-col gap-2">
+            <a href={BEN_SALES_CAL_URL} className="px-6 py-3 bg-charcoal text-bone text-sm uppercase tracking-wide">book a 15-min call with ben →</a>
+            <Link href={`/checkout/${refId}/ask`} className="underline text-saddle text-sm">message {info.rancher.name} instead</Link>
+          </div>
+        </div>
       </div>
     );
   }

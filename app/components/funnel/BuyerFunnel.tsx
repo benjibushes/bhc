@@ -58,6 +58,9 @@ interface BuyerFunnelProps {
   // Geo-landing passthrough (/access/[state] → /access?state=XX). Seeds the
   // state <select> with the visitor's region. Always overridable by the user.
   initialState?: string;
+  // Friendly banner shown at the top (e.g. an expired re-engagement link
+  // redirected here with ?error=). Dismissible; never blocks the funnel.
+  notice?: string;
 }
 
 // ── Live social-proof stats (GET /api/funnel/stats) ──────────────────────────
@@ -122,7 +125,9 @@ export default function BuyerFunnel({
   rancherSlug,
   offerOperatorCall,
   initialState,
+  notice,
 }: BuyerFunnelProps) {
+  const [noticeOpen, setNoticeOpen] = useState(!!notice);
   // resume mode jumps straight to Storage — size/timing/contact already exist
   // on the record (props carry consumerId + token).
   const [stepKey, setStepKey] = useState<StepKey>(mode === 'resume' ? 'storage' : 'size');
@@ -470,6 +475,14 @@ export default function BuyerFunnel({
         className="mx-auto w-full max-w-md px-5 pb-16 pt-5 sm:max-w-lg sm:pt-8"
         style={{ ['--accent' as string]: FUNNEL_ACCENT }}
       >
+        {/* B6 — friendly banner for expired/invalid re-engagement links (?error=).
+            Dismissible; never blocks the funnel. */}
+        {notice && noticeOpen && (
+          <div className="mb-4 flex items-start justify-between gap-3 rounded-md border border-dust bg-bone-warm px-4 py-3 text-sm text-saddle">
+            <span>{notice}</span>
+            <button type="button" onClick={() => setNoticeOpen(false)} aria-label="dismiss" className="shrink-0 text-saddle/70 hover:text-charcoal">×</button>
+          </div>
+        )}
         {/* ── Header: private-network pill + live social proof ──────────────── */}
         <header className="mb-5">
           <div className="flex items-center justify-between gap-3">
@@ -685,6 +698,7 @@ export default function BuyerFunnel({
             offerOperatorCall={offerOperatorCall}
             state={state}
             stats={stats}
+            cut={tier}
           />
         )}
 
@@ -832,11 +846,13 @@ function Reveal({
   offerOperatorCall,
   state,
   stats,
+  cut,
 }: {
   result: QualifyResult | null;
   offerOperatorCall: boolean;
   state: string;
   stats: FunnelStats | null;
+  cut: string;
 }) {
   const matched = !!(result?.routingOk && result?.rancher && result.rancher.name);
   const rancher = result?.rancher;
@@ -902,7 +918,10 @@ function Reveal({
           </div>
           <div className="space-y-2">
             <Button
-              href={`/checkout/${result!.referralId}/deposit`}
+              // Carry the cut the buyer already picked in step 1 so the deposit
+              // page pre-selects it (no re-pick that contradicts the quiz). The
+              // deposit page maps ?cut=<slug> against its priced cuts.
+              href={`/checkout/${result!.referralId}/deposit${['Quarter', 'Half', 'Whole'].includes(cut) ? `?cut=${cut.toLowerCase()}` : ''}`}
               variant="primary"
               size="lg"
               fullWidth
