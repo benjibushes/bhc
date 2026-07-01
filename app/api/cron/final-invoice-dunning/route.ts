@@ -165,7 +165,9 @@ export function shouldEscalateDunning(ref: DunningReferralLike, opts: DunningOpt
 }
 
 interface DunningResult {
-  status: 'success' | 'partial' | 'maintenance-blocked';
+  // 'error' = hard abort (e.g. throttle stamp did not persist — schema is
+  // missing the dedupe fields). withCronRun Telegram-alerts error statuses.
+  status: 'success' | 'partial' | 'maintenance-blocked' | 'error';
   recordsTouched: number;
   notes: string;
   skipReasonBreakdown: Record<string, number>;
@@ -371,10 +373,28 @@ async function realHandler(_request: Request): Promise<DunningResult> {
     // THROTTLE-FIRST: stamp the reminder time + bump the count BEFORE sending so
     // a failed stamp can't lead to a double-send on the next run.
     try {
-      await updateRecord(TABLES.REFERRALS, referralId, {
+      const updated: any = await updateRecord(TABLES.REFERRALS, referralId, {
         'Final Invoice Reminded At': new Date().toISOString(),
         'Final Invoice Reminder Count': priorCount + 1,
       });
+      // STAMP-PERSIST VERIFY (pattern from waiting-activation): updateRecord
+      // STRIPS unknown field names and retries rather than failing — if the
+      // Referrals schema is missing these fields, every stamp silently no-ops
+      // and this cron re-duns every eligible buyer DAILY FOREVER. Read back
+      // the stamp; if it didn't persist, abort the whole run. status:'error'
+      // fires the withCronRun Telegram alert (operator signal).
+      if (!updated || !updated['Final Invoice Reminded At']) {
+        return {
+          status: 'error',
+          recordsTouched: touched + healed,
+          notes:
+            `ABORT: dunning throttle stamp did not persist for ${referralId} — add ` +
+            `"Final Invoice Reminded At" (date w/ time) + "Final Invoice Reminder Count" ` +
+            `(number) to Referrals, or every run re-duns daily forever. ` +
+            `processed=${targets.length} touchedBeforeAbort=${touched}`,
+          skipReasonBreakdown: breakdown,
+        };
+      }
     } catch (e: any) {
       bump('throttle_write_failed');
       errors.push(`${referralId}: throttle stamp (${e?.message?.slice(0, 60)})`);
@@ -388,7 +408,7 @@ async function realHandler(_request: Request): Promise<DunningResult> {
     // throttle stamp above still fires every run, keeping the interval honest.
     if (!escalate) {
       try {
-        await sendBuyerFinalInvoice({
+        const reminderResult = await sendBuyerFinalInvoice({
           buyerEmail,
           buyerName,
           ranchName,
@@ -400,8 +420,15 @@ async function realHandler(_request: Request): Promise<DunningResult> {
           notes: `Friendly reminder — your final balance with ${ranchName} is still open. Tap the link below to complete your order.`,
           checkoutUrl,
         });
-        touched++;
-        bump('buyer_reminded');
+        // TRUTH: guardedSend suppression (unsub/bounce/pause) returns
+        // success:false without throwing — don't count a suppressed reminder
+        // as a touch the summary claims was delivered.
+        if ((reminderResult as any)?.success) {
+          touched++;
+          bump('buyer_reminded');
+        } else {
+          bump('buyer_reminder_suppressed');
+        }
       } catch (e: any) {
         bump('buyer_email_failed');
         errors.push(`${referralId}: buyer email (${e?.message?.slice(0, 60)})`);
@@ -434,9 +461,14 @@ async function realHandler(_request: Request): Promise<DunningResult> {
       } catch {}
 
       // Ping the rancher exactly once — on the touch that first crosses the
-      // escalation threshold — so they know money is still outstanding. Uses
-      // the generic sendEmail wrapper (subject to the 3/week cap, which is
-      // correct here: a once-per-deal nudge should never override suppression).
+      // escalation threshold — so they know money is still outstanding.
+      // Guard-truth fix (2026-07-01): this previously used the default capped
+      // 'sendEmail' templateName — but a rancher mid-deal easily has 3+ emails
+      // this week, and since justCrossed is true exactly ONCE per deal, a
+      // cap-suppress meant the rancher NEVER learned the balance was
+      // outstanding. Whitelisted as 'sendDunningEscalation' (cadence is owned
+      // by the once-per-deal justCrossed gate, not the frequency guard;
+      // unsub/bounce suppression still applies via the resend wrapper).
       const justCrossed = priorCount + 1 === ESCALATE_AFTER_TOUCHES;
       if (justCrossed) {
         const rancherEmail = String(rancher?.['Email'] || '').trim();
@@ -445,7 +477,7 @@ async function realHandler(_request: Request): Promise<DunningResult> {
             String(rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'there')
               .split(' ')[0] || 'there';
           try {
-            await sendEmail({
+            const escalationResult = await sendEmail({
               to: rancherEmail,
               subject: `Final balance still unpaid — ${buyerName}`,
               html:
@@ -457,8 +489,19 @@ async function realHandler(_request: Request): Promise<DunningResult> {
                 `<p style="text-align:center;margin:24px 0;"><a href="${SITE_URL}/rancher" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Open Dashboard &rarr;</a></p>` +
                 `<p style="margin-top:28px;">— Ben</p>` +
                 `</div></body></html>`,
+              templateName: 'sendDunningEscalation',
             });
-            bump('rancher_pinged');
+            // TRUTH: only count the ping if it actually went out. A suppressed
+            // (unsub/bounce/pause) one-shot is surfaced in the run breakdown —
+            // the Telegram card above already alerted the operator either way.
+            if (escalationResult?.success) {
+              bump('rancher_pinged');
+            } else {
+              bump('rancher_ping_suppressed');
+              console.warn(
+                `[final-invoice-dunning] rancher escalation suppressed for ${referralId} (${escalationResult?.reason || 'unknown'})`,
+              );
+            }
           } catch (e: any) {
             // Non-fatal — the Telegram card already alerted the operator.
             console.warn(
