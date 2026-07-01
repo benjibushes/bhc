@@ -191,6 +191,17 @@ export function commissionRateForTier(tier: TierSlug | null): number {
   return TIERS[tier].commissionRate;
 }
 
+// Routing priority weight + the pure priority comparator live in
+// ./routingPriority (kept there, side-effect-free + independently unit-tested,
+// so the matching route can import them without pulling tiers' secrets deps
+// into a test run). Re-exported here for discoverability alongside the tier model.
+export {
+  ROUTING_WEIGHT,
+  routingWeightForTier,
+  RETAINER_FLOOR_SLACK,
+  retainerPriorityCompare,
+} from './routingPriority';
+
 // Brand Partner Founding 100 cap — shared between /brand-partners page +
 // /api/stats/public endpoint. Single source of truth so cap can never
 // drift between display + enforcement.
