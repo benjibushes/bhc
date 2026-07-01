@@ -19,11 +19,16 @@ import {
   buildCampaignPlan,
   renderMessage,
   rancherPageUrl,
+  parseCampaignRancherIds,
+  campaignRancherForState,
+  DEFAULT_CAMPAIGN_RANCHER_IDS,
+  CAMPAIGN_RANCHER_IDS_ENV,
   FOODSTEAD,
   SILVERLINE,
   WAVE_GAP_DAYS,
   DAY_MS,
   type CampaignBuyer,
+  type CampaignRanchers,
   type Coast,
 } from './demandRouter';
 
@@ -641,4 +646,100 @@ test('synthetic records never appear in plan sends + are tallied under synthetic
   const plan = buildCampaignPlan(buyers, { now: NOW, capacity: { west: 50, eastCentral: 0 } });
   assert.deepEqual(plan.sends.map((s) => s.buyerId), ['recReal'], 'only the real buyer is selected');
   assert.equal(plan.suppressed['synthetic-test'], 1);
+});
+
+// ─── A2: configurable campaign rancher set (env → ids, pure parse) ─────────
+// The rancher set is CONFIG, not code: DEMAND_CAMPAIGN_RANCHER_IDS
+// (comma-separated Airtable rec ids, positional: 1st=WEST, 2nd=EAST+CENTRAL)
+// with the original Foodstead+Silverline pair as the default. Parse is pure;
+// the cron does the I/O operational-gate check.
+
+const RID = (c: string) => `rec${c.repeat(14)}`; // valid-shaped Airtable rec id
+
+test('parseCampaignRancherIds: unset env → the default pair (byte-identical prod state)', () => {
+  assert.deepEqual(parseCampaignRancherIds({}), [FOODSTEAD.id, SILVERLINE.id]);
+  assert.deepEqual(parseCampaignRancherIds({ OTHER_VAR: 'x' }), [...DEFAULT_CAMPAIGN_RANCHER_IDS]);
+});
+
+test('parseCampaignRancherIds: empty / whitespace-only value → defaults', () => {
+  assert.deepEqual(parseCampaignRancherIds({ [CAMPAIGN_RANCHER_IDS_ENV]: '' }), [FOODSTEAD.id, SILVERLINE.id]);
+  assert.deepEqual(parseCampaignRancherIds({ [CAMPAIGN_RANCHER_IDS_ENV]: '   ' }), [FOODSTEAD.id, SILVERLINE.id]);
+});
+
+test('parseCampaignRancherIds: csv → ids, whitespace trimmed, order preserved', () => {
+  const a = RID('A');
+  const b = RID('B');
+  assert.deepEqual(
+    parseCampaignRancherIds({ [CAMPAIGN_RANCHER_IDS_ENV]: ` ${a} , ${b} ` }),
+    [a, b],
+  );
+});
+
+test('parseCampaignRancherIds: garbage tokens filtered, valid ids kept, dupes deduped', () => {
+  const a = RID('A');
+  assert.deepEqual(
+    parseCampaignRancherIds({ [CAMPAIGN_RANCHER_IDS_ENV]: `foo, ${a}, , not-a-rec-id, ${a}` }),
+    [a],
+    'only the valid id survives (deduped)',
+  );
+  // ALL garbage → fail safe to the known-good default pair (never zero the
+  // campaign on a fat-fingered env; the runtime operational gate still guards).
+  assert.deepEqual(
+    parseCampaignRancherIds({ [CAMPAIGN_RANCHER_IDS_ENV]: 'foo,bar, ,rec-short' }),
+    [FOODSTEAD.id, SILVERLINE.id],
+  );
+});
+
+test('campaignRancherForState: default pools mirror rancherForState; a null pool is never routed', () => {
+  const defaults: CampaignRanchers = { west: { ...FOODSTEAD }, eastCentral: { ...SILVERLINE } };
+  assert.equal(campaignRancherForState('CA', defaults)!.id, rancherForState('CA')!.id);
+  assert.equal(campaignRancherForState('FL', defaults)!.id, rancherForState('FL')!.id);
+  assert.equal(campaignRancherForState('TX', defaults)!.id, rancherForState('TX')!.id);
+  assert.equal(campaignRancherForState('Ontario', defaults), null, 'unroutable state stays null');
+  const westDark: CampaignRanchers = { west: null, eastCentral: { ...SILVERLINE } };
+  assert.equal(campaignRancherForState('CA', westDark), null, 'gated-out pool → null (never routed)');
+  assert.equal(campaignRancherForState('FL', westDark)!.id, SILVERLINE.id, 'other pool unaffected');
+});
+
+test('OPERATIONAL-GATE SKIP: a null pool sends NOTHING (not even continuations) + tallies skippedNoRancher', () => {
+  const buyers: CampaignBuyer[] = [
+    // WEST new invite — would be Msg1
+    { id: 'recWNew', fields: { Email: 'wn@x.com', State: 'CA', 'Ready to Buy': true, Created: daysAgo(20) } },
+    // WEST continuation — Msg1 sent 4d ago → due Msg2 (continuations normally ALWAYS send)
+    { id: 'recWCont', fields: { Email: 'wc@x.com', State: 'CA', 'Ready to Buy': true, 'Campaign Stage': 'Msg1 Sent', 'Campaign Last Sent At': daysAgo(4), Created: daysAgo(20) } },
+    // EAST new invite — unaffected pool
+    { id: 'recENew', fields: { Email: 'en@x.com', State: 'FL', 'Ready to Buy': true, Created: daysAgo(20) } },
+  ];
+  const plan = buildCampaignPlan(buyers, {
+    now: NOW,
+    capacity: { west: 5, eastCentral: 5 },
+    ranchers: { west: null, eastCentral: { ...SILVERLINE } },
+  });
+  assert.deepEqual(plan.sends.map((s) => s.buyerId), ['recENew'], 'only the live pool sends');
+  assert.deepEqual(plan.skippedNoRancher, { west: 2, eastCentral: 0 }, 'both WEST buyers skipped (incl. the continuation)');
+  assert.equal(plan.waitlist.length, 0, 'skipped ≠ waitlisted — they roll forward, no stamp');
+});
+
+test('configured rancher target flows into the plan sends (copy/link fields come from config)', () => {
+  const acme = { id: RID('C'), slug: 'acme-ranch', name: 'Acme Ranch', ranchState: 'Texas' };
+  const buyers: CampaignBuyer[] = [
+    { id: 'recE', fields: { Email: 'e@x.com', State: 'FL', 'Ready to Buy': true, Created: daysAgo(20) } },
+  ];
+  const plan = buildCampaignPlan(buyers, {
+    now: NOW,
+    capacity: { west: 0, eastCentral: 5 },
+    ranchers: { west: { ...FOODSTEAD }, eastCentral: acme },
+  });
+  assert.equal(plan.sends.length, 1);
+  assert.equal(plan.sends[0].rancher.slug, 'acme-ranch');
+  assert.equal(plan.sends[0].rancher.id, acme.id);
+});
+
+test('opts.ranchers omitted → default pair used + skippedNoRancher is all-zero (back-compat)', () => {
+  const buyers: CampaignBuyer[] = [
+    { id: 'recW', fields: { Email: 'w@x.com', State: 'CA', 'Ready to Buy': true, Created: daysAgo(20) } },
+  ];
+  const plan = buildCampaignPlan(buyers, { now: NOW, capacity: { west: 5, eastCentral: 5 } });
+  assert.equal(plan.sends[0].rancher.id, FOODSTEAD.id);
+  assert.deepEqual(plan.skippedNoRancher, { west: 0, eastCentral: 0 });
 });

@@ -5,8 +5,13 @@
 // now a COMBINED email+SMS, send-time-gated, recovery-aware flow.
 //
 // Runs hourly (see vercel.json). Each run:
-//   1. Reads open deposit slots per rancher (Foodstead=WEST, Silverline=EAST+
-//      CENTRAL) from the canonical capacity helper.
+//   1. Resolves the campaign's CONFIGURED rancher set (A2) — env
+//      DEMAND_CAMPAIGN_RANCHER_IDS, positional 1st=WEST 2nd=EAST+CENTRAL,
+//      defaulting to Foodstead+Silverline — validates each with
+//      isRancherOperationalForBuyers (the SAME single-source gate the real
+//      matching engine /api/matching/suggest uses; a failing rancher is
+//      SKIPPED: pool sends nothing, console.warn + operator note), then reads
+//      open deposit slots per rancher from the canonical capacity helper.
 //   2. [Upgrade B] Counts reservations that paid a deposit in the last 7 days →
 //      a live social-proof line injected into Msg2/Msg3 (omitted below a floor).
 //   3. Selects the next batch of highest-intent, not-yet-contacted-this-wave
@@ -59,7 +64,9 @@ import {
   renderMessage,
   renderSmsRecovery,
   rancherPageUrl,
-  rancherForState,
+  parseCampaignRancherIds,
+  campaignRancherForState,
+  CAMPAIGN_RANCHER_IDS_ENV,
   openSlotsFor,
   countRecentDeposits,
   socialProofLine,
@@ -73,10 +80,12 @@ import {
   FOODSTEAD,
   SILVERLINE,
   type CampaignBuyer,
+  type CampaignRanchers,
   type PlannedSend,
   type CampaignPlan,
   type RancherTarget,
 } from '@/lib/demandRouter';
+import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { isEmailWindow, isSmsWindow } from '@/lib/sendWindow';
 import { normalizeState } from '@/lib/states';
 import {
@@ -147,60 +156,136 @@ async function resolveLink(rancher: RancherTarget, send: PlannedSend): Promise<s
 }
 
 /**
- * Read open deposit slots per rancher from the canonical capacity helper.
- * openSlots = Max Active Referrals − live Current Active count (Redis-backed,
- * race-safe). Clamped >= 0. Returns the rancher records too (for max display).
+ * Resolve + validate the campaign's CONFIGURED ranchers (A2) and read open
+ * deposit slots per pool. openSlots = Max Active Referrals − live Current
+ * Active count (Redis-backed, race-safe). Clamped >= 0.
+ *
+ * THE OPERATIONAL GATE (A2): every configured rancher — default or env-set —
+ * is checked against isRancherOperationalForBuyers, the SAME single-source
+ * gate the real matching engine (/api/matching/suggest) uses. A configured
+ * rancher that fails the gate is SKIPPED (target=null, capacity 0): its pool
+ * sends NOTHING this run (the planner drops even continuations), with a
+ * console.warn + an operator-visible note in the Telegram report. This closes
+ * the "campaign routes to a dark rancher" hole.
  */
-async function readCapacity(): Promise<{
+async function readCapacity(ids: readonly string[]): Promise<{
   west: number;
   eastCentral: number;
-  detail: { foodsteadMax: number; foodsteadCur: number; silverlineMax: number; silverlineCur: number };
+  targets: CampaignRanchers;
+  detail: { westName: string; westMax: number; westCur: number; eastName: string; eastMax: number; eastCur: number };
   degraded: string[];
+  skipped: string[];
 }> {
-  const [foodstead, silverline] = await Promise.all([
-    getRecordById(TABLES.RANCHERS, FOODSTEAD.id).catch(() => null) as Promise<any>,
-    getRecordById(TABLES.RANCHERS, SILVERLINE.id).catch(() => null) as Promise<any>,
-  ]);
-
   // FAIL-CLOSED on a missing/failed rancher record. getMaxActiveReferrals(null)
   // returns DEFAULT_MAX=5 — a transient fetch failure would otherwise INVENT 5
   // open slots and trigger unintended live sends. For a money-adjacent sender we
   // must never fabricate capacity: a null record → 0 slots for that coast (skip
   // it this run). The `degraded` list surfaces the skip in the report.
   const degraded: string[] = [];
+  // Operational-gate + config skips — operator-visible in the Telegram report.
+  const skipped: string[] = [];
 
-  async function coastSlots(
-    rec: any,
-    rancherId: string,
-    label: string,
-  ): Promise<{ open: number; max: number; cur: number }> {
-    if (!rec) {
-      degraded.push(`${label}: rancher record unavailable → capacity forced to 0 (skipped)`);
-      return { open: 0, max: 0, cur: 0 };
+  const [westId, eastCentralId] = ids;
+  if (ids.length > 2) {
+    skipped.push(
+      `${ids.length - 2} extra configured rancher id(s) ignored — the campaign has exactly two slots (1st=WEST, 2nd=EAST+CENTRAL)`,
+    );
+  }
+
+  // The default pair keeps its curated display fields (and short report names,
+  // byte-identical to the legacy report); any OTHER configured rancher is
+  // hydrated from its Airtable record.
+  function curatedTargetFor(id: string): RancherTarget | null {
+    if (id === FOODSTEAD.id) return { ...FOODSTEAD };
+    if (id === SILVERLINE.id) return { ...SILVERLINE };
+    return null;
+  }
+  function displayNameFor(id: string, fallback: string): string {
+    if (id === FOODSTEAD.id) return 'Foodstead';
+    if (id === SILVERLINE.id) return 'Silverline';
+    return fallback;
+  }
+
+  async function resolveSlot(
+    id: string | undefined,
+    label: 'WEST' | 'EAST+CENTRAL',
+  ): Promise<{ open: number; max: number; cur: number; target: RancherTarget | null; name: string }> {
+    if (!id) {
+      skipped.push(`${label}: no rancher configured (${CAMPAIGN_RANCHER_IDS_ENV} has fewer than 2 ids) → pool disabled this run`);
+      console.warn(`[demand-router] ${label} pool has no configured campaign rancher — pool disabled this run`);
+      return { open: 0, max: 0, cur: 0, target: null, name: 'no rancher' };
     }
+
+    const rec = (await getRecordById(TABLES.RANCHERS, id).catch(() => null)) as any;
+    if (!rec) {
+      // For the known default pair, keep the curated target so mid-arc
+      // continuations still complete on a TRANSIENT fetch failure (pre-existing
+      // behavior — a fetch blip is not "dark"). An unknown configured id we
+      // know nothing about (no slug/name) → skip the pool entirely.
+      const curated = curatedTargetFor(id);
+      if (curated) {
+        degraded.push(`${displayNameFor(id, curated.name)} (${label}): rancher record unavailable → capacity forced to 0 (skipped)`);
+        return { open: 0, max: 0, cur: 0, target: curated, name: displayNameFor(id, curated.name) };
+      }
+      skipped.push(`${label}: configured rancher ${id} could not be read → pool disabled this run`);
+      console.warn(`[demand-router] configured campaign rancher ${id} (${label}) unreadable — pool disabled this run`);
+      return { open: 0, max: 0, cur: 0, target: null, name: id };
+    }
+
+    const recName = String(rec['Ranch Name'] || rec['Operator Name'] || id).trim() || id;
+    const name = displayNameFor(id, recName);
+
+    // THE OPERATIONAL GATE — single source: lib/rancherEligibility, the same
+    // gate /api/matching/suggest applies. Fails → NEVER routed to this run.
+    if (!isRancherOperationalForBuyers(rec)) {
+      skipped.push(`${name} (${label}): failed the operational gate (isRancherOperationalForBuyers) → NOT routed to this run`);
+      console.warn(`[demand-router] configured campaign rancher ${name} (${id}, ${label}) failed isRancherOperationalForBuyers — pool disabled this run`);
+      return { open: 0, max: 0, cur: 0, target: null, name };
+    }
+
+    const target = curatedTargetFor(id) ?? hydrateTarget(id, rec);
+    if (!target) {
+      skipped.push(`${name} (${label}): operational but has no Slug → cannot build campaign links → NOT routed to this run`);
+      console.warn(`[demand-router] configured campaign rancher ${name} (${id}, ${label}) has no Slug — pool disabled this run`);
+      return { open: 0, max: 0, cur: 0, target: null, name };
+    }
+
     const max = getMaxActiveReferrals(rec);
-    const cur = await getLiveCapacity(rancherId).catch(
+    const cur = await getLiveCapacity(id).catch(
       () => Number(rec?.['Current Active Referrals'] || 0),
     );
-    return { open: openSlotsFor({ max, current: cur }), max, cur };
+    return { open: openSlotsFor({ max, current: cur }), max, cur, target, name };
   }
 
   const [fs, sl] = await Promise.all([
-    coastSlots(foodstead, FOODSTEAD.id, 'Foodstead (WEST)'),
-    coastSlots(silverline, SILVERLINE.id, 'Silverline (EAST+CENTRAL)'),
+    resolveSlot(westId, 'WEST'),
+    resolveSlot(eastCentralId, 'EAST+CENTRAL'),
   ]);
 
   return {
     west: fs.open,
     eastCentral: sl.open,
+    targets: { west: fs.target, eastCentral: sl.target },
     detail: {
-      foodsteadMax: fs.max,
-      foodsteadCur: fs.cur,
-      silverlineMax: sl.max,
-      silverlineCur: sl.cur,
+      westName: fs.name,
+      westMax: fs.max,
+      westCur: fs.cur,
+      eastName: sl.name,
+      eastMax: sl.max,
+      eastCur: sl.cur,
     },
     degraded,
+    skipped,
   };
+}
+
+/** Build a RancherTarget for a non-default configured rancher from its record. */
+function hydrateTarget(id: string, rec: any): RancherTarget | null {
+  const slug = String(rec?.['Slug'] || '').trim();
+  if (!slug) return null; // no public page / 1-tap link possible → unroutable
+  const name = String(rec?.['Ranch Name'] || rec?.['Operator Name'] || '').trim() || slug;
+  const ranchState = String(rec?.['State'] || '').trim() || 'local';
+  return { id, slug, name, ranchState };
 }
 
 /**
@@ -251,9 +336,11 @@ async function stampSunset(buyerId: string, now: Date): Promise<void> {
 function buildReport(plan: CampaignPlan, opts: {
   live: boolean;
   smsOn: boolean;
-  capDetail: { foodsteadMax: number; foodsteadCur: number; silverlineMax: number; silverlineCur: number };
+  capDetail: { westName: string; westMax: number; westCur: number; eastName: string; eastMax: number; eastCur: number };
   failures: string[];
   degraded: string[];
+  /** Configured-rancher skips (operational gate / config) — operator-visible. */
+  rancherSkips: string[];
   emailsDeferred: number;
   proof: SocialProof;
   smsRec: { planned: number; sent: number; deferred: number };
@@ -284,9 +371,18 @@ function buildReport(plan: CampaignPlan, opts: {
     `🐄 <b>DEMAND ROUTER</b> · ${mode} · combined email+SMS`,
     '',
     '<b>Capacity</b> (open slots / cap · outstanding-invited / new-invite budget)',
-    `• Foodstead (WEST): ${w.open} open / ${d.foodsteadMax} cap · ${w.outstanding} out / ${w.newBudget} new-budget → filling ${w.planned}`,
-    `• Silverline (EAST+CENTRAL): ${ec.open} open / ${d.silverlineMax} cap · ${ec.outstanding} out / ${ec.newBudget} new-budget → filling ${ec.planned}`,
+    `• ${d.westName} (WEST): ${w.open} open / ${d.westMax} cap · ${w.outstanding} out / ${w.newBudget} new-budget → filling ${w.planned}`,
+    `• ${d.eastName} (EAST+CENTRAL): ${ec.open} open / ${d.eastMax} cap · ${ec.outstanding} out / ${ec.newBudget} new-budget → filling ${ec.planned}`,
   ];
+  if (opts.rancherSkips.length > 0) {
+    // A2: configured rancher failed the operational gate / config anomaly —
+    // that pool is DISABLED this run (nothing sent, not even continuations).
+    lines.push('', '⛔ <b>Campaign rancher skipped (operational gate / config):</b>', ...opts.rancherSkips.map((s) => `• ${s}`));
+    const ps = plan.skippedNoRancher;
+    if (ps.west + ps.eastCentral > 0) {
+      lines.push(`• Buyers held back (roll forward, no stamp): WEST:${ps.west} · EAST+CENTRAL:${ps.eastCentral}`);
+    }
+  }
   if (opts.degraded.length > 0) {
     lines.push('', '⚠️ <b>Capacity degraded (fail-closed):</b>', ...opts.degraded.map((g) => `• ${g}`));
   }
@@ -431,7 +527,7 @@ async function executeSend(
 // ── Upgrade B: live social proof ─────────────────────────────────────────────
 //
 // Count reservations that paid a deposit in the last SOCIAL_PROOF_DAYS days
-// (overall + per the two campaign ranchers, cheap because we already hold the
+// (overall + per configured campaign rancher, cheap because we already hold the
 // rows). Returns pre-formatted lines (or '' to omit). We read the Referrals once
 // with a CREATED-agnostic Deposit-Paid filter; the pure counter does the window.
 interface SocialProof {
@@ -439,7 +535,7 @@ interface SocialProof {
   byRancher: Record<string, string>; // rancherId → line ('' when below floor)
 }
 
-async function readSocialProof(nowMs: number): Promise<SocialProof> {
+async function readSocialProof(nowMs: number, rancherIds: readonly string[]): Promise<SocialProof> {
   let rows: Array<Record<string, unknown>> = [];
   try {
     // Pull referrals with a non-empty Deposit Paid At in the window. We filter to
@@ -457,15 +553,13 @@ async function readSocialProof(nowMs: number): Promise<SocialProof> {
     return { overall: '', byRancher: {} };
   }
   const overallN = countRecentDeposits(rows, nowMs, { days: SOCIAL_PROOF_DAYS });
-  const fsN = countRecentDeposits(rows, nowMs, { days: SOCIAL_PROOF_DAYS, rancherId: FOODSTEAD.id });
-  const slN = countRecentDeposits(rows, nowMs, { days: SOCIAL_PROOF_DAYS, rancherId: SILVERLINE.id });
-  return {
-    overall: socialProofLine(overallN),
-    byRancher: {
-      [FOODSTEAD.id]: socialProofLine(fsN),
-      [SILVERLINE.id]: socialProofLine(slN),
-    },
-  };
+  const byRancher: Record<string, string> = {};
+  for (const id of rancherIds) {
+    byRancher[id] = socialProofLine(
+      countRecentDeposits(rows, nowMs, { days: SOCIAL_PROOF_DAYS, rancherId: id }),
+    );
+  }
+  return { overall: socialProofLine(overallN), byRancher };
 }
 
 /**
@@ -490,6 +584,7 @@ async function runSmsRecovery(
   live: boolean,
   smsOn: boolean,
   proof: SocialProof,
+  targets: CampaignRanchers,
   failures: string[],
 ): Promise<{ planned: number; sent: number; deferred: number }> {
   const nowMs = now.getTime();
@@ -507,8 +602,10 @@ async function runSmsRecovery(
 
   for (const b of eligible) {
     const f = b.fields;
-    const rancher = rancherForState(f['State']);
-    if (!rancher) continue; // unroutable → can't build a link
+    // A2: CONFIGURED campaign rancher for the buyer's coast — a gated-out /
+    // skipped pool (null) is never routed to, so no recovery SMS link either.
+    const rancher = campaignRancherForState(f['State'], targets);
+    if (!rancher) continue; // unroutable state or pool disabled → can't build a link
     planned++;
 
     // SMS SEND-WINDOW gate (Upgrade C) — defer (no stamp) if outside the local
@@ -599,13 +696,15 @@ interface RecoveryRow extends RecoveryReferralLike {
   Buyer?: unknown;
 }
 
-// BLAST-RADIUS BOUND (A7): the campaign ranchers this recovery flow is allowed
-// to touch. The first LIVE run must NEVER email a platform-wide historical
-// backlog of every abandoned reserve ever — only reserves pinned to the two
-// campaign ranchers, created within the recent window. Env-tunable.
-const CAMPAIGN_RANCHER_IDS: ReadonlySet<string> = new Set([FOODSTEAD.id, SILVERLINE.id]);
-
-async function readRecoveryReferrals(nowMs: number): Promise<RecoveryRow[]> {
+// BLAST-RADIUS BOUND (A7): `campaignRancherIds` = the CONFIGURED campaign
+// ranchers this recovery flow is allowed to touch (parseCampaignRancherIds —
+// defaults to Foodstead+Silverline). The first LIVE run must NEVER email a
+// platform-wide historical backlog of every abandoned reserve ever — only
+// reserves pinned to the campaign ranchers, created within the recent window.
+async function readRecoveryReferrals(
+  nowMs: number,
+  campaignRancherIds: ReadonlySet<string>,
+): Promise<RecoveryRow[]> {
   // Pull deposit-intent referrals that have NOT paid a deposit. Keep the formula
   // permissive (the pure selector enforces status/refund/age) and refund-field-
   // free (mirrors deposit-accept-sla: {Refunded At} may not exist on Referrals,
@@ -634,7 +733,7 @@ async function readRecoveryReferrals(nowMs: number): Promise<RecoveryRow[]> {
     // Rancher scope — only reserves pinned to the campaign ranchers (A7).
     const links = (r.Rancher || r['Suggested Rancher']) as unknown;
     const ids = Array.isArray(links) ? links.map(String) : [];
-    return ids.some((id) => CAMPAIGN_RANCHER_IDS.has(id));
+    return ids.some((id) => campaignRancherIds.has(id));
   });
 
   // Enrich with the linked Payments row (authoritative refund/dispute signal),
@@ -892,14 +991,21 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const now = new Date();
   const nowMs = now.getTime();
 
+  // A2: the campaign's rancher set is CONFIG, not code — DEMAND_CAMPAIGN_
+  // RANCHER_IDS (positional: 1st=WEST, 2nd=EAST+CENTRAL) with the original
+  // Foodstead+Silverline pair as the default. Pure parse (unit-tested);
+  // readCapacity then validates every id with isRancherOperationalForBuyers.
+  const campaignRancherIds = parseCampaignRancherIds(process.env);
+  const campaignRancherIdSet: ReadonlySet<string> = new Set(campaignRancherIds);
+
   // 1. Capacity + 2. buyers + Upgrade B social proof + Upgrade A recovery
   // referrals (parallel reads). Recovery rows are read BEFORE the plan so their
   // buyers can be excluded from the wave arc (A4 double-touch fix).
   const [cap, buyers, proof, recoveryRows] = await Promise.all([
-    readCapacity(),
+    readCapacity(campaignRancherIds),
     readBuyers(),
-    readSocialProof(nowMs),
-    readRecoveryReferrals(nowMs),
+    readSocialProof(nowMs, campaignRancherIds),
+    readRecoveryReferrals(nowMs, campaignRancherIdSet),
   ]);
 
   // A4: consumer ids that have an OPEN abandoned-reserve referral → owned by
@@ -922,6 +1028,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
     conversionBuffer: Number(process.env.CAMPAIGN_CONVERSION_BUFFER || 3),
     smsWaves: new Set(), // email-led; SMS handled by runSmsRecovery
     excludeBuyerIds, // A4: skip buyers owned by reserve-recovery this run
+    ranchers: cap.targets, // A2: configured + operational-gated rancher per pool
   });
 
   const failures: string[] = [];
@@ -969,7 +1076,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   }
 
   // 4. Upgrade C — SMS recovery touch (runs in dry-run as a plan count too).
-  const smsRec = await runSmsRecovery(buyers, now, live, smsOn, proof, failures);
+  const smsRec = await runSmsRecovery(buyers, now, live, smsOn, proof, cap.targets, failures);
 
   // 5. Upgrade A — abandoned-reserve recovery (email then later SMS). Reuses the
   // already-read recoveryRows (scoped + age-bounded — A7) so no double read.
@@ -985,6 +1092,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
         capDetail: cap.detail,
         failures,
         degraded: cap.degraded,
+        rancherSkips: cap.skipped,
         emailsDeferred,
         proof,
         smsRec,
@@ -1004,9 +1112,15 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const recoSummary =
     `reserve-recovery email=${recovery.emailSent}/${recovery.emailPlanned} sms=${recovery.smsSent}/${recovery.smsPlanned}` +
     ` · sms-recovery=${smsRec.sent}/${smsRec.planned}`;
+  // A2: operator-visible skip note (only when a configured rancher was gated
+  // out / config anomaly) — full detail is in the Telegram report.
+  const poolSkips = plan.skippedNoRancher.west + plan.skippedNoRancher.eastCentral;
+  const skipNote = cap.skipped.length > 0
+    ? ` · rancher-skips=${cap.skipped.length} (held-back buyers=${poolSkips}, see Telegram)`
+    : '';
   const notes = live
-    ? `LIVE email=${emailsSent}/${planned} (deferred=${emailsDeferred}) ${recoSummary} waitlist=${waitlisted} sunset=${sunsetted} suppressed=${suppressedTotal} failures=${failures.length} (slots W=${cap.west} E/C=${cap.eastCentral})`
-    : `DRY-RUN would email=${planned} (defer=${emailsDeferred}) ${recoSummary} · waitlist=${plan.waitlist.length} sunset=${plan.sunset.length} suppressed=${suppressedTotal} (slots W=${cap.west} E/C=${cap.eastCentral}) — set CAMPAIGN_LIVE=true to arm`;
+    ? `LIVE email=${emailsSent}/${planned} (deferred=${emailsDeferred}) ${recoSummary} waitlist=${waitlisted} sunset=${sunsetted} suppressed=${suppressedTotal} failures=${failures.length} (slots W=${cap.west} E/C=${cap.eastCentral})${skipNote}`
+    : `DRY-RUN would email=${planned} (defer=${emailsDeferred}) ${recoSummary} · waitlist=${plan.waitlist.length} sunset=${plan.sunset.length} suppressed=${suppressedTotal} (slots W=${cap.west} E/C=${cap.eastCentral})${skipNote} — set CAMPAIGN_LIVE=true to arm`;
 
   return { status, recordsTouched, notes };
 }
