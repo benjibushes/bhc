@@ -264,7 +264,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
 
           {/* Merch banner — drives traffic to Shopify /shop from highest-engagement surface */}
           <a
-            href="https://buyhalfcow.com/shop"
+            href="https://www.buyhalfcow.com/shop"
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => trackEvent('shop_click', { surface: 'member' })}
@@ -496,6 +496,26 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                               )}
                             </div>
                           </div>
+                        )}
+
+                        {/* E5 — entry point into the buyer↔rancher thread at
+                            /checkout/<refId>/ask. Without this the thread is only
+                            reachable from the campaign link, whose 48h deposit-grant
+                            cookie expires; the member session (bhc-member-auth) is
+                            accepted by both thread APIs (ownership-checked against
+                            the referral's Buyer link), so the dashboard is the
+                            durable way back into the conversation. Rendered only
+                            for active referrals with a rancher assigned — the
+                            thread API 409s when no rancher is linked. */}
+                        {ref.rancher_id && ref.status !== 'Closed Won' && ref.status !== 'Closed Lost' && (
+                          <p className="mt-4">
+                            <Link
+                              href={`/checkout/${ref.id}/ask`}
+                              className="inline-block px-4 py-2 border border-charcoal text-charcoal hover:bg-bone-warm text-xs uppercase tracking-widest font-semibold"
+                            >
+                              Message your rancher →
+                            </Link>
+                          </p>
                         )}
                       </div>
                     );

@@ -58,7 +58,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   const skipReasons: Record<string, number> = {};
 
   {
-    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
     const now = Date.now();
     const DAY_MS = 86_400_000;
 

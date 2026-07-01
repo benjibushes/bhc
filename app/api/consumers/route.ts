@@ -18,7 +18,7 @@ import { leadValueUsd } from '@/lib/leadValue';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Every signup is an Approved member. No "Pending" purgatory — the old
 // Pending status created a delay where customers thought they were in but

@@ -19,7 +19,7 @@ import { sendInstantCommissionInvoice } from '@/lib/email';
 import { transition } from '@/lib/deal/transitionLive';
 
 // Site URL for internal calls (used by pass-action re-route → matching/suggest)
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // ── Multi-secret JWT verify (mirrors activate/route.ts pattern) ────────────
 // 2026-05-28 audit #14: prior version only verified against JWT_SECRET. If

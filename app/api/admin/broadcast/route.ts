@@ -207,7 +207,7 @@ export async function POST(request: Request) {
     // Build CTA link with campaign tracking
     let fullCtaLink = ctaLink;
     if (includeCTA && ctaLink) {
-      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
       if (!ctaLink.startsWith('http')) {
         fullCtaLink = `${baseUrl}${ctaLink.startsWith('/') ? '' : '/'}${ctaLink}?campaign=${campaignName}`;
       } else {

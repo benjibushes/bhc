@@ -354,7 +354,7 @@ const resend = {
     }
   }
 };
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 // Booking link for "book a call" CTAs. Prefer the explicit env var, then the
 // NEXT_PUBLIC_ mirror (same value), and finally /contact — a REAL page that
 // routes to Ben. The old fallback (buyhalfcow.com/call) was a dead 404, so any
@@ -762,6 +762,47 @@ export async function sendQuizInvite(data: {
     <p style="font-size:13px;color:#A7A29A;margin-top:10px;">Already started it in your browser? This is the same link - finish any time.</p>
   </div>
   <p style="font-size:14px;color:#6B4F3F;">Questions? Just reply.</p>
+  <div class="divider"></div>
+  <p style="font-size:12px;color:#A7A29A;">- Ben<br>BuyHalfCow</p>
+</div></body></html>`,
+    }),
+  });
+}
+
+// ── WAITING re-activation nudge (waiting-activation cron) ───────────────────
+// Area A3: invite a buyer who signed up but never finished the qualification
+// quiz back to the EXISTING /access flow. One clear CTA, calm copy, no hype.
+// Same guardedSend + rotating-from + unsubscribe-header conventions as
+// sendQuizInvite above; the resend wrapper auto-appends the CAN-SPAM footer.
+export async function sendWaitingActivationNudge(data: {
+  firstName: string;
+  email: string;
+  state?: string;
+  resumeUrl: string;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const first = data.firstName || 'there';
+  const stateLabel = data.state ? esc(data.state) : 'your area';
+  const subject = 'Your beef match is waiting — 2 minutes to finish';
+  return guardedSend({
+    templateName: 'sendWaitingActivationNudge',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+</head><body><div class="container">
+  <h1>Hey ${esc(first)} —</h1>
+  <p>A while back you started reserving a beef share with BuyHalfCow, but never finished the last step.</p>
+  <p>Qualified ranchers in ${stateLabel} have open slots right now. Finishing takes about two minutes — a few quick questions so I know your size, timing, and storage, and can match you with the right rancher.</p>
+  <p>No payment. It just tells me what you actually want.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.resumeUrl}" class="cta">Finish my match &rarr;</a>
+  </div>
+  <p style="font-size:14px;color:#6B4F3F;">If the timing's off, no problem — just reply and tell me.</p>
   <div class="divider"></div>
   <p style="font-size:12px;color:#A7A29A;">- Ben<br>BuyHalfCow</p>
 </div></body></html>`,
@@ -1806,7 +1847,7 @@ export async function sendRancherGoLiveEmail(data: {
   email: string;
   dashboardUrl?: string;
 }) {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
   const dashboardUrl = data.dashboardUrl || `${baseUrl}/rancher`;
   const subject = "You're Live — Buyer Leads Are Coming";
   return guardedSend({

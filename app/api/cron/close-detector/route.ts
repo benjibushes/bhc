@@ -39,7 +39,7 @@ import { withCronRun } from '@/lib/cronRun';
 export const maxDuration = 60;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Min days since intro before we ask. Real ranch beef has 3-6 week pickup
 // windows so 7 days is the earliest "did it close yet?" makes sense.

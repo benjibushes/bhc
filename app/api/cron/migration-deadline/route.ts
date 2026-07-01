@@ -33,7 +33,7 @@ import { JWT_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 180;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 // Operator booking link is resolved once per run via getOperatorBookingUrl()
 // (lib/calBooking.ts) and threaded into buildNudgeEmail — single source of
 // truth, never a dead hardcoded slug (incident 2026-06-14).

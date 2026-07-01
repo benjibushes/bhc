@@ -32,7 +32,7 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 type VolumeBand = '<5' | '5-25' | '25-100' | '100+';
 type Constraint = 'more_buyers' | 'better_pricing' | 'easier_logistics' | 'brand_visibility' | 'all_above';

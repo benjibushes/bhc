@@ -40,7 +40,7 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 function redirectBaseFrom(req: Request): string {
   try {

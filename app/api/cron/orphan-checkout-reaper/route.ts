@@ -373,7 +373,7 @@ async function realHandler(_request: Request): Promise<ReaperResult> {
                   // opt-in inside sendSMSToConsumer). Non-fatal on failure.
                   if (SMS_ENABLED) {
                     try {
-                      const depositUrl = `${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/checkout/${referralId}/deposit`;
+                      const depositUrl = `${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/checkout/${referralId}/deposit`;
                       const sent = await sendSMSToConsumer({
                         consumer: buyer,
                         body:

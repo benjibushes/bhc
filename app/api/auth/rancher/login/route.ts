@@ -137,7 +137,7 @@ export async function POST(request: Request) {
       { expiresIn: '14d' }
     );
 
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
     const loginUrl = `${siteUrl}/rancher/verify?token=${token}`;
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
 

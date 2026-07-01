@@ -11,6 +11,7 @@ import { createRecord, updateRecord, getAllRecords, getRecordById, TABLES } from
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { refundReferralClearFields } from '@/lib/refundLifecycle';
 
 export type PaymentStatus = 'pending' | 'succeeded' | 'refunded' | 'failed' | 'abandoned' | 'requires_webhook_replay';
 export type PayoutStatus = 'pending' | 'paid' | 'failed';
@@ -465,16 +466,12 @@ async function restoreReferralAfterRefund(
   const buyerIds: string[] = (referral['Buyer'] || []) as string[];
   const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
 
-  // 1. Flip Referral state. Clear Closed Won-only fields. typecast creates
-  // the 'Refunded' singleSelect option if it doesn't exist yet.
-  const referralUpdates: Record<string, any> = {
-    'Status': 'Refunded',
-    'Closed At': null,
-    'Sale Amount': null,
-    'Commission Due': null,
-    'Commission Status': null,
-    'Refunded At': now,
-  };
+  // 1. Flip Referral state. Clear Closed Won-only fields PLUS the deposit/
+  // accept lifecycle stamps (C2: stale Deposit Paid At let send-final-invoice
+  // bill a refunded buyer; stale Rancher Accepted At blocked re-deposit).
+  // Field set is pure + unit-tested in lib/refundLifecycle.test.ts. typecast
+  // creates the 'Refunded' singleSelect option if it doesn't exist yet.
+  const referralUpdates: Record<string, any> = refundReferralClearFields(now);
   try {
     await updateRecord(TABLES.REFERRALS, referralId, referralUpdates);
   } catch (e: any) {
@@ -601,6 +598,16 @@ export interface ReleasePayoutInput {
   reason: 'fulfillment_confirmed' | 'dispute_resolved';
 }
 
+/**
+ * @deprecated DEAD PATH under the direct-charge model (Area E4a, 2026-07-01).
+ * releasePayout() has ZERO callers: BHC charges deposits directly on the
+ * rancher's Connect account, so the platform never creates transfers and no
+ * code path ever writes the escrow Payouts table this function feeds. That
+ * left /rancher/billing's "Recent payouts" reading a permanently-empty table;
+ * the billing UI now reads LIVE Stripe payouts instead (see the stripePayouts
+ * merge in app/api/rancher/billing/data/route.ts). Kept, not deleted, per the
+ * zero-risk rule — removal belongs to a dedicated cleanup slice.
+ */
 export async function releasePayout(input: ReleasePayoutInput): Promise<{ id: string }> {
   // Idempotency: skip if a Payout row already exists for this transfer id.
   const safeTransferId = input.stripeTransferId.replace(/"/g, '\\"');

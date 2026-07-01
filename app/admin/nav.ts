@@ -38,6 +38,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
   },
   { group: 'PIPELINE', icon: '📨', label: 'All deals', href: '/admin/referrals', shortcut: 'g r' },
   { group: 'PIPELINE', icon: '📬', label: 'Inquiries', href: '/admin/inquiries' },
+  { group: 'PIPELINE', icon: '🕓', label: 'Lead timeline', href: '/admin/timeline' },
   { group: 'PIPELINE', icon: '📋', label: 'Full Dashboard', href: '/admin', shortcut: 'g d' },
 
   // MONEY — admin-only: refunds, payments, commissions

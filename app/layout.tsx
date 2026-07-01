@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Inter } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import Header from "./components/Header";
 import PromoBar from "./components/PromoBar";
@@ -32,11 +34,11 @@ export const metadata: Metadata = {
   keywords: ["ranch beef", "grass-fed beef", "direct from rancher", "ranch land deals", "certified ranchers", "private network", "beef buying", "ranch partnerships"],
   authors: [{ name: "BuyHalfCow" }],
   creator: "BuyHalfCow",
-  metadataBase: new URL("https://buyhalfcow.com"),
+  metadataBase: new URL("https://www.buyhalfcow.com"),
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://buyhalfcow.com",
+    url: "https://www.buyhalfcow.com",
     title: "BuyHalfCow — Private Access Network",
     description: "Private network connecting verified ranchers, serious buyers, and partners.",
     siteName: "BuyHalfCow",
@@ -67,8 +69,8 @@ const jsonLd = {
   '@context': 'https://schema.org',
   '@type': 'Organization',
   name: 'BuyHalfCow',
-  url: 'https://buyhalfcow.com',
-  logo: 'https://buyhalfcow.com/bhc-logo.png',
+  url: 'https://www.buyhalfcow.com',
+  logo: 'https://www.buyhalfcow.com/bhc-logo.png',
   description: 'Private membership network connecting verified American ranchers with serious buyers. Direct ranch beef, no middlemen.',
   address: {
     '@type': 'PostalAddress',
@@ -123,6 +125,10 @@ export default function RootLayout({
             covers every page, including focused flows. GPC browsers are
             opted out silently and never see it. */}
         <ConsentBanner />
+        {/* C4 — Vercel RUM (page analytics + Core Web Vitals). Both are
+            no-ops off Vercel and add nothing until deployed there. */}
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

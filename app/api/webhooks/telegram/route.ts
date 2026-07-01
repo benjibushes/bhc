@@ -18,7 +18,7 @@ import { tierFor, commissionRateForTier, TIERS } from '@/lib/tiers';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 
 // ─── Waitlist-to-matched blast: when a rancher goes live, auto-match waiting buyers ──
@@ -4968,7 +4968,7 @@ Confirm send?`;
       else if (text === '/status') {
         try {
           await sendTelegramMessage(chatId, '🔍 Running health checks...');
-          const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+          const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
           const cronSecret = process.env.CRON_SECRET || '';
           const res = await fetch(`${SITE_URL}/api/health?secret=${encodeURIComponent(cronSecret)}`);
           const data = await res.json();
@@ -5222,7 +5222,7 @@ Confirm send?`;
                     rancherEmail,
                     rancherPhone: rancher['Phone'] || '',
                     rancherSlug: rancher['Slug'] || '',
-                    loginUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/member`,
+                    loginUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/member`,
                     quarterPrice: Number(rancher['Quarter Price']) || undefined,
                     quarterLbs: rancher['Quarter lbs'] || '',
                     halfPrice: Number(rancher['Half Price']) || undefined,

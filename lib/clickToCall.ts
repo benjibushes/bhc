@@ -53,7 +53,7 @@ const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const FROM_NUMBER = process.env.TWILIO_FROM_NUMBER;
 const OPERATOR_PHONE = process.env.BHC_OPERATOR_PHONE;
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 /**
  * Initiate a click-to-call. Connects operator (Ben) to buyer via

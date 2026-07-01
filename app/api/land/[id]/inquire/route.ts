@@ -115,7 +115,7 @@ export async function POST(
             <h1 style="font-family:Georgia,serif;font-size:22px;margin:0 0 20px;">Inquiry sent</h1>
             <p style="color:#6B4F3F;">Hi ${name},</p>
             <p style="color:#6B4F3F;">We forwarded your inquiry on the <strong>${acreage}-acre ${propertyType}</strong> in ${propertyLocation} (asking ${askingPrice}) to ${sellerName}. They typically respond within 1-3 business days.</p>
-            <p style="color:#6B4F3F;">Want to see more listings or get notified when new ones go up? <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/access" style="color:#0E0E0E;">Join the network →</a></p>
+            <p style="color:#6B4F3F;">Want to see more listings or get notified when new ones go up? <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/access" style="color:#0E0E0E;">Join the network →</a></p>
             <p style="color:#6B4F3F;margin-top:24px;">— Benjamin, BuyHalfCow</p>
           </div>`,
       });

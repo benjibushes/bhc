@@ -24,7 +24,7 @@ import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 120;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 interface CronResult {
   status: 'success' | 'partial' | 'error' | 'maintenance-blocked';

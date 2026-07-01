@@ -39,7 +39,7 @@ function isValidEmail(s: string): boolean {
 }
 
 function siteUrl(): string {
-  return process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  return process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 }
 
 async function findProspect(slug: string) {

@@ -44,7 +44,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   // 0=Sunday, 1=Monday. Use UTC so we don't drift across DST.
   const today = new Date();
   const isMonday = today.getUTCDay() === 1;
-  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
   const ranchers = await getAllRecords(TABLES.RANCHERS);
     const now = new Date();

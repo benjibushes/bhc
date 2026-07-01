@@ -16,6 +16,7 @@ import { recordDeposit } from '@/lib/contracts/payments';
 import { MIN_TIER_PRICE, deriveDeposit } from '@/lib/pricing';
 import { tierFor, TIERS, commissionRateForTier } from '@/lib/tiers';
 import { resolveDepositAuth } from '@/lib/buyerAuth';
+import { claimOnce } from '@/lib/rancherCapacity';
 import { checkOriginGuard } from '@/lib/csrfGuard';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
@@ -23,7 +24,7 @@ import { metaEventId } from '@/lib/analytics';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 const CUT_LABELS: Record<string, string> = {
   quarter: 'Quarter Cow',
@@ -245,6 +246,37 @@ export async function POST(req: Request) {
   // deposit + platform fee).
   const platformFeeCents = Math.round(fullSaleCents * TIERS[tier].commissionRate);
   const totalChargedCents = amountCents + platformFeeCents;
+
+  // M5/C5 concurrent-create serialization. The re-pay guard above only trips
+  // on POST-settlement signals (Deposit Paid At / Awaiting Payment / Slot
+  // Locked) — nothing is stamped while a Checkout Session is merely LIVE.
+  // Two concurrent POSTs for DIFFERENT cuts (Tab A=Quarter, Tab B=Half) both
+  // pass it, and the Stripe idempotency key varies by cut (amount+fullSale
+  // folded in), so each tab gets its own live hosted page → the buyer can
+  // complete both and pay TWO deposits. Serialize session creation per
+  // referral with a short-lived atomic claim (SET NX EX via claimOnce).
+  // No release helper exists — on any failure after the claim (Stripe error,
+  // recordDeposit fail) the 120s TTL expires naturally and the buyer retries.
+  // Redis-down: claimOnce degrades OPEN (returns true) — availability over
+  // serialization; identical-cut double-submits are still deduped by the
+  // cut-specific Stripe idempotency key.
+  let depositCreateClaimed = true;
+  try {
+    depositCreateClaimed = await claimOnce(`deposit-create:${referralId}`, 120);
+  } catch (claimErr: any) {
+    // Never let claim infrastructure block a legitimate buyer — fail open.
+    console.warn('[checkout/deposit] deposit-create claim errored (allowing):', claimErr?.message);
+    depositCreateClaimed = true;
+  }
+  if (!depositCreateClaimed) {
+    return NextResponse.json(
+      {
+        error: 'checkout_in_progress',
+        message: 'Hang on — your checkout is already being prepared in another tab. Use that tab, or wait a few seconds and try again.',
+      },
+      { status: 409 },
+    );
+  }
 
   // Create Stripe Checkout Session
   let result: { url: string; paymentIntentId: string; sessionId: string; connectAccountId: string };

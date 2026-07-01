@@ -12,6 +12,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
 // Order request endpoint — buyer fills inline form on rancher landing page.
 // No external redirect to rancher's website. We capture the request, link
@@ -77,11 +78,39 @@ function isValidEmail(s: string): boolean {
 }
 
 export async function POST(req: Request) {
+  // Rate limit order requests. No-op when Upstash env unset (safe fallthrough)
+  // — same limiter + semantics as /api/consumers. This route is fully
+  // anonymous and creates Consumer + Referral rows and fires rancher/buyer
+  // emails + Telegram, so it's a bot magnet under paid traffic. 5/min/IP.
+  const ip = getRequestIp(req);
+  const rl = await rateLimit(`order-req:${ip}`, { requests: 5, window: '1m' });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Too many order requests from this network — wait a minute and try again.' },
+      { status: 429 },
+    );
+  }
+
   let body: Record<string, any> = {};
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+
+  // Honeypot — the rancher-page order form renders a hidden `website` field
+  // (same field name /api/consumers uses). Real users never fill it; bots
+  // that POST it get a fake success so they don't adapt. Absent field = pass,
+  // so older clients / non-form callers are unaffected. No rows created, no
+  // sends fired.
+  if (typeof body.website === 'string' && body.website.trim().length > 0) {
+    return NextResponse.json({
+      success: true,
+      referralId: null,
+      rancherName: '',
+      ranchName: '',
+      expectedResponseHours: 48,
+    });
   }
 
   const slug = String(body.slug || '').trim();

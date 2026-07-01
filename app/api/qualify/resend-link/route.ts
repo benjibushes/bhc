@@ -16,7 +16,7 @@ import { JWT_SECRET } from '@/lib/secrets';
 
 export const dynamic = 'force-dynamic';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 function esc(s: string): string {
   return String(s || '')

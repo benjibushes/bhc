@@ -35,7 +35,7 @@ async function realHandler(
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
 
-  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
   const now = Date.now();
   const stuckCutoff = now - STUCK_DAYS * DAY_MS;
   const remindCutoff = now - REMIND_INTERVAL_DAYS * DAY_MS;

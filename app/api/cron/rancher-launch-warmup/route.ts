@@ -12,7 +12,7 @@ import jwt from 'jsonwebtoken';
 export const maxDuration = 60;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 import { JWT_SECRET } from '@/lib/secrets';
 
 // Global per-run caps — protects sender reputation during mass re-engagement.

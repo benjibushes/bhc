@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     description:
       'Sell quarter, half, and whole cows direct to buyers in your state. Free to start, $0 up front — pay only when you sell, or pick a plan with commission as low as 0%.',
     type: 'website',
-    url: 'https://buyhalfcow.com/sell',
+    url: 'https://www.buyhalfcow.com/sell',
   },
 };
 

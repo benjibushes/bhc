@@ -37,7 +37,7 @@ import { normalizeState } from '@/lib/states';
 
 export const maxDuration = 120;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Days to wait BEFORE each touch, indexed by touches-already-sent.
 // [0,2,4,7] → touch1 immediately, touch2 +2d after touch1, etc. Length = max touches.

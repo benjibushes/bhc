@@ -6,7 +6,7 @@ import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 export type BulkRouteSummary = {
   state: string;

@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import {
   routingWeightForTier,
   retainerPriorityCompare,
+  retainerPriorityCompareWithOverride,
+  parseRoutingWeightOverride,
   RETAINER_FLOOR_SLACK,
 } from './routingPriority';
 
@@ -53,4 +55,45 @@ test('(e) two equal-weight retainers → tie (0), load-balance splits them', () 
 
 test('both empty: retainer beats free regardless of absolute load', () => {
   assert.ok(retainerPriorityCompare(RANCH, 0, FREE, 0) < 0);
+});
+
+// ── Per-rancher operator override (Ashcraft: all TX leads regardless of tier) ─
+test('parseRoutingWeightOverride: number in, garbage/empty/≤0 → null', () => {
+  assert.equal(parseRoutingWeightOverride(100), 100);
+  assert.equal(parseRoutingWeightOverride('100'), 100); // Airtable string shape
+  assert.equal(parseRoutingWeightOverride(null), null);
+  assert.equal(parseRoutingWeightOverride(undefined), null);
+  assert.equal(parseRoutingWeightOverride(''), null);
+  assert.equal(parseRoutingWeightOverride('abc'), null);
+  assert.equal(parseRoutingWeightOverride(0), null);
+  assert.equal(parseRoutingWeightOverride(-5), null);
+});
+
+test('override wins ABSOLUTELY — no starvation floor (heavy-loaded override still first)', () => {
+  // Ashcraft override=100 with 41 active refs vs free rancher with 0 refs:
+  // tier compare would defer (floor exceeded); override must still win.
+  assert.ok(retainerPriorityCompareWithOverride(FREE, 41, 100, FREE, 0, null) < 0);
+  assert.ok(retainerPriorityCompareWithOverride(FREE, 0, null, FREE, 41, 100) > 0);
+  // Override even beats a Ranch-tier retainer.
+  assert.ok(retainerPriorityCompareWithOverride(FREE, 41, 100, RANCH, 0, null) < 0);
+});
+
+test('no override on either side → identical to the floored tier compare', () => {
+  assert.equal(
+    retainerPriorityCompareWithOverride(RANCH, 5, null, FREE, 1, null),
+    retainerPriorityCompare(RANCH, 5, FREE, 1),
+  );
+  assert.equal(
+    retainerPriorityCompareWithOverride(RANCH, 1, null, FREE, 1, null),
+    retainerPriorityCompare(RANCH, 1, FREE, 1),
+  );
+});
+
+test('two equal overrides → fall through to load-balance (fair split)', () => {
+  assert.equal(retainerPriorityCompareWithOverride(FREE, 3, 100, FREE, 9, 100), 0);
+});
+
+test('override below a tier weight can also DEMOTE (operator intent both ways)', () => {
+  // override=1 on a Ranch rancher vs plain Pasture (eff 1 vs 2) → pasture first
+  assert.ok(retainerPriorityCompareWithOverride(RANCH, 0, 1, PASTURE, 0, null) > 0);
 });

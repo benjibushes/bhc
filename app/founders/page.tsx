@@ -77,7 +77,7 @@ interface PublicStats {
 
 async function fetchPublicStats(): Promise<PublicStats> {
   try {
-    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
     const res = await fetch(`${SITE_URL}/api/stats/public`, { next: { revalidate: 300 } });
     if (!res.ok) throw new Error(`stats fetch returned ${res.status}`);
     return await res.json();

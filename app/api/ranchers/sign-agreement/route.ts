@@ -39,7 +39,7 @@ export async function GET(request: Request) {
 
     if (rancher['Agreement Signed']) {
       // Give them a fresh dashboard link so they're not stuck
-      const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
       const rancherEmail = rancher['Email'] || '';
       const loginToken = jwt.sign(
         { type: 'rancher-login', rancherId: decoded.rancherId, email: rancherEmail },
@@ -195,7 +195,7 @@ export async function POST(request: Request) {
     const rancherName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
     const ranchName = rancher['Ranch Name'] || rancherName;
     const rancherEmail = rancher['Email'] || '';
-    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
     const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@buyhalfcow.com';
 
     // Create a login token so they can go straight to their dashboard.

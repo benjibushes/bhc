@@ -8,7 +8,7 @@ import {
   FOUNDERS_TEST_MODE,
 } from '@/lib/secrets';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // /api/founders/checkout
 //

@@ -27,7 +27,7 @@ import {
   getRecordById,
   TABLES,
 } from '@/lib/airtable';
-import { settleBuyerDeposit, settleFinalInvoice } from '@/lib/stripeSettlement';
+import { settleBuyerDeposit, settleFinalInvoice, isPermanentSettlementError } from '@/lib/stripeSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
 import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
@@ -319,7 +319,23 @@ export async function POST(request: Request) {
         } catch (e: any) {
           console.error('[stripe-connect] payment_intent.succeeded settlement failed:', e);
           await flipStripeEventFailed(event.id, e?.message || 'unknown');
-          return NextResponse.json({ received: true });
+          // C1: these deposit + final-invoice PIs are DIRECT charges on the
+          // connected account, so Stripe delivers payment_intent.succeeded ONLY
+          // to THIS endpoint. Returning 200 on a TRANSIENT failure (Airtable
+          // 429/timeout) orphaned real paid money — Stripe treats 200 as success
+          // and never redelivers. Mirror the platform webhook (stripe/route.ts):
+          // return 5xx on a transient failure so Stripe redelivers and the
+          // deposit/final-invoice self-heals. This is SAFE because both settle*
+          // functions throw only before/at their idempotency anchor, and a
+          // redelivered event re-runs (flipStripeEventFailed sets Status='failed',
+          // and the dedup at the top skips only 'processed') into the pi.id-keyed
+          // guards above — so a redelivery can never double-settle or double-notify.
+          // Only a PERMANENT failure (malformed metadata that can never settle)
+          // returns 200 to stop pointless 3-day redelivery.
+          if (isPermanentSettlementError(e)) {
+            return NextResponse.json({ received: true, permanent: true });
+          }
+          return NextResponse.json({ error: 'settlement_retry' }, { status: 500 });
         }
         break;
       }
@@ -673,7 +689,7 @@ async function handlePayoutFailed(event: any): Promise<void> {
         html:
           `<p>hey ${firstName} — heads up, your bank rejected your latest BuyHalfCow payout ($${amount}).</p>` +
           `<p>reason: ${failureMessage}</p>` +
-          `<p>usually means a typo in your routing/account # or the account was closed. fix it in your <a href="https://buyhalfcow.com/rancher/billing">billing dashboard</a> or just reply to this email + i'll help.</p>` +
+          `<p>usually means a typo in your routing/account # or the account was closed. fix it in your <a href="https://www.buyhalfcow.com/rancher/billing">billing dashboard</a> or just reply to this email + i'll help.</p>` +
           `<p>— Ben @ BuyHalfCow</p>`,
       });
     } catch (e: any) {

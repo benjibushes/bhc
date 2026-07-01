@@ -65,6 +65,8 @@ export default function RancherOrderForm({
     state: '',
     zip: '',
     message: '',
+    // honeypot — bots fill, humans don't see (server fakes success when set)
+    website: '',
   });
   // TCPA SMS consent — UNCHECKED by default, never gates the request. Only
   // shown with the guest fields (phone is only collected when logged out).
@@ -138,6 +140,7 @@ export default function RancherOrderForm({
           message: form.message,
           // Funnel payload convention → Consumers `SMS Opt-In` server-side.
           smsOptIn,
+          website: form.website,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -239,6 +242,7 @@ export default function RancherOrderForm({
                       state: session?.state || '',
                       zip: '',
                       message: '',
+                      website: '',
                     });
                     setSmsOptIn(false);
                   }}
@@ -264,6 +268,17 @@ export default function RancherOrderForm({
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
+                  {/* Honeypot — hidden field, real users don't see it */}
+                  <input
+                    type="text"
+                    name="website"
+                    value={form.website}
+                    onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))}
+                    tabIndex={-1}
+                    autoComplete="off"
+                    style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px' }}
+                    aria-hidden="true"
+                  />
                   {!session && (
                     <>
                       <input

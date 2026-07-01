@@ -54,3 +54,40 @@ export function retainerPriorityCompare(
   if (higherRefs <= lowerRefs + floorSlack) return aWeight > bWeight ? -1 : 1;
   return 0;
 }
+
+// ── Per-rancher operator override ────────────────────────────────────────────
+// The Airtable 'Routing Weight Override' number field lets the operator pin a
+// SPECIFIC rancher ahead of (or behind) the tier ladder — e.g. "Ashcraft gets
+// every TX lead regardless of tier" = override 100. Semantics differ from tier
+// weights on purpose:
+//   • An explicit override is OPERATOR INTENT — it wins ABSOLUTELY among
+//     eligible ranchers (no starvation floor). Eligibility + capacity still
+//     gate upstream, so an over-cap or non-operational rancher never hoards.
+//   • No override (empty/garbage/≤0 field) → null → the tier ladder + floor
+//     behave exactly as before. Zero behavior change for every other rancher.
+
+export function parseRoutingWeightOverride(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export function retainerPriorityCompareWithOverride(
+  aWeight: number,
+  aRefs: number,
+  aOverride: number | null,
+  bWeight: number,
+  bRefs: number,
+  bOverride: number | null,
+  floorSlack: number = RETAINER_FLOOR_SLACK,
+): number {
+  // Explicit override present on either side → absolute comparison, no floor.
+  if (aOverride !== null || bOverride !== null) {
+    const aEff = aOverride ?? aWeight;
+    const bEff = bOverride ?? bWeight;
+    if (aEff !== bEff) return aEff > bEff ? -1 : 1;
+    // Equal effective weights (e.g. two override-100 ranchers) → fall through
+    // to the floored tier compare so load-balance still splits them fairly.
+  }
+  return retainerPriorityCompare(aWeight, aRefs, bWeight, bRefs, floorSlack);
+}

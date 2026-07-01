@@ -33,7 +33,7 @@ import jwt from 'jsonwebtoken';
 export const maxDuration = 180;
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // ── Per-sequence revive allowlist ───────────────────────────────────────────

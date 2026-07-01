@@ -28,8 +28,9 @@ import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
+import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Tier values match the Order Type single-select on Consumers.
 type Tier = 'Quarter' | 'Half' | 'Whole' | 'Not Sure';
@@ -71,6 +72,19 @@ function scoreAnswers(a: QualifyAnswers): number {
 
 // POST /api/qualify
 export async function POST(request: Request) {
+  // Rate limit qualification submits. No-op when Upstash env unset (safe
+  // fallthrough) — same limiter + semantics as /api/consumers. A replayed
+  // qualify token in a loop = referral churn + rancher intro email/SMS/
+  // Telegram spam at send cost; this caps the blast radius. 10/min/IP.
+  const ip = getRequestIp(request);
+  const rl = await rateLimit(`qualify:${ip}`, { requests: 10, window: '1m' });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Too many attempts from this network — wait a minute and try again.' },
+      { status: 429 },
+    );
+  }
+
   let body: any;
   try {
     body = await request.json();
@@ -101,6 +115,22 @@ export async function POST(request: Request) {
   }
   if (payload.type !== 'qualify-access' || payload.consumerId !== consumerId) {
     return NextResponse.json({ error: 'Token does not authorize this qualification' }, { status: 403 });
+  }
+
+  // Per-consumer throttle — the qualify JWT is replayable within its TTL, so
+  // an IP cap alone doesn't stop a distributed replay of one token. Runs
+  // AFTER token verification so an attacker can't burn another buyer's bucket
+  // without a valid token. 5/hr is generous for a human retrying the quiz; a
+  // replay loop hits the wall fast. Same fail-open limiter as the IP gate.
+  const rlConsumer = await rateLimit(`qualify-consumer:${consumerId}`, {
+    requests: 5,
+    window: '1h',
+  });
+  if (!rlConsumer.ok) {
+    return NextResponse.json(
+      { error: 'Too many qualification attempts for this account — wait an hour and try again, or email ben@buyhalfcow.com.' },
+      { status: 429 },
+    );
   }
 
   // Validate shape — reject unknown values so client can't smuggle freeform.

@@ -70,7 +70,7 @@ export async function POST(request: Request) {
       console.log(`[backfill] skip matching/suggest for ${consumerId} — no Qualified At (run /qualify first or use operatorOverride)`);
     } else if (buyerState) {
       try {
-        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
         await fetch(`${siteUrl}/api/matching/suggest`, {
           method: 'POST',
           headers: {
