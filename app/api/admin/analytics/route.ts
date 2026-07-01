@@ -3,6 +3,7 @@ import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { requireRole } from '@/lib/adminAuth';
 import { getSpendInRange } from '@/lib/adSpend';
+import { deriveSalesMetrics, isLegacyInquirySale } from '@/lib/salesMetrics';
 
 export const maxDuration = 60;
 
@@ -44,42 +45,19 @@ export async function GET(request: Request) {
     const inquiriesInRange = inquiries.filter((i: any) => withinRange(i['Created'] || i._createdTime));
     const referralsInRange = referrals.filter((r: any) => withinRange(r['Created At'] || r['Created'] || r._createdTime));
 
-    // Legacy Inquiries "Sale Completed" path (pre-tier_v2 / manual closes).
-    const completedSales = inquiriesInRange.filter((i: any) => i['Status'] === 'Sale Completed');
-    const inquiryRevenue = completedSales.reduce(
-      (sum: number, i: any) => sum + parseFloat(i['Sale Amount'] || '0'),
-      0,
-    );
-    const inquiryCommission = completedSales.reduce(
-      (sum: number, i: any) => sum + parseFloat(i['Commission Amount'] || '0'),
-      0,
-    );
+    // Legacy Inquiries "Sale Completed" path (pre-tier_v2 / manual closes) —
+    // still used below for campaign attribution + the activity feed.
+    const completedSales = inquiriesInRange.filter(isLegacyInquirySale);
 
     // B4: the tier_v2 deposit funnel writes SALES to Referrals (+ Payments),
-    // NOT Inquiries — so these headline numbers read ~0 the moment ads drive
-    // deposit-flow sales unless we count them here. A referral is a real sale
-    // once the deposit landed (Deposit Paid At = money in) OR it reached Closed
-    // Won. Revenue = full sale value; commission = stored Commission Due.
-    const referralSales = referralsInRange.filter(
-      (r: any) => !!r['Deposit Paid At'] || String(r['Status'] || '') === 'Closed Won',
-    );
-    const referralRevenue = referralSales.reduce(
-      (sum: number, r: any) =>
-        sum + Number(r['Total Sale Amount'] || r['Sale Amount'] || r['Deposit Amount'] || 0),
-      0,
-    );
-    const referralCommission = referralSales.reduce(
-      (sum: number, r: any) => sum + Number(r['Commission Due'] || 0),
-      0,
-    );
-
-    const totalSales = completedSales.length + referralSales.length;
-    const totalRevenue = inquiryRevenue + referralRevenue;
-    const totalCommission = inquiryCommission + referralCommission;
-    // Conversion = sales per funnel LEAD (consumers), the meaningful ad-funnel
-    // rate. Was sales/inquiries — an ~empty legacy denominator that made the
-    // rate meaningless once traffic moved to the quiz→deposit funnel.
-    const conversionRate = consumersInRange.length > 0 ? totalSales / consumersInRange.length : 0;
+    // NOT Inquiries — so the headline numbers read ~0 the moment ads drive
+    // deposit-flow sales unless Referrals are counted. All derivation lives in
+    // lib/salesMetrics (pure, unit-tested): a referral is a sale once the
+    // deposit landed ('Deposit Paid At') OR it reached 'Closed Won', counted
+    // exactly ONCE — the previous inline math re-added the Closed Won slice on
+    // top of referral revenue/commission, near-doubling both the moment the
+    // first funnel deal closed. Conversion = sales per funnel LEAD (consumers).
+    const sales = deriveSalesMetrics(inquiriesInRange, referralsInRange, consumersInRange.length);
 
     const campaignStats: any[] = [];
     const campaignMap = new Map();
@@ -291,14 +269,23 @@ export async function GET(request: Request) {
       overview: {
         totalConsumers: consumersInRange.length,
         totalInquiries: inquiriesInRange.length,
-        totalSales,
-        totalRevenue: totalRevenue + refRevenue,
-        totalCommission: totalCommission + refCommission,
-        conversionRate,
+        // Deposit-funnel truth (Referrals — where tier_v2 money actually lands).
+        depositsPaid: sales.depositsPaid,
+        salesClosed: sales.salesClosed,
+        // Legacy Inquiries 'Sale Completed' count, clearly named so the old
+        // number never silently disappears.
+        legacyInquirySales: sales.legacyInquirySales,
+        totalSales: sales.totalSales,
+        // NOTE: refRevenue/refCommission (Closed Won) are NOT added here —
+        // they are already inside sales.totalRevenue/-Commission. The old
+        // `+ refRevenue` double-counted every closed funnel deal.
+        totalRevenue: sales.totalRevenue,
+        totalCommission: sales.totalCommission,
+        conversionRate: sales.conversionRate,
         totalSpend: spend.total,
         // Blended return across all paid channels. null when nothing logged.
-        blendedRoas: spend.total > 0 ? (totalCommission + refCommission) / spend.total : null,
-        blendedGmvRoas: spend.total > 0 ? (totalRevenue + refRevenue) / spend.total : null,
+        blendedRoas: spend.total > 0 ? sales.totalCommission / spend.total : null,
+        blendedGmvRoas: spend.total > 0 ? sales.totalRevenue / spend.total : null,
       },
       referralStats: {
         total: referralsInRange.length,

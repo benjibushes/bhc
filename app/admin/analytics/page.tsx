@@ -36,6 +36,10 @@ interface AnalyticsData {
   overview: {
     totalConsumers: number;
     totalInquiries: number;
+    // B4 deposit-funnel truth: tier_v2 sales live in Referrals, not Inquiries.
+    depositsPaid?: number;
+    salesClosed?: number;
+    legacyInquirySales?: number;
     totalSales: number;
     totalRevenue: number;
     totalCommission: number;
@@ -131,10 +135,13 @@ export default function AnalyticsPage() {
     setLoading(true);
     try {
       const response = await fetch(`/api/admin/analytics?sinceDays=${since}`);
-      const analyticsData = await response.json();
-      setData(analyticsData);
+      // U13: a 500 returns { error } — rendering it as data crashed the page.
+      // Route non-ok / malformed bodies to the explicit failure state instead.
+      const analyticsData = response.ok ? await response.json().catch(() => null) : null;
+      setData(analyticsData && analyticsData.overview ? analyticsData : null);
     } catch (err) {
       console.error('Error fetching analytics:', err);
+      setData(null);
     }
     setLoading(false);
   };
@@ -179,7 +186,15 @@ export default function AnalyticsPage() {
       <AdminAuthGuard>
         <main className="min-h-screen py-24 bg-bone text-charcoal">
           <Container>
-            <p className="text-center">Failed to load analytics.</p>
+            <div className="text-center space-y-4">
+              <p>Failed to load analytics.</p>
+              <button
+                onClick={() => fetchAnalytics(sinceFilter)}
+                className="px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+              >
+                Retry
+              </button>
+            </div>
           </Container>
         </main>
       </AdminAuthGuard>
@@ -254,11 +269,26 @@ export default function AnalyticsPage() {
                     {data.overview.totalInquiries}
                   </div>
                 </div>
+                {/* B4: deposit-funnel truth. tier_v2 sales land in Referrals —
+                    Deposits Paid = money in, Sales Closed = Closed Won. The
+                    legacy Inquiries count stays visible as a footnote. */}
+                <div className="p-6 border border-charcoal bg-white">
+                  <div className="text-sm text-saddle mb-1">Deposits Paid</div>
+                  <div className="text-3xl font-[family-name:var(--font-serif)]">
+                    {data.overview.depositsPaid ?? 0}
+                  </div>
+                  <div className="text-xs text-saddle mt-1">deposit money in</div>
+                </div>
                 <div className="p-6 border border-dust bg-white">
                   <div className="text-sm text-saddle mb-1">Sales Closed</div>
                   <div className="text-3xl font-[family-name:var(--font-serif)]">
-                    {data.overview.totalSales}
+                    {data.overview.salesClosed ?? data.overview.totalSales}
                   </div>
+                  {(data.overview.legacyInquirySales ?? 0) > 0 && (
+                    <div className="text-xs text-saddle mt-1">
+                      +{data.overview.legacyInquirySales} legacy (Inquiries)
+                    </div>
+                  )}
                 </div>
                 <div className="p-6 border border-charcoal bg-white">
                   <div className="text-sm text-saddle mb-1">Total Revenue</div>
@@ -277,6 +307,7 @@ export default function AnalyticsPage() {
                   <div className="text-3xl font-[family-name:var(--font-serif)]">
                     {formatPercent(data.overview.conversionRate)}
                   </div>
+                  <div className="text-xs text-saddle mt-1">sales ÷ consumers</div>
                 </div>
                 <div className="p-6 border border-dust bg-white">
                   <div className="text-sm text-saddle mb-1">Ad Spend</div>
