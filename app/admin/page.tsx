@@ -704,9 +704,19 @@ export default function AdminPage() {
                       Run Batch Approve
                     </button>
                     <button
-                      onClick={() => {
-                        const pw = prompt('Enter admin password:');
-                        if (pw) window.open(`/api/admin/setup-ai-fields?password=${encodeURIComponent(pw)}`, '_blank');
+                      onClick={async () => {
+                        // U14: the route authorizes via the admin cookie
+                        // (requireAdmin) — the old ?password= query param was
+                        // ignored server-side yet leaked the password into
+                        // browser history + Vercel access logs. Fetch with the
+                        // cookie + show the result inline instead.
+                        try {
+                          const res = await fetch('/api/admin/setup-ai-fields', { credentials: 'include' });
+                          const j = await res.json().catch(() => ({}));
+                          alert(res.ok ? `AI field setup: ${j.message || 'done'}` : `Failed: ${j.error || res.status}`);
+                        } catch {
+                          alert('AI field setup failed — try again.');
+                        }
                       }}
                       className="px-3 py-1.5 text-xs border border-dust hover:bg-dust hover:text-white transition-colors"
                     >

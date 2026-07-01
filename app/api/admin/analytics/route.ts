@@ -44,15 +44,42 @@ export async function GET(request: Request) {
     const inquiriesInRange = inquiries.filter((i: any) => withinRange(i['Created'] || i._createdTime));
     const referralsInRange = referrals.filter((r: any) => withinRange(r['Created At'] || r['Created'] || r._createdTime));
 
+    // Legacy Inquiries "Sale Completed" path (pre-tier_v2 / manual closes).
     const completedSales = inquiriesInRange.filter((i: any) => i['Status'] === 'Sale Completed');
-    const totalSales = completedSales.length;
-    const totalRevenue = completedSales.reduce((sum: number, i: any) => {
-      return sum + (parseFloat(i['Sale Amount'] || '0'));
-    }, 0);
-    const totalCommission = completedSales.reduce((sum: number, i: any) => {
-      return sum + (parseFloat(i['Commission Amount'] || '0'));
-    }, 0);
-    const conversionRate = inquiriesInRange.length > 0 ? totalSales / inquiriesInRange.length : 0;
+    const inquiryRevenue = completedSales.reduce(
+      (sum: number, i: any) => sum + parseFloat(i['Sale Amount'] || '0'),
+      0,
+    );
+    const inquiryCommission = completedSales.reduce(
+      (sum: number, i: any) => sum + parseFloat(i['Commission Amount'] || '0'),
+      0,
+    );
+
+    // B4: the tier_v2 deposit funnel writes SALES to Referrals (+ Payments),
+    // NOT Inquiries — so these headline numbers read ~0 the moment ads drive
+    // deposit-flow sales unless we count them here. A referral is a real sale
+    // once the deposit landed (Deposit Paid At = money in) OR it reached Closed
+    // Won. Revenue = full sale value; commission = stored Commission Due.
+    const referralSales = referralsInRange.filter(
+      (r: any) => !!r['Deposit Paid At'] || String(r['Status'] || '') === 'Closed Won',
+    );
+    const referralRevenue = referralSales.reduce(
+      (sum: number, r: any) =>
+        sum + Number(r['Total Sale Amount'] || r['Sale Amount'] || r['Deposit Amount'] || 0),
+      0,
+    );
+    const referralCommission = referralSales.reduce(
+      (sum: number, r: any) => sum + Number(r['Commission Due'] || 0),
+      0,
+    );
+
+    const totalSales = completedSales.length + referralSales.length;
+    const totalRevenue = inquiryRevenue + referralRevenue;
+    const totalCommission = inquiryCommission + referralCommission;
+    // Conversion = sales per funnel LEAD (consumers), the meaningful ad-funnel
+    // rate. Was sales/inquiries — an ~empty legacy denominator that made the
+    // rate meaningless once traffic moved to the quiz→deposit funnel.
+    const conversionRate = consumersInRange.length > 0 ? totalSales / consumersInRange.length : 0;
 
     const campaignStats: any[] = [];
     const campaignMap = new Map();
