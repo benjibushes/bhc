@@ -324,7 +324,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 const hasActive = !!data?.memberReferrals?.find(
                   r => r.status !== 'Closed Won' && r.status !== 'Closed Lost' && r.rancher_id
                 );
-                return <ReadyToBuyButton hasMatch={hasActive} />;
+                return <ReadyToBuyButton hasMatch={hasActive} memberEmail={member.email} />;
               })()}
 
               {/* Past Orders / Reorder — repeat customers are the highest-LTV
@@ -343,6 +343,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   <PastOrdersSection
                     orders={closedWons}
                     hasActiveOrder={hasActiveMatch}
+                    memberEmail={member.email}
                     rancherLookup={(id) => {
                       return (
                         data?.stateRanchers?.find(r => r.id === id) ||
@@ -810,10 +811,12 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
 function PastOrdersSection({
   orders,
   hasActiveOrder,
+  memberEmail,
   rancherLookup,
 }: {
   orders: MemberReferral[];
   hasActiveOrder: boolean;
+  memberEmail: string;
   rancherLookup: (id: string) => Rancher | null;
 }) {
   const [reordering, setReordering] = useState<string | null>(null);
@@ -848,7 +851,7 @@ function PastOrdersSection({
           ...prev,
           [order.id]: {
             ok: false,
-            message: data.error || 'Reorder failed. Try again or email hello@buyhalfcow.com.',
+            message: data.error || 'Reorder failed. Try again in a moment.',
           },
         }));
       }
@@ -910,6 +913,21 @@ function PastOrdersSection({
               {result && (
                 <div className={`p-3 text-sm ${result.ok ? 'border border-sage-dark bg-sage/10 text-sage-dark' : 'border border-weathered text-weathered'}`}>
                   {result.message}
+                  {/* Failure escape hatch — route to the support intake with
+                      the member's email + this order prefilled; keep the
+                      plain email as the secondary path. */}
+                  {!result.ok && (
+                    <>
+                      {' '}
+                      <Link
+                        href={`/support?email=${encodeURIComponent(memberEmail)}&ref=${encodeURIComponent(order.id)}`}
+                        className="underline"
+                      >
+                        Get help
+                      </Link>
+                      {' '}or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a>.
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -922,7 +940,7 @@ function PastOrdersSection({
 
 // Single-click "I'm ready to buy this month" signal. Pings Telegram + emails
 // the matched rancher. This is the highest-intent signal the buyer can send.
-function ReadyToBuyButton({ hasMatch }: { hasMatch: boolean }) {
+function ReadyToBuyButton({ hasMatch, memberEmail }: { hasMatch: boolean; memberEmail: string }) {
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [matchName, setMatchName] = useState<string | null>(null);
 
@@ -973,7 +991,11 @@ function ReadyToBuyButton({ hasMatch }: { hasMatch: boolean }) {
         {state === 'sending' ? 'Sending signal...' : "I'm Ready to Buy This Month"}
       </button>
       {state === 'error' && (
-        <p className="text-xs text-weathered">Couldn't send — try again in a moment or email hello@buyhalfcow.com.</p>
+        <p className="text-xs text-weathered">
+          Couldn&apos;t send — try again in a moment,{' '}
+          <Link href={`/support?email=${encodeURIComponent(memberEmail)}`} className="underline">get help</Link>, or
+          email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a>.
+        </p>
       )}
     </div>
   );

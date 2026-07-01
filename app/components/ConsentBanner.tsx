@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CONSENT_GRANTED_EVENT,
   hasGlobalPrivacyControl,
@@ -22,6 +22,7 @@ import {
  */
 export default function ConsentBanner() {
   const [visible, setVisible] = useState(false);
+  const bannerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (hasGlobalPrivacyControl()) {
@@ -30,6 +31,31 @@ export default function ConsentBanner() {
     }
     if (readConsent() === null) setVisible(true);
   }, []);
+
+  // Layout coordination — while the banner is on screen, publish its measured
+  // height (incl. safe-area padding) as --consent-h on <html> so other
+  // bottom-anchored UI (StickyMobileCTA, the deposit page's sticky pay block)
+  // can offset above it instead of being covered on mobile. The var is
+  // removed the moment a choice is made (banner unmounts) or on unmount, so
+  // everything snaps back to bottom: 0. Pure layout — no consent behavior.
+  useEffect(() => {
+    if (!visible) return;
+    const el = bannerRef.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const update = () =>
+      root.style.setProperty('--consent-h', `${el.offsetHeight}px`);
+    update();
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(update);
+      ro.observe(el);
+    }
+    return () => {
+      ro?.disconnect();
+      root.style.removeProperty('--consent-h');
+    };
+  }, [visible]);
 
   if (!visible) return null;
 
@@ -44,9 +70,16 @@ export default function ConsentBanner() {
 
   return (
     <div
+      ref={bannerRef}
       role="region"
       aria-label="Cookie consent"
-      className="fixed inset-x-0 bottom-0 z-[70] border-t border-divider/20 bg-charcoal text-bone"
+      // z-[45]: above StickyMobileCTA (z-40) so the CTA's slide-down hidden
+      // state tucks behind the banner, but BELOW modals/header (z-50) so a
+      // dialog is never partially covered by the consent bar. Safe-area
+      // padding keeps the OK/Opt-out buttons clear of the iOS home indicator;
+      // offsetHeight above measures it automatically.
+      className="fixed inset-x-0 bottom-0 z-[45] border-t border-divider/20 bg-charcoal text-bone"
+      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
     >
       <div className="mx-auto flex max-w-4xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs leading-relaxed text-bone/90">
