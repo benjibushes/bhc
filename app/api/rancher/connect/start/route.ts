@@ -84,9 +84,26 @@ async function mintOnboardingUrl(
       accountId = result.accountId;
     } catch (e: any) {
       console.error('[connect/start] V2 account create failed:', e?.message);
+      // U26: a rancher stuck at payout setup is a supply blocker (they can never
+      // take a deposit). Alert the operator with the raw detail, but return a
+      // calm human message — never the raw Stripe internals — with a help path.
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: 'Rancher stuck at Stripe Connect start (account create failed)',
+          detail: `rancher=${session.rancherId} (${String(rancher['Operator Name'] || rancher['Ranch Name'] || '')}) — ${e?.message?.slice(0, 200) || 'unknown'}`,
+          dedupeKey: `connect-start-fail-${session.rancherId}`,
+          dedupeWindowMs: 30 * 60 * 1000,
+        });
+      } catch {}
       return {
         ok: false,
-        response: NextResponse.json({ error: `Stripe account create failed: ${e?.message || 'unknown'}` }, { status: 500 }),
+        response: NextResponse.json(
+          { error: "We couldn't start your payout setup with Stripe just now. Give it another try in a moment — if it keeps happening, email hello@buyhalfcow.com and we'll finish it with you.", code: 'connect_start_failed' },
+          { status: 502 },
+        ),
       };
     }
 
@@ -123,9 +140,24 @@ async function mintOnboardingUrl(
     return { ok: true, url, accountId };
   } catch (e: any) {
     console.error('[connect/start] onboarding link failed:', e?.message);
+    // U26: same as the account-create failure — alert + calm human message.
+    try {
+      const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'system-error',
+        summary: 'Rancher stuck at Stripe Connect start (onboarding link failed)',
+        detail: `rancher=${session.rancherId} acct=${accountId} — ${e?.message?.slice(0, 200) || 'unknown'}`,
+        dedupeKey: `connect-link-fail-${session.rancherId}`,
+        dedupeWindowMs: 30 * 60 * 1000,
+      });
+    } catch {}
     return {
       ok: false,
-      response: NextResponse.json({ error: `Onboarding link failed: ${e?.message || 'unknown'}` }, { status: 500 }),
+      response: NextResponse.json(
+        { error: "We couldn't open your Stripe payout setup just now. Please try again — if it persists, email hello@buyhalfcow.com and we'll get you connected.", code: 'connect_link_failed' },
+        { status: 502 },
+      ),
     };
   }
 }

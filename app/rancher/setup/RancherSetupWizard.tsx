@@ -408,8 +408,30 @@ export default function RancherSetupWizard() {
   useEffect(() => {
     if (!connectComplete) return;
     if (!rancher) return;
-    setStep(8);
-  }, [connectComplete, rancher]);
+    let alive = true;
+    (async () => {
+      // U5: don't trust the possibly-lagged account.updated webhook. On return
+      // from Stripe, force the authoritative LIVE Connect read (POST persists
+      // the true status to this rancher's record, idempotent + self-scoped via
+      // the setup-minted session cookie), then refresh the wizard's rancher
+      // data so the Done step reflects reality. Without this, a rancher who
+      // JUST finished KYC can still see "connect your bank" from stale cache
+      // and leave thinking they're not live when they are (or vice-versa).
+      try {
+        await fetch('/api/rancher/connect/status', { method: 'POST', credentials: 'include' });
+      } catch { /* best-effort — advance regardless */ }
+      try {
+        const res = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (alive && data?.rancher) setRancher(data.rancher);
+        }
+      } catch { /* keep existing rancher data */ }
+      if (alive) setStep(8);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectComplete, rancher?.id]);
 
   // Resume-from-paid-tier-checkout handler. After a Pasture/Ranch/Operator
   // subscription clears in Stripe, tier/select's successUrl returns the rancher
@@ -2372,15 +2394,16 @@ export default function RancherSetupWizard() {
 
           // Bank: only tier_v2 ranchers settle via Stripe Connect; legacy
           // ranchers use payment links / commission invoicing, so a bank
-          // connection isn't part of their readiness. For tier_v2 we flag
-          // missing ONLY when Connect status is present AND not 'active' — the
-          // setup endpoint doesn't always surface Stripe Connect Status, and
-          // the Step-9 flow already gates completion server-side, so an absent
-          // status is treated as "don't nag" rather than a false negative.
+          // connection isn't part of their readiness. U4: the setup endpoint
+          // NOW surfaces Stripe Connect Status, so flag missing whenever a
+          // tier_v2 rancher isn't 'active' — INCLUDING the empty/never-started
+          // case, which is the exact silent-dark-rancher this fixes (a tier_v2
+          // rancher who finished the wizard but never connected a bank can't
+          // take a single deposit, so ads have nothing to route to them).
           const pricingModel = String((rancher as any)['Pricing Model'] || 'legacy').toLowerCase();
           const isTierV2 = pricingModel === 'tier_v2';
           const connectStatus = String((rancher as any)['Stripe Connect Status'] || '').toLowerCase();
-          const missingBank = isTierV2 && connectStatus !== '' && connectStatus !== 'active';
+          const missingBank = isTierV2 && connectStatus !== 'active';
 
           // Photos: zero gallery photos on file.
           const missingPhotos = parseGallery(form['Gallery Photos']).length === 0;
@@ -2462,20 +2485,27 @@ export default function RancherSetupWizard() {
             );
           }
 
-          // Something missing → calm "page is live, but finish these" nudge.
-          // Still fully proceedable; the dashboard CTAs stay primary.
+          // Something missing → calm "finish these" nudge. U4: when the BANK is
+          // the blocker (tier_v2 Connect not active), the page is NOT yet
+          // transactable — don't claim "page live". Say "almost live" and lead
+          // with the payout connection so a rancher never leaves thinking
+          // they're ready to take deposits when they can't.
+          const bankBlocks = missing.some((m) => m.key === 'bank');
           return (
             <section className="space-y-6 bg-bone border-2 border-charcoal p-7 md:p-8">
               <header className="space-y-2 text-center">
                 <p className="text-xs uppercase tracking-[0.2em] text-sage-dark font-bold">
-                  Agreement signed · page live
+                  {bankBlocks ? 'Agreement signed · almost live' : 'Agreement signed · page live'}
                 </p>
                 <h2 className="font-serif text-3xl md:text-4xl text-charcoal">
-                  {rancher.ranchName}, you&rsquo;re in.
+                  {rancher.ranchName}, you&rsquo;re {bankBlocks ? 'almost there.' : 'in.'}
                 </h2>
                 <p className="text-charcoal/85 max-w-md mx-auto leading-relaxed">
-                  Your page is live. To start closing deals, finish{' '}
-                  {missing.length === 1 ? 'this' : `these ${missing.length}`}:
+                  {bankBlocks
+                    ? <>Your page is up — but buyers can&rsquo;t reserve a share until your payout account is connected. Finish{' '}
+                        {missing.length === 1 ? 'this' : `these ${missing.length}`} to go fully live:</>
+                    : <>Your page is live. To start closing deals, finish{' '}
+                        {missing.length === 1 ? 'this' : `these ${missing.length}`}:</>}
                 </p>
               </header>
 
