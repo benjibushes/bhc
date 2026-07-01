@@ -8,21 +8,21 @@
 import type { TierSlug } from './tiers';
 
 // Higher weight = matched FIRST among equally-eligible, equally-loaded ranchers
-// whose PRIMARY state is the buyer's state. ranch (TIERS.ranch feature:
-// "Priority routing — you get the match before any other rancher") and operator
-// (inherits everything below it) are the paid tiers that SELL priority → weight
-// 3. pasture (entry paid tier, no priority perk), legacy_connect ("same buyer
-// routing as paid tiers" = in the pool, not ahead of it), and no-tier ranchers
-// stay at the baseline 1.
-//
-// To give a specific rancher priority, put them on Ranch/Operator. Legacy
-// Connect (e.g. Champion Valley) is intentionally NOT prioritized here — flip
-// its weight below only if the Legacy "same as paid" promise is meant to include
-// priority (a business decision, not a code default).
+// whose PRIMARY state is the buyer's state. The model is "a paid RETAINER earns
+// local priority over free/commission-only ranchers" (the founder's rule as
+// ranchers flip to monthly terms), GRADUATED by tier:
+//   • operator ($500/mo) + ranch ($350/mo) = top priority (weight 3) — ranch's
+//     "you get the match before any other rancher" perk, operator inherits it.
+//   • pasture ($150/mo) = the entry paid retainer → priority OVER free/legacy
+//     (weight 2), but yields to the higher-paid ranch/operator.
+//   • legacy_connect (10%, no monthly = NOT a retainer) + no-tier = baseline 1.
+// This is why a Pasture rancher (e.g. Champion Valley on the $150 term) is
+// matched ahead of a free in-state rancher, but a Ranch rancher still outranks
+// a Pasture one. Change a weight here to re-tune the priority ladder.
 export const ROUTING_WEIGHT: Record<TierSlug, number> = {
   operator: 3,
   ranch: 3,
-  pasture: 1,
+  pasture: 2,
   legacy_connect: 1,
 };
 

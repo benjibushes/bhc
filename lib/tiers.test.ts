@@ -8,18 +8,26 @@ import {
   RETAINER_FLOOR_SLACK,
 } from './routingPriority';
 
-// ── routing weights: only the paid-priority tiers (ranch/operator) get weight ──
-test('routingWeightForTier: ranch + operator get priority weight, others baseline', () => {
-  assert.equal(routingWeightForTier('ranch'), 3);
+// ── routing weights: paid retainers get graduated priority, free/legacy baseline ─
+test('routingWeightForTier: paid retainers graduated, free/legacy baseline', () => {
   assert.equal(routingWeightForTier('operator'), 3);
-  assert.equal(routingWeightForTier('pasture'), 1);
-  assert.equal(routingWeightForTier('legacy_connect'), 1); // Champion Valley's tier
-  assert.equal(routingWeightForTier(null), 1); // no tier / free
+  assert.equal(routingWeightForTier('ranch'), 3);
+  assert.equal(routingWeightForTier('pasture'), 2);       // $150 retainer — priority over free
+  assert.equal(routingWeightForTier('legacy_connect'), 1); // 10%, not a retainer
+  assert.equal(routingWeightForTier(null), 1);             // no tier / free
 });
 
 // ── the acceptance matrix for retainer priority ──────────────────────────────
-const RANCH = routingWeightForTier('ranch');   // 3
-const FREE = routingWeightForTier(null);       // 1
+const RANCH = routingWeightForTier('ranch');       // 3
+const PASTURE = routingWeightForTier('pasture');   // 2
+const FREE = routingWeightForTier(null);           // 1
+
+test('pasture ($150 retainer) beats a free rancher but yields to ranch', () => {
+  assert.ok(retainerPriorityCompare(PASTURE, 1, FREE, 1) < 0);   // pasture > free
+  assert.ok(retainerPriorityCompare(PASTURE, 1, RANCH, 1) > 0);  // ranch > pasture
+  // pasture still starvation-protected vs free
+  assert.equal(retainerPriorityCompare(PASTURE, 5, FREE, 1), 0);
+});
 
 test('(a) retainer + free, SAME load → retainer matched first', () => {
   assert.ok(retainerPriorityCompare(RANCH, 1, FREE, 1) < 0);   // a=retainer wins
