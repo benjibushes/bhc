@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Unsubscribe — BuyHalfCow',
     description: 'Manage your BuyHalfCow email preferences.',
-    url: 'https://buyhalfcow.com/unsubscribe',
+    url: 'https://www.buyhalfcow.com/unsubscribe',
     images: ['/og-image.png'],
   },
   twitter: {

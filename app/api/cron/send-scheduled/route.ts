@@ -147,7 +147,7 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       continue;
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
     const rawCtaLink = campaign['CTA Link'] || '/member';
     let fullCtaLink = rawCtaLink;
     if (campaign['Include CTA'] && rawCtaLink) {

@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Partner with BuyHalfCow',
     description: 'Partner with BuyHalfCow as a brand or affiliate. Direct ranch beef network - verified ranchers, real buying families.',
-    url: 'https://buyhalfcow.com/partner',
+    url: 'https://www.buyhalfcow.com/partner',
     images: ['/og-image.png'],
   },
   twitter: {

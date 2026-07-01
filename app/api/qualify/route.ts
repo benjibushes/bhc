@@ -29,7 +29,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Tier values match the Order Type single-select on Consumers.
 type Tier = 'Quarter' | 'Half' | 'Whole' | 'Not Sure';

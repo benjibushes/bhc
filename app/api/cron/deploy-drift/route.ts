@@ -26,7 +26,7 @@ import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 60;
 
-const PROD_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const PROD_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const REPO_OWNER = process.env.DEPLOY_DRIFT_REPO_OWNER || 'benjibushes';
 const REPO_NAME = process.env.DEPLOY_DRIFT_REPO_NAME || 'bhc';
 const BRANCH = 'main';

@@ -7,7 +7,7 @@ import { verifyJwtWithFallback } from '@/lib/jwt';
 
 import { JWT_SECRET } from '@/lib/secrets';
 const MEMBER_AUTH_COOKIE = 'bhc-member-auth';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Open-redirect defense for the GET magic-link flow. `next` arrives via the
 // query string (i.e. fully buyer-controlled — anyone can craft an intro-email

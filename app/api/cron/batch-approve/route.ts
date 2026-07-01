@@ -17,7 +17,7 @@ import jwt from 'jsonwebtoken';
 export const maxDuration = 120;
 
 import { JWT_SECRET } from '@/lib/secrets';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));

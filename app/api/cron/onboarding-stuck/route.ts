@@ -27,7 +27,7 @@ import { JWT_SECRET } from '@/lib/secrets';
 export const maxDuration = 90;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Per-run ceiling — protects sender reputation under cohort growth.
 // Matches existing caps on buyer-pulse + email-sequences.

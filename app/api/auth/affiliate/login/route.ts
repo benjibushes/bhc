@@ -8,7 +8,7 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 export const maxDuration = 60;
 
 import { JWT_SECRET } from '@/lib/secrets';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 export async function POST(request: Request) {
   try {

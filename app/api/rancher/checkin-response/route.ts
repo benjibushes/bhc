@@ -4,8 +4,8 @@ import { sendTelegramUpdate } from '@/lib/telegram';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
-const CALENDLY_LINK = process.env.CALENDLY_LINK || 'https://buyhalfcow.com/call';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+const CALENDLY_LINK = process.env.CALENDLY_LINK || 'https://www.buyhalfcow.com/call';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

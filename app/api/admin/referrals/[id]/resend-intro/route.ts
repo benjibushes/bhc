@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 import { requireAdmin } from '@/lib/adminAuth';
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 function esc(s: string): string {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

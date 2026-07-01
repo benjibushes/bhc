@@ -11,7 +11,7 @@ import { CRON_SECRET, JWT_SECRET } from '@/lib/secrets';
 import { withCronRun } from '@/lib/cronRun';
 import jwt from 'jsonwebtoken';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Self-submit / community-submit drip — fires Day 2 / Day 5 / Day 14 nudges
 // for ranchers who landed on the map via /map/add-a-rancher and haven't been

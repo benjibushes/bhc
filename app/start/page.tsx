@@ -80,7 +80,7 @@ interface PublicStats {
 // latestClose + activity24h.
 async function fetchStats(): Promise<PublicStats> {
   try {
-    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
     const res = await fetch(`${SITE_URL}/api/stats/public`, {
       next: { revalidate: 300 },
     });

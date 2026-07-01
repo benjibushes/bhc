@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Land deals — BuyHalfCow',
     description: 'Verified ranch land deals — connect with sellers + buyers across the U.S.',
-    url: 'https://buyhalfcow.com/land',
+    url: 'https://www.buyhalfcow.com/land',
     images: ['/og-image.png'],
   },
   twitter: {

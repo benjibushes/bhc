@@ -51,7 +51,7 @@ const TIER_NAMES: Record<string, string> = {
   founding: 'Co-marketed',
 };
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

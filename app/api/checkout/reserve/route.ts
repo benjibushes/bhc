@@ -39,7 +39,7 @@ import { normalizeState } from '@/lib/states';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Format check + disposable-domain block — mirrors /api/consumers:42-47 so a
 // session-minting endpoint can't be farmed on throwaway addresses.

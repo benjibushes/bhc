@@ -120,7 +120,7 @@ function buildRancherBody(type: RancherSMSEventType, vars: RancherSMSEventVars):
     : '';
   switch (type) {
     case 'deposit_paid_rancher':
-      return `BuyHalfCow: ${who}${where} just PAID a deposit for a ${cut}${amt}. They're expecting your call today. Accept + details in your dashboard: ${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/rancher`;
+      return `BuyHalfCow: ${who}${where} just PAID a deposit for a ${cut}${amt}. They're expecting your call today. Accept + details in your dashboard: ${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/rancher`;
   }
 }
 

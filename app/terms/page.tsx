@@ -8,7 +8,7 @@ export const metadata = {
   openGraph: {
     title: 'Terms of Service',
     description: 'Terms of Service for BuyHalfCow private membership network',
-    url: 'https://buyhalfcow.com/terms',
+    url: 'https://www.buyhalfcow.com/terms',
     images: ['/og-image.png'],
   },
   twitter: {

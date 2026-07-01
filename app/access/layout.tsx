@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Get matched with a verified rancher',
     description: '90 seconds. Direct ranch beef. No middleman.',
-    url: 'https://buyhalfcow.com/access',
+    url: 'https://www.buyhalfcow.com/access',
     images: ['/og-image.png'],
   },
   twitter: {

@@ -12,7 +12,7 @@ export const maxDuration = 60;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_CHASE_UPS = 3;
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 import { JWT_SECRET } from '@/lib/secrets';
 const OLLAMA_URL = process.env.OLLAMA_BASE_URL || '';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
