@@ -128,7 +128,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (recipientEmail) {
         const subjectPrefix = thread['Subject'] || 'BuyHalfCow message';
         const senderLabel = auth.kind === 'buyer' ? 'a buyer' : 'your rancher';
-        await sendEmail({
+        const mirrorResult = await sendEmail({
           to: recipientEmail,
           subject: `New message — ${subjectPrefix}`,
           html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:36px;border:1px solid #A7A29A;background:#fff;line-height:1.6;color:#0E0E0E">
@@ -141,7 +141,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             </p>
           </div>`,
           _replyContext: { type: 'thread' as any, recordId: id } as any,
+          // Guard-truth fix (2026-07-01): default 'sendEmail' templateName was
+          // frequency-capped — thread notifications silently dropped mid-deal.
+          // Whitelisted (customer-expected 1:1 message mirror).
+          templateName: 'sendThreadMessageNotification',
         } as any);
+        // TRUTH: suppression returns success:false without throwing. The
+        // message is persisted in-thread either way, but log honestly so a
+        // "rancher never replied" report is debuggable.
+        if (!mirrorResult?.success) {
+          console.warn(
+            `[threads message] email mirror suppressed (${mirrorResult?.reason || 'unknown'}) — recipient not notified by email`,
+          );
+        }
       }
     }
   } catch (e: any) {

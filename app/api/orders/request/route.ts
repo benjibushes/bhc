@@ -304,13 +304,25 @@ ${message ? `<div style="background:#F4F1EC;padding:16px;margin:18px 0;border-le
 <p style="margin-top:24px;font-size:14px;color:#6B4F3F">Tracked in BuyHalfCow as Referral <code>${referral.id}</code>. Ben gets a Telegram alert too.</p>
 <p style="margin-top:24px">— Ben<br>Founder, BuyHalfCow</p>
 </div></body></html>`;
-      await sendEmail({
+      const rancherResult = await sendEmail({
         to: rancherEmail,
         subject,
         html,
         _replyContext: { type: 'ref', recordId: referral.id },
+        // Guard-truth fix (2026-07-01): the default 'sendEmail' templateName is
+        // subject to the 3/week frequency cap — a rancher mid-deal trivially
+        // exceeds it, after which NEW paying store leads were silently eaten.
+        // Whitelisted in TRANSACTIONAL_WHITELIST (money-path).
+        templateName: 'sendOrderRequestToRancher',
       });
-      rancherEmailSent = true;
+      // TRUTH: guardedSend suppression (pause/unsub/bounce) returns
+      // success:false WITHOUT throwing — the old `rancherEmailSent = true`
+      // here lied to the Telegram footer whenever the send was suppressed.
+      rancherEmailSent = !!rancherResult?.success;
+      if (!rancherResult?.success) {
+        rancherEmailErr = `suppressed: ${rancherResult?.reason || 'unknown'}`;
+        console.error('[orders/request] rancher email suppressed:', rancherResult?.reason);
+      }
     } catch (e: any) {
       rancherEmailErr = e?.message || 'unknown';
       console.error('[orders/request] rancher email failed:', e?.message);
@@ -329,12 +341,21 @@ ${message ? `<div style="background:#F4F1EC;padding:16px;margin:18px 0;border-le
 <p style="margin-top:24px">— Ben<br>Founder, BuyHalfCow</p>
 <p style="margin-top:24px;font-size:12px;color:#A7A29A">BuyHalfCow · Kalispell, MT 59901</p>
 </div></body></html>`;
-    await sendEmail({
+    const buyerResult = await sendEmail({
       to: buyerEmail,
       subject,
       html,
+      // Customer-expected post-submit confirmation — whitelisted so the
+      // frequency cap can never leave the buyer wondering if it went through.
+      templateName: 'sendOrderRequestConfirmation',
     });
-    buyerEmailSent = true;
+    // TRUTH: same as the rancher send — suppression returns success:false
+    // without throwing, so derive the reported outcome from the actual result.
+    buyerEmailSent = !!buyerResult?.success;
+    if (!buyerResult?.success) {
+      buyerEmailErr = `suppressed: ${buyerResult?.reason || 'unknown'}`;
+      console.error('[orders/request] buyer email suppressed:', buyerResult?.reason);
+    }
   } catch (e: any) {
     buyerEmailErr = e?.message || 'unknown';
     console.error('[orders/request] buyer email failed:', e?.message);

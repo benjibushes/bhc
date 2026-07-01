@@ -707,7 +707,7 @@ async function handlePayoutFailed(event: any): Promise<void> {
   if (rancherEmail) {
     try {
       const firstName = (rancherName || '').split(' ')[0] || 'there';
-      await sendEmail({
+      const payoutEmailResult = await sendEmail({
         to: rancherEmail,
         subject: 'your stripe payout failed — quick fix needed',
         html:
@@ -715,7 +715,18 @@ async function handlePayoutFailed(event: any): Promise<void> {
           `<p>reason: ${failureMessage}</p>` +
           `<p>usually means a typo in your routing/account # or the account was closed. fix it in your <a href="https://www.buyhalfcow.com/rancher/billing">billing dashboard</a> or just reply to this email + i'll help.</p>` +
           `<p>— Ben @ BuyHalfCow</p>`,
+        // Guard-truth fix (2026-07-01): default 'sendEmail' templateName was
+        // frequency-capped — a rancher mid-deal (already 3+ emails this week)
+        // never learned their payout bounced. Whitelisted (money-path notice).
+        templateName: 'sendPayoutFailed',
       });
+      // TRUTH: suppression returns success:false without throwing — surface it
+      // so ops can manually reach the rancher (the Telegram card above still fired).
+      if (!payoutEmailResult?.success) {
+        console.error(
+          `[stripe-connect payout.failed] email suppressed (${payoutEmailResult?.reason || 'unknown'}) — rancher NOT notified of failed payout`,
+        );
+      }
     } catch (e: any) {
       console.error('[stripe-connect payout.failed] email send failed:', e?.message);
     }

@@ -181,6 +181,26 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // would burn one of the 3 lifetime chase slots with nothing delivered.
   // Unsub/bounce suppression still applies (resend wrapper).
   'sendRancherFulfillmentNudge',
+  // Guard-truth fix (2026-07-01): money-path sends that previously used the
+  // generic capped 'sendEmail' templateName — a rancher/buyer mid-deal easily
+  // hits 3 emails/week, after which each of these was silently eaten.
+  // Money-path: a NEW paying store lead's order request to the rancher.
+  // Capping this = the lead silently vanishes (rancher never contacted).
+  'sendOrderRequestToRancher',
+  // Customer-expected: buyer's "your order request was delivered" confirmation
+  // right after they hit submit — capping it = "did my request go through?"
+  'sendOrderRequestConfirmation',
+  // Customer-expected 1:1 buyer<->rancher thread mirror. The message is already
+  // persisted in-thread; capping the mirror silently kills the conversation
+  // mid-deal (neither side knows the other replied).
+  'sendThreadMessageNotification',
+  // Money-path operator notice: rancher's bank rejected the payout. Fires once
+  // per Stripe payout.failed event; must reach the rancher or they don't get paid.
+  'sendPayoutFailed',
+  // Money-path: one-shot-per-deal dunning escalation to the rancher (fires only
+  // on the touch that crosses ESCALATE_AFTER_TOUCHES, never retried) — a
+  // cap-suppress means the rancher never learns the balance is outstanding.
+  'sendDunningEscalation',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage
