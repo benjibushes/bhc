@@ -177,8 +177,14 @@ function DepositPageContent() {
         <div className="w-full max-w-md text-center space-y-5">{children}</div>
       </div>
     );
+    // Primary escape hatch is the on-site support intake (prefills ?ref so
+    // the report arrives with the reservation attached); mailto stays as the
+    // secondary path for buyers who just want their mail app.
     const supportLink = (
-      <a href="mailto:hello@buyhalfcow.com" className="underline text-saddle text-sm">email us and we&apos;ll sort it</a>
+      <>
+        <Link href={`/support?ref=${encodeURIComponent(refId)}`} className="underline text-saddle text-sm">get help and we&apos;ll sort it</Link>
+        {' '}or email <a href="mailto:hello@buyhalfcow.com" className="underline text-saddle text-sm">hello@buyhalfcow.com</a>
+      </>
     );
 
     // A4 — already reserved: a positive state, not an error.
@@ -467,8 +473,15 @@ function DepositPageContent() {
             Honest scarcity (real next-processing date) sits just above; the
             trust line (refund + stripe) sits just below where anxiety peaks.
             On mobile this whole block sticks to the thumb zone so the deposit
-            is always one reach away on a long page. */}
-        <div className="sticky bottom-0 -mx-4 md:mx-0 px-4 md:px-0 pt-3 pb-4 md:pb-0 md:static bg-bone md:bg-transparent border-t border-divider md:border-0">
+            is always one reach away on a long page.
+
+            bottom: var(--consent-h) — while the first-visit consent banner is
+            on screen it publishes its height on <html>; sticking this block
+            that many px up keeps the PAY button fully visible above the
+            banner instead of covered by it (the exact buyer every ad click
+            sends is first-visit + mobile). 0px once a consent choice is made.
+            Inert on desktop (md:static ignores bottom). */}
+        <div className="sticky -mx-4 md:mx-0 px-4 md:px-0 pt-3 pb-4 md:pb-0 md:static bg-bone md:bg-transparent border-t border-divider md:border-0" style={{ bottom: 'var(--consent-h, 0px)' }}>
           {/* error surfaces here, above the button, so it's never hidden under
               the sticky block on mobile */}
           {error && <p className="text-red-700 mb-2 text-sm text-center">{error}</p>}

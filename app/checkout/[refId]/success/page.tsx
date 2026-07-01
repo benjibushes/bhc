@@ -257,7 +257,7 @@ function DepositSuccessContent() {
             need the reassurance reinforced. */}
         <div className="border-l-4 border-sage-dark bg-white p-4 md:p-5 mb-6 md:mb-8">
           <p className="text-sm text-charcoal leading-relaxed">
-            <strong>BHC Promise still applies.</strong> Your deposit is fully refundable until {rancherFirst} accepts your slot &mdash; usually within 24&ndash;48 hours. Once they commit your processing slot it&apos;s non-refundable, but the cold-chain guarantee never goes away: if your beef arrives thawed or short, BHC makes you whole. Anything goes sideways &mdash; reply to your message thread or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a> and we step in.
+            <strong>BHC Promise still applies.</strong> Your deposit is fully refundable until {rancherFirst} accepts your slot &mdash; usually within 24&ndash;48 hours. Once they commit your processing slot it&apos;s non-refundable, but the cold-chain guarantee never goes away: if your beef arrives thawed or short, BHC makes you whole. Anything goes sideways &mdash; reply to your message thread or <Link href={`/support?ref=${encodeURIComponent(refId)}`} className="underline">get help here</Link> and we step in, or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a>.
           </p>
         </div>
 

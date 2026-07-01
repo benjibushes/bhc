@@ -37,9 +37,15 @@ export default function StickyMobileCTA({ href, label, subLabel }: StickyMobileC
   return (
     <>
       <div
-        className={`md:hidden fixed bottom-0 inset-x-0 bg-charcoal text-bone z-40 border-t border-saddle transition-base ${
+        // bottom offsets by --consent-h (set on <html> by ConsentBanner while
+        // it's visible) so the CTA rides ABOVE the consent bar instead of
+        // being covered by it on a first ad-click visit. Falls back to 0 when
+        // the banner is gone. The hidden slide-down state tucks behind the
+        // banner (banner z-45 > this z-40), so no sliver shows.
+        className={`md:hidden fixed inset-x-0 bg-charcoal text-bone z-40 border-t border-saddle transition-base ${
           visible ? 'translate-y-0' : 'translate-y-full'
         }`}
+        style={{ bottom: 'var(--consent-h, 0px)' }}
       >
         <Link href={href} className="block text-center py-4 px-4">
           <span className="text-sm font-bold tracking-widest uppercase">{label}</span>
