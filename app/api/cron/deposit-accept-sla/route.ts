@@ -19,6 +19,7 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { findPaymentsByReferral } from '@/lib/contracts/payments';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { CRON_SECRET } from '@/lib/secrets';
@@ -73,11 +74,10 @@ async function realHandler(
   // __payment null and the row is still gated by the Referral-side checks.
   for (const ref of candidates) {
     try {
-      const safeId = String(ref.id).replace(/"/g, '\\"');
-      const payments = (await getAllRecords(
-        TABLES.PAYMENTS,
-        `SEARCH("${safeId}", ARRAYJOIN({Referral}))`,
-      )) as any[];
+      // Payments-by-referral (G1/E6): exact match on {Referral Id Text} first,
+      // legacy ARRAYJOIN scan only as back-compat fallback (see
+      // findPaymentsByReferral in lib/contracts/payments.ts).
+      const payments = (await findPaymentsByReferral(String(ref.id))) as any[];
       // Prefer a refunded/disputed row if any exists so a partial-refund or
       // dispute on one of several Payments rows still excludes the referral.
       ref.__payment =

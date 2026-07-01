@@ -7,7 +7,7 @@
 // Idempotency is keyed on Stripe Payment Intent ID + Stripe Transfer ID so
 // webhook retries never double-process.
 
-import { createRecord, updateRecord, getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, getRecordById, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
@@ -18,6 +18,99 @@ export type PayoutStatus = 'pending' | 'paid' | 'failed';
 
 export const PAYMENTS_TABLE = 'Payments';
 export const PAYOUTS_TABLE = 'Payouts';
+
+// ── Payments-by-referral lookup (G1/E6 — referral-id denorm) ─────────────────
+//
+// Clover defers the PaymentIntent to pay-time, so the deposit-dedup and the
+// settlement fallback must find the Payments row BY REFERRAL. The historical
+// pattern was `SEARCH("<refId>", ARRAYJOIN({Referral}))` — an unindexable
+// full-table formula scan that is ALSO semantically DEAD in this base:
+// ARRAYJOIN over a link field joins the linked records' PRIMARY-FIELD values,
+// and the Referrals primary field (`Name`, singleLineText) is never written by
+// any code path — verified 2026-07-01 against the live schema + row samples
+// (every sampled Referrals.Name is empty). So ARRAYJOIN({Referral}) emits ""
+// and SEARCH(recId, "") NEVER matches. (The old comment here claiming the
+// Referral link's primary value "is the record ID" was wrong.)
+//
+// Fix: recordDeposit denormalizes the referral record id into a plain
+// `Referral Id Text` field on Payments; every by-referral lookup queries that
+// with an exact match FIRST and only falls back to the legacy ARRAYJOIN scan
+// for rows written before the field existed. One release after this ships the
+// legacy fallback can be dropped (the prod Payments table was EMPTY when this
+// landed, so in practice there are no legacy rows to preserve).
+//
+// SCHEMA DEPENDENCY: `Referral Id Text` (single line text) must exist on the
+// Payments table. If it doesn't, createRecord/updateRecord strip it with a
+// console.warn + throttled operator Telegram alert (see lib/airtable.ts), and
+// recordDeposit below ALSO read-back-verifies the first write and warns loudly.
+
+export const REFERRAL_ID_TEXT_FIELD = 'Referral Id Text';
+
+// Airtable record ids are exactly `rec` + 14 alphanumerics. Validating the
+// shape BEFORE interpolating means no quote/backslash can ever reach the
+// formula string (escapeAirtableValue below is belt-and-braces on top).
+const AIRTABLE_RECORD_ID = /^rec[A-Za-z0-9]{14}$/;
+
+/**
+ * Build the Payments-by-referral filterByFormula clause. Pure — unit-tested in
+ * payments.byReferral.test.ts.
+ *
+ *   - default: `{Referral Id Text} = "<refId>"` (exact match on the
+ *     denormalized scalar — the fast path for every row written after the
+ *     field shipped).
+ *   - { legacy: true }: the old `SEARCH("<refId>", ARRAYJOIN({Referral}))`
+ *     scan, kept ONLY as a back-compat fallback for pre-field rows. Drop one
+ *     release after 2026-07-01.
+ *
+ * A referralId that is not shaped like a record id returns `FALSE()` — a
+ * never-matching clause — instead of interpolating attacker-controllable text
+ * into the formula. (A malformed id could never identify a row anyway, and a
+ * substring-y one like "rec" inside SEARCH could match the WRONG rows.)
+ */
+export function paymentsByReferralFormula(
+  referralId: string,
+  opts: { legacy?: boolean } = {},
+): string {
+  if (!AIRTABLE_RECORD_ID.test(referralId)) {
+    console.warn(
+      `[paymentsByReferralFormula] refusing non-record-id referralId ${JSON.stringify(String(referralId).slice(0, 40))} — returning never-match clause`,
+    );
+    return 'FALSE()';
+  }
+  const escaped = escapeAirtableValue(referralId); // no-op for a valid rec id; defense in depth
+  return opts.legacy
+    ? `SEARCH("${escaped}", ARRAYJOIN({Referral}))`
+    : `{${REFERRAL_ID_TEXT_FIELD}} = "${escaped}"`;
+}
+
+/**
+ * Fetch Payments rows for a referral: exact-match on `Referral Id Text` first,
+ * then (only when that returns nothing) the legacy ARRAYJOIN scan for rows
+ * written before the field existed. `statusClause` is an optional trusted
+ * formula fragment (literal constants at call sites, e.g. `{Status} = "pending"`)
+ * AND-ed onto both queries.
+ *
+ * LEGACY FALLBACK — DROP ONE RELEASE AFTER 2026-07-01: once every live row
+ * carries `Referral Id Text` (all rows created after this ships do, and the
+ * table was empty at ship time), delete the second query.
+ */
+export async function findPaymentsByReferral(
+  referralId: string,
+  opts: { statusClause?: string } = {},
+): Promise<any[]> {
+  if (!AIRTABLE_RECORD_ID.test(String(referralId || ''))) return [];
+  const compose = (byRef: string) =>
+    opts.statusClause ? `AND(${byRef}, ${opts.statusClause})` : byRef;
+  const fast: any[] = await getAllRecords(
+    PAYMENTS_TABLE,
+    compose(paymentsByReferralFormula(referralId)),
+  );
+  if (fast.length > 0) return fast;
+  return (await getAllRecords(
+    PAYMENTS_TABLE,
+    compose(paymentsByReferralFormula(referralId, { legacy: true })),
+  )) as any[];
+}
 
 export interface CreateDepositInput {
   referralId: string;
@@ -86,6 +179,12 @@ export function selectSettlementRow(
 export async function recordDeposit(input: CreateDepositInput): Promise<{ id: string }> {
   const fields = {
     'Referral': [input.referralId],
+    // Denormalized scalar copy of the referral record id (G1/E6). The link
+    // field above is authoritative for humans + rollups; this plain-text copy
+    // exists so filterByFormula can find the row by referral with an exact
+    // match instead of the (dead — see paymentsByReferralFormula) ARRAYJOIN
+    // full-table scan. Settlement under Clover depends on this lookup.
+    [REFERRAL_ID_TEXT_FIELD]: input.referralId,
     'Buyer': [input.buyerId],
     'Rancher': [input.rancherId],
     'Tier': input.tier,
@@ -121,19 +220,30 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
   // has its own settle-able row.
   try {
     const piEscaped = input.stripePaymentIntentId.replace(/"/g, '\\"');
-    const refEscaped = input.referralId.replace(/"/g, '\\"');
     // Match by PI (the same-session resubmit) OR by a still-pending row for this
     // referral. The referral clause only WIDENS the candidate set so we can see
     // an in-flight row — the reuse decision below still requires an exact PI
-    // match. SEARCH over ARRAYJOIN({Referral}) is the established
-    // Payments-by-referral pattern in this repo (see
-    // app/api/rancher/fulfillment/confirm/route.ts) — the Referral link's
-    // primary value is the record ID, unlike {Rancher} which emits names (the
-    // capacity-drift gotcha) and would silently never match.
-    const existing: any[] = await getAllRecords(
+    // match. By-referral matching uses the denormalized {Referral Id Text}
+    // exact match (see paymentsByReferralFormula — the old ARRAYJOIN scan
+    // never matched because Referrals' primary field is empty).
+    let existing: any[] = await getAllRecords(
       PAYMENTS_TABLE,
-      `OR({Stripe Payment Intent Id} = "${piEscaped}", AND(SEARCH("${refEscaped}", ARRAYJOIN({Referral})), {Status} = "pending"))`,
+      `OR({Stripe Payment Intent Id} = "${piEscaped}", AND(${paymentsByReferralFormula(input.referralId)}, {Status} = "pending"))`,
     );
+    // LEGACY FALLBACK — DROP ONE RELEASE AFTER 2026-07-01. Rows written before
+    // `Referral Id Text` existed can only be seen via the old ARRAYJOIN scan.
+    // Running it ONLY when the fast query returned nothing is behavior-
+    // equivalent to the old single query for the reuse decision: a row this
+    // skips is by construction a different-PI row (a same-PI row would have
+    // matched the PI clause above), and selectReusablePaymentRow maps
+    // different-PI candidates and absent candidates to the SAME outcome
+    // (create a new row).
+    if (existing.length === 0) {
+      existing = await getAllRecords(
+        PAYMENTS_TABLE,
+        `OR({Stripe Payment Intent Id} = "${piEscaped}", AND(${paymentsByReferralFormula(input.referralId, { legacy: true })}, {Status} = "pending"))`,
+      );
+    }
     // Reuse ONLY a Status==='pending' row whose PI is exactly this PI (see
     // selectReusablePaymentRow): excludes 'requires_webhook_replay' (masks an
     // unreconciled charge) and any different-PI-same-referral row (would orphan
@@ -146,6 +256,9 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
         'Platform Fee Cents': input.platformFeeCents,
         'Stripe Payment Intent Id': input.stripePaymentIntentId,
         'Status': 'pending',
+        // Backfill the denormalized referral id on reuse so a pre-field row
+        // migrates to the fast lookup path (no-op re-stamp on new rows).
+        [REFERRAL_ID_TEXT_FIELD]: input.referralId,
       });
       return { id: reusable.id };
     }
@@ -154,6 +267,24 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
   }
 
   const created: any = await createRecord(PAYMENTS_TABLE, fields);
+  // VERIFY the denormalized field persisted. createRecord auto-strips unknown
+  // fields (with its own warn + throttled operator alert — see lib/airtable.ts)
+  // and returns the record AS SAVED, so a missing key here means the field
+  // doesn't exist on the Payments table yet. Warn loudly with the exact fix:
+  // without this field, by-referral lookups fall back to the legacy ARRAYJOIN
+  // scan, which NEVER matches (Referrals' primary field is empty) — i.e.
+  // Clover settlement-by-referral stays broken until the field is added.
+  // Zero extra API calls: we inspect the create response, no read-back fetch.
+  const savedRefIdText = created?.fields?.[REFERRAL_ID_TEXT_FIELD];
+  if (savedRefIdText !== input.referralId) {
+    console.warn(
+      `[recordDeposit] '${REFERRAL_ID_TEXT_FIELD}' did NOT persist on Payments row ${created?.id} ` +
+      `(got ${JSON.stringify(savedRefIdText)}). ACTION REQUIRED: add '${REFERRAL_ID_TEXT_FIELD}' ` +
+      `(single line text) to the Payments table in Airtable. Until it exists, Payments-by-referral ` +
+      `lookups (deposit dedup, Clover settlement fallback, fulfillment payment gate, SLA/demand-router ` +
+      `enrichment) cannot use the exact-match path and the legacy ARRAYJOIN fallback never matches.`,
+    );
+  }
   return { id: created.id };
 }
 
@@ -179,13 +310,17 @@ export async function markDepositSucceeded(
   // no row matches the PI id, fall back to the still-pending row for that
   // referral and backfill the PI id so the ledger settles + repeat deliveries
   // dedupe by PI. Decision extracted to selectSettlementRow (pure, tested).
+  // Lookup swap (G1/E6): exact match on the denormalized {Referral Id Text}
+  // first, legacy ARRAYJOIN scan only when that returns nothing (pre-field
+  // rows — drop one release after 2026-07-01). NOTE the legacy scan never
+  // actually matched in this base (Referrals' primary field is empty — see
+  // paymentsByReferralFormula), so for rows carrying the new field this is
+  // the first time the Clover settle-by-referral fallback can fire at all.
   let referralPending: any[] = [];
   if (piMatched.length === 0 && opts.referralId) {
-    const refEscaped = String(opts.referralId).replace(/"/g, '\\"');
-    referralPending = await getAllRecords(
-      PAYMENTS_TABLE,
-      `AND(SEARCH("${refEscaped}", ARRAYJOIN({Referral})), {Status} = "pending")`,
-    );
+    referralPending = await findPaymentsByReferral(String(opts.referralId), {
+      statusClause: `{Status} = "pending"`,
+    });
   }
   const { row: payment, backfillPi } = selectSettlementRow(piMatched, referralPending);
   if (!payment) return true;
@@ -206,6 +341,20 @@ export async function markDepositSucceeded(
   // refund/abandon lookups + repeat-delivery dedup find it by PI from now on.
   if (backfillPi) {
     fields['Stripe Payment Intent Id'] = stripePaymentIntentId;
+  }
+  // Same rationale as the PI backfill, for the by-referral path: stamp the
+  // denormalized referral id onto rows that predate {Referral Id Text} so
+  // future by-referral lookups (fulfillment gate, SLA/demand-router
+  // enrichment) hit the exact-match path. Same update call — zero extra API
+  // cost; strip-safe if the schema field is missing. Settlement decision is
+  // untouched. Deliberately NOT added to the schema-fallback retry below —
+  // that path stays minimal so the critical Status flip can't be blocked.
+  if (
+    opts.referralId &&
+    !payment[REFERRAL_ID_TEXT_FIELD] &&
+    /^rec[A-Za-z0-9]{14}$/.test(String(opts.referralId))
+  ) {
+    fields[REFERRAL_ID_TEXT_FIELD] = String(opts.referralId);
   }
   if (typeof opts.totalChargedCents === 'number' && opts.totalChargedCents > 0) {
     fields['Total Charged Cents'] = Math.round(opts.totalChargedCents);
