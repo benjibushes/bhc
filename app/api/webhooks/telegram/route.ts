@@ -938,23 +938,21 @@ async function processUpdate(update: any) {
 
           const now = new Date().toISOString();
 
-          // Capacity reconciliation: if upstream matching/suggest already
-          // incremented when this referral was first created, the live count
-          // is already correct. But for Pending Approval referrals that
-          // pre-date the Redis counter (or were inserted manually / via
-          // /assignto / direct page) the counter may not reflect this
-          // referral yet. Detect by comparing previous status — only INCR
-          // when the referral wasn't already in an ACTIVE_REF state
-          // (Intro Sent et al). This is idempotent: a re-tapped approve
-          // button on an already-approved referral was rejected earlier by
-          // the "already approved" guard, so we don't double-INCR.
+          // Capacity reconciliation: approve transitions the referral INTO
+          // the held set ('Intro Sent'), so the INCR must fire only when the
+          // referral was NOT already holding a slot — i.e. prev status ∉
+          // HELD_REFERRAL_STATUSES (the canonical held set, lib/capacityCount).
+          // The old local ACTIVE_REF_STATES set (Intro Sent / Rancher
+          // Contacted / Negotiation) was MISSING Awaiting Payment and Slot
+          // Locked — both held — and the "already approved" guard above only
+          // blocks Intro Sent / Closed Won, so a re-approve tapped on an
+          // Awaiting Payment / Slot Locked referral double-INCR'd a slot that
+          // was already counted → phantom-full rancher stopped routing.
+          // Idempotent: held→held re-approves skip the INCR; unheld→held
+          // (Pending Approval, or reopening a Closed Lost / Refunded) takes
+          // exactly one slot, matching the DECR its close/refund path fired.
           const prevStatus = String(referral['Status'] || '');
-          const ACTIVE_REF_STATES = new Set([
-            'Intro Sent',
-            'Rancher Contacted',
-            'Negotiation',
-          ]);
-          const shouldIncrement = !ACTIVE_REF_STATES.has(prevStatus);
+          const shouldIncrement = !HELD_REFERRAL_STATUSES.has(prevStatus);
 
           await updateRecord(TABLES.REFERRALS, fullReferralId, {
             'Status': 'Intro Sent',

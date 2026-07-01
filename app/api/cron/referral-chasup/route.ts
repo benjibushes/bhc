@@ -6,6 +6,7 @@ import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from 
 import { callClaude } from '@/lib/ai';
 import { sendEmail, sendRancherLeadReminder } from '@/lib/email';
 import { withCronRun } from '@/lib/cronRun';
+import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import jwt from 'jsonwebtoken';
 
 export const maxDuration = 60;
@@ -176,6 +177,10 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
 
     for (const referral of maxedOut) {
       try {
+        // Capture the pre-flip status BEFORE the write — it feeds the
+        // capacity gate below (the local row object is not mutated by
+        // updateRecord, but capturing first makes the ordering explicit).
+        const prevStatus = String(referral['Status'] || '');
         await updateRecord(TABLES.REFERRALS, referral.id, {
           'Status': 'Closed Lost',
           'Closed At': new Date().toISOString(),
@@ -184,8 +189,16 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
         // Decrement rancher's active referral count atomically via Redis.
         // Was non-atomic read+write — race with concurrent matching/suggest
         // INCR could drift the counter. PA-MATCH audit (2026-05-28) flagged.
+        //
+        // Gated on shouldDecrementOnClose (same gate as #216/#218): DECR
+        // fires only when the referral actually LEAVES the held set. Today
+        // the fetch filter only selects Intro Sent / Rancher Contacted (both
+        // held) so this is defense in depth — but if this disabled path is
+        // ever re-enabled against a wider pool (e.g. Pending Approval, which
+        // never took a slot), an unconditional DECR would drift the counter
+        // down and over-book full ranchers.
         const rancherIds = referral['Suggested Rancher'] || referral['Rancher'] || [];
-        if (rancherIds.length > 0) {
+        if (rancherIds.length > 0 && shouldDecrementOnClose(prevStatus, 'Closed Lost')) {
           try {
             const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
             const newCount = await decrementCapacity(rancherIds[0]);
@@ -583,6 +596,9 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
         try {
           const ref = referrals.find((r: any) => r.id === c.refId);
           if (!ref) continue;
+          // Pre-flip status for the capacity gate below (local row is not
+          // mutated by updateRecord).
+          const prevStatus = String(ref['Status'] || '');
           await updateRecord(TABLES.REFERRALS, c.refId, {
             'Status': 'Closed Lost',
             'Closed At': new Date().toISOString(),
@@ -590,7 +606,12 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
           });
           const rancherIds = ref['Rancher'] || ref['Suggested Rancher'] || [];
           const prevRancherId = Array.isArray(rancherIds) ? rancherIds[0] : null;
-          if (prevRancherId) {
+          // shouldDecrementOnClose gate (same as #216/#218): DECR only when
+          // the referral leaves the held set. Candidates here are built from
+          // activeStallable (Status === 'Intro Sent' only — held), so this is
+          // provably a no-op today; it exists so a future widening of the
+          // ghost-close pool can't drift the counter down.
+          if (prevRancherId && shouldDecrementOnClose(prevStatus, 'Closed Lost')) {
             try {
               // Atomic Redis decrement + Airtable mirror sync. Replaces
               // non-atomic read+write that could race with matching/suggest
