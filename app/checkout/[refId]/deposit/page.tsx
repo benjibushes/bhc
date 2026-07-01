@@ -269,7 +269,7 @@ function DepositPageContent() {
   return (
     <main className="min-h-screen bg-bone text-charcoal">
       <div className="max-w-2xl mx-auto px-4 md:px-6 py-6 md:py-10">
-        <Link href={`/checkout/${refId}/ask`} className="text-saddle text-sm hover:underline">← Back to thread</Link>
+        <Link href={`/checkout/${refId}/ask`} className="text-saddle text-sm hover:underline">have a question? message your rancher →</Link>
 
         <h1 className="text-2xl md:text-4xl mt-4 mb-2 font-serif">
           Reserve your beef
@@ -382,7 +382,7 @@ function DepositPageContent() {
               Cold-chain guarantee + mediation stay regardless. */}
           <div className="border-l-4 border-sage-dark bg-white p-3 md:p-6 mb-3">
             <h2 className="font-serif text-lg uppercase tracking-widest text-sage-dark mb-3">
-              <span aria-hidden="true">🛡️</span> BHC Promise
+              the BuyHalfCow promise
             </h2>
             <p className="text-sm text-charcoal leading-relaxed mb-4">
               Your deposit reserves your slot with {info.rancher.name}. It&rsquo;s fully refundable until they accept it — usually within 24–48 hours. Once they commit your processing slot, it becomes non-refundable.
