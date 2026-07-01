@@ -192,6 +192,27 @@ export function verifyDepositGrantToken(
   return { ok: true, payload: { purpose: DEPOSIT_GRANT_PURPOSE, consumerId, referralId } };
 }
 
+/**
+ * Grant↔thread scope predicate — pure, unit-tested in campaignReserve.test.ts.
+ *
+ * The deposit grant is REFERRAL-scoped but the thread message route is
+ * THREAD-scoped, so the route resolves the thread's `Referral` link and asks
+ * this predicate whether the grant's referralId names exactly that referral.
+ * STRICT: authorizes ONLY on an exact string match against one of the thread's
+ * Referral link ids. Empty grant id, missing/non-array link cell, non-string
+ * members, or substring overlap all refuse. The grant id is trimmed (cookie
+ * hygiene); link ids are NOT (a padded link id is data corruption, not a match).
+ */
+export function depositGrantAuthorizesThread(
+  grantReferralId: string,
+  threadReferralLinkIds: unknown,
+): boolean {
+  const gid = String(grantReferralId || '').trim();
+  if (!gid) return false;
+  if (!Array.isArray(threadReferralLinkIds)) return false;
+  return threadReferralLinkIds.some((id) => typeof id === 'string' && id === gid);
+}
+
 // ---------------------------------------------------------------------------
 // Pure redirect decision — the testable core of the /r route. Given a verify
 // result + the referral that the route resolved (or null on any I/O failure),

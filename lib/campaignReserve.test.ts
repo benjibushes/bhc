@@ -6,6 +6,7 @@ import {
   verifyCampaignReserveToken,
   mintDepositGrantToken,
   verifyDepositGrantToken,
+  depositGrantAuthorizesThread,
   decideCampaignRedirect,
   rancherPublicPath,
   CAMPAIGN_RESERVE_PURPOSE,
@@ -203,4 +204,57 @@ test('rancherPublicPath: builds storefront path, generic on empty', () => {
   assert.equal(rancherPublicPath('renick-valley'), '/ranchers/renick-valley');
   assert.equal(rancherPublicPath(''), '/ranchers');
   assert.equal(rancherPublicPath('  '), '/ranchers');
+});
+
+// ── depositGrantAuthorizesThread — grant↔thread scope predicate ──────────────
+//
+// The deposit grant is REFERRAL-scoped; the thread message route is THREAD-
+// scoped. This predicate is the security boundary between the two: a grant
+// may act on a thread ONLY when the grant's referralId is one of the thread's
+// Referral link ids. STRICT: anything else (empty grant, missing/non-array
+// link, no exact string match) is a refusal. Never authorizes by substring,
+// coercion, or empty-vs-empty.
+
+test('grant↔thread scope: exact referral match authorizes', () => {
+  assert.equal(
+    depositGrantAuthorizesThread('rec12345678901234', ['rec12345678901234']),
+    true,
+  );
+  // Link arrays are written as single-element by createThread, but a multi-
+  // link row must still match when the grant's referral is among them.
+  assert.equal(
+    depositGrantAuthorizesThread('rec12345678901234', ['recXXXXXXXXXXXXXX', 'rec12345678901234']),
+    true,
+  );
+});
+
+test('grant↔thread scope: different referral is refused', () => {
+  assert.equal(
+    depositGrantAuthorizesThread('rec12345678901234', ['recXXXXXXXXXXXXXX']),
+    false,
+  );
+});
+
+test('grant↔thread scope: empty/missing inputs never authorize', () => {
+  assert.equal(depositGrantAuthorizesThread('', ['rec12345678901234']), false);
+  assert.equal(depositGrantAuthorizesThread('rec12345678901234', []), false);
+  assert.equal(depositGrantAuthorizesThread('rec12345678901234', undefined), false);
+  assert.equal(depositGrantAuthorizesThread('rec12345678901234', null), false);
+  assert.equal(depositGrantAuthorizesThread('', []), false);
+  // A non-array Referral cell (data corruption) must never be reachable.
+  assert.equal(depositGrantAuthorizesThread('rec12345678901234', 'rec12345678901234' as any), false);
+});
+
+test('grant↔thread scope: no substring/coercion matches', () => {
+  // Substring of a linked id must not match.
+  assert.equal(depositGrantAuthorizesThread('rec1234567890123', ['rec12345678901234']), false);
+  // Non-string members are ignored, not coerced.
+  assert.equal(
+    depositGrantAuthorizesThread('rec12345678901234', [{ id: 'rec12345678901234' } as any]),
+    false,
+  );
+  // Whitespace-padded grant ids are trimmed before compare (cookie hygiene),
+  // but a padded LINK id is Airtable data corruption and must not match.
+  assert.equal(depositGrantAuthorizesThread(' rec12345678901234 ', ['rec12345678901234']), true);
+  assert.equal(depositGrantAuthorizesThread('rec12345678901234', [' rec12345678901234 ']), false);
 });
