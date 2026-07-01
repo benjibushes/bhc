@@ -77,6 +77,11 @@ export default function DepositReserveForm({
       if (!res.ok) {
         // Ineligible (legacy / paused / unpriced) → fall back to the standard flow.
         if (j?.fallback) { window.location.href = `/access?rancher=${slug}`; return; }
+        // Server error (Airtable/Stripe transient, unexpected 5xx): never
+        // dead-end the buyer on the fast path. Route them to the quiz, which
+        // mints its own referral + session and still lands them at a deposit.
+        // 4xx validation (bad email, etc.) stays inline so they can correct it.
+        if (res.status >= 500) { window.location.href = `/access?rancher=${slug}`; return; }
         setError(j?.error || 'Something went wrong — try again.');
         setLoading(false);
         return;

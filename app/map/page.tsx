@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { getAllRecords, TABLES } from '@/lib/airtable';
+import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import Container from '../components/Container';
 import StickyMobileCTA from '../components/StickyMobileCTA';
@@ -70,6 +71,13 @@ export type MapPin = {
   // tier that price is (half/quarter/whole) so the card reads "from $X/half".
   fromPrice: number | null;
   fromLabel: 'half' | 'quarter' | 'whole' | '';
+  // Reserve-ability — true only when the storefront will actually render a
+  // deposit form for this rancher: tier_v2 pricing model + an ACTIVE Stripe
+  // Connect account (mirrors isRancherOnConnect / isRancherOperationalForBuyers).
+  // The map must not paint "Reserve →" on a verified rancher who can't take a
+  // deposit — that dead-ends the buyer at the checkout page. When false the
+  // card shows "View ranch →" (they can still browse + contact on the store).
+  onConnect: boolean;
 };
 
 const ONBOARDING_STAGES = [
@@ -144,6 +152,14 @@ async function fetchPins(): Promise<MapPin[]> {
 
       const ranchName = (r['Ranch Name'] || r['Operator Name'] || 'Ranch').toString();
 
+      // Reserve-ability gate — the storefront only shows a deposit form for
+      // tier_v2 ranchers with an ACTIVE Stripe Connect account. Use the SAME
+      // canonical helper the deposit path uses so the map CTA ("Reserve →" vs
+      // "View ranch →") can never drift from what the rancher's page actually
+      // offers. A verified pin without Connect is real + browsable but not
+      // deposit-ready — sending a buyer to a deposit there is a dead-end.
+      const onConnect = isRancherOnConnect(r);
+
       // Prices — Airtable stores these as numbers. Coerce defensively (a
       // stray "$1,800" string or empty cell must become null, never NaN).
       const toPrice = (v: unknown): number | null => {
@@ -185,6 +201,7 @@ async function fetchPins(): Promise<MapPin[]> {
         wholePrice,
         fromPrice,
         fromLabel,
+        onConnect,
       };
     })
     .filter((x): x is MapPin => x !== null);
