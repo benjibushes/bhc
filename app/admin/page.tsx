@@ -133,6 +133,10 @@ export default function AdminPage() {
   const [expandedConsumer, setExpandedConsumer] = useState<string | null>(null);
   const [toast, setToast] = useState<{message: string; type: 'success' | 'error' | 'warning'} | null>(null);
   const [confirmAction, setConfirmAction] = useState<{message: string; onConfirm: () => void} | null>(null);
+  // U13: a failed/500 admin fetch used to render as a silent false "0" (or
+  // crash on a non-array error body). Track which sections failed so the
+  // cards show "—" and a dismissible banner offers Retry instead of lying.
+  const [loadError, setLoadError] = useState<{ message: string; sections: string[] } | null>(null);
 
   // Auto-dismiss toast after 3 seconds
   useEffect(() => {
@@ -148,32 +152,53 @@ export default function AdminPage() {
 
   const fetchAllData = async () => {
     setLoading(true);
+    // U13: never trust a fetch blindly — a failed/500 response used to flow
+    // straight through res.json() into the tables as a false "0" (or crash
+    // on a non-array error body). Guard every response: non-ok / non-array
+    // bodies mark their section failed instead of zeroing it out.
+    const safeArray = async (res: Response | null): Promise<any[] | null> => {
+      if (!res || !res.ok) return null;
+      const body = await res.json().catch(() => null);
+      return Array.isArray(body) ? body : null;
+    };
     try {
       const [consumersRes, ranchersRes, brandsRes, landDealsRes, refStatsRes] = await Promise.all([
-        fetch('/api/admin/consumers'),
-        fetch('/api/admin/ranchers'),
-        fetch('/api/admin/brands'),
-        fetch('/api/admin/landDeals'),
+        fetch('/api/admin/consumers').catch(() => null),
+        fetch('/api/admin/ranchers').catch(() => null),
+        fetch('/api/admin/brands').catch(() => null),
+        fetch('/api/admin/landDeals').catch(() => null),
         fetch('/api/admin/referrals/stats').catch(() => null),
       ]);
 
       const [consumersData, ranchersData, brandsData, landDealsData] = await Promise.all([
-        consumersRes.json(),
-        ranchersRes.json(),
-        brandsRes.json(),
-        landDealsRes.json(),
+        safeArray(consumersRes),
+        safeArray(ranchersRes),
+        safeArray(brandsRes),
+        safeArray(landDealsRes),
       ]);
 
-      setConsumers(consumersData);
-      setRanchers(ranchersData);
-      setBrands(brandsData);
-      setLandDeals(landDealsData);
+      const failed: string[] = [];
+      if (consumersData) setConsumers(consumersData); else failed.push('consumers');
+      if (ranchersData) setRanchers(ranchersData); else failed.push('ranchers');
+      if (brandsData) setBrands(brandsData); else failed.push('brands');
+      if (landDealsData) setLandDeals(landDealsData); else failed.push('land deals');
 
       if (refStatsRes && refStatsRes.ok) {
-        setRefStats(await refStatsRes.json());
+        const stats = await refStatsRes.json().catch(() => null);
+        if (stats && typeof stats === 'object') setRefStats(stats);
       }
+
+      setLoadError(
+        failed.length
+          ? { message: `Failed to load: ${failed.join(', ')}. Those counts show as "—" below — they are not zero.`, sections: failed }
+          : null,
+      );
     } catch (error) {
       console.error('Error fetching admin data:', error);
+      setLoadError({
+        message: 'Failed to load dashboard data. Check your connection and retry.',
+        sections: ['consumers', 'ranchers', 'brands', 'land deals'],
+      });
     }
     setLoading(false);
   };
@@ -497,6 +522,32 @@ export default function AdminPage() {
             <p className="text-sm text-saddle">Internal CRM — BuyHalfCow</p>
           </div>
 
+          {/* U13: load-failure banner — failed fetches surface here with a
+              Retry, instead of silently rendering false zeros below. */}
+          {loadError && (
+            <div className="flex items-start justify-between gap-4 p-4 border-2 border-weathered/60 bg-weathered/10">
+              <div className="text-sm">
+                <span className="font-medium text-weathered">Some data failed to load.</span>{' '}
+                <span className="text-saddle">{loadError.message}</span>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  onClick={() => fetchAllData()}
+                  className="px-3 py-1.5 text-xs border border-weathered text-weathered hover:bg-weathered hover:text-white transition-colors"
+                >
+                  Retry
+                </button>
+                <button
+                  onClick={() => setLoadError(null)}
+                  aria-label="Dismiss load error"
+                  className="px-3 py-1.5 text-xs border border-dust text-saddle hover:bg-dust hover:text-white transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Global Search Bar */}
           <div className="w-full">
             <input
@@ -588,22 +639,23 @@ export default function AdminPage() {
 
               <Divider />
 
-              {/* Stats Overview */}
+              {/* Stats Overview. U13: a section that failed to load renders
+                  "—", never a false 0 — the banner above explains why. */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="p-4 border border-dust text-center">
-                  <div className="font-[family-name:var(--font-serif)] text-3xl">{consumers.length}</div>
+                  <div className="font-[family-name:var(--font-serif)] text-3xl">{loadError?.sections.includes('consumers') ? '—' : consumers.length}</div>
                   <div className="text-sm text-saddle">Consumers</div>
                 </div>
                 <div className="p-4 border border-dust text-center">
-                  <div className="font-[family-name:var(--font-serif)] text-3xl">{ranchers.length}</div>
+                  <div className="font-[family-name:var(--font-serif)] text-3xl">{loadError?.sections.includes('ranchers') ? '—' : ranchers.length}</div>
                   <div className="text-sm text-saddle">Ranchers</div>
                 </div>
                 <div className="p-4 border border-dust text-center">
-                  <div className="font-[family-name:var(--font-serif)] text-3xl">{brands.length}</div>
+                  <div className="font-[family-name:var(--font-serif)] text-3xl">{loadError?.sections.includes('brands') ? '—' : brands.length}</div>
                   <div className="text-sm text-saddle">Brands</div>
                 </div>
                 <div className="p-4 border border-dust text-center">
-                  <div className="font-[family-name:var(--font-serif)] text-3xl">{landDeals.length}</div>
+                  <div className="font-[family-name:var(--font-serif)] text-3xl">{loadError?.sections.includes('land deals') ? '—' : landDeals.length}</div>
                   <div className="text-sm text-saddle">Land Deals</div>
                 </div>
               </div>
