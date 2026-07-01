@@ -168,7 +168,12 @@ export async function POST(req: Request) {
           'Segment': 'Beef Buyer',
           'Source': `rancher-page:${slug}`,
           'Order Type': TIER_LABELS[tier],
-          'Interest Beef': true,
+          // FIX: same phantom 'Interest Beef' boolean bug as the reserve route.
+          // Here the catch is non-fatal so the referral survived, but the
+          // Consumer create 422'd → store buyers got a referral with NO Consumer
+          // row (broke later member-login, review linkage, attribution). Write
+          // the real 'Interests' multipleSelects field instead.
+          'Interests': ['Beef'],
           'Intent Score': 90,
           'Intent Classification': 'High',
         });
