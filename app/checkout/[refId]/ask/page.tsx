@@ -85,9 +85,9 @@ export default function AskPage() {
     return (
       <div className="max-w-2xl mx-auto p-6 md:p-8 bg-bone min-h-screen text-charcoal">
         <h1 className="text-2xl font-serif mb-4">Ask your rancher</h1>
-        <p className="text-saddle">{error}</p>
+        <p className="text-saddle">we couldn&apos;t open this conversation — the link may be old or you may be signed out.</p>
         <p className="text-saddle text-sm mt-4">
-          If this looks wrong, <a href="/member" className="underline">open your dashboard</a> and pick the referral you want to discuss.
+          <a href="/member" className="underline">open your dashboard</a> and pick the order you want to talk about, or email <a href="mailto:hello@buyhalfcow.com" className="underline">hello@buyhalfcow.com</a>.
         </p>
       </div>
     );

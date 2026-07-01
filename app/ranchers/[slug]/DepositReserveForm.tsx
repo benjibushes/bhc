@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { track } from '@/lib/track';
 import { deriveDeposit } from '@/lib/pricing';
+import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 
 type Cut = 'quarter' | 'half' | 'whole';
 interface CutData { price: number; lbs?: any }
@@ -178,7 +179,7 @@ export default function DepositReserveForm({
           {loading ? 'Starting…' : `Reserve your ${CUT_LABEL[cut]} — $${depositOf(cut).toLocaleString()} deposit →`}
         </button>
         <p className="text-[11px] text-dust text-center">
-          Deposit fully refundable for 7 days. {operatorFirst} ships it straight to you.
+          {REFUND_POLICY_SHORT}. a small BuyHalfCow service fee is added at checkout — {operatorFirst} ships your beef straight to you.
         </p>
       </form>
 

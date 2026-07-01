@@ -47,6 +47,7 @@ import CalInlineBooker from '@/app/qualify/[consumerId]/CalInlineBooker';
 import { trackEvent, metaEventId } from '@/lib/analytics';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
+import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 
 // ── Props ──────────────────────────────────────────────────────────────────
 interface BuyerFunnelProps {
@@ -930,7 +931,7 @@ function Reveal({
             </Button>
             {/* trust line at the point of peak deposit anxiety */}
             <p className="text-[11px] text-saddle text-center">
-              fully refundable until processing · payment secured by stripe
+              {REFUND_POLICY_SHORT} · payment secured by stripe
             </p>
           </div>
           {/* recessive, separated secondary — the lower-commitment fallback,
