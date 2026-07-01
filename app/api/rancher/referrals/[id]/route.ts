@@ -8,6 +8,7 @@ import { isQualifiedForRouting } from '@/lib/qualification';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, getRancherCommissionRate } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import jwt from 'jsonwebtoken';
 import { requireRancher } from '@/lib/rancherAuth';
 
@@ -126,6 +127,14 @@ export async function PATCH(
       // — same pattern as the capacity-raise flow in /api/rancher/landing-
       // page. Without this, a rancher who passes their way under cap stays
       // "At Capacity" until next manual edit or batch-approve self-heal.
+      //
+      // Wave-2 fix: gated on the canonical held set. Pre-fix this DECR was
+      // UNCONDITIONAL — passing a Pending Approval suggestion freed a slot
+      // that was never INCR'd (the INCR fires at Intro Sent), and a repeated
+      // pass on an already-Closed Lost referral double-freed. `referral` was
+      // read before the transition above, so its Status is the pre-pass one.
+      const passPrevStatus = String(referral['Status'] || '');
+      if (shouldDecrementOnClose(passPrevStatus, 'Closed Lost')) {
       try {
         const rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
         const newCount = await decrementCapacity(decoded.rancherId);
@@ -141,6 +150,9 @@ export async function PATCH(
         }
       } catch (e) {
         console.error('Pass: capacity decrement error:', e);
+      }
+      } else {
+        console.log(`[referrals/pass] no capacity DECR — prev status "${passPrevStatus}" holds no slot`);
       }
 
       // 3. Re-fire matching for the buyer with this rancher excluded
@@ -304,6 +316,42 @@ export async function PATCH(
       });
     }
 
+    // ── HARD GATES — MUST run before ANY side effect ───────────────────
+    // Wave-2 audit fix: these gates used to sit AFTER the Closed Won
+    // side-effect block below, so a close they rejected had ALREADY synced
+    // the buyer to CLOSED, fired the post-purchase welcome email, enrolled
+    // the affiliate, freed the capacity slot, and kicked off auto-matching
+    // — then returned 400 and left the Referral row itself untouched.
+    // Hoisted here so a rejected close is a pure no-op.
+    //
+    // HARD GATE 1: Closed Won MUST have a positive sale amount. Previous code
+    // silently accepted status=Closed Won with no sale → no commission
+    // computed, no Stripe invoice fired, no payment path. Money-losing
+    // failure mode. Now return 400 so the dashboard re-prompts.
+    if (status === 'Closed Won') {
+      if (saleAmount === undefined || saleAmount === null || isNaN(saleAmount) || saleAmount <= 0) {
+        return NextResponse.json({
+          error: 'A positive sale amount is required to close as Won. Enter the actual sale price.',
+        }, { status: 400 });
+      }
+      // HARD GATE 2: rancher must have a Commission Rate locked. Stops the
+      // "we never agreed on a rate" disputes (Ashcraft pattern 2026-05-20).
+      // Pull the rancher row defensively — close path mustn't proceed if
+      // we can't read the rate.
+      try {
+        const rancherForCheck = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
+        if (!hasLockedCommissionRate(rancherForCheck)) {
+          return NextResponse.json({
+            error: 'No Commission Rate locked on your account. Contact hello@buyhalfcow.com to set this before closing deals.',
+          }, { status: 400 });
+        }
+      } catch (e) {
+        return NextResponse.json({
+          error: 'Could not verify Commission Rate. Try again or contact support.',
+        }, { status: 500 });
+      }
+    }
+
     const fields: Record<string, any> = {};
 
     // Ranchers can update to these statuses
@@ -331,26 +379,24 @@ export async function PATCH(
         }
       }
 
-      // Capacity-freeing transitions. Awaiting Payment counts here too —
-       // the rancher closed the deal off-platform; slot should free for new
-       // leads while we wait for buyer payment confirmation. Audit finding
-       // 2026-05-20 #13: previously only Closed Won/Lost decremented,
-       // leaving Awaiting Payment rows blocking capacity.
-       const isCapacityFreeingClose =
-         status === 'Closed Won' || status === 'Closed Lost' || status === 'Awaiting Payment';
-       // Track previous status so we never double-decrement if the rancher
-       // PATCHes a Closed Won record back to Closed Won (re-edit), or
-       // transitions Awaiting Payment → Closed Won (second close after
-       // already freeing capacity at Awaiting Payment time).
+      // Capacity-freeing transitions — decided by the ONE canonical gate
+      // (shouldDecrementOnClose, lockstep with HELD_REFERRAL_STATUSES in
+      // lib/capacityCount): DECR exactly when the referral LEAVES the held
+      // set, i.e. previousStatus held AND new status not held.
+      //
+      // Wave-2 fix over the old local ACTIVE_REF_STATES_FOR_DECREMENT set:
+      //   - prev 'Awaiting Payment'/'Slot Locked' now DECR on terminal close
+      //     (old set skipped them → counter drifted UP → phantom-full).
+      //   - prev 'Pending Approval' never DECRs (pre-INCR — old set freed a
+      //     slot never taken → counter drifted DOWN → over-booking).
+      //   - status='Awaiting Payment' no longer frees on ENTRY (2026-05-20
+      //     #13 freed it early, but canon holds the slot until the real
+      //     close — the ground-truth reseed counts AP rows, so an early free
+      //     just re-drifted at every reseed AND double-freed when the deal
+      //     later closed Won from AP).
+      //   - re-edit (Closed Won → Closed Won etc.) still never DECRs.
        const previousStatus = String(referral['Status'] || '');
-       const ACTIVE_REF_STATES_FOR_DECREMENT = new Set([
-         'Intro Sent',
-         'Rancher Contacted',
-         'Negotiation',
-         'Pending Approval',
-       ]);
-       const shouldDecrementCapacity =
-         isCapacityFreeingClose && ACTIVE_REF_STATES_FOR_DECREMENT.has(previousStatus);
+       const shouldDecrementCapacity = shouldDecrementOnClose(previousStatus, status);
 
       if (status === 'Closed Won' || status === 'Closed Lost' || status === 'Awaiting Payment') {
         fields['Closed At'] = new Date().toISOString();
@@ -595,33 +641,9 @@ export async function PATCH(
       }
     }
 
-    // HARD GATE 1: Closed Won MUST have a positive sale amount. Previous code
-    // silently accepted status=Closed Won with no sale → no commission
-    // computed, no Stripe invoice fired, no payment path. Money-losing
-    // failure mode. Now return 400 so the dashboard re-prompts.
-    if (status === 'Closed Won') {
-      if (saleAmount === undefined || saleAmount === null || isNaN(saleAmount) || saleAmount <= 0) {
-        return NextResponse.json({
-          error: 'A positive sale amount is required to close as Won. Enter the actual sale price.',
-        }, { status: 400 });
-      }
-      // HARD GATE 2: rancher must have a Commission Rate locked. Stops the
-      // "we never agreed on a rate" disputes (Ashcraft pattern 2026-05-20).
-      // Pull the rancher row defensively — close path mustn't proceed if
-      // we can't read the rate.
-      try {
-        const rancherForCheck = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
-        if (!hasLockedCommissionRate(rancherForCheck)) {
-          return NextResponse.json({
-            error: 'No Commission Rate locked on your account. Contact hello@buyhalfcow.com to set this before closing deals.',
-          }, { status: 400 });
-        }
-      } catch (e) {
-        return NextResponse.json({
-          error: 'Could not verify Commission Rate. Try again or contact support.',
-        }, { status: 500 });
-      }
-    }
+    // (HARD GATE 1 + 2 — positive sale amount / locked Commission Rate —
+    // moved ABOVE the side-effect block; see the hoisted gates after the
+    // idempotency guard.)
 
     if (saleAmount !== undefined && saleAmount > 0) {
       // Reject Sale Amount edits on already-closed deals. Otherwise the

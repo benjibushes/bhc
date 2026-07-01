@@ -7,6 +7,7 @@ import {
   canSendFinalInvoice,
   FINAL_INVOICE_BLOCKED_STATUSES,
   shouldDecrementOnRefundRestore,
+  shouldDecrementOnClose,
 } from './refundLifecycle';
 // Zero-dep canonical held-slot definition — safe under tsx --test.
 import { HELD_REFERRAL_STATUSES } from './capacityCount';
@@ -115,5 +116,83 @@ test('unknown / empty / non-held statuses → NO decrement (never drift down on 
   // already-Refunded early-return were bypassed, the gate refuses a second hit.
   for (const s of ['Refunded', 'Closed Lost', 'Pending Approval', 'Deposit Paid', 'Totally Bogus', '', null, undefined]) {
     assert.equal(shouldDecrementOnRefundRestore(s), false, `${String(s)} must not decrement`);
+  }
+});
+
+// ── Wave-2 audit: close-path capacity gate (mirror of the C4 refund gate) ────
+// The DECR decision on EVERY close path (recordClose, rancher dashboard PATCH,
+// rancher pass action, admin PATCH) must derive from the ONE canonical held
+// set. Pre-fix, recordClose + the routes gated on ACTIVE_REF_STATES
+// (Intro Sent / Rancher Contacted / Negotiation / Pending Approval), which
+//   (a) includes 'Pending Approval' → DECR of a slot that was never INCR'd
+//       (INCR fires at Intro Sent) → counter drifts DOWN → over-booking;
+//   (b) excludes 'Awaiting Payment' + 'Slot Locked' → closing from those
+//       skipped the DECR → counter drifts UP → phantom-full ranchers.
+test('each held status → Closed Won/Lost close frees the slot (fixes drift-UP / phantom-full)', () => {
+  // Literal list from HELD_REFERRAL_STATUSES (lib/capacityCount.ts), spelled
+  // out so a silent edit to the canonical set shows up as a diff here too.
+  for (const held of ['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Awaiting Payment', 'Slot Locked']) {
+    assert.equal(shouldDecrementOnClose(held, 'Closed Won'), true, `${held} → Closed Won must free the slot`);
+    assert.equal(shouldDecrementOnClose(held, 'Closed Lost'), true, `${held} → Closed Lost must free the slot`);
+  }
+});
+
+test('Awaiting Payment / Slot Locked closes DECR (the exact wave-2 drift-UP defect)', () => {
+  // Pre-fix these two were NOT in ACTIVE_REF_STATES → close skipped the DECR
+  // → the Redis mirror kept charging the rancher for a terminal referral.
+  assert.equal(shouldDecrementOnClose('Awaiting Payment', 'Closed Won'), true);
+  assert.equal(shouldDecrementOnClose('Slot Locked', 'Closed Lost'), true);
+});
+
+test('Pending Approval close → NO decrement (the exact wave-2 drift-DOWN defect)', () => {
+  // Pending Approval is pre-INCR — no slot was ever taken, so none may be
+  // given back. Pre-fix ACTIVE_REF_STATES included it → counter went negative
+  // relative to truth → matcher over-booked a genuinely-full rancher.
+  assert.equal(shouldDecrementOnClose('Pending Approval', 'Closed Won'), false);
+  assert.equal(shouldDecrementOnClose('Pending Approval', 'Closed Lost'), false);
+});
+
+test('terminal / empty / unknown previous statuses → NO decrement (repeat clicks are no-ops)', () => {
+  // Closed Won → Closed Won (re-edit / double click), Closed Lost → Closed
+  // Lost (repeated pass), Refunded, garbage, empty: none held a slot.
+  for (const prev of ['Closed Won', 'Closed Lost', 'Refunded', 'Deposit Paid', 'Totally Bogus', '', null, undefined]) {
+    assert.equal(shouldDecrementOnClose(prev, 'Closed Won'), false, `${String(prev)} → Closed Won must not decrement`);
+    assert.equal(shouldDecrementOnClose(prev, 'Closed Lost'), false, `${String(prev)} → Closed Lost must not decrement`);
+  }
+});
+
+test('held → held transition frees NOTHING (Awaiting Payment is canonically still held)', () => {
+  // The 2026-05-20 dashboard model freed the slot on ENTERING Awaiting
+  // Payment. Canon (HELD_REFERRAL_STATUSES) says AP still holds the slot —
+  // the ground-truth reseed counts it — so an entry-DECR just drifts the
+  // mirror DOWN until the real close. A held→held move must never DECR;
+  // combined with held→terminal DECR above, each slot frees exactly once.
+  for (const prev of HELD_REFERRAL_STATUSES) {
+    for (const next of HELD_REFERRAL_STATUSES) {
+      assert.equal(shouldDecrementOnClose(prev, next), false, `${prev} → ${next} must not decrement`);
+    }
+  }
+});
+
+test('same-status NOOP transitions never DECR, held or not', () => {
+  for (const s of [...HELD_REFERRAL_STATUSES, 'Pending Approval', 'Closed Won', 'Closed Lost', 'Refunded', '']) {
+    assert.equal(shouldDecrementOnClose(s, s), false, `${s} → ${s} must not decrement`);
+  }
+});
+
+test('empty / unknown NEXT status → NO decrement (never free a slot on uncertainty)', () => {
+  // Every real call site passes a validated concrete target status; if next
+  // is missing something upstream broke — hold the slot, let the reseed heal.
+  for (const next of ['', null, undefined]) {
+    assert.equal(shouldDecrementOnClose('Negotiation', next), false, `Negotiation → ${String(next)} must not decrement`);
+  }
+});
+
+test('close gate stays in lockstep with the canonical HELD_REFERRAL_STATUSES set', () => {
+  for (const s of HELD_REFERRAL_STATUSES) {
+    assert.equal(shouldDecrementOnClose(s, 'Closed Won'), true, `${s} is canonically held`);
+    // Equivalence with the refund gate: closing to 'Refunded' and the refund
+    // restore must make the identical decision for the identical prior status.
+    assert.equal(shouldDecrementOnClose(s, 'Refunded'), shouldDecrementOnRefundRestore(s), `${s}: close-to-Refunded ≡ refund-restore`);
   }
 });

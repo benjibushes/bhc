@@ -5,13 +5,16 @@
 // itself zero-dep) so lib/refundLifecycle.test.ts can run under `tsx --test`
 // without dragging in lib/secrets — mirrors the lib/routingPriority.ts pattern.
 //
-// Three decisions live here:
+// Four decisions live here:
 //   1. refundReferralClearFields — the exact Referral update object a full
 //      refund writes (lib/contracts/payments.ts restoreReferralAfterRefund).
 //   2. canSendFinalInvoice — the send gate for the rancher final-invoice
 //      route (app/api/rancher/referrals/[id]/send-final-invoice).
 //   3. shouldDecrementOnRefundRestore — the capacity gate for the refund
 //      restore path (C4: unconditional decrement double-freed the slot).
+//   4. shouldDecrementOnClose — the capacity gate for every CLOSE path
+//      (wave-2: gates were ACTIVE_REF_STATES-based or missing entirely,
+//      drifting the counter both directions).
 //
 // The C2 bug both sides share: a refund left `Deposit Paid At` +
 // `Rancher Accepted At` stamped, and the send gate ONLY checked
@@ -118,4 +121,47 @@ export function shouldDecrementOnRefundRestore(priorStatus: unknown): boolean {
   const s = String(priorStatus ?? '').trim();
   if (!s) return false;
   return HELD_REFERRAL_STATUSES.has(s);
+}
+
+/**
+ * Wave-2 capacity gate for EVERY close-path DECR — recordClose
+ * (lib/contracts/rancher.ts), the rancher dashboard PATCH + pass action
+ * (app/api/rancher/referrals/[id]/route.ts), and the admin PATCH
+ * (app/api/referrals/[id]/route.ts). Mirror of shouldDecrementOnRefundRestore:
+ * for any prior status, shouldDecrementOnClose(prior, 'Refunded') ≡
+ * shouldDecrementOnRefundRestore(prior) — one held-set, one answer.
+ *
+ * A slot frees exactly when the referral LEAVES the canonical held set
+ * (HELD_REFERRAL_STATUSES, lib/capacityCount.ts — the same set the
+ * ground-truth reseed counts):
+ *
+ *   prevStatus ∈ HELD  AND  nextStatus ∉ HELD  →  true (DECR)
+ *
+ * What that kills, per direction of drift:
+ *   - prev 'Pending Approval' → false. Pre-INCR (the INCR fires at Intro
+ *     Sent) — closing from it gave back a slot never taken → counter drifted
+ *     DOWN → matcher over-booked full ranchers. (Old ACTIVE_REF_STATES
+ *     included it.)
+ *   - prev 'Awaiting Payment' / 'Slot Locked' → true. Old ACTIVE_REF_STATES
+ *     excluded them, so those closes skipped the DECR → counter drifted UP →
+ *     phantom-full ranchers stopped routing.
+ *   - prev terminal ('Closed Won'/'Closed Lost'/'Refunded') or same-status
+ *     repeat → false. Re-edits, double clicks, and webhook redelivery never
+ *     double-free.
+ *   - next ∈ HELD (e.g. Negotiation → Awaiting Payment) → false. The slot is
+ *     STILL held per canon — an entry-DECR would drift the mirror DOWN until
+ *     the next reseed clobbered it back up. Held→held reshuffles free nothing;
+ *     the DECR fires once, at the real terminal close.
+ *
+ * Empty/unknown prev OR next → false. Same safe default as the refund gate:
+ * a wrong skip self-heals on the next ground-truth reseed
+ * (liveHeldCountForRancher); a wrong decrement silently over-books. Never
+ * drift down on uncertainty.
+ */
+export function shouldDecrementOnClose(prevStatus: unknown, nextStatus: unknown): boolean {
+  const prev = String(prevStatus ?? '').trim();
+  if (!prev || !HELD_REFERRAL_STATUSES.has(prev)) return false;
+  const next = String(nextStatus ?? '').trim();
+  if (!next || HELD_REFERRAL_STATUSES.has(next)) return false;
+  return true;
 }

@@ -5,6 +5,7 @@ import { sendTelegramSaleCelebration } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
 import { calcCommission, calcCommissionForRancher, getCommissionRate } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 
 export async function PATCH(
@@ -35,13 +36,25 @@ export async function PATCH(
         try {
           const referral = await getRecordById(TABLES.REFERRALS, id);
           const rancherId = (referral as any)['Rancher']?.[0];
-          if (rancherId) {
+          // Wave-2 fix: pre-fix this DECR was UNCONDITIONAL on any Closed
+          // Won/Lost PATCH — a repeated admin click (Closed Lost → Closed
+          // Lost again), a close from Pending Approval (pre-INCR, no slot
+          // ever taken), or a re-close of an already-terminal referral each
+          // freed a phantom slot → counter drifted DOWN → over-booking.
+          // Now gated on the canonical held set: DECR only when the
+          // pre-update status (read above, before updateRecord below runs)
+          // actually held a slot. Same-status no-ops can never DECR —
+          // terminal statuses are not in the held set.
+          const prevStatus = String((referral as any)?.['Status'] || '');
+          if (rancherId && shouldDecrementOnClose(prevStatus, status)) {
             // Atomic DECR via Redis (see lib/rancherCapacity) — concurrent
             // admin closes can't race the counter past 0 or skip a slot
             // release. syncCapacityToAirtable mirrors the new value back so
             // dashboards stay accurate.
             const newCount = await decrementCapacity(rancherId);
             await syncCapacityToAirtable(rancherId, newCount);
+          } else if (rancherId) {
+            console.log(`[referrals PATCH] no capacity DECR — "${prevStatus}" → "${status}" frees no slot`);
           }
         } catch (e) {
           console.error('Error decrementing rancher referrals:', e);
