@@ -266,6 +266,15 @@ export default function RancherDashboardPage() {
   const [buyerSort, setBuyerSort] = useState<'newest' | 'oldest' | 'stalest'>('newest');
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState('');
+  // U11: which referral row the last inline status update failed on. Set only
+  // by updateReferralStatus (the row buttons — the one path with no modal to
+  // show updateError), so the Deals-tab banner + per-row error line render
+  // exactly for silent failures without double-showing modal errors.
+  const [updateErrorId, setUpdateErrorId] = useState<string | null>(null);
+  // U10: initial dashboard load hit a 5xx / network failure (NOT an auth
+  // failure — those still redirect to login). Renders an inline retry card
+  // instead of ejecting a logged-in rancher to /rancher/login.
+  const [loadError, setLoadError] = useState(false);
   // Pass-on-Lead modal — separate from "close deal" because it carries a
   // structured reason and triggers auto-rematch with this rancher excluded.
   const [passModal, setPassModal] = useState<Referral | null>(null);
@@ -346,6 +355,9 @@ export default function RancherDashboardPage() {
   const [editingCapacity, setEditingCapacity] = useState(false);
   const [capacityValue, setCapacityValue] = useState('');
   const [capacitySaving, setCapacitySaving] = useState(false);
+  // U12: capacity-save failures render inside the edit panel (updateError is
+  // never rendered on the overview tab, so failures used to show nothing).
+  const [capacityError, setCapacityError] = useState('');
   // Go-live request
   const [goLiveRequested, setGoLiveRequested] = useState(false);
   const [goLiveLoading, setGoLiveLoading] = useState(false);
@@ -448,10 +460,17 @@ export default function RancherDashboardPage() {
   const [isAdminImpersonating, setIsAdminImpersonating] = useState(false);
 
   const fetchDashboard = async () => {
+    setLoadError(false);
     try {
       const sessionRes = await fetch('/api/auth/rancher/session');
       if (!sessionRes.ok) {
-        router.push('/rancher/login');
+        // U10: only a real auth failure ejects to login. A transient 5xx on
+        // the session check must NOT log a rancher out — show the retry card.
+        if (sessionRes.status === 401 || sessionRes.status === 403) {
+          router.push('/rancher/login');
+        } else {
+          setLoadError(true);
+        }
         return;
       }
       try {
@@ -461,7 +480,13 @@ export default function RancherDashboardPage() {
 
       const dashRes = await fetch('/api/rancher/dashboard');
       if (!dashRes.ok) {
-        router.push('/rancher/login');
+        // U10: same branch — 401/403 means the session is gone; anything else
+        // (5xx, rate limit) is transient and keeps the session + shows retry.
+        if (dashRes.status === 401 || dashRes.status === 403) {
+          router.push('/rancher/login');
+        } else {
+          setLoadError(true);
+        }
         return;
       }
 
@@ -470,6 +495,9 @@ export default function RancherDashboardPage() {
       setStats(data.stats);
       setReferrals(data.referrals);
       setBenefits(data.networkBenefits || []);
+      // U11: fresh data supersedes any stale row-update error still showing.
+      setUpdateError('');
+      setUpdateErrorId(null);
       // Populate landing page form with current values
       const r = data.rancher;
       setPageForm({
@@ -596,7 +624,9 @@ export default function RancherDashboardPage() {
         }
       } catch { /* parity fields stay blank — non-fatal */ }
     } catch {
-      router.push('/rancher/login');
+      // U10: network / unexpected failure — session may be perfectly valid.
+      // Show the retry card instead of ejecting to login.
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -605,6 +635,7 @@ export default function RancherDashboardPage() {
   const updateReferralStatus = async (referralId: string, status: string) => {
     setUpdating(referralId);
     setUpdateError('');
+    setUpdateErrorId(null);
     try {
       const res = await fetch(`/api/rancher/referrals/${referralId}`, {
         method: 'PATCH',
@@ -614,15 +645,23 @@ export default function RancherDashboardPage() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setUpdateError(data.error || 'Failed to update status. Please try again.');
+        setUpdateErrorId(referralId); // U11: surface on the affected row + tab banner
         return; // nothing changed server-side — keep current view, no refetch
       }
       await fetchDashboard();
     } catch {
       setUpdateError('Network error. Please check your connection.');
+      setUpdateErrorId(referralId);
     } finally {
       setUpdating(null);
     }
   };
+
+  // U11: a stale row-update error shouldn't follow the rancher to another tab.
+  useEffect(() => {
+    setUpdateError('');
+    setUpdateErrorId(null);
+  }, [activeTab]);
 
   // WAVE 3a — hydrate activity-feed read-state from localStorage once we know
   // the rancher id. Keyed per-rancher so a shared browser / admin impersonation
@@ -1291,10 +1330,13 @@ export default function RancherDashboardPage() {
   const handleUpdateCapacity = async () => {
     const val = parseInt(capacityValue);
     if (isNaN(val) || val < 1 || val > 50) {
-      setUpdateError('Capacity must be between 1 and 50');
+      // U12: errors render inside the capacity panel — updateError was never
+      // shown on the overview tab, so these failures were invisible.
+      setCapacityError('Capacity must be between 1 and 50');
       return;
     }
     setCapacitySaving(true);
+    setCapacityError('');
     try {
       const res = await fetch('/api/rancher/landing-page', {
         method: 'PATCH',
@@ -1302,14 +1344,16 @@ export default function RancherDashboardPage() {
         body: JSON.stringify({ _action: 'update-capacity', maxActiveReferrals: val }),
       });
       if (res.ok) {
+        setCapacityError('');
         setEditingCapacity(false);
         await fetchDashboard();
       } else {
         const data = await res.json().catch(() => ({}));
-        setUpdateError(data.error || 'Failed to update capacity');
+        // Keep the panel open so the rancher can correct the value and retry.
+        setCapacityError(data.error || 'Failed to update capacity. Please try again.');
       }
     } catch {
-      setUpdateError('Network error');
+      setCapacityError('Network error. Please check your connection and try again.');
     } finally {
       setCapacitySaving(false);
     }
@@ -1363,6 +1407,31 @@ export default function RancherDashboardPage() {
           <div className="text-center">
             <div className="inline-block w-8 h-8 border-4 border-charcoal border-t-transparent rounded-full animate-spin" />
             <p className="mt-4 text-saddle">Loading your dashboard...</p>
+          </div>
+        </Container>
+      </main>
+    );
+  }
+
+  // U10: initial load failed on a 5xx / network error — the session is still
+  // good, so render an inline retry card instead of bouncing to /rancher/login.
+  // Only full-screens when we have nothing to show; if a background refetch
+  // fails after data loaded, the dashboard stays up on slightly stale data.
+  if (loadError && (!rancherInfo || !stats)) {
+    return (
+      <main className="min-h-screen py-24 bg-bone text-charcoal flex items-center justify-center">
+        <Container>
+          <div className="max-w-md mx-auto p-6 border border-weathered/40 bg-white text-center space-y-3">
+            <h2 className="font-serif text-xl">trouble loading your dashboard</h2>
+            <p className="text-sm text-saddle">
+              Something went wrong on our end — you&apos;re still signed in. Give it another try in a moment.
+            </p>
+            <button
+              onClick={() => { setLoading(true); fetchDashboard(); }}
+              className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors"
+            >
+              Retry
+            </button>
           </div>
         </Container>
       </main>
@@ -2261,7 +2330,7 @@ export default function RancherDashboardPage() {
                     <h3 className="font-serif text-xl">capacity</h3>
                     {!editingCapacity && (
                       <button
-                        onClick={() => { setEditingCapacity(true); setCapacityValue(String(rancherInfo.maxActiveReferrals)); }}
+                        onClick={() => { setEditingCapacity(true); setCapacityValue(String(rancherInfo.maxActiveReferrals)); setCapacityError(''); }}
                         className="text-xs text-saddle hover:text-charcoal transition-colors"
                       >
                         Edit Max
@@ -2304,12 +2373,15 @@ export default function RancherDashboardPage() {
                             {capacitySaving ? '...' : 'Save'}
                           </button>
                           <button
-                            onClick={() => setEditingCapacity(false)}
+                            onClick={() => { setEditingCapacity(false); setCapacityError(''); }}
                             className="px-3 py-2 min-h-[44px] text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
                           >
                             Cancel
                           </button>
                         </div>
+                        {capacityError && (
+                          <div className="p-3 border border-weathered text-weathered text-sm">{capacityError}</div>
+                        )}
                         <p className="text-xs text-dust">Set how many buyer leads you can handle at once. We&apos;ll pause new leads when you hit this limit.</p>
                       </div>
                     )}
@@ -2362,6 +2434,7 @@ export default function RancherDashboardPage() {
                         onRequestDeposit={() => openDepositModal(ref)}
                         depositEligible={depositEligible}
                         updating={updating}
+                        rowError={updateErrorId === ref.id ? updateError : undefined}
                       />
                     ))}
                     {activeRefs.length > 3 && (
@@ -2378,6 +2451,21 @@ export default function RancherDashboardPage() {
           {/* Referrals Tab */}
           {activeTab === 'referrals' && (
             <div className="space-y-8">
+              {/* U11: inline status updates used to fail silently — the row
+                  buttons have no modal to carry updateError, so surface it
+                  here. Dismissible; also cleared on tab change / retry / refetch. */}
+              {updateError && updateErrorId && (
+                <div className="p-3 border border-weathered/40 bg-weathered/10 text-weathered text-sm flex items-start justify-between gap-3">
+                  <span>{updateError}</span>
+                  <button
+                    onClick={() => { setUpdateError(''); setUpdateErrorId(null); }}
+                    className="text-lg leading-none hover:text-charcoal"
+                    aria-label="Dismiss error"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <h2 className="font-serif text-2xl">deals</h2>
                 {activeRefs.length > 3 && (
@@ -2462,6 +2550,7 @@ export default function RancherDashboardPage() {
                         onRequestDeposit={() => openDepositModal(ref)}
                         depositEligible={depositEligible}
                         updating={updating}
+                        rowError={updateErrorId === ref.id ? updateError : undefined}
                       />
                     ))}
                   </div>
@@ -2515,6 +2604,7 @@ export default function RancherDashboardPage() {
                         onRequestDeposit={() => openDepositModal(ref)}
                         depositEligible={depositEligible}
                         updating={updating}
+                        rowError={updateErrorId === ref.id ? updateError : undefined}
                       />
                     ))}
                   </div>
@@ -5181,7 +5271,7 @@ function ResponseDeadline({ referral }: { referral: Referral }) {
   );
 }
 
-function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, onAccept, onConfirmPayment, onRequestDeposit, depositEligible, updating }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; onAccept?: () => void; onConfirmPayment?: () => void; onRequestDeposit?: () => void; depositEligible?: boolean; updating: string | null }) {
+function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, onAccept, onConfirmPayment, onRequestDeposit, depositEligible, updating, rowError }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; onAccept?: () => void; onConfirmPayment?: () => void; onRequestDeposit?: () => void; depositEligible?: boolean; updating: string | null; rowError?: string }) {
   // FINAL-5 (2026-05-31): show "Send Final Invoice" when deposit landed +
   // referral isn't yet Closed Won / Closed Lost / fully paid. Re-send label
   // if invoice already sent (final_invoice_url present).
@@ -5247,6 +5337,8 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
         <p className="font-medium mt-1">{referral.buyer_name}</p>
         <p className="text-xs text-dust">{referral.buyer_state} &middot; {referral.order_type}</p>
         {depositEligible && <PipelineNextStep referral={referral} />}
+        {/* U11: compact per-row error when the inline status update failed. */}
+        {rowError && <p className="text-xs text-weathered mt-1">{rowError}</p>}
       </div>
       {/* Mobile: primary actions stack full-width; Mark Lost / Pass demoted to a
           compact secondary row. sm+: everything sits inline as before. */}
@@ -5492,6 +5584,7 @@ function ReferralCard({
   onRequestDeposit,
   depositEligible,
   updating,
+  rowError,
 }: {
   referral: Referral;
   onUpdate: (id: string, status: string) => void;
@@ -5507,6 +5600,8 @@ function ReferralCard({
   // rancher whose deposit request would 422 server-side.
   depositEligible?: boolean;
   updating: string | null;
+  // U11: message shown when the inline status update failed for THIS row.
+  rowError?: string;
 }) {
   // FINAL-5 (2026-05-31): see ReferralRow for parity logic + button intent.
   const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
@@ -5556,6 +5651,8 @@ function ReferralCard({
             {referral.intro_sent_at ? `Introduced ${new Date(referral.intro_sent_at).toLocaleDateString()}` : ''}
           </p>
           {depositEligible && <PipelineNextStep referral={referral} />}
+          {/* U11: compact per-row error when the inline status update failed. */}
+          {rowError && <p className="text-xs text-weathered mt-1">{rowError}</p>}
         </div>
       </div>
 
