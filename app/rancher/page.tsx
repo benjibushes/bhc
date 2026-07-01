@@ -355,6 +355,12 @@ export default function RancherDashboardPage() {
   const [editingCapacity, setEditingCapacity] = useState(false);
   const [capacityValue, setCapacityValue] = useState('');
   const [capacitySaving, setCapacitySaving] = useState(false);
+  // E4b: self-serve pause/resume. Confirm-first (the confirm panel carries the
+  // "what pausing means" copy), optimistic flip, revert + inline error on
+  // failure. pauseError renders both in the capacity card and the amber banner.
+  const [pauseConfirming, setPauseConfirming] = useState(false);
+  const [pauseSaving, setPauseSaving] = useState(false);
+  const [pauseError, setPauseError] = useState('');
   // U12: capacity-save failures render inside the edit panel (updateError is
   // never rendered on the overview tab, so failures used to show nothing).
   const [capacityError, setCapacityError] = useState('');
@@ -1359,6 +1365,39 @@ export default function RancherDashboardPage() {
     }
   };
 
+  // E4b (2026-07-01): self-serve pause/resume. Optimistic — flip the badge and
+  // banner immediately, revert on failure. The server whitelists the value to
+  // exactly Active/Paused (lib/pauseStatus) and may resolve a resume to
+  // 'At Capacity' when the rancher is still at their lead cap — trust its
+  // returned activeStatus over our optimistic guess.
+  const handleTogglePause = async (next: 'Active' | 'Paused') => {
+    if (!rancherInfo || pauseSaving) return;
+    const prevStatus = rancherInfo.activeStatus;
+    setPauseSaving(true);
+    setPauseError('');
+    setRancherInfo((p) => (p ? { ...p, activeStatus: next } : p));
+    try {
+      const res = await fetch('/api/rancher/landing-page', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 'Active Status': next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setRancherInfo((p) => (p ? { ...p, activeStatus: data.activeStatus || next } : p));
+        setPauseConfirming(false);
+      } else {
+        setRancherInfo((p) => (p ? { ...p, activeStatus: prevStatus } : p));
+        setPauseError(data.error || 'Could not update your status. Please try again.');
+      }
+    } catch {
+      setRancherInfo((p) => (p ? { ...p, activeStatus: prevStatus } : p));
+      setPauseError('Network error. Please check your connection and try again.');
+    } finally {
+      setPauseSaving(false);
+    }
+  };
+
   const handleRequestGoLive = async () => {
     setGoLiveLoading(true);
     setGoLiveError('');
@@ -1775,6 +1814,7 @@ export default function RancherDashboardPage() {
               <span className={`px-3 py-1 text-xs font-medium uppercase tracking-wider ${
                 rancherInfo.activeStatus === 'Active' ? 'bg-sage/15 text-sage-dark' :
                 rancherInfo.activeStatus === 'At Capacity' ? 'bg-amber/20 text-amber-dark' :
+                rancherInfo.activeStatus === 'Paused' ? 'bg-amber/20 text-amber-dark' :
                 'bg-bone-warm text-saddle'
               }`}>
                 {rancherInfo.activeStatus || 'Pending'}
@@ -1918,6 +1958,31 @@ export default function RancherDashboardPage() {
               </div>
             );
           })()}
+
+          {/* E4b — persistent paused banner. Renders on every tab while
+              Active Status === 'Paused' (rancher used the self-serve pause in
+              the capacity card). One-tap Resume; errors surface inline. */}
+          {rancherInfo.activeStatus === 'Paused' && (
+            <div className="p-4 border-l-4 border-amber-dark bg-amber/10 space-y-2">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <p className="text-sm text-charcoal">
+                  <strong>New leads are paused.</strong>{' '}
+                  New buyers won&apos;t be routed to you while paused. Your page stays live. Current conversations continue.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleTogglePause('Active')}
+                  disabled={pauseSaving}
+                  className="px-4 py-2 min-h-[44px] text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+                >
+                  {pauseSaving ? 'Resuming…' : 'Resume new leads'}
+                </button>
+              </div>
+              {pauseError && (
+                <p className="text-sm text-weathered">{pauseError}</p>
+              )}
+            </div>
+          )}
 
           {/* Stage-3 Task 11C — Banner cascade for tier_v2 ranchers.
               Shows ALL applicable banners stacked. Priority (top → bottom):
@@ -2385,6 +2450,63 @@ export default function RancherDashboardPage() {
                         <p className="text-xs text-dust">Set how many buyer leads you can handle at once. We&apos;ll pause new leads when you hit this limit.</p>
                       </div>
                     )}
+                    {/* E4b — self-serve pause/resume. The only in-app brake a
+                        rancher had before this was emailing support. Pausing
+                        flips Active Status to 'Paused' (routing excludes them);
+                        their page stays live and in-flight deals are untouched.
+                        Confirm-first so a stray tap can't cut off their leads. */}
+                    <div className="pt-3 border-t border-dust space-y-2">
+                      {rancherInfo.activeStatus === 'Paused' ? (
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs font-medium text-amber-dark">New leads paused</p>
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePause('Active')}
+                            disabled={pauseSaving}
+                            className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+                          >
+                            {pauseSaving ? '...' : 'Resume'}
+                          </button>
+                        </div>
+                      ) : !pauseConfirming ? (
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs text-saddle">Need a break from new buyers?</p>
+                          <button
+                            type="button"
+                            onClick={() => { setPauseConfirming(true); setPauseError(''); }}
+                            className="px-4 py-2 min-h-[44px] text-xs border border-dust text-saddle hover:bg-dust hover:text-bone transition-colors"
+                          >
+                            Pause new leads
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <p className="text-xs text-saddle">
+                            New buyers won&apos;t be routed to you while paused. Your page stays live. Current conversations continue.
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePause('Paused')}
+                              disabled={pauseSaving}
+                              className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+                            >
+                              {pauseSaving ? '...' : 'Pause new leads'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setPauseConfirming(false); setPauseError(''); }}
+                              className="px-3 py-2 min-h-[44px] text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {pauseError && (
+                        <div className="p-3 border border-weathered text-weathered text-sm">{pauseError}</div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -2502,6 +2624,27 @@ export default function RancherDashboardPage() {
                     - deposit-eligible (tier_v2 + Connect): the deposit rail
                     - everyone else: contact → close → confirm payment */}
               <PipelineExplainer depositEligible={depositEligible} />
+
+              {/* U38 — why the deposit rail is missing. tier_v2 ranchers whose
+                  Connect isn't active silently lose every request-deposit
+                  button (depositEligible=false) with no explanation; name the
+                  fix and where it lives. Legacy ranchers get their manual flow
+                  labeled so the absence of deposit links reads as by-design,
+                  not broken. */}
+              {rancherInfo.pricingModel === 'tier_v2' && !depositEligible && (
+                <div className="p-3 border-l-4 border-amber-dark bg-amber/10 text-sm text-charcoal">
+                  Finish your payout setup in{' '}
+                  <a href="/rancher/billing" className="underline underline-offset-2 font-medium hover:text-saddle">
+                    Billing
+                  </a>{' '}
+                  to send deposit links.
+                </div>
+              )}
+              {rancherInfo.pricingModel === 'legacy' && (
+                <p className="text-sm text-saddle">
+                  You handle payment directly — log the sale here when it closes.
+                </p>
+              )}
 
               {(() => {
                 // Apply filter + sort. Pure-function — no side effects.
@@ -4446,6 +4589,14 @@ export default function RancherDashboardPage() {
                     <p className="text-xs text-saddle mt-1">
                       This is your gross sale price (what you want to net). Commission was already charged on top of this at deposit time — you keep 100% of this number.
                     </p>
+                    {/* U30 — the prefill comes from tier pricing; when no tier
+                        price is set this arrives EMPTY with no explanation of
+                        what belongs here. Spell it out. */}
+                    {!finalInvoiceTotalSale && (
+                      <p className="text-xs text-amber-dark mt-1">
+                        Enter the final agreed sale total — the invoice collects the total minus the deposit already paid.
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -4474,6 +4625,13 @@ export default function RancherDashboardPage() {
                       <p className="text-xs text-saddle">
                         ${parseFloat(finalInvoiceTotalSale).toFixed(2)} listed sale &minus; ${(finalInvoiceModal.deposit_amount || 0).toFixed(2)} deposit already paid
                       </p>
+                      {/* U30 — say WHY send is disabled instead of a silently
+                          dead button + a $0.00 balance. */}
+                      {parseFloat(finalInvoiceTotalSale) <= (finalInvoiceModal.deposit_amount || 0) && (
+                        <p className="text-xs text-weathered">
+                          The total must be more than the deposit already paid — there&apos;s nothing left to invoice at this amount.
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -4520,7 +4678,11 @@ export default function RancherDashboardPage() {
                     disabled={
                       finalInvoiceSubmitting ||
                       !finalInvoiceTotalSale ||
-                      parseFloat(finalInvoiceTotalSale) <= 0
+                      parseFloat(finalInvoiceTotalSale) <= 0 ||
+                      // U30 — the invoice charges total minus deposit; a total
+                      // at or below the deposit invoices nothing (the server
+                      // would reject it anyway). The balance box explains why.
+                      parseFloat(finalInvoiceTotalSale) <= (finalInvoiceModal.deposit_amount || 0)
                     }
                     className="flex-1 px-4 py-3 bg-charcoal text-bone hover:bg-saddle transition-colors font-medium uppercase text-sm tracking-wider disabled:opacity-50"
                   >
@@ -5756,15 +5918,17 @@ function ReferralCard({
 
 // ── WAVE 3b — Earnings CSV export ─────────────────────────────────────────
 // Optional date range (blank = all-time) + a download button hitting the
-// rancher-scoped /api/rancher/earnings/export route. Builds the query string
-// and navigates to the URL so the browser handles the file download via the
-// Content-Disposition header (no blob juggling needed).
+// rancher-scoped /api/rancher/earnings/export route.
+// U22 (2026-07-01): previously navigated via window.location.href — a 401 or
+// 500 REPLACED the whole dashboard with raw JSON. Now fetch() the CSV, surface
+// errors inline, and trigger the download from a Blob object URL.
 function EarningsCsvExport() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [error, setError] = useState('');
+  const [downloading, setDownloading] = useState(false);
 
-  function download() {
+  async function download() {
     setError('');
     if (from && to && from > to) {
       setError('Start date must be on or before end date.');
@@ -5774,7 +5938,41 @@ function EarningsCsvExport() {
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     const qs = params.toString();
-    window.location.href = `/api/rancher/earnings/export${qs ? `?${qs}` : ''}`;
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/rancher/earnings/export${qs ? `?${qs}` : ''}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        let msg = 'Export failed — please try again in a moment.';
+        try {
+          const data = await res.json();
+          if (data?.error) msg = data.error;
+        } catch {
+          // Non-JSON error body — keep the generic message.
+        }
+        setError(msg);
+        return;
+      }
+      // Prefer the server's filename (Content-Disposition), fall back to a
+      // date-stamped local name.
+      const dispo = res.headers.get('Content-Disposition') || '';
+      const match = dispo.match(/filename="([^"]+)"/);
+      const filename = match?.[1] || `bhc-earnings${from ? `-from-${from}` : ''}${to ? `-to-${to}` : ''}.csv`;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError('Network error — please check your connection and try again.');
+    } finally {
+      setDownloading(false);
+    }
   }
 
   return (
@@ -5807,9 +6005,10 @@ function EarningsCsvExport() {
         <button
           type="button"
           onClick={download}
-          className="px-5 min-h-[44px] bg-charcoal text-bone hover:bg-saddle transition-colors text-sm font-medium uppercase tracking-wider"
+          disabled={downloading}
+          className="px-5 min-h-[44px] bg-charcoal text-bone hover:bg-saddle transition-colors text-sm font-medium uppercase tracking-wider disabled:opacity-50"
         >
-          Export CSV ↓
+          {downloading ? 'Exporting…' : 'Export CSV ↓'}
         </button>
       </div>
       {error && <p className="text-xs text-weathered">{error}</p>}
