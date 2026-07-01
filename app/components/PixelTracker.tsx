@@ -1,6 +1,12 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Script from 'next/script';
+import {
+  CONSENT_GRANTED_EVENT,
+  hasGlobalPrivacyControl,
+  readConsent,
+} from '@/lib/consent';
 
 /**
  * Mounts Meta Pixel + GA4 + Google Ads conversion tags. Conditional on
@@ -11,11 +17,40 @@ import Script from 'next/script';
  * - NEXT_PUBLIC_META_PIXEL_ID   (e.g. "1234567890")
  * - NEXT_PUBLIC_GA4_ID          (e.g. "G-XXXXXXXXXX")
  * - NEXT_PUBLIC_GOOGLE_ADS_ID   (e.g. "AW-1234567890")
+ *
+ * Consent gate (F3 — CCPA/GPC): NO third-party script loads until the
+ * visitor's consent is 'granted' — either stored from a prior visit
+ * (localStorage/cookie via lib/consent) or granted live via ConsentBanner's
+ * OK button, which fires CONSENT_GRANTED_EVENT so tracking starts on the
+ * spot without a reload. Global Privacy Control browsers are denied
+ * silently and never load anything. When denied/unset this renders null;
+ * lib/track's window.fbq / window.gtag guards make every track() call a
+ * safe no-op in that state. Server-side CAPI is a separate rail and is
+ * unaffected by this gate.
  */
 export default function PixelTracker() {
   const metaPixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID;
   const ga4Id = process.env.NEXT_PUBLIC_GA4_ID;
   const googleAdsId = process.env.NEXT_PUBLIC_GOOGLE_ADS_ID;
+
+  // false on the server and on first client render — the initial HTML never
+  // contains tracking scripts, so denied/unset visitors load nothing at all.
+  const [consented, setConsented] = useState(false);
+
+  useEffect(() => {
+    // GPC is a binding opt-out: it wins even over a previously stored grant.
+    if (hasGlobalPrivacyControl()) return;
+    if (readConsent() === 'granted') {
+      setConsented(true);
+      return;
+    }
+    // No stored grant yet — start the moment ConsentBanner's OK fires.
+    const onGranted = () => setConsented(true);
+    window.addEventListener(CONSENT_GRANTED_EVENT, onGranted);
+    return () => window.removeEventListener(CONSENT_GRANTED_EVENT, onGranted);
+  }, []);
+
+  if (!consented) return null;
 
   return (
     <>

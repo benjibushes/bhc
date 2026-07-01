@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { track } from '@/lib/track';
 import { deriveDeposit } from '@/lib/pricing';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
+import SmsConsentCheckbox, { TermsNotice } from '@/app/components/SmsConsentCheckbox';
 
 type Cut = 'quarter' | 'half' | 'whole';
 interface CutData { price: number; lbs?: any }
@@ -42,6 +43,8 @@ export default function DepositReserveForm({
   const [cut, setCut] = useState<Cut>(defaultCut);
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  // TCPA SMS consent — UNCHECKED by default, never gates the reserve.
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [stateCode, setStateCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -71,7 +74,12 @@ export default function DepositReserveForm({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ slug, cut, email, phone, state: stateCode }),
+        // smsOptIn rides along using the funnel's exact payload convention
+        // (→ Airtable `SMS Opt-In`). The reserve route is a money path and is
+        // untouched in this slice, so it currently drops the field — the
+        // checkbox under-promises (we store nothing, we send nothing) until
+        // the route picks it up in a follow-up slice.
+        body: JSON.stringify({ slug, cut, email, phone, state: stateCode, smsOptIn }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -175,6 +183,7 @@ export default function DepositReserveForm({
             ))}
           </select>
         </div>
+        <SmsConsentCheckbox checked={smsOptIn} onChange={setSmsOptIn} />
         {error && <p className="text-sm text-weathered">{error}</p>}
         <button
           type="submit"
@@ -186,6 +195,7 @@ export default function DepositReserveForm({
         <p className="text-[11px] text-dust text-center">
           {REFUND_POLICY_SHORT}. a small BuyHalfCow service fee is added at checkout — {operatorFirst} ships your beef straight to you.
         </p>
+        <TermsNotice />
       </form>
 
       {bookingUrl ? (

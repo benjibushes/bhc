@@ -11,6 +11,7 @@ import UtmCapture from "./components/UtmCapture";
 import Footer from "./components/Footer";
 import ChromeGate from "./components/ChromeGate";
 import FocusedHeader from "./components/FocusedHeader";
+import ConsentBanner from "./components/ConsentBanner";
 
 const playfair = Playfair_Display({
   variable: "--font-playfair",
@@ -120,6 +121,10 @@ export default function RootLayout({
         <ChromeGate>
           <Footer />
         </ChromeGate>
+        {/* First-visit cookie/tracking consent — mounted at the root so it
+            covers every page, including focused flows. GPC browsers are
+            opted out silently and never see it. */}
+        <ConsentBanner />
         {/* C4 — Vercel RUM (page analytics + Core Web Vitals). Both are
             no-ops off Vercel and add nothing until deployed there. */}
         <Analytics />

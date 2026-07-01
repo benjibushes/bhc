@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createRecord, getAllRecords, getRecordById } from '@/lib/airtable';
+import { createRecord, getAllRecords, getRecordById, updateRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendInquiryToRancher, sendInquiryAlertToAdmin } from '@/lib/email';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     } catch {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
-    const { consumerId, rancherId, consumerName, consumerEmail, consumerPhone, message, interestType } = body;
+    const { consumerId, rancherId, consumerName, consumerEmail, consumerPhone, message, interestType, smsOptIn } = body;
 
     if (!rancherId || !consumerName || !consumerEmail || !message) {
       return NextResponse.json({ error: 'Missing required fields for inquiry' }, { status: 400 });
@@ -99,6 +99,41 @@ export async function POST(request: Request) {
     }
 
     const record = await createRecord(TABLES.INQUIRIES, inquiryFields);
+
+    // TCPA SMS consent from the store inquiry form. The Inquiries table has
+    // no consent column — consent lives on CONSUMERS (`SMS Opt-In`, the exact
+    // field the funnel writes and sendSMSToConsumer gates on) — so record it
+    // there when a matching Consumer exists. Only ever flips false→true (an
+    // unchecked box means "no new consent granted", never a revocation),
+    // requires a non-empty phone (same guard as /api/consumers), and never
+    // fails the inquiry itself.
+    if (smsOptIn === true && consumerPhone && String(consumerPhone).trim().length > 0) {
+      try {
+        let consumerRecordId = consumerId || '';
+        let consumerRecord: any = null;
+        if (consumerRecordId) {
+          consumerRecord = await getRecordById(TABLES.CONSUMERS, consumerRecordId).catch(() => null);
+        } else {
+          const safeEmail = escapeAirtableValue(String(consumerEmail).trim().toLowerCase());
+          const matches: any[] = await getAllRecords(
+            TABLES.CONSUMERS,
+            `LOWER({Email}) = "${safeEmail}"`
+          );
+          if (matches.length > 0) {
+            consumerRecord = matches[0];
+            consumerRecordId = matches[0].id;
+          }
+        }
+        if (consumerRecordId && consumerRecord && consumerRecord['SMS Opt-In'] !== true) {
+          await updateRecord(TABLES.CONSUMERS, consumerRecordId, {
+            'SMS Opt-In': true,
+            'SMS Opt-In At': new Date().toISOString(),
+          });
+        }
+      } catch (e: any) {
+        console.error('[inquiries] SMS opt-in record failed (non-fatal):', e?.message);
+      }
+    }
 
     // ONLY send alert to admin - rancher email goes out AFTER approval
     await sendInquiryAlertToAdmin({
