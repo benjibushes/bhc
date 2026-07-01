@@ -48,6 +48,11 @@ export async function GET(req: Request) {
       familiesMatched: d.familiesMatched,
       verifiedRanches: d.verifiedRanches,
       ranchesInState: state ? d.byState[state] || 0 : 0,
+    }, {
+      // CDN-cache the response (keyed per ?state) so a cold lambda doesn't
+      // recompute this vanity stat on every funnel mount (542 hits/24h). The
+      // in-process cache only helps warm lambdas; this offloads to the edge.
+      headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
     });
   } catch {
     return NextResponse.json({ familiesMatched: FAMILIES_FLOOR, verifiedRanches: 0, ranchesInState: 0 });
