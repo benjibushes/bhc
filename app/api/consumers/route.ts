@@ -14,6 +14,7 @@ import { transitionBuyerStage } from '@/lib/contracts';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
+import { leadValueUsd } from '@/lib/leadValue';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -297,7 +298,11 @@ export async function POST(request: Request) {
               fbc: capiFbcQ,
             }),
             custom_data: {
-              value: 0,
+              // Modeled expected value (never 0 — that told Meta the lead was
+              // worthless + killed value-based bidding). Funnel-start has no
+              // qualifying signal yet, so this is the base; the richer signup
+              // Lead below carries intent/basket. See lib/leadValue.
+              value: leadValueUsd(),
               currency: 'usd',
               content_name: 'funnel-lead',
               content_category: 'buyer-funnel',
@@ -686,6 +691,15 @@ export async function POST(request: Request) {
         fbc: capiFbc,
       }),
       custom_data: {
+        // Valued signup Lead — scales with intent + basket + ready-to-buy so
+        // Meta value-bidding optimizes toward whole-cow buyers, not the
+        // cheapest click (was sending no value at all). See lib/leadValue.
+        value: leadValueUsd({
+          intentScore: serverIntentScore,
+          orderType: consumerFields['Order Type'] as string | undefined,
+          readyToBuy: !!consumerFields['Ready to Buy'],
+        }),
+        currency: 'usd',
         content_name: 'BHC Signup',
         content_category: consumerSegment,
       },

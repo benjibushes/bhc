@@ -368,6 +368,21 @@ export default async function RancherPage(
     ...(tagline ? { description: tagline } : {}),
     ...(offers.length > 0 ? { makesOffer: offers } : {}),
     ...(priceRange ? { priceRange } : {}),
+    // aggregateRating — avgRating + reviewCount are already computed from real
+    // buyer reviews above. Emitting them here earns the gold-star rich result
+    // in Google on the exact pages paid traffic lands on (free CTR lift). Gated
+    // on real reviews so we never publish an empty/fake rating (Google policy).
+    ...(reviewCount > 0 && avgRating > 0
+      ? {
+          aggregateRating: {
+            '@type': 'AggregateRating',
+            ratingValue: avgRating,
+            reviewCount,
+            bestRating: 5,
+            worstRating: 1,
+          },
+        }
+      : {}),
     ...(isProspect
       ? {
           disambiguatingDescription:
