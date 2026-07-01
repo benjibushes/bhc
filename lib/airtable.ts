@@ -1,4 +1,9 @@
 import Airtable from 'airtable';
+import { withTimeout, AirtableTimeoutError, resolveAirtableTimeoutMs } from './airtableTimeout';
+
+// Re-export so callers can `instanceof AirtableTimeoutError` without a
+// separate import path.
+export { withTimeout, AirtableTimeoutError, resolveAirtableTimeoutMs } from './airtableTimeout';
 
 // Initialize Airtable
 const apiKey = process.env.AIRTABLE_API_KEY;
@@ -39,13 +44,24 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+// C3: `label` (pass the table name) is surfaced in the timeout error message
+// for debuggability. Each individual ATTEMPT gets its own timeout budget —
+// the timeout wraps the attempt, NOT the whole retry loop — so the existing
+// 429 exponential backoff is unchanged and every retry gets a fresh ~10s
+// before we declare the connection hung.
+async function withRateLimitRetry<T>(fn: () => Promise<T>, label = 'Airtable'): Promise<T> {
   const maxWait = 32000;
   let delay = 1000;
   while (true) {
     try {
-      return await fn();
+      return await withTimeout(fn(), resolveAirtableTimeoutMs(), label);
     } catch (error: any) {
+      // A hung connection is a transient FAILURE, not a rate limit: propagate
+      // as a throw so callers' existing catch/retry/5xx logic fires. Never
+      // swallow it or return empty data — an empty return would render "no
+      // ranchers" lies. (Explicit instanceof check also guards against the
+      // timeout message ever matching the '429' substring test below.)
+      if (error instanceof AirtableTimeoutError) throw error;
       const msg = error?.message || error?.error?.message || String(error);
       const isRateLimit = error?.statusCode === 429 || msg.includes('429') || msg.toLowerCase().includes('rate limit');
       if (isRateLimit && delay <= maxWait) {
@@ -66,7 +82,7 @@ export async function createRecord(tableName: string, fields: any) {
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const records = await withRateLimitRetry(() => base(tableName).create([{ fields: currentFields }], { typecast: true }));
+      const records = await withRateLimitRetry(() => base(tableName).create([{ fields: currentFields }], { typecast: true }), tableName);
       if (_cacheKey(tableName)) invalidateAirtableCache(tableName);
       return records[0];
     } catch (error: any) {
@@ -175,7 +191,8 @@ export async function getAllRecords(tableName: string, filterByFormula?: string)
         .select({
           ...(filterByFormula && { filterByFormula }),
         })
-        .all()
+        .all(),
+      tableName
     );
 
     // Preserve Airtable's autogen createdTime (record metadata, NOT a field).
@@ -198,7 +215,7 @@ export async function getAllRecords(tableName: string, filterByFormula?: string)
 // Helper function to get a single record by ID
 export async function getRecordById(tableName: string, recordId: string) {
   try {
-    const record = await withRateLimitRetry(() => base(tableName).find(recordId));
+    const record = await withRateLimitRetry(() => base(tableName).find(recordId), tableName);
     return {
       id: record.id,
       ...record.fields,
@@ -231,6 +248,7 @@ export async function findReferralByBuyerEmail(email: string) {
           maxRecords: 50,
         })
         .all(),
+      TABLES.REFERRALS,
     );
     if (!records.length) return null;
     const CLOSED = new Set(['Closed Lost', 'Closed Won']);
@@ -256,7 +274,9 @@ export async function findReferralByBuyerEmail(email: string) {
 // Alias for consistency
 export async function getRecord(tableName: string, recordId: string) {
   try {
-    const record = await base(tableName).find(recordId);
+    // C3: this helper never had retry; give the bare SDK call the same
+    // per-attempt timeout so a hung connection throws instead of dangling.
+    const record = await withTimeout(base(tableName).find(recordId), resolveAirtableTimeoutMs(), tableName);
     return {
       id: record.id,
       fields: record.fields,
@@ -279,7 +299,7 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
           id: recordId,
           fields: currentFields,
         },
-      ], { typecast: true }));
+      ], { typecast: true }), tableName);
       // Bust the in-process cache for this table so callers don't read
       // back stale data on the next getAllRecords. Cheap; runs only on
       // tables we cache (currently just RANCHERS).
@@ -396,7 +416,7 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
 // Helper function to delete a record
 export async function deleteRecord(tableName: string, recordId: string) {
   try {
-    const deletedRecords = await base(tableName).destroy([recordId]);
+    const deletedRecords = await withTimeout(base(tableName).destroy([recordId]), resolveAirtableTimeoutMs(), tableName);
     return deletedRecords[0];
   } catch (error) {
     console.error(`Error deleting record ${recordId} from ${tableName}:`, error);
@@ -407,9 +427,13 @@ export async function deleteRecord(tableName: string, recordId: string) {
 // Get all ranchers with active landing pages (Page Live = true)
 export async function getActiveRancherPages() {
   try {
-    const records = await base(TABLES.RANCHERS)
-      .select({ filterByFormula: '{Page Live} = 1' })
-      .all();
+    const records = await withTimeout(
+      base(TABLES.RANCHERS)
+        .select({ filterByFormula: '{Page Live} = 1' })
+        .all(),
+      resolveAirtableTimeoutMs(),
+      TABLES.RANCHERS,
+    );
     return records.map((record) => ({
       id: record.id,
       ...record.fields,
@@ -424,9 +448,13 @@ export async function getActiveRancherPages() {
 export async function getRancherBySlug(slug: string) {
   try {
     const safeSlug = escapeAirtableValue(slug);
-    const records = await base(TABLES.RANCHERS)
-      .select({ filterByFormula: `AND({Slug} = "${safeSlug}", {Page Live} = 1)`, maxRecords: 1 })
-      .all();
+    const records = await withTimeout(
+      base(TABLES.RANCHERS)
+        .select({ filterByFormula: `AND({Slug} = "${safeSlug}", {Page Live} = 1)`, maxRecords: 1 })
+        .all(),
+      resolveAirtableTimeoutMs(),
+      TABLES.RANCHERS,
+    );
     if (records.length === 0) return null;
     return { id: records[0].id, ...records[0].fields };
   } catch (error) {
@@ -574,6 +602,7 @@ export async function getRancherOrProspectBySlug(slug: string) {
           maxRecords: 1,
         })
         .all(),
+      TABLES.RANCHERS,
     );
     if (records.length === 0) return null;
     return { id: records[0].id, ...records[0].fields };
