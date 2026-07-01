@@ -13,12 +13,34 @@ import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapaci
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { requireAdmin } from '@/lib/adminAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
+import { tierFor } from '@/lib/tiers';
+import { routingWeightForTier, retainerPriorityCompare } from '@/lib/routingPriority';
 
 export const maxDuration = 90;
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 import { funnelRecord } from '@/lib/funnelMetrics';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+
+// ── Retainer priority tiebreaker (S0.2) ──────────────────────────────────────
+// Makes the paid-tier "priority routing" promise (lib/tiers.ts) real: among
+// equally-eligible ranchers, a paid-priority tier (ranch/operator, weight 3)
+// is matched ahead of a non-priority peer (pasture/legacy/none, weight 1).
+//
+// Starvation floor: a higher-weight rancher wins the tiebreak ONLY while it is
+// not meaningfully MORE loaded than the lower-weight peer (within FLOOR_SLACK
+// active referrals). Past that, this returns 0 and the existing load-balance /
+// round-robin rules take over — so a retainer can never hoard every lead and a
+// free rancher is never fully starved. This is a TIEBREAKER only; it never
+// touches eligibility, capacity, or the atomic-INCR ceiling.
+function retainerPriorityCmp(a: any, b: any): number {
+  return retainerPriorityCompare(
+    routingWeightForTier(tierFor(a)),
+    a['Current Active Referrals'] || 0,
+    routingWeightForTier(tierFor(b)),
+    b['Current Active Referrals'] || 0,
+  );
+}
 
 export async function POST(request: Request) {
   try {
@@ -641,6 +663,16 @@ export async function POST(request: Request) {
         const bPrimary = normalizeState(b['State']) === normalizedBuyerState;
         if (aPrimary !== bPrimary) return aPrimary ? -1 : 1;
 
+        // 1b. RETAINER PRIORITY (S0.2) — scoped to TRUE-LOCAL ranchers only
+        //     (both primary-in-state), so a paid-priority tier never jumps ahead
+        //     of an actual in-state rancher it only reaches via Routing States.
+        //     Starvation-protected (see retainerPriorityCmp); returns 0 when the
+        //     retainer is overloaded, so load-balance below still governs.
+        if (aPrimary && bPrimary) {
+          const p = retainerPriorityCmp(a, b);
+          if (p !== 0) return p;
+        }
+
         // 2. Then by capacity (fewer active = preferred for load-balance)
         const aRefs = a['Current Active Referrals'] || 0;
         const bRefs = b['Current Active Referrals'] || 0;
@@ -683,6 +715,10 @@ export async function POST(request: Request) {
         // No primary-state preference here (none are in-state). Load-balance →
         // round-robin → performance, same tiebreakers as the local sort.
         nationwideEligible.sort((a: any, b: any) => {
+          // Retainer priority (S0.2) first — none are in-state here, so it
+          // applies across the whole nationwide pool (still starvation-floored).
+          const p = retainerPriorityCmp(a, b);
+          if (p !== 0) return p;
           const aRefs = a['Current Active Referrals'] || 0;
           const bRefs = b['Current Active Referrals'] || 0;
           if (aRefs !== bRefs) return aRefs - bRefs;
