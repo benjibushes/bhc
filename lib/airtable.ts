@@ -212,6 +212,40 @@ export async function getAllRecords(tableName: string, filterByFormula?: string)
   }
 }
 
+// Exact unique-key lookup — fetch AT MOST ONE record matching a formula.
+// getAllRecords(table, formula) walks EVERY page of the (server-filtered)
+// result set even when the caller only ever reads rows[0] of a unique-key
+// match (Payments by Stripe Payment Intent Id, Stripe Events by Event Id,
+// Ranchers by Connect Account Id). maxRecords:1 + pageSize:1 tells Airtable
+// to stop after the first hit — one round-trip, no full pagination. Mirrors
+// getRancherBySlug's select shape; retry/error semantics mirror getAllRecords
+// (withRateLimitRetry, throw on failure) so swapped callers behave identically.
+// Returns the record flattened EXACTLY like a getAllRecords row
+// (id + _createdTime + fields spread at top level), or null when no match.
+export async function getFirstRecord(
+  tableName: string,
+  filterByFormula: string,
+): Promise<Record<string, any> | null> {
+  try {
+    const records = await withRateLimitRetry(
+      () =>
+        base(tableName)
+          .select({ filterByFormula, maxRecords: 1, pageSize: 1 })
+          .all(),
+      tableName,
+    );
+    if (records.length === 0) return null;
+    return {
+      id: records[0].id,
+      _createdTime: (records[0] as any)._rawJson?.createdTime || '',
+      ...records[0].fields,
+    };
+  } catch (error) {
+    console.error(`Error fetching first record from ${tableName}:`, error);
+    throw error;
+  }
+}
+
 // Helper function to get a single record by ID
 export async function getRecordById(tableName: string, recordId: string) {
   try {

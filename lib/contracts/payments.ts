@@ -7,7 +7,7 @@
 // Idempotency is keyed on Stripe Payment Intent ID + Stripe Transfer ID so
 // webhook retries never double-process.
 
-import { createRecord, updateRecord, getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, getFirstRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
@@ -168,10 +168,14 @@ export async function markDepositSucceeded(
   opts: { totalChargedCents?: number; referralId?: string } = {},
 ): Promise<boolean> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
-  const piMatched: any[] = await getAllRecords(
+  // Unique-key lookup — maxRecords:1 (getFirstRecord) instead of a full
+  // filtered pagination. Wrapped back into an array so selectSettlementRow's
+  // (pure, tested) decision contract is untouched.
+  const piFirst = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`
   );
+  const piMatched: any[] = piFirst ? [piFirst] : [];
   // CLOVER async-PI fallback: under apiVersion 2026-02-25 the PaymentIntent
   // doesn't exist at checkout-create, so recordDeposit stored the row with an
   // EMPTY 'Stripe Payment Intent Id'. By the payment_intent.succeeded webhook
@@ -244,12 +248,11 @@ export async function markDepositAbandoned(
   opts: { stripeStatus?: string } = {},
 ): Promise<{ found: boolean; flipped: boolean }> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
-  const existing: any[] = await getAllRecords(
+  const payment: any = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`,
   );
-  if (existing.length === 0) return { found: false, flipped: false };
-  const payment = existing[0];
+  if (!payment) return { found: false, flipped: false };
   // Idempotency: any non-pending row is a no-op. We only flip pending → abandoned
   // so a succeeded row never gets downgraded by a delayed cron pass.
   if (payment['Status'] !== 'pending') return { found: true, flipped: false };
@@ -287,12 +290,11 @@ export async function markDepositRequiresReplay(
   stripePaymentIntentId: string,
 ): Promise<{ found: boolean; flipped: boolean }> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
-  const existing: any[] = await getAllRecords(
+  const payment: any = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`,
   );
-  if (existing.length === 0) return { found: false, flipped: false };
-  const payment = existing[0];
+  if (!payment) return { found: false, flipped: false };
   if (payment['Status'] !== 'pending') return { found: true, flipped: false };
 
   try {
@@ -321,12 +323,11 @@ export async function markDepositRefunded(
   opts: MarkDepositRefundedOpts = {},
 ): Promise<{ flipped: boolean }> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
-  const existing: any[] = await getAllRecords(
+  const payment: any = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`
   );
-  if (existing.length === 0) return { flipped: false };
-  const payment = existing[0];
+  if (!payment) return { flipped: false };
 
   // FULL-refund detection — the gate that decides whether to NUKE the whole
   // Closed Won deal (restoreReferralAfterRefund). A FULL refund requires BOTH:
@@ -572,15 +573,15 @@ export async function markDepositDisputed(
   input: MarkDepositDisputedInput,
 ): Promise<{ found: boolean; recordId?: string }> {
   const escaped = input.stripePaymentIntentId.replace(/"/g, '\\"');
-  const rows: any[] = await getAllRecords(
+  const row = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`,
   );
-  if (rows.length === 0) {
+  if (!row) {
     console.warn(`[markDepositDisputed] dispute event for unknown PI: ${input.stripePaymentIntentId}`);
     return { found: false };
   }
-  const recordId: string = rows[0].id;
+  const recordId: string = row.id;
   await updateRecord(PAYMENTS_TABLE, recordId, {
     'Dispute Status': input.disputeStatus,
     'Dispute Amount': (input.disputeAmountCents || 0) / 100,

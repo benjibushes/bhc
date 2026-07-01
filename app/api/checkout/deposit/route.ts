@@ -142,28 +142,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Rancher Stripe Connect Account missing' }, { status: 409 });
   }
 
-  // Live Connect status re-check. The cached `Stripe Connect Status` field
-  // above can go stale when Stripe flips a rancher active→restricted and the
-  // Connect webhook misses it (CONNECT_WEBHOOK_SECRET is often unset in prod).
-  // A stale 'active' would route buyers here and then blow up inside
-  // createDepositCheckout at Stripe (a 500) instead of a clean rejection.
-  // Read live, self-heal Airtable so routing recovers, and reject with the
-  // SAME 409 as the cached gate. Transient read failures fall back to the
-  // cached value already validated above — never block a deposit on a flaky
-  // Stripe read.
-  try {
-    const live = await getConnectAccountStatus(connectAccountId);
-    if (live.status !== 'active') {
-      try {
+  // Live Connect status re-check — self-heal only, OFF the response path (E2/m8).
+  // The cached `Stripe Connect Status` gate above already passed. Previously we
+  // AWAITED a live Stripe account read here (~200-500ms, serial) on EVERY
+  // deposit POST just to catch the rare stale-'active' case. The buyer-facing
+  // money guard doesn't need the await: a genuinely restricted/disabled account
+  // fails createDepositCheckout at Stripe below, which maps to the friendly
+  // 'checkout_failed' response ("your card was not charged") — no charge can
+  // ever land on a dead account. What IS load-bearing is the SELF-HEAL write:
+  // when Stripe flips a rancher active→restricted and the Connect webhook
+  // misses it (CONNECT_WEBHOOK_SECRET has been unset/wrong in prod), this
+  // correction is the only mechanism that un-sticks the cached field so
+  // ROUTING stops sending new buyers to the broken rancher. Keep the
+  // correction, fire-and-forget — same pattern as the CAPI fires below.
+  void (async () => {
+    try {
+      const live = await getConnectAccountStatus(connectAccountId);
+      if (live.status !== 'active') {
+        console.warn(`[checkout/deposit] stale Connect status for rancher ${rancherId}: cached=active live=${live.status} — self-healing`);
         await updateRecord(TABLES.RANCHERS, rancherId, { 'Stripe Connect Status': live.status });
-      } catch (persistErr: any) {
-        console.error('[checkout/deposit] failed to persist corrected Connect status:', persistErr?.message);
       }
-      return NextResponse.json({ error: 'Rancher bank not connected — cannot accept deposits yet' }, { status: 409 });
+    } catch (statusErr: any) {
+      console.error('[checkout/deposit] background Connect status re-check failed (cached gate already passed):', statusErr?.message);
     }
-  } catch (statusErr: any) {
-    console.error('[checkout/deposit] live Connect status read failed — falling back to cached field:', statusErr?.message);
-  }
+  })();
 
   // Subscription status gate. past_due/unpaid/canceled ranchers cannot accept
   // deposits — prevents payments to ranchers in Stripe collections.
@@ -359,45 +361,53 @@ export async function POST(req: Request) {
   // client Pixel via event_id=<referralId>. Fire-and-forget. We look up
   // the buyer's Consumer row best-effort for richer user_data (state,
   // first name) — failure logs but never blocks the Stripe redirect.
+  // E4 efficiency (m8): that Consumer read used to be AWAITED on the response
+  // path — an Airtable round-trip serialized in front of the buyer's redirect
+  // to Stripe, purely for analytics enrichment. Capture the request-derived
+  // bits synchronously (headers/cookies), then do the read + fire inside the
+  // same detached async block so the {url} response never waits on it.
   try {
-    let buyer: any = null;
-    try {
-      buyer = await getRecordById(TABLES.CONSUMERS, session.consumerId);
-    } catch {}
-    const buyerFullName = String(buyer?.['Full Name'] || '').trim();
-    const buyerFirstName = buyerFullName.split(/\s+/)[0] || undefined;
-    const buyerState = String(buyer?.['State'] || '') || undefined;
-    const buyerPhone = String(buyer?.['Phone'] || '') || undefined;
     const capiIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
     const capiUserAgent = req.headers.get('user-agent') || undefined;
     const { fbp: capiFbp, fbc: capiFbc } = getMetaCookiesFromRequest(req);
 
-    fireCapi([{
-      event_name: 'InitiateCheckout',
-      event_time: Math.floor(Date.now() / 1000),
-      event_id: metaEventId(referralId),
-      action_source: 'website',
-      event_source_url: `${SITE_URL}/checkout/${referralId}/deposit`,
-      user_data: buildUserData({
-        email: buyerEmail,
-        phone: buyerPhone,
-        firstName: buyerFirstName,
-        state: buyerState,
-        ip: capiIp,
-        userAgent: capiUserAgent,
-        fbp: capiFbp,
-        fbc: capiFbc,
-      }),
-      custom_data: {
-        // Pixel/CAPI value = TOTAL the buyer will charge to their card
-        // (deposit + BHC service fee) so it matches the eventual Purchase
-        // event value + buyer's bank statement. Keeps ROAS attribution clean.
-        value: totalChargedCents / 100,
-        currency: 'usd',
-        content_name: `Beef deposit — ${CUT_LABELS[cutSize]}`,
-        content_category: tier,
-      },
-    }]).catch((e) => console.error('[meta-capi] deposit InitiateCheckout fire failed:', e));
+    void (async () => {
+      let buyer: any = null;
+      try {
+        buyer = await getRecordById(TABLES.CONSUMERS, session.consumerId);
+      } catch {}
+      const buyerFullName = String(buyer?.['Full Name'] || '').trim();
+      const buyerFirstName = buyerFullName.split(/\s+/)[0] || undefined;
+      const buyerState = String(buyer?.['State'] || '') || undefined;
+      const buyerPhone = String(buyer?.['Phone'] || '') || undefined;
+
+      await fireCapi([{
+        event_name: 'InitiateCheckout',
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: metaEventId(referralId),
+        action_source: 'website',
+        event_source_url: `${SITE_URL}/checkout/${referralId}/deposit`,
+        user_data: buildUserData({
+          email: buyerEmail,
+          phone: buyerPhone,
+          firstName: buyerFirstName,
+          state: buyerState,
+          ip: capiIp,
+          userAgent: capiUserAgent,
+          fbp: capiFbp,
+          fbc: capiFbc,
+        }),
+        custom_data: {
+          // Pixel/CAPI value = TOTAL the buyer will charge to their card
+          // (deposit + BHC service fee) so it matches the eventual Purchase
+          // event value + buyer's bank statement. Keeps ROAS attribution clean.
+          value: totalChargedCents / 100,
+          currency: 'usd',
+          content_name: `Beef deposit — ${CUT_LABELS[cutSize]}`,
+          content_category: tier,
+        },
+      }]);
+    })().catch((e) => console.error('[meta-capi] deposit InitiateCheckout fire failed:', e));
   } catch (e) {
     console.error('[meta-capi] deposit InitiateCheckout setup failed:', e);
   }

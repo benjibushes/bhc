@@ -23,14 +23,14 @@ import { getConnectAccountStatus } from '@/lib/stripeConnect';
 import {
   createRecord,
   updateRecord,
-  getAllRecords,
+  getFirstRecord,
   getRecordById,
   TABLES,
 } from '@/lib/airtable';
 import { settleBuyerDeposit, settleFinalInvoice, isPermanentSettlementError } from '@/lib/stripeSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
-import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
+import { markDepositRefunded, markDepositDisputed } from '@/lib/contracts/payments';
 import { logAuditEntry } from '@/lib/auditLog';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
@@ -148,11 +148,13 @@ export async function POST(request: Request) {
   // ------------------------------------------------------------------
   try {
     const safeEventId = String(event.id).replace(/"/g, '\\"');
-    const existing: any[] = await getAllRecords(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
-    if (existing.length > 0 && existing[0]['Status'] === 'processed') {
+    // Event Id is unique — getFirstRecord (maxRecords:1) instead of paginating
+    // the whole filtered scan. Same decision logic on the single row.
+    const existing = await getFirstRecord(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
+    if (existing && existing['Status'] === 'processed') {
       return NextResponse.json({ ok: true, skipped: 'duplicate event' });
     }
-    if (existing.length === 0) {
+    if (!existing) {
       await createRecord(STRIPE_EVENTS_TABLE, {
         'Event Id': event.id,
         'Event Type': event.type,
@@ -291,13 +293,17 @@ export async function POST(request: Request) {
       // protection. These guards make whichever fires FIRST settle fully;
       // the SECOND sees terminal state and no-ops.
       //
-      //   buyer_deposit : Payments.Status === 'succeeded'  → pi.id-keyed anchor
+      //   buyer_deposit : claimOnce(settle-deposit:<pi.id>) + Payments.Status
+      //                   flip INSIDE settleBuyerDeposit → pi.id-keyed anchors
       //   final_invoice : Referral.Status === 'Closed Won' → referralId-keyed anchor
       //
-      // The settle* functions themselves (lib/stripeSettlement.ts) contain
-      // markDepositSucceeded as a second idempotency anchor for deposit — this
-      // outer guard is belt-and-suspenders so we never even enter the function
-      // on the second delivery.
+      // E3 efficiency (m8): the buyer_deposit branch used to pre-scan Payments
+      // by PI here and then settleBuyerDeposit re-ran the IDENTICAL query via
+      // markDepositSucceeded — 2 scans of the hottest table per delivery. The
+      // outer pre-scan is dropped: a repeat delivery re-enters
+      // settleBuyerDeposit, where the claimOnce serializer and/or the
+      // already-succeeded row flip short-circuit BEFORE any non-idempotent
+      // side effect (funnel/email/Telegram). Same terminal behavior, 1 scan.
       case 'payment_intent.succeeded': {
         const pi = event?.data?.object;
         const metaType = pi?.metadata?.type;
@@ -306,11 +312,9 @@ export async function POST(request: Request) {
         if (!referralId) break;
         try {
           if (metaType === 'buyer_deposit') {
-            // pi.id-keyed guard: if the Payments row is already 'succeeded', the
-            // platform webhook (or a prior delivery) already settled — no-op.
-            const rows: any[] = await getAllRecords(PAYMENTS_TABLE, `{Stripe Payment Intent Id} = "${String(pi.id).replace(/"/g, '\\"')}"`);
-            if ((rows[0] as any)?.['Status'] === 'succeeded') break;
-            await settleBuyerDeposit(pi);            // we're first — full settlement
+            // Idempotency lives inside settleBuyerDeposit (claimOnce +
+            // markDepositSucceeded's pi.id-keyed row flip) — see block comment.
+            await settleBuyerDeposit(pi);
           } else { // final_invoice
             const ref: any = await getRecordById(TABLES.REFERRALS, referralId).catch(() => null);
             if (String(ref?.['Status'] || '') === 'Closed Won') break;  // already closed
@@ -329,7 +333,8 @@ export async function POST(request: Request) {
           // functions throw only before/at their idempotency anchor, and a
           // redelivered event re-runs (flipStripeEventFailed sets Status='failed',
           // and the dedup at the top skips only 'processed') into the pi.id-keyed
-          // guards above — so a redelivery can never double-settle or double-notify.
+          // anchors inside settleBuyerDeposit / the Closed-Won guard above — so a
+          // redelivery can never double-settle or double-notify.
           // Only a PERMANENT failure (malformed metadata that can never settle)
           // returns 200 to stop pointless 3-day redelivery.
           if (isPermanentSettlementError(e)) {
@@ -359,9 +364,9 @@ export async function POST(request: Request) {
   // ------------------------------------------------------------------
   try {
     const safeEventId = String(event.id).replace(/"/g, '\\"');
-    const eventRows: any[] = await getAllRecords(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
-    if (eventRows[0]) {
-      await updateRecord(STRIPE_EVENTS_TABLE, eventRows[0].id, {
+    const eventRow = await getFirstRecord(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
+    if (eventRow) {
+      await updateRecord(STRIPE_EVENTS_TABLE, eventRow.id, {
         'Status': 'processed',
         'Processed At': new Date().toISOString(),
       });
@@ -378,13 +383,13 @@ export async function POST(request: Request) {
 // ============================================================================
 async function syncRancherConnectStatus(accountId: string): Promise<void> {
   // Look up the Ranchers row by Connect account id. Multiple ranchers
-  // sharing an account id would be a setup bug; we take the first.
+  // sharing an account id would be a setup bug; we take the first
+  // (getFirstRecord = maxRecords:1, same first row as the old full scan).
   const safeAcct = accountId.replace(/"/g, '\\"');
-  const matches = await getAllRecords(
+  const rancher: any = await getFirstRecord(
     TABLES.RANCHERS,
     `{Stripe Connect Account Id} = "${safeAcct}"`,
   );
-  const rancher: any = matches[0];
   if (!rancher) {
     console.warn(`[stripe-connect webhook] no rancher matches accountId ${accountId}`);
     // Still mark event processed at end of handler — not our row, but
@@ -652,12 +657,11 @@ async function handlePayoutFailed(event: any): Promise<void> {
   let rancherName: string | null = null;
   try {
     const safeAcct = accountId.replace(/"/g, '\\"');
-    const rows: any[] = await getAllRecords(
+    const r: any = await getFirstRecord(
       TABLES.RANCHERS,
       `{Stripe Connect Account Id} = "${safeAcct}"`,
     );
-    if (rows.length > 0) {
-      const r: any = rows[0];
+    if (r) {
       rancherEmail = (r['Email'] as string) || null;
       rancherName = (r['Operator Name'] as string) || (r['Ranch Name'] as string) || null;
     }
@@ -736,11 +740,10 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
 
   // Look up rancher by Connect Account ID.
   const safeAcct = accountId.replace(/"/g, '\\"');
-  const rows: any[] = await getAllRecords(
+  const rancher: any = await getFirstRecord(
     TABLES.RANCHERS,
     `{Stripe Connect Account Id} = "${safeAcct}"`,
   );
-  const rancher: any = rows[0];
 
   if (!rancher) {
     // No matching rancher — event still valid (e.g. a test acct, or a
@@ -860,9 +863,9 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
 async function flipStripeEventFailed(eventId: string, errorMessage: string): Promise<void> {
   try {
     const safeEventId = String(eventId).replace(/"/g, '\\"');
-    const eventRows: any[] = await getAllRecords(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
-    if (eventRows[0]) {
-      await updateRecord(STRIPE_EVENTS_TABLE, eventRows[0].id, {
+    const eventRow = await getFirstRecord(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
+    if (eventRow) {
+      await updateRecord(STRIPE_EVENTS_TABLE, eventRow.id, {
         'Status': 'failed',
         'Error': (errorMessage || 'unknown').slice(0, 500),
       });
