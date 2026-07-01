@@ -143,12 +143,22 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
   if (input.outcome === 'won' || input.outcome === 'lost') {
     try {
       const { getAllRecords, updateRecord } = await import('@/lib/airtable');
-      const { THREADS_TABLE } = await import('./threads');
-      const safeRefId = input.referralId.replace(/"/g, '\\"');
-      const threads: any[] = await getAllRecords(
+      const { THREADS_TABLE, threadsByReferralFormula } = await import('./threads');
+      // Exact-match on the denormalized {Referral Id Text} first; legacy
+      // ARRAYJOIN scan only when that returns nothing (pre-field rows). The
+      // legacy scan never actually matched in this base (Referrals' primary
+      // field is empty — see threadsByReferralFormula), so this close hook was
+      // dead until the denorm field shipped. Whole block is non-fatal already.
+      let threads: any[] = await getAllRecords(
         THREADS_TABLE,
-        `AND(SEARCH("${safeRefId}", ARRAYJOIN({Referral})), {Status} = "Active")`,
+        `AND(${threadsByReferralFormula(input.referralId)}, {Status} = "Active")`,
       );
+      if (threads.length === 0) {
+        threads = await getAllRecords(
+          THREADS_TABLE,
+          `AND(${threadsByReferralFormula(input.referralId, { legacy: true })}, {Status} = "Active")`,
+        );
+      }
       for (const t of threads) {
         try {
           await updateRecord(THREADS_TABLE, t.id, { 'Status': 'Closed' });

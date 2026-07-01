@@ -1,9 +1,15 @@
 // Thread message API — GET lists messages, POST creates one.
 //
-// Auth: accepts BOTH buyer-session (Consumers JWT) AND rancher-session
-// (Ranchers JWT). The thread's Buyer + Rancher links determine which side
-// the authenticated party is on; sender id + sender type are stamped onto
-// the message accordingly.
+// Auth: accepts buyer-session (Consumers JWT), rancher-session (Ranchers JWT),
+// AND — as a strictly-scoped fallback — the referral-scoped deposit-grant
+// cookie (campaign 1-tap buyers inside their 48h window). The grant path
+// resolves the thread's Referral link FIRST and accepts the grant ONLY when it
+// names exactly that referral (depositGrantAuthorizesThread) AND the grant's
+// consumer is on the thread's Buyer link. Without it, a grant-only buyer could
+// OPEN the thread (the by-referral GET accepts the grant via resolveDepositAuth)
+// but hit a silent 401 wall composing. The thread's Buyer + Rancher links
+// determine which side the authenticated party is on; sender id + sender type
+// are stamped onto the message accordingly.
 //
 // Email mirror: every POST also sends an email to the OTHER side with a
 // Reply-To of thread-<id>@replies.<domain>. Inbound replies hit
@@ -15,8 +21,9 @@ import { postMessage, listThreadMessages, THREADS_TABLE } from '@/lib/contracts/
 import { getRecordById, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { rateLimit } from '@/lib/rateLimit';
-import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { resolveBuyerSession, readDepositGrantPayload } from '@/lib/buyerAuth';
 import { resolveRancherSession } from '@/lib/rancherAuth';
+import { depositGrantAuthorizesThread } from '@/lib/campaignReserve';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -63,35 +70,95 @@ async function assertThreadOwnership(threadId: string, auth: AuthInfo): Promise<
   return { ok: true, thread };
 }
 
+// Deposit-grant fallback for thread-scoped access when NEITHER session
+// resolves. The grant is REFERRAL-scoped and this route is THREAD-scoped, so
+// the thread's Referral link is resolved first and the grant is accepted ONLY
+// when it names exactly that referral (never weakened):
+//   - no/invalid grant cookie → 401 (no credential at all)
+//   - thread doesn't exist    → 404
+//   - valid grant, DIFFERENT referral (or consumer not the thread's buyer) → 403
+// The grant JWT is verified locally (readDepositGrantPayload) BEFORE any
+// Airtable read, so unauthenticated probes never reach the table.
+async function grantThreadAccess(
+  req: Request,
+  threadId: string,
+): Promise<{ auth: AuthInfo; thread: any } | NextResponse> {
+  const grant = await readDepositGrantPayload(req);
+  if (!grant) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  let thread: any;
+  try {
+    thread = await getRecordById(THREADS_TABLE, threadId);
+  } catch {
+    return NextResponse.json({ error: 'Thread not found' }, { status: 404 });
+  }
+  if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 });
+  // STRICT referral↔thread scope match (pure, tested): a grant for referral A
+  // can never act on referral B's thread.
+  if (!depositGrantAuthorizesThread(grant.referralId, thread['Referral'])) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  // Same containment as assertThreadOwnership's buyer branch: the grant's
+  // consumer must BE the thread's buyer.
+  const buyerIds: string[] = thread['Buyer'] || [];
+  if (!buyerIds.includes(grant.consumerId)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  // Grant carries only consumerId — name/email stay '' (matches
+  // resolveDepositAuth's grant path; nothing in this route needs them).
+  return { auth: { kind: 'buyer', id: grant.consumerId, name: '', email: '' }, thread };
+}
+
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await authBuyerOrRancher(req);
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { id } = await params;
-  const own = await assertThreadOwnership(id, auth);
-  if (!own.ok) return NextResponse.json({ error: own.error }, { status: own.error === 'Forbidden' ? 403 : 404 });
+  const auth = await authBuyerOrRancher(req);
+  if (auth) {
+    const own = await assertThreadOwnership(id, auth);
+    if (!own.ok) return NextResponse.json({ error: own.error }, { status: own.error === 'Forbidden' ? 403 : 404 });
+  } else {
+    // Grant-only buyer (campaign 1-tap): the ask page refreshes messages via
+    // this GET after posting, so read access must match the by-referral GET.
+    const granted = await grantThreadAccess(req, id);
+    if (granted instanceof NextResponse) return granted;
+  }
   const messages = await listThreadMessages(id);
   return NextResponse.json({ messages });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await authBuyerOrRancher(req);
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  // Rate limit: 10 messages per 60s per sender. Anti-spam guard so a runaway
-  // client OR malicious actor can't flood the rancher's inbox. Buyers and
-  // ranchers each get their own bucket scoped by sender id.
-  const rl = await rateLimit(`threads:msg:${auth.kind}:${auth.id}`, { requests: 10, window: '1m' });
-  if (!rl.ok) {
-    return NextResponse.json(
-      { error: 'Slow down — too many messages. Wait a minute and try again.' },
-      { status: 429 },
-    );
-  }
-
   const { id } = await params;
-  const own = await assertThreadOwnership(id, auth);
-  if (!own.ok) return NextResponse.json({ error: own.error }, { status: own.error === 'Forbidden' ? 403 : 404 });
-  const thread = own.thread!;
+  let auth: AuthInfo | null = await authBuyerOrRancher(req);
+  let thread: any;
+
+  if (auth) {
+    // Rate limit: 10 messages per 60s per sender. Anti-spam guard so a runaway
+    // client OR malicious actor can't flood the rancher's inbox. Buyers and
+    // ranchers each get their own bucket scoped by sender id.
+    const rl = await rateLimit(`threads:msg:${auth.kind}:${auth.id}`, { requests: 10, window: '1m' });
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: 'Slow down — too many messages. Wait a minute and try again.' },
+        { status: 429 },
+      );
+    }
+
+    const own = await assertThreadOwnership(id, auth);
+    if (!own.ok) return NextResponse.json({ error: own.error }, { status: own.error === 'Forbidden' ? 403 : 404 });
+    thread = own.thread!;
+  } else {
+    const granted = await grantThreadAccess(req, id);
+    if (granted instanceof NextResponse) return granted;
+    auth = granted.auth;
+    thread = granted.thread;
+    // Same anti-spam budget, same buyer-scoped bucket as the session path —
+    // a buyer can't dodge the cap by switching credentials.
+    const rl = await rateLimit(`threads:msg:${auth.kind}:${auth.id}`, { requests: 10, window: '1m' });
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: 'Slow down — too many messages. Wait a minute and try again.' },
+        { status: 429 },
+      );
+    }
+  }
 
   let body: any = {};
   try {

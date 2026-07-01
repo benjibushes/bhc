@@ -90,6 +90,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'A valid phone number is required so the rancher can reach you.' }, { status: 400 });
   }
 
+  // TCPA SMS consent from DepositReserveForm's checkbox (funnel payload
+  // convention). Same gate as /api/consumers (~172 + ~545): stored true ONLY
+  // when the buyer ticked the box AND supplied a phone — phone is already
+  // required on this rail (400 above), so the guard is belt-and-braces.
+  // Opt-IN only: false never revokes a prior opt-in (STOP webhook is the
+  // authoritative off switch).
+  const smsOptInReserve = body.smsOptIn === true && !!phoneInput;
+
   const existingSession = await resolveBuyerSession(req);
   if (!existingSession && !isValidEmail(emailInput)) {
     return NextResponse.json({ error: 'Valid email required' }, { status: 400 });
@@ -129,6 +137,14 @@ export async function POST(req: Request) {
         const patch: Record<string, any> = {};
         if (buyerPhone && !String(existing[0]['Phone'] || '').trim()) patch['Phone'] = buyerPhone;
         if (buyerState && !String(existing[0]['State'] || '').trim()) patch['State'] = buyerState;
+        // SMS consent: opting in always writes true + stamps the consent time;
+        // no tick leaves the existing value untouched (mirrors /api/consumers'
+        // funnel-path semantics — never silently revoke). Rides the existing
+        // non-fatal patch, so a write failure can't block the reserve.
+        if (smsOptInReserve) {
+          patch['SMS Opt-In'] = true;
+          patch['SMS Opt-In At'] = new Date().toISOString();
+        }
         if (Object.keys(patch).length > 0) {
           try { await updateRecord(TABLES.CONSUMERS, consumerId, patch); }
           catch (e: any) { console.warn('[checkout/reserve] consumer backfill skipped:', e?.message); }
@@ -151,12 +167,29 @@ export async function POST(req: Request) {
           'Interests': ['Beef'],
           'Intent Score': 90,
           'Intent Classification': 'High',
+          // SMS consent (TCPA): seed the checkbox explicitly on a brand-new
+          // Consumer so the Twilio gate starts in a known state; stamp the
+          // consent time only on a real opt-in. Mirrors /api/consumers ~545.
+          'SMS Opt-In': smsOptInReserve,
+          ...(smsOptInReserve ? { 'SMS Opt-In At': new Date().toISOString() } : {}),
         });
         consumerId = created.id;
       }
     } catch (e: any) {
       console.error('[checkout/reserve] consumer upsert failed:', e?.message);
       return NextResponse.json({ error: 'Could not start your reservation — try again.' }, { status: 500 });
+    }
+  } else if (smsOptInReserve) {
+    // Already-logged-in buyer: the upsert above is skipped, so persist their
+    // ticked consent here. Same guards (true only with phone, opt-IN only).
+    // NON-FATAL: consent persistence must never block the reserve money path.
+    try {
+      await updateRecord(TABLES.CONSUMERS, consumerId, {
+        'SMS Opt-In': true,
+        'SMS Opt-In At': new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.warn('[checkout/reserve] SMS opt-in persist skipped (non-fatal):', e?.message);
     }
   }
 

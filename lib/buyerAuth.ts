@@ -14,7 +14,7 @@ import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 import { mintBuyerSessionToken, type BuyerSessionClaims } from './buyerSession';
-import { DEPOSIT_GRANT_COOKIE, verifyDepositGrantToken } from './campaignReserve';
+import { DEPOSIT_GRANT_COOKIE, verifyDepositGrantToken, type DepositGrantPayload } from './campaignReserve';
 
 const BHC_MEMBER_COOKIE = 'bhc-member-auth';
 
@@ -63,13 +63,15 @@ export async function resolveBuyerSession(
  *      it names this exact referralId (campaign 1-tap link path).
  *
  * SECURITY: the deposit-grant cookie is the ONLY thing this adds over
- * resolveBuyerSession, and it is deliberately consulted NOWHERE else —
- * /member, /api/member/*, reorder, upgrade-intent, qualify all keep using
- * resolveBuyerSession (member-session only). So a forwarded campaign link's
- * grant can authorize at most this one referral's deposit/preferences/thread and
- * can NEVER reach the buyer's dashboard or start new orders. The referralId
- * binding (verifyDepositGrantToken's expectReferralId) further pins it to one
- * checkout, so a grant for referral A can't act on referral B.
+ * resolveBuyerSession, and it is deliberately consulted nowhere outside the
+ * deposit flow — /member, /api/member/*, reorder, upgrade-intent, qualify all
+ * keep using resolveBuyerSession (member-session only). So a forwarded campaign
+ * link's grant can authorize at most this one referral's deposit/preferences/
+ * thread and can NEVER reach the buyer's dashboard or start new orders. The
+ * referralId binding (verifyDepositGrantToken's expectReferralId) further pins
+ * it to one checkout, so a grant for referral A can't act on referral B.
+ * (Thread-SCOPED deposit-flow routes use readDepositGrantPayload below and
+ * enforce the same referral pin against the thread's Referral link themselves.)
  *
  * Returns a BuyerSession-shaped object. For the grant path only `consumerId` is
  * known from the token (email/name/state default to ''); every deposit-flow
@@ -96,6 +98,30 @@ export async function resolveDepositAuth(
     name: '',
     state: '',
   };
+}
+
+/**
+ * Read + verify the deposit-grant cookie WITHOUT a referral pin.
+ *
+ * For THREAD-scoped deposit-flow routes (/api/threads/[id]/message) that must
+ * resolve the thread's linked referral BEFORE they can enforce the grant's
+ * referral scope — and that need to distinguish "no credential at all" (401)
+ * from "valid grant, but for a different referral" (403), which
+ * resolveDepositAuth's single null cannot express.
+ *
+ * SECURITY: callers MUST enforce payload.referralId against the resource
+ * (lib/campaignReserve.depositGrantAuthorizesThread) — a payload from here is
+ * an authenticated IDENTITY, not an authorization. Signature/purpose/expiry
+ * are fully verified; only the referral pin is deferred to the caller.
+ */
+export async function readDepositGrantPayload(
+  _request: Request,
+): Promise<DepositGrantPayload | null> {
+  const cookieStore = await cookies();
+  const grant = cookieStore.get(DEPOSIT_GRANT_COOKIE);
+  if (!grant?.value) return null;
+  const res = verifyDepositGrantToken(grant.value);
+  return res.ok ? res.payload : null;
 }
 
 /**
@@ -155,11 +181,16 @@ const BHC_DEPOSIT_GRANT_MAX_AGE = 2 * 24 * 60 * 60; // 2 days
  *
  * Path is `/` (not /checkout) because the deposit flow spans two API roots —
  * /api/checkout/* (deposit + preferences) AND /api/threads/* (the buyer↔rancher
- * ask thread) — and a narrower path would starve the thread endpoint. The
- * containment boundary is NOT the cookie path: it's that resolveDepositAuth is
- * the ONLY reader of this cookie and is wired exclusively into deposit-flow
- * routes. /member + /api/member/* call resolveBuyerSession, which never reads
- * this cookie, so the grant is inert there even though the browser sends it.
+ * ask thread, including posting messages) — and a narrower path would starve
+ * the thread endpoints. The containment boundary is NOT the cookie path: it's
+ * that this cookie has exactly TWO readers, both in this file and both wired
+ * exclusively into deposit-flow routes — resolveDepositAuth (referral-scoped
+ * routes, pin enforced inside verifyDepositGrantToken) and
+ * readDepositGrantPayload (the thread-scoped message route, which enforces the
+ * same referral pin against the thread's Referral link via
+ * depositGrantAuthorizesThread). /member + /api/member/* call
+ * resolveBuyerSession, which never reads this cookie, so the grant is inert
+ * there even though the browser sends it.
  */
 export function setDepositGrantCookie(res: NextResponse, mintedToken: string): NextResponse {
   res.cookies.set(DEPOSIT_GRANT_COOKIE, mintedToken, {
