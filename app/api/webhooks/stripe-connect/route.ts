@@ -31,7 +31,7 @@ import { settleBuyerDeposit, settleFinalInvoice, isPermanentSettlementError } fr
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail } from '@/lib/email';
-import { markDepositRefunded, markDepositDisputed } from '@/lib/contracts/payments';
+import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
 import { logAuditEntry } from '@/lib/auditLog';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
@@ -912,11 +912,10 @@ async function handleEarlyFraudWarning(event: any): Promise<void> {
     let paymentRow: any = null;
     if (piId) {
       try {
-        const rows: any[] = await getAllRecords(
+        paymentRow = await getFirstRecord(
           PAYMENTS_TABLE,
           `{Stripe Payment Intent Id} = "${piId.replace(/"/g, '\\"')}"`,
         );
-        paymentRow = rows[0] || null;
       } catch (e: any) {
         console.warn('[stripe-connect efw] Payments lookup failed (continuing):', e?.message);
       }
