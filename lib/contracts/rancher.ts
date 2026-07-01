@@ -6,6 +6,7 @@
 
 import { updateRecord, getRecordById, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import { transitionBuyerStage } from './buyer';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { ensureBuyerAffiliate } from '@/lib/affiliates';
@@ -33,13 +34,6 @@ export interface RecordCloseInput {
   closeReason?: 'no_response' | 'price' | 'timing' | 'other';
 }
 
-const ACTIVE_REF_STATES = new Set<ReferralStatus>([
-  'Intro Sent',
-  'Rancher Contacted',
-  'Negotiation',
-  'Pending Approval',
-]);
-
 export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolean; capacityFreed: boolean }> {
   const ref: any = await getRecordById(TABLES.REFERRALS, input.referralId);
   if (!ref) return { ok: false, capacityFreed: false };
@@ -62,8 +56,17 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
   }
   await updateRecord(TABLES.REFERRALS, input.referralId, updates);
 
+  // Wave-2 fix: the DECR decision derives from the canonical held set
+  // (HELD_REFERRAL_STATUSES via shouldDecrementOnClose), not the old local
+  // ACTIVE_REF_STATES. That set (a) included 'Pending Approval' — pre-INCR,
+  // so closing from it freed a slot never taken (drift DOWN, over-booking) —
+  // and (b) excluded 'Awaiting Payment'/'Slot Locked' — so tier_v2 closes
+  // from those skipped the DECR (drift UP, phantom-full ranchers). Also:
+  // outcome='awaiting_payment' now frees NOTHING (held → held per canon; the
+  // slot frees once, at the real terminal close) — pre-fix it double-freed
+  // when the deal later closed Won from Awaiting Payment.
   let capacityFreed = false;
-  if (ACTIVE_REF_STATES.has(prevStatus)) {
+  if (shouldDecrementOnClose(prevStatus, nextStatus)) {
     try {
       const newCount = await decrementCapacity(input.rancherId);
       await syncCapacityToAirtable(input.rancherId, newCount);
