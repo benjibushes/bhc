@@ -318,7 +318,7 @@ export default async function RancherPage(
 
   const lat = Number(r['Latitude']);
   const lng = Number(r['Longitude']);
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
   // Build offers array + priceRange (verified ranchers only)
   const offers: any[] = [];

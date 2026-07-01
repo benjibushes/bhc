@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'FAQ — BuyHalfCow',
     description: 'Common questions about BuyHalfCow — how matching works, who pays, what verification means.',
-    url: 'https://buyhalfcow.com/faq',
+    url: 'https://www.buyhalfcow.com/faq',
     images: ['/og-image.png'],
   },
   twitter: {

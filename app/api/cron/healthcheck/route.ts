@@ -6,7 +6,7 @@ import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Daily healthcheck cron — runs at 7am MT (13:00 UTC), BEFORE any business crons.
 // Calls /api/health and sends a Telegram summary so Ben knows everything is live.

@@ -29,7 +29,7 @@ import { requireRole } from '@/lib/adminAuth';
 
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 // Ben's Cal.com migration-call link is now resolved at request time via
 // getOperatorBookingUrl() (lib/calBooking.ts) — single source of truth that

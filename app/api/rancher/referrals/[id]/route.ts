@@ -90,7 +90,7 @@ export async function PATCH(
         }, { status: 400 });
       }
 
-      const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
       const reasonLabel = PASS_REASONS[passReason];
       const buyerName = referral['Buyer Name'] || 'Unknown';
       const buyerState = referral['Buyer State'] || '';
@@ -504,7 +504,7 @@ export async function PATCH(
           }
 
           const rancherState = rancher['State'] || '';
-          const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+          const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
           // ── CLOSED LOST: Re-route this buyer to another rancher ──
           if (status === 'Closed Lost') {

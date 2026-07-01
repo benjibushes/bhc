@@ -10,7 +10,7 @@ import { checkOriginGuard } from '@/lib/csrfGuard';
 
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Member clicks "Ready to buy this month" on the dashboard. This is the
 // highest-intent signal we have — the buyer is self-identifying as a hot lead.

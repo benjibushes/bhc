@@ -37,7 +37,7 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const MAX_FINAL_INVOICE_CENTS = 2_500_000; // $25k typo guard
 const MIN_FINAL_INVOICE_CENTS = 100;       // $1 floor — Stripe requires > $0
 

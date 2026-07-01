@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Our Ranchers',
     description: 'Browse BuyHalfCow\'s verified rancher partners. Grass-fed, pasture-raised beef — bought direct from the ranch.',
-    url: 'https://buyhalfcow.com/ranchers',
+    url: 'https://www.buyhalfcow.com/ranchers',
     images: ['/og-image.png'],
   },
   twitter: {

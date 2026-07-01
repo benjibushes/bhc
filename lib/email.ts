@@ -354,7 +354,7 @@ const resend = {
     }
   }
 };
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 // Booking link for "book a call" CTAs. Prefer the explicit env var, then the
 // NEXT_PUBLIC_ mirror (same value), and finally /contact — a REAL page that
 // routes to Ben. The old fallback (buyhalfcow.com/call) was a dead 404, so any
@@ -1847,7 +1847,7 @@ export async function sendRancherGoLiveEmail(data: {
   email: string;
   dashboardUrl?: string;
 }) {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
   const dashboardUrl = data.dashboardUrl || `${baseUrl}/rancher`;
   const subject = "You're Live — Buyer Leads Are Coming";
   return guardedSend({

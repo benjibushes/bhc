@@ -152,7 +152,7 @@ async function realHandler(
           `⏰ <b>UNACCEPTED PAID DEPOSIT — ${hrs}h</b>\n\n` +
             `${buyerName} paid, ${rancherName} hasn't tapped Accept Slot.\n` +
             `Re-pinged the rancher (email + text). Buyer is waiting on a call.\n\n` +
-            `Nudge them: <code>${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/rancher</code>\n` +
+            `Nudge them: <code>${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/rancher</code>\n` +
             `ref=${String(refId).slice(-6)}`,
         );
       }

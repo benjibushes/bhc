@@ -5,7 +5,7 @@ import { trackEvent } from '@/lib/analytics';
 export default function MerchCTA() {
   return (
     <a
-      href="https://buyhalfcow.com/shop"
+      href="https://www.buyhalfcow.com/shop"
       target="_blank"
       rel="noopener noreferrer"
       onClick={() => trackEvent('shop_click', { surface: 'matched' })}

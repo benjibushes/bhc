@@ -23,7 +23,7 @@ import { metaEventId } from '@/lib/analytics';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 const CUT_LABELS: Record<string, string> = {
   quarter: 'Quarter Cow',

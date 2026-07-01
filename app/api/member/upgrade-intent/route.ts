@@ -4,7 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { checkOriginGuard } from '@/lib/csrfGuard';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 function calculateIntentScore(orderType: string, budgetRange: string): number {
   let score = 30; // Base: they're explicitly requesting beef

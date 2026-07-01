@@ -199,7 +199,7 @@ export async function PATCH(request: Request) {
     if (body._action === 'request-verification') {
       const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
       const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown';
-      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
       const slug = rancher['Slug'] || '';
 
       // Save any verification materials submitted with the request
@@ -302,7 +302,7 @@ export async function PATCH(request: Request) {
       const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
       const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Unknown';
       const slug = rancher['Slug'] || '';
-      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
       // SELF-PUBLISH when the rancher is genuinely eligible — same predicate the
       // go-live safety-net cron uses (#66). No more waiting on an admin tap; the

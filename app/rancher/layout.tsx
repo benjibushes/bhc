@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Rancher dashboard — BuyHalfCow',
     description: 'Rancher dashboard — manage your listing, capacity, leads, and payouts.',
-    url: 'https://buyhalfcow.com/rancher',
+    url: 'https://www.buyhalfcow.com/rancher',
     images: ['/og-image.png'],
   },
   twitter: {

@@ -202,7 +202,7 @@ export async function PATCH(
         const email = rancher['Email'];
         const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
         const ranchName = rancher['Ranch Name'] || '';
-        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
         if (email) {
           await sendRancherGoLiveEmail({

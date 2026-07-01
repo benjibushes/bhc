@@ -4,7 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { sendAffiliateInvite } from '@/lib/email';
 import { requireAdmin } from '@/lib/adminAuth';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 export async function POST(
   request: Request,

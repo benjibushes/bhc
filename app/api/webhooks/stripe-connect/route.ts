@@ -673,7 +673,7 @@ async function handlePayoutFailed(event: any): Promise<void> {
         html:
           `<p>hey ${firstName} — heads up, your bank rejected your latest BuyHalfCow payout ($${amount}).</p>` +
           `<p>reason: ${failureMessage}</p>` +
-          `<p>usually means a typo in your routing/account # or the account was closed. fix it in your <a href="https://buyhalfcow.com/rancher/billing">billing dashboard</a> or just reply to this email + i'll help.</p>` +
+          `<p>usually means a typo in your routing/account # or the account was closed. fix it in your <a href="https://www.buyhalfcow.com/rancher/billing">billing dashboard</a> or just reply to this email + i'll help.</p>` +
           `<p>— Ben @ BuyHalfCow</p>`,
       });
     } catch (e: any) {

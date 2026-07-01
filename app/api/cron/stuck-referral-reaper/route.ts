@@ -134,7 +134,7 @@ async function realHandler(_request: Request): Promise<ReaperResult> {
     };
   }
 
-  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
   const now = Date.now();
   const breakdown: Record<string, number> = {};
   const bump = (k: string) => {

@@ -8,7 +8,7 @@ import { checkOriginGuard } from '@/lib/csrfGuard';
 
 export const maxDuration = 30;
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // Repeat-customer reorder flow — fixes the largest revenue leak in the
 // platform today. Without this, a buyer who closes a deal with rancher X

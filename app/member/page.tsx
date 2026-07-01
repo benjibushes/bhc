@@ -264,7 +264,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
 
           {/* Merch banner — drives traffic to Shopify /shop from highest-engagement surface */}
           <a
-            href="https://buyhalfcow.com/shop"
+            href="https://www.buyhalfcow.com/shop"
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => trackEvent('shop_click', { surface: 'member' })}

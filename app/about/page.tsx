@@ -8,7 +8,7 @@ export const metadata = {
   openGraph: {
     title: 'About',
     description: 'Why BuyHalfCow exists. Ben Beauchman, Kalispell MT. Built for ranchers and the families who buy from them.',
-    url: 'https://buyhalfcow.com/about',
+    url: 'https://www.buyhalfcow.com/about',
     images: ['/og-image.png'],
   },
   twitter: {

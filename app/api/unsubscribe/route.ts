@@ -117,7 +117,7 @@ async function handleUnsubscribe(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
     return NextResponse.redirect(`${siteUrl}/unsubscribe?success=true&email=${encodeURIComponent(normalizedEmail)}`);
   } catch (error) {
     console.error('Unsubscribe error:', error);

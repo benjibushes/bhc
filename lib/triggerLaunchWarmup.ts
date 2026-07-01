@@ -12,7 +12,7 @@
 // route accepts (the ?secret= query fallback was removed in the cron-auth
 // fail-closed pass).
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 export function triggerLaunchWarmup(reason: string): void {
   const cronSecret = process.env.CRON_SECRET;

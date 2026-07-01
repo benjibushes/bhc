@@ -36,7 +36,7 @@ export async function GET(
 ) {
   const { slug, tier } = await params;
   const config = TIER_CONFIG[tier.toLowerCase()];
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
   // Invalid tier — redirect back to ranch page
   if (!config) {

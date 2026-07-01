@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
   });
 
   // Fire send-v2-upgrade for each. Sequential — small N + Airtable rate-limit safe.
-  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+  const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
   const internalSecret = process.env.INTERNAL_API_SECRET || '';
   const results: Array<{ id: string; name: string; ok: boolean; error?: string }> = [];
   for (const r of targets) {

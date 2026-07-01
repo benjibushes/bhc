@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'News + updates — BuyHalfCow',
     description: 'Latest from BuyHalfCow — partner spotlights, deal closes, ranch profiles, founder updates.',
-    url: 'https://buyhalfcow.com/news',
+    url: 'https://www.buyhalfcow.com/news',
     images: ['/og-image.png'],
   },
   twitter: {

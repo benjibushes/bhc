@@ -20,7 +20,7 @@ export const maxDuration = 90;
 
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
 import { funnelRecord } from '@/lib/funnelMetrics';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
 // ── Retainer priority tiebreaker (S0.2) ──────────────────────────────────────
 // Makes the paid-tier "priority routing" promise (lib/tiers.ts) real: among
@@ -169,7 +169,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         error: 'Buyer has not completed /qualify quiz — routing blocked',
         buyer: buyerLabel,
-        qualifyUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://buyhalfcow.com'}/qualify`,
+        qualifyUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/qualify`,
         hint: 'Direct buyer to complete /qualify, OR pass operatorOverride=true + operatorOverrideReason for admin manual route.',
       }, { status: 412 });
     }
