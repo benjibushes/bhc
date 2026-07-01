@@ -17,7 +17,8 @@
 //   6. Fire Telegram alert to admin (celebration + audit trail)
 
 import { NextResponse } from 'next/server';
-import { getRecordById, getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { findPaymentsByReferral } from '@/lib/contracts/payments';
 import { sendBuyerFulfillmentConfirmation } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { requireRancher } from '@/lib/rancherAuth';
@@ -25,8 +26,6 @@ import { funnelRecord } from '@/lib/funnelMetrics';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
-
-const PAYMENTS_TABLE = 'Payments';
 
 export async function POST(req: Request) {
   const r = await requireRancher(req);
@@ -74,11 +73,14 @@ export async function POST(req: Request) {
   let paymentTier = '';
   let paymentAmountCents = 0;
   try {
-    const safeRefId = referralId.replace(/"/g, '\\"');
-    const payments: any[] = await getAllRecords(
-      PAYMENTS_TABLE,
-      `AND(SEARCH("${safeRefId}", ARRAYJOIN({Referral})), {Status} = "succeeded")`,
-    );
+    // Payments-by-referral (G1/E6): exact match on the denormalized
+    // {Referral Id Text} first, legacy ARRAYJOIN scan only as the back-compat
+    // fallback for pre-field rows (see findPaymentsByReferral — the legacy
+    // formula never matched in this base anyway; Referrals' primary field is
+    // empty, so ARRAYJOIN({Referral}) emits "").
+    const payments: any[] = await findPaymentsByReferral(referralId, {
+      statusClause: `{Status} = "succeeded"`,
+    });
     if (payments.length > 0) {
       paymentVerified = true;
       paymentTier = String(payments[0]['Tier'] || '');

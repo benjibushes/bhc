@@ -50,6 +50,7 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { findPaymentsByReferral } from '@/lib/contracts/payments';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendDemandRouterCampaign } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
@@ -741,11 +742,10 @@ async function readRecoveryReferrals(
   // we don't N+1 the whole table.
   for (const ref of prelim) {
     try {
-      const safeId = String(ref.id).replace(/"/g, '\\"');
-      const payments = (await getAllRecords(
-        TABLES.PAYMENTS,
-        `SEARCH("${safeId}", ARRAYJOIN({Referral}))`,
-      )) as any[];
+      // Payments-by-referral (G1/E6): exact match on {Referral Id Text} first,
+      // legacy ARRAYJOIN scan only as back-compat fallback (see
+      // findPaymentsByReferral in lib/contracts/payments.ts).
+      const payments = (await findPaymentsByReferral(String(ref.id))) as any[];
       ref.__payment =
         payments.find(
           (p) =>
