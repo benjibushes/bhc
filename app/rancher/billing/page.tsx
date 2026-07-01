@@ -25,6 +25,9 @@ interface BillingData {
   // True when a fresh Stripe onboarding link can resume the rancher (the
   // self-serve fix for accounts stuck mid-KYC: no bank / unaccepted TOS).
   connectCanResumeOnboarding?: boolean;
+  // Legacy escrow-model payouts (Airtable Payouts table). Permanently empty
+  // under the direct-charge model — kept in the shape for compatibility, but
+  // the UI no longer renders it. See stripePayouts below.
   payouts: Array<{
     id: string;
     amountCents: number;
@@ -33,6 +36,17 @@ interface BillingData {
     releasedAt: string | null;
     stripeTransferId: string;
   }>;
+  // LIVE Stripe payouts on the rancher's Connect account (Area E4a) — the
+  // truth for "did I get paid?". null/missing = the Stripe read failed
+  // (show an error line, never claim "no payouts yet"); [] = genuinely none.
+  stripePayouts?: Array<{
+    id: string;
+    amountCents: number;
+    status: string;
+    createdISO: string | null;
+    arrivalDateISO: string | null;
+    destinationLast4: string | null;
+  }> | null;
   addOns: Array<{
     id: string;
     type: string;
@@ -303,11 +317,21 @@ function RancherBillingContent() {
           );
         })()}
 
-        {/* Payouts table */}
+        {/* Payouts table — renders LIVE Stripe payouts on the rancher's
+            Connect account (Area E4a). The old escrow-model `payouts` array is
+            dead (releasePayout has zero callers under direct charges), so
+            rendering it said "No payouts yet" forever — even after a rancher
+            had been paid. */}
         <div className="border border-dust bg-white p-6 mb-4">
           <div className="text-xs text-saddle uppercase tracking-wider mb-3">Recent payouts</div>
-          {data.payouts.length === 0 ? (
-            <p className="text-saddle text-sm">No payouts yet.</p>
+          {data.stripePayouts == null ? (
+            <p className="text-saddle text-sm">
+              We couldn’t reach Stripe to load your payouts just now — your money isn’t affected. Refresh in a minute.
+            </p>
+          ) : data.stripePayouts.length === 0 ? (
+            <p className="text-saddle text-sm">
+              No payouts yet — your first payout lands about 2 business days after your first deposit clears.
+            </p>
           ) : (
             <table className="w-full text-sm">
               <thead className="border-b border-divider">
@@ -315,16 +339,18 @@ function RancherBillingContent() {
                   <th className="pb-2 font-normal">Date</th>
                   <th className="pb-2 font-normal">Amount</th>
                   <th className="pb-2 font-normal">Status</th>
-                  <th className="pb-2 font-normal">Reason</th>
+                  <th className="pb-2 font-normal">Arrives</th>
+                  <th className="pb-2 font-normal">Bank</th>
                 </tr>
               </thead>
               <tbody>
-                {data.payouts.map((p) => (
+                {data.stripePayouts.map((p) => (
                   <tr key={p.id} className="border-b border-divider last:border-0">
-                    <td className="py-2">{fmtDate(p.releasedAt)}</td>
+                    <td className="py-2">{fmtDate(p.createdISO)}</td>
                     <td className="py-2">{fmtCurrency(p.amountCents)}</td>
-                    <td className="py-2 capitalize">{p.status}</td>
-                    <td className="py-2 text-saddle text-xs">{p.reason}</td>
+                    <td className="py-2 capitalize">{p.status.replace(/_/g, ' ')}</td>
+                    <td className="py-2">{fmtDate(p.arrivalDateISO)}</td>
+                    <td className="py-2 text-saddle text-xs">{p.destinationLast4 ? `••${p.destinationLast4}` : '—'}</td>
                   </tr>
                 ))}
               </tbody>
