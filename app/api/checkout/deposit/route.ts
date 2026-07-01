@@ -263,8 +263,15 @@ export async function POST(req: Request) {
       cancelUrl: `${SITE_URL}/checkout/${referralId}/deposit?canceled=1`,
     });
   } catch (e: any) {
+    // Log the technical detail server-side ONLY. Return a stable machine code +
+    // a customer-safe message — never the raw Stripe/SDK string (that leaked to
+    // buyers as "Checkout failed: ...incomplete fields..."). The deposit page
+    // maps 'checkout_failed' to a friendly retry state.
     console.error('[checkout/deposit] Stripe Checkout create failed:', e?.message);
-    return NextResponse.json({ error: `Checkout failed: ${e?.message || 'unknown'}` }, { status: 500 });
+    return NextResponse.json(
+      { error: 'checkout_failed', message: 'We could not start your reservation. Your card was not charged.' },
+      { status: 500 },
+    );
   }
 
   // Record pending payment. If this fails the buyer must NOT be sent to Stripe —

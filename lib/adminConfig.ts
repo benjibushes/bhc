@@ -59,7 +59,23 @@ function getBase() {
  * Falls back to ADMIN_CONFIG_DEFAULTS for any missing key or if the table
  * does not exist. Never throws.
  */
+let _cfgCache: { value: AdminConfig; at: number } | null = null;
+const CFG_TTL_MS = 60_000;
+
 export async function getAdminConfig(): Promise<AdminConfig> {
+  // Module TTL cache — /access (the paid-ad front door) calls this on EVERY
+  // render. The Airtable read can error (permission) and fall back to defaults,
+  // so without a cache every ad hit pays a failing round-trip on the critical
+  // render path (a root cause of "things hardly load"). Cache the resolved
+  // value (even the default) for 60s so at most one read/min happens. Config
+  // toggles rarely; 60s staleness is acceptable.
+  if (_cfgCache && Date.now() - _cfgCache.at < CFG_TTL_MS) return _cfgCache.value;
+  const value = await _loadAdminConfig();
+  _cfgCache = { value, at: Date.now() };
+  return value;
+}
+
+async function _loadAdminConfig(): Promise<AdminConfig> {
   const base = getBase();
   if (!base) return { ...ADMIN_CONFIG_DEFAULTS };
 
