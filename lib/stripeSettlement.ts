@@ -24,6 +24,27 @@ import {
   getRecordById,
   TABLES,
 } from '@/lib/airtable';
+
+// PERMANENT vs TRANSIENT settlement failures.
+//
+// The webhook must RETRY (return 5xx) on a transient failure (Airtable 429 /
+// timeout / Stripe blip) so a real paid deposit self-heals instead of orphaning.
+// But it must NOT retry a PERMANENT failure (malformed metadata with no
+// referralId/rancherId) — Stripe would pointlessly redeliver for 3 days. A
+// deposit thrown for missing ids can never settle no matter how many retries,
+// so we tag it and let the webhook return 200 (mark failed, manual review).
+// Everything else is treated as transient → retry.
+export class PermanentSettlementError extends Error {
+  readonly permanent = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'PermanentSettlementError';
+  }
+}
+
+export function isPermanentSettlementError(e: unknown): boolean {
+  return !!e && typeof e === 'object' && (e as any).permanent === true;
+}
 import { sendPostPurchaseWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { markDepositSucceeded } from '@/lib/contracts/payments';
@@ -59,7 +80,8 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
 
   if (!referralId || !rancherId || !pi.id) {
     const metadataKeys = Object.keys(pi.metadata || {}).join(',');
-    throw new Error(`buyer_deposit missing required ids — refId=${!!referralId} rancherId=${!!rancherId} piId=${!!pi.id} actualMetadataKeys=[${metadataKeys}]`);
+    // Permanent: malformed metadata can never settle — don't make Stripe retry.
+    throw new PermanentSettlementError(`buyer_deposit missing required ids — refId=${!!referralId} rancherId=${!!rancherId} piId=${!!pi.id} actualMetadataKeys=[${metadataKeys}]`);
   }
 
   // Flip Payments row pending → succeeded. This is the cross-webhook
@@ -263,7 +285,8 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
   const finalCents = Number(pi.amount || 0);
   if (!referralId || !rancherId || !pi.id) {
     const metadataKeys = Object.keys(pi.metadata || {}).join(',');
-    throw new Error(`final_invoice missing required ids — refId=${!!referralId} rancherId=${!!rancherId} piId=${!!pi.id} actualMetadataKeys=[${metadataKeys}]`);
+    // Permanent: malformed metadata can never settle — don't make Stripe retry.
+    throw new PermanentSettlementError(`final_invoice missing required ids — refId=${!!referralId} rancherId=${!!rancherId} piId=${!!pi.id} actualMetadataKeys=[${metadataKeys}]`);
   }
 
   // Hydrate referral to compute Total Sale Amount for Closed Won.

@@ -62,6 +62,7 @@ import {
   markDepositRequiresReplay,
   PAYMENTS_TABLE,
 } from '@/lib/contracts/payments';
+import { settleBuyerDeposit } from '@/lib/stripeSettlement';
 
 export const maxDuration = 60;
 
@@ -211,47 +212,81 @@ async function realHandler(_request: Request): Promise<ReaperResult> {
 
     const stripeStatus = String(pi?.status || '');
 
-    // succeeded — webhook MUST have missed an event. Loud Telegram alert
-    // + flag the Payments row for ops attention. Don't silently fire the
-    // success branch logic; the webhook owns the funnel + audit + Telegram
-    // celebration. Operator replays the event from Stripe dashboard.
+    // succeeded — the webhook missed this event (or its Airtable write failed
+    // and, pre-U1, returned 200 so Stripe never retried). AUTO-HEAL: call the
+    // SAME idempotent settlement the webhook runs (settleBuyerDeposit) directly,
+    // so the orphaned deposit fully settles — Payments row → succeeded, referral
+    // stamped Deposit Paid At, buyer + rancher notified — instead of sitting in
+    // a manual-replay queue. This is safe now that settleBuyerDeposit is an
+    // extracted, idempotent lib function (markDepositSucceeded no-ops if already
+    // succeeded; claimOnce serializes a concurrent webhook delivery). If the
+    // heal itself throws, FALL BACK to the manual-replay flag + LOUD alert so we
+    // never silently lose a real money event.
     if (stripeStatus === 'succeeded') {
       try {
-        const flip = await markDepositRequiresReplay(piId);
-        if (flip.flipped) {
-          touched++;
-          bump('webhook_missed');
-          // LOUD Telegram alert — this is a real money event we lost track of.
-          try {
-            await sendTelegramUpdate(
-              `\u{1F6A8} ORPHAN REAPER found succeeded PI w/ pending Payments row — webhook missed pi=${piId}\n` +
-              `Payments row: ${paymentRowId}\n` +
-              `Rancher: ${String(rancher?.['Operator Name'] || rancher?.['Ranch Name'] || rancherId)}\n` +
-              `Replay the payment_intent.succeeded event from Stripe dashboard, then clear Status manually.`,
-            );
-          } catch {}
-          // Audit log — non-reversible (operator-driven from here).
-          try {
-            await logAuditEntry({
-              actor: 'cron',
-              tool: 'orphan-checkout-reaper-webhook-missed',
-              targetType: 'Other',
-              targetId: paymentRowId,
-              args: { paymentIntentId: piId, stripeStatus, connectAccountId },
-              result: { flippedTo: 'requires_webhook_replay' },
-              reverseAction: {
-                type: 'noop',
-                reason: 'Stripe webhook replay required — manual op',
-              },
-            });
-          } catch {}
-        } else {
-          // Status was no longer pending — concurrent webhook race won. Good.
-          bump('already_flipped');
+        await settleBuyerDeposit(pi);
+        touched++;
+        bump('webhook_missed_healed');
+        try {
+          await sendTelegramUpdate(
+            `\u{2705} ORPHAN REAPER healed a missed deposit — settled pi=${piId}\n` +
+            `Payments row: ${paymentRowId}\n` +
+            `Rancher: ${String(rancher?.['Operator Name'] || rancher?.['Ranch Name'] || rancherId)}\n` +
+            `Buyer + rancher notified. No manual replay needed.`,
+          );
+        } catch {}
+        try {
+          await logAuditEntry({
+            actor: 'cron',
+            tool: 'orphan-checkout-reaper-healed',
+            targetType: 'Other',
+            targetId: paymentRowId,
+            args: { paymentIntentId: piId, stripeStatus, connectAccountId },
+            result: { settled: true },
+            reverseAction: {
+              type: 'noop',
+              reason: 'Stripe-driven deposit settlement — cannot un-charge via Airtable',
+            },
+          });
+        } catch {}
+      } catch (healErr: any) {
+        // Auto-heal failed — fall back to the manual-replay flag + loud alert.
+        try {
+          const flip = await markDepositRequiresReplay(piId);
+          if (flip.flipped) {
+            touched++;
+            bump('webhook_missed');
+            try {
+              await sendTelegramUpdate(
+                `\u{1F6A8} ORPHAN REAPER found succeeded PI but AUTO-HEAL FAILED — pi=${piId}\n` +
+                `Payments row: ${paymentRowId}\n` +
+                `Rancher: ${String(rancher?.['Operator Name'] || rancher?.['Ranch Name'] || rancherId)}\n` +
+                `Error: ${healErr?.message?.slice(0, 120) || 'unknown'}\n` +
+                `Replay the payment_intent.succeeded event from Stripe dashboard, then clear Status manually.`,
+              );
+            } catch {}
+            try {
+              await logAuditEntry({
+                actor: 'cron',
+                tool: 'orphan-checkout-reaper-webhook-missed',
+                targetType: 'Other',
+                targetId: paymentRowId,
+                args: { paymentIntentId: piId, stripeStatus, connectAccountId, healError: healErr?.message?.slice(0, 200) },
+                result: { flippedTo: 'requires_webhook_replay' },
+                reverseAction: {
+                  type: 'noop',
+                  reason: 'Stripe webhook replay required — manual op',
+                },
+              });
+            } catch {}
+          } else {
+            // Status was no longer pending — concurrent webhook race won. Good.
+            bump('already_flipped');
+          }
+        } catch (e: any) {
+          bump('stripe_error');
+          errors.push(`${paymentRowId}: heal+replay-flag failed ${e?.message?.slice(0, 60)}`);
         }
-      } catch (e: any) {
-        bump('stripe_error');
-        errors.push(`${paymentRowId}: replay-flag failed ${e?.message?.slice(0, 60)}`);
       }
       continue;
     }

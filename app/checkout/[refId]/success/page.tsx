@@ -48,6 +48,11 @@ function DepositSuccessContent() {
   // then (webhook lag, or a direct/bookmarked/back-button hit) we say
   // "confirming…" instead of a false "Deposit confirmed."
   const [paidConfirmed, setPaidConfirmed] = useState(false);
+  // U2 — once polling exhausts (webhook lag > ~15s) or errors, STOP claiming
+  // "confirming…" forever. Flip to a terminal reassurance state (the Stripe
+  // return means the charge already succeeded) with a manual "Check again".
+  const [pollDone, setPollDone] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   // G4 — deposit_completed client Pixel fire on success landing.
   // Server-side CAPI InitiateCheckout fires from the buyer_deposit branch of
@@ -69,6 +74,10 @@ function DepositSuccessContent() {
   useEffect(() => {
     let alive = true;
     let tries = 0;
+    // ~15s of webhook grace (6 × 2.5s) before we settle into the terminal
+    // reassurance state. Deposit settlement is usually a few seconds; this
+    // gives Airtable + the Connect webhook comfortable headroom.
+    const MAX_TRIES = 6;
     const poll = () => {
       fetch(`/api/checkout/deposit?refId=${encodeURIComponent(refId)}`, { credentials: 'include' })
         .then((r) => r.json())
@@ -80,24 +89,32 @@ function DepositSuccessContent() {
           if (!j.error) {
             setInfo(j);
             // Only poll for the paid flip when we actually came from Stripe
-            // (session_id present) — otherwise this is just an unpaid visit.
-            if (sessionId && tries < 4) { tries++; setTimeout(poll, 2500); }
+            // (session_id present) — otherwise this is just an unpaid visit,
+            // so go straight to terminal (don't hang on "confirming…").
+            if (sessionId && tries < MAX_TRIES) { tries++; setTimeout(poll, 2500); }
+            else if (alive) setPollDone(true);
             return;
           }
           // referral_closed = PAID. This is the real "confirmed" signal.
           if (j.error === 'referral_closed') {
             setPaidConfirmed(true);
+            setPollDone(true);
             if (j.rancher?.slug && !info) {
               setInfo({ rancher: { name: '', ranchName: '', slug: j.rancher.slug } });
             }
+            return;
           }
+          // Any other error (load_failed, not-found, auth) — stop polling and
+          // fall into the terminal state rather than an eternal "confirming…".
+          if (alive) setPollDone(true);
         })
-        .catch(() => {});
+        .catch(() => { if (alive) setPollDone(true); });
     };
+    setPollDone(false);
     poll();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refId, sessionId]);
+  }, [refId, sessionId, refreshNonce]);
 
   const rancherName = info?.rancher?.name || 'your rancher';
   // First name for friendly inline mentions. Special-case the "your rancher"
@@ -133,13 +150,31 @@ function DepositSuccessContent() {
     <main className="min-h-screen bg-bone text-charcoal">
       <div className="max-w-2xl mx-auto px-4 md:px-6 py-8 md:py-12">
         <h1 className="font-serif text-3xl md:text-4xl mb-2">
-          {paidConfirmed ? 'you reserved your beef.' : 'confirming your payment…'}
+          {paidConfirmed
+            ? 'you reserved your beef.'
+            : pollDone
+              ? 'your deposit is in.'
+              : 'confirming your payment…'}
         </h1>
-        <p className="text-saddle mb-6 md:mb-8 text-base md:text-lg">
+        <p className="text-saddle mb-4 text-base md:text-lg">
           {paidConfirmed
             ? <>your spot with <strong>{rancherName}</strong> is locked in — a receipt&apos;s in your inbox.</>
-            : <>hang tight a moment while we confirm your payment{sessionId ? '' : ''}. this can take a few seconds — your receipt will land in your email.</>}
+            : pollDone
+              ? <>your payment went through — we&apos;re just finalizing the details, and your receipt is on its way to your inbox. everything below is ready for you now.</>
+              : <>hang tight a moment while we confirm your payment. this can take a few seconds — your receipt will land in your email.</>}
         </p>
+        {/* U2 — never a dead "confirming…". When the webhook is still catching
+            up, offer a manual re-check instead of an infinite spinner headline. */}
+        {!paidConfirmed && pollDone && (
+          <button
+            type="button"
+            onClick={() => setRefreshNonce((n) => n + 1)}
+            className="mb-6 md:mb-8 inline-flex items-center text-sm text-saddle underline underline-offset-2 hover:text-charcoal"
+          >
+            Check payment status again
+          </button>
+        )}
+        {!pollDone && <div className="mb-6 md:mb-8" />}
 
         {/* Primary handoff CTA — the buyer's one action right now. Tell the
             rancher how they want it so the first call is productive. */}

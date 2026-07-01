@@ -97,17 +97,18 @@ export async function POST(
     // Gate: only accept once a deposit actually exists. Without this a rancher
     // could lock a buyer in before any money changed hands — destroying the
     // refund-window protection from the buyer side.
-    // S3 (2026-06-10): Accept on EITHER Deposit Paid At OR Status='Awaiting
-    // Payment' (legacy path that didn't stamp Deposit Paid At). The Stripe
-    // webhook fix (S1) now stamps Deposit Paid At, but historic referrals
-    // already in Awaiting Payment need a fallback.
+    // U18: gate STRICTLY on Deposit Paid At — the authoritative "money landed"
+    // signal (stamped only by settleBuyerDeposit). The old 'Awaiting Payment'
+    // fallback was unsafe: the rancher self-serve request-deposit flow flips
+    // Status to 'Awaiting Payment' the moment the rancher REQUESTS a deposit,
+    // so a rancher could Accept Slot — flipping the (nonexistent) deposit to
+    // NON-REFUNDABLE — before the buyer paid a cent.
     const depositPaidAt = referral['Deposit Paid At'];
-    const referralStatus = String(referral['Status'] || '');
-    if (!depositPaidAt && referralStatus !== 'Awaiting Payment') {
+    if (!depositPaidAt) {
       return NextResponse.json(
         {
-          error: 'Cannot accept yet — buyer has not paid deposit',
-          hint: 'Accept fires only after Stripe Connect deposit lands. Check back after buyer completes checkout.',
+          error: 'Cannot accept yet — the buyer has not paid their deposit.',
+          hint: 'Accept unlocks automatically the moment the Stripe deposit lands.',
         },
         { status: 409 },
       );
