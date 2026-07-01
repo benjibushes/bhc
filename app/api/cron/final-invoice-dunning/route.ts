@@ -38,6 +38,20 @@
 //     payment on its own.
 //   - Closed Won / Closed Lost / Refunded are excluded so a paid/dead deal is
 //     never dunned.
+//
+// HEAL-OR-SKIP GATE (M2 / audit C3, 2026-07-01):
+//   Final-invoice PIs are DIRECT charges on the connected account. If webhook
+//   settlement threw transiently, the referral stays 'Awaiting Payment' even
+//   though the buyer PAID — the Status filter above can't see that, and this
+//   cron would re-bill the paid buyer. So BEFORE dunning each candidate we
+//   retrieve the live PI on the CONNECTED account (via the stamped
+//   `Final Invoice Payment Intent ID`, or the session id recovered from
+//   `Final Invoice URL` when Clover deferred the PI to pay-time):
+//     • pi.status succeeded → call settleFinalInvoice (idempotent) to heal the
+//       stuck referral, count `healed`, and NEVER send the reminder.
+//     • payment state unknown / in flight → count `skipped_unknown`, no dun.
+//     • only a retrievable, definitively-unpaid PI proceeds to dunning.
+//   Retrieve + settle-idempotent only — nothing is created or charged here.
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
@@ -46,6 +60,14 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { CRON_SECRET } from '@/lib/secrets';
 import { withCronRun } from '@/lib/cronRun';
 import { sendBuyerFinalInvoice, sendEmail } from '@/lib/email';
+import { getStripe } from '@/lib/stripe';
+import { settleFinalInvoice } from '@/lib/stripeSettlement';
+import {
+  finalInvoiceDunningAction,
+  parseCheckoutSessionIdFromUrl,
+  NO_PAYMENT_INTENT,
+  type FinalInvoiceDunningAction,
+} from '@/lib/finalInvoiceDunning';
 
 export const maxDuration = 60;
 
@@ -149,6 +171,70 @@ interface DunningResult {
   skipReasonBreakdown: Record<string, number>;
 }
 
+/**
+ * Resolve the LIVE Stripe payment state for a candidate referral's final
+ * invoice, on the CONNECTED account (direct charge — the platform account
+ * can't see it without stripeAccount).
+ *
+ * Resolution chain:
+ *   1. `Final Invoice Payment Intent ID` (stamped by send-final-invoice when
+ *      Stripe returned a PI at create time) → paymentIntents.retrieve.
+ *   2. Clover async-PI fallback: that field is usually EMPTY (apiVersion
+ *      '2026-02-25.clover' defers PI creation to pay-time), so recover the
+ *      session id from `Final Invoice URL` and read session.payment_intent.
+ *      A live session with payment_status 'unpaid' and no PI = the buyer never
+ *      submitted payment → definitively dunnable (NO_PAYMENT_INTENT sentinel).
+ *
+ * Returns piStatus null when payment state could not be determined — the
+ * caller maps that to 'skip' (never dun on unknown payment state). `pi` is the
+ * full PaymentIntent object (metadata intact) so a 'heal' can feed it straight
+ * to settleFinalInvoice.
+ */
+async function resolveFinalInvoicePi(
+  ref: any,
+  connectAccountId: string,
+): Promise<{ pi: any | null; piStatus: string | null }> {
+  const stripe = getStripe();
+
+  const piId = String(ref['Final Invoice Payment Intent ID'] || '').trim();
+  if (piId) {
+    try {
+      const pi: any = await stripe.paymentIntents.retrieve(piId, {
+        stripeAccount: connectAccountId,
+      });
+      return { pi, piStatus: String(pi?.status || '') || null };
+    } catch (e: any) {
+      // Stale/bogus stored id → fall through to the session path below.
+      // Anything else (429 / timeout / auth blip) = transient → UNKNOWN.
+      if (e?.code !== 'resource_missing') return { pi: null, piStatus: null };
+    }
+  }
+
+  const sessionId = parseCheckoutSessionIdFromUrl(ref['Final Invoice URL']);
+  if (!sessionId) return { pi: null, piStatus: null };
+  try {
+    const session: any = await stripe.checkout.sessions.retrieve(
+      sessionId,
+      { expand: ['payment_intent'] },
+      { stripeAccount: connectAccountId },
+    );
+    const pi: any =
+      session?.payment_intent && typeof session.payment_intent === 'object'
+        ? session.payment_intent
+        : null;
+    if (pi) return { pi, piStatus: String(pi?.status || '') || null };
+    // No PI on the session. 'unpaid' = buyer never submitted payment (Clover
+    // creates the PI at pay-time) → definitively dunnable. Any other
+    // payment_status without a readable PI is a weird state → UNKNOWN.
+    if (String(session?.payment_status || '') === 'unpaid') {
+      return { pi: null, piStatus: NO_PAYMENT_INTENT };
+    }
+    return { pi: null, piStatus: null };
+  } catch {
+    return { pi: null, piStatus: null };
+  }
+}
+
 async function realHandler(_request: Request): Promise<DunningResult> {
   if (isMaintenanceMode()) {
     return {
@@ -187,6 +273,8 @@ async function realHandler(_request: Request): Promise<DunningResult> {
   const targets = eligible.slice(0, MAX_PER_RUN);
   const errors: string[] = [];
   let touched = 0;
+  let healed = 0;
+  let skippedUnknown = 0;
 
   for (const ref of targets) {
     const referralId = ref.id as string;
@@ -222,6 +310,60 @@ async function realHandler(_request: Request): Promise<DunningResult> {
     const ranchName = String(
       rancher?.['Ranch Name'] || rancher?.['Operator Name'] || 'your rancher',
     ).trim();
+
+    // ── HEAL-OR-SKIP GATE (M2/C3) — runs BEFORE any dunning touch ──────────
+    // Retrieve the live PI on the CONNECTED account. Paid → heal + never dun.
+    // Unknown/in-flight → skip (never dun on unknown payment state). Only a
+    // retrievable, definitively-unpaid PI falls through to the reminder below.
+    // Per-referral try/catch: one Stripe/settle failure never kills the batch.
+    let dunAction: FinalInvoiceDunningAction = 'skip';
+    let livePi: any = null;
+    try {
+      const connectAccountId = String(rancher?.['Stripe Connect Account Id'] || '').trim();
+      if (connectAccountId) {
+        const resolved = await resolveFinalInvoicePi(ref, connectAccountId);
+        livePi = resolved.pi;
+        dunAction = finalInvoiceDunningAction({ piStatus: resolved.piStatus });
+      }
+      // No Connect account id readable → payment state unverifiable → skip.
+    } catch (e: any) {
+      dunAction = 'skip';
+      errors.push(`${referralId}: pi resolve (${e?.message?.slice(0, 60)})`);
+    }
+
+    if (dunAction === 'heal') {
+      // Buyer already PAID — the webhook settlement was lost. Heal the stuck
+      // referral (settleFinalInvoice is idempotent: no-ops on 'Closed Won')
+      // and NEVER send the reminder — even if the heal write fails, the money
+      // state is known-paid, so dunning is always wrong here.
+      try {
+        await settleFinalInvoice(livePi);
+        healed++;
+        bump('healed');
+        try {
+          if (TELEGRAM_ADMIN_CHAT_ID) {
+            await sendTelegramMessage(
+              TELEGRAM_ADMIN_CHAT_ID,
+              `🩹 <b>Final invoice HEALED by dunning cron</b> · ref=${referralId.slice(-6)}\n\n` +
+                `${buyerName} → ${ranchName} had PAID, but webhook settlement never ` +
+                `landed (referral was stuck 'Awaiting Payment'). Settled now — ` +
+                `check Connect webhook health if this repeats.`,
+            );
+          }
+        } catch {}
+      } catch (e: any) {
+        bump('heal_failed');
+        errors.push(`${referralId}: heal (${e?.message?.slice(0, 60)})`);
+      }
+      continue;
+    }
+
+    if (dunAction === 'skip') {
+      skippedUnknown++;
+      bump('skipped_unknown');
+      continue;
+    }
+    // dunAction === 'dun' → PI retrievable + definitively unpaid. Proceed.
 
     const priorCount = dunningTouchCount(ref);
     const escalate = shouldEscalateDunning(ref, { now });
@@ -330,9 +472,12 @@ async function realHandler(_request: Request): Promise<DunningResult> {
 
   return {
     status: errors.length ? 'partial' : 'success',
-    recordsTouched: touched,
+    // A heal is a real record mutation (stuck referral → Closed Won), so it
+    // counts as touched alongside buyer reminders.
+    recordsTouched: touched + healed,
     notes:
       `eligible=${eligible.length} processed=${targets.length} touched=${touched} ` +
+      `healed=${healed} skipped_unknown=${skippedUnknown} ` +
       `errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
     skipReasonBreakdown: breakdown,
   };
