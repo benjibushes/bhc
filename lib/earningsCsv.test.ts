@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   csvEscape,
+  csvNeutralizeFormula,
   money,
   dateOnly,
   filterByClosedDate,
@@ -33,6 +34,30 @@ test('csvEscape wraps + doubles quotes for comma/quote/newline', () => {
   assert.equal(csvEscape('Smith, John'), '"Smith, John"');
   assert.equal(csvEscape('he said "hi"'), '"he said ""hi"""');
   assert.equal(csvEscape('line1\nline2'), '"line1\nline2"');
+});
+
+test('csvNeutralizeFormula prefixes formula-trigger cells', () => {
+  assert.equal(csvNeutralizeFormula('=HYPERLINK("http://evil")'), "'=HYPERLINK(\"http://evil\")");
+  assert.equal(csvNeutralizeFormula('+1234'), "'+1234");
+  assert.equal(csvNeutralizeFormula('-2+3'), "'-2+3");
+  assert.equal(csvNeutralizeFormula('@SUM(A1:A9)'), "'@SUM(A1:A9)");
+  assert.equal(csvNeutralizeFormula('\tTabbed'), "'\tTabbed");
+});
+
+test('csvNeutralizeFormula leaves safe text + empties untouched', () => {
+  assert.equal(csvNeutralizeFormula('Jane Buyer'), 'Jane Buyer');
+  assert.equal(csvNeutralizeFormula('Smith, John'), 'Smith, John');
+  assert.equal(csvNeutralizeFormula(''), '');
+  assert.equal(csvNeutralizeFormula(null), '');
+});
+
+test('buildEarningsCsv neutralizes a formula-injection buyer name', () => {
+  const csv = buildEarningsCsv([row({ buyerName: '=cmd|calc' })]);
+  const lines = csv.trimEnd().split('\r\n');
+  // Leading = must be defused with a quote so the sheet treats it as text.
+  // The cell also contains no comma/quote/newline, so csvEscape won't wrap it.
+  assert.match(lines[1], /(^|,)'=cmd\|calc(,|$)/);
+  assert.ok(!/(^|,)=cmd\|calc(,|$)/.test(lines[1]));
 });
 
 test('money formats to 2dp, guards NaN', () => {

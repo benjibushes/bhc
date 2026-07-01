@@ -33,6 +33,21 @@ export function csvEscape(value: unknown): string {
   return s;
 }
 
+/**
+ * Neutralize spreadsheet formula injection. A cell whose text begins with
+ * `= + - @`, TAB (0x09), or CR (0x0D) is interpreted as a FORMULA by Excel,
+ * Google Sheets, and LibreOffice — e.g. a buyer named `=HYPERLINK("http://evil",...)`
+ * or `@SUM(...)` executes when the rancher opens their earnings export. Buyer
+ * names + order types are untrusted consumer input landing in a file a human
+ * opens, so prefix a single quote to force literal-text rendering (OWASP CSV-
+ * injection mitigation). Apply ONLY to free-text cells — machine-generated
+ * numbers/dates/ids must not be mangled (a legit "-100.00" stays numeric).
+ */
+export function csvNeutralizeFormula(value: unknown): string {
+  const s = value === null || value === undefined ? '' : String(value);
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+}
+
 /** Format cents-free dollar number for a spreadsheet (no $, 2dp). */
 export function money(n: number): string {
   const v = Number(n);
@@ -93,8 +108,8 @@ export function buildEarningsCsv(rows: EarningsRow[]): string {
     const net = (Number(r.saleAmount) || 0) - (Number(r.commissionDue) || 0);
     lines.push([
       csvEscape(r.id),
-      csvEscape(r.buyerName),
-      csvEscape(r.orderType),
+      csvEscape(csvNeutralizeFormula(r.buyerName)),
+      csvEscape(csvNeutralizeFormula(r.orderType)),
       csvEscape(money(r.saleAmount)),
       csvEscape(money(r.commissionDue)),
       csvEscape(money(net)),
