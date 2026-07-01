@@ -87,15 +87,17 @@ interface MemberReferral {
 type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
 
 const statusLabels: Record<string, { label: string; style: string }> = {
-  'Pending Approval': { label: 'Being Matched', style: 'bg-amber/20 text-amber-dark' },
-  'Waitlisted': { label: 'Waitlisted — No Rancher Yet', style: 'bg-rust/10 text-rust-dark' },
-  'Intro Sent': { label: 'Rancher Introduced', style: 'bg-charcoal/10 text-charcoal' },
-  'In Progress': { label: 'In Progress', style: 'bg-charcoal/10 text-charcoal' },
-  'Awaiting Payment': { label: 'Deposit Invoice Ready', style: 'bg-amber/20 text-amber-dark' },
-  'Slot Locked': { label: 'Slot Locked', style: 'bg-sage/15 text-sage-dark' },
-  'Closed Won': { label: 'Beef Delivered', style: 'bg-sage/15 text-sage-dark' },
-  'Closed Lost': { label: 'Closed', style: 'bg-dust/20 text-saddle' },
-  'Rejected': { label: 'No Match Available', style: 'bg-weathered/10 text-weathered' },
+  // Buyer-facing labels — plain language, not CRM jargon. A buyer never
+  // "referred" anyone; these describe THEIR order.
+  'Pending Approval': { label: 'finding your rancher', style: 'bg-amber/20 text-amber-dark' },
+  'Waitlisted': { label: 'finding a rancher near you', style: 'bg-rust/10 text-rust-dark' },
+  'Intro Sent': { label: 'meet your rancher', style: 'bg-charcoal/10 text-charcoal' },
+  'In Progress': { label: 'in progress', style: 'bg-charcoal/10 text-charcoal' },
+  'Awaiting Payment': { label: 'ready to reserve', style: 'bg-amber/20 text-amber-dark' },
+  'Slot Locked': { label: 'reserved', style: 'bg-sage/15 text-sage-dark' },
+  'Closed Won': { label: 'beef delivered', style: 'bg-sage/15 text-sage-dark' },
+  'Closed Lost': { label: 'closed', style: 'bg-dust/20 text-saddle' },
+  'Rejected': { label: 'finding your rancher', style: 'bg-weathered/10 text-weathered' },
 };
 
 function MemberDashboard({ member }: { member: { id: string; name: string; email: string; state: string } }) {
@@ -345,7 +347,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 );
               })()}
 
-              <h2 className="font-serif text-2xl">Your Referral Status</h2>
+              <h2 className="font-serif text-2xl">Your order</h2>
 
               {data?.memberReferrals && data.memberReferrals.length > 0 ? (
                 <div className="space-y-4">
