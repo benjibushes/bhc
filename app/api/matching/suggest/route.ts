@@ -772,6 +772,51 @@ export async function POST(request: Request) {
       } catch (e: any) {
         console.warn('[matching] consumer waitlist update failed:', e?.message);
       }
+
+      // F-1 audit fix (relocated): fire sendStateWaitlistLetter on the
+      // REACHABLE no-match path. This block previously lived in the
+      // `else` of the auto-approve `if (topMatch)` further down — dead
+      // code, because this short-circuit returns whenever !topMatch, so
+      // that else could never execute and no-supply buyers got ZERO email.
+      //
+      // Dedup: gate on the Consumer's existing `Routing Segment Send
+      // Count` field (== 0 → not yet lettered). The email-sequences cron
+      // honors the same counter, so stamping it here prevents both a
+      // waitlist-retry re-send from this route AND a later cron
+      // double-fire. No new Airtable schema.
+      //
+      // Non-blocking: send + stamp are fire-and-forget with .catch (same
+      // pattern as this route's other sends); the consumer fetch is
+      // wrapped in try/catch. The letter can never fail this response.
+      if (buyerEmail) {
+        try {
+          const consumer = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
+          const segCount = Number(consumer?.['Routing Segment Send Count'] || 0);
+          if (segCount === 0) {
+            const firstName = String(buyerName || '').split(' ')[0] || 'there';
+            sendStateWaitlistLetter({
+              email: buyerEmail,
+              firstName,
+              buyerState: normalizedBuyerState,
+            })
+              .then(async () => {
+                // Stamp the counter so email-sequences cron doesn't double-fire.
+                try {
+                  await updateRecord(TABLES.CONSUMERS, buyerId, {
+                    'Routing Segment Send Count': 1,
+                    'Routing Segment Last Sent At': new Date().toISOString(),
+                  });
+                } catch (e) {
+                  console.error('[state-waitlist] segment counter stamp failed:', e);
+                }
+              })
+              .catch(e => console.warn('[state-waitlist] no-match letter failed:', e?.message));
+          }
+        } catch (e: any) {
+          console.warn('[state-waitlist] consumer fetch failed:', e?.message);
+        }
+      }
+
       return NextResponse.json({
         success: true,
         matchFound: false,
@@ -1381,66 +1426,12 @@ export async function POST(request: Request) {
       } catch (e) {
         console.error('Error auto-approving match:', e);
       }
-    } else {
-      // No match found — waitlist the buyer. Buyer Stage falls back to WAITING
-      // (no rancher available right now). The rancher-launch-warmup cron picks
-      // them back up the moment a rancher activates in their state and bumps
-      // them to READY.
-      try {
-        await updateRecord(TABLES.CONSUMERS, buyerId, {
-          'Referral Status': 'Waitlisted',
-          'Buyer Stage': 'WAITING',
-          'Buyer Stage Updated At': new Date().toISOString(),
-        });
-      } catch (e) {
-        console.error('Error updating consumer referral status:', e);
-      }
-
-      // F-1 audit fix: fire sendStateWaitlistLetter immediately at signup.
-      // Pre-fix, buyer signed up in an uncovered state → Status=Waitlisted +
-      // Buyer Stage=WAITING → NO email until reclassify-buyers cron segmented
-      // them as STATE_WAITLIST + email-sequences fired the letter days later.
-      // For cold paid-ad traffic this 24-48h silence was the bounce/trust hit.
-      // Gate on Routing Segment Send Count == 0 so a buyer hitting the
-      // endpoint twice (re-signup, retry) doesn't get the letter twice — the
-      // email-sequences cron also honors this counter.
-      if (buyerEmail) {
-        try {
-          const consumer = await getRecordById(TABLES.CONSUMERS, buyerId) as any;
-          const segCount = Number(consumer?.['Routing Segment Send Count'] || 0);
-          if (segCount === 0) {
-            const firstName = String(buyerName || '').split(' ')[0] || 'there';
-            sendStateWaitlistLetter({
-              email: buyerEmail,
-              firstName,
-              buyerState: normalizedBuyerState,
-            })
-              .then(async () => {
-                // Stamp the counter so email-sequences cron doesn't double-fire.
-                try {
-                  await updateRecord(TABLES.CONSUMERS, buyerId, {
-                    'Routing Segment Send Count': 1,
-                    'Routing Segment Last Sent At': new Date().toISOString(),
-                  });
-                } catch (e) {
-                  console.error('[state-waitlist] segment counter stamp failed:', e);
-                }
-              })
-              .catch(e => console.error('[state-waitlist] fire failed:', e));
-          }
-        } catch (e) {
-          console.error('[state-waitlist] consumer fetch failed:', e);
-        }
-      }
-
-      // Telegram noise reduction: routine no-match events roll into the
-      // morning digest. Real-time pings for high-intent no-match were
-      // dropped 2026-05-13 ahead of spike — at scale, every uncovered
-      // state generates dozens of these per hour and clogged the chat.
-      // batch-approve's waitlist-retry path re-routes them automatically
-      // when a rancher comes online in the state, so the operator doesn't
-      // need to act in real-time.
     }
+    // NOTE: the former `else` (no-match → waitlist + sendStateWaitlistLetter)
+    // was DEAD CODE — the NO-MATCH SHORT-CIRCUIT above returns whenever
+    // !topMatch, so topMatch is always truthy here and the else never ran.
+    // The waitlist letter now fires inside that short-circuit (grep
+    // 'F-1 audit fix (relocated)').
 
     return NextResponse.json({
       success: true,
