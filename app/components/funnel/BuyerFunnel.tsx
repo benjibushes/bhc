@@ -1004,6 +1004,23 @@ function Reveal({
               you&apos;re a qualified buyer the moment a verified rancher opens up near you — and you&apos;ll
               be the first we reach out to. we&apos;re working on it.
             </p>
+            {/* U19: the waitlist used to dead-end here. Give the qualified buyer
+                a forward path — many ranchers ship nationwide, so let them
+                browse + reach one now instead of only waiting. */}
+            <div className="mt-5 flex flex-col sm:flex-row gap-3">
+              <a
+                href="/map"
+                className="flex-1 text-center bg-charcoal text-bone px-5 py-3 min-h-[48px] flex items-center justify-center uppercase tracking-wider text-sm transition hover:bg-saddle"
+              >
+                Browse ranchers on the map &rarr;
+              </a>
+              <a
+                href="/ranchers"
+                className="flex-1 text-center border border-charcoal text-charcoal px-5 py-3 min-h-[48px] flex items-center justify-center uppercase tracking-wider text-sm transition hover:bg-charcoal hover:text-bone"
+              >
+                See who ships nationwide &rarr;
+              </a>
+            </div>
           </div>
         </div>
       )}

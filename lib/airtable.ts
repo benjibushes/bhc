@@ -559,15 +559,22 @@ export async function findOrCreateRancherByEmail(
 export async function getRancherOrProspectBySlug(slug: string) {
   try {
     const safeSlug = escapeAirtableValue(slug);
-    const records = await base(TABLES.RANCHERS)
-      .select({
-        filterByFormula:
-          `AND({Slug} = "${safeSlug}", NOT({Public Map Hidden} = 1), ` +
-          `{Verification Status} != "Removed", ` +
-          `OR({Page Live} = 1, {Verification Status} = "Prospect"))`,
-        maxRecords: 1,
-      })
-      .all();
+    // U17: wrap in withRateLimitRetry — this powers the PUBLIC rancher page,
+    // where paid ads land. An un-retried Airtable 429 here threw straight
+    // through to a generic error page = a wasted ad click. Now transient rate
+    // limits back off + recover; a genuine hard failure still throws (caught by
+    // the route's error.tsx boundary, which offers a forward path).
+    const records = await withRateLimitRetry(() =>
+      base(TABLES.RANCHERS)
+        .select({
+          filterByFormula:
+            `AND({Slug} = "${safeSlug}", NOT({Public Map Hidden} = 1), ` +
+            `{Verification Status} != "Removed", ` +
+            `OR({Page Live} = 1, {Verification Status} = "Prospect"))`,
+          maxRecords: 1,
+        })
+        .all(),
+    );
     if (records.length === 0) return null;
     return { id: records[0].id, ...records[0].fields };
   } catch (error) {
