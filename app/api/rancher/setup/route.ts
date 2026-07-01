@@ -139,6 +139,14 @@ export async function GET(req: Request) {
     Tier: rancher['Tier'] || '',
     'Subscription Status': rancher['Subscription Status'] || '',
     'Pricing Model': rancher['Pricing Model'] || '',
+    // U4 — the wizard MUST know Connect state to tell the truth about going
+    // live. A tier_v2 rancher whose Stripe Connect isn't 'active' can't take
+    // buyer deposits, so the Done step calling them "live" is a lie that leaves
+    // a silent dark rancher (nothing for ads to route to). Surface both the
+    // status and the account id (presence = onboarding started) read-only so
+    // the wizard can gate the "you're live" messaging + the Sign step warning.
+    'Stripe Connect Status': rancher['Stripe Connect Status'] || '',
+    'Stripe Connect Account Id': rancher['Stripe Connect Account Id'] || '',
   };
   for (const f of ALLOWED_FIELDS) {
     if (rancher[f] !== undefined) out[f] = rancher[f];
