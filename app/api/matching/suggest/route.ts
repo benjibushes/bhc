@@ -14,7 +14,11 @@ import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { requireAdmin } from '@/lib/adminAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
 import { tierFor } from '@/lib/tiers';
-import { routingWeightForTier, retainerPriorityCompare } from '@/lib/routingPriority';
+import {
+  routingWeightForTier,
+  retainerPriorityCompareWithOverride,
+  parseRoutingWeightOverride,
+} from '@/lib/routingPriority';
 
 export const maxDuration = 90;
 
@@ -33,12 +37,19 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com
 // round-robin rules take over — so a retainer can never hoard every lead and a
 // free rancher is never fully starved. This is a TIEBREAKER only; it never
 // touches eligibility, capacity, or the atomic-INCR ceiling.
+// Per-rancher operator override: the Airtable 'Routing Weight Override' number
+// field pins a specific rancher ahead of the tier ladder ABSOLUTELY (no
+// starvation floor) among eligible ranchers — operator intent (e.g. "Ashcraft
+// gets every TX lead regardless of tier" = 100). Eligibility + capacity still
+// gate upstream. Empty/garbage field → null → tier ladder + floor unchanged.
 function retainerPriorityCmp(a: any, b: any): number {
-  return retainerPriorityCompare(
+  return retainerPriorityCompareWithOverride(
     routingWeightForTier(tierFor(a)),
     a['Current Active Referrals'] || 0,
+    parseRoutingWeightOverride(a['Routing Weight Override']),
     routingWeightForTier(tierFor(b)),
     b['Current Active Referrals'] || 0,
+    parseRoutingWeightOverride(b['Routing Weight Override']),
   );
 }
 
