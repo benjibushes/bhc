@@ -550,6 +550,30 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                           );
                         })() : null}
 
+                        {/* Pending-deposit resume — the durable way back into
+                            checkout. A buyer who bounced off
+                            /checkout/<refId>/deposit (closed the tab, session
+                            expired) previously had NO path back from the
+                            dashboard. Gating mirrors POST /api/checkout/deposit
+                            exactly: it 409s on Deposit Paid At, Awaiting
+                            Payment (legacy invoice rail — has its own Pay CTA
+                            above), Slot Locked, Closed Won/Lost, or a missing
+                            rancher — so the CTA renders only for the allowlist
+                            of statuses that rail accepts, with a rancher
+                            linked and no paid marker. */}
+                        {ref.rancher_id &&
+                          !ref.deposit_paid_at &&
+                          ['Pending Approval', 'Intro Sent', 'Waitlisted'].includes(ref.status) && (
+                          <p className="mt-4">
+                            <Link
+                              href={`/checkout/${ref.id}/deposit`}
+                              className="inline-block px-5 py-2 bg-charcoal text-bone hover:bg-saddle text-xs uppercase tracking-widest font-semibold"
+                            >
+                              Finish reserving your share →
+                            </Link>
+                          </p>
+                        )}
+
                         {/* E5 — entry point into the buyer↔rancher thread at
                             /checkout/<refId>/ask. Without this the thread is only
                             reachable from the campaign link, whose 48h deposit-grant

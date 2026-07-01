@@ -16,11 +16,23 @@ export default function MemberLoginPage() {
     setError('');
     setSending(true);
 
+    // Resume path — arrives as ?next=/checkout/<refId>/deposit when the buyer
+    // was bounced here mid-checkout (deposit page 401 CTA / MemberAuthGuard).
+    // Forwarded in the POST body so the login route can embed it in the magic
+    // link; the server validates it (safeNextPath) before it rides the email.
+    // Read via window.location at submit time (client event handler — always
+    // available) rather than useSearchParams, which would force a Suspense
+    // boundary around this whole page for zero benefit.
+    const next = new URLSearchParams(window.location.search).get('next');
+
     try {
       const response = await fetch('/api/auth/member/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          ...(next ? { next } : {}),
+        }),
       });
 
       const data = await response.json();

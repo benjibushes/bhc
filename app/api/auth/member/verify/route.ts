@@ -4,34 +4,15 @@ import { getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
 import { verifyJwtWithFallback } from '@/lib/jwt';
+// Open-redirect defense for the ?next= param (validator + full rationale
+// live in lib/safeNextPath.ts — extracted so the login route and the
+// /member/verify page validate with the SAME rules; tested in
+// lib/__auth_tests__/safeNextPath.test.ts).
+import { safeNextPath } from '@/lib/safeNextPath';
 
 import { JWT_SECRET } from '@/lib/secrets';
 const MEMBER_AUTH_COOKIE = 'bhc-member-auth';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
-
-// Open-redirect defense for the GET magic-link flow. `next` arrives via the
-// query string (i.e. fully buyer-controlled — anyone can craft an intro-email
-// URL with their own ?next=). Without this validator, a malicious URL could
-// set our bhc-member-auth cookie then 302 the browser to an attacker-controlled
-// domain (phishing / credential capture / cookie exfil via meta tags).
-//
-// Rules:
-//   - Must start with `/` (single slash — relative path)
-//   - Must NOT start with `//` (protocol-relative URL = open redirect)
-//   - Must NOT contain `://` (defends against `/\\evil.com` style bypasses
-//     that some parsers normalize to absolute URLs)
-//   - Length cap 200 chars (sanity bound — our legitimate paths are well under)
-//
-// Anything failing these checks falls back to `/member` (the default landing
-// page for an authed buyer).
-function safeNextPath(next: string | null): string {
-  if (!next) return '/member';
-  if (next.length > 200) return '/member';
-  if (!next.startsWith('/')) return '/member';
-  if (next.startsWith('//')) return '/member';
-  if (next.includes('://')) return '/member';
-  return next;
-}
 
 export async function POST(request: Request) {
   try {

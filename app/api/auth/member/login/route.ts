@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
 import { sendEmail, sendMagicLink } from '@/lib/email';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+import { safeNextPath } from '@/lib/safeNextPath';
 
 export const maxDuration = 60;
 
@@ -13,11 +14,18 @@ export async function POST(request: Request) {
   try {
     let parsedBody: any;
     try { parsedBody = await request.json(); } catch { return NextResponse.json({ error: 'Invalid request body' }, { status: 400 }); }
-    const { email } = parsedBody;
+    const { email, next } = parsedBody;
 
     if (!email) {
       return NextResponse.json({ error: 'Email is required' }, { status: 400 });
     }
+
+    // Resume path (e.g. /checkout/<refId>/deposit when a logged-out buyer
+    // bounced off checkout). Validated HERE — before it ever rides the emailed
+    // magic link — with the same open-redirect rules the verify hop applies.
+    // Invalid/absent values clamp to '/member' (the default), in which case we
+    // simply don't append the param.
+    const safeNext = safeNextPath(typeof next === 'string' ? next : null);
 
     const normalizedEmail = email.trim().toLowerCase();
     const ip = getRequestIp(request);
@@ -97,7 +105,13 @@ export async function POST(request: Request) {
     );
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
-    const loginUrl = `${siteUrl}/member/verify?token=${token}`;
+    // Thread the resume path through the magic link so the buyer lands back
+    // where they left off (the /member/verify page reads &next= and re-clamps
+    // it with safeNextPath before redirecting). '/member' is the default
+    // landing page — appending it would be noise, so skip it.
+    const loginUrl = `${siteUrl}/member/verify?token=${token}${
+      safeNext !== '/member' ? `&next=${encodeURIComponent(safeNext)}` : ''
+    }`;
 
     await sendMagicLink({
       to: normalizedEmail,
