@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Inter } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import Header from "./components/Header";
 import PromoBar from "./components/PromoBar";
@@ -118,6 +120,10 @@ export default function RootLayout({
         <ChromeGate>
           <Footer />
         </ChromeGate>
+        {/* C4 — Vercel RUM (page analytics + Core Web Vitals). Both are
+            no-ops off Vercel and add nothing until deployed there. */}
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
