@@ -40,6 +40,55 @@ export function escapeAirtableValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+// ── Read-path formula builders + error classifiers (audit slice 9) ──────
+// The rancher dashboard used to pull the ENTIRE Referrals table per load
+// because ARRAYJOIN({Rancher}) renders linked-record PRIMARY FIELD VALUES,
+// not record ids (the PR #36 trap). The proper fix is LOOKUP fields on
+// Referrals that surface the Ranchers `Rancher Record Id` formula field:
+//   • 'Rancher Record Id'           — lookup via the Rancher link
+//   • 'Suggested Rancher Record Id' — lookup via the Suggested Rancher link
+// The founder creates both manually (the API can't create lookups). Until
+// they exist, a formula referencing them ERRORS the whole query — callers
+// classify that with isInvalidFilterFormulaError and fall back to the scan.
+
+// Server-side "referrals owned by this rancher" filter. Covers BOTH link
+// fields because the dashboard's ownership test is
+// rancher.includes(id) || suggested.includes(id) — filtering only the
+// Rancher link would hide suggested-only (pre-accept) referrals.
+export function referralsByRancherFormula(rancherId: string): string {
+  const id = escapeAirtableValue(String(rancherId || ''));
+  return `OR({Rancher Record Id} = "${id}", {Suggested Rancher Record Id} = "${id}")`;
+}
+
+// Server-side "referrals for this buyer email" filter — the same
+// exact-or-wrapped match findReferralByBuyerEmail uses (never a bare
+// substring: ben@x must not match rueben@x). Returns null when the input
+// isn't a usable email so callers can fall back to their scan path.
+export function referralsByBuyerEmailFormula(email: string): string | null {
+  const e = String(email || '').toLowerCase().replace(/"/g, '').trim();
+  if (!e || !e.includes('@')) return null;
+  return `OR(LOWER(TRIM({Buyer Email})) = "${e}", FIND("<${e}>", LOWER({Buyer Email})) > 0)`;
+}
+
+// True when Airtable rejected the filterByFormula itself — the signature of
+// a formula referencing a field that doesn't exist yet (e.g. the lookup
+// fields above before the founder creates them). airtable.js throws
+// AirtableError with .error = type code; message fallback covers rewraps.
+export function isInvalidFilterFormulaError(error: any): boolean {
+  if (!error) return false;
+  if (error.error === 'INVALID_FILTER_BY_FORMULA') return true;
+  return /formula for filtering records is invalid/i.test(String(error.message || ''));
+}
+
+// True when Airtable rejected a fields[] projection entry (unknown field).
+// Message fallback is anchored on the singular `name: "` so it can NEVER
+// match the formula error's plural "Unknown field names: ..." text.
+export function isUnknownFieldNameError(error: any): boolean {
+  if (!error) return false;
+  if (error.error === 'UNKNOWN_FIELD_NAME') return true;
+  return /unknown field name: "/i.test(String(error.message || ''));
+}
+
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -178,10 +227,24 @@ export function invalidateAirtableCache(tableName?: string): void {
   }
 }
 
-// Helper function to get all records from a table
-export async function getAllRecords(tableName: string, filterByFormula?: string) {
+// Helper function to get all records from a table.
+// opts.fields — optional projection, passed straight to the SDK's
+// select({fields}) so Airtable only serializes those columns (bandwidth +
+// latency; request COUNT is governed by pagination, not projection). A
+// projected read NEVER reads from or writes to the in-process cache: the
+// cache stores the FULL row shape and a projected result stored under the
+// full key would silently starve other callers of fields. NOTE: a fields[]
+// entry naming a nonexistent field errors the whole query
+// (UNKNOWN_FIELD_NAME) — callers that project must classify with
+// isUnknownFieldNameError and retry unprojected.
+export async function getAllRecords(
+  tableName: string,
+  filterByFormula?: string,
+  opts?: { fields?: string[] },
+) {
   try {
-    const key = !filterByFormula ? _cacheKey(tableName) : null;
+    const projected = !!(opts?.fields && opts.fields.length);
+    const key = !filterByFormula && !projected ? _cacheKey(tableName) : null;
     if (key) {
       const hit = _cache[key];
       if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return hit.data;
@@ -190,6 +253,7 @@ export async function getAllRecords(tableName: string, filterByFormula?: string)
       base(tableName)
         .select({
           ...(filterByFormula && { filterByFormula }),
+          ...(projected && { fields: opts!.fields }),
         })
         .all(),
       tableName

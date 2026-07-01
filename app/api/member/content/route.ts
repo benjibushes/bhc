@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords } from '@/lib/airtable';
+import { getAllRecords, getRecordById, referralsByBuyerEmailFormula } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
@@ -18,38 +18,59 @@ export async function GET(request: Request) {
     let memberSegment = '';
     let memberOrderType = '';
 
-    // Fetch member's segment from their consumer record. Also rehydrate
-    // memberState if JWT didn't carry it — older session tokens minted by
-    // /api/warmup/engage didn't include state, which made the dashboard
-    // show "0 ranchers" even after a successful match. Defense-in-depth
-    // so any future token shape change can't strand the buyer.
-    let memberConsumer: any = null;
-    if (memberId) {
-      try {
-        const { getRecordById } = await import('@/lib/airtable');
-        memberConsumer = await getRecordById(TABLES.CONSUMERS, memberId);
-        memberSegment = memberConsumer['Segment'] || '';
-        memberOrderType = memberConsumer['Order Type'] || '';
-        if (!memberState && memberConsumer['State']) memberState = String(memberConsumer['State']);
-      } catch {
-        // Non-fatal, segment will be empty
+    // Buyer-scoped Referrals read (audit slice 9). 'Buyer Email' is a
+    // long-standing Referrals field (email type, same field
+    // findReferralByBuyerEmail filters on), so this is a direct swap from
+    // "pull the ENTIRE Referrals table, filter by Buyer link in JS" to a
+    // server-side LOWER(TRIM({Buyer Email})) match — O(this buyer's rows)
+    // instead of O(all referrals platform-wide). Still guarded: any
+    // filtered-read failure falls back to the legacy full scan, sessions
+    // minted without an email skip straight to the scan, and the Buyer-link
+    // ownership filter below stays as the belt either way.
+    const fetchBuyerReferralRows = async (): Promise<any[]> => {
+      const formula = referralsByBuyerEmailFormula(session.email);
+      if (formula) {
+        try {
+          return (await getAllRecords(TABLES.REFERRALS, formula)) as any[];
+        } catch (e: any) {
+          console.warn(
+            '[member/content] filtered Referrals read failed; falling back to full scan:',
+            e?.message || e,
+          );
+        }
       }
-    }
+      return (await getAllRecords(TABLES.REFERRALS)) as any[];
+    };
 
-    const [ranchers, landDeals, brands] = await Promise.all([
+    // All five reads are independent — one parallel round instead of three
+    // serial rounds (consumer row → ranchers/deals/brands → referrals). Each
+    // promise preserves its old failure semantics: consumer row is non-fatal
+    // (segment stays empty), everything else degrades to [].
+    const [memberConsumer, ranchers, landDeals, brands, referrals] = await Promise.all([
+      // Rehydrates memberState if the JWT didn't carry it — older session
+      // tokens minted by /api/warmup/engage didn't include state, which made
+      // the dashboard show "0 ranchers" even after a successful match.
+      // Defense-in-depth so any future token shape change can't strand the
+      // buyer.
+      memberId
+        ? (getRecordById(TABLES.CONSUMERS, memberId) as Promise<any>).catch(() => null)
+        : Promise.resolve<any>(null),
       getAllRecords(TABLES.RANCHERS, "{Certified} = TRUE()").catch(() => []),
       getAllRecords(TABLES.LAND_DEALS, "{Status} = 'Approved'").catch(() => []),
       // NOTE: Brands schema has no "Payment Status" field — the old filter
       // was always returning [] silently. Featured/Status are multilineText,
       // so use truthy-string checks. Brands are curated before being added.
       getAllRecords(TABLES.BRANDS, "{Featured}").catch(() => []),
+      fetchBuyerReferralRows().catch(() => {
+        console.warn('Referrals table not accessible, returning empty referrals');
+        return [] as any[];
+      }),
     ]);
 
-    let referrals: any[] = [];
-    try {
-      referrals = await getAllRecords(TABLES.REFERRALS);
-    } catch (e) {
-      console.warn('Referrals table not accessible, returning empty referrals');
+    if (memberConsumer) {
+      memberSegment = memberConsumer['Segment'] || '';
+      memberOrderType = memberConsumer['Order Type'] || '';
+      if (!memberState && memberConsumer['State']) memberState = String(memberConsumer['State']);
     }
 
     // Filter ranchers by member's state. Use normalizeState so "Montana" and
