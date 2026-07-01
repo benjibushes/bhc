@@ -381,12 +381,15 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
 // ── Rich pin card ───────────────────────────────────────────────────────────
 // Replaces the old underlined text link with a real storefront card: logo,
 // name, location, "from $X/half", a status line, and a tap-friendly primary
-// button. Verified pins get a filled "Reserve" CTA; non-verified get a softer
-// "View ranch" so we never promise checkout on a rancher who can't fulfill yet.
+// button. Only DEPOSIT-READY ranchers (verified + onConnect) get the filled
+// "Reserve" CTA; everyone else gets a softer "View ranch" so we never promise
+// checkout on a rancher whose page can't actually take a deposit — that
+// dead-ends the buyer at the checkout screen. A verified-but-not-Connect
+// rancher is still real + browsable; the store lets buyers contact them there.
 function PinCard({ pin }: { pin: MapPin }) {
   const price = pin.status === 'verified' ? fromPriceLabel(pin) : '';
   const loc = locationLabel(pin);
-  const reserve = pin.status === 'verified';
+  const reserve = pin.status === 'verified' && pin.onConnect;
 
   return (
     <div style={{ minWidth: 210, maxWidth: 240 }}>

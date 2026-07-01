@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getRancherBySlug, getAllRecords, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { getRancherBySlug, getAllRecords, createRecord, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTrackedContactEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
@@ -74,22 +74,78 @@ export async function POST(
       return NextResponse.json({ error: 'This rancher cannot receive messages at this time' }, { status: 400 });
     }
 
-    // Check for matching referral and update status
+    // Track this contact as a Referral so the pipeline + admin see it and can
+    // follow up. If a referral for this buyer↔rancher already exists, just
+    // advance its status. Otherwise CREATE one: a cold store contact (buyer
+    // found the rancher on /map with no prior referral) previously fired an
+    // email into the void — no record, no attribution, no way to route or
+    // follow up. That's an invisible, unrecoverable lead.
     try {
-      const referrals = await getAllRecords(
+      const safeEmail = escapeAirtableValue(email.trim().toLowerCase());
+      const existing = await getAllRecords(
         TABLES.REFERRALS,
-        `AND({Buyer Email} = "${escapeAirtableValue(email.trim().toLowerCase())}", {Suggested Rancher Name} = "${escapeAirtableValue(rancherName)}")`
+        `LOWER({Buyer Email}) = "${safeEmail}"`
       );
 
-      for (const referral of referrals) {
-        if ((referral as any)['Status'] === 'Intro Sent') {
-          await updateRecord(TABLES.REFERRALS, referral.id, {
-            'Status': 'Rancher Contacted',
-          });
+      let hasReferral = false;
+      for (const referral of existing) {
+        const r = referral as any;
+        const linked: string[] = Array.isArray(r['Rancher']) ? r['Rancher'] : [];
+        // Only referrals for THIS rancher count (by link id or legacy name).
+        if (!linked.includes(rancher.id) && r['Suggested Rancher Name'] !== rancherName) continue;
+        hasReferral = true;
+        if (r['Status'] === 'Intro Sent') {
+          await updateRecord(TABLES.REFERRALS, referral.id, { 'Status': 'Rancher Contacted' });
         }
       }
+
+      if (!hasReferral) {
+        // Upsert the Consumer (by email) so future visits + member login +
+        // review attribution work — same pattern as the order-request path.
+        let consumerId = '';
+        try {
+          const existingConsumers: any[] = await getAllRecords(
+            TABLES.CONSUMERS,
+            `LOWER({Email}) = "${safeEmail}"`
+          );
+          if (existingConsumers.length > 0) {
+            consumerId = existingConsumers[0].id;
+          } else {
+            const createdConsumer: any = await createRecord(TABLES.CONSUMERS, {
+              'Full Name': name.trim(),
+              'Email': email.trim().toLowerCase(),
+              'Phone': phone?.trim() || '',
+              'Segment': 'Beef Buyer',
+              'Source': `rancher-contact:${slug}`,
+              'Interests': ['Beef'],
+              'Intent Score': 80,
+              'Intent Classification': 'High',
+            });
+            consumerId = createdConsumer.id;
+          }
+        } catch (e: any) {
+          console.error('[contact] consumer upsert failed:', e?.message);
+          // Non-fatal — still create the referral with denormalized buyer data.
+        }
+
+        const referralFields: Record<string, any> = {
+          Name: `${name.trim()} → ${rancherName} · Contact`,
+          Status: 'Rancher Contacted',
+          'Approval Status': 'Pending Rancher Response',
+          'Match Type': 'Direct (Rancher Page)',
+          'Buyer Name': name.trim(),
+          'Buyer Email': email.trim().toLowerCase(),
+          'Buyer Phone': phone?.trim() || '',
+          'Intent Score': 80,
+          'Intent Classification': 'High',
+          'Notes': `[Buyer message]\n${message.trim()}\n\n[Source] Store contact form`,
+          Rancher: [rancher.id],
+        };
+        if (consumerId) referralFields.Buyer = [consumerId];
+        await createRecord(TABLES.REFERRALS, referralFields);
+      }
     } catch (e) {
-      console.error('Error updating referral status:', e);
+      console.error('Error tracking contact referral:', e);
       // Non-blocking — continue sending the message
     }
 

@@ -16,7 +16,12 @@ import { usePathname } from 'next/navigation';
 // so the game-like wizard is a checkout-style room with no nav/promo/footer.
 // '/book' is the on-site booking keystone (2026-06-19) — sealed so email/SMS
 // booking links land on a focused, chrome-free booking page (no escape hatches).
-const FOCUSED_PREFIXES = ['/qualify', '/access', '/book'];
+// '/checkout' is the money step BOTH front doors converge on (deposit, success,
+// preferences, ask) — sealed 2026-07-01 so the buyer isn't dumped back into the
+// full marketing site (nav exit-links, footer, hat-merch promo bar) at the peak
+// deposit-anxiety moment. Un-sealing it is exactly the pattern that tanked
+// completion to 4.8% (see the demand-funnel history above).
+const FOCUSED_PREFIXES = ['/qualify', '/access', '/book', '/checkout'];
 
 export function isFocusedRoute(pathname: string | null | undefined): boolean {
   const p = pathname || '';
