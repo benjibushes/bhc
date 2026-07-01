@@ -11,7 +11,7 @@ import { createRecord, updateRecord, getAllRecords, getFirstRecord, getRecordByI
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
-import { refundReferralClearFields } from '@/lib/refundLifecycle';
+import { refundReferralClearFields, shouldDecrementOnRefundRestore } from '@/lib/refundLifecycle';
 
 export type PaymentStatus = 'pending' | 'succeeded' | 'refunded' | 'failed' | 'abandoned' | 'requires_webhook_replay';
 export type PayoutStatus = 'pending' | 'paid' | 'failed';
@@ -390,7 +390,9 @@ export async function markDepositRefunded(
   //   - Referral.Status → 'Refunded' (new option, typecast-created)
   //   - Clear Closed At, Sale Amount, Commission Due, Commission Status
   //   - Stamp Refunded At
-  //   - Decrement rancher capacity (the deal reverts; slot opens back up)
+  //   - Rancher capacity: NO decrement from Closed Won (C4 — recordClose
+  //     already freed the slot at close time; gated via
+  //     shouldDecrementOnRefundRestore for any future non-Closed-Won restore)
   //   - Buyer → Buyer Stage='READY', Buyer Health='Active', Sequence Stage=''
   //   - Audit-log the restore
   //   - Telegram-alert the operator (no buyer email storm)
@@ -484,12 +486,22 @@ async function restoreReferralAfterRefund(
     await updateRecord(TABLES.REFERRALS, referralId, fallback);
   }
 
-  // 2. Decrement rancher capacity — one count back since the deal reverts.
-  // Best-effort: capacity drift on a rare refund is a non-fatal warning.
-  if (rancherId) {
+  // 2. Rancher capacity — gated, never unconditional (C4 fix). recordClose
+  // already freed the slot when the deal transitioned to Closed Won, so
+  // decrementing again here pushed the counter BELOW the true held count and
+  // let the matcher over-book a genuinely-full rancher (compounding on every
+  // close→refund cycle). Only decrement when the status captured BEFORE the
+  // refund flip (currentStatus) still occupied a slot — pure decision,
+  // unit-tested in lib/refundLifecycle.test.ts. On today's path currentStatus
+  // is always 'Closed Won' (early-returns above), so this never fires; the
+  // gate keeps any future widening of the restore path capacity-correct.
+  // syncCapacityToAirtable only runs when the counter actually moved.
+  let capacityDecremented = false;
+  if (rancherId && shouldDecrementOnRefundRestore(currentStatus)) {
     try {
       const newCount = await decrementCapacity(rancherId);
       await syncCapacityToAirtable(rancherId, newCount);
+      capacityDecremented = true;
     } catch (capErr: any) {
       console.warn('[restoreReferralAfterRefund] capacity decrement failed:', capErr?.message);
     }
@@ -531,7 +543,10 @@ async function restoreReferralAfterRefund(
       },
       result: {
         referralStatus: 'Refunded',
-        capacityDecremented: !!rancherId,
+        // C4: truthful — reflects the gated decrement actually landing, not
+        // merely "a rancher was linked" (which logged true on the buggy
+        // unconditional path AND when the decrement threw).
+        capacityDecremented,
         buyerRestored: !!buyerId,
       },
       reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },

@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createDepositCheckout, getConnectAccountStatus } from '@/lib/stripeConnect';
+import { validateDepositConsent } from '@/lib/depositConsent';
 import { recordDeposit } from '@/lib/contracts/payments';
 import { MIN_TIER_PRICE, deriveDeposit } from '@/lib/pricing';
 import { tierFor, TIERS, commissionRateForTier } from '@/lib/tiers';
@@ -55,6 +56,17 @@ export async function POST(req: Request) {
   const cutSize = String(body.cutSize || '').toLowerCase();
   if (!referralId) return NextResponse.json({ error: 'referralId required' }, { status: 400 });
   if (!CUT_LABELS[cutSize]) return NextResponse.json({ error: 'cutSize must be quarter|half|whole' }, { status: 400 });
+
+  // F2/A4 consent gate — NEW session creates require explicit ToS + refund-
+  // policy acceptance (the deposit page's required checkbox sends
+  // termsAccepted: true). No acceptance record = weak chargeback rebuttal.
+  // Strict boolean check (see lib/depositConsent). GET is untouched.
+  if (!validateDepositConsent(body)) {
+    return NextResponse.json(
+      { error: 'terms_required', message: 'Please agree to the Terms and refund policy to continue.' },
+      { status: 400 },
+    );
+  }
 
   // Auth: full member session OR the referral-scoped deposit grant (campaign
   // 1-tap link). resolveDepositAuth pins the grant to THIS referralId, so a
@@ -353,6 +365,26 @@ export async function POST(req: Request) {
       } catch {}
     }
     return NextResponse.json({ error: 'Could not record deposit. Please try again.' }, { status: 500 });
+  }
+
+  // F2/A4 consent stamp — record WHEN the buyer accepted the Terms + refund
+  // policy on the referral itself, so a chargeback rebuttal can cite it.
+  // BEST-EFFORT by design: no updateRecord touches the Referral at create
+  // time today (Payments row via recordDeposit is the only write), so this is
+  // its own call — and a stamp failure must NEVER block the money path.
+  // Requires a 'Terms Accepted At' dateTime field on Referrals; Airtable
+  // rejects/strips unknown fields, which the catch tolerates. When
+  // STRIPE_CONSENT_COLLECTION is on, Stripe records acceptance on their side
+  // as the primary evidence; this stamp is the operator-visible copy.
+  try {
+    await updateRecord(TABLES.REFERRALS, referralId, {
+      'Terms Accepted At': new Date().toISOString(),
+    });
+  } catch (stampErr: any) {
+    console.warn(
+      '[checkout/deposit] Terms Accepted At stamp failed (non-blocking — add the dateTime field on Referrals if missing):',
+      stampErr?.message,
+    );
   }
 
   // ── Meta Conversions API: server-side `InitiateCheckout` event ──────

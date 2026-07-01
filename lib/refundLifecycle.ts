@@ -1,20 +1,24 @@
 // lib/refundLifecycle.ts
 //
-// Pure refund-lifecycle decisions (M3 / audit C2). Side-effect-free +
-// import-clean (NO imports at all) so lib/refundLifecycle.test.ts can run
-// under `tsx --test` without dragging in lib/secrets — mirrors the
-// lib/routingPriority.ts pattern.
+// Pure refund-lifecycle decisions (M3 / audit C2 + M4 / audit C4).
+// Side-effect-free + import-clean (the ONLY import is lib/capacityCount,
+// itself zero-dep) so lib/refundLifecycle.test.ts can run under `tsx --test`
+// without dragging in lib/secrets — mirrors the lib/routingPriority.ts pattern.
 //
-// Two decisions live here:
+// Three decisions live here:
 //   1. refundReferralClearFields — the exact Referral update object a full
 //      refund writes (lib/contracts/payments.ts restoreReferralAfterRefund).
 //   2. canSendFinalInvoice — the send gate for the rancher final-invoice
 //      route (app/api/rancher/referrals/[id]/send-final-invoice).
+//   3. shouldDecrementOnRefundRestore — the capacity gate for the refund
+//      restore path (C4: unconditional decrement double-freed the slot).
 //
 // The C2 bug both sides share: a refund left `Deposit Paid At` +
 // `Rancher Accepted At` stamped, and the send gate ONLY checked
 // `Deposit Paid At` — so a refunded buyer could still be emailed a
 // `total − deposit` balance invoice for beef they never owed on.
+
+import { HELD_REFERRAL_STATUSES } from './capacityCount';
 
 /**
  * The Referral field updates for a full-refund restore. Airtable field names
@@ -83,4 +87,35 @@ export function canSendFinalInvoice(
     };
   }
   return { ok: true };
+}
+
+/**
+ * C4 capacity gate for the full-refund restore path
+ * (lib/contracts/payments.ts restoreReferralAfterRefund).
+ *
+ * `priorStatus` is the Referral `Status` read BEFORE the flip to 'Refunded'.
+ * Return true ONLY when that status still occupied a rancher slot — i.e. it
+ * is in the canonical held set (HELD_REFERRAL_STATUSES, lib/capacityCount.ts:
+ * Intro Sent / Rancher Contacted / Negotiation / Awaiting Payment /
+ * Slot Locked). Flipping a held referral to 'Refunded' genuinely frees a
+ * slot, so the counter must come down with it.
+ *
+ * 'Closed Won' → false. That is THE C4 bug: recordClose (lib/contracts/
+ * rancher.ts) already decremented when the deal closed, so decrementing
+ * again at refund time pushed the Redis-mirrored counter BELOW the true
+ * held count and let the matcher over-book a genuinely-full rancher —
+ * compounding on every close→refund cycle. Since the restore path today
+ * only proceeds from 'Closed Won', this gate never fires on the current
+ * reachable path; it exists so any future widening of the restore path
+ * (e.g. refund-before-close) stays capacity-correct automatically.
+ *
+ * Unknown / empty / non-held statuses → false. Safe default: a wrong skip
+ * self-heals on the next ground-truth reseed (liveHeldCountForRancher), while a
+ * wrong decrement silently over-books a full rancher. Never drift down on
+ * uncertainty.
+ */
+export function shouldDecrementOnRefundRestore(priorStatus: unknown): boolean {
+  const s = String(priorStatus ?? '').trim();
+  if (!s) return false;
+  return HELD_REFERRAL_STATUSES.has(s);
 }

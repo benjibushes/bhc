@@ -390,6 +390,18 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       // customer_email alone is insufficient — so we omit it. Disabling tax also
       // removes Stripe's address-collection requirement entirely.)
       automatic_tax: { enabled: false },
+      // F2/A4 consent record on Stripe's side — Stripe requires the buyer to
+      // tick "I agree to the terms" on the hosted page and stores the
+      // acceptance on THEIR records: the strongest chargeback evidence.
+      // ENV-GATED OFF BY DEFAULT: Stripe 400s session creation if the account
+      // has no Terms of Service URL configured (and this is a direct charge on
+      // the rancher's connected account, so the setting applies THERE). The
+      // money path must never break on a Dashboard settings gap — Ben sets the
+      // ToS URL in Stripe (Settings → Public details / Checkout), verifies one
+      // session, then flips STRIPE_CONSENT_COLLECTION=true.
+      ...(process.env.STRIPE_CONSENT_COLLECTION === 'true'
+        ? { consent_collection: { terms_of_service: 'required' as const } }
+        : {}),
     },
     {
       stripeAccount: input.rancherConnectAccountId,
