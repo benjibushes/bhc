@@ -226,7 +226,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
             <div className="border-2 border-charcoal bg-bone p-6 space-y-2">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="font-serif text-2xl">🔥 You&apos;re in.</p>
+                  <p className="font-serif text-2xl">You&apos;re in.</p>
                   <p className="text-saddle mt-2">
                     We just fired your intro to the rancher in {member.state}. They&apos;ll reach out via email or phone within 1–2 business days. Their contact info is below — feel free to reach out first if you&apos;d like.
                   </p>
