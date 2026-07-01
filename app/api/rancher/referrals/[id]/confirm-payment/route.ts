@@ -9,6 +9,7 @@ import {
 import { createCommissionInvoice } from '@/lib/stripe-commission';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { requireRancher } from '@/lib/rancherAuth';
+import { hasPendingStripeDeposit } from '@/lib/confirmPaymentGuard';
 
 export const maxDuration = 60;
 
@@ -70,6 +71,26 @@ export async function POST(
           error: `Referral is in ${currentStatus} state, not Awaiting Payment. Use the regular Close-Sale flow instead.`,
         },
         { status: 400 },
+      );
+    }
+
+    // GUARD: 'Awaiting Payment' is overloaded. The rancher self-serve "Request
+    // Deposit" flow (app/api/rancher/referrals/[id]/request-deposit) ALSO parks
+    // a row in Awaiting Payment while the buyer's Stripe deposit link is
+    // outstanding (Status flips there, Deposit Requested At stamped, Deposit
+    // Paid At still empty until the Connect webhook settles). Confirming
+    // "payment received" on THAT row would prematurely close the deal — and,
+    // for legacy ranchers, fire a commission invoice — before the buyer paid a
+    // cent, plus risk a double-pay if the buyer later clicks the live link.
+    // A pending Stripe deposit is uniquely: Deposit Requested At set + Deposit
+    // Paid At empty. Reject it here; real deposits confirm via the webhook.
+    if (hasPendingStripeDeposit(ref)) {
+      return NextResponse.json(
+        {
+          error:
+            "This buyer has a Stripe deposit link out — it confirms automatically the moment they pay, so there's nothing to confirm here. If they paid you off-platform instead, email hello@buyhalfcow.com to cancel the deposit link first.",
+        },
+        { status: 409 },
       );
     }
 

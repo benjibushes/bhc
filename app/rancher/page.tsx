@@ -5203,7 +5203,15 @@ function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal,
   const showClose = !balanceOutstanding;
   // Awaiting Payment rows fire the off-platform commission invoice through the
   // /confirm-payment endpoint, not the regular close. Surface that as its own CTA.
-  const showConfirmPayment = !!onConfirmPayment && referral.status === 'Awaiting Payment';
+  // Hide on a PENDING Stripe deposit (deposit link out, not yet paid): those
+  // rows also sit in Awaiting Payment, but confirming there closes the deal
+  // before the buyer pays. Only genuine off-platform Awaiting-Payment rows
+  // (no outstanding deposit request) get the manual confirm. The server
+  // enforces the same guard in /confirm-payment.
+  const showConfirmPayment =
+    !!onConfirmPayment &&
+    referral.status === 'Awaiting Payment' &&
+    !(referral.deposit_requested_at && !depositPaid);
   // WAVE 1 (2026-06-30): self-serve "request deposit" on PRE-deposit leads.
   const showRequestDeposit = !!onRequestDeposit && !!depositEligible && !depositPaid && !isTerminal;
 
@@ -5520,7 +5528,15 @@ function ReferralCard({
   // for Awaiting Payment rows (off-platform pay → /confirm-payment endpoint).
   const balanceOutstanding = depositPaid && !finalPaid;
   const showClose = !balanceOutstanding;
-  const showConfirmPayment = !!onConfirmPayment && referral.status === 'Awaiting Payment';
+  // Hide on a PENDING Stripe deposit (deposit link out, not yet paid): those
+  // rows also sit in Awaiting Payment, but confirming there closes the deal
+  // before the buyer pays. Only genuine off-platform Awaiting-Payment rows
+  // (no outstanding deposit request) get the manual confirm. The server
+  // enforces the same guard in /confirm-payment.
+  const showConfirmPayment =
+    !!onConfirmPayment &&
+    referral.status === 'Awaiting Payment' &&
+    !(referral.deposit_requested_at && !depositPaid);
   return (
     // id anchor lets global-search / activity-feed results scroll-jump to a card.
     <div id={`ref-${referral.id}`} className="p-6 border border-dust bg-white space-y-4 scroll-mt-24">
