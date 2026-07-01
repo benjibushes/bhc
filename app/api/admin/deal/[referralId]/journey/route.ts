@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getRecordById, getAllRecords, TABLES, escapeAirtableValue } from '@/lib/airtable';
+import { getRecordById, getAllRecords, getRecordsByIds, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { requireRole } from '@/lib/adminAuth';
 
 export const maxDuration = 30;
@@ -142,9 +142,24 @@ export async function GET(
   }
 
   // ── Funnel events (linked by Buyer record, buyer-scoped) ──
+  // Same dead class as the Threads/Payments lookups: linkFilter runs
+  // SEARCH(<recId>, ARRAYJOIN({Buyer})), which compares the buyer RECORD ID
+  // against the linked Consumer's PRIMARY-FIELD value — never the id — so this
+  // source always contributed zero events. Exact path: the buyer record
+  // (already fetched above) carries the inverse 'Funnel Events' link — an
+  // array of real record ids — fetched via getRecordsByIds. Fallback = the
+  // legacy scan (behavior-identical to pre-fix); belt = JS filter on the
+  // {Buyer} link array so another buyer's events can never leak in.
   if (buyerId) {
     try {
-      const fes = await getAllRecords('Funnel Events', linkFilter('Buyer', buyerId)) as any[];
+      let fes: any[] = [];
+      try {
+        fes = await getRecordsByIds('Funnel Events', buyer?.['Funnel Events']);
+      } catch { /* fall through to legacy scan */ }
+      if (fes.length === 0) {
+        fes = await getAllRecords('Funnel Events', linkFilter('Buyer', buyerId)) as any[];
+      }
+      fes = fes.filter((fe: any) => Array.isArray(fe['Buyer']) && fe['Buyer'].includes(buyerId));
       for (const fe of fes) {
         const at = iso(fe['Created At'] || fe._createdTime);
         if (!at) continue;

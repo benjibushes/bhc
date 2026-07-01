@@ -276,6 +276,31 @@ export async function getAllRecords(
   }
 }
 
+// Fetch records by their record ids (e.g. the ids carried by an inverse link
+// field), chunked so each filterByFormula stays well under Airtable's URL
+// limit. Ids that are not shaped like record ids are dropped BEFORE
+// interpolation — no quote/backslash can ever reach the formula string.
+// Row shape matches getAllRecords (id + _createdTime + fields spread).
+// Throws on fetch failure (same contract as getAllRecords) — callers own
+// their fallback.
+const AIRTABLE_RECORD_ID_SHAPE = /^rec[A-Za-z0-9]{14}$/;
+export async function getRecordsByIds(
+  tableName: string,
+  ids: unknown, // typically a link-field value: string[] | undefined
+): Promise<Record<string, any>[]> {
+  const valid = (Array.isArray(ids) ? ids : []).filter(
+    (id): id is string => typeof id === 'string' && AIRTABLE_RECORD_ID_SHAPE.test(id),
+  );
+  if (valid.length === 0) return [];
+  const rows: Record<string, any>[] = [];
+  const CHUNK = 100; // keep filterByFormula well under Airtable's URL limit
+  for (let i = 0; i < valid.length; i += CHUNK) {
+    const clause = `OR(${valid.slice(i, i + CHUNK).map((id) => `RECORD_ID() = "${id}"`).join(', ')})`;
+    rows.push(...((await getAllRecords(tableName, clause)) as Record<string, any>[]));
+  }
+  return rows;
+}
+
 // Exact unique-key lookup — fetch AT MOST ONE record matching a formula.
 // getAllRecords(table, formula) walks EVERY page of the (server-filtered)
 // result set even when the caller only ever reads rows[0] of a unique-key

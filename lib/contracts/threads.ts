@@ -7,7 +7,7 @@
 // /api/webhooks/resend-inbound which routes back into the thread via the
 // `thread-` reply tag (Task 10 wires the inbound side).
 
-import { createRecord, updateRecord, getAllRecords, getRecordById } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, getRecordById, getRecordsByIds } from '@/lib/airtable';
 
 export type SenderType = 'buyer' | 'rancher' | 'admin' | 'system';
 export type SendVia = 'web' | 'email' | 'telegram';
@@ -58,6 +58,31 @@ export const MESSAGES_TABLE = 'Thread Messages';
 
 export const THREADS_REFERRAL_ID_TEXT_FIELD = 'Referral Id Text';
 
+// ── Threads-by-rancher lookup (rancher inbox — same bug class) ───────────────
+//
+// The rancher inbox (app/api/rancher/inbox) used to run
+// `SEARCH("<rancherId>", ARRAYJOIN({Rancher}))`. ARRAYJOIN over a link field
+// joins the linked records' PRIMARY-FIELD values — for Ranchers that's the
+// Ranch Name, never the record id — so the scan NEVER matched and the inbox
+// listed zero threads since it shipped.
+//
+// Fix mirrors the by-referral denorm above: createThread writes the rancher
+// record id into a plain `Rancher Id Text` field, and listThreadsForRancher
+// exact-matches it. There is NO legacy formula variant — the old scan could
+// never match a record id, so the fallback for pre-field rows is a full
+// Threads scan + JS filter on the {Rancher} link array (the API returns real
+// record ids in link arrays; Threads is tiny — 2 rows prod — and unfiltered
+// getAllRecords is TTL-cached).
+//
+// SCHEMA DEPENDENCY: `Rancher Id Text` (single line text) must exist on the
+// THREADS table (sibling of `Referral Id Text`). Until it does, the fast path
+// 422s (INVALID_FILTER_BY_FORMULA) and every lookup takes the full-scan
+// fallback — correct, just unindexed. createThread read-back-verifies the
+// write and warns loudly with the exact fix (same discipline as the referral
+// field above).
+
+export const THREADS_RANCHER_ID_TEXT_FIELD = 'Rancher Id Text';
+
 // Airtable record ids are exactly `rec` + 14 alphanumerics. Validating the
 // shape BEFORE interpolating means no quote/backslash can ever reach the
 // formula string.
@@ -91,6 +116,67 @@ export function threadsByReferralFormula(
     : `{${THREADS_REFERRAL_ID_TEXT_FIELD}} = "${referralId}"`;
 }
 
+/**
+ * Build the Threads-by-rancher filterByFormula clause. Pure — unit-tested in
+ * threads.byRancher.test.ts.
+ *
+ *   `{Rancher Id Text} = "<rancherId>"` (exact match on the denormalized
+ *   scalar). No legacy variant — see the block comment above.
+ *
+ * A rancherId that is not shaped like a record id returns `FALSE()` — a
+ * never-matching clause — instead of interpolating attacker-controllable text
+ * into the formula.
+ */
+export function threadsByRancherFormula(rancherId: string): string {
+  if (!AIRTABLE_RECORD_ID.test(rancherId)) {
+    console.warn(
+      `[threadsByRancherFormula] refusing non-record-id rancherId ${JSON.stringify(String(rancherId).slice(0, 40))} — returning never-match clause`,
+    );
+    return 'FALSE()';
+  }
+  return `{${THREADS_RANCHER_ID_TEXT_FIELD}} = "${rancherId}"`;
+}
+
+/**
+ * List every Thread linked to a rancher. NEVER-ERROR: returns [] on total
+ * failure rather than throwing — an inbox that renders empty beats a 500.
+ *
+ *   1. Fast path: exact match on the denormalized `Rancher Id Text`.
+ *   2. Fallback (fast path threw — e.g. field doesn't exist yet — or found
+ *      nothing): full Threads scan + JS filter on the {Rancher} link array,
+ *      which carries real record ids. Correct for pre-field rows; fine while
+ *      Threads is tiny (2 rows prod) and the unfiltered read is TTL-cached.
+ *
+ * Belt: fast-path rows are ALSO JS-filtered on the {Rancher} link array, so a
+ * stale/mis-backfilled text field can never leak another rancher's thread.
+ */
+export async function listThreadsForRancher(rancherId: string): Promise<any[]> {
+  const linkedToRancher = (t: any): boolean =>
+    Array.isArray(t?.['Rancher']) && t['Rancher'].includes(rancherId);
+
+  let rows: any[] = [];
+  try {
+    rows = ((await getAllRecords(
+      THREADS_TABLE,
+      threadsByRancherFormula(rancherId),
+    )) as any[]).filter(linkedToRancher);
+  } catch (e: any) {
+    console.warn(
+      `[listThreadsForRancher] fast path failed (likely '${THREADS_RANCHER_ID_TEXT_FIELD}' missing on Threads) — full-scan fallback:`,
+      e?.message,
+    );
+  }
+  if (rows.length > 0) return rows;
+  // Full-scan fallback — catches pre-field rows the fast path can't see.
+  try {
+    const all: any[] = (await getAllRecords(THREADS_TABLE)) as any[];
+    return all.filter(linkedToRancher);
+  } catch (e: any) {
+    console.warn('[listThreadsForRancher] full-scan fallback failed — returning empty:', e?.message);
+    return [];
+  }
+}
+
 export async function createThread(input: ThreadCreateInput): Promise<{ id: string }> {
   const created: any = await createRecord(THREADS_TABLE, {
     'Referral': [input.referralId],
@@ -103,6 +189,9 @@ export async function createThread(input: ThreadCreateInput): Promise<{ id: stri
     // Denormalized referral id — the ONLY way a Threads row can be found
     // by referral (see threadsByReferralFormula above).
     [THREADS_REFERRAL_ID_TEXT_FIELD]: input.referralId,
+    // Denormalized rancher id — the fast path for the rancher inbox
+    // (see threadsByRancherFormula / listThreadsForRancher above).
+    [THREADS_RANCHER_ID_TEXT_FIELD]: input.rancherId,
   });
   // VERIFY the denormalized field persisted. createRecord auto-strips unknown
   // fields (with its own warn + throttled operator alert — see lib/airtable.ts)
@@ -117,6 +206,15 @@ export async function createThread(input: ThreadCreateInput): Promise<{ id: stri
       `(single line text) to the Threads table in Airtable. Until it exists, thread dedup ` +
       `(getOrCreateThreadForReferral) creates a duplicate thread per call and ` +
       `thread-close-on-terminal-close (contracts/rancher.recordClose) never finds the thread.`,
+    );
+  }
+  const savedRancherIdText = created?.fields?.[THREADS_RANCHER_ID_TEXT_FIELD];
+  if (savedRancherIdText !== input.rancherId) {
+    console.warn(
+      `[createThread] '${THREADS_RANCHER_ID_TEXT_FIELD}' did NOT persist on Threads row ${created?.id} ` +
+      `(got ${JSON.stringify(savedRancherIdText)}). ACTION REQUIRED: add '${THREADS_RANCHER_ID_TEXT_FIELD}' ` +
+      `(single line text) to the Threads table in Airtable. Until it exists, the rancher inbox ` +
+      `(listThreadsForRancher) works but takes the full-Threads-scan fallback on every request.`,
     );
   }
   return { id: created.id };
@@ -198,20 +296,13 @@ export async function listThreadMessages(threadId: string): Promise<any[]> {
   //
   // Exact path (no schema change needed): read the Thread row's inverse
   // 'Thread Messages' link field (an array of message record ids — exists on
-  // the live Threads table) and fetch those messages by RECORD_ID(), chunked
-  // to keep the formula bounded. NEVER-ERROR: any failure falls back to the
-  // legacy scan (harmless — worst case the pre-fix empty list), never a 500.
+  // the live Threads table) and fetch those messages via getRecordsByIds
+  // (chunked RECORD_ID() formula; validates id shape before interpolation).
+  // NEVER-ERROR: any failure falls back to the legacy scan (harmless — worst
+  // case the pre-fix empty list), never a 500.
   try {
     const thread: any = await getRecordById(THREADS_TABLE, threadId);
-    const msgIds: string[] = (Array.isArray(thread?.['Thread Messages']) ? thread['Thread Messages'] : [])
-      .filter((id: unknown): id is string => typeof id === 'string' && AIRTABLE_RECORD_ID.test(id));
-    if (msgIds.length === 0) return [];
-    const rows: any[] = [];
-    const CHUNK = 100; // keep filterByFormula well under Airtable's URL limit
-    for (let i = 0; i < msgIds.length; i += CHUNK) {
-      const clause = `OR(${msgIds.slice(i, i + CHUNK).map((id) => `RECORD_ID() = "${id}"`).join(', ')})`;
-      rows.push(...(await getAllRecords(MESSAGES_TABLE, clause)) as any[]);
-    }
+    const rows: any[] = await getRecordsByIds(MESSAGES_TABLE, thread?.['Thread Messages']);
     // Sort ascending by Created At so the UI renders chronologically.
     rows.sort((a, b) => new Date(a['Created At']).getTime() - new Date(b['Created At']).getTime());
     return rows;
