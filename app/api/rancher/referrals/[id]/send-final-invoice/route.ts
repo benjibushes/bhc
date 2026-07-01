@@ -144,17 +144,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // Preconditions on referral state.
-  // S4 (2026-06-10): also accept on Status='Slot Locked' (post-rancher-
-  // accept) since the only way to get there is via deposit pay → accept.
-  // S4: `Deposit Paid` boolean field doesn't exist; rely on Deposit Paid At
-  // OR the status fallback for historical referrals.
-  const referralStatus = String(referral['Status'] || '');
-  const depositPaid = !!referral['Deposit Paid At']
-    || referralStatus === 'Awaiting Payment'
-    || referralStatus === 'Slot Locked';
+  // U18: gate STRICTLY on Deposit Paid At — the only field stamped by actual
+  // settlement (lib/stripeSettlement.settleBuyerDeposit). The old Status
+  // fallback ('Awaiting Payment' / 'Slot Locked') was unsafe: the rancher
+  // self-serve request-deposit flow flips Status to 'Awaiting Payment' AND
+  // stamps Deposit Amount the moment the rancher REQUESTS a deposit — before
+  // the buyer pays a cent. That let a final invoice (collect-the-balance) fire
+  // on an unpaid deposit. Deposit Paid At is set only when money settles.
+  const depositPaid = !!referral['Deposit Paid At'];
   if (!depositPaid) {
     return NextResponse.json(
-      { error: 'Deposit must be paid before sending final invoice. Wait for buyer to complete deposit checkout.' },
+      { error: 'The deposit has to land before you can send the final invoice. Once the buyer completes their deposit, this unlocks automatically.' },
       { status: 400 },
     );
   }

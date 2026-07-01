@@ -443,7 +443,21 @@ export async function GET(req: Request) {
   const rancherId = rancherLinks[0];
   if (!rancherId) return NextResponse.json({ error: 'No rancher on referral' }, { status: 409 });
 
-  const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+  // U25: guard the rancher lookup (matches the POST handler). An unguarded
+  // throw here 500'd the deposit page AND the success page's status poll on any
+  // transient Airtable blip — a raw error at the money step. Return a soft
+  // load_failed the client renders as a retry, and the success poll treats as
+  // terminal instead of hanging on "confirming…".
+  let rancher: any;
+  try {
+    rancher = await getRecordById(TABLES.RANCHERS, rancherId);
+  } catch (e: any) {
+    console.error('[checkout/deposit GET] rancher lookup failed:', e?.message);
+    return NextResponse.json({ error: 'load_failed' }, { status: 503 });
+  }
+  if (!rancher) {
+    return NextResponse.json({ error: 'load_failed' }, { status: 503 });
+  }
 
   const pricingModel = String(rancher['Pricing Model'] || 'legacy');
 

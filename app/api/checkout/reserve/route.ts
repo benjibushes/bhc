@@ -20,7 +20,7 @@ import {
   getRancherBySlug,
   escapeAirtableValue,
 } from '@/lib/airtable';
-import { incrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { resolveBuyerSession, setBuyerSessionCookie } from '@/lib/buyerAuth';
 import { checkOriginGuard } from '@/lib/csrfGuard';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
@@ -188,6 +188,7 @@ export async function POST(req: Request) {
   // unverified email (account takeover). Email a one-tap magic link that proves
   // ownership and lands on the deposit page authed.
   if (adoptedExisting && !existingSession) {
+    let emailSent = false;
     try {
       const token = generateMemberLoginToken(consumerId, buyerEmail);
       const magicLink = `${SITE_URL}/api/auth/member/verify?token=${token}&next=${encodeURIComponent(depositPath)}`;
@@ -204,9 +205,37 @@ export async function POST(req: Request) {
         referralId: referral.id,
         depositMagicLinkUrl: magicLink,
       });
+      emailSent = true;
     } catch (e: any) {
       console.error('[checkout/reserve] magic-link email failed:', e?.message);
     }
+
+    // U3: never tell the buyer "check your inbox" when the email did NOT send.
+    // Void the hold we just created (referral → Lost + release the capacity
+    // bump, together so we don't leave a counter-drift), then return an honest,
+    // retryable error. Leaving it as-is would strand a phantom Pending lead the
+    // rancher sees + a buyer waiting on an email that never comes.
+    if (!emailSent) {
+      try {
+        await updateRecord(TABLES.REFERRALS, referral.id, {
+          'Status': 'Lost',
+          'Notes': 'Voided automatically — the reserve sign-in email failed to send; buyer was asked to retry.',
+        });
+      } catch (voidErr: any) {
+        console.warn('[checkout/reserve] orphan referral void skipped:', voidErr?.message);
+      }
+      try {
+        const newCount = await decrementCapacity(rancher.id);
+        await syncCapacityToAirtable(rancher.id, newCount);
+      } catch (capErr: any) {
+        console.warn('[checkout/reserve] capacity release after email fail skipped:', capErr?.message);
+      }
+      return NextResponse.json(
+        { error: "We couldn't email your secure sign-in link just now. Please try again in a moment — or log in from the member page to finish reserving." },
+        { status: 502 },
+      );
+    }
+
     return NextResponse.json({
       requiresEmailVerification: true,
       message: 'We emailed you a secure link to finish reserving your share — check your inbox.',

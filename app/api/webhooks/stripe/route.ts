@@ -18,7 +18,7 @@ import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { logAuditEntry } from '@/lib/auditLog';
-import { settleBuyerDeposit, settleFinalInvoice } from '@/lib/stripeSettlement';
+import { settleBuyerDeposit, settleFinalInvoice, isPermanentSettlementError } from '@/lib/stripeSettlement';
 
 // Heaviest events (deposit/final-invoice settlement) do many sequential
 // Airtable reads + writes plus a Stripe invoice call; the default function
@@ -334,7 +334,15 @@ export async function POST(request: Request) {
         } catch (e: any) {
           console.error('[stripe webhook] payment_intent.succeeded (final_invoice) failed:', e);
           await flipStripeEventFailed(event.id, e?.message || 'unknown');
-          return NextResponse.json({ received: true });
+          // U1: retry TRANSIENT failures (Airtable 429 / timeout / read blip) so
+          // a real settled payment doesn't orphan — settleFinalInvoice is
+          // idempotent (Referral.Status==='Closed Won' short-circuits, and it
+          // fails-closed on an unreadable referral). Only a PERMANENT failure
+          // (malformed metadata) returns 200 to stop pointless 3-day redelivery.
+          if (isPermanentSettlementError(e)) {
+            return NextResponse.json({ received: true, permanent: true });
+          }
+          return NextResponse.json({ error: 'settlement_retry' }, { status: 500 });
         }
         break;
       }
@@ -349,10 +357,23 @@ export async function POST(request: Request) {
       } catch (e: any) {
         console.error('[stripe webhook] payment_intent.succeeded (buyer_deposit) failed:', e);
         await flipStripeEventFailed(event.id, e?.message || 'unknown');
-        // 200 to Stripe — don't retry on a code bug (Stripe Events row is now
-        // 'failed' so manual replay is possible). Returning 500 would create
-        // a retry storm against a guaranteed-broken handler.
-        return NextResponse.json({ received: true });
+        // U1 (the deposit-orphan fix): a TRANSIENT failure here (Airtable 429 /
+        // timeout flipping the Payments row) means the paid deposit did NOT
+        // settle — the row is still 'pending' and the referral was never
+        // stamped 'Deposit Paid At'. Returning 200 (the old behavior) told
+        // Stripe never to retry, orphaning real money until a manual replay.
+        // Return 5xx so Stripe redelivers and the deposit self-heals when the
+        // blip clears. This is SAFE because settleBuyerDeposit throws ONLY
+        // before/at its idempotency anchor (markDepositSucceeded's single row
+        // flip) — every post-anchor side effect is try/caught or
+        // fire-and-forget, so a redelivery can never double-settle or
+        // double-notify. The orphan-checkout-reaper is the daily belt to this
+        // suspenders. Only a PERMANENT failure (malformed metadata that can
+        // never settle) returns 200 to stop pointless 3-day redelivery.
+        if (isPermanentSettlementError(e)) {
+          return NextResponse.json({ received: true, permanent: true });
+        }
+        return NextResponse.json({ error: 'settlement_retry' }, { status: 500 });
       }
       break;
     }
