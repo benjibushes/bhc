@@ -28,6 +28,8 @@ import { NextResponse } from 'next/server';
 import { TABLES, getRecordById, updateRecord } from '@/lib/airtable';
 import { requireRancher } from '@/lib/rancherAuth';
 import { validateFulfillmentUpdate, FULFILLMENT_FIELDS } from '@/lib/fulfillmentTracking';
+import { carrierTrackingUrl } from '@/lib/trackingLink';
+import { sendBuyerShippingNotification } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -84,11 +86,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Write. updateRecord self-heals unknown (not-yet-created) fields by
   // stripping them + signalling the operator — so this is best-effort until
   // the founder adds the new fields. Known fields persist regardless.
+  let updated: any = null;
   try {
-    await updateRecord(TABLES.REFERRALS, referralId, result.fields);
+    updated = await updateRecord(TABLES.REFERRALS, referralId, result.fields);
   } catch (e: any) {
     console.error('[rancher/fulfillment] update failed:', e?.message || e);
     return NextResponse.json({ error: 'Could not save fulfillment details. Please try again.' }, { status: 500 });
+  }
+
+  // ── D3: FIRST tracking-number save → buyer "your beef is on the way" email ──
+  // Idempotent by construction: fires only when the referral had NO tracking
+  // number before this write AND has one after it, so edits/corrections never
+  // re-send. We check the PERSISTED value from updateRecord's returned record
+  // (not result.fields) — if the founder hasn't created the Tracking Number
+  // Airtable field yet, updateRecord strips it, the buyer-facing surface can't
+  // show it, and re-sends on every save would be spam; skipping keeps the
+  // email in lockstep with what actually stuck. Best-effort try/catch — email
+  // infra can never fail or block the rancher's save.
+  try {
+    const priorTracking = String(referral[FULFILLMENT_FIELDS.trackingNumber] || '').trim();
+    const savedTracking = String(updated?.[FULFILLMENT_FIELDS.trackingNumber] || '').trim();
+    if (!priorTracking && savedTracking) {
+      const buyerLinks: string[] = (referral['Buyer'] || []) as string[];
+      const buyerId = Array.isArray(buyerLinks) ? buyerLinks[0] : null;
+      const buyer: any = buyerId ? await getRecordById(TABLES.CONSUMERS, buyerId).catch(() => null) : null;
+      const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
+      if (buyer?.['Email']) {
+        const carrier = String(updated?.[FULFILLMENT_FIELDS.carrier] || '').trim();
+        await sendBuyerShippingNotification({
+          email: String(buyer['Email']),
+          firstName: String(buyer['Full Name'] || '').split(' ')[0] || '',
+          rancherName: String(rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'Your rancher'),
+          ranchName: String(rancher?.['Ranch Name'] || rancher?.['Operator Name'] || 'the ranch'),
+          orderType: String(referral['Order Type'] || ''),
+          carrier,
+          trackingNumber: savedTracking,
+          trackingUrl: carrierTrackingUrl(carrier, savedTracking),
+        });
+      }
+    }
+  } catch (e: any) {
+    console.warn('[rancher/fulfillment] buyer shipping email failed:', e?.message);
   }
 
   return NextResponse.json({ ok: true, status: result.status, fields: result.fields });

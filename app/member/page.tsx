@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { trackEvent } from '@/lib/analytics';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { carrierTrackingUrl } from '@/lib/trackingLink';
 
 interface Rancher {
   id: string;
@@ -82,6 +83,12 @@ interface MemberReferral {
   stripe_invoice_url?: string;
   fulfillment_confirmed_at?: string;
   processing_date?: string;
+  // D3 — shipment surface (rancher-typed fulfillment tracker fields)
+  fulfillment_status?: string;
+  fulfillment_method?: string;
+  shipping_carrier?: string;
+  tracking_number?: string;
+  fulfillment_updated_at?: string;
 }
 
 type Tab = 'dashboard' | 'ranchers' | 'land' | 'brands';
@@ -497,6 +504,51 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                             </div>
                           </div>
                         )}
+
+                        {/* D3 — shipment surface. The rancher types carrier +
+                            tracking into the fulfillment tracker; this is where
+                            the buyer finally SEES it. Gated hard on a tracking
+                            number existing — no empty shell, no "tracking
+                            pending" placeholder. Renders for any status
+                            (including Closed Won: the delivered line replaces
+                            the shipped line, and the number stays useful for
+                            reference). */}
+                        {ref.tracking_number ? (() => {
+                          const trackUrl = carrierTrackingUrl(ref.shipping_carrier || '', ref.tracking_number);
+                          const delivered = ref.fulfillment_status === 'fulfilled' || !!ref.fulfillment_confirmed_at;
+                          const statusDate = delivered
+                            ? (ref.fulfillment_confirmed_at || ref.fulfillment_updated_at)
+                            : ref.fulfillment_updated_at;
+                          const statusLine = `${delivered ? 'Delivered' : 'Shipped'}${statusDate ? ` ${new Date(statusDate).toLocaleDateString()}` : ''}`;
+                          return (
+                            <div className="mt-4 bg-bone border border-dust p-4 space-y-2 text-sm text-saddle">
+                              <p className="text-xs uppercase tracking-widest text-saddle">Shipment</p>
+                              {ref.shipping_carrier && (
+                                <p>
+                                  <span className="text-dust">Carrier:</span>{' '}
+                                  <strong className="text-charcoal">{ref.shipping_carrier}</strong>
+                                </p>
+                              )}
+                              <p>
+                                <span className="text-dust">Tracking #:</span>{' '}
+                                <span className="font-mono text-xs text-charcoal select-all break-all">{ref.tracking_number}</span>
+                              </p>
+                              <p className="text-xs text-dust">{statusLine}</p>
+                              {trackUrl && (
+                                <p className="pt-1">
+                                  <a
+                                    href={trackUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-block px-4 py-2 border border-charcoal text-charcoal hover:bg-bone-warm text-xs uppercase tracking-widest font-semibold"
+                                  >
+                                    Track shipment →
+                                  </a>
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })() : null}
 
                         {/* E5 — entry point into the buyer↔rancher thread at
                             /checkout/<refId>/ask. Without this the thread is only

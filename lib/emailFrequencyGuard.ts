@@ -47,6 +47,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendRenewalReminder',
   // Customer-expected fulfillment confirmation post-order.
   'sendBuyerFulfillmentConfirmation',
+  // Customer-expected shipping notification — the tracking number for a
+  // ~$1,000 frozen-meat shipment. Sent at most ONCE per referral (the
+  // fulfillment route only fires it on the FIRST save of a tracking number),
+  // so whitelisting cannot cause volume. Suppressing it = buyer misses the
+  // delivery window = thawed beef on a porch. D3, 2026-07-01.
+  'sendBuyerShippingNotification',
   // Customer-expected confirmation that partner application was received.
   'sendPartnerConfirmation',
   // Operator-expected internal alerts — capping these blinds the team.
