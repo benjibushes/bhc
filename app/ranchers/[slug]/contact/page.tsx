@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import Container from '../../../components/Container';
+import SmsConsentCheckbox, { TermsNotice } from '../../../components/SmsConsentCheckbox';
 
 interface RancherInfo {
   name: string;
@@ -27,6 +28,9 @@ export default function RancherContactPage() {
     phone: '',
     message: '',
   });
+  // TCPA SMS consent — UNCHECKED by default, never gates the message. Phone
+  // itself stays optional; the checkbox only matters if a number is given.
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
@@ -75,6 +79,8 @@ export default function RancherContactPage() {
           email: form.email,
           phone: form.phone,
           message: form.message,
+          // Funnel payload convention → Consumers `SMS Opt-In` server-side.
+          smsOptIn,
         }),
       });
 
@@ -274,6 +280,12 @@ export default function RancherContactPage() {
                 />
               </div>
 
+              <SmsConsentCheckbox
+                checked={smsOptIn}
+                onChange={setSmsOptIn}
+                leadIn="Text me updates."
+              />
+
               <div>
                 <label className="block text-sm font-medium mb-1">
                   Message <span className="text-weathered">*</span>
@@ -304,6 +316,8 @@ export default function RancherContactPage() {
               <p className="text-xs text-dust text-center">
                 Your contact information is shared with {rancher.name} so they can reply directly. BuyHalfCow receives a copy for quality assurance.
               </p>
+
+              <TermsNotice />
             </form>
           </div>
         </Container>

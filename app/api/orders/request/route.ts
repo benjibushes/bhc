@@ -92,6 +92,9 @@ export async function POST(req: Request) {
   const state = String(body.state || '').trim().toUpperCase().slice(0, 2);
   const zip = String(body.zip || '').trim().slice(0, 5);
   const message = String(body.message || '').trim().slice(0, 1000);
+  // TCPA SMS consent checkbox (guest form only; unchecked by default). Only
+  // meaningful with a non-empty phone — same guard as /api/consumers.
+  const wantsSms = body.smsOptIn === true && phone.length > 0;
 
   if (!slug) return NextResponse.json({ error: 'Rancher slug required' }, { status: 400 });
   if (!TIER_LABELS[tier]) return NextResponse.json({ error: 'Invalid tier' }, { status: 400 });
@@ -158,6 +161,16 @@ export async function POST(req: Request) {
       );
       if (existing.length > 0) {
         consumerId = existing[0].id;
+        // Consent lives on CONSUMERS (`SMS Opt-In` — the exact field the
+        // funnel writes and sendSMSToConsumer gates on). Only ever flips
+        // false→true; an unchecked box is not a revocation. Failure hits the
+        // surrounding non-fatal catch.
+        if (wantsSms && (existing[0] as any)['SMS Opt-In'] !== true) {
+          await updateRecord(TABLES.CONSUMERS, consumerId, {
+            'SMS Opt-In': true,
+            'SMS Opt-In At': new Date().toISOString(),
+          });
+        }
       } else {
         const created: any = await createRecord(TABLES.CONSUMERS, {
           'Full Name': buyerName,
@@ -176,6 +189,10 @@ export async function POST(req: Request) {
           'Interests': ['Beef'],
           'Intent Score': 90,
           'Intent Classification': 'High',
+          // TCPA consent captured at creation when the box was checked.
+          ...(wantsSms
+            ? { 'SMS Opt-In': true, 'SMS Opt-In At': new Date().toISOString() }
+            : {}),
         });
         consumerId = created.id;
       }

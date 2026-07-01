@@ -41,7 +41,13 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
-    const { name, email, phone, message } = body;
+    const { name, email, phone, message, smsOptIn } = body;
+
+    // TCPA SMS consent from the store contact form's checkbox (unchecked by
+    // default; phone itself is optional). Only meaningful with a non-empty
+    // phone attached — same guard as /api/consumers.
+    const wantsSms =
+      smsOptIn === true && typeof phone === 'string' && phone.trim().length > 0;
 
     // Validate required fields
     if (!name || typeof name !== 'string' || name.trim().length < 2) {
@@ -110,6 +116,16 @@ export async function POST(
           );
           if (existingConsumers.length > 0) {
             consumerId = existingConsumers[0].id;
+            // Consent lives on CONSUMERS (`SMS Opt-In` — the exact field the
+            // funnel writes and sendSMSToConsumer gates on). Only ever flips
+            // false→true; an unchecked box is not a revocation. Failure here
+            // hits the surrounding non-fatal catch.
+            if (wantsSms && (existingConsumers[0] as any)['SMS Opt-In'] !== true) {
+              await updateRecord(TABLES.CONSUMERS, consumerId, {
+                'SMS Opt-In': true,
+                'SMS Opt-In At': new Date().toISOString(),
+              });
+            }
           } else {
             const createdConsumer: any = await createRecord(TABLES.CONSUMERS, {
               'Full Name': name.trim(),
@@ -120,6 +136,10 @@ export async function POST(
               'Interests': ['Beef'],
               'Intent Score': 80,
               'Intent Classification': 'High',
+              // TCPA consent captured at creation when the box was checked.
+              ...(wantsSms
+                ? { 'SMS Opt-In': true, 'SMS Opt-In At': new Date().toISOString() }
+                : {}),
             });
             consumerId = createdConsumer.id;
           }

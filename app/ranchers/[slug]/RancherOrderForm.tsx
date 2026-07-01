@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { track } from '@/lib/track';
+import SmsConsentCheckbox, { TermsNotice } from '@/app/components/SmsConsentCheckbox';
 
 const US_STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
@@ -65,6 +66,9 @@ export default function RancherOrderForm({
     zip: '',
     message: '',
   });
+  // TCPA SMS consent — UNCHECKED by default, never gates the request. Only
+  // shown with the guest fields (phone is only collected when logged out).
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState<{ rancherName: string; expectedHours: number } | null>(null);
@@ -132,6 +136,8 @@ export default function RancherOrderForm({
           state: form.state,
           zip: form.zip,
           message: form.message,
+          // Funnel payload convention → Consumers `SMS Opt-In` server-side.
+          smsOptIn,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -234,6 +240,7 @@ export default function RancherOrderForm({
                       zip: '',
                       message: '',
                     });
+                    setSmsOptIn(false);
                   }}
                   className="w-full py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase hover:bg-saddle transition-colors"
                 >
@@ -308,6 +315,7 @@ export default function RancherOrderForm({
                           className="w-full px-4 py-3 border border-dust bg-white text-sm"
                         />
                       </div>
+                      <SmsConsentCheckbox checked={smsOptIn} onChange={setSmsOptIn} />
                     </>
                   )}
 
@@ -354,6 +362,7 @@ export default function RancherOrderForm({
                   <p className="text-[10px] text-dust text-center leading-relaxed">
                     No payment now. {rancherName} confirms timing + arranges payment directly.
                   </p>
+                  <TermsNotice />
                 </form>
               </>
             )}

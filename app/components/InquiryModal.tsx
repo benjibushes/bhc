@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Input from './Input';
 import Textarea from './Textarea';
+import SmsConsentCheckbox, { TermsNotice } from './SmsConsentCheckbox';
 
 interface InquiryModalProps {
   rancher: {
@@ -23,6 +24,8 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
     message: '',
     interestType: 'half_cow',
   });
+  // TCPA SMS consent — UNCHECKED by default, never gates the inquiry.
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState('');
@@ -43,6 +46,8 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
           consumerPhone: formData.phone,
           message: formData.message,
           interestType: formData.interestType,
+          // Funnel payload convention → Consumers `SMS Opt-In` server-side.
+          smsOptIn,
         }),
       });
 
@@ -123,6 +128,12 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
             onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
           />
 
+          <SmsConsentCheckbox
+            checked={smsOptIn}
+            onChange={setSmsOptIn}
+            leadIn="Text me updates."
+          />
+
           <div className="space-y-2">
             <label className="block text-sm font-medium">
               What are you interested in? <span className="text-weathered">*</span>
@@ -176,6 +187,8 @@ export default function InquiryModal({ rancher, onClose }: InquiryModalProps) {
           <p className="text-xs text-saddle text-center">
             The rancher will receive your contact information and reply directly to your email.
           </p>
+
+          <TermsNotice />
         </form>
       </div>
     </div>
