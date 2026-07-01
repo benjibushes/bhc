@@ -2841,9 +2841,37 @@ export default function RancherDashboardPage() {
                                   </strong>
                                 </span>
                               </div>
+                              {!slotLocked && (
+                                <p className="mt-1.5 text-xs text-saddle">
+                                  Accepting locks the buyer&apos;s slot and makes their deposit non-refundable — do this once you&apos;ve confirmed you can fulfill.
+                                </p>
+                              )}
                             </div>
-                            {/* Right: action button */}
-                            <div className="flex-shrink-0">
+                            {/* Right: action buttons. AUDIT CRITICAL FIX: once a
+                                deposit settles, the webhook flips Status to
+                                'Awaiting Payment' → the row leaves activeRefs and
+                                is excluded from awaitingPaymentRefs, so THIS card
+                                is the ONLY place it renders — and it had no Accept
+                                Slot button (only the "Accept Slot first" badge).
+                                handleAcceptSlot was unreachable and the accept-SLA
+                                cron nagged forever. Render the accept as the
+                                PRIMARY action here, wired to the same confirm
+                                modal + fetchDashboard refresh the row buttons use.
+                                Send Final Invoice stays ENABLED: the server gate
+                                (canSendFinalInvoice) requires only a non-blocked
+                                status + Deposit Paid At — acceptance is NOT a
+                                server precondition, so we don't invent one. */}
+                            <div className="flex-shrink-0 flex flex-col items-stretch sm:items-end gap-2">
+                              {!slotLocked && (
+                                <button
+                                  onClick={() => handleAcceptSlot(ref)}
+                                  disabled={updating === ref.id}
+                                  className="px-4 py-2 text-sm font-medium bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+                                  title="Accept slot — buyer&apos;s deposit becomes non-refundable per BHC policy."
+                                >
+                                  🔒 Accept Slot — lock it in
+                                </button>
+                              )}
                               <button
                                 onClick={() => openFinalInvoiceModal(ref)}
                                 className="px-4 py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
