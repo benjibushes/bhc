@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getRecordById, getAllRecords } from '@/lib/airtable';
+import {
+  getRecordById,
+  getAllRecords,
+  referralsByRancherFormula,
+  isInvalidFilterFormulaError,
+  isUnknownFieldNameError,
+} from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { requireRancher } from '@/lib/rancherAuth';
@@ -27,36 +33,185 @@ export function computeUnpaidCommission(
     .reduce((sum, r) => sum + (Number(r['Commission Due']) || 0), 0);
 }
 
+// ── Referrals read path (audit slice 9: kill the full-table scan) ────────
+//
+// Every Referrals field this route's payload maps — verified against the
+// LIVE schema 2026-07-01. Projecting trims the per-record payload from ~86
+// table fields to these 38 (bandwidth/latency; request count is governed by
+// pagination). 'Created At' is deliberately ABSENT: Referrals has no such
+// field (R3 note below) and an unknown name in fields[] errors the whole
+// query — created_at falls back to _createdTime metadata, which the
+// projection always preserves.
+const REFERRAL_DASHBOARD_FIELDS = [
+  // ownership belt
+  'Rancher', 'Suggested Rancher',
+  // status + money
+  'Status', 'Sale Amount', 'Commission Due', 'Commission Paid',
+  // activity / rot badges + leadQuality window
+  'Last Rancher Activity At', 'Last Buyer Activity At', 'Rancher Accepted At',
+  'Intro Sent At', 'Approved At', 'Closed At',
+  // buyer card
+  'Buyer Name', 'Buyer Email', 'Buyer Phone', 'Buyer State',
+  'Order Type', 'Budget Range', 'Notes',
+  // flags + invoices
+  'Rancher Engaged Flag', 'Stripe Invoice URL',
+  // fulfillment tracker (WAVE 3b)
+  'Fulfillment Confirmed At', 'Fulfillment Status', 'Cut Sheet Note',
+  'Fulfillment Method', 'Shipping Carrier', 'Tracking Number',
+  'Fulfillment Updated At',
+  // deposit + final invoice rail
+  'Deposit Paid At', 'Deposit Amount', 'Deposit Requested At',
+  'Final Invoice URL', 'Final Invoice Sent At', 'Final Invoice Amount',
+  'Final Paid At', 'Total Sale Amount', 'Processing Fee', 'Processing Date',
+];
+
+// Per-instance circuit breakers. The optimized read depends on Airtable
+// schema the founder controls (the two lookup fields; projection field
+// names), and a formula/projection naming a nonexistent field ERRORS the
+// whole query. On that error class we fall back seamlessly AND remember the
+// breakage for 5 minutes so steady-state traffic doesn't pay a doomed probe
+// request per load. After the window we probe again — so when Ben adds the
+// lookup fields the filtered read engages by itself, zero deploy.
+const READ_PATH_BREAKER_MS = 5 * 60 * 1000;
+let lookupFilterBrokenUntil = 0;
+let projectionBrokenUntil = 0;
+
+// One Referrals read with graceful projection: try fields[]-projected,
+// degrade to unprojected on UNKNOWN_FIELD_NAME (schema drift), rethrow
+// anything else (incl. INVALID_FILTER_BY_FORMULA — the caller owns that).
+async function readReferrals(formula?: string): Promise<any[]> {
+  if (Date.now() < projectionBrokenUntil) {
+    return (await getAllRecords(TABLES.REFERRALS, formula)) as any[];
+  }
+  try {
+    return (await getAllRecords(TABLES.REFERRALS, formula, {
+      fields: REFERRAL_DASHBOARD_FIELDS,
+    })) as any[];
+  } catch (e) {
+    if (!isUnknownFieldNameError(e)) throw e;
+    projectionBrokenUntil = Date.now() + READ_PATH_BREAKER_MS;
+    console.warn('[rancher/dashboard] Referrals projection rejected (schema drift?); retrying unprojected');
+    return (await getAllRecords(TABLES.REFERRALS, formula)) as any[];
+  }
+}
+
+// Rancher-scoped Referrals fetch. Optimized path is a server-side filter on
+// the 'Rancher Record Id' / 'Suggested Rancher Record Id' LOOKUP fields —
+// O(this rancher's referrals) instead of O(all referrals platform-wide).
+// Those lookups may not exist yet (the founder must add them manually; the
+// API can't create lookups). A formula referencing a nonexistent field
+// ERRORS the whole query, so on that exact error class we fall back to the
+// legacy full scan and fire a once-per-day operator signal telling Ben the
+// 30-second Airtable fix. NEVER throws that path's error at the request.
+// Downstream ALWAYS re-applies the JS ownership filter as a belt.
+async function fetchReferralRowsForRancher(rancherId: string): Promise<any[]> {
+  if (Date.now() >= lookupFilterBrokenUntil) {
+    try {
+      return await readReferrals(referralsByRancherFormula(rancherId));
+    } catch (e: any) {
+      if (isInvalidFilterFormulaError(e)) {
+        lookupFilterBrokenUntil = Date.now() + READ_PATH_BREAKER_MS;
+        try {
+          const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+          await sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'system-error',
+            summary: 'Add lookup fields on Referrals to kill the dashboard full-scan',
+            detail:
+              'Every /rancher dashboard load is full-scanning the Referrals table. ' +
+              '30-second fix in the Airtable UI — on Referrals add TWO Lookup fields: ' +
+              '1) "Rancher Record Id" (via the Rancher link, showing Ranchers → Rancher Record Id), ' +
+              '2) "Suggested Rancher Record Id" (via the Suggested Rancher link, same source field). ' +
+              'The filtered read then engages automatically — no deploy needed.',
+            dedupeKey: 'referrals-rancher-lookup-missing',
+            dedupeWindowMs: 24 * 60 * 60 * 1000, // once per day
+          });
+        } catch {}
+      } else {
+        console.warn(
+          '[rancher/dashboard] filtered Referrals read failed; falling back to full scan:',
+          e?.message || e,
+        );
+      }
+      // fall through to the legacy scan
+    }
+  }
+  return readReferrals();
+}
+
+// Network Benefits = brands flagged Featured + Status approved/active.
+// BRANDS fields that actually exist (per schema): Brand Name, Contact Name,
+// Email, Phone, Website, Product Category, Proposed Discount, Partnership Goals,
+// Featured, Status. Older code referenced "Product Type", "Discount Offered (%)",
+// and "Payment Status" — none of which exist — so the filter silently returned
+// zero brands forever. Also: Status is multilineText (free text), so we do a
+// truthy/contains check instead of strict equality. Never throws — the Brands
+// table may not be accessible, in which case the dashboard renders no benefits
+// (same as the old inline try/catch).
+async function loadNetworkBenefits(): Promise<any[]> {
+  try {
+    const allBrands = await getAllRecords(TABLES.BRANDS);
+    return allBrands
+      .filter((b: any) => {
+        const status = String(b['Status'] || '').toLowerCase();
+        const featured = !!b['Featured'];
+        return featured && (status.includes('approv') || status.includes('active') || status.includes('paid'));
+      })
+      .map((b: any) => ({
+        id: b.id,
+        brand_name: b['Brand Name'] || '',
+        product_type: b['Product Category'] || '',
+        discount_offered: Number(b['Proposed Discount']) || 0,
+        description: b['Partnership Goals'] || '',
+        website: b['Website'] || '',
+        contact_email: b['Email'] || '',
+      }));
+  } catch {
+    // Brands table may not be accessible
+    return [];
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const r = await requireRancher(request);
     if (r instanceof NextResponse) return r;
     const { session } = r;
 
-    const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
+    // The three reads are order-independent — run them in parallel instead
+    // of serially (rancher row → referrals scan → brands scan tripled
+    // worst-case latency for zero ordering need). The referrals + brands
+    // promises swallow their own failures exactly like the old inline
+    // try/catch blocks did; a rancher-row failure still throws to the outer
+    // catch → 500, unchanged.
+    const [rancher, referralRows, networkBenefits] = await Promise.all([
+      getRecordById(TABLES.RANCHERS, session.rancherId) as Promise<any>,
+      fetchReferralRowsForRancher(session.rancherId).catch(() => {
+        console.warn('Referrals table not accessible, returning empty referrals');
+        return [] as any[];
+      }),
+      loadNetworkBenefits(),
+    ]);
     if (!rancher) {
       return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
     }
 
-    // Load + filter client-side. The Airtable filterByFormula
-    // optimization attempted in PR #36 (audit #30) used
-    // FIND(rancherId, ARRAYJOIN({Rancher})) — but Airtable's ARRAYJOIN
-    // on a linked-record field renders the linked record's PRIMARY
-    // FIELD VALUE (e.g. "Sackett Ranch"), not its record ID. So FIND
-    // could never match and every rancher saw 0 referrals. Reverted
-    // here pending a proper Lookup-field-based optimization.
-    let myReferrals: any[] = [];
-    try {
-      const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
-      const myId = session.rancherId;
-      myReferrals = allRefs.filter((r: any) => {
-        const rancher = Array.isArray(r['Rancher']) ? r['Rancher'] : [];
-        const suggested = Array.isArray(r['Suggested Rancher']) ? r['Suggested Rancher'] : [];
-        return rancher.includes(myId) || suggested.includes(myId);
-      });
-    } catch (e) {
-      console.warn('Referrals table not accessible, returning empty referrals');
-    }
+    // Ownership belt — ALWAYS applied, filtered read or full-scan fallback.
+    // When the lookup-filtered read worked these rows are already
+    // rancher-scoped (the lookup mirrors the link), so this is a cheap
+    // re-check; on the fallback it is the real filter. Direct link-id
+    // filtering server-side is impossible: the filterByFormula optimization
+    // attempted in PR #36 (audit #30) used FIND(rancherId,
+    // ARRAYJOIN({Rancher})) — but ARRAYJOIN on a linked-record field renders
+    // the linked record's PRIMARY FIELD VALUE (e.g. "Sackett Ranch"), not
+    // its record ID, so FIND could never match and every rancher saw 0
+    // referrals. Hence the Lookup-field read + this JS belt.
+    const myId = session.rancherId;
+    const myReferrals = referralRows.filter((r: any) => {
+      const rancherLinks = Array.isArray(r['Rancher']) ? r['Rancher'] : [];
+      const suggested = Array.isArray(r['Suggested Rancher']) ? r['Suggested Rancher'] : [];
+      return rancherLinks.includes(myId) || suggested.includes(myId);
+    });
 
     const activeReferrals = myReferrals.filter((r: any) =>
       ['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(r['Status'])
@@ -167,35 +322,6 @@ export async function GET(request: Request) {
       if (aActive !== bActive) return aActive - bActive;
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
-
-    // Network Benefits = brands flagged Featured + Status approved/active.
-    // BRANDS fields that actually exist (per schema): Brand Name, Contact Name,
-    // Email, Phone, Website, Product Category, Proposed Discount, Partnership Goals,
-    // Featured, Status. Older code referenced "Product Type", "Discount Offered (%)",
-    // and "Payment Status" — none of which exist — so the filter silently returned
-    // zero brands forever. Also: Status is multilineText (free text), so we do a
-    // truthy/contains check instead of strict equality.
-    let networkBenefits: any[] = [];
-    try {
-      const allBrands = await getAllRecords(TABLES.BRANDS);
-      networkBenefits = allBrands
-        .filter((b: any) => {
-          const status = String(b['Status'] || '').toLowerCase();
-          const featured = !!b['Featured'];
-          return featured && (status.includes('approv') || status.includes('active') || status.includes('paid'));
-        })
-        .map((b: any) => ({
-          id: b.id,
-          brand_name: b['Brand Name'] || '',
-          product_type: b['Product Category'] || '',
-          discount_offered: Number(b['Proposed Discount']) || 0,
-          description: b['Partnership Goals'] || '',
-          website: b['Website'] || '',
-          contact_email: b['Email'] || '',
-        }));
-    } catch {
-      // Brands table may not be accessible
-    }
 
     return NextResponse.json({
       rancher: {
