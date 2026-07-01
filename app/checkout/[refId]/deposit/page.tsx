@@ -69,6 +69,10 @@ function DepositPageContent() {
   const [info, setInfo] = useState<DepositInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Machine error CODE from the API (not the raw message) so the render maps it
+  // to warm, actionable copy — never a raw Stripe/dev string to the buyer.
+  const [errCode, setErrCode] = useState('');
+  const [errSlug, setErrSlug] = useState(''); // rancher slug from an error payload (e.g. referral_closed)
   const [selectedCut, setSelectedCut] = useState<string>('half');
   const [submitting, setSubmitting] = useState(false);
 
@@ -94,8 +98,11 @@ function DepositPageContent() {
     fetch(`/api/checkout/deposit?refId=${encodeURIComponent(refId)}`, { credentials: 'include' })
       .then((r) => r.json())
       .then((j) => {
-        if (j?.error) setError(j.message || j.error);
-        else {
+        if (j?.error) {
+          setErrCode(String(j.error));
+          if (j.rancherSlug) setErrSlug(String(j.rancherSlug));
+          setError(String(j.message || j.error));
+        } else {
           setInfo(j);
           // Auto-redirect if legacy
           if (j.pricingModel === 'legacy' && j.legacyRedirectUrl) {
@@ -110,7 +117,7 @@ function DepositPageContent() {
         }
         setLoading(false);
       })
-      .catch((e) => { setError(e?.message || 'Load failed'); setLoading(false); });
+      .catch(() => { setErrCode('load_failed'); setError('load_failed'); setLoading(false); });
   }, [refId, cutParam]);
 
   const continueToCheckout = async () => {
@@ -129,29 +136,103 @@ function DepositPageContent() {
           window.location.href = j.redirectUrl;
           return;
         }
-        setError(j?.message || j?.error || 'Checkout failed');
+        if (j?.rancherSlug) setErrSlug(String(j.rancherSlug));
+        setErrCode(String(j?.error || 'checkout_failed'));
+        setError(String(j?.message || j?.error || 'checkout_failed'));
         setSubmitting(false);
         return;
       }
       if (j?.url) {
         window.location.href = j.url;
       } else {
-        setError('No checkout URL returned');
+        setErrCode('checkout_failed');
+        setError('no checkout url');
         setSubmitting(false);
       }
-    } catch (e: any) {
-      setError(e?.message || 'Network error');
+    } catch {
+      setErrCode('network');
+      setError('network');
       setSubmitting(false);
     }
   };
 
-  if (loading) return <div className="min-h-screen bg-bone text-charcoal p-8">Loading…</div>;
-  if (error || !info) return (
-    <div className="min-h-screen bg-bone text-charcoal p-8">
-      <p>{error || 'No data'}</p>
-      <Link href="/member" className="underline text-saddle">← Your dashboard</Link>
+  if (loading) return (
+    <div className="min-h-screen bg-bone text-charcoal flex items-center justify-center p-8">
+      <p className="text-saddle">loading your reservation…</p>
     </div>
   );
+
+  // Never render a raw API/Stripe error to a buyer, and never dead-end. Map the
+  // machine error code to warm copy + a forward path (retry / sign-in / storefront).
+  if (error || !info) {
+    const code = String(errCode || error).toLowerCase();
+    const storefrontHref = errSlug ? `/ranchers/${errSlug}` : '/ranchers';
+    const Shell = ({ children }: { children: React.ReactNode }) => (
+      <div className="min-h-screen bg-bone text-charcoal flex items-center justify-center p-6">
+        <div className="w-full max-w-md text-center space-y-5">{children}</div>
+      </div>
+    );
+    const supportLink = (
+      <a href="mailto:hello@buyhalfcow.com" className="underline text-saddle text-sm">email us and we&apos;ll sort it</a>
+    );
+
+    // A4 — already reserved: a positive state, not an error.
+    if (code.includes('referral_closed') || code.includes('already')) {
+      return (
+        <Shell>
+          <h1 className="font-serif text-2xl">you&apos;re already reserved ✓</h1>
+          <p className="text-saddle">your spot is locked in. we emailed your receipt — you&apos;re all set.</p>
+          <div className="flex flex-col gap-2">
+            <Link href={`/checkout/${refId}/preferences`} className="px-6 py-3 bg-charcoal text-bone text-sm uppercase tracking-wide">set your preferences →</Link>
+            <Link href={`/checkout/${refId}/ask`} className="underline text-saddle text-sm">message your rancher</Link>
+          </div>
+        </Shell>
+      );
+    }
+
+    // A2 — auth: session expired / not this account. Send them to sign in and
+    // come right back to finish, never a bare "Not authenticated".
+    if (code.includes('auth') || code.includes('forbidden') || code.includes('sign in') || code.includes('401') || code.includes('403')) {
+      return (
+        <Shell>
+          <h1 className="font-serif text-2xl">sign in to finish reserving</h1>
+          <p className="text-saddle">your link expired or you&apos;re signed out. sign in and we&apos;ll drop you right back here.</p>
+          <Link href={`/member/login?next=${encodeURIComponent(`/checkout/${refId}/deposit${cutParam ? `?cut=${cutParam}` : ''}`)}`} className="px-6 py-3 bg-charcoal text-bone text-sm uppercase tracking-wide inline-block">sign in →</Link>
+          <p className="text-xs text-saddle">still stuck? {supportLink}.</p>
+        </Shell>
+      );
+    }
+
+    // not found
+    if (code.includes('not_found') || code.includes('not found')) {
+      return (
+        <Shell>
+          <h1 className="font-serif text-2xl">we couldn&apos;t find this reservation</h1>
+          <p className="text-saddle">the link may be old. pick your rancher and reserve fresh — takes a minute.</p>
+          <Link href={storefrontHref} className="px-6 py-3 bg-charcoal text-bone text-sm uppercase tracking-wide inline-block">find your rancher →</Link>
+          <p className="text-xs text-saddle">{supportLink}.</p>
+        </Shell>
+      );
+    }
+
+    // A1 — generic failure (checkout create / network / load). Card was NOT
+    // charged; offer a real retry + a human. Retry re-runs checkout when the
+    // reservation loaded, else reloads the page.
+    return (
+      <Shell>
+        <h1 className="font-serif text-2xl">hmm — that didn&apos;t go through</h1>
+        <p className="text-saddle">your card wasn&apos;t charged. give it another try — these things are usually a quick blip.</p>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => { setError(''); setErrCode(''); if (info) { continueToCheckout(); } else { window.location.reload(); } }}
+            className="px-6 py-3 bg-charcoal text-bone text-sm uppercase tracking-wide"
+          >try again</button>
+          <Link href={`/checkout/${refId}/ask`} className="underline text-saddle text-sm">message your rancher instead</Link>
+        </div>
+        <p className="text-xs text-saddle">still not working? {supportLink}.</p>
+      </Shell>
+    );
+  }
 
   if (!info.tierConnected) {
     return (

@@ -43,6 +43,11 @@ function DepositSuccessContent() {
 
   const [info, setInfo] = useState<Info | null>(null);
   const [copied, setCopied] = useState(false);
+  // A6 — only claim "confirmed" once payment is actually verified. The paid
+  // signal is the referral flipping closed (GET returns referral_closed). Until
+  // then (webhook lag, or a direct/bookmarked/back-button hit) we say
+  // "confirming…" instead of a false "Deposit confirmed."
+  const [paidConfirmed, setPaidConfirmed] = useState(false);
 
   // G4 — deposit_completed client Pixel fire on success landing.
   // Server-side CAPI InitiateCheckout fires from the buyer_deposit branch of
@@ -62,24 +67,37 @@ function DepositSuccessContent() {
   }, [refId, sessionId]);
 
   useEffect(() => {
-    fetch(`/api/checkout/deposit?refId=${encodeURIComponent(refId)}`, { credentials: 'include' })
-      .then((r) => r.json())
-      .then((j) => {
-        if (!j) return;
-        // Happy path: the GET returns full rancher info (name/ranchName/slug).
-        if (!j.error) { setInfo(j); return; }
-        // Already-paid path: by the time the buyer lands here the referral has
-        // flipped to a paid/closed status, so the GET returns a 409 with
-        // `error: 'referral_closed'`. That branch now carries the rancher slug
-        // so the refer-a-friend link can still build a real /ranchers/<slug>
-        // deep-link instead of falling back to /access. name/ranchName aren't
-        // included there, so they keep their friendly "your rancher" defaults.
-        if (j.error === 'referral_closed' && j.rancher?.slug) {
-          setInfo({ rancher: { name: '', ranchName: '', slug: j.rancher.slug } });
-        }
-      })
-      .catch(() => {});
-  }, [refId]);
+    let alive = true;
+    let tries = 0;
+    const poll = () => {
+      fetch(`/api/checkout/deposit?refId=${encodeURIComponent(refId)}`, { credentials: 'include' })
+        .then((r) => r.json())
+        .then((j) => {
+          if (!alive || !j) return;
+          // Happy path GET returns full rancher info — but a NON-error response
+          // means the referral is still OPEN (not yet paid). That's either a
+          // pre-payment direct/bookmark hit OR webhook lag right after paying.
+          if (!j.error) {
+            setInfo(j);
+            // Only poll for the paid flip when we actually came from Stripe
+            // (session_id present) — otherwise this is just an unpaid visit.
+            if (sessionId && tries < 4) { tries++; setTimeout(poll, 2500); }
+            return;
+          }
+          // referral_closed = PAID. This is the real "confirmed" signal.
+          if (j.error === 'referral_closed') {
+            setPaidConfirmed(true);
+            if (j.rancher?.slug && !info) {
+              setInfo({ rancher: { name: '', ranchName: '', slug: j.rancher.slug } });
+            }
+          }
+        })
+        .catch(() => {});
+    };
+    poll();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refId, sessionId]);
 
   const rancherName = info?.rancher?.name || 'your rancher';
   // First name for friendly inline mentions. Special-case the "your rancher"
@@ -115,10 +133,12 @@ function DepositSuccessContent() {
     <main className="min-h-screen bg-bone text-charcoal">
       <div className="max-w-2xl mx-auto px-4 md:px-6 py-8 md:py-12">
         <h1 className="font-serif text-3xl md:text-4xl mb-2">
-          Deposit confirmed.
+          {paidConfirmed ? 'you reserved your beef.' : 'confirming your payment…'}
         </h1>
         <p className="text-saddle mb-6 md:mb-8 text-base md:text-lg">
-          Your payment to <strong>{rancherName}</strong> went through. A receipt is in your email.
+          {paidConfirmed
+            ? <>your spot with <strong>{rancherName}</strong> is locked in — a receipt&apos;s in your inbox.</>
+            : <>hang tight a moment while we confirm your payment{sessionId ? '' : ''}. this can take a few seconds — your receipt will land in your email.</>}
         </p>
 
         {/* Primary handoff CTA — the buyer's one action right now. Tell the

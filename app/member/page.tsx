@@ -399,7 +399,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                                 )}
                                 {ref.rancher_slug && (
                                   <p className="pt-1">
-                                    <Link href={`/r/${ref.rancher_slug}`} className="text-charcoal underline text-xs uppercase tracking-wider">View their page →</Link>
+                                    <Link href={`/ranchers/${ref.rancher_slug}`} className="text-charcoal underline text-xs uppercase tracking-wider">View their page →</Link>
                                   </p>
                                 )}
                               </div>
@@ -486,7 +486,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                               </Link>
                               {ref.rancher_slug && (
                                 <Link
-                                  href={`/r/${ref.rancher_slug}#review`}
+                                  href={`/ranchers/${ref.rancher_slug}#reviews`}
                                   className="inline-block px-4 py-2 border border-charcoal text-charcoal hover:bg-bone-warm text-xs uppercase tracking-widest font-semibold"
                                 >
                                   Leave a review →
