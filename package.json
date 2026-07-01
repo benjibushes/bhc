@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "JWT_SECRET=test-secret-ci tsx --test lib/**/*.test.ts",
+    "test": "JWT_SECRET=test-secret-ci ADMIN_PASSWORD=test-admin-ci CRON_SECRET=test-cron-ci tsx --test \"lib/**/*.test.ts\"",
     "boundaries:check": "tsx tools/check-vertical-boundaries.ts"
   },
   "dependencies": {
