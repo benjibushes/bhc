@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, createRecord, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { getMaxActiveReferrals, getLiveCapacity, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
+import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
 import {
   sendTelegramMessage,
   editTelegramMessage,
@@ -1103,8 +1105,16 @@ async function processUpdate(update: any) {
           // concurrent reject/closelost clicks on the same rancher don't
           // under-decrement via read-then-write race. Prior code read
           // currentRefs from a possibly-stale snapshot + wrote currentRefs-1.
+          // DECR gate centralized in shouldDecrementOnClose (#216): the DECR
+          // here was unconditional, so rejecting a 'Pending Approval' referral
+          // (the common reject) freed a slot the rancher never took → counter
+          // drifted DOWN → matcher over-booked full ranchers.
           const assignedRancherIds = referral['Rancher'] || referral['Suggested Rancher'] || [];
-          if (Array.isArray(assignedRancherIds) && assignedRancherIds.length > 0) {
+          if (
+            Array.isArray(assignedRancherIds) &&
+            assignedRancherIds.length > 0 &&
+            shouldDecrementOnClose(currentStatus, 'Closed Lost')
+          ) {
             try {
               const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
               const newCount = await decrementCapacity(assignedRancherIds[0]);
@@ -1192,20 +1202,22 @@ async function processUpdate(update: any) {
           }
 
           const oldRancherId = referral['Rancher']?.[0] || referral['Suggested Rancher']?.[0];
-          // Atomic decrement on the OLD rancher only if the referral was in
-          // an active state (occupying a slot). Read-then-write here was racy
-          // with concurrent close-completions; Redis DECR clamps at 0.
-          const ACTIVE_REF_STATES_REASSIGN = new Set([
-            'Intro Sent',
-            'Rancher Contacted',
-            'Negotiation',
-            'Pending Approval',
-          ]);
+          // Atomic decrement on the OLD rancher only if the referral held one
+          // of their slots. This is a slot-swap, not a close: the referral
+          // departs the old rancher regardless of its next status, so the gate
+          // is canonical held-set membership of the PREVIOUS status alone
+          // (shouldDecrementOnClose(prev, 'Intro Sent') would never fire —
+          // next ∈ HELD — and leak the old slot forever). Kills the stale
+          // local ACTIVE set: 'Pending Approval' is pre-INCR (freed a slot the
+          // old rancher never took), 'Awaiting Payment'/'Slot Locked' were
+          // missing (old rancher stayed phantom-full after every reassign out
+          // of them). Read-then-write here was racy with concurrent
+          // close-completions; Redis DECR clamps at 0.
           const prevStatusForReassign = String(referral['Status'] || '');
           if (
             oldRancherId &&
             oldRancherId !== newRancherId &&
-            ACTIVE_REF_STATES_REASSIGN.has(prevStatusForReassign)
+            HELD_REFERRAL_STATUSES.has(prevStatusForReassign)
           ) {
             try {
               const newOldCount = await decrementCapacity(oldRancherId);
@@ -1719,7 +1731,14 @@ Source: ${c['Source'] || 'organic'}`;
           }
           // MISMATCH FIX: atomic Redis DECR same as reject path above —
           // protects against concurrent closelost clicks under-decrementing.
-          if (Array.isArray(rancherIds) && rancherIds[0]) {
+          // DECR gate centralized in shouldDecrementOnClose (#216): was
+          // unconditional, so closing a non-held referral (e.g. 'Pending
+          // Approval') freed a slot that was never taken.
+          if (
+            Array.isArray(rancherIds) &&
+            rancherIds[0] &&
+            shouldDecrementOnClose(previousStatus, 'Closed Lost')
+          ) {
             try {
               const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
               const newCount = await decrementCapacity(rancherIds[0]);
@@ -3005,15 +3024,12 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               // /api/stats/public.familiesMatched + blocking the email-sequences
               // cron from re-routing the buyer. Now: atomic capacity decrement +
               // Buyer Stage flip mirror the canonical close-completion path.
-              const ACTIVE_REF_STATES_FOR_LOST_DECREMENT = new Set([
-                'Intro Sent',
-                'Rancher Contacted',
-                'Negotiation',
-                'Pending Approval',
-              ]);
+              // DECR gate centralized in shouldDecrementOnClose (#216): the old
+              // local ACTIVE set freed a never-taken slot on 'Pending Approval'
+              // and skipped the free on 'Awaiting Payment'/'Slot Locked'.
               const rancherIdsForLost: string[] = before?.['Rancher'] || before?.['Suggested Rancher'] || [];
               const rancherIdForLost = Array.isArray(rancherIdsForLost) ? rancherIdsForLost[0] : null;
-              if (rancherIdForLost && ACTIVE_REF_STATES_FOR_LOST_DECREMENT.has(String(previousStatus || ''))) {
+              if (rancherIdForLost && shouldDecrementOnClose(previousStatus, 'Closed Lost')) {
                 try {
                   const newCap = await decrementCapacity(rancherIdForLost);
                   await syncCapacityToAirtable(rancherIdForLost, newCap);
@@ -3367,14 +3383,9 @@ Output ONLY the email body. First line should be the subject line prefixed with 
 
           // Capacity-freeing transitions need previous-status tracking so we
           // don't double-decrement when operator re-replies to the same prompt.
-          // Mirrors logic in app/api/rancher/referrals/[id]/route.ts:312-320.
+          // DECR gate centralized in shouldDecrementOnClose (#216) — same gate
+          // as the rancher dashboard PATCH (app/api/rancher/referrals/[id]).
           const previousStatus = String(ref['Status'] || '');
-          const ACTIVE_REF_STATES_FOR_DECREMENT = new Set([
-            'Intro Sent',
-            'Rancher Contacted',
-            'Negotiation',
-            'Pending Approval',
-          ]);
 
           // ─── Terminal-status guard (added 2026-05-27, P0 audit G-3) ────────
           // Refuse if Referral.Status already terminal. Without this, operator
@@ -3400,10 +3411,13 @@ Output ONLY the email body. First line should be the subject line prefixed with 
               'Rancher Engaged Flag': true,
             });
 
-            // Capacity decrement — Awaiting Payment frees the slot per the
-            // 2026-05-20 audit. Atomic Redis DECR + Airtable mirror so dashboards
-            // and routing both see the new count. Gate prevents double-decrement.
-            if (ACTIVE_REF_STATES_FOR_DECREMENT.has(previousStatus)) {
+            // Capacity gate centralized in shouldDecrementOnClose (#216).
+            // 'Awaiting Payment' is IN the canonical held set (lib/capacityCount)
+            // — entering it frees NOTHING: the slot stays held until the real
+            // terminal close. The old entry-DECR here double-freed the slot
+            // (once now, again when the Awaiting Payment referral later closed
+            // Won/Lost under the centralized gate), over-booking the rancher.
+            if (shouldDecrementOnClose(previousStatus, 'Awaiting Payment')) {
               try {
                 const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
                 const newCount = await decrementCapacity(rancherId);
@@ -3416,7 +3430,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             await sendTelegramMessage(
               chatId,
               `🕓 <b>Awaiting Payment</b> — ${buyerName} → ${rancherName}\n\n` +
-              `Status: Awaiting Payment. Capacity slot freed.\n` +
+              `Status: Awaiting Payment. The slot stays held until the deal closes.\n` +
               `When the buyer pays, open the rancher dashboard and tap the "Confirm Payment Received" button — the invoice fires automatically at that point.\n\n` +
               `I'll nudge you at 14 days if it's still unresolved.`,
             );
@@ -3473,10 +3487,13 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           });
 
           // ── Capacity decrement (atomic Redis DECR + Airtable mirror) ───────
-          // Gate on previous status so a re-reply to the same prompt doesn't
-          // double-decrement. Mirrors rancher dashboard PATCH logic.
+          // Centralized gate (shouldDecrementOnClose, #216): DECR exactly when
+          // the referral LEAVES the canonical held set. Kills the stale local
+          // ACTIVE set ('Pending Approval' freed a never-taken slot; 'Awaiting
+          // Payment'/'Slot Locked' closes skipped the free). Re-replies to the
+          // same prompt stay safe: prev is then terminal → gate is false.
           let capacityDecremented = false;
-          if (ACTIVE_REF_STATES_FOR_DECREMENT.has(previousStatus)) {
+          if (shouldDecrementOnClose(previousStatus, 'Closed Won')) {
             try {
               const { decrementCapacity, syncCapacityToAirtable } = await import('@/lib/rancherCapacity');
               const newCount = await decrementCapacity(rancherId);
@@ -3642,7 +3659,7 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           const statusLines: string[] = [];
           statusLines.push(`Sale: <b>$${saleAmount.toLocaleString()}</b>`);
           statusLines.push(`Commission (${(rate * 100).toFixed(1)}%): <b>$${commission.toLocaleString()}</b>`);
-          statusLines.push(`Capacity slot: ${capacityDecremented ? '✅ freed' : (ACTIVE_REF_STATES_FOR_DECREMENT.has(previousStatus) ? '⚠️ decrement failed' : 'already free')}`);
+          statusLines.push(`Capacity slot: ${capacityDecremented ? '✅ freed' : (shouldDecrementOnClose(previousStatus, 'Closed Won') ? '⚠️ decrement failed' : 'already free')}`);
           if (invoiceFailed) {
             statusLines.push(`Invoice: ⚠️ failed (${invoiceErrMsg})`);
           } else if (stripeInvoiceUrl) {
