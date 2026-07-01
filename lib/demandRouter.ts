@@ -1,9 +1,30 @@
 // lib/demandRouter.ts
 //
-// THE DEMAND ROUTER — pure, side-effect-free selection + rendering logic for
-// the capacity-gated backfill campaign (docs/NATIONWIDE-2-RANCHER-CAMPAIGN.md
-// + docs/CAMPAIGN-SENDS.md). The cron at app/api/cron/demand-router/route.ts
-// does all the I/O (Airtable reads, email/SMS sends, stamps, Telegram); this
+// ⚠️ NAMED CAMPAIGN ENGINE — NOT THE BUYER-MATCHING ROUTER.
+//
+// This module is the pure planner for ONE named campaign: the nationwide
+// warm-back / capacity-gated backfill campaign
+// (docs/NATIONWIDE-2-RANCHER-CAMPAIGN.md + docs/CAMPAIGN-SENDS.md).
+// The platform's real routing engine — the thing that matches any buyer to
+// any eligible rancher — is /api/matching/suggest. Nothing in this file
+// decides platform-wide buyer→rancher matching. The legacy file name
+// ("demandRouter") is kept only to avoid import churn; read it as
+// "demand-router CAMPAIGN".
+//
+// RANCHER SET (A2): configurable, not hardcoded. The env var
+// DEMAND_CAMPAIGN_RANCHER_IDS (comma-separated Airtable record ids,
+// POSITIONAL: 1st id serves WEST, 2nd serves EAST+CENTRAL) selects the
+// campaign's ranchers; unset it and the original Foodstead+Silverline pair
+// applies (byte-identical to the pre-config behavior). At cron runtime every
+// configured rancher is validated with isRancherOperationalForBuyers
+// (lib/rancherEligibility — the SAME single-source gate the real matching
+// engine uses); a rancher that fails the gate is SKIPPED (console.warn +
+// operator-visible note), and its pool sends NOTHING that run — not even
+// wave continuations — so the campaign can never route to a dark rancher.
+//
+// Pure, side-effect-free selection + rendering logic lives here. The cron at
+// app/api/cron/demand-router/route.ts does all the I/O (Airtable reads,
+// email/SMS sends, stamps, Telegram, the operational-gate check); this
 // module decides WHO gets WHAT and proves it can't oversell.
 //
 // Everything here is a deterministic pure function over plain objects so it can
@@ -84,6 +105,74 @@ export function rancherForCoast(coast: Coast): RancherTarget {
 export function rancherForState(rawState: unknown): RancherTarget | null {
   const coast = coastForState(rawState);
   return coast ? rancherForCoast(coast) : null;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CONFIGURABLE RANCHER SET (A2)
+// The campaign's ranchers are CONFIG, not code. DEMAND_CAMPAIGN_RANCHER_IDS
+// holds comma-separated Airtable record ids, POSITIONAL: 1st = WEST pool,
+// 2nd = EAST+CENTRAL pool. Unset/blank/garbage → the original default pair
+// (fail safe to known-good — never zero the campaign on a fat-fingered env;
+// the cron's runtime operational gate still guards every id, default or not).
+// Parsing is pure (env injected) so it's unit-testable; the cron resolves the
+// ids to RancherTarget records + runs isRancherOperationalForBuyers on each.
+// ─────────────────────────────────────────────────────────────────────
+
+/** Env var naming the campaign's ranchers (comma-separated Airtable rec ids). */
+export const CAMPAIGN_RANCHER_IDS_ENV = 'DEMAND_CAMPAIGN_RANCHER_IDS';
+
+/** Default campaign rancher ids — the original pair. POSITIONAL: [WEST, EAST+CENTRAL]. */
+export const DEFAULT_CAMPAIGN_RANCHER_IDS: readonly string[] = [FOODSTEAD.id, SILVERLINE.id];
+
+// Airtable record ids are exactly "rec" + 14 alphanumerics. Anything else in
+// the env value is garbage and gets filtered (whitespace, typos, empty tokens).
+const AIRTABLE_REC_ID = /^rec[A-Za-z0-9]{14}$/;
+
+/**
+ * Parse DEMAND_CAMPAIGN_RANCHER_IDS from an env-like object. Pure.
+ *
+ *   unset / empty / whitespace-only → DEFAULT_CAMPAIGN_RANCHER_IDS
+ *   "recA…,recB…"                   → [recA…, recB…] (trimmed, order kept)
+ *   garbage tokens                  → filtered out (valid ids survive, deduped)
+ *   ALL tokens garbage              → DEFAULT_CAMPAIGN_RANCHER_IDS (fail safe)
+ */
+export function parseCampaignRancherIds(
+  env: Record<string, string | undefined>,
+): string[] {
+  const raw = env[CAMPAIGN_RANCHER_IDS_ENV];
+  if (typeof raw !== 'string' || !raw.trim()) return [...DEFAULT_CAMPAIGN_RANCHER_IDS];
+  const ids = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => AIRTABLE_REC_ID.test(s));
+  const deduped = [...new Set(ids)];
+  if (deduped.length === 0) return [...DEFAULT_CAMPAIGN_RANCHER_IDS];
+  return deduped;
+}
+
+/**
+ * The campaign's resolved rancher per coast pool. `null` = the pool has NO
+ * operational campaign rancher this run (env-configured rancher failed the
+ * operational gate / was unreadable / unconfigured) — a null pool is NEVER
+ * routed to: no new invites, no continuations, no recovery SMS links.
+ */
+export interface CampaignRanchers {
+  west: RancherTarget | null;
+  eastCentral: RancherTarget | null;
+}
+
+/**
+ * state → the CONFIGURED campaign rancher for that coast pool, or null when
+ * the state is unroutable OR the pool is disabled (gated-out rancher). The
+ * config-aware sibling of rancherForState. Pure.
+ */
+export function campaignRancherForState(
+  rawState: unknown,
+  ranchers: CampaignRanchers,
+): RancherTarget | null {
+  const coast = coastForState(rawState);
+  if (!coast) return null;
+  return coast === 'WEST' ? ranchers.west : ranchers.eastCentral;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -618,6 +707,14 @@ export interface CampaignPlan {
   byWave: Record<Wave, number>;
   /** Waitlist counts grouped by state, for the report. */
   waitlistByState: Record<string, number>;
+  /**
+   * Buyers who WOULD have been sent a wave but whose coast pool has no
+   * operational campaign rancher this run (opts.ranchers.<pool> === null —
+   * the configured rancher failed the operational gate / was unreadable /
+   * unconfigured). Not sent, not stamped, not waitlisted — they roll forward
+   * untouched to a run where the pool is live again.
+   */
+  skippedNoRancher: { west: number; eastCentral: number };
 }
 
 export interface BuildPlanOpts {
@@ -635,6 +732,16 @@ export interface BuildPlanOpts {
    * recovery referrals it reads; tallied under suppressed['in-reserve-recovery'].
    */
   excludeBuyerIds?: ReadonlySet<string>;
+  /**
+   * The campaign rancher per coast pool (A2). Omit for the default pair
+   * (Foodstead WEST, Silverline EAST+CENTRAL) — byte-identical legacy
+   * behavior. A `null` pool means "no operational campaign rancher this run"
+   * (the cron's isRancherOperationalForBuyers gate failed the configured
+   * rancher): its buyers are skipped entirely — no sends, not even wave
+   * continuations, no stamps — and tallied in plan.skippedNoRancher, so a
+   * gated-out/dark rancher can never be routed to.
+   */
+  ranchers?: CampaignRanchers;
 }
 
 const DEFAULT_SMS_WAVES: ReadonlySet<Wave> = new Set<Wave>(['Msg2']);
@@ -686,6 +793,13 @@ export function buildCampaignPlan(
   const { now, capacity } = opts;
   const smsWaves = opts.smsWaves ?? DEFAULT_SMS_WAVES;
   const excludeBuyerIds = opts.excludeBuyerIds ?? new Set<string>();
+  // A2: configured rancher per pool — defaults to the original pair so callers
+  // without the option are byte-identical. null pool = gated out, never routed.
+  const ranchers: CampaignRanchers = opts.ranchers ?? {
+    west: { ...FOODSTEAD },
+    eastCentral: { ...SILVERLINE },
+  };
+  const skippedNoRancher = { west: 0, eastCentral: 0 };
   const suppressed = emptySuppressed();
   const sunset: PlannedSunset[] = [];
 
@@ -741,7 +855,16 @@ export function buildCampaignPlan(
     const decision = decideWave(f, now);
     if (!decision.send) continue;
 
-    const rancher = rancherForCoast(coast);
+    // 4.5. Pool gate (A2): a coast whose configured rancher is gated out /
+    // unavailable (null) sends NOTHING — not even continuations — so the
+    // campaign can never route a buyer to a dark rancher. Skipped buyers are
+    // untouched (no stamp) and roll forward to a run where the pool is live.
+    const rancher = coast === 'WEST' ? ranchers.west : ranchers.eastCentral;
+    if (!rancher) {
+      if (coast === 'WEST') skippedNoRancher.west++;
+      else skippedNoRancher.eastCentral++;
+      continue;
+    }
     const wave = decision.wave;
     const smsOptIn = asBool(f['SMS Opt-In']);
     const phone = String(f['Phone'] || '').trim();
@@ -844,6 +967,7 @@ export function buildCampaignPlan(
     },
     byWave,
     waitlistByState,
+    skippedNoRancher,
   };
 }
 
