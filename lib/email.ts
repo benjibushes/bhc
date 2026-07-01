@@ -1111,6 +1111,67 @@ export async function sendRancherDepositPaid(data: {
   return { success: !!r.success, suppressed: r.suppressed, reason: r.reason };
 }
 
+// ── RANCHER: fulfillment chase — did the beef make it home? ──────────────────
+// E3/B15 (2026-07-01): fires from the fulfillment-chase cron when a
+// deposit-paid, rancher-accepted referral's Processing Date passes with no
+// fulfillment confirmation (neither the legacy "Mark beef delivered" flag nor
+// the tracker's `fulfilled` status). Tier 1 (T+2d past due) is the first
+// gentle ask; tier 2 (T+5d, isSecondNudge) is a second calm nudge alongside a
+// loud operator signal. Tone is deliberately guilt-free — ranch life is busy,
+// most "missing" confirmations are just an untapped button.
+//
+// Same conventions as sendRancherDepositPaid: routes through sendEmail so it
+// inherits the suppression check + tagged Reply-To ('rnc' → replies land
+// against the rancher record). 'sendRancherFulfillmentNudge' is in
+// TRANSACTIONAL_WHITELIST — the cron stamps its claim BEFORE sending (one of
+// only 3 lifetime touches), so a frequency-cap suppression would silently
+// burn a chase slot without the rancher ever seeing it.
+export async function sendRancherFulfillmentNudge(data: {
+  rancherEmail: string;
+  rancherFirstName?: string;
+  buyerFirstName: string;
+  cut?: string; // "Quarter" | "Half" | "Whole" | freeform order type
+  processingDate?: string; // raw Airtable value, shown when parseable
+  rancherId?: string; // for tagged Reply-To
+  /** Tier-2 re-nudge — acknowledges the earlier email, slightly firmer ask. */
+  isSecondNudge?: boolean;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const rFirst = data.rancherFirstName || 'there';
+  const buyer = esc(data.buyerFirstName || 'your buyer');
+  const cut = (data.cut || '').trim() || 'beef share';
+  const procDate = data.processingDate ? new Date(String(data.processingDate)) : null;
+  const procStr =
+    procDate && !isNaN(procDate.getTime())
+      ? procDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' })
+      : '';
+  const dashUrl = `${SITE_URL}/rancher`;
+
+  const subject = data.isSecondNudge
+    ? `still showing unconfirmed — ${buyer}'s ${esc(cut)}`
+    : `quick check — how did ${buyer}'s processing go?`;
+  const leadIn = data.isSecondNudge
+    ? `Following up on my last note — ${buyer}'s ${esc(cut)}${procStr ? ` (processing was set for ${procStr})` : ''} still shows unconfirmed on our side. If it's been handed off, one tap closes the loop. If something's holding it up, just reply and we'll figure it out together.`
+    : `Hope processing week went smooth. ${buyer}'s ${esc(cut)}${procStr ? ` had a processing date of ${procStr}` : ''} and I don't see a delivery confirmation yet — no worries if it's done and the button just didn't get tapped. Ranch life is busy.`;
+
+  const r = await sendEmail({
+    to: data.rancherEmail,
+    subject,
+    templateName: 'sendRancherFulfillmentNudge',
+    _replyContext: data.rancherId ? { type: 'rnc', recordId: data.rancherId } : undefined,
+    html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;background:#0E0E0E;color:#fff;text-decoration:none;padding:14px 28px;margin:8px 0;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:14px}</style>
+</head><body><div class="container">
+  <h1>Quick check, ${esc(rFirst)}.</h1>
+  <p>${leadIn}</p>
+  <p>One tap in your dashboard marks it delivered — that's all it takes. It keeps ${buyer}'s order record straight and keeps us out of your hair:</p>
+  <p><a class="cta" href="${dashUrl}">Confirm fulfillment →</a></p>
+  <p>Processor running behind? Pickup rescheduled? Reply right here and I'll note it — no button needed.</p>
+  <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Thanks for taking care of your buyers. — Ben, BuyHalfCow</p>
+</div></body></html>`,
+  });
+  return { success: !!r.success, suppressed: r.suppressed, reason: r.reason };
+}
+
 // ── CLOSED Day 14: cuts education + first-cook playbook ──────────────────────
 // Premium DTC food's strongest retention move (per research — ButcherBox,
 // Wild Idea pattern). The buyer just got 200lbs of beef and doesn't know
@@ -4777,6 +4838,62 @@ export async function sendBuyerFulfillmentConfirmation(data: {
     <li>Around the 5-month mark I'll ping you about reserving the next share — from ${esc(data.rancherName)} again or another rancher in your area if their next harvest fits your timing better.</li>
   </ul>
   <p>If anything was off about pickup/delivery, reply to this email. I read every reply.</p>
+  <p style="margin-top:32px;">— Ben</p>
+</div></body></html>`,
+    }),
+  });
+}
+
+// ── D3 (2026-07-01): rancher saved a tracking number → buyer gets "on the way" ──
+// Fires from /api/rancher/referrals/[id]/fulfillment on the FIRST save of a
+// tracking number only (the route checks the prior value — edits/corrections
+// never re-send). This is the answer to the #1 post-deposit anxiety: "where
+// is my $1,000 of frozen meat?" Pure status mail — no payment action.
+export async function sendBuyerShippingNotification(data: {
+  email: string;
+  firstName: string;
+  rancherName: string;
+  ranchName: string;
+  orderType: string;
+  carrier?: string;
+  trackingNumber: string;
+  trackingUrl?: string | null;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = data.firstName || 'there';
+  const subject = 'Your beef is on the way — tracking inside';
+  const carrierLine = data.carrier && data.carrier.trim()
+    ? `<p style="margin:0 0 8px;"><strong>Carrier:</strong> ${esc(data.carrier)}</p>`
+    : '';
+  const trackCta = data.trackingUrl
+    ? `<p style="text-align:center;margin:24px 0;"><a href="${data.trackingUrl}" class="cta">Track your shipment &rarr;</a></p>`
+    : '';
+  return guardedSend({
+    templateName: 'sendBuyerShippingNotification',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0}.mono{font-family:Menlo,Consolas,monospace;font-size:14px;color:#0E0E0E}.cta{display:inline-block;padding:14px 28px;background:#0E0E0E;color:#fff !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;margin:8px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>Your beef is on the way, ${esc(first)}.</h1>
+  <p>${esc(data.rancherName)} from ${esc(data.ranchName)} just shipped your ${esc(data.orderType || 'share')}. Here's everything you need to follow it home:</p>
+  <div class="box">
+    ${carrierLine}
+    <p style="margin:0;"><strong>Tracking number:</strong> <span class="mono">${esc(data.trackingNumber)}</span></p>
+  </div>
+  ${trackCta}
+  <p><strong>What to expect on delivery:</strong></p>
+  <ul style="color:#2A2A2A;line-height:2;">
+    <li>Your beef ships frozen, vacuum-sealed, in an insulated box — usually with dry ice. Don't handle dry ice with bare hands.</li>
+    <li>Get the packs into your freezer promptly. If a pack feels cool and slightly soft on arrival, it's still fine — freeze it right away.</li>
+    <li>Try to be around on delivery day, or ask a neighbor to move the box inside. A few hours on a porch is okay; a full day in the sun is not.</li>
+  </ul>
+  <p>You can check your order status anytime on <a href="${SITE_URL}/member" style="color:#0E0E0E;">your dashboard</a>.</p>
+  <p>Questions about the shipment? Reply to this email. I read every reply.</p>
   <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
     }),

@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { trackEvent, metaEventId } from '@/lib/analytics';
 import { CutBreakdown, type Tier } from '@/app/components/CutBreakdown';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
+import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 
 // Map deposit cut slug → CutBreakdown tier. Slug is lowercase from
 // Stripe Price metadata; tier is the capitalized human-readable label.
@@ -75,6 +76,10 @@ function DepositPageContent() {
   const [errSlug, setErrSlug] = useState(''); // rancher slug from an error payload (e.g. referral_closed)
   const [selectedCut, setSelectedCut] = useState<string>('half');
   const [submitting, setSubmitting] = useState(false);
+  // F2/A4 — explicit ToS + refund-policy acceptance at the payment point.
+  // The pay CTA stays disabled until checked; the POST requires it (400
+  // terms_required otherwise), so acceptance is recorded at create time.
+  const [termsAccepted, setTermsAccepted] = useState(false);
 
   // G4 — deposit_initiated client Pixel fire on page mount. Server-side
   // CAPI InitiateCheckout fires from /api/checkout/deposit POST (F5);
@@ -128,7 +133,7 @@ function DepositPageContent() {
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ referralId: refId, cutSize: selectedCut }),
+        body: JSON.stringify({ referralId: refId, cutSize: selectedCut, termsAccepted }),
       });
       const j = await res.json();
       if (!res.ok) {
@@ -475,9 +480,34 @@ function DepositPageContent() {
             </p>
           )}
 
+          {/* F2/A4 consent — required checkbox directly above the pay CTA so
+              acceptance happens AT the payment point. Copy pulls
+              REFUND_POLICY_SHORT from lib/refundPolicy (single source — never
+              hand-write the policy here). */}
+          <label className="flex items-start gap-3 mb-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={(e) => setTermsAccepted(e.target.checked)}
+              className="mt-1 w-4 h-4 accent-charcoal cursor-pointer shrink-0"
+            />
+            <span className="text-sm text-charcoal/85 leading-relaxed">
+              I agree to the{' '}
+              <a
+                href="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2 hover:text-saddle"
+              >
+                Terms of Service
+              </a>{' '}
+              and the refund policy: {REFUND_POLICY_SHORT}.
+            </span>
+          </label>
+
           <button
             onClick={continueToCheckout}
-            disabled={submitting || !selectedCutData}
+            disabled={submitting || !selectedCutData || !termsAccepted}
             className="w-full bg-charcoal text-bone px-4 md:px-8 py-4 min-h-[48px] text-base hover:bg-saddle transition disabled:opacity-50 flex items-center justify-center"
           >
             {submitting

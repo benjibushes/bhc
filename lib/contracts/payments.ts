@@ -7,11 +7,11 @@
 // Idempotency is keyed on Stripe Payment Intent ID + Stripe Transfer ID so
 // webhook retries never double-process.
 
-import { createRecord, updateRecord, getAllRecords, getRecordById, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, getFirstRecord, getRecordById, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
-import { refundReferralClearFields } from '@/lib/refundLifecycle';
+import { refundReferralClearFields, shouldDecrementOnRefundRestore } from '@/lib/refundLifecycle';
 
 export type PaymentStatus = 'pending' | 'succeeded' | 'refunded' | 'failed' | 'abandoned' | 'requires_webhook_replay';
 export type PayoutStatus = 'pending' | 'paid' | 'failed';
@@ -299,10 +299,14 @@ export async function markDepositSucceeded(
   opts: { totalChargedCents?: number; referralId?: string } = {},
 ): Promise<boolean> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
-  const piMatched: any[] = await getAllRecords(
+  // Unique-key lookup — maxRecords:1 (getFirstRecord) instead of a full
+  // filtered pagination. Wrapped back into an array so selectSettlementRow's
+  // (pure, tested) decision contract is untouched.
+  const piFirst = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`
   );
+  const piMatched: any[] = piFirst ? [piFirst] : [];
   // CLOVER async-PI fallback: under apiVersion 2026-02-25 the PaymentIntent
   // doesn't exist at checkout-create, so recordDeposit stored the row with an
   // EMPTY 'Stripe Payment Intent Id'. By the payment_intent.succeeded webhook
@@ -393,12 +397,11 @@ export async function markDepositAbandoned(
   opts: { stripeStatus?: string } = {},
 ): Promise<{ found: boolean; flipped: boolean }> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
-  const existing: any[] = await getAllRecords(
+  const payment: any = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`,
   );
-  if (existing.length === 0) return { found: false, flipped: false };
-  const payment = existing[0];
+  if (!payment) return { found: false, flipped: false };
   // Idempotency: any non-pending row is a no-op. We only flip pending → abandoned
   // so a succeeded row never gets downgraded by a delayed cron pass.
   if (payment['Status'] !== 'pending') return { found: true, flipped: false };
@@ -436,12 +439,11 @@ export async function markDepositRequiresReplay(
   stripePaymentIntentId: string,
 ): Promise<{ found: boolean; flipped: boolean }> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
-  const existing: any[] = await getAllRecords(
+  const payment: any = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`,
   );
-  if (existing.length === 0) return { found: false, flipped: false };
-  const payment = existing[0];
+  if (!payment) return { found: false, flipped: false };
   if (payment['Status'] !== 'pending') return { found: true, flipped: false };
 
   try {
@@ -470,12 +472,11 @@ export async function markDepositRefunded(
   opts: MarkDepositRefundedOpts = {},
 ): Promise<{ flipped: boolean }> {
   const escaped = stripePaymentIntentId.replace(/"/g, '\\"');
-  const existing: any[] = await getAllRecords(
+  const payment: any = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`
   );
-  if (existing.length === 0) return { flipped: false };
-  const payment = existing[0];
+  if (!payment) return { flipped: false };
 
   // FULL-refund detection — the gate that decides whether to NUKE the whole
   // Closed Won deal (restoreReferralAfterRefund). A FULL refund requires BOTH:
@@ -538,7 +539,9 @@ export async function markDepositRefunded(
   //   - Referral.Status → 'Refunded' (new option, typecast-created)
   //   - Clear Closed At, Sale Amount, Commission Due, Commission Status
   //   - Stamp Refunded At
-  //   - Decrement rancher capacity (the deal reverts; slot opens back up)
+  //   - Rancher capacity: NO decrement from Closed Won (C4 — recordClose
+  //     already freed the slot at close time; gated via
+  //     shouldDecrementOnRefundRestore for any future non-Closed-Won restore)
   //   - Buyer → Buyer Stage='READY', Buyer Health='Active', Sequence Stage=''
   //   - Audit-log the restore
   //   - Telegram-alert the operator (no buyer email storm)
@@ -632,12 +635,22 @@ async function restoreReferralAfterRefund(
     await updateRecord(TABLES.REFERRALS, referralId, fallback);
   }
 
-  // 2. Decrement rancher capacity — one count back since the deal reverts.
-  // Best-effort: capacity drift on a rare refund is a non-fatal warning.
-  if (rancherId) {
+  // 2. Rancher capacity — gated, never unconditional (C4 fix). recordClose
+  // already freed the slot when the deal transitioned to Closed Won, so
+  // decrementing again here pushed the counter BELOW the true held count and
+  // let the matcher over-book a genuinely-full rancher (compounding on every
+  // close→refund cycle). Only decrement when the status captured BEFORE the
+  // refund flip (currentStatus) still occupied a slot — pure decision,
+  // unit-tested in lib/refundLifecycle.test.ts. On today's path currentStatus
+  // is always 'Closed Won' (early-returns above), so this never fires; the
+  // gate keeps any future widening of the restore path capacity-correct.
+  // syncCapacityToAirtable only runs when the counter actually moved.
+  let capacityDecremented = false;
+  if (rancherId && shouldDecrementOnRefundRestore(currentStatus)) {
     try {
       const newCount = await decrementCapacity(rancherId);
       await syncCapacityToAirtable(rancherId, newCount);
+      capacityDecremented = true;
     } catch (capErr: any) {
       console.warn('[restoreReferralAfterRefund] capacity decrement failed:', capErr?.message);
     }
@@ -679,7 +692,10 @@ async function restoreReferralAfterRefund(
       },
       result: {
         referralStatus: 'Refunded',
-        capacityDecremented: !!rancherId,
+        // C4: truthful — reflects the gated decrement actually landing, not
+        // merely "a rancher was linked" (which logged true on the buggy
+        // unconditional path AND when the decrement threw).
+        capacityDecremented,
         buyerRestored: !!buyerId,
       },
       reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },
@@ -721,15 +737,15 @@ export async function markDepositDisputed(
   input: MarkDepositDisputedInput,
 ): Promise<{ found: boolean; recordId?: string }> {
   const escaped = input.stripePaymentIntentId.replace(/"/g, '\\"');
-  const rows: any[] = await getAllRecords(
+  const row = await getFirstRecord(
     PAYMENTS_TABLE,
     `{Stripe Payment Intent Id} = "${escaped}"`,
   );
-  if (rows.length === 0) {
+  if (!row) {
     console.warn(`[markDepositDisputed] dispute event for unknown PI: ${input.stripePaymentIntentId}`);
     return { found: false };
   }
-  const recordId: string = rows[0].id;
+  const recordId: string = row.id;
   await updateRecord(PAYMENTS_TABLE, recordId, {
     'Dispute Status': input.disputeStatus,
     'Dispute Amount': (input.disputeAmountCents || 0) / 100,

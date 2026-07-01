@@ -47,6 +47,12 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendRenewalReminder',
   // Customer-expected fulfillment confirmation post-order.
   'sendBuyerFulfillmentConfirmation',
+  // Customer-expected shipping notification — the tracking number for a
+  // ~$1,000 frozen-meat shipment. Sent at most ONCE per referral (the
+  // fulfillment route only fires it on the FIRST save of a tracking number),
+  // so whitelisting cannot cause volume. Suppressing it = buyer misses the
+  // delivery window = thawed beef on a porch. D3, 2026-07-01.
+  'sendBuyerShippingNotification',
   // Customer-expected confirmation that partner application was received.
   'sendPartnerConfirmation',
   // Operator-expected internal alerts — capping these blinds the team.
@@ -167,6 +173,14 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // would mark the buyer recovered with nothing sent. Whitelist it. Unsub/bounce
   // suppression still applies (resend wrapper). DRY-RUN gate lives in the cron.
   'reserveRecoveryEmail',
+  // E3/B15 (2026-07-01): fulfillment-chase rancher nudge — deposit-paid,
+  // rancher-accepted order past its Processing Date with no fulfillment
+  // confirmation. Cadence is owned by the chase cron's own stamps
+  // (Fulfillment Chase Last Sent At / Count: 48h cooldown, one send per tier,
+  // 3 lifetime) — AND the cron stamps BEFORE the send, so a cap-suppress
+  // would burn one of the 3 lifetime chase slots with nothing delivered.
+  // Unsub/bounce suppression still applies (resend wrapper).
+  'sendRancherFulfillmentNudge',
 ]);
 
 // T1 (2026-06-10): dynamic-name templates whose names contain a stage

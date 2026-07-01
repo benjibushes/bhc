@@ -8,9 +8,12 @@
 //
 // Dual-delivery safety model:
 //   buyer_deposit  — markDepositSucceeded(pi.id) is the idempotency anchor.
-//                    It no-ops if Payments.Status === 'succeeded'. The Connect
-//                    webhook additionally reads that field BEFORE calling here
-//                    so the second delivery never enters settleBuyerDeposit.
+//                    It no-ops if Payments.Status === 'succeeded'. A repeat
+//                    delivery therefore enters settleBuyerDeposit and exits at
+//                    the claimOnce serializer or the row-flip check before any
+//                    non-idempotent side effect (both webhooks rely on this;
+//                    the Connect webhook's old outer pre-read was dropped as a
+//                    duplicate of the same query — M8/E3).
 //   final_invoice  — recordClose idempotency is partial (capacity-safe) but
 //                    transitionBuyerStage fires on every call. The Connect
 //                    webhook reads Referral.Status === 'Closed Won' BEFORE
@@ -146,6 +149,18 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
     console.warn('[stripe webhook] funnel deposit_paid record failed:', e?.message);
   }
 
+  // E1 efficiency (m8): the post-purchase email block and the rancher-notify
+  // block below both need the SAME Referral + Rancher rows — previously each
+  // block fetched its own copy (4 serial Airtable reads for 2 records inside
+  // the hottest webhook). Fetch once, in parallel, and reuse in both blocks.
+  // Both blocks already tolerate a null row (they skip their send + warn).
+  // Read AFTER the Awaiting-Payment stamp above so the rows reflect the same
+  // post-stamp state both blocks always saw.
+  const [referralRow, rancherRow]: any[] = await Promise.all([
+    getRecordById(TABLES.REFERRALS, referralId).catch(() => null),
+    getRecordById(TABLES.RANCHERS, rancherId).catch(() => null),
+  ]);
+
   // Buyer post-purchase welcome — closes the "you bought" loop with
   // a warm BHC-branded email (cuts education preview, freezer prep,
   // pickup/delivery timeline). Mirrors the legacy quick-action(won)
@@ -156,13 +171,11 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
   // Also: reuse the fetched buyer below for Meta CAPI Purchase user_data.
   let buyerForCapi: { email?: string; firstName?: string; lastName?: string } = {};
   try {
-    const referralRow: any = await getRecordById(TABLES.REFERRALS, referralId).catch(() => null);
     const buyerLinksForEmail: string[] = (referralRow?.['Buyer'] || []) as string[];
     const buyerIdForEmail = buyerLinksForEmail[0] || '';
     const buyer: any = buyerIdForEmail
       ? await getRecordById(TABLES.CONSUMERS, buyerIdForEmail).catch(() => null)
       : null;
-    const rancherForEmail: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
     if (buyer?.['Email']) {
       const fullName = String(buyer['Full Name'] || '').trim();
       const nameParts = fullName.split(/\s+/);
@@ -171,11 +184,11 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
         firstName: nameParts[0] || undefined,
         lastName: nameParts.slice(1).join(' ') || undefined,
       };
-      if (rancherForEmail) {
+      if (rancherRow) {
         await sendPostPurchaseWelcome({
           firstName: nameParts[0] || '',
           email: String(buyer['Email']),
-          rancherName: String(rancherForEmail['Operator Name'] || rancherForEmail['Ranch Name'] || 'your rancher'),
+          rancherName: String(rancherRow['Operator Name'] || rancherRow['Ranch Name'] || 'your rancher'),
           orderType: String(referralRow?.['Order Type'] || ''),
           // Deposit-path: lead with an explicit "deposit received: $X · balance ~$Y"
           // confirmation (the buyer's biggest-intent moment) instead of the
@@ -239,12 +252,12 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
   // rancher now so that promise is true and they call the waiting buyer today.
   // Best-effort: each channel wraps its own try/catch inside notifyRancher; a
   // failure here must not roll back the settled deposit.
+  // E1: reuses the referralRow/rancherRow fetched once above (was a second
+  // pair of getRecordById reads for the exact same records).
   try {
-    const refRow: any = await getRecordById(TABLES.REFERRALS, referralId).catch(() => null);
-    const rancherRow: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
-    if (refRow && rancherRow) {
+    if (referralRow && rancherRow) {
       const { notifyRancherDepositPaid } = await import('@/lib/rancherNotify');
-      const r = await notifyRancherDepositPaid(refRow, rancherRow, { depositAmount: depositCents / 100 });
+      const r = await notifyRancherDepositPaid(referralRow, rancherRow, { depositAmount: depositCents / 100 });
       if (!r.emailSent && !r.smsSent) {
         console.warn(`[stripe webhook] rancher deposit notify reached no channel (ref=${referralId}): ${r.skipped || 'send failed'}`);
       }

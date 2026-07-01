@@ -170,6 +170,10 @@
       "schedule": "15 * * * *"
     },
     {
+      "path": "/api/cron/fulfillment-chase",
+      "schedule": "50 13 * * *"
+    },
+    {
       "path": "/api/cron/waiting-activation",
       "schedule": "40 17 * * *"
     }

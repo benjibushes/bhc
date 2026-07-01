@@ -23,12 +23,13 @@ import { getConnectAccountStatus } from '@/lib/stripeConnect';
 import {
   createRecord,
   updateRecord,
-  getAllRecords,
+  getFirstRecord,
   getRecordById,
   TABLES,
 } from '@/lib/airtable';
 import { settleBuyerDeposit, settleFinalInvoice, isPermanentSettlementError } from '@/lib/stripeSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail } from '@/lib/email';
 import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
 import { logAuditEntry } from '@/lib/auditLog';
@@ -148,11 +149,13 @@ export async function POST(request: Request) {
   // ------------------------------------------------------------------
   try {
     const safeEventId = String(event.id).replace(/"/g, '\\"');
-    const existing: any[] = await getAllRecords(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
-    if (existing.length > 0 && existing[0]['Status'] === 'processed') {
+    // Event Id is unique — getFirstRecord (maxRecords:1) instead of paginating
+    // the whole filtered scan. Same decision logic on the single row.
+    const existing = await getFirstRecord(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
+    if (existing && existing['Status'] === 'processed') {
       return NextResponse.json({ ok: true, skipped: 'duplicate event' });
     }
-    if (existing.length === 0) {
+    if (!existing) {
       await createRecord(STRIPE_EVENTS_TABLE, {
         'Event Id': event.id,
         'Event Type': event.type,
@@ -241,6 +244,25 @@ export async function POST(request: Request) {
         await handleConnectDeauthorized(event);
         break;
 
+      // ── Area D2 — Radar early-fraud + review visibility (VISIBILITY ONLY) ──
+      // Chargebacks on tier_v2 direct charges debit the RANCHER's connected
+      // account. Radar early-fraud warnings + review events arrive BEFORE a
+      // dispute becomes a fact, but pre-D2 this switch had no cases for them —
+      // the first sign of card-testing was a formal dispute weeks later
+      // (charge.dispute.created above). These handlers alert ops + stamp the
+      // Payments row; they NEVER touch money (no refunds/cancels — that's a
+      // human decision in the Stripe Dashboard) and NEVER throw (fully wrapped
+      // internally — a fraud-visibility failure must not fail the webhook or
+      // block unrelated Connect events).
+      case 'radar.early_fraud_warning.created':
+        await handleEarlyFraudWarning(event);
+        break;
+
+      case 'review.opened':
+      case 'review.closed':
+        await handleReviewEvent(event);
+        break;
+
       // ── Audit F8 — charge.refunded mirror ──
       // tier_v2 direct-charge refunds fire charge.refunded on the CONNECTED
       // account, not the platform. The existing handler only lived on the
@@ -291,13 +313,17 @@ export async function POST(request: Request) {
       // protection. These guards make whichever fires FIRST settle fully;
       // the SECOND sees terminal state and no-ops.
       //
-      //   buyer_deposit : Payments.Status === 'succeeded'  → pi.id-keyed anchor
+      //   buyer_deposit : claimOnce(settle-deposit:<pi.id>) + Payments.Status
+      //                   flip INSIDE settleBuyerDeposit → pi.id-keyed anchors
       //   final_invoice : Referral.Status === 'Closed Won' → referralId-keyed anchor
       //
-      // The settle* functions themselves (lib/stripeSettlement.ts) contain
-      // markDepositSucceeded as a second idempotency anchor for deposit — this
-      // outer guard is belt-and-suspenders so we never even enter the function
-      // on the second delivery.
+      // E3 efficiency (m8): the buyer_deposit branch used to pre-scan Payments
+      // by PI here and then settleBuyerDeposit re-ran the IDENTICAL query via
+      // markDepositSucceeded — 2 scans of the hottest table per delivery. The
+      // outer pre-scan is dropped: a repeat delivery re-enters
+      // settleBuyerDeposit, where the claimOnce serializer and/or the
+      // already-succeeded row flip short-circuit BEFORE any non-idempotent
+      // side effect (funnel/email/Telegram). Same terminal behavior, 1 scan.
       case 'payment_intent.succeeded': {
         const pi = event?.data?.object;
         const metaType = pi?.metadata?.type;
@@ -306,11 +332,9 @@ export async function POST(request: Request) {
         if (!referralId) break;
         try {
           if (metaType === 'buyer_deposit') {
-            // pi.id-keyed guard: if the Payments row is already 'succeeded', the
-            // platform webhook (or a prior delivery) already settled — no-op.
-            const rows: any[] = await getAllRecords(PAYMENTS_TABLE, `{Stripe Payment Intent Id} = "${String(pi.id).replace(/"/g, '\\"')}"`);
-            if ((rows[0] as any)?.['Status'] === 'succeeded') break;
-            await settleBuyerDeposit(pi);            // we're first — full settlement
+            // Idempotency lives inside settleBuyerDeposit (claimOnce +
+            // markDepositSucceeded's pi.id-keyed row flip) — see block comment.
+            await settleBuyerDeposit(pi);
           } else { // final_invoice
             const ref: any = await getRecordById(TABLES.REFERRALS, referralId).catch(() => null);
             if (String(ref?.['Status'] || '') === 'Closed Won') break;  // already closed
@@ -329,7 +353,8 @@ export async function POST(request: Request) {
           // functions throw only before/at their idempotency anchor, and a
           // redelivered event re-runs (flipStripeEventFailed sets Status='failed',
           // and the dedup at the top skips only 'processed') into the pi.id-keyed
-          // guards above — so a redelivery can never double-settle or double-notify.
+          // anchors inside settleBuyerDeposit / the Closed-Won guard above — so a
+          // redelivery can never double-settle or double-notify.
           // Only a PERMANENT failure (malformed metadata that can never settle)
           // returns 200 to stop pointless 3-day redelivery.
           if (isPermanentSettlementError(e)) {
@@ -359,9 +384,9 @@ export async function POST(request: Request) {
   // ------------------------------------------------------------------
   try {
     const safeEventId = String(event.id).replace(/"/g, '\\"');
-    const eventRows: any[] = await getAllRecords(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
-    if (eventRows[0]) {
-      await updateRecord(STRIPE_EVENTS_TABLE, eventRows[0].id, {
+    const eventRow = await getFirstRecord(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
+    if (eventRow) {
+      await updateRecord(STRIPE_EVENTS_TABLE, eventRow.id, {
         'Status': 'processed',
         'Processed At': new Date().toISOString(),
       });
@@ -378,13 +403,13 @@ export async function POST(request: Request) {
 // ============================================================================
 async function syncRancherConnectStatus(accountId: string): Promise<void> {
   // Look up the Ranchers row by Connect account id. Multiple ranchers
-  // sharing an account id would be a setup bug; we take the first.
+  // sharing an account id would be a setup bug; we take the first
+  // (getFirstRecord = maxRecords:1, same first row as the old full scan).
   const safeAcct = accountId.replace(/"/g, '\\"');
-  const matches = await getAllRecords(
+  const rancher: any = await getFirstRecord(
     TABLES.RANCHERS,
     `{Stripe Connect Account Id} = "${safeAcct}"`,
   );
-  const rancher: any = matches[0];
   if (!rancher) {
     console.warn(`[stripe-connect webhook] no rancher matches accountId ${accountId}`);
     // Still mark event processed at end of handler — not our row, but
@@ -652,12 +677,11 @@ async function handlePayoutFailed(event: any): Promise<void> {
   let rancherName: string | null = null;
   try {
     const safeAcct = accountId.replace(/"/g, '\\"');
-    const rows: any[] = await getAllRecords(
+    const r: any = await getFirstRecord(
       TABLES.RANCHERS,
       `{Stripe Connect Account Id} = "${safeAcct}"`,
     );
-    if (rows.length > 0) {
-      const r: any = rows[0];
+    if (r) {
       rancherEmail = (r['Email'] as string) || null;
       rancherName = (r['Operator Name'] as string) || (r['Ranch Name'] as string) || null;
     }
@@ -736,11 +760,10 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
 
   // Look up rancher by Connect Account ID.
   const safeAcct = accountId.replace(/"/g, '\\"');
-  const rows: any[] = await getAllRecords(
+  const rancher: any = await getFirstRecord(
     TABLES.RANCHERS,
     `{Stripe Connect Account Id} = "${safeAcct}"`,
   );
-  const rancher: any = rows[0];
 
   if (!rancher) {
     // No matching rancher — event still valid (e.g. a test acct, or a
@@ -853,6 +876,178 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
 }
 
 // ============================================================================
+// RADAR EARLY FRAUD WARNING — card-testing tripwire (Area D2).
+//
+// radar.early_fraud_warning.created fires when the card issuer flags a
+// charge as likely fraud BEFORE any formal dispute exists. On tier_v2
+// direct charges this lands on the CONNECTED account — i.e. the rancher
+// eats the eventual chargeback. This handler is the earliest possible
+// signal that someone is card-testing against a rancher's storefront.
+//
+// VISIBILITY ONLY: loud operator signal + optional Payments-row stamp.
+// No auto-refund (refunding an EFW charge is a human judgment call — an
+// `actionable: true` warning CAN be refunded in the Dashboard to duck the
+// dispute fee, but that's ops' decision, not the webhook's).
+//
+// Payments-row resolution mirrors handleDispute + the settlement guard:
+// lookup by {Stripe Payment Intent Id} (the field recordDeposit()
+// populates — there is no charge-id field on Payments). Non-tier_v2
+// charges won't match a row; the signal still fires without one.
+//
+// Never throws — a failure here must not fail the webhook.
+// ============================================================================
+async function handleEarlyFraudWarning(event: any): Promise<void> {
+  try {
+    const efw = event?.data?.object as any;
+    const chargeId: string =
+      typeof efw?.charge === 'string' ? efw.charge : efw?.charge?.id || '';
+    const piId: string =
+      typeof efw?.payment_intent === 'string'
+        ? efw.payment_intent
+        : efw?.payment_intent?.id || '';
+    const fraudType: string = efw?.fraud_type || 'unknown';
+    const actionable = !!efw?.actionable;
+
+    // Best-effort Payments row resolution (tier_v2 deposits only).
+    let paymentRow: any = null;
+    if (piId) {
+      try {
+        paymentRow = await getFirstRecord(
+          PAYMENTS_TABLE,
+          `{Stripe Payment Intent Id} = "${piId.replace(/"/g, '\\"')}"`,
+        );
+      } catch (e: any) {
+        console.warn('[stripe-connect efw] Payments lookup failed (continuing):', e?.message);
+      }
+    }
+
+    // Defensive field reads — undefined when the row/field is missing.
+    const amountCents = Number(paymentRow?.['Amount Cents'] || 0);
+    const rancherRecordId: string =
+      (Array.isArray(paymentRow?.['Rancher']) && paymentRow['Rancher'][0]) || '';
+
+    const detailLines = [
+      `Charge: ${chargeId || 'unknown'}`,
+      `Fraud type: ${fraudType}`,
+      `Actionable: ${actionable ? 'YES — refundable in Dashboard to avoid dispute fee' : 'no'}`,
+    ];
+    if (piId) detailLines.push(`PI: ${piId}`);
+    if (amountCents > 0) detailLines.push(`Amount: $${(amountCents / 100).toFixed(2)}`);
+    if (chargeId) detailLines.push(`Stripe: https://dashboard.stripe.com/payments/${chargeId}`);
+
+    // sendOperatorSignal never throws (catches internally) — the signal is
+    // the point of this handler, so it fires before the optional stamp.
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'other',
+      summary: '🚨 EARLY FRAUD WARNING — likely card testing',
+      detail: detailLines.join('\n'),
+      refs: rancherRecordId ? [{ type: 'rancher', id: rancherRecordId }] : undefined,
+      dedupeKey: `efw:${chargeId || piId || event?.id}`,
+    });
+
+    // Optional Payments-row stamp — mirrors the possibly-missing-field
+    // pattern in handleConnectDeauthorized ('Connect Detached At'): Airtable
+    // either silently strips unknown fields or 422s depending on typecast;
+    // either way the stamp is best-effort and NEVER aborts the handler
+    // (signal already fired above).
+    if (paymentRow?.id) {
+      try {
+        await updateRecord(PAYMENTS_TABLE, paymentRow.id, {
+          'Fraud Warning At': new Date().toISOString(),
+          'Fraud Warning Type': fraudType,
+        });
+      } catch (e: any) {
+        console.warn(
+          '[stripe-connect efw] Payments stamp failed — TODO: add `Fraud Warning At` (dateTime) + `Fraud Warning Type` (single line text) fields to Payments table:',
+          e?.message,
+        );
+      }
+    }
+
+    // Audit-log mirror — same shape as the dispute handler above.
+    await logAuditEntry({
+      actor: 'cron',
+      tool: 'stripe-connect-early-fraud-warning',
+      targetType: 'Other',
+      targetId: piId || chargeId || 'unknown',
+      args: { paymentIntentId: piId, chargeId, fraudType, actionable },
+      result: { paymentRecordId: paymentRow?.id || null },
+      reverseAction: { type: 'noop', reason: 'visibility-only — refund decision is human, via Stripe Dashboard' },
+    }).catch(e => console.error('[audit] connect efw log failed:', e));
+  } catch (e: any) {
+    // Visibility-only case — swallow everything so the webhook returns 200
+    // and the Stripe Events row still flips to processed.
+    console.error('[stripe-connect efw] handler failed (visibility-only, continuing):', e?.message);
+  }
+}
+
+// ============================================================================
+// STRIPE REVIEW OPENED / CLOSED — Radar review visibility (Area D2).
+//
+// review.opened fires when Radar's rules place a payment in manual review;
+// review.closed fires with the outcome (approved / refunded /
+// refunded_as_fraud / disputed / redacted). On tier_v2 direct charges these
+// fire on the CONNECTED account. Pre-D2 both fell through to the unhandled-
+// event default — ops never knew Stripe had flagged a payment until it
+// escalated to a dispute.
+//
+// VISIBILITY ONLY: opened → loud signal (act fast, the charge is held in
+// review); closed → normal signal with the outcome. No Stripe mutations.
+// Never throws — a failure here must not fail the webhook.
+// ============================================================================
+async function handleReviewEvent(event: any): Promise<void> {
+  try {
+    const review = event?.data?.object as any;
+    const eventType: string = event?.type || 'review';
+    const opened = eventType === 'review.opened';
+    const chargeId: string =
+      typeof review?.charge === 'string' ? review.charge : review?.charge?.id || '';
+    const piId: string =
+      typeof review?.payment_intent === 'string'
+        ? review.payment_intent
+        : review?.payment_intent?.id || '';
+    // opened carries `reason` (why it went to review, e.g. 'rule'); closed
+    // carries `closed_reason` (the outcome).
+    const reason: string = opened
+      ? review?.reason || 'unknown'
+      : review?.closed_reason || review?.reason || 'unknown';
+
+    const detailLines = [
+      `${opened ? 'Reason' : 'Outcome'}: ${reason}`,
+      `Charge: ${chargeId || 'unknown'}`,
+    ];
+    if (piId) detailLines.push(`PI: ${piId}`);
+    if (chargeId) detailLines.push(`Stripe: https://dashboard.stripe.com/payments/${chargeId}`);
+
+    await sendOperatorSignal({
+      urgency: opened ? 'loud' : 'normal',
+      kind: 'other',
+      summary: opened
+        ? 'PAYMENT IN REVIEW — Stripe flagged this charge'
+        : `PAYMENT REVIEW CLOSED — ${reason}`,
+      detail: detailLines.join('\n'),
+      dedupeKey: `review:${eventType}:${review?.id || chargeId || piId || event?.id}`,
+    });
+
+    // Audit-log mirror — same shape as the dispute handler above.
+    await logAuditEntry({
+      actor: 'cron',
+      tool: `stripe-connect-${eventType}`,
+      targetType: 'Other',
+      targetId: piId || chargeId || 'unknown',
+      args: { paymentIntentId: piId, chargeId, eventType },
+      result: { reason },
+      reverseAction: { type: 'noop', reason: 'visibility-only — Stripe-driven review lifecycle' },
+    }).catch(e => console.error('[audit] connect review log failed:', e));
+  } catch (e: any) {
+    // Visibility-only case — swallow everything so the webhook returns 200
+    // and the Stripe Events row still flips to processed.
+    console.error('[stripe-connect review] handler failed (visibility-only, continuing):', e?.message);
+  }
+}
+
+// ============================================================================
 // IDEMPOTENCY FAILURE HELPER — flips a Stripe Events row to failed.
 // Inlined from app/api/webhooks/stripe/route.ts:845-858 (no shared module
 // exists yet; matches platform webhook field shape exactly).
@@ -860,9 +1055,9 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
 async function flipStripeEventFailed(eventId: string, errorMessage: string): Promise<void> {
   try {
     const safeEventId = String(eventId).replace(/"/g, '\\"');
-    const eventRows: any[] = await getAllRecords(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
-    if (eventRows[0]) {
-      await updateRecord(STRIPE_EVENTS_TABLE, eventRows[0].id, {
+    const eventRow = await getFirstRecord(STRIPE_EVENTS_TABLE, `{Event Id} = "${safeEventId}"`);
+    if (eventRow) {
+      await updateRecord(STRIPE_EVENTS_TABLE, eventRow.id, {
         'Status': 'failed',
         'Error': (errorMessage || 'unknown').slice(0, 500),
       });
