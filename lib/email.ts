@@ -4783,6 +4783,62 @@ export async function sendBuyerFulfillmentConfirmation(data: {
   });
 }
 
+// ── D3 (2026-07-01): rancher saved a tracking number → buyer gets "on the way" ──
+// Fires from /api/rancher/referrals/[id]/fulfillment on the FIRST save of a
+// tracking number only (the route checks the prior value — edits/corrections
+// never re-send). This is the answer to the #1 post-deposit anxiety: "where
+// is my $1,000 of frozen meat?" Pure status mail — no payment action.
+export async function sendBuyerShippingNotification(data: {
+  email: string;
+  firstName: string;
+  rancherName: string;
+  ranchName: string;
+  orderType: string;
+  carrier?: string;
+  trackingNumber: string;
+  trackingUrl?: string | null;
+}): Promise<{ success: boolean; error?: any }> {
+  const first = data.firstName || 'there';
+  const subject = 'Your beef is on the way — tracking inside';
+  const carrierLine = data.carrier && data.carrier.trim()
+    ? `<p style="margin:0 0 8px;"><strong>Carrier:</strong> ${esc(data.carrier)}</p>`
+    : '';
+  const trackCta = data.trackingUrl
+    ? `<p style="text-align:center;margin:24px 0;"><a href="${data.trackingUrl}" class="cta">Track your shipment &rarr;</a></p>`
+    : '';
+  return guardedSend({
+    templateName: 'sendBuyerShippingNotification',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:26px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #0E0E0E;padding:16px 20px;margin:18px 0}.mono{font-family:Menlo,Consolas,monospace;font-size:14px;color:#0E0E0E}.cta{display:inline-block;padding:14px 28px;background:#0E0E0E;color:#fff !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;margin:8px 0}.footer{margin-top:36px;padding-top:18px;border-top:1px solid #A7A29A;font-size:12px;color:#A7A29A}</style>
+</head><body><div class="container">
+  <h1>Your beef is on the way, ${esc(first)}.</h1>
+  <p>${esc(data.rancherName)} from ${esc(data.ranchName)} just shipped your ${esc(data.orderType || 'share')}. Here's everything you need to follow it home:</p>
+  <div class="box">
+    ${carrierLine}
+    <p style="margin:0;"><strong>Tracking number:</strong> <span class="mono">${esc(data.trackingNumber)}</span></p>
+  </div>
+  ${trackCta}
+  <p><strong>What to expect on delivery:</strong></p>
+  <ul style="color:#2A2A2A;line-height:2;">
+    <li>Your beef ships frozen, vacuum-sealed, in an insulated box — usually with dry ice. Don't handle dry ice with bare hands.</li>
+    <li>Get the packs into your freezer promptly. If a pack feels cool and slightly soft on arrival, it's still fine — freeze it right away.</li>
+    <li>Try to be around on delivery day, or ask a neighbor to move the box inside. A few hours on a porch is okay; a full day in the sun is not.</li>
+  </ul>
+  <p>You can check your order status anytime on <a href="${SITE_URL}/member" style="color:#0E0E0E;">your dashboard</a>.</p>
+  <p>Questions about the shipment? Reply to this email. I read every reply.</p>
+  <p style="margin-top:32px;">— Ben</p>
+</div></body></html>`,
+    }),
+  });
+}
+
 // =====================================================
 // BUYER FINAL INVOICE — sent by rancher after deposit + processing locked.
 // Direct Stripe Connect Checkout link, 100% to rancher (no BHC fee). Buyer

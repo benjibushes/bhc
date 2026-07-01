@@ -3,6 +3,7 @@ import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
+import { FULFILLMENT_FIELDS } from '@/lib/fulfillmentTracking';
 
 export const maxDuration = 60;
 
@@ -110,6 +111,16 @@ export async function GET(request: Request) {
         stripe_invoice_url: r['Stripe Invoice URL'] || '',
         fulfillment_confirmed_at: r['Fulfillment Confirmed At'] || '',
         processing_date: r['Processing Date'] || '',
+        // D3 — surface the rancher-typed shipment fields (WAVE 3b fulfillment
+        // tracker) to the buyer. Field names come from FULFILLMENT_FIELDS —
+        // never hand-typed. Additive keys only; empty string when the rancher
+        // hasn't filled them (or the founder hasn't created the Airtable
+        // fields yet), which the UI treats as "render nothing".
+        fulfillment_status: r[FULFILLMENT_FIELDS.status] || '',
+        fulfillment_method: r[FULFILLMENT_FIELDS.method] || '',
+        shipping_carrier: r[FULFILLMENT_FIELDS.carrier] || '',
+        tracking_number: r[FULFILLMENT_FIELDS.trackingNumber] || '',
+        fulfillment_updated_at: r[FULFILLMENT_FIELDS.updatedAt] || '',
       };
     });
 
