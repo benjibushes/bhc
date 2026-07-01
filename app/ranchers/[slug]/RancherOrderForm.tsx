@@ -64,6 +64,8 @@ export default function RancherOrderForm({
     state: '',
     zip: '',
     message: '',
+    // honeypot — bots fill, humans don't see (server fakes success when set)
+    website: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -132,6 +134,7 @@ export default function RancherOrderForm({
           state: form.state,
           zip: form.zip,
           message: form.message,
+          website: form.website,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -233,6 +236,7 @@ export default function RancherOrderForm({
                       state: session?.state || '',
                       zip: '',
                       message: '',
+                      website: '',
                     });
                   }}
                   className="w-full py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase hover:bg-saddle transition-colors"
@@ -257,6 +261,17 @@ export default function RancherOrderForm({
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
+                  {/* Honeypot — hidden field, real users don't see it */}
+                  <input
+                    type="text"
+                    name="website"
+                    value={form.website}
+                    onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))}
+                    tabIndex={-1}
+                    autoComplete="off"
+                    style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px' }}
+                    aria-hidden="true"
+                  />
                   {!session && (
                     <>
                       <input
