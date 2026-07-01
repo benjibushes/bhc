@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Container from '../../components/Container';
 import Link from 'next/link';
+import { safeNextPath } from '@/lib/safeNextPath';
 
 function VerifyContent() {
   const searchParams = useSearchParams();
@@ -44,7 +45,12 @@ function VerifyContent() {
 
       setStatus('success');
       setTimeout(() => {
-        router.push('/member');
+        // Resume path threaded through the magic link (&next=) by the login
+        // route. Re-clamped with safeNextPath here because the emailed URL is
+        // buyer-visible/forwardable — anyone can edit the query string. An
+        // invalid or absent next falls back to /member (the old hardcoded
+        // destination).
+        router.push(safeNextPath(searchParams.get('next')));
       }, 1500);
     } catch (err: any) {
       setStatus('error');

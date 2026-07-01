@@ -24,6 +24,19 @@ export default function MemberAuthGuard({
     checkSession();
   }, []);
 
+  // Bounce to login WITH a resume path (?next=) so the buyer lands back on
+  // the exact page they were kicked off of after the magic-link round-trip
+  // (login page forwards it → login route embeds it in the emailed link →
+  // /member/verify honors it). Previously the path was dropped entirely — a
+  // logged-out buyer on a guarded page lost their place forever. Read from
+  // window.location (checkSession only ever runs client-side, inside
+  // useEffect) instead of useSearchParams, which would force a Suspense
+  // boundary onto every page that mounts this guard.
+  const redirectToLogin = () => {
+    const here = window.location.pathname + window.location.search;
+    router.push(`/member/login?next=${encodeURIComponent(here)}`);
+  };
+
   const checkSession = async () => {
     try {
       const response = await fetch('/api/auth/member/session');
@@ -32,13 +45,13 @@ export default function MemberAuthGuard({
         if (data.authenticated && data.member) {
           setMember(data.member);
         } else {
-          router.push('/member/login');
+          redirectToLogin();
         }
       } else {
-        router.push('/member/login');
+        redirectToLogin();
       }
     } catch {
-      router.push('/member/login');
+      redirectToLogin();
     } finally {
       setIsLoading(false);
     }
