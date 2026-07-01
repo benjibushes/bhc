@@ -21,7 +21,7 @@
 // Why server-side: client can't be trusted to mint a real referral. JWT-gated
 // to prevent enumeration / replay attacks.
 
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { JWT_SECRET, generateMemberLoginToken } from '@/lib/secrets';
@@ -29,6 +29,14 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { getOperatorBookingUrl } from '@/lib/calBooking';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
+// B4 (2026-07-01): matching/suggest is invoked IN-PROCESS (imported route
+// handler + synthetic Request) instead of fetch()ing our own deployment over
+// the network — that self-call was an edge round-trip plus a SECOND serverless
+// invocation (cold start included) in the middle of the buyer's post-quiz
+// spinner. Same handler, same x-internal-secret auth path, same payload and
+// status semantics. The suggest route file is untouched and still serves its
+// external callers (cron, admin) over HTTP.
+import { POST as matchingSuggestPOST } from '@/app/api/matching/suggest/route';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
@@ -201,14 +209,19 @@ export async function POST(request: Request) {
     } catch (e: any) {
       console.error('[/api/qualify] consumer update failed:', e?.message);
     }
-    try {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `🛑 <b>QUIZ DROP-OFF</b> — ${consumer['Full Name'] || consumer['Email']} (${consumer['State'] || '?'})\n` +
-          `Score: ${score}/100 | Tier: ${tier} | Timing: ${timing} | Storage: ${storage} | Ack: ${ack ? '✓' : '✗'}\n` +
-          `<i>Not routed. Stays in nurture.</i>`
-      );
-    } catch {}
+    // B4 (2026-07-01): Telegram is operator-visibility only — the buyer's
+    // waitlist reveal doesn't depend on it. after() defers it past the
+    // response flush (Vercel runs it via waitUntil, so it still completes).
+    after(async () => {
+      try {
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🛑 <b>QUIZ DROP-OFF</b> — ${consumer['Full Name'] || consumer['Email']} (${consumer['State'] || '?'})\n` +
+            `Score: ${score}/100 | Tier: ${tier} | Timing: ${timing} | Storage: ${storage} | Ack: ${ack ? '✓' : '✗'}\n` +
+            `<i>Not routed. Stays in nurture.</i>`
+        );
+      } catch {}
+    });
     return NextResponse.json({
       qualified: false,
       score,
@@ -245,7 +258,22 @@ export async function POST(request: Request) {
     }, { status: 500 });
   }
 
-  // PASSED — fire matching/suggest. Server-to-server call with internal secret.
+  // B4 (2026-07-01): the operator Cal resolve (Cal.com API round-trip) is
+  // independent of matching — start it NOW so it overlaps the matching call
+  // instead of adding serial latency right before the response. Same mapping
+  // + never-throws semantics as the old awaited block (any failure → '').
+  // Kicked off only on the pass path so the Cal API call count per branch is
+  // identical to before.
+  const operatorCalLinkPromise: Promise<string> = getOperatorBookingUrl('sales')
+    .then((resolvedOperatorUrl) => {
+      const CAL_PREFIX = 'https://cal.com/';
+      return resolvedOperatorUrl.startsWith(CAL_PREFIX)
+        ? resolvedOperatorUrl.slice(CAL_PREFIX.length)
+        : '';
+    })
+    .catch(() => '');
+
+  // PASSED — fire matching/suggest. Same-process call with internal secret.
   let suggestedRancher: any = null;
   let referralId: string | null = null;
   let pricingModel = 'legacy';
@@ -258,7 +286,13 @@ export async function POST(request: Request) {
 
   if (consumer['Email'] && consumer['State']) {
     try {
-      const matchRes = await fetch(`${SITE_URL}/api/matching/suggest`, {
+      // B4 (2026-07-01): direct in-process invocation of the imported suggest
+      // handler with a synthetic Request that carries EXACTLY what the old
+      // fetch sent (same URL, headers, x-internal-secret auth, body). The
+      // handler only reads headers.get('x-internal-secret') + request.json(),
+      // so a bare Request is a faithful stand-in. Response object semantics
+      // (.ok/.status/.json()) are unchanged — NextResponse extends Response.
+      const matchRes = await matchingSuggestPOST(new Request(`${SITE_URL}/api/matching/suggest`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -292,7 +326,7 @@ export async function POST(request: Request) {
           // pre-call context is loaded.
           skipBuyerIntro: true,
         }),
-      });
+      }));
       // R9 (2026-06-10): capture matching response shape on no-match
       // path so synthetic-e2e cron + manual debugs surface WHY routing
       // failed (no candidate / paused / 412 / no qualified-at race).
@@ -356,156 +390,166 @@ export async function POST(request: Request) {
   // synthetic-e2e + manual probes can see WHY no referralId was minted.
   // routingOk/referralId already in response — add diagnostic field.
 
-  // Persist path AFTER matching outcome is known. Early write above already
-  // landed Qualified At + Score + Answers + Order Type + Timing; this second
-  // write only sets the late-stage Path field so the operator can see whether
-  // the buyer chose the deposit-first vs schedule-call path.
-  try {
-    await updateRecord(TABLES.CONSUMERS, consumerId, {
-      'Qualification Path': 'rancher_meet', // default — client may flip to direct_deposit later
-    });
-  } catch (e: any) {
-    console.error('[/api/qualify] path update failed:', e?.message);
-  }
-
-  // DEPOSIT OPTIONALITY (2026-06-30): for a tier_v2 / Stripe-Connect-active
-  // rancher the buyer is deposit-capable — so the qualified email leads with
-  // a one-tap deposit (reusing the bulkRoute member-verify magic-link pattern:
-  // mint a member-login token → /api/auth/member/verify?token=…&next=
-  // /checkout/<refId>/deposit so the buyer lands authed and goes straight to
-  // Stripe) and demotes the call to a quiet "or book a 15-min call with ben"
-  // secondary. NEVER call-only for a deposit-capable rancher — that was the
-  // cash leak (a ready buyer matched to a Connect rancher could only book Ben's
-  // Cal, with no way to deposit now).
-  //
-  // The deposit deep-link needs a referralId to point at /checkout/<refId>/
-  // deposit. When matching minted one (routingOk + referralId), send the
-  // deposit-primary email. If a tier_v2 match somehow has no referralId, fall
-  // back to the call-only invite rather than a dead deposit link.
-  //
-  // Non-tier_v2 (legacy / Operator-without-Connect) ranchers genuinely can't
-  // take a self-serve deposit, so they keep the call-only invite.
-  //
-  // Score guard unchanged: low scorers (<60) stay routed but get no email —
-  // Ben follows up manually via /admin/today v2.
-  if (score >= 60 && consumer['Email']) {
-    const buyerEmail = String(consumer['Email']);
-    const buyerFirstName = String(consumer['Full Name'] || 'there').split(' ')[0];
-    const depositCapable = isDepositCapableMatch(pricingModel, referralId);
-    if (depositCapable) {
-      try {
-        const magicToken = generateMemberLoginToken(consumerId, buyerEmail);
-        const nextPath = `/checkout/${referralId}/deposit`;
-        const depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
-        const { sendQuizCompleteDepositInvite } = await import('@/lib/emailMinimal');
-        await sendQuizCompleteDepositInvite({
-          to: buyerEmail,
-          firstName: buyerFirstName,
-          score,
-          depositMagicLinkUrl,
-          rancherName: suggestedRancher?.name || '',
-          depositAmount,
-          nextProcessingDate: suggestedRancher?.nextProcessingDate || '',
-        });
-      } catch (e: any) {
-        console.warn('[/api/qualify] deposit invite fire failed:', e?.message);
-      }
-    } else if (pricingModel === 'tier_v2') {
-      // tier_v2 but no referralId to deposit against → call-only fallback.
-      try {
-        const { sendQuizCompleteCalInvite } = await import('@/lib/emailMinimal');
-        await sendQuizCompleteCalInvite({
-          to: buyerEmail,
-          firstName: buyerFirstName,
-          score,
-        });
-      } catch (e: any) {
-        console.warn('[/api/qualify] cal invite fire failed:', e?.message);
-      }
-    }
-    // Non-tier_v2 (legacy) buyers: matching/suggest already fired their
-    // off-platform rancher intro with contact info — no qualify email here.
-  }
-
-  // F2 — Meta CAPI CompleteRegistration. Server fire deduped w/ client fire
-  // via event_id (client mints `qualify-{consumerId}-{ts}` so dedup window
-  // catches both within 7d). Critical signal for ad optimization: only
-  // qualified buyers reach this step.
-  if (consumer['Email']) {
+  // ── B4 (2026-07-01): post-response side-effects ─────────────────────────
+  // Everything inside this after() is invisible to the buyer — the response
+  // only needs the match result computed above. The path write, qualify
+  // email, Meta CAPI fire, stage flip, and Telegram celebration used to run
+  // SERIALLY before the response (6+ awaited network round-trips the buyer
+  // stared at on the post-quiz spinner). next/server after() defers them past
+  // the response flush; on Vercel it rides waitUntil, so the work is
+  // guaranteed to complete instead of being killed at flush. Original
+  // relative order + per-step try/catch semantics preserved exactly — a
+  // failed email/CAPI/stage-flip/Telegram never failed the qualify before
+  // and still cannot now.
+  after(async () => {
+    // Persist path AFTER matching outcome is known. Early write above already
+    // landed Qualified At + Score + Answers + Order Type + Timing; this second
+    // write only sets the late-stage Path field so the operator can see whether
+    // the buyer chose the deposit-first vs schedule-call path.
     try {
-      const { fireCapi, buildUserData, getMetaCookiesFromRequest } = await import('@/lib/metaCapi');
-      const cookies = getMetaCookiesFromRequest(request);
-      const userData = buildUserData({
-        email: String(consumer['Email']),
-        phone: String(consumer['Phone'] || ''),
-        state: String(consumer['State'] || ''),
-        firstName: String(consumer['Full Name'] || '').split(' ')[0],
-        fbp: cookies.fbp,
-        fbc: cookies.fbc,
+      await updateRecord(TABLES.CONSUMERS, consumerId, {
+        'Qualification Path': 'rancher_meet', // default — client may flip to direct_deposit later
       });
-      // S5 (2026-06-10): use client-minted event_id when present so Meta
-      // dedupes the two fires within the 7-day window.
-      const serverEventId = clientEventId || `qualify-server-${consumerId}-${completedAt}`;
-      fireCapi([{
-        event_name: 'CompleteRegistration',
-        event_id: serverEventId,
-        event_time: Math.floor(Date.now() / 1000),
-        action_source: 'website',
-        event_source_url: `${SITE_URL}/qualify/${consumerId}`,
-        user_data: userData,
-        custom_data: {
-          currency: 'USD',
-          value: depositAmount || 0,
-          content_name: 'quiz_complete',
-          content_category: tier,
-        },
-      }]);
     } catch (e: any) {
-      console.warn('[/api/qualify] CAPI CompleteRegistration fire failed:', e?.message);
+      console.error('[/api/qualify] path update failed:', e?.message);
     }
-  }
 
-  try {
-    const { transitionBuyerStage } = await import('@/lib/contracts');
-    await transitionBuyerStage(
-      consumerId,
-      routingOk ? 'MATCHED' : 'READY',
-      `qualify:${routingOk ? 'matched' : 'no-rancher'}`
-    );
-  } catch (e: any) {
-    console.error('[/api/qualify] stage flip failed:', e?.message);
-  }
+    // DEPOSIT OPTIONALITY (2026-06-30): for a tier_v2 / Stripe-Connect-active
+    // rancher the buyer is deposit-capable — so the qualified email leads with
+    // a one-tap deposit (reusing the bulkRoute member-verify magic-link pattern:
+    // mint a member-login token → /api/auth/member/verify?token=…&next=
+    // /checkout/<refId>/deposit so the buyer lands authed and goes straight to
+    // Stripe) and demotes the call to a quiet "or book a 15-min call with ben"
+    // secondary. NEVER call-only for a deposit-capable rancher — that was the
+    // cash leak (a ready buyer matched to a Connect rancher could only book Ben's
+    // Cal, with no way to deposit now).
+    //
+    // The deposit deep-link needs a referralId to point at /checkout/<refId>/
+    // deposit. When matching minted one (routingOk + referralId), send the
+    // deposit-primary email. If a tier_v2 match somehow has no referralId, fall
+    // back to the call-only invite rather than a dead deposit link.
+    //
+    // Non-tier_v2 (legacy / Operator-without-Connect) ranchers genuinely can't
+    // take a self-serve deposit, so they keep the call-only invite.
+    //
+    // Score guard unchanged: low scorers (<60) stay routed but get no email —
+    // Ben follows up manually via /admin/today v2.
+    if (score >= 60 && consumer['Email']) {
+      const buyerEmail = String(consumer['Email']);
+      const buyerFirstName = String(consumer['Full Name'] || 'there').split(' ')[0];
+      const depositCapable = isDepositCapableMatch(pricingModel, referralId);
+      if (depositCapable) {
+        try {
+          const magicToken = generateMemberLoginToken(consumerId, buyerEmail);
+          const nextPath = `/checkout/${referralId}/deposit`;
+          const depositMagicLinkUrl = `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+          const { sendQuizCompleteDepositInvite } = await import('@/lib/emailMinimal');
+          await sendQuizCompleteDepositInvite({
+            to: buyerEmail,
+            firstName: buyerFirstName,
+            score,
+            depositMagicLinkUrl,
+            rancherName: suggestedRancher?.name || '',
+            depositAmount,
+            nextProcessingDate: suggestedRancher?.nextProcessingDate || '',
+          });
+        } catch (e: any) {
+          console.warn('[/api/qualify] deposit invite fire failed:', e?.message);
+        }
+      } else if (pricingModel === 'tier_v2') {
+        // tier_v2 but no referralId to deposit against → call-only fallback.
+        try {
+          const { sendQuizCompleteCalInvite } = await import('@/lib/emailMinimal');
+          await sendQuizCompleteCalInvite({
+            to: buyerEmail,
+            firstName: buyerFirstName,
+            score,
+          });
+        } catch (e: any) {
+          console.warn('[/api/qualify] cal invite fire failed:', e?.message);
+        }
+      }
+      // Non-tier_v2 (legacy) buyers: matching/suggest already fired their
+      // off-platform rancher intro with contact info — no qualify email here.
+    }
 
-  // Telegram celebration so operator sees every qualified buyer in real time.
-  try {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `⭐ <b>QUALIFIED BUYER</b> — ${consumer['Full Name'] || consumer['Email']} (${consumer['State'] || '?'})\n` +
-        `Score: ${score}/100 | Tier: ${tier} | Timing: ${timing} | Storage: ${storage}\n` +
-        (routingOk && suggestedRancher
-          ? `→ Routed to <b>${suggestedRancher.name}</b> (${suggestedRancher.state}) | ${pricingModel === 'tier_v2' && depositAmount ? `deposit $${depositAmount}` : 'legacy'}`
-          : `→ No rancher available — stays in READY for next opening`)
-    );
-  } catch {}
+    // F2 — Meta CAPI CompleteRegistration. Server fire deduped w/ client fire
+    // via event_id (client mints `qualify-{consumerId}-{ts}` so dedup window
+    // catches both within 7d). Critical signal for ad optimization: only
+    // qualified buyers reach this step.
+    if (consumer['Email']) {
+      try {
+        const { fireCapi, buildUserData, getMetaCookiesFromRequest } = await import('@/lib/metaCapi');
+        const cookies = getMetaCookiesFromRequest(request);
+        const userData = buildUserData({
+          email: String(consumer['Email']),
+          phone: String(consumer['Phone'] || ''),
+          state: String(consumer['State'] || ''),
+          firstName: String(consumer['Full Name'] || '').split(' ')[0],
+          fbp: cookies.fbp,
+          fbc: cookies.fbc,
+        });
+        // S5 (2026-06-10): use client-minted event_id when present so Meta
+        // dedupes the two fires within the 7-day window.
+        const serverEventId = clientEventId || `qualify-server-${consumerId}-${completedAt}`;
+        // B4 (2026-07-01): awaited now — inside after() an awaited fire is
+        // guaranteed to complete (waitUntil); the old detached promise raced the
+        // lambda freeze. Failures still only console.warn (same catch as before).
+        await fireCapi([{
+          event_name: 'CompleteRegistration',
+          event_id: serverEventId,
+          event_time: Math.floor(Date.now() / 1000),
+          action_source: 'website',
+          event_source_url: `${SITE_URL}/qualify/${consumerId}`,
+          user_data: userData,
+          custom_data: {
+            currency: 'USD',
+            value: depositAmount || 0,
+            content_name: 'quiz_complete',
+            content_category: tier,
+          },
+        }]);
+      } catch (e: any) {
+        console.warn('[/api/qualify] CAPI CompleteRegistration fire failed:', e?.message);
+      }
+    }
+
+    try {
+      const { transitionBuyerStage } = await import('@/lib/contracts');
+      await transitionBuyerStage(
+        consumerId,
+        routingOk ? 'MATCHED' : 'READY',
+        `qualify:${routingOk ? 'matched' : 'no-rancher'}`
+      );
+    } catch (e: any) {
+      console.error('[/api/qualify] stage flip failed:', e?.message);
+    }
+
+    // Telegram celebration so operator sees every qualified buyer in real time.
+    try {
+      await sendTelegramMessage(
+        TELEGRAM_ADMIN_CHAT_ID,
+        `⭐ <b>QUALIFIED BUYER</b> — ${consumer['Full Name'] || consumer['Email']} (${consumer['State'] || '?'})\n` +
+          `Score: ${score}/100 | Tier: ${tier} | Timing: ${timing} | Storage: ${storage}\n` +
+          (routingOk && suggestedRancher
+            ? `→ Routed to <b>${suggestedRancher.name}</b> (${suggestedRancher.state}) | ${pricingModel === 'tier_v2' && depositAmount ? `deposit $${depositAmount}` : 'legacy'}`
+            : `→ No rancher available — stays in READY for next opening`)
+      );
+    } catch {}
+  });
 
   // Operator booking link for the tier_v2 inline Cal booker on the result
   // page. page.tsx is a client component and can't call the server resolver,
   // so we resolve here (server-side, where CAL_API_KEY lives) and pass the
-  // embed-ready slug down as a prop. The Cal embed wants a bare 'username/slug'
-  // — strip the 'https://cal.com/' prefix the resolver returns. If the
-  // resolver fell back to /contact (no live Cal event), there's no cal.com URL
-  // to strip → send '' so the client shows "booking temporarily unavailable"
-  // instead of feeding a non-Cal URL into the embed. Never throws.
-  let operatorCalLink = '';
-  try {
-    const resolvedOperatorUrl = await getOperatorBookingUrl('sales');
-    const CAL_PREFIX = 'https://cal.com/';
-    if (resolvedOperatorUrl.startsWith(CAL_PREFIX)) {
-      operatorCalLink = resolvedOperatorUrl.slice(CAL_PREFIX.length);
-    }
-  } catch {
-    operatorCalLink = '';
-  }
+  // embed-ready slug down as a prop. The Cal embed wants a bare
+  // 'username/slug' — non-Cal fallback URLs (e.g. /contact when no live Cal
+  // event exists) map to '' so the client shows "booking temporarily
+  // unavailable" instead of feeding a non-Cal URL into the embed. B4
+  // (2026-07-01): the Cal.com round-trip started BEFORE the matching call
+  // (operatorCalLinkPromise above), so it has usually already settled by now
+  // — this await adds ~0ms instead of a serial API call. Never throws
+  // (mapping + catch live at the promise).
+  const operatorCalLink = await operatorCalLinkPromise;
 
   const res = NextResponse.json({
     qualified: true,
