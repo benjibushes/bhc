@@ -29,6 +29,7 @@
 
 import { NextResponse } from 'next/server';
 import { TABLES, getRecordById, updateRecord } from '@/lib/airtable';
+import { canSendFinalInvoice } from '@/lib/refundLifecycle';
 import { createFinalInvoiceCheckout } from '@/lib/stripeConnect';
 import { requireRancher } from '@/lib/rancherAuth';
 import { sendBuyerFinalInvoice } from '@/lib/email';
@@ -143,19 +144,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'This referral does not belong to you' }, { status: 403 });
   }
 
-  // Preconditions on referral state.
-  // U18: gate STRICTLY on Deposit Paid At — the only field stamped by actual
-  // settlement (lib/stripeSettlement.settleBuyerDeposit). The old Status
-  // fallback ('Awaiting Payment' / 'Slot Locked') was unsafe: the rancher
-  // self-serve request-deposit flow flips Status to 'Awaiting Payment' AND
-  // stamps Deposit Amount the moment the rancher REQUESTS a deposit — before
-  // the buyer pays a cent. That let a final invoice (collect-the-balance) fire
-  // on an unpaid deposit. Deposit Paid At is set only when money settles.
-  const depositPaid = !!referral['Deposit Paid At'];
-  if (!depositPaid) {
+  // Preconditions on referral state — pure gate, unit-tested in
+  // lib/refundLifecycle.test.ts, checked BEFORE any Stripe session exists:
+  //   • C2 status guard: Refunded / Closed Lost referrals can NEVER be
+  //     invoiced — a refunded buyer may still carry a stale Deposit Paid At
+  //     stamp, and the old deposit-only gate would bill them the full balance.
+  //   • U18 deposit gate: Deposit Paid At is the only field stamped by actual
+  //     settlement (lib/stripeSettlement.settleBuyerDeposit). Status alone was
+  //     unsafe: request-deposit flips Status to 'Awaiting Payment' before the
+  //     buyer pays a cent.
+  const gate = canSendFinalInvoice(referral['Status'], referral['Deposit Paid At']);
+  if (!gate.ok) {
     return NextResponse.json(
-      { error: 'The deposit has to land before you can send the final invoice. Once the buyer completes their deposit, this unlocks automatically.' },
-      { status: 400 },
+      { error: gate.message },
+      { status: gate.reason === 'blocked-status' ? 409 : 400 },
     );
   }
   const depositAmount = Number(referral['Deposit Amount'] || 0);

@@ -11,6 +11,7 @@ import { createRecord, updateRecord, getAllRecords, getRecordById, TABLES } from
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
+import { refundReferralClearFields } from '@/lib/refundLifecycle';
 
 export type PaymentStatus = 'pending' | 'succeeded' | 'refunded' | 'failed' | 'abandoned' | 'requires_webhook_replay';
 export type PayoutStatus = 'pending' | 'paid' | 'failed';
@@ -465,16 +466,12 @@ async function restoreReferralAfterRefund(
   const buyerIds: string[] = (referral['Buyer'] || []) as string[];
   const buyerId = Array.isArray(buyerIds) ? buyerIds[0] : null;
 
-  // 1. Flip Referral state. Clear Closed Won-only fields. typecast creates
-  // the 'Refunded' singleSelect option if it doesn't exist yet.
-  const referralUpdates: Record<string, any> = {
-    'Status': 'Refunded',
-    'Closed At': null,
-    'Sale Amount': null,
-    'Commission Due': null,
-    'Commission Status': null,
-    'Refunded At': now,
-  };
+  // 1. Flip Referral state. Clear Closed Won-only fields PLUS the deposit/
+  // accept lifecycle stamps (C2: stale Deposit Paid At let send-final-invoice
+  // bill a refunded buyer; stale Rancher Accepted At blocked re-deposit).
+  // Field set is pure + unit-tested in lib/refundLifecycle.test.ts. typecast
+  // creates the 'Refunded' singleSelect option if it doesn't exist yet.
+  const referralUpdates: Record<string, any> = refundReferralClearFields(now);
   try {
     await updateRecord(TABLES.REFERRALS, referralId, referralUpdates);
   } catch (e: any) {
