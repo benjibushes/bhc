@@ -1111,6 +1111,67 @@ export async function sendRancherDepositPaid(data: {
   return { success: !!r.success, suppressed: r.suppressed, reason: r.reason };
 }
 
+// ── RANCHER: fulfillment chase — did the beef make it home? ──────────────────
+// E3/B15 (2026-07-01): fires from the fulfillment-chase cron when a
+// deposit-paid, rancher-accepted referral's Processing Date passes with no
+// fulfillment confirmation (neither the legacy "Mark beef delivered" flag nor
+// the tracker's `fulfilled` status). Tier 1 (T+2d past due) is the first
+// gentle ask; tier 2 (T+5d, isSecondNudge) is a second calm nudge alongside a
+// loud operator signal. Tone is deliberately guilt-free — ranch life is busy,
+// most "missing" confirmations are just an untapped button.
+//
+// Same conventions as sendRancherDepositPaid: routes through sendEmail so it
+// inherits the suppression check + tagged Reply-To ('rnc' → replies land
+// against the rancher record). 'sendRancherFulfillmentNudge' is in
+// TRANSACTIONAL_WHITELIST — the cron stamps its claim BEFORE sending (one of
+// only 3 lifetime touches), so a frequency-cap suppression would silently
+// burn a chase slot without the rancher ever seeing it.
+export async function sendRancherFulfillmentNudge(data: {
+  rancherEmail: string;
+  rancherFirstName?: string;
+  buyerFirstName: string;
+  cut?: string; // "Quarter" | "Half" | "Whole" | freeform order type
+  processingDate?: string; // raw Airtable value, shown when parseable
+  rancherId?: string; // for tagged Reply-To
+  /** Tier-2 re-nudge — acknowledges the earlier email, slightly firmer ask. */
+  isSecondNudge?: boolean;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const rFirst = data.rancherFirstName || 'there';
+  const buyer = esc(data.buyerFirstName || 'your buyer');
+  const cut = (data.cut || '').trim() || 'beef share';
+  const procDate = data.processingDate ? new Date(String(data.processingDate)) : null;
+  const procStr =
+    procDate && !isNaN(procDate.getTime())
+      ? procDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' })
+      : '';
+  const dashUrl = `${SITE_URL}/rancher`;
+
+  const subject = data.isSecondNudge
+    ? `still showing unconfirmed — ${buyer}'s ${esc(cut)}`
+    : `quick check — how did ${buyer}'s processing go?`;
+  const leadIn = data.isSecondNudge
+    ? `Following up on my last note — ${buyer}'s ${esc(cut)}${procStr ? ` (processing was set for ${procStr})` : ''} still shows unconfirmed on our side. If it's been handed off, one tap closes the loop. If something's holding it up, just reply and we'll figure it out together.`
+    : `Hope processing week went smooth. ${buyer}'s ${esc(cut)}${procStr ? ` had a processing date of ${procStr}` : ''} and I don't see a delivery confirmation yet — no worries if it's done and the button just didn't get tapped. Ranch life is busy.`;
+
+  const r = await sendEmail({
+    to: data.rancherEmail,
+    subject,
+    templateName: 'sendRancherFulfillmentNudge',
+    _replyContext: data.rancherId ? { type: 'rnc', recordId: data.rancherId } : undefined,
+    html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;background:#0E0E0E;color:#fff;text-decoration:none;padding:14px 28px;margin:8px 0;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:14px}</style>
+</head><body><div class="container">
+  <h1>Quick check, ${esc(rFirst)}.</h1>
+  <p>${leadIn}</p>
+  <p>One tap in your dashboard marks it delivered — that's all it takes. It keeps ${buyer}'s order record straight and keeps us out of your hair:</p>
+  <p><a class="cta" href="${dashUrl}">Confirm fulfillment →</a></p>
+  <p>Processor running behind? Pickup rescheduled? Reply right here and I'll note it — no button needed.</p>
+  <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Thanks for taking care of your buyers. — Ben, BuyHalfCow</p>
+</div></body></html>`,
+  });
+  return { success: !!r.success, suppressed: r.suppressed, reason: r.reason };
+}
+
 // ── CLOSED Day 14: cuts education + first-cook playbook ──────────────────────
 // Premium DTC food's strongest retention move (per research — ButcherBox,
 // Wild Idea pattern). The buyer just got 200lbs of beef and doesn't know
