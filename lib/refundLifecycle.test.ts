@@ -6,7 +6,10 @@ import {
   refundReferralClearFields,
   canSendFinalInvoice,
   FINAL_INVOICE_BLOCKED_STATUSES,
+  shouldDecrementOnRefundRestore,
 } from './refundLifecycle';
+// Zero-dep canonical held-slot definition — safe under tsx --test.
+import { HELD_REFERRAL_STATUSES } from './capacityCount';
 
 const NOW = '2026-07-01T12:00:00.000Z';
 const DEPOSIT_STAMP = '2026-06-20T09:30:00.000Z';
@@ -77,4 +80,40 @@ test('canSendFinalInvoice ALLOWS the legitimate paid-deposit path', () => {
 
 test('blocked-status list is exactly Refunded + Closed Lost (no scope creep into eligibility)', () => {
   assert.deepEqual([...FINAL_INVOICE_BLOCKED_STATUSES].sort(), ['Closed Lost', 'Refunded']);
+});
+
+// ── C4: full refund must NOT double-decrement rancher capacity ───────────────
+// recordClose already frees the slot when a deal transitions to Closed Won
+// (prior status ∈ its active set). The refund restore then decremented AGAIN,
+// unconditionally → counter drifts BELOW the true held count → the matcher
+// over-books a genuinely-full rancher, compounding on every close→refund cycle.
+test('Closed Won at refund time → NO decrement (C4: recordClose already freed the slot)', () => {
+  // The exact production bug: restoreReferralAfterRefund only proceeds from
+  // Closed Won, and Closed Won holds no slot — so the decrement must never fire.
+  assert.equal(shouldDecrementOnRefundRestore('Closed Won'), false);
+});
+
+test('each held status at refund time → decrement (slot was still occupied)', () => {
+  // Literal list from HELD_REFERRAL_STATUSES (lib/capacityCount.ts), spelled
+  // out so a silent edit to the canonical set shows up as a diff here too.
+  for (const held of ['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Awaiting Payment', 'Slot Locked']) {
+    assert.equal(shouldDecrementOnRefundRestore(held), true, `${held} still holds a slot — refund must free it`);
+  }
+});
+
+test('gate stays in lockstep with the canonical HELD_REFERRAL_STATUSES set', () => {
+  for (const s of HELD_REFERRAL_STATUSES) {
+    assert.equal(shouldDecrementOnRefundRestore(s), true, `${s} is canonically held`);
+  }
+});
+
+test('unknown / empty / non-held statuses → NO decrement (never drift down on uncertainty)', () => {
+  // 'Pending Approval' is in recordClose's ACTIVE_REF_STATES but NOT in the
+  // canonical held set — the capacity INCR fires at Intro Sent, so a
+  // Pending Approval referral never occupied a Redis slot to give back.
+  // 'Refunded' doubles as the double-webhook-redelivery guard: even if the
+  // already-Refunded early-return were bypassed, the gate refuses a second hit.
+  for (const s of ['Refunded', 'Closed Lost', 'Pending Approval', 'Deposit Paid', 'Totally Bogus', '', null, undefined]) {
+    assert.equal(shouldDecrementOnRefundRestore(s), false, `${String(s)} must not decrement`);
+  }
 });
