@@ -142,7 +142,13 @@ export async function POST(req: Request) {
           'Segment': 'Beef Buyer',
           'Source': `rancher-page-deposit:${slug}`,
           'Order Type': CUT_LABELS[cut],
-          'Interest Beef': true,
+          // FIX (store-reserve 500): 'Interest Beef' is a singleLineText field —
+          // writing boolean `true` 422'd Airtable (typecast can't coerce
+          // bool→text), the catch returned 500, and reserve aborted BEFORE the
+          // referral was created → EVERY new store buyer's deposit failed. The
+          // real, read-everywhere field is 'Interests' (multipleSelects); match
+          // the main funnel (/api/consumers). typecast auto-creates 'Beef'.
+          'Interests': ['Beef'],
           'Intent Score': 90,
           'Intent Classification': 'High',
         });
