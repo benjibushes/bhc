@@ -8,6 +8,7 @@ import { requireRancher } from '@/lib/rancherAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import { validateAccountPatch, ACCOUNT_EDITABLE_KEYS } from '@/lib/accountProfile';
+import { validatePauseValue, validatePauseTransition } from '@/lib/pauseStatus';
 
 // Fulfillment Types option values — mirrors FULFILLMENT_OPTIONS in the setup
 // wizard + the dashboard editor so all three agree on the exact strings the
@@ -81,7 +82,10 @@ export async function PATCH(request: Request) {
 
     const body = await request.json();
 
-    // Only allow landing page fields — never let ranchers write to status/commission/auth fields
+    // Only allow landing page fields — never let ranchers write to status/commission/auth fields.
+    // NOTE: 'Active Status' is intentionally NOT in this list — the self-serve
+    // pause/resume toggle (E4b) is handled by a dedicated, whitelisted block
+    // below (lib/pauseStatus) so it can never ride the raw pass-through.
     const allowed = [
       'Slug',
       'Logo URL',
@@ -348,6 +352,64 @@ export async function PATCH(request: Request) {
         console.error('Telegram go-live notification error:', e);
       }
       return NextResponse.json({ success: false, live: false, message: `Almost there — you still need to: ${missing.join(', ')}.` });
+    }
+
+    // ── E4b (2026-07-01): self-serve pause / resume ──────────────────────
+    // 'Active Status' is accepted on PATCH but NEVER as a raw pass-through —
+    // the allowed[] list above deliberately excludes it. Two hard gates
+    // (lib/pauseStatus, unit-tested):
+    //   1. VALUE whitelist: exactly 'Active' or 'Paused'. A rancher can never
+    //      write 'Removed', 'At Capacity', or arbitrary states.
+    //   2. TRANSITION guard: current status must already be live
+    //      ('Active' / 'At Capacity' / 'Paused') — a Removed/Pending rancher
+    //      cannot self-activate through this endpoint.
+    // Handled exclusively (returns here): the dashboard toggle sends this
+    // field alone, and mixing a status flip into a bulk field write would
+    // hide it from this validation path.
+    if ('Active Status' in body) {
+      const parsed = validatePauseValue(body['Active Status']);
+      if (!parsed.ok) {
+        return NextResponse.json({ error: parsed.error }, { status: 400 });
+      }
+
+      const rancher = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
+      const currentStatus = String(rancher?.['Active Status'] || '');
+      const transition = validatePauseTransition(currentStatus, parsed.value);
+      if (!transition.ok) {
+        return NextResponse.json({ error: transition.error }, { status: 403 });
+      }
+
+      // Resume honesty: if they're still at/over their lead cap, the true
+      // state is 'At Capacity' (mirrors the update-capacity flip logic above)
+      // — routing stays gated until a deal closes, and the dashboard says so.
+      let nextStatus: string = parsed.value;
+      if (parsed.value === 'Active') {
+        const liveCurrent = await getLiveCapacity(session.rancherId);
+        const max = Number(rancher?.[MAX_ACTIVE_REFERRALS_FIELD] || 0);
+        if (max > 0 && liveCurrent >= max) nextStatus = 'At Capacity';
+      }
+
+      if (nextStatus !== currentStatus) {
+        await updateRecord(TABLES.RANCHERS, session.rancherId, { 'Active Status': nextStatus });
+        if (nextStatus === 'Active') {
+          // Supply came back — waitlisted buyers get their YES email.
+          triggerLaunchWarmup(`landing-page-resume:${session.rancherId}`);
+        }
+        // Ben visibility: supply going offline/online is an ops event.
+        try {
+          const name = rancher?.['Operator Name'] || rancher?.['Ranch Name'] || 'Unknown';
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            nextStatus === 'Paused'
+              ? `<b>RANCHER PAUSED</b> — ${name} paused new leads from the dashboard.`
+              : `<b>RANCHER RESUMED</b> — ${name} is taking new leads again${nextStatus === 'At Capacity' ? ' (still At Capacity until a deal closes)' : ''}.`
+          );
+        } catch (e) {
+          console.error('Telegram pause/resume alert error:', e);
+        }
+      }
+
+      return NextResponse.json({ success: true, activeStatus: nextStatus });
     }
 
     const fields: Record<string, any> = {};
