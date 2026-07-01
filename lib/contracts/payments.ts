@@ -601,6 +601,16 @@ export interface ReleasePayoutInput {
   reason: 'fulfillment_confirmed' | 'dispute_resolved';
 }
 
+/**
+ * @deprecated DEAD PATH under the direct-charge model (Area E4a, 2026-07-01).
+ * releasePayout() has ZERO callers: BHC charges deposits directly on the
+ * rancher's Connect account, so the platform never creates transfers and no
+ * code path ever writes the escrow Payouts table this function feeds. That
+ * left /rancher/billing's "Recent payouts" reading a permanently-empty table;
+ * the billing UI now reads LIVE Stripe payouts instead (see the stripePayouts
+ * merge in app/api/rancher/billing/data/route.ts). Kept, not deleted, per the
+ * zero-risk rule — removal belongs to a dedicated cleanup slice.
+ */
 export async function releasePayout(input: ReleasePayoutInput): Promise<{ id: string }> {
   // Idempotency: skip if a Payout row already exists for this transfer id.
   const safeTransferId = input.stripeTransferId.replace(/"/g, '\\"');
