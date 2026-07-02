@@ -1,0 +1,190 @@
+/* Brand chrome for the public discover map's Leaflet surface.
+ *
+ * Scoped under .bhc-map (set on <MapContainer className>). Imported by
+ * DiscoverMap.tsx so it code-splits with the map chunk — none of this CSS
+ * ships on pages that never mount the map.
+ *
+ * Tile provider note: we deliberately STAY on the OpenStreetMap tile server
+ * (already in use, attribution preserved) rather than swapping to Carto
+ * Positron/Voyager — Carto's free basemaps carry ambiguous fair-use terms for
+ * commercial apps without a Carto account, and BHC is commercial. Instead we
+ * style AROUND the OSM tiles: a warm sepia/desaturate filter pulls the
+ * basemap toward the bone/dust palette so the branded pins carry the color.
+ * Client-side CSS filtering of tiles is presentation-only and license-safe.
+ */
+
+.bhc-map.leaflet-container {
+  background: #ede9e2; /* bone-adjacent — shows while tiles stream in */
+  font-family: inherit; /* site font instead of Leaflet's Helvetica stack */
+}
+
+/* Calm, warm basemap: mute OSM's saturated greens/blues toward the palette. */
+.bhc-map .leaflet-tile-pane {
+  filter: sepia(0.16) saturate(0.72) contrast(0.94) brightness(1.03);
+}
+
+/* ── Pins (L.divIcon) ────────────────────────────────────────────────────────
+ * The marker element itself (.bhc-marker) is positioned by Leaflet via
+ * inline transform — NEVER transition/scale it directly or panning breaks.
+ * All hover/active motion lives on the inner .bhc-pin / .bhc-dot span. */
+.bhc-marker {
+  background: transparent;
+  border: none;
+}
+.bhc-marker:focus-visible {
+  outline: 2px solid #6b4f3f;
+  outline-offset: 2px;
+}
+
+.bhc-pin {
+  position: relative;
+  display: block;
+  width: 28px;
+  height: 36px;
+  transform-origin: 50% 100%; /* grow from the pin tip, not the center */
+  transition: transform 0.18s ease;
+  filter: drop-shadow(0 2px 2px rgba(14, 14, 14, 0.3));
+}
+.bhc-pin svg {
+  position: relative; /* paint above the halo */
+  display: block;
+}
+.bhc-marker:hover .bhc-pin,
+.bhc-marker:focus-visible .bhc-pin {
+  transform: scale(1.12);
+}
+
+/* Subtle ring behind the verified pin head — the "this one is live" glow. */
+.bhc-pin__halo {
+  position: absolute;
+  left: 14px;
+  top: 13px;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  border-radius: 9999px;
+  border: 2px solid rgba(79, 122, 63, 0.35);
+  background: rgba(79, 122, 63, 0.1);
+}
+
+/* Prospect = muted dot, not a teardrop — deliberately de-emphasized so the
+ * network reads "green is where the action is" at a glance. */
+.bhc-dot {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 9999px;
+  background: #a7a29a;
+  border: 1.5px solid #6b4f3f;
+  opacity: 0.85;
+  box-shadow: 0 1px 2px rgba(14, 14, 14, 0.25);
+  transition:
+    transform 0.18s ease,
+    opacity 0.18s ease;
+}
+.bhc-marker:hover .bhc-dot,
+.bhc-marker:focus-visible .bhc-dot {
+  transform: scale(1.3);
+  opacity: 1;
+}
+
+/* ── Clusters ────────────────────────────────────────────────────────────────
+ * Override MarkerCluster.Default.css's lime-green bubbles with charcoal cores
+ * + a saddle-tinted outer ring. No transform on hover (same positioning trap
+ * as markers) — hover just warms the core. */
+.bhc-map .marker-cluster-small,
+.bhc-map .marker-cluster-medium,
+.bhc-map .marker-cluster-large {
+  background-color: rgba(107, 79, 63, 0.25);
+}
+.bhc-map .marker-cluster-small div,
+.bhc-map .marker-cluster-medium div,
+.bhc-map .marker-cluster-large div {
+  background-color: #0e0e0e;
+  color: #f4f1ec;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 12px;
+  transition: background-color 0.15s ease;
+}
+.bhc-map .marker-cluster:hover div {
+  background-color: #6b4f3f;
+}
+
+/* ── Popups — match the storefront card look ───────────────────────────────── */
+.bhc-map .leaflet-popup-content-wrapper {
+  background: #f4f1ec;
+  color: #0e0e0e;
+  border: 1px solid #a7a29a;
+  border-radius: 2px;
+  box-shadow: 0 14px 36px rgba(14, 14, 14, 0.2);
+}
+.bhc-map .leaflet-popup-content {
+  margin: 14px 16px;
+  line-height: 1.45;
+  font-family: inherit;
+}
+.bhc-map .leaflet-popup-tip {
+  background: #f4f1ec;
+  box-shadow: 0 3px 8px rgba(14, 14, 14, 0.12);
+}
+.bhc-map a.leaflet-popup-close-button {
+  color: #6b4f3f;
+  font-size: 18px;
+  padding: 6px 6px 0 0;
+}
+.bhc-map a.leaflet-popup-close-button:hover {
+  color: #0e0e0e;
+}
+
+/* Pin card width lives here (not inline) so mobile can supersize it into a
+ * thumb-friendly near-full-width card. A literal fixed bottom sheet isn't
+ * reliable inside Leaflet's transformed panes (position:fixed resolves
+ * against the transformed ancestor), so we go big-card + autopan instead. */
+.bhc-pin-card {
+  min-width: 214px;
+  max-width: 248px;
+}
+@media (max-width: 640px) {
+  .bhc-pin-card {
+    min-width: min(70vw, 300px);
+  }
+  .bhc-map .leaflet-popup-content {
+    margin: 16px;
+  }
+}
+
+/* ── Controls ──────────────────────────────────────────────────────────────── */
+.bhc-map .leaflet-bar {
+  border-radius: 0;
+  box-shadow: 0 6px 18px rgba(14, 14, 14, 0.15);
+}
+.bhc-map .leaflet-control-zoom a {
+  background: #f4f1ec;
+  color: #0e0e0e;
+  border-color: #a7a29a;
+  border-radius: 0;
+}
+.bhc-map .leaflet-control-zoom a:hover {
+  background: #0e0e0e;
+  color: #f4f1ec;
+}
+
+/* Attribution stays legible + on-brand (OSM requires visible attribution). */
+.bhc-map .leaflet-control-attribution {
+  background: rgba(244, 241, 236, 0.85);
+  color: #6b4f3f;
+  font-size: 10px;
+}
+.bhc-map .leaflet-control-attribution a {
+  color: #6b4f3f;
+}
+
+/* Mobile: the sticky bottom CTA (fixed, ~72px tall, z-40) overlays the hero's
+ * bottom edge. Lift Leaflet's bottom controls (zoom + attribution) above it so
+ * the OSM attribution is never covered — that's a license requirement, not a
+ * nicety. */
+@media (max-width: 767px) {
+  .bhc-map .leaflet-bottom {
+    bottom: 4.5rem;
+  }
+}
