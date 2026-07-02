@@ -19,6 +19,31 @@ export const HELD_REFERRAL_STATUSES = new Set<string>([
   'Slot Locked',
 ]);
 
+// "Does this referral represent a live deal that should block a NEW match?"
+// The single answer for matching/suggest's already-in-a-deal guard,
+// member/ready-to-buy's active-referral lookup, and the stuck-buyer-recovery
+// cron. Before this predicate each caller kept its own status literal — and
+// every one of them omitted 'Awaiting Payment' + 'Slot Locked', so a buyer
+// mid-payment could be double-routed into a second referral (BLOCKER-4,
+// 2026-07-01).
+//
+// Rule: any HELD status is active. 'Pending Approval' is active ONLY with a
+// linked Rancher / Suggested Rancher — an orphan Pending Approval (no
+// attachment) is the residue of a failed matching attempt and must stay
+// recoverable (2026-05-06 bug: treating orphans as active blocked retries
+// forever). Pure + synchronous.
+export function isActiveDealReferral(ref: any): boolean {
+  const status = ref?.['Status'];
+  if (HELD_REFERRAL_STATUSES.has(status)) return true;
+  if (status === 'Pending Approval') {
+    return (
+      (Array.isArray(ref?.['Rancher']) && ref['Rancher'].length > 0) ||
+      (Array.isArray(ref?.['Suggested Rancher']) && ref['Suggested Rancher'].length > 0)
+    );
+  }
+  return false;
+}
+
 // Count held referrals attributed to a rancher from a referrals array.
 // Attribution = Status ∈ HELD_REFERRAL_STATUSES AND the `Rancher` link array
 // includes the rancher id. NOT `Suggested Rancher` — a held referral always has

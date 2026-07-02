@@ -7,6 +7,7 @@ import { resolveBuyerSession } from '@/lib/buyerAuth';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 import { checkOriginGuard } from '@/lib/csrfGuard';
+import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
 
 export const maxDuration = 30;
 
@@ -93,13 +94,23 @@ export async function POST(request: Request) {
       }
     }
 
-    // 2. Find the buyer's active matched rancher (if any)
+    // 2. Find the buyer's active matched rancher (if any).
+    //
+    // BLOCKER-4 FIX (2026-07-01): the status list is HELD_REFERRAL_STATUSES
+    // (the canonical active-deal set), not a local literal. The old literal
+    // omitted 'Awaiting Payment' + 'Slot Locked', so a buyer mid-payment who
+    // clicked Ready-to-Buy fell through to step 2.5 and re-fired
+    // matching/suggest — second referral + competing intro, or a false
+    // "we're bringing ranchers to your state" waitlist.
     let matchedRancher: any = null;
     let activeReferral: any = null;
     try {
+      const heldStatusFormula = [...HELD_REFERRAL_STATUSES]
+        .map((s) => `{Status} = "${s}"`)
+        .join(', ');
       const refs = await getAllRecords(
         TABLES.REFERRALS,
-        `AND({Buyer Email} = "${escapeAirtableValue((memberEmail || '').toLowerCase())}", OR({Status} = "Intro Sent", {Status} = "Rancher Contacted", {Status} = "Negotiation"))`
+        `AND({Buyer Email} = "${escapeAirtableValue((memberEmail || '').toLowerCase())}", OR(${heldStatusFormula}))`
       ) as any[];
       activeReferral = refs[0] || null;
       if (activeReferral) {

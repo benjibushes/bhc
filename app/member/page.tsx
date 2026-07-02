@@ -363,7 +363,16 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
               {data?.memberReferrals && data.memberReferrals.length > 0 ? (
                 <div className="space-y-4">
                   {data.memberReferrals.map((ref) => {
-                    const statusInfo = statusLabels[ref.status] || { label: ref.status, style: 'bg-dust/20 text-saddle' };
+                    // BLOCKER-1 (2026-07-01): Status='Awaiting Payment' +
+                    // Deposit Paid At set is THE post-payment state —
+                    // settlement stamps Deposit Paid At and keeps the status
+                    // until the rancher accepts (→ Slot Locked). The badge
+                    // must not say "ready to reserve" to a buyer who paid.
+                    const depositPaidAwaitingAccept =
+                      ref.status === 'Awaiting Payment' && !!ref.deposit_paid_at;
+                    const statusInfo = depositPaidAwaitingAccept
+                      ? { label: 'deposit paid', style: 'bg-sage/15 text-sage-dark' }
+                      : statusLabels[ref.status] || { label: ref.status, style: 'bg-dust/20 text-saddle' };
                     return (
                       <div key={ref.id} className="p-6 border border-dust bg-white">
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -421,7 +430,24 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                         )}
 
                         {/* F16 — engagement branches: Awaiting Payment / Slot Locked / Closed Won */}
-                        {ref.status === 'Awaiting Payment' && (
+
+                        {/* BLOCKER-1 FIX (2026-07-01): the deposit-paid branch
+                            MUST sit above the pay-CTA branch. Before it, every
+                            buyer who paid saw "your deposit invoice is ready"
+                            plus a live Pay-deposit button — a double-charge
+                            invitation on the happy path. */}
+                        {depositPaidAwaitingAccept && (
+                          <div className="mt-3 space-y-2 text-sm text-saddle">
+                            <p className="text-charcoal font-medium">
+                              ✓ Deposit paid — waiting for {ref.rancher_name || 'your rancher'} to accept your slot.
+                            </p>
+                            <p className="text-xs text-dust">
+                              You&apos;ll get an email the moment it locks.
+                            </p>
+                          </div>
+                        )}
+
+                        {ref.status === 'Awaiting Payment' && !ref.deposit_paid_at && (
                           <div className="mt-3 space-y-3 text-sm text-saddle">
                             <p className="text-charcoal font-medium">
                               Your deposit invoice is ready. Lock your slot at {ref.rancher_name}:
