@@ -11,6 +11,8 @@ import BHCPromiseBadge from '../../components/BHCPromiseBadge';
 import StickyMobileCTA from '../../components/StickyMobileCTA';
 import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
+import { depositDisplay } from '@/lib/pricing';
+import { tierFor, TIERS, commissionRateForTier } from '@/lib/tiers';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import RancherOrderForm from './RancherOrderForm';
@@ -283,6 +285,19 @@ export default async function RancherPage(
   // Payment-Link hrefs to buyers. All buy paths route through /access?rancher=
   // (the on-platform commission flow). Legacy ranchers are unaffected.
   const onConnect = isRancherOnConnect(r);
+
+  // FEE-INVISIBLE deposit display (founder directive 2026-07-01): the reserve
+  // button shows the ALL-IN deposit — commission baked in, never itemized —
+  // matching exactly what /checkout/[refId]/deposit quotes and what the card
+  // is charged. Same tier-rate + stored-deposit resolution as the checkout
+  // GET/POST (tierFor → commissionRate; stored `{Cut} Deposit` if valid, else
+  // derived ~25%). Display math only — the charge path is untouched.
+  const storefrontTier = tierFor(r);
+  const storefrontRate = storefrontTier ? TIERS[storefrontTier].commissionRate : commissionRateForTier(null);
+  const depositDueDollars = (price: any, storedDeposit: any): number | undefined => {
+    const d = depositDisplay(Number(price), Number(storedDeposit), storefrontRate);
+    return d ? Math.round(d.dueNowCents / 100) : undefined;
+  };
 
   const hasPricing = !isProspect && (quarterPrice || halfPrice || wholePrice);
   const embedUrl = getYouTubeEmbedUrl(videoUrl);
@@ -725,9 +740,9 @@ export default async function RancherPage(
                   ranchName={name}
                   operatorFirst={operatorFirst || name}
                   bookingUrl={showCalCta ? calCtaUrl : ''}
-                  quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs } : undefined}
-                  half={halfPrice ? { price: halfPrice, lbs: halfLbs } : undefined}
-                  whole={wholePrice ? { price: wholePrice, lbs: wholeLbs } : undefined}
+                  quarter={quarterPrice ? { price: quarterPrice, lbs: quarterLbs, depositDue: depositDueDollars(quarterPrice, r['Quarter Deposit']) } : undefined}
+                  half={halfPrice ? { price: halfPrice, lbs: halfLbs, depositDue: depositDueDollars(halfPrice, r['Half Deposit']) } : undefined}
+                  whole={wholePrice ? { price: wholePrice, lbs: wholeLbs, depositDue: depositDueDollars(wholePrice, r['Whole Deposit']) } : undefined}
                 />
               ) : (
                 <RancherOrderForm
