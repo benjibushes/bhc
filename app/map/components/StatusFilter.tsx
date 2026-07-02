@@ -18,6 +18,14 @@ export function statusMatches(value: StatusFilterValue, status: MapPin['status']
   return true;
 }
 
+// Rendered as toggle chips (not a <select>) inside the floating filter card —
+// one tap on mobile, and the active choice is readable at a glance.
+const OPTIONS: { value: StatusFilterValue; label: string }[] = [
+  { value: 'coming', label: 'Shipping + onboarding' },
+  { value: 'available', label: 'Shipping today' },
+  { value: 'all', label: 'Everyone' },
+];
+
 export default function StatusFilter({
   value,
   onChange,
@@ -26,17 +34,22 @@ export default function StatusFilter({
   onChange: (v: StatusFilterValue) => void;
 }) {
   return (
-    <label className="text-sm flex items-center gap-2">
-      <span className="text-saddle">Show</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value as StatusFilterValue)}
-        className="px-3 py-2 border border-dust text-sm bg-bone text-charcoal"
-      >
-        <option value="coming">Shipping + onboarding</option>
-        <option value="available">Shipping today only</option>
-        <option value="all">Everyone on the map</option>
-      </select>
-    </label>
+    <div role="group" aria-label="Who to show" className="flex flex-wrap gap-1.5">
+      {OPTIONS.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={`border px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-wide transition-base ${
+            value === o.value
+              ? 'border-charcoal bg-charcoal text-bone'
+              : 'border-dust bg-bone text-saddle hover:border-charcoal hover:text-charcoal'
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
   );
 }
