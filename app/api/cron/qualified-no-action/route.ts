@@ -1,24 +1,44 @@
 // app/api/cron/qualified-no-action/route.ts
 //
-// ABANDON-CART NUDGE — gentle re-engagement for qualified buyers who
-// didn't act (no deposit, no Cal.com booking, no inbound reply) within
-// a small window after passing /qualify.
+// ABANDON-CART NUDGE — gentle re-engagement for matched buyers who
+// didn't act (no deposit) within a small window after their intro
+// went out.
 //
 // Pattern from Crowd Cow + ButcherBox + Shopify cart abandonment data:
 // 60-90 min post-decision is the sweet spot for first nudge. Earlier =
 // pushy; later = forgotten. Email + optional SMS (gated on opt-in).
 //
-// Schedule: every 30 min. Window: Qualified At 30min-4h ago.
-// Dedup: stamp Notes "[no-action-nudge YYYY-MM-DD]" so each buyer fires
-// at most once.
+// Schedule: hourly. Window: Intro Sent At 30min-4h ago.
+// Dedup: stamp Consumer Notes "[no-action-nudge YYYY-MM-DD]" so each buyer
+// fires at most once.
+//
+// SELECTOR HISTORY (why this cron queries REFERRALS, not Consumers):
+// the previous Consumers formula excluded {Buyer Stage}='MATCHED', while the
+// per-buyer loop required a Referral with Status='Intro Sent'. Matching sets
+// BOTH together (matching/suggest flips the Referral to 'Intro Sent' and the
+// Consumer to Buyer Stage='MATCHED' in the same pass) — so the formula
+// pre-excluded everyone the loop could nudge. Hourly cron, selected ~0 rows,
+// nudged nobody, forever. (A prior comment here mis-blamed the "tight 4h
+// window" — the window was fine; the selector was structurally dead.)
+// The selection now lives in lib/noActionNudge.ts, pure + red-first tested:
+// Referrals with Status='Intro Sent' + blank Deposit Paid At minted 30min-4h
+// ago, joined to the Consumer for the suppression trio + dedup + opt-ins.
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import {
+  NUDGE_WINDOW_MIN_MS,
+  NUDGE_WINDOW_MAX_MS,
+  buildNudgeReferralFormula,
+  isNudgeEligibleReferral,
+  isNudgeEligibleConsumer,
+} from '@/lib/noActionNudge';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { isSmsWindow } from '@/lib/sendWindow';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { generateMemberLoginToken } from '@/lib/secrets';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 
@@ -36,10 +56,24 @@ function esc(s: string): string {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Deposit CTA: the deposit page requires the bhc-member-auth cookie, so the
+// link is the magic-link verify hop (`/api/auth/member/verify?token=…&next=
+// /checkout/<refId>/deposit`) — verify sets the cookie then 302s to the
+// deposit page. Same pattern as the intro email (matching/suggest) and
+// bulkRoute. A bare /checkout link would 401; the previous /member CTA made
+// the buyer sign in and re-find their match — this cron already knows the
+// exact referral, so send them straight to the money page.
+function buildDepositMagicLink(buyerId: string, buyerEmail: string, referralId: string): string {
+  const magicToken = generateMemberLoginToken(buyerId, buyerEmail);
+  const nextPath = `/checkout/${referralId}/deposit`;
+  return `${SITE_URL}/api/auth/member/verify?token=${magicToken}&next=${encodeURIComponent(nextPath)}`;
+}
+
 function buildEmailHtml(args: {
   firstName: string;
   rancherName: string;
   state: string;
+  depositUrl: string;
 }): { subject: string; html: string } {
   const first = args.firstName || 'there';
   const subject = `${first}, your match with ${args.rancherName} is still open`;
@@ -50,7 +84,7 @@ function buildEmailHtml(args: {
   <p><strong>What happens if you don't act:</strong> the slot sits open for someone else in your state. ${esc(args.rancherName)}&rsquo;s processing dates fill on a first-come basis.</p>
   <p><strong>If you have questions before deciding:</strong> hit reply. I read every email and answer same-day.</p>
   <div style="text-align:center;margin:24px 0;">
-    <a href="${SITE_URL}/member" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Open your match →</a>
+    <a href="${args.depositUrl}" style="display:inline-block;padding:14px 32px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;font-weight:bold;font-size:13px;letter-spacing:1px;text-transform:uppercase;">Reserve your slot →</a>
   </div>
   <p style="font-size:13px;color:#6B4F3F;">— Benjamin, BuyHalfCow</p>
 </div>
@@ -69,76 +103,64 @@ async function realHandler(_request: Request): Promise<CronResult> {
     return { status: 'partial', recordsTouched: 0, notes: 'skipped — MATCHING_ENABLED=false' };
   }
 
-  // Window: qualified within last 4h but at least 30min ago.
-  const cutoffStart = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
-  const cutoffEnd = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  // Window: intro sent within last 4h but at least 30min ago. Anchoring on
+  // Intro Sent At (not Qualified At) means buyers matched hours after
+  // qualifying — batch-approve, demand-router — still get their nudge.
+  const now = Date.now();
+  const cutoffStart = new Date(now - NUDGE_WINDOW_MAX_MS).toISOString();
+  const cutoffEnd = new Date(now - NUDGE_WINDOW_MIN_MS).toISOString();
 
-  // Pull recent qualified buyers. Filter formula keeps the cron's Airtable
-  // I/O bounded to a small window.
-  //
-  // `Deposit Paid At` field lives on Referrals, NOT Consumers — original CONV-4
-  // formula was invalid and the cron errored every 30min until this fix.
-  // Use Buyer Stage as the proxy: any non-closed buyer w/ Qualified At is a
-  // valid abandon-cart candidate. The per-referral lookup below additionally
-  // requires Status='Intro Sent', so referrals that already moved to Closed
-  // Won (deposit paid) won't trigger a nudge anyway.
-  // S8 (2026-06-10): use IS_AFTER / IS_BEFORE for dateTime comparison —
-  // string > / < on dateTime fields is unreliable across Airtable versions.
-  // qualified-no-action's 0 matches is partially explained by the 4h window
-  // being tight (qualified buyers are quickly routed if rancher available).
-  const formula = `AND(
-    NOT({Qualified At} = BLANK()),
-    IS_AFTER({Qualified At}, '${cutoffStart}'),
-    IS_BEFORE({Qualified At}, '${cutoffEnd}'),
-    {Buyer Stage} != 'CLOSED',
-    {Buyer Stage} != 'MATCHED',
-    {Unsubscribed} != TRUE(),
-    {Bounced} != TRUE(),
-    {Complained} != TRUE(),
-    NOT(FIND('[no-action-nudge', {Notes}))
-  )`.replace(/\s+/g, ' ');
-
-  let candidates: any[] = [];
+  // Referrals-first selection (see header + lib/noActionNudge.ts). The
+  // formula bounds Airtable I/O to the window; the pure predicates re-check
+  // every row in the loop (formula = optimization, predicate = truth).
+  let candidateRefs: any[] = [];
   try {
-    candidates = (await getAllRecords(TABLES.CONSUMERS, formula)) as any[];
+    candidateRefs = (await getAllRecords(
+      TABLES.REFERRALS,
+      buildNudgeReferralFormula(cutoffStart, cutoffEnd),
+    )) as any[];
   } catch (e: any) {
     return { status: 'error', recordsTouched: 0, notes: `airtable query failed: ${e?.message}` };
   }
 
-  if (candidates.length === 0) {
-    return { status: 'success', recordsTouched: 0, notes: 'no qualified-no-action buyers in window' };
+  if (candidateRefs.length === 0) {
+    return { status: 'success', recordsTouched: 0, notes: 'no intro-sent-no-deposit referrals in window' };
   }
 
   let nudgedEmail = 0;
   let nudgedSms = 0;
   const failures: string[] = [];
+  // A buyer with multiple in-window referrals gets at most ONE nudge per run
+  // (the Notes stamp already guarantees once-ever; this guards within-run).
+  const seenBuyers = new Set<string>();
 
-  for (const c of candidates) {
-    const buyerId = c.id;
+  for (const ref of candidateRefs) {
+    // Re-check the formula's promise in JS — the inline formula burned this
+    // cron once already (see header).
+    if (!isNudgeEligibleReferral(ref, now)) continue;
+
+    const buyerId: string = (Array.isArray(ref['Buyer']) && ref['Buyer'][0]) || '';
+    if (!buyerId || seenBuyers.has(buyerId)) continue;
+    seenBuyers.add(buyerId);
+
+    // Join to the Consumer for the suppression trio + dedup stamp + opt-ins.
+    let c: any;
+    try {
+      c = await getRecordById(TABLES.CONSUMERS, buyerId);
+    } catch {
+      // Lookup failed — skip rather than nudge blind (suppression unknown).
+      continue;
+    }
+    if (!isNudgeEligibleConsumer(c)) continue;
+
     const email = String(c['Email'] || '').trim();
     const firstName = String(c['Full Name'] || '').split(' ')[0] || 'there';
     const state = String(c['State'] || '');
-    if (!email) continue;
-
-    // Look up most recent active referral for this buyer to get rancher
-    // name. Skip nudge if no active match (they're not in a state where
-    // this nudge makes sense — likely waitlisted or already closed).
-    let rancherName = 'your rancher';
-    try {
-      const refs = (await getAllRecords(
-        TABLES.REFERRALS,
-        `AND(FIND('${buyerId}', ARRAYJOIN({Buyer})) > 0, {Status}='Intro Sent')`,
-      )) as any[];
-      if (refs.length === 0) continue;
-      rancherName = refs[0]['Suggested Rancher Name'] || refs[0]['Rancher Name'] || 'your rancher';
-    } catch {
-      // Lookup failed — skip rather than nudge with generic copy.
-      continue;
-    }
+    const rancherName = ref['Suggested Rancher Name'] || ref['Rancher Name'] || 'your rancher';
 
     // Claim BEFORE sending: stamp the dedup note first so a stamp failure skips
-    // + retries next run rather than re-nudging. This cron runs every 30 min
-    // with a ~3.5h eligibility window (~7 ticks), and the template isn't
+    // + retries next run rather than re-nudging. This cron runs hourly with a
+    // ~3.5h eligibility window (multiple ticks), and the template isn't
     // frequency-capped against itself — so a stamp-after-send (the old order)
     // would double-nudge by email AND SMS on any stamp hiccup.
     try {
@@ -151,9 +173,12 @@ async function realHandler(_request: Request): Promise<CronResult> {
       continue;
     }
 
+    // One-tap deposit deep link for THIS referral (cookie-setting magic hop).
+    const depositUrl = buildDepositMagicLink(buyerId, email, ref.id);
+
     // Email
     try {
-      const { subject, html } = buildEmailHtml({ firstName, rancherName, state });
+      const { subject, html } = buildEmailHtml({ firstName, rancherName, state, depositUrl });
       const r: any = await sendEmail({
         to: email,
         subject,
@@ -178,7 +203,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
       try {
         const ok = await sendSMSToConsumer({
           consumer: c,
-          body: `Hey ${firstName} — your match with ${rancherName} is still open. Lock your slot: ${SITE_URL}/member — Ben @ BuyHalfCow (reply STOP to opt out)`,
+          body: `Hey ${firstName} — your match with ${rancherName} is still open. Lock your slot: ${depositUrl} — Ben @ BuyHalfCow (reply STOP to opt out)`,
           reason: 'qualified-no-action-nudge',
         });
         if (ok) nudgedSms++;
@@ -203,7 +228,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status,
     recordsTouched: nudgedEmail + nudgedSms,
-    notes: `email=${nudgedEmail} sms=${nudgedSms} failures=${failures.length}`,
+    notes: `refsInWindow=${candidateRefs.length} email=${nudgedEmail} sms=${nudgedSms} failures=${failures.length}`,
   };
 }
 

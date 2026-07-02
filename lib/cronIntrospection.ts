@@ -139,6 +139,36 @@ export async function getLatestCronRuns(
 }
 
 /**
+ * THE dead-man's-switch decision, extracted pure (2026-07-02) so it has two
+ * consumers instead of one:
+ *   - buildCronStatusCard (pull — Telegram /cronstatus)
+ *   - daily-health-digest (push — loud sendOperatorSignal when a money
+ *     safety-net cron writes NO row; previously the digest only inspected
+ *     rows that EXIST, so a silently-unscheduled cron was invisible. In-repo
+ *     precedent: Vercel skipped commission-invoices for 60+ days — 0 rows,
+ *     0 alerts.)
+ *
+ * Returns every EXPECTED_CRONS_24H entry whose latest run is absent from
+ * `latestRuns` OR older than `windowMs` before `nowISO` (present-but-old —
+ * matters when the caller fetched with a wider sinceMs). An unparseable
+ * startedAt counts as missing: the watchdog must never call garbage healthy.
+ * EXCLUDED_CRONS_24H entries are never returned (they aren't in EXPECTED).
+ */
+export function missingExpectedCrons(
+  latestRuns: ReadonlyMap<string, CronRunSummary>,
+  nowISO: string,
+  windowMs = 24 * 60 * 60 * 1000,
+): string[] {
+  const cutoffMs = new Date(nowISO).getTime() - windowMs;
+  return EXPECTED_CRONS_24H.filter((name) => {
+    const run = latestRuns.get(name);
+    if (!run) return true;
+    const startedMs = new Date(run.startedAt).getTime();
+    return !Number.isFinite(startedMs) || startedMs < cutoffMs;
+  });
+}
+
+/**
  * Renders a Telegram-friendly summary card showing per-cron last-run status
  * + any expected crons that haven't fired in the window.
  */
@@ -163,10 +193,8 @@ export async function buildCronStatusCard(sinceMs = 24 * 60 * 60 * 1000): Promis
   };
 
   const lines: string[] = [];
-  const seen = new Set<string>();
   const sortedNames = Array.from(latest.keys()).sort();
   for (const name of sortedNames) {
-    seen.add(name);
     const r = latest.get(name)!;
     const ago = humanAgo(Date.now() - new Date(r.startedAt).getTime());
     const notesShort = r.notes.length > 70 ? r.notes.slice(0, 67) + '...' : r.notes;
@@ -175,7 +203,10 @@ export async function buildCronStatusCard(sinceMs = 24 * 60 * 60 * 1000): Promis
     );
   }
 
-  const missing = EXPECTED_CRONS_24H.filter((c) => !seen.has(c));
+  // Same decision the daily-health-digest dead-man's switch pushes through
+  // sendOperatorSignal — one helper, two consumers. windowMs mirrors sinceMs
+  // so a wider card window never age-flags rows it deliberately fetched.
+  const missing = missingExpectedCrons(latest, new Date().toISOString(), sinceMs);
   if (missing.length) {
     lines.push('');
     lines.push(`🚨 <b>No run in 24h:</b> ${missing.join(', ')}`);

@@ -26,6 +26,12 @@ export type SignalKind =
   | 'verification-request'
   | 'recovery-suggestion'
   | 'audit'
+  // Money-failure classes (2026-07-02): dispute/chargeback cards, failed
+  // rancher payouts, and Connect detach events ride the loud rail — the kind
+  // names them in the SMS/email fallback ("BHC ALERT DISPUTE: …").
+  | 'dispute'
+  | 'payout'
+  | 'connect'
   | 'other';
 
 interface SignalInput {

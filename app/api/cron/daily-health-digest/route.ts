@@ -15,10 +15,20 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { getLatestCronRuns, missingExpectedCrons } from '@/lib/cronIntrospection';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 60;
+
+// Dead-man's-switch window (2026-07-02). 25h, not 24h: daily crons scheduled
+// at a fixed slot are ~24h ± Vercel-jitter old at digest time (the digest's
+// own yesterday-row is the worst case — it starts at the same minute this
+// query runs), so a hard 24h cutoff coin-flips a false alarm every day. The
+// 1h grace only delays detection of a genuinely dead daily cron by 1h; a
+// missed slot still surfaces (~48h-old latest row is far outside 25h).
+const WATCHDOG_WINDOW_MS = 25 * 60 * 60 * 1000;
 
 interface CronResult {
   status: 'success' | 'partial' | 'error';
@@ -66,6 +76,44 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const failedCronNames = Array.from(
     new Set(cronErrorRuns.map((r: any) => String(r['Name'] || 'unknown')))
   );
+
+  // ── Dead-man's switch (2026-07-02) ──
+  // Everything above only inspects Cron Runs rows that EXIST — a cron that
+  // writes NO row (Vercel silently dropping a schedule; in-repo precedent:
+  // commission-invoices skipped for 60+ days) was invisible. The missing-set
+  // logic already existed in lib/cronIntrospection but its sole consumer was
+  // the pull-only Telegram /cronstatus command. Push it here daily.
+  // null = the watchdog read itself failed (Airtable outage) — in that case
+  // we must NOT scream "every cron is missing"; the readErrors rail below
+  // already downgrades the run and flags the blind spot.
+  let missingCrons: string[] | null = null;
+  try {
+    const latestRuns = await getLatestCronRuns(WATCHDOG_WINDOW_MS);
+    missingCrons = missingExpectedCrons(latestRuns, new Date().toISOString(), WATCHDOG_WINDOW_MS);
+  } catch (e: any) {
+    readErrors.push(`cronWatchdog: ${e?.message || 'failed'}`);
+  }
+
+  if (missingCrons && missingCrons.length > 0) {
+    // Loud + dedupe 12h: sendOperatorSignal rides Telegram and falls back to
+    // SMS/email on Telegram failure (lib/signalDelivery.ts) — the missing set
+    // includes the frozen-money nets (deposit-accept-sla, orphan-checkout-
+    // reaper, final-invoice-dunning, stuck-referral-reaper), so this alert
+    // must not die with the wire. Never throws.
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'system-error',
+      summary: `CRON WATCHDOG — ${missingCrons.length} expected cron${missingCrons.length === 1 ? '' : 's'} wrote NO run in 25h`,
+      detail:
+        `${missingCrons.join(', ')}\n\n` +
+        `These crons are scheduled in vercel.json but left no Cron Runs row — ` +
+        `check the Vercel cron schedule / recent deploys (Vercel has silently ` +
+        `dropped schedules before: commission-invoices, 60+ days). ` +
+        `/cronstatus for the full board.`,
+      dedupeKey: 'cron-watchdog-missing',
+      dedupeWindowMs: 12 * 60 * 60 * 1000,
+    });
+  }
 
   // Funnel
   const signups24h = consumers.length;
@@ -133,13 +181,19 @@ async function realHandler(_request: Request): Promise<CronResult> {
     cronErrorRuns.length > 0
       ? `🚨 <b>Cron failures (24h):</b> ${cronErrorRuns.length} runs across ${failedCronNames.length} crons → ${failedCronNames.slice(0, 8).join(', ')}`
       : `✅ <b>Crons healthy</b> — 0 failures in 24h`,
+    missingCrons === null
+      ? `⚠️ <b>Watchdog blind:</b> Cron Runs read failed — missing-cron check skipped this digest`
+      : missingCrons.length > 0
+        ? `🚨 <b>No run in 25h:</b> ${missingCrons.join(', ')} — check Vercel cron schedule / recent deploys`
+        : `✅ <b>Watchdog:</b> all expected crons wrote a run in the last 25h`,
   ];
 
   // Surface read failures IN the digest so a blind monitor is impossible.
+  // 6 reads total: the 5 parallel pulls + the watchdog's Cron Runs read.
   if (readErrors.length > 0) {
     lines.push(
       '',
-      `⚠️ <b>Health read errors:</b> ${readErrors.length}/5 Airtable reads failed (${readErrors.map((e) => e.split(':')[0]).join(', ')}) — numbers above are incomplete.`
+      `⚠️ <b>Health read errors:</b> ${readErrors.length}/6 Airtable reads failed (${readErrors.map((e) => e.split(':')[0]).join(', ')}) — numbers above are incomplete.`
     );
   }
 
@@ -156,7 +210,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status,
     recordsTouched: 1,
-    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} cronErrors=${cronErrorRuns.length} readErrors=${readErrors.length}`,
+    notes: `signups=${signups24h} qualified=${qualified24h} closed=${referralsClosedToday.length} cronErrors=${cronErrorRuns.length} missingCrons=${missingCrons === null ? 'read-failed' : missingCrons.length} readErrors=${readErrors.length}`,
   };
 }
 
