@@ -5,6 +5,7 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 60;
 
@@ -164,15 +165,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
 
 async function authedHandler(request: Request): Promise<Response> {
   // Cron auth — CRON_SECRET is required (validated at import via lib/secrets).
-  const { CRON_SECRET } = await import('@/lib/secrets');
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${CRON_SECRET}`) {
-    const url = new URL(request.url);
-    const secret = url.searchParams.get('secret');
-    if (secret !== CRON_SECRET) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('compliance-reminders', realHandler)(request);
 }
 

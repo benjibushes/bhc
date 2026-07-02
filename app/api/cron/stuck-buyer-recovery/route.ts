@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { CRON_SECRET } from '@/lib/secrets';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 import { isActiveDealReferral } from '@/lib/capacityCount';
 
 // Stuck-buyer recovery — runs daily and retries matching for buyers who
@@ -229,15 +229,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  if (CRON_SECRET) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${CRON_SECRET}`) {
-      const { searchParams } = new URL(request.url);
-      if (searchParams.get('secret') !== CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('stuck-buyer-recovery', realHandler)(request);
 }
 

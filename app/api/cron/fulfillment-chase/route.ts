@@ -34,8 +34,8 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
-import { CRON_SECRET } from '@/lib/secrets';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 import { sendRancherFulfillmentNudge } from '@/lib/email';
 import { resolveRancherEmail, rancherFirstName } from '@/lib/rancherNotify';
 import { FULFILLMENT_FIELDS } from '@/lib/fulfillmentTracking';
@@ -229,15 +229,8 @@ async function realHandler(
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  if (CRON_SECRET) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${CRON_SECRET}`) {
-      const { searchParams } = new URL(request.url);
-      if (searchParams.get('secret') !== CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('fulfillment-chase', realHandler)(request);
 }
 
