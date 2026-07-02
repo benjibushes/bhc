@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countHeldReferrals, HELD_REFERRAL_STATUSES } from './capacityCount';
+import { countHeldReferrals, isActiveDealReferral, HELD_REFERRAL_STATUSES } from './capacityCount';
 
 const RID = 'recRancher1';
 const OTHER = 'recRancher2';
@@ -81,4 +81,43 @@ test('HELD_REFERRAL_STATUSES is exactly the canonical 5-status set', () => {
   assert.ok(HELD_REFERRAL_STATUSES.has('Awaiting Payment'));
   assert.ok(!HELD_REFERRAL_STATUSES.has('Pending Approval'));
   assert.ok(!HELD_REFERRAL_STATUSES.has('Closed Won'));
+});
+
+// ── isActiveDealReferral — "does this referral block a NEW match?" ──────────
+
+test('isActiveDealReferral: every held status is an active deal', () => {
+  for (const status of HELD_REFERRAL_STATUSES) {
+    assert.equal(isActiveDealReferral({ Status: status }), true, status);
+  }
+});
+
+test('isActiveDealReferral: Awaiting Payment and Slot Locked block a new match (BLOCKER-4)', () => {
+  // The mid-payment states the old ad-hoc lists omitted — a buyer with a live
+  // deposit request must NOT be double-routed or waitlisted.
+  assert.equal(isActiveDealReferral({ Status: 'Awaiting Payment' }), true);
+  assert.equal(isActiveDealReferral({ Status: 'Slot Locked' }), true);
+});
+
+test('isActiveDealReferral: Pending Approval counts ONLY with a linked rancher', () => {
+  // Orphan Pending Approval (no Rancher / Suggested Rancher) is a failed match
+  // attempt and must stay recoverable (2026-05-06 bug: 15 buyers stuck forever).
+  assert.equal(isActiveDealReferral({ Status: 'Pending Approval' }), false);
+  assert.equal(isActiveDealReferral({ Status: 'Pending Approval', Rancher: [] }), false);
+  assert.equal(isActiveDealReferral({ Status: 'Pending Approval', Rancher: [RID] }), true);
+  assert.equal(isActiveDealReferral({ Status: 'Pending Approval', 'Suggested Rancher': [RID] }), true);
+});
+
+test('isActiveDealReferral: terminal / dormant / unknown statuses are not active', () => {
+  assert.equal(isActiveDealReferral({ Status: 'Closed Won' }), false);
+  assert.equal(isActiveDealReferral({ Status: 'Closed Lost' }), false);
+  assert.equal(isActiveDealReferral({ Status: 'Waitlisted' }), false);
+  assert.equal(isActiveDealReferral({ Status: 'Dormant' }), false);
+  assert.equal(isActiveDealReferral({ Status: '' }), false);
+});
+
+test('isActiveDealReferral: malformed input does not throw', () => {
+  assert.equal(isActiveDealReferral(null as any), false);
+  assert.equal(isActiveDealReferral(undefined as any), false);
+  assert.equal(isActiveDealReferral({} as any), false);
+  assert.equal(isActiveDealReferral({ Status: 'Pending Approval', Rancher: 'not-an-array' } as any), false);
 });
