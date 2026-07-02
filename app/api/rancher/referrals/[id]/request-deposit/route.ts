@@ -46,7 +46,7 @@ import { createDepositCheckout } from '@/lib/stripeConnect';
 import { requireRancher } from '@/lib/rancherAuth';
 import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { tierFor, type TierSlug } from '@/lib/tiers';
+import { tierFor, TIERS, type TierSlug } from '@/lib/tiers';
 import { decideDepositRequest, isCutTier } from '@/lib/depositRequest';
 
 export const dynamic = 'force-dynamic';
@@ -239,6 +239,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // Email the buyer the deposit link (reuses the deposit-invoice email).
+  // chargedCents mirrors createDepositCheckout's totalChargedCents exactly
+  // (deposit + round(fullSale × tier rate)) so the quoted "Today" figure is
+  // byte-identical to what Stripe charges. FEE-INVISIBLE: one number, no split.
   try {
     await sendBuyerDepositInvoice({
       buyerEmail,
@@ -247,6 +250,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       cutTier: cut,
       depositCents,
       fullSaleCents,
+      chargedCents: depositCents + Math.round(fullSaleCents * TIERS[tierSlug].commissionRate),
       checkoutUrl,
     });
   } catch (e: any) {

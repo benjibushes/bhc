@@ -4954,7 +4954,7 @@ export async function sendBuyerFinalInvoice(data: {
   <p style="text-align:center;margin:24px 0;">
     <a href="${data.checkoutUrl}" class="cta">Pay final balance &rarr;</a>
   </p>
-  <p style="font-size:13px;color:#6B4F3F;">This payment goes directly to ${esc(data.ranchName)} — 100% of the balance, no BuyHalfCow fee. Our service fee was already collected with your deposit, upfront.</p>
+  <p style="font-size:13px;color:#6B4F3F;">This payment goes directly to ${esc(data.ranchName)} — 100% of the balance, straight to the rancher.</p>
   <p style="font-size:13px;color:#6B4F3F;">Questions about cuts, pickup, or timing? Reply to this email — it goes straight to the rancher.</p>
   <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,

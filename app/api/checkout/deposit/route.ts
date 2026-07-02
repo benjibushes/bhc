@@ -14,7 +14,7 @@ import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createDepositCheckout, getConnectAccountStatus } from '@/lib/stripeConnect';
 import { validateDepositConsent } from '@/lib/depositConsent';
 import { recordDeposit } from '@/lib/contracts/payments';
-import { MIN_TIER_PRICE, deriveDeposit } from '@/lib/pricing';
+import { MIN_TIER_PRICE, deriveDeposit, depositDisplay } from '@/lib/pricing';
 import { tierFor, TIERS, commissionRateForTier } from '@/lib/tiers';
 import { resolveDepositAuth } from '@/lib/buyerAuth';
 import { claimOnce } from '@/lib/rancherCapacity';
@@ -535,20 +535,16 @@ export async function GET(req: Request) {
 
   const pricingModel = String(rancher['Pricing Model'] || 'legacy');
 
-  // Per-cut money breakdown for the buyer deposit page. Mirrors the POST
-  // handler so the page shows the EXACT charge (no surprises at Stripe):
-  //   • fee   = round(fullPrice × commissionRate)  — ADDED ON TOP of deposit
-  //             (POST route.ts:230, stripeConnect.ts:232). Rate resolved via
-  //             tierFor(rancher) exactly like POST route.ts:120; falls back to
-  //             the legacy default (commissionRateForTier) when tier is unset
-  //             so an un-tiered rancher still itemizes instead of NaN.
-  //   • deposit = stored `{Cut} Deposit` if a valid 0<dep≤price, ELSE
-  //             deriveDeposit(price) (a sane ~25% partial). This is the SAME
-  //             resolution POST uses (route.ts ~202), so the page shows exactly
-  //             what the card is charged — no full-price-upfront surprise for an
-  //             un-backfilled rancher.
-  //   • dueNow  = deposit + fee   (what the card is actually charged)
-  //   • balance = fullPrice − deposit (paid rancher-direct at pickup)
+  // Per-cut money breakdown for the buyer deposit page, via the shared
+  // depositDisplay helper (lib/pricing.ts) — same deposit resolution + fee
+  // rounding order as the POST charge path, so dueNowCents is EXACTLY what
+  // the card is charged (no surprises at Stripe). Rate resolved via
+  // tierFor(rancher) exactly like POST; falls back to the legacy default
+  // (commissionRateForTier) when tier is unset.
+  //
+  // FEE-INVISIBLE (founder directive 2026-07-01): the buyer UI renders ONLY
+  // dueNowCents. depositCents/feeCents stay on the payload for API-shape
+  // compat (and internal tooling) but are never displayed buyer-side.
   const tier = tierFor(rancher);
   const commissionRate = tier ? TIERS[tier].commissionRate : commissionRateForTier(null);
   const depositFieldByCut: Record<string, string> = {
@@ -558,26 +554,20 @@ export async function GET(req: Request) {
   };
   const buildCut = (slug: 'quarter' | 'half' | 'whole', label: string, priceField: string, lbsField: string) => {
     const price = Number(rancher[priceField]) || null;
-    if (price === null || price <= 0) {
-      return { slug, label, price: null, lbs: String(rancher[lbsField] || ''), depositCents: null, feeCents: null, dueNowCents: null, balanceCents: null };
+    const lbs = String(rancher[lbsField] || '');
+    const d = price === null ? null : depositDisplay(price, Number(rancher[depositFieldByCut[slug]]), commissionRate);
+    if (price === null || price <= 0 || !d) {
+      return { slug, label, price: null, lbs, depositCents: null, feeCents: null, dueNowCents: null, balanceCents: null };
     }
-    const fullCents = Math.round(price * 100);
-    const storedDeposit = Number(rancher[depositFieldByCut[slug]]);
-    const depositDollars =
-      Number.isFinite(storedDeposit) && storedDeposit > 0 && storedDeposit <= price
-        ? storedDeposit
-        : deriveDeposit(price);
-    const depositCents = Math.round(depositDollars * 100);
-    const feeCents = Math.round(price * 100 * commissionRate);
     return {
       slug,
       label,
       price,
-      lbs: String(rancher[lbsField] || ''),
-      depositCents,
-      feeCents,
-      dueNowCents: depositCents + feeCents,
-      balanceCents: fullCents - depositCents,
+      lbs,
+      depositCents: d.depositCents,
+      feeCents: d.feeCents,
+      dueNowCents: d.dueNowCents,
+      balanceCents: d.balanceCents,
     };
   };
 

@@ -85,6 +85,50 @@ export function deriveDeposit(tierPrice: number, pct = DEPOSIT_PCT, min = DEPOSI
   return Math.min(floored, p - 50);
 }
 
+// ── Fee-invisible buyer display math (founder directive 2026-07-01) ───────
+// The buyer sees ONE price: dueNowCents — the deposit with BHC commission
+// already baked in. No buyer-facing surface may itemize deposit vs fee.
+// DISPLAY ONLY: the charge path (POST /api/checkout/deposit +
+// lib/stripeConnect.createDepositCheckout) keeps its own math; this helper
+// mirrors it exactly (same deposit resolution, same fee rounding order:
+// cents first, then rate) so what we display equals what the card is charged.
+// feeCents stays on the shape for rancher/admin surfaces + API compat — it is
+// never rendered to a buyer.
+export interface DepositDisplay {
+  depositCents: number;  // rancher-portion reserve (stored valid or derived)
+  feeCents: number;      // BHC commission — internal/rancher-facing only
+  dueNowCents: number;   // THE buyer-facing number (deposit + fee)
+  balanceCents: number;  // fullPrice − deposit, paid rancher-direct later
+}
+
+export function depositDisplay(
+  priceDollars: number,
+  storedDepositDollars: number | null | undefined,
+  commissionRate: number,
+): DepositDisplay | null {
+  const price = Number(priceDollars);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const fullCents = Math.round(price * 100);
+  // Same stored-deposit resolution as POST /api/checkout/deposit (~route.ts:233)
+  // and GET buildCut: a stored deposit is honored only when 0 < dep ≤ price,
+  // else fall back to the derived ~25% partial.
+  const stored = Number(storedDepositDollars);
+  const depositDollars =
+    Number.isFinite(stored) && stored > 0 && stored <= price
+      ? stored
+      : deriveDeposit(price);
+  const depositCents = Math.round(depositDollars * 100);
+  // POST ordering: fullSaleCents first, THEN rate — matches the actual charge
+  // (route.ts:261 platformFeeCents = round(fullSaleCents × commissionRate)).
+  const feeCents = Math.round(fullCents * commissionRate);
+  return {
+    depositCents,
+    feeCents,
+    dueNowCents: depositCents + feeCents,
+    balanceCents: fullCents - depositCents,
+  };
+}
+
 /** Implied $/lb for a total price given hanging weight (0 if no weight given). */
 export function impliedPerLb(totalPrice: number, hangingLbs: number): number {
   const lbs = Number(hangingLbs);
