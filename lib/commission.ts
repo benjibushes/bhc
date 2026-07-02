@@ -79,3 +79,32 @@ export function hasLockedCommissionRate(rancher: any): boolean {
   const raw = rancher?.['Commission Rate'];
   return typeof raw === 'number' && !Number.isNaN(raw) && raw > 0;
 }
+
+/**
+ * Rail-split net earnings — SLICE E (2026-07-01). Pure display math; the ONE
+ * helper every "your net / your earnings" surface must route through.
+ *
+ * THE SEMANTICS SPLIT:
+ *   - tier_v2: BHC's commission is charged ON TOP of the rancher's price at
+ *     deposit time — the BUYER pays it. The rancher keeps 100% of THEIR price,
+ *     so net = revenue. Deducting commission here understated tier_v2 earnings
+ *     on 4 cockpit surfaces + the CSV and contradicted the "you keep 100%"
+ *     close-modal copy.
+ *   - legacy (and any unknown rail): the rancher pays commission post-close
+ *     via a Stripe invoice, so net = revenue − commission. This branch is
+ *     byte-identical to the old math — legacy numbers must not move.
+ *
+ * `rail` is the rancher's Pricing Model ('legacy' | 'tier_v2'); tolerant of
+ * case/whitespace because Airtable singleSelect values pass through String()
+ * coercions in several routes. DISPLAY ONLY — never used on a charge path.
+ */
+export function netEarningsFor(
+  rail: string | null | undefined,
+  revenue: number,
+  commission: number,
+): number {
+  const rev = Number(revenue) || 0;
+  const com = Number(commission) || 0;
+  if (String(rail || '').trim().toLowerCase() === 'tier_v2') return rev;
+  return rev - com;
+}

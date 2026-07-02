@@ -8,6 +8,7 @@ import StateMultiSelect from '../components/StateMultiSelect';
 import ImageUploader from '../components/ImageUploader';
 import Link from 'next/link';
 import { deriveLadder, deriveDeposit, checkWholePrice, MIN_TIER_PRICE } from '@/lib/pricing';
+import { netEarningsFor } from '@/lib/commission';
 import {
   groupReferralsByBuyer,
   deriveActivityEvents,
@@ -2384,7 +2385,17 @@ export default function RancherDashboardPage() {
                 <StatCard label="Active Leads" value={stats.activeReferrals} />
                 <StatCard label="Deals Closed" value={stats.closedWon} />
                 <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
-                <StatCard label="Your Earnings" value={`$${stats.netEarnings.toLocaleString()}`} sub={`(after ${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}% commission)`} />
+                {/* SLICE E — netEarnings is rail-split server-side (tier_v2 keeps
+                    100% of their price; legacy nets out commission). Match the
+                    sub-copy to the rail so this card never contradicts the
+                    "you keep 100%" close-modal promise. */}
+                <StatCard
+                  label="Your Earnings"
+                  value={`$${stats.netEarnings.toLocaleString()}`}
+                  sub={rancherInfo.pricingModel === 'tier_v2'
+                    ? '(100% of your price — buyers paid the commission)'
+                    : `(after ${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}% commission)`}
+                />
               </div>
 
               {/* WAVE 2 (2026-06-30): the old "Optimize your page" 6-item
@@ -3145,8 +3156,21 @@ export default function RancherDashboardPage() {
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
-                <StatCard label={`Commission (${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}%)`} value={`$${stats.totalCommission.toLocaleString()}`} />
-                <StatCard label="Your Net" value={`$${stats.netEarnings.toLocaleString()}`} />
+                {/* SLICE E — netEarnings is rail-split server-side. tier_v2:
+                    BHC's commission was charged on top of the rancher's price
+                    at deposit (the buyer paid it) → Your Net = Total Revenue,
+                    and the Commission card says who actually paid it so the
+                    row's math reads honestly. Legacy math is unchanged. */}
+                <StatCard
+                  label={`Commission (${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}%)`}
+                  value={`$${stats.totalCommission.toLocaleString()}`}
+                  sub={rancherInfo.pricingModel === 'tier_v2' ? 'buyers paid this on top' : ''}
+                />
+                <StatCard
+                  label="Your Net"
+                  value={`$${stats.netEarnings.toLocaleString()}`}
+                  sub={rancherInfo.pricingModel === 'tier_v2' ? '100% of your price' : ''}
+                />
                 {/* tier_v2 ranchers never owe a post-close invoice — BHC's cut is
                     taken at deposit time. unpaidCommission is forced to 0 server-
                     side; show "collected at deposit" so the card isn't a confusing
@@ -3184,7 +3208,10 @@ export default function RancherDashboardPage() {
                           <td className="py-3 pr-4">{ref.buyer_name}</td>
                           <td className="py-3 pr-4">${ref.sale_amount.toLocaleString()}</td>
                           <td className="py-3 pr-4">${ref.commission_due.toLocaleString()}</td>
-                          <td className="py-3 pr-4 font-medium">${(ref.sale_amount - ref.commission_due).toLocaleString()}</td>
+                          {/* SLICE E — per-row net is rail-split: tier_v2 keeps
+                              100% of the sale (buyer paid the commission on top);
+                              legacy nets it out, byte-identical to before. */}
+                          <td className="py-3 pr-4 font-medium">${netEarningsFor(rancherInfo.pricingModel, ref.sale_amount, ref.commission_due).toLocaleString()}</td>
                           <td className="py-3">
                             {/* tier_v2: commission was collected at deposit time —
                                 no invoice to pay. Show "Collected" instead of the
@@ -5120,9 +5147,12 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
 //   1. Action cards — only the things that need the rancher right now, each a
 //      big tap target that deep-links the existing action. Composed purely
 //      from data already on the page + /api/rancher/payouts. No new data.
-//   2. Money strip — "You've been paid $X · next payout [date]" (Stripe) plus
+//   2. Money strip — "Last payout $X · next payout [date]" (Stripe) plus
 //      the deposit money in flight (collected / still to collect) so the
 //      rancher never has to "go check Stripe" to know if money landed.
+//      SLICE E: /api/rancher/payouts returns only the MOST RECENT completed
+//      payout (limit-5 Stripe list → first 'paid'), not a lifetime total —
+//      the old "You've been paid $X" copy read like lifetime. Label honestly.
 //   3. Vitals — capacity/spots, recent buyers, "View my page".
 // All copy is plain ranch language (no "Connect" / "tier_v2" / "capture
 // remaining balance").
@@ -5292,11 +5322,14 @@ function HomeTab({
           </p>
 
           {/* "Did I get paid?" — the one fact we never make them go check
-              Stripe for. Only shown when payouts data is available. */}
+              Stripe for. Only shown when payouts data is available.
+              SLICE E: paidDollars is the MOST RECENT completed payout only
+              (the API reads 5 recent Stripe payouts — not a lifetime total),
+              so say "Last payout", never "You've been paid" (reads lifetime). */}
           {paidDollars != null && (
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-dust">
               <p className="font-serif text-xl text-charcoal">
-                You&rsquo;ve been paid ${paidDollars.toLocaleString()}
+                Last payout: ${paidDollars.toLocaleString()}
                 {nextPayoutLabel ? (
                   <span className="text-saddle text-base font-sans">
                     {' '}

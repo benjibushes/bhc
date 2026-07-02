@@ -13,7 +13,7 @@
 // (Rancher or Suggested Rancher).
 
 import { NextResponse } from 'next/server';
-import { TABLES, getAllRecords } from '@/lib/airtable';
+import { TABLES, getAllRecords, getRecordById } from '@/lib/airtable';
 import { requireRancher } from '@/lib/rancherAuth';
 import {
   buildEarningsCsv,
@@ -37,6 +37,22 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const from = url.searchParams.get('from');
   const to = url.searchParams.get('to');
+
+  // SLICE E — the "Net to You" column is rail-split (tier_v2 keeps 100% of
+  // their price; legacy nets out the commission). Load the rancher's Pricing
+  // Model; FAIL LOUD if we can't — a bookkeeping file with the wrong net is
+  // worse than no file.
+  let rail = 'legacy';
+  try {
+    const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
+    if (!rancher) {
+      return NextResponse.json({ error: 'Could not load earnings.' }, { status: 500 });
+    }
+    rail = String(rancher['Pricing Model'] || 'legacy');
+  } catch (e: any) {
+    console.error('[rancher/earnings/export] rancher load failed:', e?.message || e);
+    return NextResponse.json({ error: 'Could not load earnings.' }, { status: 500 });
+  }
 
   // Load + filter to this rancher's Closed Won deals. Mirror the dashboard's
   // client-side ownership filter (ARRAYJOIN can't match record ids — see the
@@ -69,7 +85,7 @@ export async function GET(request: Request) {
     // Newest closed first for a readable sheet.
     .sort((a, b) => Date.parse(b.closedAt || '') - Date.parse(a.closedAt || ''));
 
-  const csv = buildEarningsCsv(ranged);
+  const csv = buildEarningsCsv(ranged, rail);
   const filename = earningsCsvFilename(rancherId, from, to);
 
   return new NextResponse(csv, {
