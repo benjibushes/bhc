@@ -3,7 +3,7 @@ import { getRecordById, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendEmail } from '@/lib/email';
-import { getCommissionRate } from '@/lib/commission';
+import { getCommissionRate, normalizeCommissionRate } from '@/lib/commission';
 import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
@@ -103,11 +103,14 @@ export async function POST(request: Request) {
     // an earlier signing) wins — otherwise default to env. This stops the
     // 2026-05-20 Ashcraft pattern where deals closed against ad-hoc rates
     // because the rancher's row had no Commission Rate set.
-    const existingRate = Number(rancher['Commission Rate']);
-    const rateToLock =
-      Number.isFinite(existingRate) && existingRate > 0
-        ? existingRate
-        : getCommissionRate();
+    //
+    // MONEY-TRUTH TAIL (2026-07-01): read through normalizeCommissionRate so
+    //   (b) a pre-set 0 (Operator — zero commission) is a VALID rate and is
+    //       locked as 0, not silently replaced with the 10% env default, and
+    //   (c) a percent-typed pre-set ("4" meaning 4%) locks as 0.04, so the
+    //       canonical fraction is what persists from signing onward.
+    const existingRate = normalizeCommissionRate(rancher['Commission Rate']);
+    const rateToLock = existingRate !== null ? existingRate : getCommissionRate();
 
     // Auto-flip live if the rancher's page already has the minimum content
     // required to serve buyers (slug + at least one price + at least one

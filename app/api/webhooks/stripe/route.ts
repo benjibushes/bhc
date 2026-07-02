@@ -11,6 +11,7 @@ import {
 import { sendBrandListingConfirmation, sendFoundingHerdWelcome, sendPostPurchaseWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { commissionRateForTier, TierSlug } from '@/lib/tiers';
+import { isCommissionRateFieldEmpty } from '@/lib/commission';
 import { rancherIdFromSubscription } from '@/lib/stripeSubscription';
 import { markDepositSucceeded, markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
 import { recordClose } from '@/lib/contracts/rancher';
@@ -1461,31 +1462,81 @@ async function handleTierSubscriptionUpsert(sub: any): Promise<void> {
     'Stripe Subscription Id': sub.id,
     'Subscription Status': sub.status,
     'Subscription Started At': new Date(sub.start_date * 1000).toISOString(),
-    'Commission Rate': commissionRate,
-    'Commission Rate Locked At': new Date().toISOString(),
   };
   if (nextInvoiceAt !== null) {
     fields['Subscription Next Invoice At'] = nextInvoiceAt;
+  }
+
+  // Fetch the current rancher row ONCE — needed for (a) the locked-rate guard
+  // and (b) the tier_v2 auto-flip check below.
+  let currentRancher: any = null;
+  let rancherFetchFailed = false;
+  try {
+    currentRancher = await getRecordById(TABLES.RANCHERS, rancherRecordId);
+  } catch (e: any) {
+    rancherFetchFailed = true;
+    console.warn('[stripe webhook] tier sub upsert: rancher fetch failed:', e?.message);
+  }
+
+  // ── LOCKED-RATE GUARD — MONEY-TRUTH TAIL finding 1a (2026-07-01) ──────
+  // This upsert used to write 'Commission Rate' = the tier default on EVERY
+  // subscription.created/updated event, CLOBBERING negotiated locked rates
+  // (Ashcraft-class: a locked 4% rancher who later subscribes to a tier got
+  // silently re-locked to the tier default). Now the tier default is stamped
+  // ONLY when the field is truly EMPTY (never written). Any non-empty value —
+  // including a locked 0 (Operator) or even operator-typed garbage — is
+  // operator-owned and is never overwritten; we log + fire a deduped operator
+  // note so the skip is visible. If the rancher read failed we ALSO skip
+  // (fail-safe: better to leave the rate for the next subscription event /
+  // manual set than to risk clobbering a rate we could not read).
+  const existingRateRaw = currentRancher?.['Commission Rate'];
+  if (!rancherFetchFailed && isCommissionRateFieldEmpty(existingRateRaw)) {
+    fields['Commission Rate'] = commissionRate;
+    fields['Commission Rate Locked At'] = new Date().toISOString();
+  } else if (!rancherFetchFailed) {
+    console.log(
+      `[stripe webhook] tier sub upsert: rancher ${rancherRecordId} already has Commission Rate=` +
+      `${JSON.stringify(existingRateRaw)} — NOT overwriting with tier default ${commissionRate} (${tierLabel})`,
+    );
+    try {
+      const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'audit',
+        summary: `Tier subscription kept ${String(currentRancher?.['Operator Name'] || currentRancher?.['Ranch Name'] || rancherRecordId)}'s locked Commission Rate`,
+        detail:
+          `Rancher ${rancherRecordId} subscribed to ${tierLabel} (tier default rate ${commissionRate}), but their ` +
+          `row already has Commission Rate = ${JSON.stringify(existingRateRaw)} — the locked rate WINS and was not ` +
+          `overwritten. If they should be on the ${tierLabel} default instead, clear/update the field manually.`,
+        refs: [{ type: 'rancher', id: rancherRecordId }],
+        dedupeKey: `tier-upsert-rate-skip-${rancherRecordId}`,
+        dedupeWindowMs: 24 * 60 * 60 * 1000,
+      });
+    } catch (sigErr: any) {
+      console.warn('[stripe webhook] tier sub upsert: rate-skip operator note failed:', sigErr?.message);
+    }
+  } else {
+    console.warn(
+      `[stripe webhook] tier sub upsert: skipping Commission Rate write for ${rancherRecordId} — ` +
+      `could not read the current row to check for a locked rate. Next subscription event retries.`,
+    );
   }
 
   // ── AUTO-FLIP PRICING MODEL → tier_v2 (2026-06-04) ────────────────
   // Mirror of the gate in stripe-connect/syncRancherConnectStatus. If
   // subscription is now active AND Connect was already active, this is
   // the final step that activates tier_v2. Without this, the rancher
-  // had to find + click the dashboard banner to flip.
+  // had to find + click the dashboard banner to flip. (Uses the rancher
+  // row fetched above; a failed fetch skips the flip — same semantics as
+  // the old inline try/catch.)
   let didAutoFlip = false;
-  if (sub.status === 'active' || sub.status === 'trialing') {
-    try {
-      const currentRancher: any = await (await import('@/lib/airtable')).getRecordById(TABLES.RANCHERS, rancherRecordId);
-      const connectStatus = String(currentRancher?.['Stripe Connect Status'] || '').toLowerCase();
-      const pricingModel = String(currentRancher?.['Pricing Model'] || '').toLowerCase();
-      if (connectStatus === 'active' && pricingModel !== 'tier_v2') {
-        fields['Pricing Model'] = 'tier_v2';
-        fields['Migration Status'] = 'completed';
-        didAutoFlip = true;
-      }
-    } catch (e: any) {
-      console.warn('[stripe webhook] tier sub auto-flip check failed:', e?.message);
+  if ((sub.status === 'active' || sub.status === 'trialing') && currentRancher) {
+    const connectStatus = String(currentRancher?.['Stripe Connect Status'] || '').toLowerCase();
+    const pricingModel = String(currentRancher?.['Pricing Model'] || '').toLowerCase();
+    if (connectStatus === 'active' && pricingModel !== 'tier_v2') {
+      fields['Pricing Model'] = 'tier_v2';
+      fields['Migration Status'] = 'completed';
+      didAutoFlip = true;
     }
   }
 

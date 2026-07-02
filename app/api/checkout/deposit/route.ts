@@ -340,6 +340,10 @@ export async function POST(req: Request) {
       amountCents,
       platformFeeCents,
       stripePaymentIntentId: result.paymentIntentId,
+      // Clover: paymentIntentId is EMPTY at create time (PI is created when
+      // the buyer pays). The session id is the only Stripe key the row has
+      // until settlement backfills the PI — the orphan-reaper heals via it.
+      stripeCheckoutSessionId: result.sessionId,
     });
   } catch (e: any) {
     console.error('[checkout/deposit] recordDeposit failed — expiring Stripe Session to prevent orphan payment:', e);

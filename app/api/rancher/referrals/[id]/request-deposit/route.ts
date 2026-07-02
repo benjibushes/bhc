@@ -48,6 +48,7 @@ import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { tierFor, TIERS, type TierSlug } from '@/lib/tiers';
 import { decideDepositRequest, isCutTier } from '@/lib/depositRequest';
+import { REFERRAL_ID_TEXT_FIELD } from '@/lib/contracts/payments';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -226,6 +227,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       'Buyer Email': buyerEmail,
       'Rancher': [session.rancherId],
       'Referral': [referralId],
+      // Denormalized referral id (finding 3, 2026-07-01) — under Clover
+      // paymentIntentId above is EMPTY at create time, so settlement finds
+      // this row BY REFERRAL via {Referral Id Text} (see
+      // lib/contracts/payments.findPaymentsByReferral). Without it, a
+      // request-deposit row could never settle.
+      [REFERRAL_ID_TEXT_FIELD]: referralId,
       'Stripe Payment Intent Id': paymentIntentId,
       'Stripe Connect Account Id': connectAcct,
       'Stripe Checkout Session Id': sessionId,

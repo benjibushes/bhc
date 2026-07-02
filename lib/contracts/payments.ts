@@ -7,7 +7,7 @@
 // Idempotency is keyed on Stripe Payment Intent ID + Stripe Transfer ID so
 // webhook retries never double-process.
 
-import { createRecord, updateRecord, getAllRecords, getFirstRecord, getRecordById, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { createRecord, updateRecord, getAllRecords, getFirstRecord, getRecordById, escapeAirtableValue, isInvalidFilterFormulaError, TABLES } from '@/lib/airtable';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
@@ -45,6 +45,18 @@ export const PAYOUTS_TABLE = 'Payouts';
 // recordDeposit below ALSO read-back-verifies the first write and warns loudly.
 
 export const REFERRAL_ID_TEXT_FIELD = 'Referral Id Text';
+
+// MONEY-TRUTH TAIL finding 3 (2026-07-01): under Clover the PaymentIntent is
+// created at PAY time, so 'Stripe Payment Intent Id' is EMPTY on every
+// checkout-created Payments row until settlement backfills it. The Checkout
+// Session id DOES exist at create time — storing it gives the orphan-reaper a
+// second key: stripe.checkout.sessions.retrieve(sessionId, {stripeAccount}) →
+// session.payment_intent heals rows the PI lookup can't see. The rancher
+// self-serve request-deposit route and the admin send-deposit-invoice route
+// already write this exact field name, so the schema dependency is shared.
+// createRecord/updateRecord strip the key (with their own warn) if the field
+// is missing; recordDeposit read-back-verifies and warns with the exact fix.
+export const CHECKOUT_SESSION_ID_FIELD = 'Stripe Checkout Session Id';
 
 // Airtable record ids are exactly `rec` + 14 alphanumerics. Validating the
 // shape BEFORE interpolating means no quote/backslash can ever reach the
@@ -90,9 +102,23 @@ export function paymentsByReferralFormula(
  * formula fragment (literal constants at call sites, e.g. `{Status} = "pending"`)
  * AND-ed onto both queries.
  *
+ * SELF-HEALING (MONEY-TRUTH TAIL finding 4, 2026-07-01): this lookup IS the
+ * normal Clover settlement path (markDepositSucceeded's referral fallback) —
+ * a thrown formula error here loses a settlement lookup, which is exactly the
+ * "money in, ledger silent" failure class. Mirror of the rancher-dashboard
+ * scan-kill pattern: if the fast query throws the classified
+ * INVALID_FILTER_BY_FORMULA error (the {Referral Id Text} field is missing /
+ * renamed), fire a deduped operator note with the 30-second Airtable fix and
+ * fall through to the legacy scan instead of throwing. Any other fast-path
+ * error also degrades to the legacy scan (warn only — transient). Only a
+ * failure of BOTH paths propagates (a real Airtable outage the caller must
+ * see).
+ *
  * LEGACY FALLBACK — DROP ONE RELEASE AFTER 2026-07-01: once every live row
  * carries `Referral Id Text` (all rows created after this ships do, and the
- * table was empty at ship time), delete the second query.
+ * table was empty at ship time), delete the second query. (The schema-missing
+ * degrade above must keep SOME fallback — if the legacy scan is dropped,
+ * degrade to returning [] after the operator note.)
  */
 export async function findPaymentsByReferral(
   referralId: string,
@@ -101,10 +127,42 @@ export async function findPaymentsByReferral(
   if (!AIRTABLE_RECORD_ID.test(String(referralId || ''))) return [];
   const compose = (byRef: string) =>
     opts.statusClause ? `AND(${byRef}, ${opts.statusClause})` : byRef;
-  const fast: any[] = await getAllRecords(
-    PAYMENTS_TABLE,
-    compose(paymentsByReferralFormula(referralId)),
-  );
+  let fast: any[] = [];
+  try {
+    fast = await getAllRecords(
+      PAYMENTS_TABLE,
+      compose(paymentsByReferralFormula(referralId)),
+    );
+  } catch (e: any) {
+    if (isInvalidFilterFormulaError(e)) {
+      console.warn(
+        `[findPaymentsByReferral] {${REFERRAL_ID_TEXT_FIELD}} filter rejected (field missing?) — ` +
+        `falling back to legacy scan for ${referralId}`,
+      );
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: `Payments '${REFERRAL_ID_TEXT_FIELD}' field is missing — Clover settlement lookups are degraded`,
+          detail:
+            `filterByFormula on {${REFERRAL_ID_TEXT_FIELD}} was rejected by Airtable, which means the field ` +
+            `does not exist (or was renamed) on the Payments table. Deposit settlement under Clover finds the ` +
+            `Payments row BY REFERRAL through this field — until it exists, settle-by-referral falls back to the ` +
+            `legacy ARRAYJOIN scan, which never matches in this base. 30-second fix: add '${REFERRAL_ID_TEXT_FIELD}' ` +
+            `(single line text) to the Payments table.`,
+          dedupeKey: 'payments-referral-id-text-filter-broken',
+          dedupeWindowMs: 24 * 60 * 60 * 1000,
+        });
+      } catch {}
+    } else {
+      console.warn(
+        `[findPaymentsByReferral] fast by-referral query failed (${e?.message?.slice(0, 120) || 'unknown'}) — ` +
+        `falling back to legacy scan for ${referralId}`,
+      );
+    }
+    fast = [];
+  }
   if (fast.length > 0) return fast;
   return (await getAllRecords(
     PAYMENTS_TABLE,
@@ -120,6 +178,10 @@ export interface CreateDepositInput {
   amountCents: number;
   platformFeeCents: number;  // NEW — BHC's cut of the deposit
   stripePaymentIntentId: string;
+  // Clover-gap fix (finding 3): the Checkout Session id, known at create time
+  // even when the PaymentIntent isn't (Clover defers the PI to pay-time). The
+  // orphan-reaper resolves stuck rows via the session when the PI is empty.
+  stripeCheckoutSessionId?: string;
 }
 
 /**
@@ -177,7 +239,7 @@ export function selectSettlementRow(
 }
 
 export async function recordDeposit(input: CreateDepositInput): Promise<{ id: string }> {
-  const fields = {
+  const fields: Record<string, any> = {
     'Referral': [input.referralId],
     // Denormalized scalar copy of the referral record id (G1/E6). The link
     // field above is authoritative for humans + rollups; this plain-text copy
@@ -194,6 +256,13 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
     'Status': 'pending',
     'Created At': new Date().toISOString(),
   };
+  // Clover-gap fix (finding 3): store the Checkout Session id so the row is
+  // healable even while the PI id is empty (Clover creates the PI at pay-time).
+  // Strip-tolerant: createRecord/updateRecord drop the key if the Airtable
+  // field doesn't exist; read-back verify below reports the missing field.
+  if (input.stripeCheckoutSessionId) {
+    fields[CHECKOUT_SESSION_ID_FIELD] = input.stripeCheckoutSessionId;
+  }
 
   // De-dupe pending ledger rows. A concurrent double-POST to the deposit route
   // (back button, double-click, retried fetch) creates two Checkout Sessions
@@ -250,7 +319,7 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
     // the older PI on completion → create a new row instead).
     const reusable = selectReusablePaymentRow(existing, input.stripePaymentIntentId);
     if (reusable) {
-      await updateRecord(PAYMENTS_TABLE, reusable.id, {
+      const reuseFields: Record<string, any> = {
         'Tier': input.tier,
         'Amount Cents': input.amountCents,
         'Platform Fee Cents': input.platformFeeCents,
@@ -259,7 +328,13 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
         // Backfill the denormalized referral id on reuse so a pre-field row
         // migrates to the fast lookup path (no-op re-stamp on new rows).
         [REFERRAL_ID_TEXT_FIELD]: input.referralId,
-      });
+      };
+      // Re-stamp the live session id (same-session resubmit keeps its id;
+      // a pre-field row gains one) so the reaper's Clover fallback works.
+      if (input.stripeCheckoutSessionId) {
+        reuseFields[CHECKOUT_SESSION_ID_FIELD] = input.stripeCheckoutSessionId;
+      }
+      await updateRecord(PAYMENTS_TABLE, reusable.id, reuseFields);
       return { id: reusable.id };
     }
   } catch (e: any) {
@@ -285,7 +360,53 @@ export async function recordDeposit(input: CreateDepositInput): Promise<{ id: st
       `enrichment) cannot use the exact-match path and the legacy ARRAYJOIN fallback never matches.`,
     );
   }
+  // Same read-back verify for the Checkout Session id (finding 3). Without
+  // this field the orphan-reaper cannot heal Clover-era rows whose PI is
+  // still empty — they sit in 'pending' forever.
+  if (input.stripeCheckoutSessionId) {
+    const savedSessionId = created?.fields?.[CHECKOUT_SESSION_ID_FIELD];
+    if (savedSessionId !== input.stripeCheckoutSessionId) {
+      console.warn(
+        `[recordDeposit] '${CHECKOUT_SESSION_ID_FIELD}' did NOT persist on Payments row ${created?.id} ` +
+        `(got ${JSON.stringify(savedSessionId)}). ACTION REQUIRED: add '${CHECKOUT_SESSION_ID_FIELD}' ` +
+        `(single line text) to the Payments table in Airtable. Until it exists, the orphan-checkout-reaper ` +
+        `cannot resolve Clover-era pending rows (empty PI id) via the Checkout Session — they are unhealable.`,
+      );
+    }
+  }
   return { id: created.id };
+}
+
+/**
+ * Row-id variant of markDepositAbandoned — MONEY-TRUTH TAIL finding 3.
+ * Clover-era rows can be certainly-dead with NO PaymentIntent id at all
+ * (the Checkout Session expired before the buyer paid, so Stripe never
+ * created a PI). markDepositAbandoned's PI lookup can't reach those; the
+ * orphan-reaper flips them by row id instead. Same semantics: re-fetches
+ * the row and only flips pending → abandoned (idempotent; a concurrent
+ * webhook settle wins the race), same schema fallback for older bases.
+ */
+export async function markDepositRowAbandoned(
+  paymentRowId: string,
+  opts: { reason?: string } = {},
+): Promise<{ found: boolean; flipped: boolean }> {
+  const payment: any = await getRecordById(PAYMENTS_TABLE, paymentRowId).catch(() => null);
+  if (!payment) return { found: false, flipped: false };
+  if (payment['Status'] !== 'pending') return { found: true, flipped: false };
+
+  const fields: Record<string, any> = {
+    'Status': 'abandoned',
+    'Abandoned At': new Date().toISOString(),
+  };
+  if (opts.reason) fields['Abandoned Reason'] = opts.reason;
+
+  try {
+    await updateRecord(PAYMENTS_TABLE, paymentRowId, fields);
+  } catch (e: any) {
+    console.warn('[markDepositRowAbandoned] schema fallback (retrying with Status only):', e?.message);
+    await updateRecord(PAYMENTS_TABLE, paymentRowId, { 'Status': 'abandoned' });
+  }
+  return { found: true, flipped: true };
 }
 
 // Returns true if this call flipped the row to succeeded (or there is no row to
