@@ -126,3 +126,72 @@ test('batchCap of 0 or negative selects nothing', () => {
 test('empty input returns an empty selection', () => {
   assert.deepEqual(selectWaitingBuyersForNudge([], OPTS), []);
 });
+
+// ── dry-run report (T2.1, 2026-07-02) ────────────────────────────────────────
+
+import { buildWaitingDryRunReport, formatWaitingDryRunReport } from './waitingActivation';
+
+test('dry-run report: counts pool, selected, states, prior nudges, sms-eligible', () => {
+  const candidates = [
+    buyer({ id: 'recA', State: 'TX', _createdTime: daysAgo(200) }),
+    buyer({ id: 'recB', State: 'TX', 'SMS Opt-In': true, Phone: '+14065551212', _createdTime: daysAgo(100) }),
+    buyer({ id: 'recC', State: 'CA', 'Waiting Nudge Count': 1, _createdTime: daysAgo(50) }),
+    buyer({ id: 'recD', _createdTime: daysAgo(10) }), // no state
+  ];
+  const selected = selectWaitingBuyersForNudge(candidates, { ...OPTS, batchCap: 3 });
+  const report = buildWaitingDryRunReport(candidates, selected, { nowISO: NOW_ISO });
+  assert.equal(report.poolSize, 4);
+  assert.equal(report.selectedCount, 3); // oldest 3: A, B, C
+  assert.deepEqual(report.byState, { TX: 2, CA: 1 });
+  assert.deepEqual(report.byPriorNudges, { '0': 2, '1': 1 });
+  assert.equal(report.smsEligibleCount, 1); // only recB has opt-in + phone
+  assert.equal(report.oldestSignupDays, 200);
+});
+
+test('dry-run report: SMS-eligible requires opt-in AND phone AND not unsubscribed', () => {
+  const sel = [
+    buyer({ id: 'r1', 'SMS Opt-In': true }), // no phone
+    buyer({ id: 'r2', Phone: '+14065551212' }), // no opt-in
+    buyer({ id: 'r3', 'SMS Opt-In': true, Phone: '+14065551212' }),
+  ];
+  const report = buildWaitingDryRunReport(sel, sel, { nowISO: NOW_ISO });
+  assert.equal(report.smsEligibleCount, 1);
+});
+
+test('dry-run report: sample capped and carries id/state/age/prior fields', () => {
+  const selected = Array.from({ length: 15 }, (_, i) =>
+    buyer({ id: `rec${i}`, State: 'MT', _createdTime: daysAgo(30 + i) }),
+  );
+  const report = buildWaitingDryRunReport(selected, selected, { nowISO: NOW_ISO, sampleSize: 5 });
+  assert.equal(report.sample.length, 5);
+  assert.equal(report.sample[0].id, 'rec0');
+  assert.equal(report.sample[0].state, 'MT');
+  assert.equal(report.sample[0].signedUpDaysAgo, 30);
+  assert.equal(report.sample[0].priorNudges, 0);
+});
+
+test('dry-run report: empty selection → zeroed report, null oldest', () => {
+  const report = buildWaitingDryRunReport([], [], { nowISO: NOW_ISO });
+  assert.equal(report.poolSize, 0);
+  assert.equal(report.selectedCount, 0);
+  assert.equal(report.oldestSignupDays, null);
+  assert.deepEqual(report.sample, []);
+});
+
+test('dry-run formatter: carries the load-bearing numbers + go-live instruction', () => {
+  const candidates = [
+    buyer({ id: 'recA', State: 'TX', 'Full Name': 'Kasey Jones', _createdTime: daysAgo(200) }),
+  ];
+  const report = buildWaitingDryRunReport(candidates, candidates, { nowISO: NOW_ISO });
+  const text = formatWaitingDryRunReport(report, { cooldownDays: 14, batchCap: 50 });
+  assert.match(text, /DRY RUN/);
+  assert.match(text, /no sends, no stamps/i);
+  assert.match(text, /Pool: 1/);
+  assert.match(text, /Would nudge this run: 1/);
+  assert.match(text, /cap 50/);
+  assert.match(text, /cooldown 14d/);
+  assert.match(text, /TX/);
+  assert.match(text, /WAITING_ACTIVATION_ENABLED=true/);
+  assert.match(text, /Kasey/);
+  assert.doesNotMatch(text, /undefined/);
+});
