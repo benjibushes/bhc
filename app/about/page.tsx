@@ -173,7 +173,7 @@ export default function AboutPage() {
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
                 <Button href="/access">Apply for access</Button>
-                <Button href="/partner" variant="secondary">Rancher? Apply here</Button>
+                <Button href="/sell" variant="secondary">Rancher? Apply here</Button>
               </div>
               <p className="text-saddle text-sm pt-4">
                 Questions? <a href="mailto:ben@buyhalfcow.com" className="underline">ben@buyhalfcow.com</a> &mdash; I read every email.

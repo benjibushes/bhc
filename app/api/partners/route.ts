@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
+import jwt from 'jsonwebtoken';
 import { createRecord, getAllRecords, escapeAirtableValue, findOrCreateRancherByEmail } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendPartnerConfirmation, sendAdminAlert } from '@/lib/email';
+import { sendPartnerConfirmation, sendAdminAlert, sendRancherApplyAutoApproved } from '@/lib/email';
+import { JWT_SECRET } from '@/lib/secrets';
 import { sendTelegramPartnerAlert } from '@/lib/telegram';
 import { validateAffiliateRefForSignup } from '@/lib/affiliates';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
@@ -66,6 +68,10 @@ export async function POST(request: Request) {
 
     let record;
     let tableName;
+    // Set on the rancher path only — returned to the client so /partner can
+    // offer "finish setup now" alongside the booking CTA (same two-path
+    // success state as /apply).
+    let rancherWizardUrl: string | undefined;
 
     if (partnerType === 'rancher') {
       const { ranchName, operatorName, email, phone, state, acreage, beefTypes, monthlyCapacity, certifications, operationDetails, callScheduled, ranchTourInterested, ranchTourAvailability } = body;
@@ -154,47 +160,42 @@ export async function POST(request: Request) {
 
       record = await createRecord(tableName, rancherFields);
 
-      // Send confirmation email
-      await sendPartnerConfirmation({
-        type: 'rancher',
-        name: operatorName,
-        email,
-      });
+      // ENTRY-RAIL CONSOLIDATION (2026-07-01): the rancher path now mints the
+      // setup-wizard link and auto-approves, exactly like /api/apply — ONE
+      // rail for every rancher application. This replaces the retired
+      // agreement-first flow (sendPartnerConfirmation type='rancher' +
+      // auto-fired /api/ranchers/[id]/send-onboarding packet). send-onboarding
+      // survives as an admin/Telegram resend tool only — no automatic flow
+      // calls it anymore.
+      const wizardToken = jwt.sign(
+        { type: 'rancher-setup', rancherId: record.id },
+        JWT_SECRET,
+        { expiresIn: '60d' }
+      );
+      rancherWizardUrl = `${SITE_URL}/rancher/setup?token=${wizardToken}`;
 
-      // AUTO-SEND ONBOARDING DOCS IMMEDIATELY.
-      // Previously Ben had to tap a Telegram button to manually send the
-      // agreement + info packet. Now fires automatically so the rancher can
-      // self-serve sign + set up their profile without waiting on a human.
-      // If the onboarding-docs send fails we loudly alert admin over Telegram
-      // — silent failure here used to strand ranchers at "signed up, expected
-      // an email, never got one" with no recovery path.
+      // Auto-approval welcome email carrying the wizard URL. Non-fatal on
+      // Resend hiccup, but loudly alerted — the client response still carries
+      // wizardUrl, and Ben can follow up from the Telegram alert.
       try {
-        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
-        const res = await fetch(`${siteUrl}/api/ranchers/${record.id}/send-onboarding`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}),
-          },
-          body: JSON.stringify({
-            confirmedCapacity: parseInt(monthlyCapacity) || 10,
-            includeVerification: true,
-          }),
+        await sendRancherApplyAutoApproved({
+          operatorName,
+          ranchName,
+          email,
+          wizardUrl: rancherWizardUrl,
+          // /partner's long-form application doesn't collect the /apply
+          // fit-check answers (volume band + deposits), so no hot-lead
+          // scoring here — conservative default, Ben triages via Telegram.
+          score: 0,
+          hotLead: false,
         });
-        if (!res.ok) {
-          // send-onboarding already fired a Telegram alert when it failed.
-          // Still log here so the partner-signup request shows the error.
-          const errBody = await res.json().catch(() => ({}));
-          console.error('Auto-send onboarding returned non-ok:', res.status, errBody);
-        }
-      } catch (e) {
-        // Network/DNS/etc — send-onboarding didn't run at all. Alert admin.
-        console.error('Auto-send onboarding error:', e);
+      } catch (e: any) {
+        console.error('[partners] auto-approved welcome email failed:', e?.message);
         try {
           const { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } = await import('@/lib/telegram');
           await sendTelegramMessage(
             TELEGRAM_ADMIN_CHAT_ID,
-            `⚠️ <b>Auto-send onboarding FAILED</b> for new rancher ${ranchName} (${email})\nManually trigger from admin dashboard or call /api/ranchers/${record.id}/send-onboarding.`
+            `⚠️ <b>Wizard welcome email FAILED</b> for new rancher ${ranchName} (${email})\nWizard link: ${rancherWizardUrl}\nSend it manually or resend docs from the admin dashboard.`
           );
         } catch {}
       }
@@ -219,7 +220,7 @@ export async function POST(request: Request) {
           name: `${operatorName} — ${ranchName}`,
           email,
           state,
-          details: `🥩 <b>Beef:</b> ${beefTypes}\n📦 <b>Capacity:</b> ${monthlyCapacity || 'N/A'}/mo${callScheduled ? '\n📅 Call scheduled' : ''}\n📧 Onboarding docs auto-sent`,
+          details: `🥩 <b>Beef:</b> ${beefTypes}\n📦 <b>Capacity:</b> ${monthlyCapacity || 'N/A'}/mo${callScheduled ? '\n📅 Call scheduled' : ''}\n🪄 Setup-wizard link auto-sent`,
         });
       } catch (e) {
         console.error('Telegram rancher alert error:', e);
@@ -461,7 +462,14 @@ export async function POST(request: Request) {
       },
     ]).catch((e) => console.error('[meta-capi] partner lead fire failed:', e));
 
-    return NextResponse.json({ success: true, partner: record }, { status: 201 });
+    return NextResponse.json(
+      {
+        success: true,
+        partner: record,
+        ...(rancherWizardUrl ? { wizardUrl: rancherWizardUrl } : {}),
+      },
+      { status: 201 },
+    );
   } catch (error: any) {
     console.error('API error creating partner:', error);
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });

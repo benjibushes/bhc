@@ -400,7 +400,10 @@ export async function sendTelegramFounderBacker(data: {
   const keyboard = {
     inline_keyboard: [[
       { text: '📧 Email backer', url: `mailto:${data.email}` },
-      { text: '📅 Calendar invite', url: `mailto:${data.email}?subject=${encodeURIComponent('Welcome to the Founding Herd — let\'s find a time')}&body=${encodeURIComponent('Hey — Ben here. Wanted to say thanks personally. My calendar\'s at ' + (process.env.CALENDLY_LINK || 'https://www.buyhalfcow.com/call') + ' if you ever want to hop on. — Ben')}` },
+      // Calendar link in the mailto body points at the on-site /book page —
+      // the retired CALENDLY_LINK env (dead Calendly event) and the old
+      // /call fallback (404) are both gone.
+      { text: '📅 Calendar invite', url: `mailto:${data.email}?subject=${encodeURIComponent('Welcome to the Founding Herd — let\'s find a time')}&body=${encodeURIComponent('Hey — Ben here. Wanted to say thanks personally. My calendar\'s at ' + ((process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com') + '/book') + ' if you ever want to hop on. — Ben')}` },
     ]],
   };
 
