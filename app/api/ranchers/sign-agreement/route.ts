@@ -165,9 +165,20 @@ export async function POST(request: Request) {
     // only fires on a Connect state change) never re-fired at sign time.
     const preVetted = isTierV2 && connectStatus === 'active';
     if (readyToGoLive) {
+      // The full 4-field go-live union (lib/goLiveGates GO_LIVE_FIELDS) —
+      // this write used to miss Status='Active', leaving auto-go-live
+      // ranchers diverged from every admin-driven go-live. Kept INLINE
+      // (not via goLiveRancher) deliberately: signing must stay one atomic
+      // updateRecord (agreement fields + live flip succeed or fail
+      // together), and this flow sends its own "you're signed" email in the
+      // same breath — the rail's go-live email seconds later would double-
+      // email the rancher. The rail's gates are provably satisfied here:
+      // Agreement Signed is set in this very write, and readyToGoLive
+      // already requires Connect active for tier_v2.
       updateFields['Onboarding Status'] = 'Live';
       updateFields['Active Status'] = 'Active';
       updateFields['Page Live'] = true;
+      updateFields['Status'] = 'Active';
     } else if (preVetted) {
       // Skip verification — they're already vetted. They still need slug+price
       // to flip Live (handled by the next dashboard save / batch-approve cron /

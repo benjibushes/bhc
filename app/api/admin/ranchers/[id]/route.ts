@@ -1,10 +1,10 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { getRecordById, updateRecord, deleteRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
-import { sendRancherApproval, sendRancherGoLiveEmail } from '@/lib/email';
+import { sendRancherApproval } from '@/lib/email';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals, MAX_ACTIVE_REFERRALS_FIELD } from '@/lib/rancherCapacity';
-import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
+import { goLiveRancher } from '@/lib/goLiveRancher';
 import { logAuditEntry, buildAirtableUpdateReverse } from '@/lib/auditLog';
 import { geocodeRancher } from '@/lib/geocode';
 
@@ -88,23 +88,42 @@ export async function PATCH(
     if (body.routing_states !== undefined) fields['Routing States'] = body.routing_states;
     if (body.state_capacity_override !== undefined) fields['State Capacity Override'] = body.state_capacity_override;
 
+    // ── GO-LIVE RAIL ────────────────────────────────────────────────────
+    // onboarding_status='Live' is a GO-LIVE, not a field edit. Pre-fix this
+    // branch gated NOTHING — "Mark Live"/handleRelease could mint a Live
+    // rancher who can't route (unsigned) or can't collect (tier_v2, Connect
+    // not active) — and fired its own divergent warmup while skipping the
+    // waitlist blast. Now it routes through the ONE rail (lib/goLiveRancher):
+    // identical gates/write/side-effects as POST /go-live. The helper owns
+    // the go-live status fields; any remaining fields in this PATCH (e.g.
+    // handleRelease's featured + release_date) are written below ONLY if the
+    // go-live succeeds — a refused release must not half-apply.
+    const wantsGoLive = body.onboarding_status === 'Live';
+    let goLiveResult: Awaited<ReturnType<typeof goLiveRancher>> | null = null;
+    if (wantsGoLive) {
+      delete fields['Onboarding Status'];
+      delete fields['Active Status'];
+      delete fields['Page Live'];
+      goLiveResult = await goLiveRancher(id, {
+        force: body.force === true,
+        actor: 'admin-rancher-patch',
+      });
+      if (!goLiveResult.ok) {
+        const status = goLiveResult.code === 'rancher_not_found' ? 404 : 409;
+        return NextResponse.json(
+          { error: goLiveResult.message, code: goLiveResult.code },
+          { status },
+        );
+      }
+    }
+
     let shouldSendApproval = false;
-    let shouldSendGoLive = false;
     if (body.status && body.status.toLowerCase() === 'approved') {
       try {
         const current: any = await getRecordById(TABLES.RANCHERS, id);
         const currentStatus = (current['Status'] || '').toLowerCase();
         if (currentStatus !== 'approved') {
           shouldSendApproval = true;
-        }
-      } catch { /* proceed */ }
-    }
-    if (body.onboarding_status === 'Live' && (body.active_status === 'Active' || fields['Active Status'] === 'Active')) {
-      try {
-        const current: any = await getRecordById(TABLES.RANCHERS, id);
-        const currentOnboarding = (current['Onboarding Status'] || '').trim();
-        if (currentOnboarding !== 'Live') {
-          shouldSendGoLive = true;
         }
       } catch { /* proceed */ }
     }
@@ -139,46 +158,40 @@ export async function PATCH(
     let prevRancher: any = null;
     try { prevRancher = await getRecordById(TABLES.RANCHERS, id); } catch { /* non-fatal */ }
 
-    const updatedRecord = await updateRecord(TABLES.RANCHERS, id, fields);
+    // A pure "Mark Live" PATCH has nothing left to write here — the go-live
+    // rail above owns all four status fields. Only write (and audit-log) the
+    // remaining non-go-live fields when there are any.
+    const hasRemainingFields = Object.keys(fields).length > 0;
+    const updatedRecord = hasRemainingFields
+      ? await updateRecord(TABLES.RANCHERS, id, fields)
+      : prevRancher;
 
     // Audit log: any admin PATCH on a rancher record is a tracked mutation.
     // Stores the prior values of every field we touched so a Telegram undo
     // card can restore on misclick. Non-fatal — bare-minimum coverage > none.
-    try {
-      const reverseFields: Record<string, unknown> = {};
-      if (prevRancher) {
-        for (const key of Object.keys(fields)) {
-          reverseFields[key] = prevRancher[key] !== undefined ? prevRancher[key] : null;
+    // (The go-live write is separately audit-logged inside goLiveRancher.)
+    if (hasRemainingFields) {
+      try {
+        const reverseFields: Record<string, unknown> = {};
+        if (prevRancher) {
+          for (const key of Object.keys(fields)) {
+            reverseFields[key] = prevRancher[key] !== undefined ? prevRancher[key] : null;
+          }
         }
+        await logAuditEntry({
+          actor: 'manual',
+          tool: 'admin-rancher-patch',
+          targetType: 'Rancher',
+          targetId: id,
+          args: { fieldsChanged: Object.keys(fields) },
+          result: { ok: true },
+          reverseAction: prevRancher
+            ? buildAirtableUpdateReverse(TABLES.RANCHERS, id, reverseFields)
+            : { type: 'noop', reason: 'pre-state unavailable' },
+        });
+      } catch (e: any) {
+        console.error('[admin-rancher-patch] audit log failed (non-fatal):', e?.message);
       }
-      await logAuditEntry({
-        actor: 'manual',
-        tool: 'admin-rancher-patch',
-        targetType: 'Rancher',
-        targetId: id,
-        args: { fieldsChanged: Object.keys(fields) },
-        result: { ok: true },
-        reverseAction: prevRancher
-          ? buildAirtableUpdateReverse(TABLES.RANCHERS, id, reverseFields)
-          : { type: 'noop', reason: 'pre-state unavailable' },
-      });
-    } catch (e: any) {
-      console.error('[admin-rancher-patch] audit log failed (non-fatal):', e?.message);
-    }
-
-    // F8 audit: if THIS PATCH transitions the rancher to Live + Active in one
-    // shot, fire launch-warmup immediately. Pre-fix, manual admin flips waited
-    // up to 24h for the daily cron — buyers in this rancher's state stayed
-    // un-warmed. Gate on previous-state != live so we don't re-fire on every
-    // PATCH that mentions both fields. Idempotent on the cron side anyway.
-    const willGoLive = body.onboarding_status === 'Live' &&
-      (body.active_status === 'Active' || fields['Active Status'] === 'Active');
-    const wasAlreadyLive = prevRancher
-      ? (prevRancher['Onboarding Status'] || '').trim() === 'Live' &&
-        (prevRancher['Active Status'] || '').trim() === 'Active'
-      : false;
-    if (willGoLive && !wasAlreadyLive) {
-      triggerLaunchWarmup(`admin-rancher-patch:${id}`);
     }
 
     if (shouldSendApproval) {
@@ -196,28 +209,22 @@ export async function PATCH(
       }
     }
 
-    if (shouldSendGoLive) {
-      try {
-        const rancher: any = await getRecordById(TABLES.RANCHERS, id);
-        const email = rancher['Email'];
-        const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Partner';
-        const ranchName = rancher['Ranch Name'] || '';
-        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+    // NOTE: the go-live email + launch warmup + waitlist blast + Telegram
+    // note all fire inside goLiveRancher() (exactly once) — the divergent
+    // copies that used to live here are intentionally gone.
 
-        if (email) {
-          await sendRancherGoLiveEmail({
-            operatorName,
-            ranchName,
-            email,
-            dashboardUrl: `${baseUrl}/rancher`,
-          });
-        }
-      } catch (emailErr) {
-        console.error('Failed to send rancher go-live email (non-fatal):', emailErr);
-      }
-    }
-
-    return NextResponse.json(updatedRecord);
+    return NextResponse.json(
+      goLiveResult
+        ? {
+            ...(updatedRecord || { id }),
+            goLive: {
+              success: true,
+              alreadyLive: goLiveResult.alreadyLive,
+              matched: goLiveResult.matched,
+            },
+          }
+        : updatedRecord,
+    );
   } catch (error: any) {
     console.error('API error updating rancher:', error);
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });

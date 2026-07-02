@@ -6,6 +6,7 @@ import Divider from '../components/Divider';
 import Button from '../components/Button';
 import AdminAuthGuard from '../components/AdminAuthGuard';
 import CommandCenter from './components/CommandCenter';
+import { isReadyToGoLive, goLiveBlockersView } from '@/lib/goLiveGates';
 
 type Tab = 'consumers' | 'ranchers' | 'brands' | 'landDeals';
 
@@ -66,6 +67,9 @@ interface Rancher {
   agreement_signed?: boolean;
   docs_sent_at?: string;
   verification_status?: string;
+  // Go-live readiness inputs (lib/goLiveGates isReadyToGoLive)
+  pricing_model?: string;
+  stripe_connect_status?: string;
   featured?: boolean;
   release_date?: string;
   referred_by?: string;
@@ -364,8 +368,10 @@ export default function AdminPage() {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
+        // Surface the rail's precise gate message (e.g. "agreement isn't
+        // signed" / "Stripe Connect not active") — never a generic swallow.
         const data = await res.json().catch(() => ({}));
-        setToast({ message: data.error || 'Error updating onboarding status', type: 'error' });
+        setToast({ message: data.error || data.message || 'Error updating onboarding status', type: 'error' });
         return;
       }
       setToast({ message: `Status updated to ${newStatus}`, type: 'success' });
@@ -389,7 +395,7 @@ export default function AdminPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setToast({ message: data.error || 'Error releasing rancher', type: 'error' });
+        setToast({ message: data.error || data.message || 'Error releasing rancher', type: 'error' });
         return;
       }
       if (releaseAnnounce) {
@@ -432,11 +438,14 @@ export default function AdminPage() {
     return daysSince > 7;
   }).length;
 
-  // Helper: ranchers ready to go live
+  // Helper: ranchers ready to go live — must ALSO pass the go-live gates
+  // (signed + Connect-ok-or-legacy + verification not pending) so the badge
+  // never counts ranchers the rail would 409.
   const readyToGoLiveCount = ranchers.filter(r =>
     (r.onboarding_status === 'Verification Complete' || (r.agreement_signed && r.verification_status === 'Verified'))
     && r.page_live !== true
     && r.slug
+    && isReadyToGoLive(r)
   ).length;
 
   // Helper: stalled leads count
@@ -1154,7 +1163,7 @@ export default function AdminPage() {
                           <p className="text-sm text-saddle mb-4">
                             Showing {ranchers.filter(r => {
                               if (rancherStateFilter && r.state !== rancherStateFilter) return false;
-                              if (rancherViewFilter === 'ready') return !!(r.agreement_signed && r.onboarding_status === 'Verification Complete');
+                              if (rancherViewFilter === 'ready') return !!(r.agreement_signed && r.onboarding_status === 'Verification Complete' && isReadyToGoLive(r));
                               if (rancherViewFilter === 'broken') return !!(r.onboarding_status === 'Live' && r.active_status !== 'Active');
                               if (pipelineFilter && getRancherPipelineStage(r) !== pipelineFilter) return false;
                               return true;
@@ -1169,7 +1178,7 @@ export default function AdminPage() {
                           {ranchers
                             .filter(r => {
                               if (rancherStateFilter && r.state !== rancherStateFilter) return false;
-                              if (rancherViewFilter === 'ready') return !!(r.agreement_signed && r.onboarding_status === 'Verification Complete');
+                              if (rancherViewFilter === 'ready') return !!(r.agreement_signed && r.onboarding_status === 'Verification Complete' && isReadyToGoLive(r));
                               if (rancherViewFilter === 'broken') return !!(r.onboarding_status === 'Live' && r.active_status !== 'Active');
                               if (pipelineFilter && getRancherPipelineStage(r) !== pipelineFilter) return false;
                               return true;
@@ -1214,6 +1223,19 @@ export default function AdminPage() {
                                   );
                                 }
                                 if (stage === 'Verified') {
+                                  // Only OFFER Go Live when the server-side rail would
+                                  // accept it (signed + Connect-ok-or-legacy + verification
+                                  // not pending) — same predicate as lib/goLiveGates.
+                                  if (!isReadyToGoLive(rancher)) {
+                                    return (
+                                      <span
+                                        className="px-3 py-1 text-xs border border-amber-dark text-amber-dark cursor-default"
+                                        title={`Not ready to go live: ${goLiveBlockersView(rancher).join('; ')}`}
+                                      >
+                                        Not Ready: {goLiveBlockersView(rancher).join('; ')}
+                                      </span>
+                                    );
+                                  }
                                   return (
                                     <button
                                       onClick={() => {
@@ -1411,25 +1433,34 @@ export default function AdminPage() {
                                           </>
                                         )}
                                         {rancher.onboarding_status === 'Verification Complete' && (
-                                          <>
-                                            <button
-                                              onClick={() => {
-                                                setConfirmAction({
-                                                  message: `Mark ${rancher.ranch_name || rancher.operator_name} as Live?`,
-                                                  onConfirm: () => updateOnboardingStatus(rancher.id, 'Live')
-                                                });
-                                              }}
-                                              className="px-3 py-1 text-xs bg-sage-dark text-white hover:bg-sage-dark"
+                                          isReadyToGoLive(rancher) ? (
+                                            <>
+                                              <button
+                                                onClick={() => {
+                                                  setConfirmAction({
+                                                    message: `Mark ${rancher.ranch_name || rancher.operator_name} as Live?`,
+                                                    onConfirm: () => updateOnboardingStatus(rancher.id, 'Live')
+                                                  });
+                                                }}
+                                                className="px-3 py-1 text-xs bg-sage-dark text-white hover:bg-sage-dark"
+                                              >
+                                                Mark Live
+                                              </button>
+                                              <button
+                                                onClick={() => { setReleaseModal(rancher); setReleaseAnnounce(true); }}
+                                                className="px-3 py-1 text-xs bg-amber-dark text-white hover:opacity-90"
+                                              >
+                                                Release + Announce
+                                              </button>
+                                            </>
+                                          ) : (
+                                            <span
+                                              className="px-3 py-1 text-xs border border-amber-dark text-amber-dark cursor-default"
+                                              title="Go Live is offered once every gate passes — same rules the server enforces."
                                             >
-                                              Mark Live
-                                            </button>
-                                            <button
-                                              onClick={() => { setReleaseModal(rancher); setReleaseAnnounce(true); }}
-                                              className="px-3 py-1 text-xs bg-amber-dark text-white hover:opacity-90"
-                                            >
-                                              Release + Announce
-                                            </button>
-                                          </>
+                                              Not ready to go live: {goLiveBlockersView(rancher).join('; ')}
+                                            </span>
+                                          )
                                         )}
                                         {rancher.onboarding_status === 'Live' && !rancher.featured && (
                                           <button
@@ -1497,7 +1528,10 @@ export default function AdminPage() {
                                                     setToast({ message: 'Page is now live!', type: 'success' });
                                                     fetchAllData();
                                                   } else {
-                                                    setToast({ message: 'Failed to go live', type: 'error' });
+                                                    // Surface the rail's precise gate message (agreement /
+                                                    // Connect / verification) instead of a generic swallow.
+                                                    const data = await res.json().catch(() => ({}));
+                                                    setToast({ message: data.error || data.message || 'Failed to go live', type: 'error' });
                                                   }
                                                 }
                                               });
