@@ -1033,6 +1033,7 @@ export async function sendPostPurchaseWelcome(data: {
     <li>Monthly check-ins from me on what's happening across the network</li>
     <li>~5 months from now: I'll ping you about reserving the next ${tier} from ${esc(data.rancherName)} or the next rancher in your area</li>
   </ul>
+  <p>Track your order anytime: <a href="${SITE_URL}/member" style="color:#0E0E0E;">buyhalfcow.com/member</a>.</p>
   <p>Reply anytime. I read every reply.</p>
   <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
@@ -4790,6 +4791,7 @@ export async function sendStateWaitlistLetter(data: {
   <p>Thanks for signing up. Straight read: we don't have a verified rancher in ${esc(data.buyerState)} yet. You're on the waitlist.</p>
   <p>I cold-email D2C ranchers in uncovered states every week. ${esc(data.buyerState)} is on the list. When one signs the agreement + goes live, you're one of the first I match them to.</p>
   <p>I'll email when it happens. No spam in the meantime — just one short monthly note so you know the platform is still building.</p>
+  <p>You can check your spot on the list anytime at <a href="${SITE_URL}/member" style="color:#6B4F3F;">buyhalfcow.com/member</a> — we'll email you a sign-in link, no password needed.</p>
   <p>Thanks for being patient w/ a small platform doing it right.</p>
   <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Ben<br>BuyHalfCow</p>
 </div></body></html>`,
@@ -4837,6 +4839,7 @@ export async function sendBuyerFulfillmentConfirmation(data: {
     <li>In ~2 weeks I'll send you a cuts education email — what to do with the oxtail, the shanks, the trim that becomes burger.</li>
     <li>Around the 5-month mark I'll ping you about reserving the next share — from ${esc(data.rancherName)} again or another rancher in your area if their next harvest fits your timing better.</li>
   </ul>
+  <p>Track your order anytime: <a href="${SITE_URL}/member" style="color:#0E0E0E;">buyhalfcow.com/member</a>.</p>
   <p>If anything was off about pickup/delivery, reply to this email. I read every reply.</p>
   <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
@@ -4955,6 +4958,7 @@ export async function sendBuyerFinalInvoice(data: {
     <a href="${data.checkoutUrl}" class="cta">Pay final balance &rarr;</a>
   </p>
   <p style="font-size:13px;color:#6B4F3F;">This payment goes directly to ${esc(data.ranchName)} — 100% of the balance, no BuyHalfCow fee. Our service fee was already collected with your deposit, upfront.</p>
+  <p style="font-size:13px;color:#6B4F3F;">Track your order anytime: <a href="${SITE_URL}/member" style="color:#0E0E0E;">buyhalfcow.com/member</a>.</p>
   <p style="font-size:13px;color:#6B4F3F;">Questions about cuts, pickup, or timing? Reply to this email — it goes straight to the rancher.</p>
   <p style="margin-top:32px;">— Ben</p>
 </div></body></html>`,
