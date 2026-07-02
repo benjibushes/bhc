@@ -1,32 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Container from './Container';
 import Divider from './Divider';
 import Button from './Button';
-import LiveCounter from './LiveCounter';
+import LiveCounter, { useNetworkStats } from './LiveCounter';
+import StickyMobileCTA from './StickyMobileCTA';
+import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 
 // CampaignTracker moved to app/components/UtmCapture.tsx + mounted in
 // app/layout.tsx so UTM/fbclid/gclid land on EVERY entry page, not just /.
 // See: 2026-05-27 P0 marketing fix I-2.
 
-function useLiveStats() {
-  const [stats, setStats] = useState<{ rancherCount: number; buyerCount: number; stateCount: number } | null>(null);
-
-  useEffect(() => {
-    fetch('/api/stats/public')
-      .then(r => r.json())
-      .then(setStats)
-      .catch(() => {});
-  }, []);
-
-  return stats;
-}
-
 export default function FullHomepage() {
-  const stats = useLiveStats();
-  const totalMembers = stats ? stats.rancherCount + stats.buyerCount : null;
+  // Shared cached fetch of /api/stats/public (same source LiveCounter
+  // renders) — the old local hook double-fetched the endpoint AND summed
+  // ranchers+buyers into a "members" number that contradicted the
+  // "Members" figure LiveCounter shows two inches below it. One source,
+  // one number.
+  const stats = useNetworkStats();
+  const totalMembers = stats?.buyers || null;
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
@@ -92,15 +85,25 @@ export default function FullHomepage() {
               Answer a few questions and we match you with a verified rancher serving your area — or put you first in line as we bring one to your state. You talk to them direct, set your cuts, pick your processing date. You pay the rancher, not a marketplace.
               {totalMembers ? ` Join ${totalMembers.toLocaleString()}+ members already sourcing direct.` : ''}
             </p>
+            {/* The two front doors: get matched (funnel) or browse the
+                ranchers (store). The old secondary CTA sent unsure buyers to
+                /start — kept below as a text link — which buried the browse
+                path entirely; /ranchers wasn't linked anywhere on this page. */}
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <Button href="/access" size="lg">
                 Get matched in 90 seconds
               </Button>
-              <Button href="/start" variant="secondary" size="lg">
-                Not sure? Start here
+              <Button href="/ranchers" variant="secondary" size="lg">
+                Browse the ranchers
               </Button>
             </div>
-            <p className="text-xs text-saddle mt-8">
+            <p className="text-sm text-saddle mt-5">
+              Not sure yet?{' '}
+              <a href="/start" className="underline hover:text-charcoal transition-colors">
+                Start here
+              </a>
+            </p>
+            <p className="text-xs text-saddle mt-6">
               Raise cattle?{' '}
               <a href="/sell" className="underline hover:text-charcoal transition-colors">
                 Sell direct — free to join
@@ -149,16 +152,18 @@ export default function FullHomepage() {
       </section>
 
       {/* Landscape image strip — break up the text wall + signal authenticity.
-          Plain <img> instead of next/image because the source is the Shopify
-          CDN and we haven't allowlisted it in next.config. eager-load above
-          the fold; lazy below. */}
-      <section className="relative w-full overflow-hidden">
-        <img
+          next/image (config allows any https host, so the Shopify CDN is
+          fine) for AVIF/WebP + responsive sizing. Lazy: this sits two full
+          sections below the fold — the previous eager + fetchPriority=high
+          made a 400KB JPEG compete with the hero for first-paint bandwidth.
+          Fixed container height = zero layout shift. */}
+      <section className="relative w-full overflow-hidden h-[260px] md:h-[420px]">
+        <Image
           src="https://cdn.shopify.com/s/files/1/0720/5348/9896/files/MAKE_AMERICA_GRASS_FED_-_LOS_RIOS_FARM-259.jpg?v=1739935780"
           alt="A rancher wearing the BuyHalfCow trucker hat in a grass-fed field"
-          className="w-full h-[260px] md:h-[420px] object-cover"
-          loading="eager"
-          fetchPriority="high"
+          fill
+          sizes="100vw"
+          className="object-cover"
         />
       </section>
 
@@ -226,26 +231,28 @@ export default function FullHomepage() {
                 href="https://merch.buyhalfcow.com/products/buy-half-cow-trucker?utm_source=buyhalfcow&utm_medium=hero-image&utm_campaign=hat-launch"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block aspect-square overflow-hidden bg-bone/5 border border-bone/10 hover:border-bone transition-colors"
+                className="relative block aspect-square overflow-hidden bg-bone/5 border border-bone/10 hover:border-bone transition-colors"
               >
-                <img
+                <Image
                   src="https://cdn.shopify.com/s/files/1/0720/5348/9896/files/MAKE_AMERICA_GRASS_FED_-_LOS_RIOS_FARM-259.jpg?v=1739935780"
-                  alt="BUY HALF COW Trucker hat"
-                  className="w-full h-full object-cover"
-                  loading="lazy"
+                  alt="The BUY HALF COW trucker hat worn on a working grass-fed ranch"
+                  fill
+                  sizes="(min-width: 768px) 25vw, 50vw"
+                  className="object-cover"
                 />
               </a>
               <a
                 href="https://merch.buyhalfcow.com/products/vuck-fegans-trucker?utm_source=buyhalfcow&utm_medium=hero-image&utm_campaign=hat-launch"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block aspect-square overflow-hidden bg-bone/5 border border-bone/10 hover:border-bone transition-colors"
+                className="relative block aspect-square overflow-hidden bg-bone/5 border border-bone/10 hover:border-bone transition-colors"
               >
-                <img
+                <Image
                   src="https://cdn.shopify.com/s/files/1/0720/5348/9896/files/retro-trucker-hat-white-front-67b54f8b08425.jpg?v=1739935633"
-                  alt="Vuck Fegans Trucker hat"
-                  className="w-full h-full object-cover"
-                  loading="lazy"
+                  alt="Vuck Fegans trucker hat, white retro style"
+                  fill
+                  sizes="(min-width: 768px) 25vw, 50vw"
+                  className="object-cover"
                 />
               </a>
             </div>
@@ -425,7 +432,10 @@ export default function FullHomepage() {
               </div>
               <div className="space-y-2">
                 <p className="font-medium">BHC Promise</p>
-                <p className="text-sm text-saddle">Refundable until your rancher accepts. Cold-chain guarantee. We mediate any dispute. <a href="/promise" className="underline hover:text-charcoal">Read the promise →</a></p>
+                {/* Refund terms single-sourced from lib/refundPolicy — the
+                    previous hardcoded phrasing here had drifted from the
+                    canonical policy string every checkout surface quotes. */}
+                <p className="text-sm text-saddle">Deposits are {REFUND_POLICY_SHORT}. Cold-chain guarantee. We mediate any dispute. <a href="/promise" className="underline hover:text-charcoal">Read the promise →</a></p>
               </div>
               <div className="space-y-2">
                 <p className="font-medium">Real support</p>
@@ -447,7 +457,7 @@ export default function FullHomepage() {
             </h2>
             <p className="text-xl max-w-2xl mx-auto">
               {totalMembers
-                ? `${totalMembers.toLocaleString()}+ people already matched. The quiz takes 90 seconds.`
+                ? `${totalMembers.toLocaleString()}+ members and counting. The quiz takes 90 seconds.`
                 : 'Take the 90-second quiz. Most buyers are matched within hours.'}
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-6">
@@ -475,13 +485,22 @@ export default function FullHomepage() {
               </Button>
             </div>
             <p className="text-sm pt-4 text-dust">
-              Questions? <a href="mailto:contact@buyhalfcow.com" className="underline">contact@buyhalfcow.com</a>
+              Questions?{' '}
+              <a href="/faq" className="underline hover:text-bone transition-colors">Read the FAQ</a>
+              {', '}
+              <a href="/support" className="underline hover:text-bone transition-colors">get support</a>
+              {', or email '}
+              <a href="mailto:contact@buyhalfcow.com" className="underline hover:text-bone transition-colors">contact@buyhalfcow.com</a>
             </p>
           </div>
         </Container>
       </section>
 
       <Divider />
+
+      {/* Mobile: keep the primary door one thumb-tap away on a page this
+          long. Same primitive /start, /map, and /wins already mount. */}
+      <StickyMobileCTA href="/access" label="Get matched in 90 seconds" />
       </main>
   );
 }

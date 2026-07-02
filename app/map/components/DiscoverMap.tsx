@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, ZoomControl, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -10,21 +10,24 @@ import 'leaflet/dist/leaflet.css';
 // as unstyled boxes. These ship inside the package's dist/assets.
 import 'react-leaflet-cluster/dist/assets/MarkerCluster.css';
 import 'react-leaflet-cluster/dist/assets/MarkerCluster.Default.css';
+// Brand chrome — warm tile filter, divIcon pins, cluster bubbles, popup cards,
+// control styling. Must come AFTER the cluster defaults so overrides win.
+import './discover-map.css';
 import type { MapPin } from '../page';
-import MapLegend from './MapLegend';
 import StateFilter from './StateFilter';
 import ProductFilter from './ProductFilter';
 import StatusFilter, { statusMatches, type StatusFilterValue } from './StatusFilter';
 import UncoveredStateCapture from './UncoveredStateCapture';
 import { fromPriceLabel, locationLabel } from './priceLabel';
 
-// Inline SVG pin icons. We deliberately avoid bundling the default Leaflet
-// raster icon — Next.js bundles assets oddly and 404 the marker shadow PNG.
-// Four visual states aligned to onboarding pipeline:
-//   - Solid green   → verified partner (Verification=Verified + Onboarding=Live)
-//   - Solid orange  → in-progress onboarding (Call/Docs/Agreement/Verification stages)
-//   - Solid yellow  → self-submitted / community-flagged (raised their hand)
-//   - Dashed grey   → cold-discovered prospect
+// Inline SVG pin bodies rendered through L.divIcon (not L.icon data-URIs) so
+// CSS can drive hover/active states and the verified halo ring. We still avoid
+// the default Leaflet raster icon — Next.js bundles assets oddly and 404s the
+// marker shadow PNG. Visual language, aligned to the onboarding pipeline:
+//   - Deep green pin + subtle ring → verified partner (taking reservations)
+//   - Amber pin                    → in-progress onboarding
+//   - Yellow pin                   → self-submitted / community-flagged
+//   - Muted grey dot               → cold-discovered prospect (de-emphasized)
 const verifiedIconSvg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
   <path d="M14 1 C7 1 1.5 6.5 1.5 13.5 C1.5 23 14 35 14 35 C14 35 26.5 23 26.5 13.5 C26.5 6.5 21 1 14 1 Z"
@@ -32,7 +35,7 @@ const verifiedIconSvg = `
   <circle cx="14" cy="13" r="4.5" fill="#F4F1EC"/>
 </svg>`;
 
-// Onboarding pin — solid orange, paper-warm border. Distinct from yellow
+// Onboarding pin — solid amber, paper-warm border. Distinct from yellow
 // (raised-hand-only) and grey (cold). Signals active progress in pipeline.
 const onboardingIconSvg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
@@ -48,44 +51,31 @@ const selfSubmittedIconSvg = `
   <circle cx="14" cy="13" r="4.5" fill="#0E0E0E"/>
 </svg>`;
 
-const prospectIconSvg = `
-<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
-  <path d="M14 1 C7 1 1.5 6.5 1.5 13.5 C1.5 23 14 35 14 35 C14 35 26.5 23 26.5 13.5 C26.5 6.5 21 1 14 1 Z"
-        fill="#A7A29A" stroke="#0E0E0E" stroke-width="1.5"
-        stroke-dasharray="3 2"/>
-  <circle cx="14" cy="13" r="4.5" fill="#F4F1EC"/>
-</svg>`;
-
-function svgToDataUri(svg: string): string {
-  return `data:image/svg+xml;base64,${typeof window !== 'undefined' ? btoa(svg) : Buffer.from(svg).toString('base64')}`;
+// divIcon factory — className 'bhc-marker' replaces Leaflet's default
+// .leaflet-div-icon (which would paint a white box behind the SVG). The
+// verified pin gets a halo <span> BEFORE the svg so it paints underneath.
+function pinDivIcon(svg: string, opts?: { halo?: boolean }) {
+  return L.divIcon({
+    className: 'bhc-marker',
+    html: `<span class="bhc-pin">${opts?.halo ? '<span class="bhc-pin__halo"></span>' : ''}${svg}</span>`,
+    iconSize: [28, 36],
+    iconAnchor: [14, 35],
+    popupAnchor: [0, -32],
+  });
 }
 
-const verifiedIcon = L.icon({
-  iconUrl: svgToDataUri(verifiedIconSvg),
-  iconSize: [28, 36],
-  iconAnchor: [14, 35],
-  popupAnchor: [0, -32],
-});
+const verifiedIcon = pinDivIcon(verifiedIconSvg, { halo: true });
+const onboardingIcon = pinDivIcon(onboardingIconSvg);
+const selfSubmittedIcon = pinDivIcon(selfSubmittedIconSvg);
 
-const onboardingIcon = L.icon({
-  iconUrl: svgToDataUri(onboardingIconSvg),
-  iconSize: [28, 36],
-  iconAnchor: [14, 35],
-  popupAnchor: [0, -32],
-});
-
-const selfSubmittedIcon = L.icon({
-  iconUrl: svgToDataUri(selfSubmittedIconSvg),
-  iconSize: [28, 36],
-  iconAnchor: [14, 35],
-  popupAnchor: [0, -32],
-});
-
-const prospectIcon = L.icon({
-  iconUrl: svgToDataUri(prospectIconSvg),
-  iconSize: [28, 36],
-  iconAnchor: [14, 35],
-  popupAnchor: [0, -32],
+// Prospects render as a small muted dot — "on our radar", intentionally quiet
+// next to the actionable teardrops.
+const prospectIcon = L.divIcon({
+  className: 'bhc-marker',
+  html: '<span class="bhc-dot"></span>',
+  iconSize: [11, 11],
+  iconAnchor: [6, 6],
+  popupAnchor: [0, -8],
 });
 
 function iconForStatus(status: MapPin['status']) {
@@ -149,6 +139,11 @@ function haversine(a: [number, number], b: [number, number]): number {
   return 2 * Math.asin(Math.sqrt(h));
 }
 
+// Immersive map surface. Renders inside DiscoverMapClient's viewport-height
+// hero (absolute inset-0) with the filter controls as a floating card OVER the
+// map instead of page chrome stacked above it. The slim title bar + list panel
+// + legend live in DiscoverMapClient (they must be SSR'd; this module is
+// ssr:false).
 export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
   // ── Filter state, hydrated from the URL for shareable/SEO links ──────────
   const initial = useMemo(() => {
@@ -173,6 +168,9 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>(initial.status);
   const [geoMsg, setGeoMsg] = useState<string>('');
   const [geoBusy, setGeoBusy] = useState(false);
+  // Mobile-only disclosure for the filter card body — closed by default so the
+  // map owns the small screen. md+ ignores this (content always shown).
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const mapRef = useRef<L.Map | null>(null);
   // Marker refs keyed by pin id so geolocation can open the nearest popup.
@@ -239,7 +237,7 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
   const findNearMe = useCallback(() => {
     setGeoMsg('');
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setGeoMsg('Location isn’t available on this device — pick your state above instead.');
+      setGeoMsg('Location isn’t available on this device — pick your state in the filters instead.');
       return;
     }
     setGeoBusy(true);
@@ -256,7 +254,7 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
         const pool = verified.length > 0 ? verified : filtered;
         if (pool.length === 0) {
           map.flyTo(me, 7, { duration: 0.8 });
-          setGeoMsg('No ranchers near you yet — drop your email below and we’ll scout your area.');
+          setGeoMsg('No ranchers near you yet — pick your state and drop your email so we can scout your area.');
           return;
         }
         let nearest = pool[0];
@@ -282,9 +280,9 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
       (err) => {
         setGeoBusy(false);
         if (err.code === err.PERMISSION_DENIED) {
-          setGeoMsg('Location blocked — no worries, pick your state from the dropdown above.');
+          setGeoMsg('Location blocked — no worries, pick your state from the filters.');
         } else {
-          setGeoMsg('Couldn’t get your location — pick your state above instead.');
+          setGeoMsg('Couldn’t get your location — pick your state in the filters instead.');
         }
       },
       { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 },
@@ -294,105 +292,153 @@ export default function DiscoverMap({ pins }: { pins: MapPin[] }) {
   const clearable = stateFilter || productFilter || statusFilter !== 'coming';
 
   return (
-    <div className="space-y-4">
-      {/* Controls row — filters left, near-me right */}
-      <div className="flex flex-wrap gap-3 items-center justify-between">
-        <div className="flex flex-wrap gap-3 items-center">
-          <StatusFilter value={statusFilter} onChange={setStatusFilter} />
-          <StateFilter value={stateFilter} options={states} onChange={setStateFilter} />
-          <ProductFilter value={productFilter} options={products} onChange={setProductFilter} />
-          {clearable && (
+    <div className="absolute inset-0">
+      <MapContainer
+        className="bhc-map"
+        center={DEFAULT_CENTER}
+        zoom={DEFAULT_ZOOM}
+        style={{ height: '100%', width: '100%' }}
+        scrollWheelZoom={false}
+        zoomControl={false}
+      >
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        {/* Default topleft zoom would hide behind the floating filter card. */}
+        <ZoomControl position="bottomright" />
+        <MapHandle onReady={handleMapReady} />
+        <FitToPins pins={filtered} signal={fitSignal} />
+        <MarkerClusterGroup chunkedLoading maxClusterRadius={45} showCoverageOnHover={false}>
+          {filtered.map((p) => (
+            <Marker
+              key={p.id}
+              position={[p.lat, p.lng]}
+              icon={iconForStatus(p.status)}
+              riseOnHover
+              ref={(m) => {
+                markerRefs.current[p.id] = m;
+              }}
+            >
+              <Popup>
+                <PinCard pin={p} />
+              </Popup>
+            </Marker>
+          ))}
+        </MarkerClusterGroup>
+      </MapContainer>
+
+      {/* ── Floating filter card ─────────────────────────────────────────────
+          Sits just under the slim title bar (h-14 mobile / h-16 desktop, both
+          fixed heights, so the top offsets are safe constants). z-[1050] beats
+          Leaflet's controls (1000) but stays under the title bar (1100) and
+          list panel (1200). The wrapper is pointer-events-none so map drags
+          pass through the empty column; each card re-enables events. */}
+      <div className="pointer-events-none absolute left-3 right-3 top-16 z-[1050] space-y-2 md:right-auto md:top-[4.75rem] md:w-[368px]">
+        <div className="pointer-events-auto border border-dust bg-bone/95 shadow-[0_10px_28px_rgba(14,14,14,0.14)] backdrop-blur-sm">
+          <div className="flex items-center gap-2 px-3 py-2">
             <button
               type="button"
-              onClick={() => {
-                setStateFilter('');
-                setProductFilter('');
-                setStatusFilter('coming');
-              }}
-              className="text-xs underline text-saddle hover:text-charcoal"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-controls="map-filters"
+              className="inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-charcoal md:hidden"
             >
-              Clear filters
-            </button>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={findNearMe}
-          disabled={geoBusy}
-          className="inline-flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide px-3 py-2 border border-charcoal text-charcoal transition-base hover:bg-charcoal hover:text-bone disabled:opacity-60"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-            <circle cx="12" cy="10" r="3" />
-            <path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z" />
-          </svg>
-          {geoBusy ? 'Locating…' : 'Find ranchers near me'}
-        </button>
-      </div>
-
-      <p className="text-xs text-dust">
-        Showing {filtered.length} of {pins.length}
-        {geoMsg ? <span className="text-saddle"> · {geoMsg}</span> : null}
-      </p>
-
-      {/* Uncovered-state capture — only when the chosen state genuinely has no
-          pins (independent of status/product filters). Turns a dead-end filter
-          into a captured lead. */}
-      {stateFilter && !stateHasAnyPin && (
-        <UncoveredStateCapture state={stateFilter} />
-      )}
-
-      <div className="border border-dust overflow-hidden h-[420px] md:h-[600px]">
-        <MapContainer
-          center={DEFAULT_CENTER}
-          zoom={DEFAULT_ZOOM}
-          style={{ height: '100%', width: '100%' }}
-          scrollWheelZoom={false}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <MapHandle onReady={handleMapReady} />
-          <FitToPins pins={filtered} signal={fitSignal} />
-          <MarkerClusterGroup chunkedLoading maxClusterRadius={45}>
-            {filtered.map((p) => (
-              <Marker
-                key={p.id}
-                position={[p.lat, p.lng]}
-                icon={iconForStatus(p.status)}
-                ref={(m) => {
-                  markerRefs.current[p.id] = m;
-                }}
+              Filters
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                aria-hidden
+                className={`transition-transform ${filtersOpen ? 'rotate-180' : ''}`}
               >
-                <Popup>
-                  <PinCard pin={p} />
-                </Popup>
-              </Marker>
-            ))}
-          </MarkerClusterGroup>
-        </MapContainer>
-      </div>
+                <path d="M1 3l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              </svg>
+            </button>
+            <span className="hidden text-[11px] font-medium uppercase tracking-wide text-charcoal md:inline">
+              Filters
+            </span>
+            <span className="min-w-0 flex-1 truncate text-right text-[11px] text-saddle md:text-left">
+              Showing {filtered.length} of {pins.length}
+            </span>
+            <button
+              type="button"
+              onClick={findNearMe}
+              disabled={geoBusy}
+              className="inline-flex shrink-0 items-center gap-1 border border-charcoal bg-bone px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-wide text-charcoal transition-base hover:bg-charcoal hover:text-bone disabled:opacity-60"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <circle cx="12" cy="10" r="3" />
+                <path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z" />
+              </svg>
+              {geoBusy ? 'Locating…' : 'Near me'}
+            </button>
+          </div>
+          <div
+            id="map-filters"
+            className={`${filtersOpen ? 'block' : 'hidden'} space-y-3 border-t border-dust/60 px-3 py-3 md:block`}
+          >
+            <StatusFilter value={statusFilter} onChange={setStatusFilter} />
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <StateFilter value={stateFilter} options={states} onChange={setStateFilter} />
+              <ProductFilter value={productFilter} options={products} onChange={setProductFilter} />
+              {clearable && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStateFilter('');
+                    setProductFilter('');
+                    setStatusFilter('coming');
+                  }}
+                  className="text-[11px] text-saddle underline hover:text-charcoal"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
 
-      <MapLegend />
+        {/* Geolocation fallback messages — restyled as a quiet card instead of
+            an inline text run. */}
+        {geoMsg ? (
+          <p
+            role="status"
+            className="pointer-events-auto border border-dust bg-bone/95 px-3 py-2 text-xs text-saddle shadow-sm backdrop-blur-sm"
+          >
+            {geoMsg}
+          </p>
+        ) : null}
+
+        {/* Uncovered-state capture — only when the chosen state genuinely has
+            no pins (independent of status/product filters). Turns a dead-end
+            filter into a captured lead. */}
+        {stateFilter && !stateHasAnyPin && (
+          <div className="pointer-events-auto shadow-[0_10px_28px_rgba(14,14,14,0.14)]">
+            <UncoveredStateCapture state={stateFilter} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 // ── Rich pin card ───────────────────────────────────────────────────────────
-// Replaces the old underlined text link with a real storefront card: logo,
-// name, location, "from $X/half", a status line, and a tap-friendly primary
-// button. Only DEPOSIT-READY ranchers (verified + onConnect) get the filled
-// "Reserve" CTA; everyone else gets a softer "View ranch" so we never promise
-// checkout on a rancher whose page can't actually take a deposit — that
-// dead-ends the buyer at the checkout screen. A verified-but-not-Connect
-// rancher is still real + browsable; the store lets buyers contact them there.
+// Storefront-style card inside the Leaflet popup: logo, name, location,
+// "from $X/half", a status line, and a tap-friendly primary button. Only
+// DEPOSIT-READY ranchers (verified + onConnect) get the filled "Reserve" CTA;
+// everyone else gets a softer "View ranch" so we never promise checkout on a
+// rancher whose page can't actually take a deposit — that dead-ends the buyer
+// at the checkout screen. A verified-but-not-Connect rancher is still real +
+// browsable; the store lets buyers contact them there. Widths live in
+// discover-map.css (.bhc-pin-card) so mobile can grow it into a big card.
 function PinCard({ pin }: { pin: MapPin }) {
   const price = pin.status === 'verified' ? fromPriceLabel(pin) : '';
   const loc = locationLabel(pin);
   const reserve = pin.status === 'verified' && pin.onConnect;
 
   return (
-    <div style={{ minWidth: 210, maxWidth: 240 }}>
+    <div className="bhc-pin-card">
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         {pin.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -431,7 +477,7 @@ function PinCard({ pin }: { pin: MapPin }) {
 
       <p style={{ margin: '6px 0 0', fontSize: 12 }}>
         {pin.status === 'verified' && (
-          <span style={{ color: '#4F7A3F', fontWeight: 600 }}>● Verified · shipping today</span>
+          <span style={{ color: '#4F7A3F', fontWeight: 600 }}>● Verified · taking reservations</span>
         )}
         {pin.status === 'onboarding' && (
           <span style={{ color: '#8C3D1F', fontWeight: 600 }}>
@@ -442,7 +488,7 @@ function PinCard({ pin }: { pin: MapPin }) {
           <span style={{ color: '#8A6F1A', fontWeight: 600 }}>● On the map · onboarding pending</span>
         )}
         {pin.status === 'prospect' && (
-          <span style={{ color: '#6B4F3F' }}>○ Prospect (unclaimed)</span>
+          <span style={{ color: '#6B4F3F' }}>○ On our radar (unclaimed)</span>
         )}
       </p>
 

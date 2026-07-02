@@ -29,6 +29,9 @@ import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
 export const maxDuration = 30;
 
+// Same fallback as lib/email.ts — used for the buyer's "track your order" link.
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+
 function esc(s: string): string {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -60,6 +63,8 @@ function buildBuyerLockEmail(args: {
     <li>You&rsquo;ll get a fulfillment confirmation email when your beef is ready</li>
     <li>Final invoice (balance due) gets sent when processing completes</li>
   </ul>
+
+  <p>Track your order anytime: <a href="${SITE_URL}/member" style="color:#0E0E0E;">buyhalfcow.com/member</a>.</p>
 
   <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Accepted ${esc(dateStr)} · Questions? Reply here. — Benjamin, BuyHalfCow</p>
 </div>

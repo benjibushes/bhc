@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 // Component caches in memory for the session so multiple instances don't
 // hammer the endpoint.
 
-type Stats = {
+export type Stats = {
   buyers: number;
   ranchers: number;
   states: number;
@@ -44,6 +44,25 @@ async function fetchStats(): Promise<Stats | null> {
   } catch {
     return cachedStats;
   }
+}
+
+// Shared stats hook — one module-level cache feeds every consumer on the
+// page (hero headline + LiveCounter used to fire two separate fetches of
+// the same endpoint on homepage mount).
+export function useNetworkStats(): Stats | null {
+  const [stats, setStats] = useState<Stats | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchStats().then((s) => {
+      if (!cancelled && s) setStats(s);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return stats;
 }
 
 // Count-up animation — eases from 0 to target over ~1s on first paint.
@@ -80,17 +99,7 @@ interface LiveCounterProps {
 }
 
 export default function LiveCounter({ variant = 'default', showStates = true }: LiveCounterProps) {
-  const [stats, setStats] = useState<Stats | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchStats().then((s) => {
-      if (!cancelled && s) setStats(s);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const stats = useNetworkStats();
 
   const buyers = useAnimatedCount(stats?.buyers || 0);
   const ranchers = useAnimatedCount(stats?.ranchers || 0);
@@ -106,8 +115,16 @@ export default function LiveCounter({ variant = 'default', showStates = true }: 
       : 'font-serif text-3xl md:text-4xl text-charcoal';
   const dividerClass = variant === 'inverted' ? 'bg-bone/30' : 'bg-dust';
 
+  // Invisible (not unmounted) until stats land — the row keeps its height
+  // so there's no layout shift, and buyers never see a "0 Members" flash
+  // while the fetch is in flight (or stuck).
   return (
-    <div className="flex justify-center gap-6 md:gap-10 pt-2">
+    <div
+      className={`flex justify-center gap-6 md:gap-10 pt-2 transition-opacity duration-300 ${
+        stats ? 'opacity-100' : 'opacity-0'
+      }`}
+      aria-hidden={!stats}
+    >
       <div className="text-center">
         <div className={valueClass}>{buyers.toLocaleString()}</div>
         <div className={labelClass}>{buyers === 1 ? 'Member' : 'Members'}</div>

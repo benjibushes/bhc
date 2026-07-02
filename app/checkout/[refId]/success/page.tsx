@@ -277,6 +277,17 @@ function DepositSuccessContent() {
         </div>
 
         <div className="mt-8 pt-6 border-t border-divider text-center text-saddle text-sm">
+          {/* Discoverability — the deposit created (or matched) a real account.
+              Say so explicitly: buyers who close this tab need to know status,
+              tracking, and the rancher thread live at /member forever. */}
+          <p className="mb-3">
+            You have a BuyHalfCow account &mdash; order status, tracking, and your
+            message thread live at{' '}
+            <Link href="/member" className="underline hover:text-charcoal">
+              buyhalfcow.com/member
+            </Link>
+            . Signed out later? We&apos;ll email you a sign-in link &mdash; no password needed.
+          </p>
           <p>Questions? Reply to the receipt email or message {rancherName} directly.</p>
           {sessionId && (
             <p className="text-xs text-dust mt-3 font-mono break-all">

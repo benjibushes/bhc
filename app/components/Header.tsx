@@ -76,13 +76,22 @@ export default function Header() {
             ))}
           </nav>
 
-          {/* Desktop CTAs */}
+          {/* Desktop CTAs — the buyer door is labeled by its JOB ("My Order"),
+              not a generic "Log In": buyers who paid a deposit need to KNOW
+              there's a place to see status/tracking. Rancher login gets its own
+              explicit link so neither audience guesses. */}
           <div className="hidden lg:flex items-center gap-3">
             <Link
               href="/member/login"
               className="text-sm text-saddle hover:text-charcoal transition-colors"
             >
-              Log In
+              My Order
+            </Link>
+            <Link
+              href="/rancher/login"
+              className="text-sm text-saddle hover:text-charcoal transition-colors"
+            >
+              Rancher Log In
             </Link>
             <Link
               href="/access"
@@ -139,7 +148,7 @@ export default function Header() {
                 onClick={() => setOpen(false)}
                 className="block py-2 text-sm text-saddle hover:text-charcoal"
               >
-                Member Login
+                My Order (Member Login)
               </Link>
               <Link
                 href="/rancher/login"
