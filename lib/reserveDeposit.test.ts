@@ -198,3 +198,22 @@ test('statusPatch never touches login-allowed or rejected statuses', () => {
   // Rejected is a deliberate admin decision — reserve must not undo it.
   assert.deepEqual(reserveConsumerStatusPatch('Rejected'), {});
 });
+
+// ── T2.2: Referred By attribution on the reserve rail ───────────────────────
+
+test('buildReserveConsumerFields stamps Referred By only when a validated code is passed', () => {
+  const base = {
+    slug: 'renick-valley',
+    cut: 'half' as const,
+    buyerName: 'Jo Buyer',
+    buyerEmail: 'jo@example.com',
+    buyerPhone: '',
+    smsOptIn: false,
+  };
+  const withRef = buildReserveConsumerFields({ ...base, referredBy: 'benji4f2k' });
+  assert.equal(withRef['Referred By'], 'benji4f2k');
+  const withoutRef = buildReserveConsumerFields(base);
+  assert.equal('Referred By' in withoutRef, false);
+  const emptyRef = buildReserveConsumerFields({ ...base, referredBy: '' });
+  assert.equal('Referred By' in emptyRef, false);
+});

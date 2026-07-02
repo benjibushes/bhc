@@ -52,7 +52,7 @@ import { sendPostPurchaseWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { markDepositSucceeded } from '@/lib/contracts/payments';
 import { claimOnce } from '@/lib/rancherCapacity';
-import { recordClose } from '@/lib/contracts/rancher';
+import { enrollClosedWonAffiliate, recordClose } from '@/lib/contracts/rancher';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { fireCapi, buildUserData, closePurchaseEnabled } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
@@ -245,6 +245,20 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
   } catch (e: any) {
     console.warn('[stripe webhook] sendPostPurchaseWelcome failed:', e?.message);
   }
+
+  // T2.2 (2026-07-02): SILENT affiliate enrollment at deposit-settle — mints
+  // the buyer's share code + stamps Consumer 'Affiliate Code' so the success
+  // page and /member can show a TRACKED share link at the moment of highest
+  // excitement. welcomeEmail:false — the affiliate welcome email still fires
+  // exactly once, at Closed Won ('Affiliate Welcomed At' dedupe). Idempotent;
+  // fire-and-forget so enrollment can never block or delay settlement.
+  try {
+    const settleBuyerLinks: string[] = (referralRow?.['Buyer'] || []) as string[];
+    const settleBuyerId = settleBuyerLinks[0] || '';
+    if (settleBuyerId) {
+      void enrollClosedWonAffiliate(settleBuyerId, { welcomeEmail: false }).catch(() => {});
+    }
+  } catch {}
 
   // ── Meta Conversions API: server-side `InitiateCheckout` event ──────
   // Deposit is the INTENT signal (buyer committed to pay), not the

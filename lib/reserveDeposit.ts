@@ -120,10 +120,20 @@ export function buildReserveConsumerFields(args: {
   buyerPhone: string;
   buyerState?: string;
   smsOptIn: boolean;
+  /**
+   * T2.2 (2026-07-02): VALIDATED affiliate code (output of
+   * validateAffiliateRefForSignup — normalized, existence/Active-checked,
+   * self-referral-blocked). Non-empty → stamped 'Referred By' so the upstream
+   * affiliate is credited at Closed Won. The reserve rail is where success-
+   * page share links land; without this stamp every shared reservation lost
+   * its attribution.
+   */
+  referredBy?: string;
   nowIso?: string;
 }): Record<string, any> {
   const nowIso = args.nowIso || new Date().toISOString();
   return {
+    ...(args.referredBy ? { 'Referred By': args.referredBy } : {}),
     'Full Name': args.buyerName || '',
     'Email': args.buyerEmail,
     'Phone': args.buyerPhone,

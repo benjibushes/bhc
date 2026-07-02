@@ -55,3 +55,33 @@ test('url-encodes a slug with unsafe characters', () => {
     'https://buyhalfcow.com/ranchers/cattle%20%26%20co',
   );
 });
+
+// ── T2.2: attributed share links ─────────────────────────────────────────────
+// Attribution is real now: the rancher page threads ?ref through the reserve
+// POST (validated server-side) and /access feeds it to /api/consumers; the
+// referrer is credited at Closed Won.
+
+test('appends ?ref when the buyer has an affiliate code', () => {
+  assert.equal(
+    buildShareLink('foodstead', 'rec123', 'https://buyhalfcow.com', '9NQBDE'),
+    'https://buyhalfcow.com/ranchers/foodstead?ref=9NQBDE',
+  );
+  assert.equal(
+    buildShareLink(undefined, 'rec123', 'https://buyhalfcow.com', '9NQBDE'),
+    'https://buyhalfcow.com/access?ref=9NQBDE',
+  );
+});
+
+test('no code -> plain link (untracked share beats a dead promise)', () => {
+  assert.equal(
+    buildShareLink('foodstead', 'rec123', 'https://buyhalfcow.com', ''),
+    'https://buyhalfcow.com/ranchers/foodstead',
+  );
+});
+
+test('ref code is URI-encoded', () => {
+  assert.equal(
+    buildShareLink('foodstead', 'rec123', 'https://buyhalfcow.com', 'a&b'),
+    'https://buyhalfcow.com/ranchers/foodstead?ref=a%26b',
+  );
+});

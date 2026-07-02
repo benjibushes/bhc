@@ -131,7 +131,23 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     // Pre-fix the dashboard PATCH path called ensureBuyerAffiliate WITHOUT
     // firing the welcome email; the tier_v2 Stripe webhook path skipped
     // enrollment entirely. Fire-and-forget: never block the close path.
-    await enrollClosedWonAffiliate(buyerId);
+    //
+    // T2.2 (2026-07-02): also pays the UPSTREAM affiliate ('Referred By' on
+    // the buyer) — ONLY on a fresh transition into Closed Won so dual webhook
+    // delivery / retries can never double-credit a commission.
+    await enrollClosedWonAffiliate(buyerId, {
+      ...(prevStatus !== 'Closed Won' &&
+      typeof input.saleAmount === 'number' &&
+      input.saleAmount > 0
+        ? {
+            credit: {
+              referralId: input.referralId,
+              rancherId: input.rancherId,
+              saleAmount: input.saleAmount,
+            },
+          }
+        : {}),
+    });
 
     // Meta CAPI: the attributed Purchase for this close. recordClose covers the
     // Stripe final-invoice, Telegram/quick-action, and tier_v2 webhook close
@@ -294,37 +310,94 @@ export function fireClosePurchaseIfEnabled(args: {
  * it. Idempotent via ensureBuyerAffiliate's email-based lookup — calling
  * this twice for the same buyer is a no-op on the second call.
  *
+ * T2.2 (2026-07-02) additions, all fire-and-forget:
+ *   - opts.welcomeEmail=false → SILENT enrollment (mint + stamp, no email).
+ *     Used at deposit-settle so the success page + /member can show the
+ *     buyer's share link immediately; the welcome email still fires exactly
+ *     once, at Closed Won (enrollment is idempotent, and the email only
+ *     sends on a FRESH mint — an existing row skips it).
+ *   - an EXISTING affiliate row now backfills the Consumer 'Affiliate Code'
+ *     stamp when missing (pre-fix: existing rows early-returned, so /member
+ *     never showed their code).
+ *   - opts.credit → pays the UPSTREAM affiliate who referred this buyer
+ *     ('Referred By', stamped at signup/reserve with self-referral blocks).
+ *     Caller passes it ONLY on a fresh Closed Won transition so webhook
+ *     retries can't double-credit.
+ *
  * Fire-and-forget: every internal step swallows its own error so a Resend
  * outage or Airtable hiccup never blocks the close path.
  */
-export async function enrollClosedWonAffiliate(buyerId: string): Promise<void> {
+export async function enrollClosedWonAffiliate(
+  buyerId: string,
+  opts: {
+    welcomeEmail?: boolean;
+    credit?: { referralId: string; rancherId: string; saleAmount: number };
+  } = {},
+): Promise<void> {
   if (!buyerId) return;
+  const welcomeEmail = opts.welcomeEmail !== false;
   try {
     const buyerRecord: any = await getRecordById(TABLES.CONSUMERS, buyerId);
     const buyerEmail = String(buyerRecord?.['Email'] || '').trim();
     const buyerFullName = String(buyerRecord?.['Full Name'] || '');
     if (!buyerEmail) return;
 
+    // Upstream credit — the affiliate who SENT this buyer gets paid on the
+    // close. Independent of the buyer's own enrollment below; runs first so
+    // an enrollment hiccup can't eat the payout.
+    if (opts.credit && Number.isFinite(opts.credit.saleAmount) && opts.credit.saleAmount > 0) {
+      const referredBy = String(buyerRecord?.['Referred By'] || '').trim();
+      if (referredBy) {
+        try {
+          const { creditAffiliateOnClose } = await import('@/lib/affiliates');
+          await creditAffiliateOnClose({
+            code: referredBy,
+            referralId: opts.credit.referralId,
+            rancherId: opts.credit.rancherId,
+            buyerId,
+            saleAmount: opts.credit.saleAmount,
+          });
+        } catch (e: any) {
+          console.warn('[enrollClosedWonAffiliate] upstream credit failed:', e?.message);
+        }
+      }
+    }
+
     const result = await ensureBuyerAffiliate({
       consumerId: buyerId,
       email: buyerEmail,
       fullName: buyerFullName,
     });
-    if (!result || result.existing || !result.code) return;
+    if (!result || !result.code) return;
 
     // Stamp Consumer row so a re-edit of Closed Won doesn't re-process.
-    // Audit trail + dedup signal for downstream crons.
-    try {
-      await updateRecord(TABLES.CONSUMERS, buyerId, {
-        'Affiliate Created At': new Date().toISOString(),
-        'Affiliate Code': result.code,
-      });
-    } catch (e: any) {
-      console.warn('[enrollClosedWonAffiliate] affiliate stamp failed:', e?.message);
+    // Audit trail + dedup signal for downstream crons. Also backfills the
+    // stamp when the affiliate row pre-existed but the Consumer was never
+    // stamped (the /member share card reads this field).
+    const alreadyStamped = String(buyerRecord?.['Affiliate Code'] || '').trim();
+    if (!alreadyStamped) {
+      try {
+        await updateRecord(TABLES.CONSUMERS, buyerId, {
+          'Affiliate Created At': new Date().toISOString(),
+          'Affiliate Code': result.code,
+        });
+      } catch (e: any) {
+        console.warn('[enrollClosedWonAffiliate] affiliate stamp failed:', e?.message);
+      }
     }
 
-    // Welcome email — fail silently if Resend errors. Mirrors the link
-    // shape used by /api/admin/affiliates POST for consistency.
+    // Welcome email — EXACTLY once per buyer, at the first welcomeEmail=true
+    // call (i.e. at Closed Won). The dedupe is 'Affiliate Welcomed At' on the
+    // Consumer, NOT result.existing — a buyer silently enrolled at deposit-
+    // settle has an existing row by close time but has never been welcomed.
+    // Silent (deposit) calls never send. Belt: if the stamp field is missing
+    // from the schema the stamp write strips silently, and the only re-send
+    // exposure is a re-fired close — which recordClose already guards.
+    if (!welcomeEmail) return;
+    if (String(buyerRecord?.['Affiliate Welcomed At'] || '').trim()) return;
+
+    // Fail silently if Resend errors. Mirrors the link shape used by
+    // /api/admin/affiliates POST for consistency.
     try {
       const buyerLink = `${AFFILIATE_SITE_URL}/access?ref=${encodeURIComponent(result.code)}`;
       const rancherLink = `${AFFILIATE_SITE_URL}/partner?ref=${encodeURIComponent(result.code)}`;
@@ -337,6 +410,9 @@ export async function enrollClosedWonAffiliate(buyerId: string): Promise<void> {
         buyerLink,
         rancherLink,
       });
+      await updateRecord(TABLES.CONSUMERS, buyerId, {
+        'Affiliate Welcomed At': new Date().toISOString(),
+      }).catch(() => {});
     } catch (e: any) {
       console.warn('[enrollClosedWonAffiliate] sendAffiliateWelcome failed:', e?.message);
     }
