@@ -1,15 +1,36 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import Link from 'next/link';
+import { safeNextPath } from '@/lib/safeNextPath';
 
 export default function MemberLoginPage() {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const router = useRouter();
+
+  // Already-authed buyers skip the form entirely — a member with a live
+  // bhc-member-auth cookie who clicks a "My Order" / email link lands straight
+  // on their dashboard (or the validated ?next= resume path) instead of being
+  // asked to re-request a magic link they don't need. Non-blocking: the form
+  // renders immediately and this quietly redirects only on a confirmed session.
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/auth/member/session')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!alive || !data?.authenticated) return;
+        const next = new URLSearchParams(window.location.search).get('next');
+        router.replace(safeNextPath(next));
+      })
+      .catch(() => { /* no session — stay on the form */ });
+    return () => { alive = false; };
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,10 +102,11 @@ export default function MemberLoginPage() {
       <Container>
         <div className="max-w-md mx-auto">
           <div className="text-center space-y-6 mb-12">
-            <h1 className="font-serif text-4xl">Member Login</h1>
+            <h1 className="font-serif text-4xl">Check Your Order</h1>
             <Divider />
             <p className="text-saddle">
-              Enter your email to receive a login link. No password needed.
+              Member login for buyers — order status, tracking, and your rancher
+              thread. We&apos;ll email you a sign-in link. No password needed.
             </p>
           </div>
 

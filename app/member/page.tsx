@@ -256,7 +256,7 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 Welcome back, {member.name.split(' ')[0]}
               </h1>
               <p className="text-saddle mt-1">
-                {member.state} Member
+                {member.state} Member · Signed in as {member.email}
               </p>
             </div>
             <button
