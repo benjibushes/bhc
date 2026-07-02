@@ -17,7 +17,7 @@ import { createDepositCheckout } from '@/lib/stripeConnect';
 import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
-import type { TierSlug } from '@/lib/tiers';
+import { TIERS, type TierSlug } from '@/lib/tiers';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -182,6 +182,9 @@ export async function POST(req: Request) {
   // Fire deposit-invoice email to the buyer w/ the checkout URL.
   const buyerName = String(buyer['Full Name'] || buyerEmail.split('@')[0]).trim();
   try {
+    // chargedCents mirrors createDepositCheckout's totalChargedCents exactly
+    // (deposit + round(fullSale × tier rate)) so the quoted "Today" figure is
+    // byte-identical to what Stripe charges. FEE-INVISIBLE: one number, no split.
     await sendBuyerDepositInvoice({
       buyerEmail,
       buyerName,
@@ -189,6 +192,7 @@ export async function POST(req: Request) {
       cutTier,
       depositCents,
       fullSaleCents,
+      chargedCents: depositCents + Math.round(fullSaleCents * TIERS[tierSlug].commissionRate),
       checkoutUrl: session.url,
     });
   } catch (e: any) {

@@ -157,10 +157,15 @@ export async function sendBuyerDepositInvoice(opts: {
   cutTier: string;
   depositCents: number;
   fullSaleCents: number;
+  // FEE-INVISIBLE (founder directive 2026-07-01): the amount the buyer's card
+  // is actually charged at the checkout link (deposit + baked-in commission,
+  // = createDepositCheckout's totalChargedCents). When provided, the email
+  // quotes THIS single number — never a deposit/fee split, and never a
+  // rancher-portion figure the Stripe page would then contradict.
+  chargedCents?: number;
   checkoutUrl: string;
 }) {
-  const dep = (opts.depositCents / 100).toFixed(0);
-  const full = (opts.fullSaleCents / 100).toFixed(0);
+  const dep = ((opts.chargedCents ?? opts.depositCents) / 100).toFixed(0);
   const balance = ((opts.fullSaleCents - opts.depositCents) / 100).toFixed(0);
   return sendEmail({
     to: opts.buyerEmail,
@@ -170,8 +175,7 @@ export async function sendBuyerDepositInvoice(opts: {
       <p>Great call. Here's the deposit link to lock your <strong>${escape(opts.cutTier)}</strong> from <strong>${escape(opts.rancherName)}</strong>:</p>
       <div style="background:#FFFFFF;border:1px solid #A7A29A;padding:18px;margin:20px 0;font-size:15px">
         <strong>Today:</strong> $${dep} deposit<br>
-        <strong>At pickup:</strong> $${balance} balance to ${escape(opts.rancherName)}<br>
-        <strong>Total:</strong> $${full}
+        <strong>At pickup:</strong> $${balance} balance to ${escape(opts.rancherName)}
       </div>
       <p style="margin:28px 0">
         <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">
