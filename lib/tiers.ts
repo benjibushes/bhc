@@ -18,6 +18,8 @@
 //   Add-on Photo     : price_1Tb3K4GTWWNqassHvTC4w9KE
 //   Add-on Founder Letter : price_1Tb3KPGTWWNqassHdBaWY8Z8
 
+import { normalizeCommissionRate } from './commission';
+
 // `legacy_connect` is the HYBRID path: Stripe Connect onboarded so deposits
 // route through the platform, but rancher keeps the legacy 10% commission
 // model (no monthly subscription, no Stripe Price). Use when a rancher
@@ -189,6 +191,32 @@ export function tierFor(rancher: any): TierSlug | null {
 export function commissionRateForTier(tier: TierSlug | null): number {
   if (!tier) return Number(process.env.COMMISSION_RATE_DEFAULT || '0.10');
   return TIERS[tier].commissionRate;
+}
+
+/**
+ * THE deposit-path commission rate — GO-LIVE MONEY HARDENING finding 1
+ * (2026-07-02). Every deposit fee computation (the Stripe application_fee,
+ * the recorded Payments row, and every buyer/rancher-facing display of the
+ * all-in "due now" number) must route through this ONE pure decision so
+ * charged fee === displayed fee === the rate the rancher agreed to.
+ *
+ * Precedence (mirrors the close path's getRancherCommissionRate — the
+ * mandated rate source since the Ashcraft 2026-05-20 dispute — but with the
+ * TIER constant as the fallback instead of the legacy env default, because
+ * tier_v2 deposits are priced by tier):
+ *   1. The rancher's locked `Commission Rate` field, when usable
+ *      (normalizeCommissionRate ≠ null). A locked 0 is VALID — negotiated
+ *      zero commission must produce a $0 fee, never the tier constant.
+ *   2. commissionRateForTier(tier): TIERS[tier].commissionRate, or the
+ *      env-default legacy fallback when tier is null — byte-identical to the
+ *      pre-fix behavior for every rancher with no locked rate.
+ *
+ * Decision table pinned in lib/depositCommissionRate.test.ts.
+ */
+export function depositCommissionRate(rancher: any, tier: TierSlug | null): number {
+  const locked = normalizeCommissionRate(rancher?.['Commission Rate']);
+  if (locked !== null) return locked;
+  return commissionRateForTier(tier);
 }
 
 // Routing priority weight + the pure priority comparator live in

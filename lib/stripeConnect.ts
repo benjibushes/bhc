@@ -242,11 +242,22 @@ export async function getConnectAccountStatus(accountId: string): Promise<Connec
 // Stage-3 Task 8 — buyer deposit direct-charge Checkout Session
 // ---------------------------------------------------------------------------
 
-import { TIERS, TierSlug } from '@/lib/tiers';
+import { TierSlug } from '@/lib/tiers';
 
 export interface CreateDepositCheckoutInput {
   rancherConnectAccountId: string;  // acct_* — direct charge target
   tier: TierSlug;
+  /**
+   * THE commission rate for this deposit's application_fee — REQUIRED
+   * (GO-LIVE MONEY HARDENING finding 1, 2026-07-02). Callers MUST resolve it
+   * via depositCommissionRate(rancher, tier) (lib/tiers.ts) so a rancher's
+   * locked `Commission Rate` field takes precedence over the tier constant.
+   * Previously this was computed here from TIERS[tier].commissionRate alone,
+   * which charged negotiated-rate ranchers' buyers the tier constant while
+   * the billing page displayed the locked rate. Required (not defaulted) so
+   * no call site can silently fall back to the tier constant again.
+   */
+  commissionRate: number;
   /**
    * Rancher's self-selected deposit amount in cents. This is the portion
    * collected upfront and routed to the rancher's Connect acct as the
@@ -276,7 +287,10 @@ export interface CreateDepositCheckoutInput {
 }
 
 export async function createDepositCheckout(input: CreateDepositCheckoutInput): Promise<{ url: string; paymentIntentId: string; sessionId: string; connectAccountId: string }> {
-  const feeRate = TIERS[input.tier].commissionRate;  // 0.07 / 0.03 / 0
+  // Locked-rate precedence lives at the caller (depositCommissionRate) —
+  // this function just applies the rate it was handed. Math below is
+  // byte-identical to the old TIERS[tier].commissionRate path.
+  const feeRate = input.commissionRate;
   // CRITICAL: commission is calculated on the FULL sale price, not on the
   // deposit. Rancher takes their full deposit upfront, BHC takes its full
   // commission upfront, and the rancher collects the fulfillment balance

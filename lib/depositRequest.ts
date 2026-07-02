@@ -162,3 +162,34 @@ export function decideDepositRequest(input: DepositRequestInput): DepositRequest
     decision: { cut: input.cut, fullSaleDollars, fullSaleCents, depositDollars, depositCents },
   };
 }
+
+// ── Email-truth outcome (GO-LIVE MONEY HARDENING finding 3, 2026-07-02) ─────
+//
+// guardedSend (lib/email.ts) returns { success:false, suppressed:true }
+// WITHOUT throwing for bounced/unsubscribed recipients. The request-deposit
+// route used to ignore the return value and answer ok:true — the rancher
+// believed the buyer was emailed when nothing went out. This pure helper
+// collapses a guardedSend-shaped result (or its absence, when the send threw)
+// into the honest { emailSent, suppressed, reason } that rides the route
+// response and drives the rancher UI's "share the link directly" fallback.
+//
+// Strict `=== true` checks: a truthy-but-not-boolean flag must never report
+// an email as sent. Decision table pinned in
+// lib/depositRequest.emailOutcome.test.ts.
+
+export interface DepositEmailOutcome {
+  emailSent: boolean;
+  suppressed: boolean;
+  reason?: string;
+}
+
+export function depositEmailOutcome(
+  result: { success?: boolean; suppressed?: boolean; reason?: string } | null | undefined,
+): DepositEmailOutcome {
+  if (result?.success === true) return { emailSent: true, suppressed: false };
+  return {
+    emailSent: false,
+    suppressed: result?.suppressed === true,
+    reason: result?.reason,
+  };
+}

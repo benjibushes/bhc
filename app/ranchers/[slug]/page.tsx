@@ -12,7 +12,7 @@ import StickyMobileCTA from '../../components/StickyMobileCTA';
 import { getRancherOrProspectBySlug, getActiveRancherPages, getAllRecords, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isRancherOnConnect } from '@/lib/rancherEligibility';
 import { depositDisplay } from '@/lib/pricing';
-import { tierFor, TIERS, commissionRateForTier } from '@/lib/tiers';
+import { tierFor, depositCommissionRate } from '@/lib/tiers';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import RancherOrderForm from './RancherOrderForm';
@@ -289,11 +289,12 @@ export default async function RancherPage(
   // FEE-INVISIBLE deposit display (founder directive 2026-07-01): the reserve
   // button shows the ALL-IN deposit — commission baked in, never itemized —
   // matching exactly what /checkout/[refId]/deposit quotes and what the card
-  // is charged. Same tier-rate + stored-deposit resolution as the checkout
-  // GET/POST (tierFor → commissionRate; stored `{Cut} Deposit` if valid, else
-  // derived ~25%). Display math only — the charge path is untouched.
+  // is charged. Same rate + stored-deposit resolution as the checkout
+  // GET/POST (depositCommissionRate: locked Commission Rate wins, else the
+  // tier constant — finding 1, 2026-07-02; stored `{Cut} Deposit` if valid,
+  // else derived ~25%). Display math only — the charge path is untouched.
   const storefrontTier = tierFor(r);
-  const storefrontRate = storefrontTier ? TIERS[storefrontTier].commissionRate : commissionRateForTier(null);
+  const storefrontRate = depositCommissionRate(r, storefrontTier);
   const depositDueDollars = (price: any, storedDeposit: any): number | undefined => {
     const d = depositDisplay(Number(price), Number(storedDeposit), storefrontRate);
     return d ? Math.round(d.dueNowCents / 100) : undefined;

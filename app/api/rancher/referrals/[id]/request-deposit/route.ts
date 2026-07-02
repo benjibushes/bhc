@@ -46,8 +46,14 @@ import { createDepositCheckout } from '@/lib/stripeConnect';
 import { requireRancher } from '@/lib/rancherAuth';
 import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { tierFor, TIERS, type TierSlug } from '@/lib/tiers';
-import { decideDepositRequest, isCutTier } from '@/lib/depositRequest';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
+import { tierFor, depositCommissionRate, type TierSlug } from '@/lib/tiers';
+import {
+  decideDepositRequest,
+  isCutTier,
+  depositEmailOutcome,
+  type DepositEmailOutcome,
+} from '@/lib/depositRequest';
 import { REFERRAL_ID_TEXT_FIELD } from '@/lib/contracts/payments';
 
 export const dynamic = 'force-dynamic';
@@ -164,6 +170,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // to legacy_connect if the Tier field is unset — but eligibility already
   // required tier_v2 + active Connect, so a real tier is expected.
   const tierSlug: TierSlug = tierFor(rancher) || 'legacy_connect';
+  // RATE SOURCE (finding 1, 2026-07-02): locked Commission Rate wins over the
+  // tier constant — the ONE rate for the Stripe application_fee AND the
+  // buyer-email "Today" figure below, so quoted === charged === locked.
+  const feeRate = depositCommissionRate(rancher, tierSlug);
 
   const connectAcct = String(rancher['Stripe Connect Account Id'] || '').trim();
   const ranchName = String(rancher['Ranch Name'] || rancher['Operator Name'] || 'the ranch').trim();
@@ -179,6 +189,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const checkout = await createDepositCheckout({
       rancherConnectAccountId: connectAcct,
       tier: tierSlug,
+      commissionRate: feeRate,
       amountCents: depositCents,
       fullSaleCents,
       buyerEmail,
@@ -247,22 +258,58 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // Email the buyer the deposit link (reuses the deposit-invoice email).
   // chargedCents mirrors createDepositCheckout's totalChargedCents exactly
-  // (deposit + round(fullSale × tier rate)) so the quoted "Today" figure is
-  // byte-identical to what Stripe charges. FEE-INVISIBLE: one number, no split.
+  // (deposit + round(fullSale × feeRate), same locked-rate-aware rate) so the
+  // quoted "Today" figure is byte-identical to what Stripe charges.
+  // FEE-INVISIBLE: one number, no split.
+  //
+  // EMAIL TRUTH (finding 3, 2026-07-02): guardedSend returns
+  // { success:false, suppressed:true } WITHOUT throwing for bounced/
+  // unsubscribed buyers — pre-fix the result was ignored and the route
+  // answered ok:true, so the rancher believed the buyer was emailed while the
+  // first downstream net (the 14-day SLA chase) pings the RANCHER. Now the
+  // outcome rides the response (emailSent/emailSuppressed → the dashboard
+  // modal shows "share the link directly") + a deduped operator signal fires.
+  // Still non-fatal by design: the checkout link EXISTS and is returned.
+  let emailOutcome: DepositEmailOutcome;
   try {
-    await sendBuyerDepositInvoice({
+    const sendResult = await sendBuyerDepositInvoice({
       buyerEmail,
       buyerName,
       rancherName: ranchName,
       cutTier: cut,
       depositCents,
       fullSaleCents,
-      chargedCents: depositCents + Math.round(fullSaleCents * TIERS[tierSlug].commissionRate),
+      chargedCents: depositCents + Math.round(fullSaleCents * feeRate),
       checkoutUrl,
     });
+    emailOutcome = depositEmailOutcome(sendResult);
   } catch (e: any) {
     console.error('[request-deposit] buyer email failed:', e?.message);
-    // Non-fatal — link exists, rancher can resend.
+    // Non-fatal — link exists, rancher can share it directly / resend.
+    emailOutcome = depositEmailOutcome({
+      success: false,
+      reason: `send-threw: ${e?.message || 'unknown'}`,
+    });
+  }
+  if (!emailOutcome.emailSent) {
+    // Normal-urgency, deduped per referral — the rancher UI already surfaces
+    // the failure; this is the operator's copy so a suppressed buyer gets a
+    // human follow-up instead of 14 days of silence.
+    try {
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'system-error',
+        summary: 'deposit-request email to buyer did NOT send',
+        detail:
+          `Buyer ${buyerEmail} (${buyerName}) was NOT emailed the deposit link for referral ${referralId} — ` +
+          `${emailOutcome.suppressed ? 'address is suppressed (bounced/unsubscribed)' : `send failed (${emailOutcome.reason || 'unknown'})`}. ` +
+          `${ranchName} has the link on their dashboard with a "share it directly" prompt; consider reaching the buyer another way.`,
+        refs: [{ type: 'referral', id: referralId }],
+        dedupeKey: `deposit-email-fail:${referralId}`,
+      });
+    } catch (sigErr: any) {
+      console.warn('[request-deposit] operator signal failed:', sigErr?.message);
+    }
   }
 
   // Telegram operator ping.
@@ -288,5 +335,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     cutTier: cut,
     depositAmount: depositDollars,
     fullSaleAmount: fullSaleDollars,
+    // Email truth (finding 3): ok:true means "link created", NOT "buyer
+    // emailed". The dashboard modal keys off emailSent to offer the
+    // share-the-link-directly fallback.
+    emailSent: emailOutcome.emailSent,
+    emailSuppressed: emailOutcome.suppressed,
   });
 }
