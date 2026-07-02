@@ -449,16 +449,10 @@ function DepositPageContent() {
             </ul>
           </div>
 
-          {/* Refund policy — rancher's own (applies above and beyond the BHC Promise floor above) */}
-          {info.refundPolicy && (
-            <div className="bg-white border border-dust p-3 md:p-4 mb-3">
-              <div className="text-xs uppercase tracking-wider text-saddle mb-2">Rancher&apos;s refund policy</div>
-              <p className="text-sm whitespace-pre-wrap">{info.refundPolicy}</p>
-              <p className="text-xs text-saddle italic mt-3">
-                Above and beyond BHC&apos;s Promise, {info.rancher.name}&apos;s own policy applies. For disputes, reply to your match thread — BuyHalfCow can mediate.
-              </p>
-            </div>
-          )}
+          {/* Per-rancher refund policy is intentionally NOT surfaced to buyers
+              (founder directive 2026-07-02: the rancher's own refund policy is
+              not something we promote). The BuyHalfCow Promise above is the one
+              deposit-terms surface buyers see; disputes route to mediation. */}
 
           {/* What you pay today — ONE number. Founder directive (2026-07-01):
               the BHC commission is baked into the deposit price and never

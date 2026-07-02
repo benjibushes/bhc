@@ -3360,14 +3360,13 @@ export default function RancherDashboardPage() {
                   (Number(pageForm['Whole Price']) > 0)
                 );
                 const hasThreePhotos = galleryPhotos.filter(Boolean).length >= 3;
-                const refundLen = (pageForm['Refund Policy'] || '').trim().length;
-                const hasRefund = refundLen >= 20;
+                // Refund-policy nudge removed 2026-07-02 (founder directive:
+                // the rancher's own refund policy is not something we promote).
                 const checklist: { label: string; done: boolean; essential: boolean }[] = [
                   { label: 'Cover photo', done: hasCover, essential: true },
                   { label: 'About your ranch', done: hasAbout, essential: true },
                   { label: 'At least one price', done: hasPrice, essential: true },
                   { label: '3+ gallery photos', done: hasThreePhotos, essential: false },
-                  { label: 'Refund policy', done: hasRefund, essential: false },
                 ];
                 const doneCount = checklist.filter((c) => c.done).length;
                 const pct = Math.round((doneCount / checklist.length) * 100);
@@ -3778,23 +3777,10 @@ export default function RancherDashboardPage() {
                       class here so a rancher can edit them anytime. */}
                   <h3 className="font-serif text-lg border-b border-dust pb-2 pt-4">trust &amp; policies</h3>
 
-                  <div className="space-y-1">
-                    <label className="block text-sm font-medium">Refund / Satisfaction Policy <span className="text-dust font-normal">(buyers see this verbatim — 20–500 characters)</span></label>
-                    <textarea
-                      rows={4}
-                      value={pageForm['Refund Policy'] || ''}
-                      onChange={e => setPageForm(p => ({ ...p, 'Refund Policy': e.target.value }))}
-                      placeholder="e.g. If you're not happy with your beef, call us within 7 days and we'll make it right — replace the cut or refund it. We stand behind every animal we raise."
-                      className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                    />
-                    {(() => {
-                      const len = (pageForm['Refund Policy'] || '').trim().length;
-                      if (len === 0) return <p className="text-xs text-dust">A clear policy is one of the biggest trust signals for first-time buyers.</p>;
-                      if (len < 20) return <p className="text-xs text-weathered">{20 - len} more characters needed (minimum 20).</p>;
-                      if (len > 500) return <p className="text-xs text-weathered">{len - 500} characters over the 500 limit.</p>;
-                      return <p className="text-xs text-sage-dark">{len} / 500 characters.</p>;
-                    })()}
-                  </div>
+                  {/* Per-rancher refund policy editor removed 2026-07-02 (founder
+                      directive: the rancher's own refund policy is not something
+                      we promote). The BuyHalfCow Promise is the deposit-terms
+                      surface buyers see; ranchers don't author their own. */}
 
                   <div className="space-y-1">
                     <label className="block text-sm font-medium">USDA Processing Facility</label>
