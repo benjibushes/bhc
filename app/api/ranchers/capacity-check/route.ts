@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { requireCron } from '@/lib/cronAuth';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
@@ -8,16 +9,15 @@ import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  // W5 (2026-07-01): migrated to requireCron. The old inline template-literal
+  // check accepted the LITERAL header `Bearer undefined` whenever CRON_SECRET
+  // was unset (`` `Bearer ${undefined}` `` stringifies), and its `?secret=`
+  // fallback leaked the secret into Vercel access logs on manual triggers.
+  // requireCron is fail-closed (lib/secrets throws at import if CRON_SECRET
+  // is missing), constant-time, and header-only.
+  const denied = requireCron(request);
+  if (denied) return denied;
   try {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      const { searchParams } = new URL(request.url);
-      const secret = searchParams.get('secret');
-      if (secret !== process.env.CRON_SECRET || !process.env.CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-
     const ranchers = await getAllRecords(TABLES.RANCHERS);
     const updates: { name: string; oldStatus: string; newStatus: string }[] = [];
 

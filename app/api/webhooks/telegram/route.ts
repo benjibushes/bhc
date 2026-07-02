@@ -4985,7 +4985,13 @@ Confirm send?`;
           await sendTelegramMessage(chatId, '🔍 Running health checks...');
           const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
           const cronSecret = process.env.CRON_SECRET || '';
-          const res = await fetch(`${SITE_URL}/api/health?secret=${encodeURIComponent(cronSecret)}`);
+          // W6 (2026-07-01): Bearer header, NOT `?secret=` — the query-string
+          // form wrote CRON_SECRET into Vercel access logs on every /status.
+          // Matches requireCron/isAuthorizedCron; /api/health returns the full
+          // checks payload only for this header (public callers get {ok:true}).
+          const res = await fetch(`${SITE_URL}/api/health`, {
+            headers: { Authorization: `Bearer ${cronSecret}` },
+          });
           const data = await res.json();
           const checks = data.checks || {};
           const icon = (ok: boolean) => ok ? '✅' : '❌';

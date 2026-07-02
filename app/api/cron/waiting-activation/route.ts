@@ -45,6 +45,7 @@ import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendWaitingActivationNudge } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
+import { smsEnabled } from '@/lib/smsFlag';
 import { isSmsWindow } from '@/lib/sendWindow';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
@@ -140,20 +141,27 @@ async function realHandler(_request: Request): Promise<CronResult> {
       if (res.success) emailsSent++;
       else emailSuppressed++;
 
-      // SMS — best-effort bonus channel. sendSMSToConsumer enforces the TCPA
-      // gate (SMS Opt-In === true AND Unsubscribed !== true, phone present);
+      // SMS — best-effort bonus channel. W4 (2026-07-01): gated on the
+      // platform-wide ENABLE_SMS flag via the shared smsEnabled() — this was
+      // the ONLY sendSMSToConsumer call site with no ENABLE_SMS gate at all
+      // (the per-consumer TCPA opt-in inside sendSMSToConsumer still applies,
+      // but the platform kill switch must hold here too). Email path above is
+      // untouched. Inside the flag: sendSMSToConsumer enforces the TCPA gate
+      // (SMS Opt-In === true AND Unsubscribed !== true, phone present);
       // isSmsWindow enforces local quiet hours. Outside the window we simply
       // skip — the email already carried the message.
-      if (isSmsWindow(state, Date.now())) {
-        const smsUrl = `${SITE_URL}/access?resume=1`;
-        const ok = await sendSMSToConsumer({
-          consumer: c,
-          body: `You started reserving a beef share — local ranchers have open slots. Finish in 2 min: ${smsUrl} Reply STOP to opt out.`,
-          reason: 'waiting-activation nudge',
-        });
-        if (ok) smsSent++;
-      } else {
-        smsDeferredWindow++;
+      if (smsEnabled()) {
+        if (isSmsWindow(state, Date.now())) {
+          const smsUrl = `${SITE_URL}/access?resume=1`;
+          const ok = await sendSMSToConsumer({
+            consumer: c,
+            body: `You started reserving a beef share — local ranchers have open slots. Finish in 2 min: ${smsUrl} Reply STOP to opt out.`,
+            reason: 'waiting-activation nudge',
+          });
+          if (ok) smsSent++;
+        } else {
+          smsDeferredWindow++;
+        }
       }
 
       await new Promise((r) => setTimeout(r, 500)); // pace (Resend + Airtable)

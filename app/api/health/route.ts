@@ -1,22 +1,26 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
+import { isAuthorizedCron } from '@/lib/cronAuth';
 
 export const maxDuration = 30;
 
-// Health check endpoint — pings every external dependency in parallel.
-// GET /api/health?secret=CRON_SECRET
-// Returns { status: "healthy" | "degraded" | "down", checks: { ... } }
+// Health check endpoint.
+//
+// W5 (2026-07-01): auth hardened. The old inline check (a) SKIPPED auth
+// entirely when CRON_SECRET was unset — fail-open, anyone could trigger 4
+// external-dependency pings per hit (Airtable/Resend/Telegram/AI quota burn) —
+// and (b) accepted `?secret=`, leaking the secret into Vercel access logs.
+//
+// New contract (two tiers, never a 401 — uptime monitors keep their 200):
+//   - PUBLIC (no/bad auth): returns ONLY { ok: true }. Proves the app is up
+//     and routable without pinging any dependency or exposing error details
+//     (which named env vars are unset, provider latencies, etc).
+//   - AUTHED (`Authorization: Bearer CRON_SECRET` — matches requireCron):
+//     full dependency sweep, { status: "healthy"|"degraded"|"down", checks }.
+//     Callers: healthcheck cron + Telegram /status (both send the header).
 export async function GET(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      const { searchParams } = new URL(request.url);
-      const secret = searchParams.get('secret');
-      if (secret !== cronSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
+  if (!isAuthorizedCron(request)) {
+    return NextResponse.json({ ok: true });
   }
 
   const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
