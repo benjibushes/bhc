@@ -396,6 +396,21 @@ export default async function RancherPage(
             bestRating: 5,
             worstRating: 1,
           },
+          // T2.4 (2026-07-02): individual Review items alongside the
+          // aggregate — Google's rating rich result prefers LocalBusiness
+          // nodes carrying both. Same real, already-rendered reviews
+          // (first-name only; no PII beyond what the page shows).
+          review: buyerReviews.map((rev) => ({
+            '@type': 'Review',
+            author: { '@type': 'Person', name: rev.buyerName },
+            reviewRating: {
+              '@type': 'Rating',
+              ratingValue: rev.rating,
+              bestRating: 5,
+              worstRating: 1,
+            },
+            reviewBody: rev.review,
+          })),
         }
       : {}),
     ...(isProspect
