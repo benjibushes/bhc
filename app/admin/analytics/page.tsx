@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import Link from 'next/link';
-import AdminAuthGuard from '../../components/AdminAuthGuard';
 
 interface CampaignStats {
   campaignName: string;
@@ -171,38 +170,33 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-bone text-charcoal">
-          <Container>
-            <p className="text-center">Loading analytics...</p>
-          </Container>
-        </main>
-      </AdminAuthGuard>
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
+        <Container>
+          <p className="text-center">Loading analytics...</p>
+        </Container>
+      </main>
     );
   }
 
   if (!data) {
     return (
-      <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-bone text-charcoal">
-          <Container>
-            <div className="text-center space-y-4">
-              <p>Failed to load analytics.</p>
-              <button
-                onClick={() => fetchAnalytics(sinceFilter)}
-                className="px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
-              >
-                Retry
-              </button>
-            </div>
-          </Container>
-        </main>
-      </AdminAuthGuard>
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
+        <Container>
+          <div className="text-center space-y-4">
+            <p>Failed to load analytics.</p>
+            <button
+              onClick={() => fetchAnalytics(sinceFilter)}
+              className="px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        </Container>
+      </main>
     );
   }
 
   return (
-    <AdminAuthGuard>
       <main className="min-h-screen py-24 bg-bone text-charcoal">
         <Container>
           <div className="space-y-8">
@@ -231,21 +225,13 @@ export default function AnalyticsPage() {
                     <option value="all">{SINCE_LABELS['all']}</option>
                   </select>
                 </label>
+                {/* Logout lives in the admin layout shell (sidebar) */}
                 <Link
                   href="/admin"
                   className="px-4 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
                 >
                   ← Back to Admin
                 </Link>
-                <button
-                  onClick={async () => {
-                    await fetch('/api/admin/auth', { method: 'DELETE' });
-                    window.location.href = '/admin/login';
-                  }}
-                  className="px-4 py-2 text-sm border border-weathered text-weathered hover:bg-weathered hover:text-white transition-colors"
-                >
-                  Logout
-                </button>
               </div>
             </div>
 
@@ -699,7 +685,6 @@ export default function AnalyticsPage() {
           </div>
         </Container>
       </main>
-    </AdminAuthGuard>
   );
 }
 

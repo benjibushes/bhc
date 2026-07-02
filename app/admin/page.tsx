@@ -4,11 +4,10 @@ import { useState, useEffect } from 'react';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
 import Button from '../components/Button';
-import AdminAuthGuard from '../components/AdminAuthGuard';
 import CommandCenter from './components/CommandCenter';
 import { isReadyToGoLive, goLiveBlockersView } from '@/lib/goLiveGates';
 
-type Tab = 'consumers' | 'ranchers' | 'brands' | 'landDeals';
+type Tab = 'consumers' | 'ranchers';
 
 interface ReferralStats {
   totalBuyers: number;
@@ -82,37 +81,10 @@ interface Rancher {
   created_at: string;
 }
 
-interface Brand {
-  id: string;
-  brand_name: string;
-  contact_name: string;
-  email: string;
-  product_type: string;
-  discount_offered: number;
-  status: string;
-  active: boolean;
-  payment_status: string;
-  created_at: string;
-}
-
-interface LandDeal {
-  id: string;
-  seller_name: string;
-  property_location: string;
-  state: string;
-  acreage: number;
-  asking_price: string;
-  status: string;
-  visible_to_members: boolean;
-  created_at: string;
-}
-
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<Tab>('consumers');
   const [consumers, setConsumers] = useState<Consumer[]>([]);
   const [ranchers, setRanchers] = useState<Rancher[]>([]);
-  const [brands, setBrands] = useState<Brand[]>([]);
-  const [landDeals, setLandDeals] = useState<LandDeal[]>([]);
   const [loading, setLoading] = useState(true);
   const [rancherStateFilter, setRancherStateFilter] = useState<string>('');
   const [rancherViewFilter, setRancherViewFilter] = useState<string>('');
@@ -170,26 +142,20 @@ export default function AdminPage() {
       return Array.isArray(body) ? body : null;
     };
     try {
-      const [consumersRes, ranchersRes, brandsRes, landDealsRes, refStatsRes] = await Promise.all([
+      const [consumersRes, ranchersRes, refStatsRes] = await Promise.all([
         fetch('/api/admin/consumers').catch(() => null),
         fetch('/api/admin/ranchers').catch(() => null),
-        fetch('/api/admin/brands').catch(() => null),
-        fetch('/api/admin/landDeals').catch(() => null),
         fetch('/api/admin/referrals/stats').catch(() => null),
       ]);
 
-      const [consumersData, ranchersData, brandsData, landDealsData] = await Promise.all([
+      const [consumersData, ranchersData] = await Promise.all([
         safeArray(consumersRes),
         safeArray(ranchersRes),
-        safeArray(brandsRes),
-        safeArray(landDealsRes),
       ]);
 
       const failed: string[] = [];
       if (consumersData) setConsumers(consumersData); else failed.push('consumers');
       if (ranchersData) setRanchers(ranchersData); else failed.push('ranchers');
-      if (brandsData) setBrands(brandsData); else failed.push('brands');
-      if (landDealsData) setLandDeals(landDealsData); else failed.push('land deals');
 
       if (refStatsRes && refStatsRes.ok) {
         const stats = await refStatsRes.json().catch(() => null);
@@ -205,7 +171,7 @@ export default function AdminPage() {
       console.error('Error fetching admin data:', error);
       setLoadError({
         message: 'Failed to load dashboard data. Check your connection and retry.',
-        sections: ['consumers', 'ranchers', 'brands', 'land deals'],
+        sections: ['consumers', 'ranchers'],
       });
     }
     setLoading(false);
@@ -292,44 +258,6 @@ export default function AdminPage() {
     } catch (error) {
       console.error('Error updating rancher:', error);
       setToast({ message: 'Network error updating rancher', type: 'error' });
-    }
-  };
-
-  const updateBrandStatus = async (id: string, status: string, active: boolean) => {
-    try {
-      const res = await fetch(`/api/admin/brands/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, active }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setToast({ message: data.error || 'Failed to update brand', type: 'error' });
-        return;
-      }
-      fetchAllData();
-    } catch (error) {
-      console.error('Error updating brand:', error);
-      setToast({ message: 'Network error updating brand', type: 'error' });
-    }
-  };
-
-  const updateLandDealStatus = async (id: string, status: string, visible: boolean) => {
-    try {
-      const res = await fetch(`/api/admin/landDeals/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, visible_to_members: visible }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setToast({ message: data.error || 'Failed to update land deal', type: 'error' });
-        return;
-      }
-      fetchAllData();
-    } catch (error) {
-      console.error('Error updating land deal:', error);
-      setToast({ message: 'Network error updating land deal', type: 'error' });
     }
   };
 
@@ -476,20 +404,17 @@ export default function AdminPage() {
 
   if (loading) {
     return (
-      <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-bone text-charcoal">
-          <Container>
-            <div className="text-center"><p className="text-lg text-saddle">Loading admin dashboard...</p>
-            </div>
-          </Container>
-        </main>
-      </AdminAuthGuard>
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
+        <Container>
+          <div className="text-center"><p className="text-lg text-saddle">Loading admin dashboard...</p>
+          </div>
+        </Container>
+      </main>
     );
   }
 
   return (
-    <AdminAuthGuard>
-      <main className="min-h-screen py-12 bg-bone text-charcoal">
+    <main className="min-h-screen py-12 bg-bone text-charcoal">
 
       {/* Toast Notification */}
       {toast && (
@@ -515,23 +440,11 @@ export default function AdminPage() {
 
       <Container>
         <div className="space-y-8">
-          {/* Header */}
-          <div className="flex justify-between items-start mb-8">
-            <div className="text-left space-y-4">
-              <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl">
-                Admin Dashboard
-              </h1>
-            </div>
-            <button
-              onClick={async () => {
-                // Clear bhc-admin cookie via /api/admin/auth DELETE.
-                await fetch('/api/admin/auth', { method: 'DELETE' });
-                window.location.href = '/admin/login';
-              }}
-              className="px-4 py-2 text-sm border border-weathered text-weathered hover:bg-weathered hover:text-white transition-colors"
-            >
-              Logout
-            </button>
+          {/* Header — auth + logout live in the admin layout shell (sidebar) */}
+          <div className="mb-8 text-left space-y-4">
+            <h1 className="font-[family-name:var(--font-serif)] text-3xl md:text-4xl">
+              Admin Dashboard
+            </h1>
           </div>
 
           <div className="text-center space-y-4">
@@ -657,7 +570,7 @@ export default function AdminPage() {
 
               {/* Stats Overview. U13: a section that failed to load renders
                   "—", never a false 0 — the banner above explains why. */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 border border-dust text-center">
                   <div className="font-[family-name:var(--font-serif)] text-3xl">{loadError?.sections.includes('consumers') ? '—' : consumers.length}</div>
                   <div className="text-sm text-saddle">Consumers</div>
@@ -665,14 +578,6 @@ export default function AdminPage() {
                 <div className="p-4 border border-dust text-center">
                   <div className="font-[family-name:var(--font-serif)] text-3xl">{loadError?.sections.includes('ranchers') ? '—' : ranchers.length}</div>
                   <div className="text-sm text-saddle">Ranchers</div>
-                </div>
-                <div className="p-4 border border-dust text-center">
-                  <div className="font-[family-name:var(--font-serif)] text-3xl">{loadError?.sections.includes('brands') ? '—' : brands.length}</div>
-                  <div className="text-sm text-saddle">Brands</div>
-                </div>
-                <div className="p-4 border border-dust text-center">
-                  <div className="font-[family-name:var(--font-serif)] text-3xl">{loadError?.sections.includes('land deals') ? '—' : landDeals.length}</div>
-                  <div className="text-sm text-saddle">Land Deals</div>
                 </div>
               </div>
 
@@ -747,56 +652,6 @@ export default function AdminPage() {
                 </Button>
               </div>
 
-              {/* Quick Actions (replaces AI & Automation) */}
-              <div className="border border-dust bg-white p-6 space-y-4">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <h2 className="font-[family-name:var(--font-serif)] text-xl">Quick Actions</h2>
-                  <div className="flex gap-2 flex-wrap">
-                    <button
-                      onClick={async () => {
-                        setConfirmAction({
-                          message: 'Run batch-approve now? This will process all pending consumers.',
-                          onConfirm: async () => {
-                            try {
-                              const res = await fetch('/api/cron/batch-approve', { method: 'POST' });
-                              const data = await res.json();
-                              setToast({ message: res.ok ? `Batch approve complete: ${data.approved || 0} approved` : `Error: ${data.error}`, type: res.ok ? 'success' : 'error' });
-                            } catch (e: any) {
-                              setToast({ message: `Failed: ${e.message}`, type: 'error' });
-                            }
-                          }
-                        });
-                      }}
-                      className="px-3 py-1.5 text-xs border border-saddle text-saddle hover:bg-saddle hover:text-white transition-colors"
-                    >
-                      Run Batch Approve
-                    </button>
-                    <button
-                      onClick={async () => {
-                        // U14: the route authorizes via the admin cookie
-                        // (requireAdmin) — the old ?password= query param was
-                        // ignored server-side yet leaked the password into
-                        // browser history + Vercel access logs. Fetch with the
-                        // cookie + show the result inline instead.
-                        try {
-                          const res = await fetch('/api/admin/setup-ai-fields', { credentials: 'include' });
-                          const j = await res.json().catch(() => ({}));
-                          alert(res.ok ? `AI field setup: ${j.message || 'done'}` : `Failed: ${j.error || res.status}`);
-                        } catch {
-                          alert('AI field setup failed — try again.');
-                        }
-                      }}
-                      className="px-3 py-1.5 text-xs border border-dust hover:bg-dust hover:text-white transition-colors"
-                    >
-                      Run AI Field Setup
-                    </button>
-                  </div>
-                </div>
-                <p className="text-sm text-saddle">
-                  Most automations run via Telegram bot (/qualify, /brief, /chasup, /draft). Email sequences and batch approval run on daily cron schedules.
-                </p>
-              </div>
-
               {/* Tab Navigation */}
               <div className="flex flex-wrap gap-2 border-b border-dust">
                 <button
@@ -818,26 +673,6 @@ export default function AdminPage() {
                   }`}
                 >
                   Ranchers
-                </button>
-                <button
-                  onClick={() => setActiveTab('brands')}
-                  className={`px-6 py-3 font-medium transition-colors ${
-                    activeTab === 'brands'
-                      ? 'bg-charcoal text-bone'
-                      : 'text-charcoal hover:bg-dust'
-                  }`}
-                >
-                  Brands
-                </button>
-                <button
-                  onClick={() => setActiveTab('landDeals')}
-                  className={`px-6 py-3 font-medium transition-colors ${
-                    activeTab === 'landDeals'
-                      ? 'bg-charcoal text-bone'
-                      : 'text-charcoal hover:bg-dust'
-                  }`}
-                >
-                  Land Deals
                 </button>
               </div>
 
@@ -1564,110 +1399,6 @@ export default function AdminPage() {
                   </div>
                 )}
 
-                {/* BRANDS TAB */}
-                {activeTab === 'brands' && (
-                  <div className="space-y-4">
-                    <h2 className="font-[family-name:var(--font-serif)] text-2xl">Brand Partnerships</h2>
-                    {brands.length === 0 ? (
-                      <p className="text-saddle">No brand applications yet.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        {brands.map((brand) => (
-                          <div key={brand.id} className="p-4 border border-dust space-y-3">
-                            <div className="flex flex-wrap items-start justify-between gap-4">
-                              <div>
-                                <h3 className="font-medium text-lg">{brand.brand_name}</h3>
-                                <p className="text-sm text-saddle">Contact: {brand.contact_name}</p>
-                                <p className="text-sm">{brand.email}</p>
-                                <p className="text-sm">Product: {brand.product_type}</p>
-                                <p className="text-sm">Discount: {brand.discount_offered}%</p>
-                                {brand.payment_status === 'Paid' ? (
-                                  <span className="inline-block mt-1 px-2 py-0.5 bg-sage/15 text-sage-dark text-xs font-medium">PAID</span>
-                                ) : brand.status === 'Approved' ? (
-                                  <span className="inline-block mt-1 px-2 py-0.5 bg-amber/15 text-amber-dark text-xs font-medium">PAYMENT PENDING</span>
-                                ) : null}
-                              </div>
-                              <div className="flex gap-2 flex-wrap">
-                                <select
-                                  value={brand.status}
-                                  onChange={(e) => updateBrandStatus(brand.id, e.target.value, brand.active)}
-                                  className="px-3 py-1 border border-dust bg-bone text-sm"
-                                >
-                                  <option value="Pending">Pending</option>
-                                  <option value="Approved">Approved</option>
-                                  <option value="Rejected">Rejected</option>
-                                </select>
-                                <button
-                                  onClick={() => updateBrandStatus(brand.id, brand.status, !brand.active)}
-                                  className={`px-3 py-1 text-sm border ${
-                                    brand.active
-                                      ? 'bg-charcoal text-bone border-charcoal'
-                                      : 'bg-transparent text-charcoal border-dust'
-                                  }`}
-                                >
-                                  {brand.active ? 'ACTIVE' : 'Inactive'}
-                                </button>
-                              </div>
-                            </div>
-                            <p className="text-xs text-saddle">
-                              Applied: {new Date(brand.created_at).toLocaleDateString()}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* LAND DEALS TAB */}
-                {activeTab === 'landDeals' && (
-                  <div className="space-y-4">
-                    <h2 className="font-[family-name:var(--font-serif)] text-2xl">Land Deal Submissions</h2>
-                    {landDeals.length === 0 ? (
-                      <p className="text-saddle">No land deals submitted yet.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        {landDeals.map((deal) => (
-                          <div key={deal.id} className="p-4 border border-dust space-y-3">
-                            <div className="flex flex-wrap items-start justify-between gap-4">
-                              <div>
-                                <h3 className="font-medium text-lg">
-                                  {deal.acreage} Acres — {deal.property_location}, {deal.state}
-                                </h3>
-                                <p className="text-sm text-saddle">Seller: {deal.seller_name}</p>
-                                <p className="text-sm font-medium">{deal.asking_price}</p>
-                              </div>
-                              <div className="flex gap-2 flex-wrap">
-                                <select
-                                  value={deal.status}
-                                  onChange={(e) => updateLandDealStatus(deal.id, e.target.value, deal.visible_to_members)}
-                                  className="px-3 py-1 border border-dust bg-bone text-sm"
-                                >
-                                  <option value="Pending">Pending</option>
-                                  <option value="Approved">Approved</option>
-                                  <option value="Rejected">Rejected</option>
-                                </select>
-                                <button
-                                  onClick={() => updateLandDealStatus(deal.id, deal.status, !deal.visible_to_members)}
-                                  className={`px-3 py-1 text-sm border ${
-                                    deal.visible_to_members
-                                      ? 'bg-charcoal text-bone border-charcoal'
-                                      : 'bg-transparent text-charcoal border-dust'
-                                  }`}
-                                >
-                                  {deal.visible_to_members ? 'VISIBLE' : 'Hidden'}
-                                </button>
-                              </div>
-                            </div>
-                            <p className="text-xs text-saddle">
-                              Submitted: {new Date(deal.created_at).toLocaleDateString()}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             </>
           )}
@@ -1820,6 +1551,5 @@ export default function AdminPage() {
         </div>
       )}
     </main>
-    </AdminAuthGuard>
   );
 }

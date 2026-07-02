@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import Container from '../../components/Container';
 import Divider from '../../components/Divider';
 import Link from 'next/link';
-import AdminAuthGuard from '../../components/AdminAuthGuard';
 import {
   useListSearch,
   SearchSortBar,
@@ -384,19 +383,16 @@ export default function AdminInquiriesPage() {
 
   if (loading) {
     return (
-      <AdminAuthGuard>
-        <main className="min-h-screen py-24 bg-bone text-charcoal">
-          <Container>
-            <p className="text-center">Loading inquiries...</p>
-          </Container>
-        </main>
-      </AdminAuthGuard>
+      <main className="min-h-screen py-24 bg-bone text-charcoal">
+        <Container>
+          <p className="text-center">Loading inquiries...</p>
+        </Container>
+      </main>
     );
   }
 
   return (
-    <AdminAuthGuard>
-      <main className="min-h-screen py-24 bg-bone text-charcoal">
+    <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="space-y-8">
           {/* Header */}
@@ -409,6 +405,7 @@ export default function AdminInquiriesPage() {
                 Track member inquiries and commission revenue
               </p>
             </div>
+            {/* Logout lives in the admin layout shell (sidebar) */}
             <div className="flex gap-2">
               <Link
                 href="/admin"
@@ -416,15 +413,6 @@ export default function AdminInquiriesPage() {
               >
                 ← Back to Admin
               </Link>
-              <button
-                onClick={async () => {
-                  await fetch('/api/admin/auth', { method: 'DELETE' });
-                  window.location.href = '/admin/login';
-                }}
-                className="px-4 py-2 text-sm border border-weathered text-weathered hover:bg-weathered hover:text-white transition-colors"
-              >
-                Logout
-              </button>
             </div>
           </div>
 
@@ -831,7 +819,6 @@ export default function AdminInquiriesPage() {
         </div>
       </Container>
     </main>
-    </AdminAuthGuard>
   );
 }
 

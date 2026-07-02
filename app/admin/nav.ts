@@ -64,9 +64,10 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { group: 'GROWTH', icon: '🗺', label: 'Heatmap', href: '/admin/heatmap' },
 
   // SYSTEM — migration open to onboarding partner; others admin-only
+  // (Manifest #14: the Backfill nav entry was removed — /admin/backfill stays
+  //  URL-reachable for the rare one-off, it just doesn't earn sidebar space.)
   { group: 'SYSTEM', icon: '🩺', label: 'Health', href: '/admin/health' },
   { group: 'SYSTEM', icon: '📄', label: 'Page readiness', href: '/admin/page-readiness' },
-  { group: 'SYSTEM', icon: '🗃', label: 'Backfill', href: '/admin/backfill' },
   {
     group: 'SYSTEM', icon: '🚚', label: 'Migration', href: '/admin/migration',
     visibleTo: ['admin', 'onboarding'],

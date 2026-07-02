@@ -51,7 +51,10 @@ export async function POST(req: Request) {
       {
         error: 'subscription_required',
         message: 'Pick + pay a tier subscription first.',
-        nextStep: '/partner',
+        // Slice-D follow-up: /partner is the new-rancher application page (no
+        // tier cards). /rancher/billing is the session-authed money surface
+        // that renders the per-tier checkout links when no tier is active.
+        nextStep: '/rancher/billing',
       },
       { status: 412 },
     );

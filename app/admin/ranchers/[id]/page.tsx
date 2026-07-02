@@ -37,6 +37,11 @@ export default function AdminRancherDetailPage() {
   // Actions bar (ported from the orphaned /admin/today v1 drawer — Manifest #16):
   // per-action busy key so buttons don't all flicker together.
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  // Manifest #18: send-v2-upgrade tier picker is a select modal (house
+  // pattern), not the old window.prompt() typing test. '' = free Legacy
+  // Connect — same contract the API expects.
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [upgradeTargetTier, setUpgradeTargetTier] = useState('pasture');
 
   // Form state
   const [form, setForm] = useState({
@@ -323,24 +328,11 @@ export default function AdminRancherDetailPage() {
   }
 
   // Send v2 upgrade invite — 5-min wizard: pick tier, Stripe Connect, deposits.
-  async function handleSendV2Upgrade() {
-    if (
-      !window.confirm(
-        `Send v2 upgrade invite to ${rancherName()}? Email explains the deposit standardization + opens wizard for tier subscription + Stripe Connect.`,
-      )
-    )
-      return;
-    // Target plan: a paid tier (pasture/ranch/operator) lands the rancher
-    // PRE-SELECTED on that plan + sent straight to its checkout. Blank = the
-    // free Legacy Connect default.
-    const targetTier = (
-      window.prompt(
-        'Target plan? Type "pasture", "ranch", or "operator" for a PAID tier (lands them straight on that plan). Leave blank for free Legacy Connect.',
-        'pasture',
-      ) || ''
-    )
-      .trim()
-      .toLowerCase();
+  // Target plan: a paid tier (pasture/ranch/operator) lands the rancher
+  // PRE-SELECTED on that plan + sent straight to its checkout. '' = the
+  // free Legacy Connect default. Same POST the old window.prompt() flow fired.
+  async function handleSendV2Upgrade(targetTier: string) {
+    setUpgradeModalOpen(false);
     const payload = await postAction('send-v2-upgrade', 'send-v2-upgrade', {
       body: { targetTier },
       failTitle: 'Upgrade invite failed',
@@ -580,7 +572,7 @@ export default function AdminRancherDetailPage() {
                     </button>
                     {/* Send v2 upgrade — subscription tier + Connect wizard */}
                     <button
-                      onClick={handleSendV2Upgrade}
+                      onClick={() => setUpgradeModalOpen(true)}
                       disabled={actionBusy === 'send-v2-upgrade'}
                       className="px-4 py-2 text-sm border border-amber-dark bg-amber/15 text-charcoal hover:bg-amber/30 disabled:opacity-50"
                       title="Sends the rancher a 5-min wizard link to pick a tier, complete Stripe Connect, and start collecting deposits via the platform. Shows because Pricing Model is not tier_v2."
@@ -953,6 +945,55 @@ export default function AdminRancherDetailPage() {
                 </div>
               </div>
             </section>
+
+            {/* Send V2 Upgrade — tier picker modal (Manifest #18: replaced the
+                window.prompt() typing test; same POST + targetTier contract). */}
+            {upgradeModalOpen && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white max-w-lg w-full p-6 space-y-4">
+                  <h3 className="font-[family-name:var(--font-playfair)] text-xl">
+                    Send V2 Upgrade Invite
+                  </h3>
+                  <p className="text-sm text-saddle">
+                    Emails <strong>{rancherName()}</strong> ({rancher?.email || 'no email on file'}) the
+                    deposit-standardization explainer + a 60-day wizard link for tier subscription +
+                    Stripe Connect. A paid target plan lands them pre-selected on that plan and straight
+                    into its checkout.
+                  </p>
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium" htmlFor="upgrade-target-tier">
+                      Target plan
+                    </label>
+                    <select
+                      id="upgrade-target-tier"
+                      value={upgradeTargetTier}
+                      onChange={(e) => setUpgradeTargetTier(e.target.value)}
+                      className="w-full px-4 py-3 border border-dust bg-bone text-sm"
+                    >
+                      <option value="pasture">Pasture — $150/mo (paid)</option>
+                      <option value="ranch">Ranch — $350/mo (paid)</option>
+                      <option value="operator">Operator — $500/mo (paid)</option>
+                      <option value="">Legacy Connect — free, no subscription</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      onClick={() => handleSendV2Upgrade(upgradeTargetTier)}
+                      disabled={actionBusy === 'send-v2-upgrade'}
+                      className="flex-1 px-4 py-3 bg-charcoal text-bone text-sm font-medium hover:bg-divider disabled:opacity-50"
+                    >
+                      {actionBusy === 'send-v2-upgrade' ? 'Sending…' : 'Send Invite'}
+                    </button>
+                    <button
+                      onClick={() => setUpgradeModalOpen(false)}
+                      className="flex-1 px-4 py-3 border border-dust text-sm hover:bg-dust"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Bottom save */}
             <div className="flex justify-between items-center pt-4">

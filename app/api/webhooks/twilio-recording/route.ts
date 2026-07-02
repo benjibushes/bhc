@@ -16,7 +16,7 @@
 import { NextResponse } from 'next/server';
 import twilio from 'twilio';
 import { createRecord, TABLES } from '@/lib/airtable';
-import { transcribeRecording } from '@/lib/clickToCall';
+import { transcribeRecording } from '@/lib/twilioRecording';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
 export const dynamic = 'force-dynamic';
