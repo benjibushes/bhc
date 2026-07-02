@@ -34,18 +34,16 @@ export async function GET(
         certifications: r['Certifications'] || '',
         next_processing_date: r['Next Processing Date'] || '',
         reserve_link: r['Reserve Link'] || '',
+        // Raw buy.stripe.com Payment Links are NOT exposed via this API —
+        // buyers purchase through the rancher's public page, which routes
+        // Connect ranchers on-platform. (SLICE F: the *_buy_url fields that
+        // used to be emitted here had zero consumers and were removed.)
         quarter_price: r['Quarter Price'] || null,
         quarter_lbs: r['Quarter lbs'] || '',
-        // Raw buy.stripe.com Payment Links are NOT exposed — any integrator gets
-        // the tracked, fork-aware buy URL instead (Connect → on-site deposit,
-        // legacy → Payment Link), so no off-platform link leaks via the API.
-        quarter_buy_url: (r['Quarter Price'] || r['Quarter Payment Link']) ? `/ranchers/${slug}/pay/quarter` : '',
         half_price: r['Half Price'] || null,
         half_lbs: r['Half lbs'] || '',
-        half_buy_url: (r['Half Price'] || r['Half Payment Link']) ? `/ranchers/${slug}/pay/half` : '',
         whole_price: r['Whole Price'] || null,
         whole_lbs: r['Whole lbs'] || '',
-        whole_buy_url: (r['Whole Price'] || r['Whole Payment Link']) ? `/ranchers/${slug}/pay/whole` : '',
         custom_notes: r['Custom Notes'] || '',
       },
     });

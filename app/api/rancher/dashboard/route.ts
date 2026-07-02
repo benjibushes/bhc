@@ -396,10 +396,6 @@ export async function GET(request: Request) {
         // those out).
         galleryPhotos: rancher['Gallery Photos'] || '',
         testimonials: rancher['Testimonials'] || '',
-        // Click tracking stats
-        quarterClicks: rancher['Quarter Clicks'] || 0,
-        halfClicks: rancher['Half Clicks'] || 0,
-        wholeClicks: rancher['Whole Clicks'] || 0,
         // Stage-3 Task 11C — fields the dashboard banner cascade needs.
         // Pricing Model gates legacy vs tier_v2 ranchers. Tier is the
         // singleSelect string (Airtable returns either a string or

@@ -67,10 +67,6 @@ interface RancherInfo {
   nextProcessingDate: string;
   reserveLink: string;
   customNotes: string;
-  // Click tracking
-  quarterClicks: number;
-  halfClicks: number;
-  wholeClicks: number;
   // Optional optimization-checklist fields (JSON-encoded strings on
   // the Airtable side; parsed lazily where used).
   galleryPhotos?: string;
@@ -184,10 +180,11 @@ interface NetworkBenefit {
 
 // Cockpit (Wave A, 2026-06-22): 'home' is the new triage default. The spine
 // nav surfaces Home / Deals (= 'referrals') / My Page (= 'my_page') and links
-// out to Messages (/rancher/inbox) + Money (/rancher/billing). The legacy
-// 'overview' folds into Home; 'marketing'/'earnings'/'benefits' stay fully
-// reachable under the secondary "More" affordance — no content deleted.
-type Tab = 'home' | 'overview' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers';
+// out to Messages (/rancher/inbox) + Money (/rancher/billing).
+// 'marketing'/'earnings'/'benefits' stay reachable under the secondary "More"
+// affordance. SLICE F: the legacy 'overview' tab is gone — it duplicated
+// Home/Deals; its capacity + pause controls live in Home's Buyer slots card.
+type Tab = 'home' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers';
 
 // WAVE 3a (2026-06-30): localStorage key for activity-feed read-state. No
 // Airtable field exists for per-rancher read receipts, so mark-as-read is
@@ -362,8 +359,8 @@ export default function RancherDashboardPage() {
   const [pauseConfirming, setPauseConfirming] = useState(false);
   const [pauseSaving, setPauseSaving] = useState(false);
   const [pauseError, setPauseError] = useState('');
-  // U12: capacity-save failures render inside the edit panel (updateError is
-  // never rendered on the overview tab, so failures used to show nothing).
+  // U12: capacity-save failures render inside the edit panel (SLICE F: the
+  // panel lives in the Home "Buyer slots" card — see buyerSlotsPanel).
   const [capacityError, setCapacityError] = useState('');
   // Go-live request
   const [goLiveRequested, setGoLiveRequested] = useState(false);
@@ -378,8 +375,6 @@ export default function RancherDashboardPage() {
   const [verificationSocial, setVerificationSocial] = useState('');
   const [verificationProcessor, setVerificationProcessor] = useState('');
   const [verificationCerts, setVerificationCerts] = useState('');
-  const [verificationMethod, setVerificationMethod] = useState<'sample' | 'visit' | 'digital'>('digital');
-  const [trackingNumber, setTrackingNumber] = useState('');
   const [verificationSubmitting, setVerificationSubmitting] = useState(false);
   const [verificationSubmitted, setVerificationSubmitted] = useState(false);
   const [verificationError, setVerificationError] = useState('');
@@ -402,7 +397,8 @@ export default function RancherDashboardPage() {
       referrals: 'referrals',
       my_page: 'my_page',
       customers: 'customers',
-      overview: 'overview',
+      // SLICE F: '#overview' deep-links land on Home (tab deleted).
+      overview: 'home',
       marketing: 'marketing',
       earnings: 'earnings',
       benefits: 'benefits',
@@ -1337,8 +1333,8 @@ export default function RancherDashboardPage() {
   const handleUpdateCapacity = async () => {
     const val = parseInt(capacityValue);
     if (isNaN(val) || val < 1 || val > 50) {
-      // U12: errors render inside the capacity panel — updateError was never
-      // shown on the overview tab, so these failures were invisible.
+      // U12: errors render inside the capacity panel (Home Buyer slots card)
+      // — these failures used to be invisible.
       setCapacityError('Capacity must be between 1 and 50');
       return;
     }
@@ -1617,7 +1613,6 @@ export default function RancherDashboardPage() {
     { key: 'my_page', label: 'My Page' },
   ];
   const moreTabs: { key: Tab; label: string }[] = [
-    { key: 'overview', label: 'Overview' },
     { key: 'marketing', label: 'Marketing' },
     { key: 'earnings', label: 'Earnings' },
     { key: 'benefits', label: `Network Benefits${benefits.length > 0 ? ` (${benefits.length})` : ''}` },
@@ -1683,6 +1678,130 @@ export default function RancherDashboardPage() {
   ];
   const setupDone = setupSteps.filter((s) => s.done).length;
   const setupRemaining = setupSteps.length - setupDone;
+
+  // SLICE F — capacity editor + pause/resume, moved 1:1 from the deleted
+  // Overview tab into the Home "Buyer slots" card (HomeTab renders this via
+  // the slotsPanel prop; the state + handlers live on this component).
+  // Everything carried over: Edit Max with inline error states, the E4b
+  // confirm-first pause toggle, resume, and pauseError surfacing.
+  const buyerSlotsPanel = (
+    <div className="space-y-3">
+      <div className="flex justify-between items-center">
+        <p className="text-sm font-medium">manage buyer slots</p>
+        {!editingCapacity && (
+          <button
+            onClick={() => { setEditingCapacity(true); setCapacityValue(String(rancherInfo.maxActiveReferrals)); setCapacityError(''); }}
+            className="text-xs text-saddle hover:text-charcoal transition-colors"
+          >
+            Edit Max
+          </button>
+        )}
+      </div>
+      <div className="flex justify-between text-sm">
+        <span className="text-saddle">Active Referrals</span>
+        <span className="font-medium">{rancherInfo.currentActiveReferrals} / {rancherInfo.maxActiveReferrals}</span>
+      </div>
+      <div className="w-full bg-bone-deep h-2">
+        <div
+          className={`h-2 transition-all ${rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals ? 'bg-weathered' : 'bg-charcoal'}`}
+          style={{ width: `${Math.min(100, (rancherInfo.currentActiveReferrals / rancherInfo.maxActiveReferrals) * 100)}%` }}
+        />
+      </div>
+      <p className="text-xs text-dust">
+        {rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals
+          ? 'At capacity — new leads paused until a deal closes'
+          : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} more leads available`}
+      </p>
+      {editingCapacity && (
+        <div className="pt-2 border-t border-dust space-y-2">
+          <label className="text-xs text-saddle">Max active leads at a time</label>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min="1"
+              max="50"
+              value={capacityValue}
+              onChange={e => setCapacityValue(e.target.value)}
+              className="flex-1 px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
+            />
+            <button
+              onClick={handleUpdateCapacity}
+              disabled={capacitySaving}
+              className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+            >
+              {capacitySaving ? '...' : 'Save'}
+            </button>
+            <button
+              onClick={() => { setEditingCapacity(false); setCapacityError(''); }}
+              className="px-3 py-2 min-h-[44px] text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+          {capacityError && (
+            <div className="p-3 border border-weathered text-weathered text-sm">{capacityError}</div>
+          )}
+          <p className="text-xs text-dust">Set how many buyer leads you can handle at once. We&apos;ll pause new leads when you hit this limit.</p>
+        </div>
+      )}
+      {/* E4b — self-serve pause/resume. Pausing flips Active Status to
+          'Paused' (routing excludes them); their page stays live and
+          in-flight deals are untouched. Confirm-first so a stray tap
+          can't cut off their leads. */}
+      <div className="pt-3 border-t border-dust space-y-2">
+        {rancherInfo.activeStatus === 'Paused' ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-medium text-amber-dark">New leads paused</p>
+            <button
+              type="button"
+              onClick={() => handleTogglePause('Active')}
+              disabled={pauseSaving}
+              className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+            >
+              {pauseSaving ? '...' : 'Resume'}
+            </button>
+          </div>
+        ) : !pauseConfirming ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-saddle">Need a break from new buyers?</p>
+            <button
+              type="button"
+              onClick={() => { setPauseConfirming(true); setPauseError(''); }}
+              className="px-4 py-2 min-h-[44px] text-xs border border-dust text-saddle hover:bg-dust hover:text-bone transition-colors"
+            >
+              Pause new leads
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-saddle">
+              New buyers won&apos;t be routed to you while paused. Your page stays live. Current conversations continue.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => handleTogglePause('Paused')}
+                disabled={pauseSaving}
+                className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
+              >
+                {pauseSaving ? '...' : 'Pause new leads'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setPauseConfirming(false); setPauseError(''); }}
+                className="px-3 py-2 min-h-[44px] text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        {pauseError && (
+          <div className="p-3 border border-weathered text-weathered text-sm">{pauseError}</div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <main className="min-h-screen py-12 bg-bone text-charcoal">
@@ -2010,7 +2129,11 @@ export default function RancherDashboardPage() {
             const status = rancherInfo.onboardingStatus;
             const agreementDone = rancherInfo.agreementSigned || ['Agreement Signed', 'Verification Pending', 'Verification Complete'].includes(status);
             const verifiedDone = status === 'Verification Complete';
-            const pageReady = !!rancherInfo.slug && !!rancherInfo.halfPrice;
+            // SLICE F: ANY one cut price completes this step — a quarter-only
+            // or whole-only rancher can finish setup (was half-price-only,
+            // which stranded ranchers who don't sell halves).
+            const pageReady = !!rancherInfo.slug &&
+              !!(rancherInfo.quarterPrice || rancherInfo.halfPrice || rancherInfo.wholePrice);
             const steps: Array<{ label: string; state: 'done' | 'current' | 'pending'; cta?: React.ReactNode }> = [
               { label: 'Application received', state: 'done' },
               {
@@ -2286,6 +2409,7 @@ export default function RancherDashboardPage() {
               payoutsLoginUrl={payouts?.loginUrl || null}
               onGoToDeals={() => setActiveTab('referrals')}
               onGoToMyPage={() => setActiveTab('my_page')}
+              slotsPanel={buyerSlotsPanel}
             />
           )}
 
@@ -2378,216 +2502,10 @@ export default function RancherDashboardPage() {
             </div>
           )}
 
-          {/* Overview Tab */}
-          {activeTab === 'overview' && (
-            <div className="space-y-8">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <StatCard label="Active Leads" value={stats.activeReferrals} />
-                <StatCard label="Deals Closed" value={stats.closedWon} />
-                <StatCard label="Total Revenue" value={`$${stats.totalRevenue.toLocaleString()}`} />
-                {/* SLICE E — netEarnings is rail-split server-side (tier_v2 keeps
-                    100% of their price; legacy nets out commission). Match the
-                    sub-copy to the rail so this card never contradicts the
-                    "you keep 100%" close-modal promise. */}
-                <StatCard
-                  label="Your Earnings"
-                  value={`$${stats.netEarnings.toLocaleString()}`}
-                  sub={rancherInfo.pricingModel === 'tier_v2'
-                    ? '(100% of your price — buyers paid the commission)'
-                    : `(after ${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}% commission)`}
-                />
-              </div>
-
-              {/* WAVE 2 (2026-06-30): the old "Optimize your page" 6-item
-                  checklist that lived here was removed — it was a 4th competing
-                  progress tracker that duplicated the Home "finish setup" card +
-                  the My Page completeness meter (the publish gate). One source of
-                  "what's left" now: Home for go-live setup, My Page for page
-                  completeness. Keeping the checklist scaffold out avoids the
-                  step-count mismatch ranchers found confusing. */}
-
-              <Divider />
-
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="p-6 border border-dust bg-white">
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-serif text-xl">capacity</h3>
-                    {!editingCapacity && (
-                      <button
-                        onClick={() => { setEditingCapacity(true); setCapacityValue(String(rancherInfo.maxActiveReferrals)); setCapacityError(''); }}
-                        className="text-xs text-saddle hover:text-charcoal transition-colors"
-                      >
-                        Edit Max
-                      </button>
-                    )}
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-saddle">Active Referrals</span>
-                      <span className="font-medium">{rancherInfo.currentActiveReferrals} / {rancherInfo.maxActiveReferrals}</span>
-                    </div>
-                    <div className="w-full bg-bone-deep h-2">
-                      <div
-                        className={`h-2 transition-all ${rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals ? 'bg-weathered' : 'bg-charcoal'}`}
-                        style={{ width: `${Math.min(100, (rancherInfo.currentActiveReferrals / rancherInfo.maxActiveReferrals) * 100)}%` }}
-                      />
-                    </div>
-                    <p className="text-xs text-dust">
-                      {rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals
-                        ? 'At capacity — new leads paused until a deal closes'
-                        : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} more leads available`}
-                    </p>
-                    {editingCapacity && (
-                      <div className="pt-2 border-t border-dust space-y-2">
-                        <label className="text-xs text-saddle">Max active leads at a time</label>
-                        <div className="flex gap-2">
-                          <input
-                            type="number"
-                            min="1"
-                            max="50"
-                            value={capacityValue}
-                            onChange={e => setCapacityValue(e.target.value)}
-                            className="flex-1 px-3 py-2 border border-dust bg-bone text-sm focus:outline-none focus:border-charcoal"
-                          />
-                          <button
-                            onClick={handleUpdateCapacity}
-                            disabled={capacitySaving}
-                            className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
-                          >
-                            {capacitySaving ? '...' : 'Save'}
-                          </button>
-                          <button
-                            onClick={() => { setEditingCapacity(false); setCapacityError(''); }}
-                            className="px-3 py-2 min-h-[44px] text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                        {capacityError && (
-                          <div className="p-3 border border-weathered text-weathered text-sm">{capacityError}</div>
-                        )}
-                        <p className="text-xs text-dust">Set how many buyer leads you can handle at once. We&apos;ll pause new leads when you hit this limit.</p>
-                      </div>
-                    )}
-                    {/* E4b — self-serve pause/resume. The only in-app brake a
-                        rancher had before this was emailing support. Pausing
-                        flips Active Status to 'Paused' (routing excludes them);
-                        their page stays live and in-flight deals are untouched.
-                        Confirm-first so a stray tap can't cut off their leads. */}
-                    <div className="pt-3 border-t border-dust space-y-2">
-                      {rancherInfo.activeStatus === 'Paused' ? (
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-xs font-medium text-amber-dark">New leads paused</p>
-                          <button
-                            type="button"
-                            onClick={() => handleTogglePause('Active')}
-                            disabled={pauseSaving}
-                            className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
-                          >
-                            {pauseSaving ? '...' : 'Resume'}
-                          </button>
-                        </div>
-                      ) : !pauseConfirming ? (
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-xs text-saddle">Need a break from new buyers?</p>
-                          <button
-                            type="button"
-                            onClick={() => { setPauseConfirming(true); setPauseError(''); }}
-                            className="px-4 py-2 min-h-[44px] text-xs border border-dust text-saddle hover:bg-dust hover:text-bone transition-colors"
-                          >
-                            Pause new leads
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          <p className="text-xs text-saddle">
-                            New buyers won&apos;t be routed to you while paused. Your page stays live. Current conversations continue.
-                          </p>
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleTogglePause('Paused')}
-                              disabled={pauseSaving}
-                              className="px-4 py-2 min-h-[44px] text-xs bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
-                            >
-                              {pauseSaving ? '...' : 'Pause new leads'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { setPauseConfirming(false); setPauseError(''); }}
-                              className="px-3 py-2 min-h-[44px] text-xs border border-dust hover:bg-dust hover:text-bone transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      {pauseError && (
-                        <div className="p-3 border border-weathered text-weathered text-sm">{pauseError}</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-6 border border-dust bg-white">
-                  <h3 className="font-serif text-xl mb-4">your operation</h3>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-saddle">State</span>
-                      <span>{rancherInfo.state}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-saddle">Beef Types</span>
-                      <span>{rancherInfo.beefTypes || 'Not set'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-saddle">Delivers To</span>
-                      <span>{rancherInfo.shipsNationwide ? 'Nationwide' : (rancherInfo.statesServed || rancherInfo.state || 'Not set')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-saddle">Monthly Capacity</span>
-                      <span>{rancherInfo.monthlyCapacity} head</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-saddle">Agreement</span>
-                      <span>{rancherInfo.agreementSigned ? 'Signed' : 'Pending'}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Recent Active Leads */}
-              {activeRefs.length > 0 && (
-                <>
-                  <h3 className="font-serif text-xl">recent leads</h3>
-                  <div className="space-y-3">
-                    {activeRefs.slice(0, 3).map((ref) => (
-                      <ReferralRow
-                        key={ref.id}
-                        referral={ref}
-                        onUpdate={updateReferralStatus}
-                        onClose={() => setCloseModal(ref)}
-                        onPass={() => setPassModal(ref)}
-                        onLost={() => handleMarkLost(ref)}
-                        onSendFinal={() => openFinalInvoiceModal(ref)}
-                        onAccept={() => handleAcceptSlot(ref)}
-                        onConfirmPayment={() => handleConfirmPayment(ref)}
-                        onRequestDeposit={() => openDepositModal(ref)}
-                        depositEligible={depositEligible}
-                        updating={updating}
-                        rowError={updateErrorId === ref.id ? updateError : undefined}
-                      />
-                    ))}
-                    {activeRefs.length > 3 && (
-                      <button onClick={() => setActiveTab('referrals')} className="text-sm text-saddle hover:text-charcoal transition-colors">
-                        View all {activeRefs.length} active leads →
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          {/* SLICE F: the Overview tab was deleted — its stat grid duplicated
+              Home (money strip + vitals), its recent-leads preview duplicated
+              Deals, and its one load-bearing piece (capacity editor + pause/
+              resume) moved into the Home "Buyer slots" card (buyerSlotsPanel). */}
 
           {/* Referrals Tab */}
           {activeTab === 'referrals' && (
@@ -2778,7 +2696,7 @@ export default function RancherDashboardPage() {
                   outstanding. Reuses the existing send-final-invoice route +
                   modal + submitFinalInvoice handler — no new API endpoints.
                   Filter: depositPaid && !finalPaid && !terminal (same as
-                  showFinalInvoice predicate in ReferralRow).
+                  showFinalInvoice predicate in ReferralCard).
                   Sort: oldest deposit first (most urgent collection first). */}
               {collectBalanceRefs.length > 0 && (
                 <>
@@ -2913,7 +2831,11 @@ export default function RancherDashboardPage() {
                   <h2 className="font-serif text-2xl">closed deals</h2>
                   <div className="space-y-4">
                     {closedRefs.map((ref) => (
-                      <div key={ref.id} className="border border-dust bg-white">
+                      // SLICE F: id anchor so jumpToReferral (customers tab /
+                      // global search / activity feed) can scroll to a CLOSED
+                      // deal too — previously only active cards had ref- ids,
+                      // so jumping to a past customer's deal landed nowhere.
+                      <div key={ref.id} id={`ref-${ref.id}`} className="border border-dust bg-white scroll-mt-24">
                         <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                           <div>
                             <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[ref.status] || 'bg-bone-warm text-saddle'}`}>
@@ -2980,9 +2902,10 @@ export default function RancherDashboardPage() {
           )}
 
           {/* Marketing Tab — BUILD-6 (2026-05-29) ──────────────────────────
-              Surfaces what BHC actively runs FOR the rancher. Static cards
-              w/ real links + counts where available; placeholder text for
-              data not yet wired (paid ad spend, impressions, etc).
+              Surfaces what BHC actively runs FOR the rancher. VERIFIED claims
+              only (SLICE F): every card here maps to a shipped feature — no
+              copy-only promises. (The always-on-ads card + unimplemented tier
+              perks were removed; re-add ads with real spend data when live.)
               Goal: rancher sees the value being generated on their behalf,
               not just the leads. */}
           {activeTab === 'marketing' && (
@@ -3000,7 +2923,7 @@ export default function RancherDashboardPage() {
                 <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
                   Traffic &amp; reach in {rancherInfo.state || 'your state'}
                 </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="bg-bone border border-dust p-4">
                     <p className="text-[11px] uppercase tracking-widest text-saddle">
                       State landing page
@@ -3033,14 +2956,10 @@ export default function RancherDashboardPage() {
                       View map →
                     </a>
                   </div>
-                  <div className="bg-bone border border-dust p-4">
-                    <p className="text-[11px] uppercase tracking-widest text-saddle">
-                      Paid ads (Meta + Google)
-                    </p>
-                    <p className="font-serif text-base text-charcoal mt-1.5 mb-2">
-                      Always-on in your state
-                    </p>
-                  </div>
+                  {/* SLICE F: the "Paid ads — always-on in your state" card was
+                      removed — paid ads are not running yet; the card was a
+                      copy-only claim with no spend behind it. Re-add when ads
+                      are live (with real spend/impressions data, not a slogan). */}
                 </div>
               </div>
 
@@ -3128,24 +3047,32 @@ export default function RancherDashboardPage() {
                 </p>
               </div>
 
-              {/* Want more */}
-              <div className="bg-charcoal text-bone p-5 md:p-6 space-y-3">
-                <p className="text-xs uppercase tracking-widest text-bone/70 font-semibold">
-                  Want even more visibility?
-                </p>
-                <p className="text-sm leading-relaxed">
-                  Upgrade to tier_v2 unlocks: priority placement, featured ranch
-                  badge, homepage rotation slot. Top tier adds 0% commission + a
-                  dedicated brand strategist running monthly content + social
-                  cadence for you.
-                </p>
-                <a
-                  href="/rancher/billing"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-bone text-charcoal text-xs font-medium tracking-wide uppercase hover:bg-bone-warm transition-base"
-                >
-                  See tier options →
-                </a>
-              </div>
+              {/* Want more — LEGACY ONLY (SLICE F). tier_v2 ranchers are already
+                  on the subscription model; pitching them the upgrade they
+                  already bought read as noise (or worse, as a second bill).
+                  Copy trimmed to VERIFIED perks only: priority routing is real
+                  (lib/routingPriority.ts weight + S0.2 tiebreaker) and the top
+                  tier's 0% commission is real (lib/tiers.ts operator rate 0).
+                  The old "featured ranch badge / homepage rotation / dedicated
+                  brand strategist" claims had no shipped feature behind them. */}
+              {rancherInfo.pricingModel === 'legacy' && (
+                <div className="bg-charcoal text-bone p-5 md:p-6 space-y-3">
+                  <p className="text-xs uppercase tracking-widest text-bone/70 font-semibold">
+                    Want even more visibility?
+                  </p>
+                  <p className="text-sm leading-relaxed">
+                    Paid tiers get priority routing — when a buyer in your state
+                    qualifies, you&apos;re matched ahead of non-priority ranchers.
+                    The top tier drops your commission to 0%.
+                  </p>
+                  <a
+                    href="/rancher/billing"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-bone text-charcoal text-xs font-medium tracking-wide uppercase hover:bg-bone-warm transition-base"
+                  >
+                    See tier options →
+                  </a>
+                </div>
+              )}
             </div>
           )}
 
@@ -3446,24 +3373,6 @@ export default function RancherDashboardPage() {
                   </div>
                 );
               })()}
-
-              {/* Page Click Stats */}
-              {rancherInfo.pageLive && (rancherInfo.quarterClicks > 0 || rancherInfo.halfClicks > 0 || rancherInfo.wholeClicks > 0) && (
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="p-4 border border-dust bg-white text-center">
-                    <div className="font-serif text-2xl">{rancherInfo.quarterClicks}</div>
-                    <p className="text-xs text-saddle mt-1 uppercase tracking-wider">Quarter Clicks</p>
-                  </div>
-                  <div className="p-4 border border-dust bg-white text-center">
-                    <div className="font-serif text-2xl">{rancherInfo.halfClicks}</div>
-                    <p className="text-xs text-saddle mt-1 uppercase tracking-wider">Half Clicks</p>
-                  </div>
-                  <div className="p-4 border border-dust bg-white text-center">
-                    <div className="font-serif text-2xl">{rancherInfo.wholeClicks}</div>
-                    <p className="text-xs text-saddle mt-1 uppercase tracking-wider">Whole Clicks</p>
-                  </div>
-                </div>
-              )}
 
               {/* ── Photos (surfaced to the top w/ in-context preview) ──────────
                   The first gallery photo is the cover/hero buyers see; the logo
@@ -4077,16 +3986,24 @@ export default function RancherDashboardPage() {
                         className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-dust">Reserve Link <span className="text-dust">(deposit / waitlist link)</span></label>
-                      <input
-                        type="url"
-                        value={pageForm['Reserve Link'] || ''}
-                        onChange={e => setPageForm(p => ({ ...p, 'Reserve Link': e.target.value }))}
-                        placeholder="https://..."
-                        className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
-                      />
-                    </div>
+                    {/* Legacy-only reserve link. tier_v2/Connected ranchers take
+                        deposits through the on-page platform checkout — the
+                        public page ignores a pasted Reserve Link for them, so
+                        showing the editor was misleading. The field is preserved
+                        in the form + save either way (same pattern as the
+                        payment-links editor above). */}
+                    {rancherInfo.pricingModel !== 'tier_v2' && (
+                      <div className="space-y-1">
+                        <label className="text-xs text-dust">Reserve Link <span className="text-dust">(deposit / waitlist link)</span></label>
+                        <input
+                          type="url"
+                          value={pageForm['Reserve Link'] || ''}
+                          onChange={e => setPageForm(p => ({ ...p, 'Reserve Link': e.target.value }))}
+                          placeholder="https://..."
+                          className="w-full px-3 py-2 border border-dust bg-bone focus:outline-none focus:border-charcoal text-sm"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -5173,6 +5090,7 @@ function HomeTab({
   payoutsLoginUrl,
   onGoToDeals,
   onGoToMyPage,
+  slotsPanel,
 }: {
   rancherInfo: RancherInfo;
   stats: Stats;
@@ -5190,7 +5108,13 @@ function HomeTab({
   payoutsLoginUrl: string | null;
   onGoToDeals: () => void;
   onGoToMyPage: () => void;
+  // SLICE F — the capacity editor + pause/resume controls (moved from the
+  // deleted Overview tab). Rendered when the Buyer slots card is tapped open.
+  slotsPanel: React.ReactNode;
 }) {
+  // SLICE F — Buyer slots card open/closed. Local because it's pure disclosure
+  // UI; the actual capacity/pause state lives on the page component.
+  const [slotsOpen, setSlotsOpen] = useState(false);
   // Deposits already collected on deals still in flight (money in the rancher's
   // pocket from the platform deposit) vs. balances still to collect.
   const depositsCollected = collectBalanceRefs.reduce(
@@ -5405,16 +5329,38 @@ function HomeTab({
 
       {/* 3 — VITALS */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="border border-dust bg-white p-4">
-          <p className="text-xs text-saddle uppercase tracking-wider">Buyer slots</p>
-          <p className="font-serif text-xl text-charcoal mt-1">
-            {rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals
-              ? 'Full right now'
-              : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} open`}
-          </p>
-          <p className="text-xs text-dust mt-0.5">
-            {rancherInfo.currentActiveReferrals} of {rancherInfo.maxActiveReferrals} working
-          </p>
+        {/* SLICE F — tappable Buyer slots card. Tapping opens the capacity
+            editor + pause/resume panel (moved here from the deleted Overview
+            tab; see slotsPanel). The header stays a plain summary. */}
+        <div className="border border-dust bg-white">
+          <button
+            type="button"
+            onClick={() => setSlotsOpen((o) => !o)}
+            aria-expanded={slotsOpen}
+            className="w-full text-left p-4 hover:bg-bone-warm transition-colors"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs text-saddle uppercase tracking-wider">Buyer slots</p>
+              <span aria-hidden className="text-xs text-saddle">
+                {slotsOpen ? 'close ▴' : 'manage ▾'}
+              </span>
+            </div>
+            <p className="font-serif text-xl text-charcoal mt-1">
+              {rancherInfo.activeStatus === 'Paused'
+                ? 'Paused'
+                : rancherInfo.currentActiveReferrals >= rancherInfo.maxActiveReferrals
+                  ? 'Full right now'
+                  : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} open`}
+            </p>
+            <p className="text-xs text-dust mt-0.5">
+              {rancherInfo.currentActiveReferrals} of {rancherInfo.maxActiveReferrals} working
+            </p>
+          </button>
+          {slotsOpen && (
+            <div className="px-4 pb-4 pt-1 border-t border-dust">
+              {slotsPanel}
+            </div>
+          )}
         </div>
         <div className="border border-dust bg-white p-4">
           <p className="text-xs text-saddle uppercase tracking-wider">Buyers working</p>
@@ -5495,161 +5441,19 @@ function ResponseDeadline({ referral }: { referral: Referral }) {
       </span>
     );
   }
+  // SLICE F: honest nudge — there is no time-triggered auto-reassign (the
+  // reaper + chasup crons alert the operator, who may re-match the buyer by
+  // hand). Say what's true: the buyer is waiting; reply or pass.
   return (
     <span className="inline-flex px-2 py-0.5 text-xs bg-weathered/10 text-weathered border border-weathered/30 font-medium">
-      🚨 Overdue — auto-reassigning soon
+      Overdue — this buyer is waiting on you. Reply or pass the lead
     </span>
   );
 }
 
-function ReferralRow({ referral, onUpdate, onClose, onPass, onLost, onSendFinal, onAccept, onConfirmPayment, onRequestDeposit, depositEligible, updating, rowError }: { referral: Referral; onUpdate: (id: string, status: string) => void; onClose: () => void; onPass: () => void; onLost: () => void; onSendFinal?: () => void; onAccept?: () => void; onConfirmPayment?: () => void; onRequestDeposit?: () => void; depositEligible?: boolean; updating: string | null; rowError?: string }) {
-  // FINAL-5 (2026-05-31): show "Send Final Invoice" when deposit landed +
-  // referral isn't yet Closed Won / Closed Lost / fully paid. Re-send label
-  // if invoice already sent (final_invoice_url present).
-  const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
-  const finalSent = !!referral.final_invoice_sent_at || !!referral.final_invoice_url;
-  const finalPaid = !!referral.final_paid_at;
-  const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
-  const showFinalInvoice = !!onSendFinal && depositPaid && !finalPaid && !isTerminal;
-  // NRD-2: Accept Slot button. Show when deposit landed AND not yet accepted
-  // AND not in a terminal state. Once accepted, the deposit is locked
-  // non-refundable per BHC policy.
-  const rancherAcceptedAt = referral.rancher_accepted_at || '';
-  const showAccept = !!onAccept && depositPaid && !rancherAcceptedAt && !isTerminal;
-  // COCKPIT MONEY-UX: for a deposit-paid deal the rest of the money comes via
-  // "Send Final Invoice" (Collect Balance), NOT "Close as Won". Closing as Won
-  // here strands the uncollected balance. So when a deposit is in and the final
-  // balance hasn't been paid yet, hide "Close as Won" and steer to the invoice.
-  const balanceOutstanding = depositPaid && !finalPaid;
-  const showClose = !balanceOutstanding;
-  // Awaiting Payment rows fire the off-platform commission invoice through the
-  // /confirm-payment endpoint, not the regular close. Surface that as its own CTA.
-  // Hide on a PENDING Stripe deposit (deposit link out, not yet paid): those
-  // rows also sit in Awaiting Payment, but confirming there closes the deal
-  // before the buyer pays. Only genuine off-platform Awaiting-Payment rows
-  // (no outstanding deposit request) get the manual confirm. The server
-  // enforces the same guard in /confirm-payment.
-  const showConfirmPayment =
-    !!onConfirmPayment &&
-    referral.status === 'Awaiting Payment' &&
-    !(referral.deposit_requested_at && !depositPaid);
-  // WAVE 1 (2026-06-30): self-serve "request deposit" on PRE-deposit leads.
-  const showRequestDeposit = !!onRequestDeposit && !!depositEligible && !depositPaid && !isTerminal;
-
-  return (
-    <div className="p-4 border border-dust bg-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-bone-warm text-saddle'}`}>
-            {referral.status}
-          </span>
-          <FreshnessIndicator referral={referral} />
-          <ResponseDeadline referral={referral} />
-          {/* 3-state deposit badge for eligible ranchers; the sage "paid" state
-              supersedes the legacy paid-only pill below. */}
-          {depositEligible ? (
-            <DepositBadge referral={referral} />
-          ) : (
-            depositPaid && (
-              <span className="inline-block px-2 py-0.5 text-xs font-medium bg-sage/15 text-sage-dark" title={`Deposit of $${(referral.deposit_amount || 0).toFixed(2)} paid ${referral.deposit_paid_at || ''}`}>
-                Deposit ${(referral.deposit_amount || 0).toFixed(0)} ✓
-              </span>
-            )
-          )}
-          {rancherAcceptedAt && (
-            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-saddle/15 text-saddle" title={`Slot accepted ${rancherAcceptedAt}. Deposit non-refundable per BHC policy.`}>
-              🔒 Slot locked
-            </span>
-          )}
-          {finalSent && !finalPaid && (
-            <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber/20 text-amber-dark">Invoice sent</span>
-          )}
-        </div>
-        <p className="font-medium mt-1">{referral.buyer_name}</p>
-        <p className="text-xs text-dust">{referral.buyer_state} &middot; {referral.order_type}</p>
-        {depositEligible && <PipelineNextStep referral={referral} />}
-        {/* U11: compact per-row error when the inline status update failed. */}
-        {rowError && <p className="text-xs text-weathered mt-1">{rowError}</p>}
-      </div>
-      {/* Mobile: primary actions stack full-width; Mark Lost / Pass demoted to a
-          compact secondary row. sm+: everything sits inline as before. */}
-      <div className="flex flex-col w-full sm:w-auto sm:flex-row sm:flex-wrap gap-2">
-        {showRequestDeposit && (
-          <button
-            onClick={onRequestDeposit}
-            className="w-full sm:w-auto px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 text-xs font-medium bg-sage text-bone hover:bg-sage-dark transition-colors"
-            title="Send the buyer a deposit link to lock their slot."
-          >
-            {referral.deposit_requested_at ? 're-request deposit' : 'request deposit'}
-          </button>
-        )}
-        {referral.status === 'Intro Sent' && (
-          <button
-            onClick={() => onUpdate(referral.id, 'Rancher Contacted')}
-            disabled={updating === referral.id}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-charcoal text-bone hover:bg-saddle transition-colors disabled:opacity-50"
-          >
-            Contacted ✓
-          </button>
-        )}
-        {showAccept && (
-          <button
-            onClick={onAccept}
-            disabled={updating === referral.id}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-amber-dark text-bone hover:bg-saddle transition-colors disabled:opacity-50"
-            title="Accept slot — buyer&apos;s deposit becomes non-refundable per BHC policy."
-          >
-            🔒 Accept Slot
-          </button>
-        )}
-        {showFinalInvoice && (
-          <button
-            onClick={onSendFinal}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-sage text-bone hover:bg-sage-dark transition-colors"
-            title="Send final balance invoice to buyer (100% to you, no BHC fee)"
-          >
-            {finalSent ? 'Re-send invoice' : 'Send Final Invoice'}
-          </button>
-        )}
-        {showConfirmPayment && (
-          <button
-            onClick={onConfirmPayment}
-            disabled={updating === referral.id}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
-            title="Confirm the off-platform payment you received — closes the deal + fires the commission invoice"
-          >
-            Confirm payment received
-          </button>
-        )}
-        {showClose && (
-          <button
-            onClick={onClose}
-            className="w-full sm:w-auto px-3 py-2 sm:py-1.5 text-xs min-h-[44px] sm:min-h-0 bg-charcoal text-bone hover:bg-saddle transition-colors"
-          >
-            Close as Won
-          </button>
-        )}
-        {/* Secondary, lower-stakes actions: side-by-side even on mobile, smaller weight. */}
-        <div className="flex gap-2 w-full sm:w-auto">
-          <button
-            onClick={onLost}
-            className="flex-1 sm:flex-none px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 text-xs border border-saddle text-saddle hover:bg-saddle hover:text-bone transition-colors"
-            title="Mark Lost — closes deal without rerouting buyer"
-          >
-            Mark Lost
-          </button>
-          <button
-            onClick={onPass}
-            className="flex-1 sm:flex-none px-3 min-h-[44px] sm:min-h-0 sm:py-1.5 text-xs border border-dust text-dust hover:bg-dust hover:text-bone transition-colors"
-            title="Pass — we auto-reassign buyer to another rancher"
-          >
-            Pass
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// SLICE F: ReferralRow (the compact lead row) was deleted — its only consumer
+// was the Overview tab's recent-leads preview, which is gone. The Deals tab's
+// full ReferralCard below is the single lead-card implementation now.
 
 // ── Freshness indicator: visualizes how recently rancher acted on this lead
 // Green = active in last 7d. Yellow = 7-14d, nudge time. Red = 14d+, will
@@ -5834,21 +5638,22 @@ function ReferralCard({
   // U11: message shown when the inline status update failed for THIS row.
   rowError?: string;
 }) {
-  // FINAL-5 (2026-05-31): see ReferralRow for parity logic + button intent.
+  // FINAL-5 (2026-05-31): show "Send Final Invoice" when deposit landed +
+  // referral isn't yet terminal / fully paid; re-send label once sent.
   const depositPaid = !!referral.deposit_paid_at && (referral.deposit_amount || 0) > 0;
   const depositRequestedAt = referral.deposit_requested_at || '';
   const finalSent = !!referral.final_invoice_sent_at || !!referral.final_invoice_url;
   const finalPaid = !!referral.final_paid_at;
   const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
   const showFinalInvoice = !!onSendFinal && depositPaid && !finalPaid && !isTerminal;
-  // NRD-2: Accept Slot button parity with ReferralRow.
+  // NRD-2: Accept Slot button — deposit landed, not yet accepted, not terminal.
   const rancherAcceptedAt = referral.rancher_accepted_at || '';
   const showAccept = !!onAccept && depositPaid && !rancherAcceptedAt && !isTerminal;
   // WAVE 1 (2026-06-30): self-serve "request deposit" on PRE-deposit leads.
   // Show when the rancher can take card deposits, the deposit isn't paid yet,
   // and the lead isn't terminal. Re-request label once already requested.
   const showRequestDeposit = !!onRequestDeposit && !!depositEligible && !depositPaid && !isTerminal;
-  // COCKPIT MONEY-UX (parity with ReferralRow): hide "Close as Won" while a
+  // COCKPIT MONEY-UX: hide "Close as Won" while a
   // deposit balance is still outstanding — the balance is collected via "Send
   // Final Invoice", not by closing the deal. Surface "Confirm payment received"
   // for Awaiting Payment rows (off-platform pay → /confirm-payment endpoint).
