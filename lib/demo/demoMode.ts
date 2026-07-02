@@ -27,6 +27,20 @@
  * partial value can never enable demo mode.
  */
 export function isDemoMode(): boolean {
+  // ── HARD PRODUCTION LOCK (belt-and-braces) ──────────────────────────────
+  // Demo mode can NEVER activate on a Vercel PRODUCTION deploy, no matter what
+  // the env vars say — even a fat-fingered NEXT_PUBLIC_DEMO_MODE=true added to
+  // Vercel production env can't flip this. Vercel sets VERCEL_ENV (server) and
+  // inlines NEXT_PUBLIC_VERCEL_ENV (client + server) to 'production' on every
+  // production deploy, so we check BOTH — the lock holds on both sides of the
+  // client/server boundary. Local `npm run dev` sets neither (VERCEL_ENV is a
+  // Vercel-only var), so this never affects the founder's local demo.
+  if (
+    process.env.VERCEL_ENV === 'production' ||
+    process.env.NEXT_PUBLIC_VERCEL_ENV === 'production'
+  ) {
+    return false;
+  }
   return (
     process.env.NEXT_PUBLIC_DEMO_MODE === 'true' ||
     process.env.DEMO_MODE === 'true'

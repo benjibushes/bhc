@@ -13,7 +13,7 @@ function withEnv(
   overrides: Record<string, string | undefined>,
   fn: () => void,
 ) {
-  const keys = ['NEXT_PUBLIC_DEMO_MODE', 'DEMO_MODE'];
+  const keys = ['NEXT_PUBLIC_DEMO_MODE', 'DEMO_MODE', 'VERCEL_ENV', 'NEXT_PUBLIC_VERCEL_ENV'];
   const saved: Record<string, string | undefined> = {};
   for (const k of keys) saved[k] = process.env[k];
   try {
@@ -65,5 +65,37 @@ test("isDemoMode: a random value → false", () => {
 test("isDemoMode: empty string → false", () => {
   withEnv({ NEXT_PUBLIC_DEMO_MODE: '', DEMO_MODE: '' }, () => {
     assert.equal(isDemoMode(), false);
+  });
+});
+
+// ── HARD PRODUCTION LOCK (2026-07-02) ────────────────────────────────────────
+// The demo flag must be OVERRIDDEN by a Vercel production deploy. Even if the
+// flag is somehow set true in Vercel prod env, demo mode stays off.
+
+test('HARD LOCK: VERCEL_ENV=production overrides NEXT_PUBLIC_DEMO_MODE=true → false', () => {
+  withEnv({ VERCEL_ENV: 'production', NEXT_PUBLIC_DEMO_MODE: 'true' }, () => {
+    assert.equal(isDemoMode(), false);
+  });
+});
+
+test('HARD LOCK: VERCEL_ENV=production overrides DEMO_MODE=true → false', () => {
+  withEnv({ VERCEL_ENV: 'production', DEMO_MODE: 'true' }, () => {
+    assert.equal(isDemoMode(), false);
+  });
+});
+
+test('HARD LOCK: NEXT_PUBLIC_VERCEL_ENV=production (client boundary) overrides the flag → false', () => {
+  withEnv({ NEXT_PUBLIC_VERCEL_ENV: 'production', NEXT_PUBLIC_DEMO_MODE: 'true' }, () => {
+    assert.equal(isDemoMode(), false);
+  });
+});
+
+test('preview/development deploys still allow demo when the flag is on', () => {
+  // A Vercel PREVIEW deploy (or local) is NOT locked — only 'production' is.
+  withEnv({ VERCEL_ENV: 'preview', NEXT_PUBLIC_DEMO_MODE: 'true' }, () => {
+    assert.equal(isDemoMode(), true);
+  });
+  withEnv({ VERCEL_ENV: 'development', DEMO_MODE: 'true' }, () => {
+    assert.equal(isDemoMode(), true);
   });
 });
