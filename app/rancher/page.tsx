@@ -6694,14 +6694,32 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
         <div className="p-4 border-l-4 border-saddle bg-bone-warm flex items-center justify-between gap-4 flex-wrap">
           <p className="text-sm text-charcoal">
             <strong>Pick your plan to start receiving buyers.</strong>{' '}
-            Choose Pasture, Ranch, or Operator on /partner.
+            Each plan opens its checkout — done in about 5 minutes.
           </p>
-          <a
-            href="/partner"
-            className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
-          >
-            See plans →
-          </a>
+          {/* Slice-D follow-up: /partner is the NEW-rancher application page and
+              renders no tier cards — a logged-in rancher sent there dead-ends.
+              /partner/checkout/[tier] is the session-authed tier surface
+              (card + POST /api/rancher/tier/select), so link each tier direct. */}
+          <div className="flex gap-2 flex-wrap">
+            <a
+              href="/partner/checkout/pasture"
+              className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
+            >
+              Pasture $150/mo →
+            </a>
+            <a
+              href="/partner/checkout/ranch"
+              className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
+            >
+              Ranch $350/mo →
+            </a>
+            <a
+              href="/partner/checkout/operator"
+              className="inline-flex items-center gap-1 px-4 py-2 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
+            >
+              Operator $500/mo →
+            </a>
+          </div>
         </div>
       )}
 
@@ -6805,7 +6823,8 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
 
 // Legacy → tier_v2 opt-in banner. Renders only when Pricing Model === 'legacy'.
 // Two states:
-//   1. Discovery — no tier yet. Pitches the upgrade + sends to /partner.
+//   1. Discovery — no tier yet. Pitches the upgrade + sends to the per-tier
+//      session-authed checkout (/partner/checkout/[tier]).
 //   2. Ready — tier subscription paying + Connect active. One-click button
 //      hits /api/rancher/legacy-upgrade to atomically flip Pricing Model.
 function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
@@ -6934,14 +6953,30 @@ function LegacyUpgradeBanner({ rancher }: { rancher: RancherInfo }) {
 
       <div className="flex items-center justify-between gap-4 flex-wrap pt-2 border-t border-dust">
         <p className="text-xs text-saddle">
-          Takes 5 min: pick subscription tier ($150/$350/$500/mo) → Stripe Connect → set deposits per tier.
+          Takes 5 min: pick subscription tier → Stripe Connect → set deposits per tier.
         </p>
-        <a
-          href="/partner"
-          className="inline-flex items-center gap-1 px-5 py-2.5 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
-        >
-          Start the upgrade →
-        </a>
+        {/* Slice-D follow-up: /partner has no tier cards (new-rancher application
+            page) — start the upgrade at the session-authed tier checkout. */}
+        <div className="flex gap-2 flex-wrap">
+          <a
+            href="/partner/checkout/pasture"
+            className="inline-flex items-center gap-1 px-4 py-2.5 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
+          >
+            Pasture $150/mo →
+          </a>
+          <a
+            href="/partner/checkout/ranch"
+            className="inline-flex items-center gap-1 px-4 py-2.5 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
+          >
+            Ranch $350/mo →
+          </a>
+          <a
+            href="/partner/checkout/operator"
+            className="inline-flex items-center gap-1 px-4 py-2.5 text-xs font-semibold uppercase tracking-widest bg-charcoal text-bone hover:bg-saddle transition-colors"
+          >
+            Operator $500/mo →
+          </a>
+        </div>
       </div>
     </div>
   );

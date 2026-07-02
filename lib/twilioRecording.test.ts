@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAllowedTwilioRecordingUrl } from './clickToCall';
+import { isAllowedTwilioRecordingUrl } from './twilioRecording';
 
 // transcribeRecording attaches Twilio Basic auth to this fetch, so the
 // allowlist is the line that prevents SSRF + credential exfiltration from a

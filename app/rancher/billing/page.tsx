@@ -212,9 +212,15 @@ function RancherBillingContent() {
                   4%) when set, else the tier/platform default. Displayed rate
                   must always match the billed rate (2026-05-20 Ashcraft-dispute
                   pattern). */}
-              🎁 You're on the legacy {fmtRatePct(data.commissionRate)}% post-close commission model.{' '}
-              <Link href="/partner?from=upgrade" className="underline">Upgrade to a tier →</Link>{' '}
-              for marketing perks + lower commission.
+              {/* Slice-D follow-up: /partner is the new-rancher application page
+                  (no tier cards) — link each tier's session-authed checkout. */}
+              🎁 You're on the legacy {fmtRatePct(data.commissionRate)}% post-close commission model.
+              Upgrade to a tier for marketing perks + lower commission:{' '}
+              <Link href="/partner/checkout/pasture" className="underline">Pasture $150/mo</Link>
+              {' · '}
+              <Link href="/partner/checkout/ranch" className="underline">Ranch $350/mo</Link>
+              {' · '}
+              <Link href="/partner/checkout/operator" className="underline">Operator $500/mo</Link>
             </p>
           </div>
         )}
@@ -231,12 +237,28 @@ function RancherBillingContent() {
             </div>
           )}
           {!data.tier && (
-            <Link
-              href="/partner"
-              className="inline-block mt-3 bg-charcoal text-bone px-6 py-2 uppercase tracking-wider text-xs"
-            >
-              Pick a plan →
-            </Link>
+            <div className="mt-3 flex gap-2 flex-wrap">
+              {/* Slice-D follow-up: pick-a-plan goes straight to each tier's
+                  session-authed checkout — /partner renders no tier cards. */}
+              <Link
+                href="/partner/checkout/pasture"
+                className="inline-block bg-charcoal text-bone px-6 py-2 uppercase tracking-wider text-xs"
+              >
+                Pasture $150/mo →
+              </Link>
+              <Link
+                href="/partner/checkout/ranch"
+                className="inline-block bg-charcoal text-bone px-6 py-2 uppercase tracking-wider text-xs"
+              >
+                Ranch $350/mo →
+              </Link>
+              <Link
+                href="/partner/checkout/operator"
+                className="inline-block bg-charcoal text-bone px-6 py-2 uppercase tracking-wider text-xs"
+              >
+                Operator $500/mo →
+              </Link>
+            </div>
           )}
         </div>
 
