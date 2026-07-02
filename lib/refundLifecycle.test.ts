@@ -6,6 +6,7 @@ import {
   refundReferralClearFields,
   canSendFinalInvoice,
   FINAL_INVOICE_BLOCKED_STATUSES,
+  RESTORABLE_REFUND_STATUSES,
   shouldDecrementOnRefundRestore,
   shouldDecrementOnClose,
 } from './refundLifecycle';
@@ -194,5 +195,52 @@ test('close gate stays in lockstep with the canonical HELD_REFERRAL_STATUSES set
     // Equivalence with the refund gate: closing to 'Refunded' and the refund
     // restore must make the identical decision for the identical prior status.
     assert.equal(shouldDecrementOnClose(s, 'Refunded'), shouldDecrementOnRefundRestore(s), `${s}: close-to-Refunded ≡ refund-restore`);
+  }
+});
+
+// ── Blocker 2 (2026-07-01): pre-close refunds must restore too ───────────────
+// The COMMON refund is the policy-advertised NRD-window refund — it lands
+// while the deal sits at 'Awaiting Payment' (or 'Slot Locked' for a
+// post-accept make-whole), NOT at 'Closed Won'. Pre-fix,
+// restoreReferralAfterRefund early-returned for anything but 'Closed Won',
+// so the refunded buyer's referral kept Status='Awaiting Payment' +
+// Deposit Paid At stamped: the rancher could still send the final invoice,
+// dunning kept firing, the slot stayed held forever, and the buyer was
+// 409-blocked from ever re-depositing.
+
+test('RESTORABLE_REFUND_STATUSES is exactly Awaiting Payment + Closed Won + Slot Locked', () => {
+  assert.deepEqual(
+    [...RESTORABLE_REFUND_STATUSES].sort(),
+    ['Awaiting Payment', 'Closed Won', 'Slot Locked'],
+  );
+});
+
+test('Awaiting Payment / Slot Locked restores clear the deposit stamps AND free the held slot', () => {
+  for (const held of ['Awaiting Payment', 'Slot Locked']) {
+    assert.ok(RESTORABLE_REFUND_STATUSES.has(held), `${held} must be restorable`);
+    // Both are canonically held — flipping them to Refunded genuinely frees
+    // a slot, so the (pre-existing, two-arg-era) capacity gate must fire.
+    assert.equal(shouldDecrementOnRefundRestore(held), true, `${held} refund must free the slot`);
+  }
+  // One pure clear-field object serves every restorable status: flip to
+  // Refunded + clear the deposit/accept stamps (kills final-invoice dunning
+  // + the send gate + the re-deposit 409 lock in one write).
+  const updates = refundReferralClearFields(NOW);
+  assert.equal(updates['Status'], 'Refunded');
+  assert.equal(updates['Deposit Paid At'], null);
+  assert.equal(updates['Rancher Accepted At'], null);
+});
+
+test('Closed Won stays restorable AND still never decrements (recordClose already freed the slot)', () => {
+  assert.ok(RESTORABLE_REFUND_STATUSES.has('Closed Won'), 'Closed Won restore behavior must not regress');
+  assert.equal(shouldDecrementOnRefundRestore('Closed Won'), false, 'C4 stays fixed: no double-free');
+});
+
+test('non-restorable statuses stay skipped — the restore path must alert, never guess', () => {
+  // Pre-deposit, terminal, and garbage states: restoreReferralAfterRefund
+  // skips them and raises an operator signal instead (payments.ts). A refund
+  // landing in any of these states is an odd-state event, not a happy path.
+  for (const s of ['Refunded', 'Closed Lost', 'Pending Approval', 'Intro Sent', 'Rancher Contacted', 'Negotiation', 'Deposit Paid', 'Totally Bogus', '']) {
+    assert.equal(RESTORABLE_REFUND_STATUSES.has(s), false, `${s} must not auto-restore`);
   }
 });

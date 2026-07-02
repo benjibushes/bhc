@@ -28,14 +28,19 @@
 //   2. Operator explicit override via admin endpoint with unlockOverride=true
 //      and an unlockReason ≥6 chars. Logged to Notes + Telegram.
 //
-// WHY THESE THREE STATUSES
-// ------------------------
+// WHY THESE FOUR STATUSES
+// -----------------------
 // - Rancher Contacted: rancher has reached out to the buyer. They're investing
 //   their time. Auto-moving the lead destroys that effort.
 // - Negotiation: deal is in active discussion. Auto-moving creates buyer
 //   confusion and rancher resentment.
 // - Awaiting Payment: deposit is incoming or already paid. Auto-moving here
 //   risks a chargeback or worse.
+// - Slot Locked (Blocker-3 2026-07-01): the deposit has PAID and the slot is
+//   held. This was missing from the set, so a 30-day-old quick-action Pass
+//   link — or a corporate mail scanner prefetching it — could close a PAID
+//   deal Lost, free the slot, and re-route the paying buyer toward a second
+//   deposit. The strongest lock of all: money is in.
 //
 // Status='Intro Sent' is NOT locked — rancher hasn't engaged yet, fair game
 // to reassign if buyer hasn't heard back from a real human.
@@ -52,6 +57,7 @@ export const LOCKED_STATUSES: ReadonlySet<string> = new Set([
   'Rancher Contacted',
   'Negotiation',
   'Awaiting Payment',
+  'Slot Locked',
 ]);
 
 /**
@@ -89,6 +95,29 @@ export function findLockedReferrals<T extends Record<string, any>>(
     return isReferralLocked(fields);
   });
 }
+
+/**
+ * MONEY LOCK (Blocker-3 2026-07-01): once a deposit has actually settled
+ * (`Deposit Paid At` stamped by the Stripe webhook), one-click email links
+ * (quick-action pass / in_talks / won / lost) must NEVER mutate the referral.
+ * A stale Pass link — or a mail scanner's GET prefetch — was enough to close
+ * a PAID deal Lost, free the slot, and re-route the paying buyer toward a
+ * second deposit. Money in ⇒ changes go through the dashboard's explicit
+ * flows only. Pure: decides from the stamp alone, pinned in
+ * lib/referralLock.test.ts.
+ */
+export function isDepositLocked(depositPaidAt: unknown): boolean {
+  if (depositPaidAt == null) return false;
+  return String(depositPaidAt).trim().length > 0;
+}
+
+/**
+ * The friendly refusal every quick-action mutation renders when the money
+ * lock is on. Rendered as the headline of the quick-action HTML response
+ * page (which already carries an "Open dashboard" CTA button).
+ */
+export const DEPOSIT_LOCKED_MESSAGE =
+  "This deal has a paid deposit on it, so quick links from email are locked to protect it. Everything's safe — use your dashboard to make any changes.";
 
 /**
  * Tiny audit-log helper: format a one-line reason describing what was
