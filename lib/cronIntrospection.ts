@@ -88,9 +88,9 @@ export const EXCLUDED_CRONS_24H: Readonly<Record<string, string>> = {
     'weekday-only (Mon–Fri 15:30 UTC) — a 24h expectation would false-alarm every Sun/Mon',
   'waiting-activation':
     "dark-by-default: the WAITING_ACTIVATION_ENABLED gate returns BEFORE withCronRun, so no " +
-    "Cron Runs row exists while dark and the watchdog would alarm daily by design. MOVE to " +
-    "EXPECTED_CRONS_24H when the flag goes live (or move its gate inside realHandler like " +
-    "demand-router's).",
+    "Cron Runs row exists while dark and the watchdog would alarm daily by design. " +
+    "'dry-run' and 'true' modes DO write Cron Runs rows — MOVE to EXPECTED_CRONS_24H when " +
+    "the flag goes live (or move its gate inside realHandler like demand-router's).",
 };
 
 export interface CronRunSummary {

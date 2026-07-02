@@ -10,10 +10,12 @@
 // qualification logic — it only sends the invitation.
 //
 // ── DARK BY DEFAULT ─────────────────────────────────────────────────────────
-// Env `WAITING_ACTIVATION_ENABLED` must be EXACTLY the string 'true' or the
-// cron returns { skipped: 'disabled' } before reading or writing ANYTHING
-// (no Airtable reads, no Cron Runs row). The founder flips the env var in
-// Vercel to fire it. Optional knobs:
+// Env `WAITING_ACTIVATION_ENABLED`: unset/other → the cron returns
+// { skipped: 'disabled' } before reading or writing ANYTHING (no Airtable
+// reads, no Cron Runs row). 'dry-run' → the exact live selection runs
+// read-only and a Telegram report shows what WOULD send (no sends, no
+// stamps) — the founder eyeballs this before going live. 'true' → live.
+// Optional knobs:
 //   WAITING_NUDGE_COOLDOWN_DAYS  — min days between nudges per buyer (default 14)
 //   WAITING_NUDGE_MAX_PER_RUN    — batch cap per daily run (default 50)
 //
@@ -50,7 +52,11 @@ import { isSmsWindow } from '@/lib/sendWindow';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
-import { selectWaitingBuyersForNudge } from '@/lib/waitingActivation';
+import {
+  buildWaitingDryRunReport,
+  formatWaitingDryRunReport,
+  selectWaitingBuyersForNudge,
+} from '@/lib/waitingActivation';
 
 export const maxDuration = 120;
 
@@ -69,6 +75,12 @@ async function realHandler(_request: Request): Promise<CronResult> {
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
+
+  // T2.1 (2026-07-02): 'dry-run' runs the EXACT live selection but sends
+  // nothing and stamps nothing — it only reports what WOULD go out, so the
+  // founder can eyeball the batch before flipping the env to 'true'. All
+  // buyer sends stay founder-gated; this report is the gate's evidence.
+  const dryRun = process.env.WAITING_ACTIVATION_ENABLED === 'dry-run';
 
   const nowISO = new Date().toISOString();
   const cooldownDays = Number(process.env.WAITING_NUDGE_COOLDOWN_DAYS) || DEFAULT_COOLDOWN_DAYS;
@@ -95,6 +107,29 @@ async function realHandler(_request: Request): Promise<CronResult> {
   }
 
   const selected = selectWaitingBuyersForNudge(candidates, { nowISO, cooldownDays, batchCap });
+
+  if (dryRun) {
+    const report = buildWaitingDryRunReport(candidates, selected, { nowISO });
+    const text = formatWaitingDryRunReport(report, { cooldownDays, batchCap });
+    await sendOperatorSignal({
+      urgency: 'normal',
+      kind: 'other',
+      summary: `waiting-activation DRY RUN: would nudge ${report.selectedCount} of ${report.poolSize} WAITING buyers`,
+      detail: text,
+      // Daily cron + daily report is the point of dry-run mode; dedupe only
+      // guards a same-day double-fire (manual curl + schedule).
+      dedupeKey: 'waiting-activation-dry-run',
+      dedupeWindowMs: 6 * 60 * 60 * 1000,
+    }).catch(() => {});
+    return {
+      status: 'success',
+      recordsTouched: 0,
+      notes:
+        `DRY RUN pool=${report.poolSize} wouldNudge=${report.selectedCount} ` +
+        `smsEligible=${report.smsEligibleCount} cooldownDays=${cooldownDays} cap=${batchCap} ` +
+        `oldest=${report.oldestSignupDays ?? '—'}d — no sends, no stamps`,
+    };
+  }
 
   let emailsSent = 0;
   let smsSent = 0;
@@ -203,9 +238,13 @@ async function authedHandler(request: Request): Promise<Response> {
   if (denied) return denied;
 
   // DARK-BY-DEFAULT GATE — before withCronRun so a disabled cron performs
-  // ZERO reads/writes (not even a Cron Runs row). Flip WAITING_ACTIVATION_ENABLED
-  // to exactly 'true' in Vercel env to go live.
-  if (process.env.WAITING_ACTIVATION_ENABLED !== 'true') {
+  // ZERO reads/writes (not even a Cron Runs row). WAITING_ACTIVATION_ENABLED:
+  //   unset / anything else → dark (this skip)
+  //   'dry-run'             → selection runs read-only + Telegram report,
+  //                           NO sends, NO stamps (founder eyeballs the batch)
+  //   'true'                → live sends
+  const mode = process.env.WAITING_ACTIVATION_ENABLED;
+  if (mode !== 'true' && mode !== 'dry-run') {
     return NextResponse.json({ skipped: 'disabled' });
   }
 
