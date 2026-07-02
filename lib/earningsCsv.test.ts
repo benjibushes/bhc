@@ -86,6 +86,22 @@ test('buildEarningsCsv ends with CRLF', () => {
   assert.ok(csv.endsWith('\r\n'));
 });
 
+// SLICE E — rail-split "Net to You". tier_v2 commission is charged ON TOP of
+// the rancher's price at deposit (buyer pays it) → net = sale amount. Legacy
+// output (the default) must be byte-identical to the pre-rail builder.
+test('buildEarningsCsv default rail (legacy) is byte-identical to explicit legacy', () => {
+  const rows = [row({ saleAmount: 2000, commissionDue: 200 })];
+  assert.equal(buildEarningsCsv(rows), buildEarningsCsv(rows, 'legacy'));
+  assert.match(buildEarningsCsv(rows).trimEnd().split('\r\n')[1], /2000\.00,200\.00,1800\.00/);
+});
+
+test('buildEarningsCsv tier_v2 rail: Net to You = full sale amount', () => {
+  const csv = buildEarningsCsv([row({ saleAmount: 2000, commissionDue: 200 })], 'tier_v2');
+  const lines = csv.trimEnd().split('\r\n');
+  assert.equal(lines[0], EARNINGS_CSV_HEADERS.join(',')); // headers unchanged
+  assert.match(lines[1], /2000\.00,200\.00,2000\.00/); // net = sale (buyer paid commission)
+});
+
 test('filterByClosedDate: no bounds returns a copy of all rows', () => {
   const rows = [row({ id: 'a' }), row({ id: 'b' })];
   const out = filterByClosedDate(rows);

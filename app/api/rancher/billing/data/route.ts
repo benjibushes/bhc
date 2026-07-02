@@ -4,7 +4,8 @@
 
 import { NextResponse } from 'next/server';
 import { getRecordById, getAllRecords, TABLES } from '@/lib/airtable';
-import { TIERS, tierFor } from '@/lib/tiers';
+import { TIERS, tierFor, commissionRateForTier } from '@/lib/tiers';
+import { getRancherCommissionRate, hasLockedCommissionRate } from '@/lib/commission';
 import { getConnectAccountStatus } from '@/lib/stripeConnect';
 import { getStripe } from '@/lib/stripe';
 import { requireRancher } from '@/lib/rancherAuth';
@@ -149,7 +150,16 @@ export async function GET(req: Request) {
     tier: tier || null,
     tierLabel: tierConfig?.label || null,
     monthlyCents: tierConfig?.monthlyCents || null,
-    commissionRate: tierConfig?.commissionRate ?? null,
+    // SLICE E — the REAL commission rate, same precedence as every money path
+    // (lib/commission.ts): the rancher's locked 'Commission Rate' field wins
+    // (negotiated rates — Ashcraft is 4%, not the tier default), else the tier
+    // default. The old `tierConfig?.commissionRate` ignored locked rates and
+    // returned null for legacy ranchers, so /rancher/billing showed the wrong
+    // number to anyone off the standard tier rate. Repeat-incident territory
+    // (2026-05-20 Ashcraft dispute) — displayed rate must match billed rate.
+    commissionRate: hasLockedCommissionRate(rancher)
+      ? getRancherCommissionRate(rancher)
+      : commissionRateForTier(tier),
     subscriptionStatus,
     subscriptionStarted,
     subscriptionNext,

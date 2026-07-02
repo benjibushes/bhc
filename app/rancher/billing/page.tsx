@@ -174,6 +174,11 @@ function RancherBillingContent() {
 
   const fmtCurrency = (cents: number) => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
   const fmtDate = (iso: string | null) => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  // SLICE E — 0.04 → "4", 0.075 → "7.5". One decimal max, no trailing ".0",
+  // so negotiated rates (Ashcraft 4%) render exactly, never rounded to a
+  // number we don't actually bill. Falls back to the platform default label.
+  const fmtRatePct = (rate: number | null) =>
+    rate != null ? (rate * 100).toFixed(1).replace(/\.0$/, '') : '10';
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
@@ -202,7 +207,12 @@ function RancherBillingContent() {
         {data.pricingModel === 'legacy' && (
           <div className="border border-amber-dark bg-bone p-4 mb-6">
             <p className="text-sm">
-              🎁 You're on the legacy 10% post-close commission model.{' '}
+              {/* SLICE E — real rate, not hardcoded "10%". The API returns the
+                  rancher's locked 'Commission Rate' (negotiated — e.g. Ashcraft
+                  4%) when set, else the tier/platform default. Displayed rate
+                  must always match the billed rate (2026-05-20 Ashcraft-dispute
+                  pattern). */}
+              🎁 You're on the legacy {fmtRatePct(data.commissionRate)}% post-close commission model.{' '}
               <Link href="/partner?from=upgrade" className="underline">Upgrade to a tier →</Link>{' '}
               for marketing perks + lower commission.
             </p>
@@ -217,7 +227,7 @@ function RancherBillingContent() {
           </div>
           {data.monthlyCents != null && data.commissionRate != null && (
             <div className="text-saddle">
-              {fmtCurrency(data.monthlyCents)}/mo + {(data.commissionRate * 100).toFixed(0)}% commission
+              {fmtCurrency(data.monthlyCents)}/mo + {fmtRatePct(data.commissionRate)}% commission
             </div>
           )}
           {!data.tier && (

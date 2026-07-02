@@ -12,7 +12,7 @@ import { requireRancher } from '@/lib/rancherAuth';
 
 export const maxDuration = 60;
 
-import { getRancherCommissionRate } from '@/lib/commission';
+import { getRancherCommissionRate, netEarningsFor } from '@/lib/commission';
 
 // Pure: total commission the rancher still owes BHC on closed-won deals.
 // tier_v2 ranchers NEVER owe a post-close invoice — BHC's cut was taken at
@@ -423,7 +423,11 @@ export async function GET(request: Request) {
         totalRevenue,
         totalCommission,
         unpaidCommission,
-        netEarnings: totalRevenue - totalCommission,
+        // SLICE E — rail-split net. tier_v2: commission was charged ON TOP of
+        // the rancher's price at deposit (buyer paid it) → net = totalRevenue.
+        // legacy: rancher pays commission post-close → net = revenue − commission
+        // (byte-identical to the old math).
+        netEarnings: netEarningsFor(pricingModel, totalRevenue, totalCommission),
         // Lead Quality metrics — recent-window summary so ranchers can see
         // what proportion of their leads convert vs ghost. Builds trust that
         // the platform protects them from "slop" and is worth a retainer.
