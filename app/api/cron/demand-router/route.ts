@@ -54,6 +54,7 @@ import { findPaymentsByReferral } from '@/lib/contracts/payments';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendDemandRouterCampaign } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
+import { smsEnabled } from '@/lib/smsFlag';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { logAuditEntry } from '@/lib/auditLog';
@@ -117,9 +118,10 @@ function isLive(): boolean {
   return process.env.CAMPAIGN_LIVE === 'true';
 }
 // SMS is double-gated: ENABLE_SMS env AND per-consumer SMS Opt-In (TCPA).
-function smsEnabled(): boolean {
-  return process.env.ENABLE_SMS === 'true';
-}
+// F3 (2026-07-01): the ENABLE_SMS check is the shared smsEnabled() from
+// lib/smsFlag ('1' | 'true', case-insensitive) — this route used to require
+// exactly 'true' while lib/smsEvents required '1', so no single env value
+// lit the whole channel.
 
 interface CronResult {
   status: 'success' | 'partial' | 'error' | 'maintenance-blocked';

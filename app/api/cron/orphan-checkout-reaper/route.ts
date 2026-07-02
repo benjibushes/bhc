@@ -57,10 +57,12 @@ import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { sendOrphanCheckoutRewarm } from '@/lib/email';
 import { sendSMSToConsumer } from '@/lib/twilio';
+import { smsEnabled } from '@/lib/smsFlag';
 import {
   markDepositAbandoned,
   markDepositRequiresReplay,
   PAYMENTS_TABLE,
+  REFERRAL_ID_TEXT_FIELD,
 } from '@/lib/contracts/payments';
 import { settleBuyerDeposit } from '@/lib/stripeSettlement';
 
@@ -84,13 +86,22 @@ const REWARM_ENABLED =
 // Optional SMS rewarm — double-gated: ENABLE_SMS env (platform-wide SMS kill
 // switch, default OFF) AND the per-consumer TCPA opt-in enforced inside
 // sendSMSToConsumer. Even with REWARM_ENABLED on, SMS stays silent unless
-// ENABLE_SMS=true. The email is the primary touch; SMS is belt-and-suspenders.
-const SMS_ENABLED = process.env.ENABLE_SMS === 'true';
+// ENABLE_SMS is on. The email is the primary touch; SMS is belt-and-suspenders.
+// F3 (2026-07-01): gate unified via lib/smsFlag ('1' | 'true' both work —
+// this file used to require exactly 'true' while lib/smsEvents required '1').
+const SMS_ENABLED = smsEnabled();
 // Dedup stamp field on the Payments row — guarantees the rewarm fires at most
 // once per orphaned checkout even if a row is somehow re-swept (defensive: the
 // row is flipped to 'abandoned' in the same pass so it normally drops out of
 // the pending query, but the stamp makes the one-shot guarantee explicit).
 const REWARM_STAMP_FIELD = 'Rewarm Sent At';
+// W1 stamp cross-check bounds (see the pass below the main loop). Lookback is
+// generous vs the daily cadence — a stamp broken today is healed tomorrow;
+// the window only exists so we don't re-read every settled payment forever.
+const STAMP_CROSSCHECK_LOOKBACK_DAYS = Number(
+  process.env.ORPHAN_REAPER_STAMP_LOOKBACK_DAYS || 30,
+);
+const STAMP_CROSSCHECK_MAX = Number(process.env.ORPHAN_REAPER_STAMP_MAX_PER_RUN || 50);
 
 interface ReaperResult {
   status: 'success' | 'partial' | 'maintenance-blocked';
@@ -412,11 +423,96 @@ async function realHandler(_request: Request): Promise<ReaperResult> {
     bump('still_processing');
   }
 
+  // ── W1 cross-check: settled money, missing referral stamp ────────────────
+  // settleBuyerDeposit flips the Payments row to 'succeeded' FIRST (the
+  // cross-webhook idempotency anchor) and only THEN stamps 'Deposit Paid At'
+  // on the Referral — best-effort, console.warn on failure. If that stamp
+  // write fails: the webhook 200s, redelivery short-circuits on the anchor,
+  // this reaper's pending-scan never sees the row (it's succeeded), and
+  // deposit-accept-sla keys off the missing stamp. Money settled, deal
+  // frozen, silence. settleBuyerDeposit now fires a loud operator signal in
+  // that catch (lib/stripeSettlement.ts); this pass is the AUTO-HEAL: any
+  // succeeded Payments row whose linked Referral (via the {Referral Id Text}
+  // denorm) has an EMPTY 'Deposit Paid At' gets the payment's captured
+  // timestamp re-stamped. Idempotent by construction — it only ever fills an
+  // empty field with the ledger truth; rows already stamped are untouched.
+  // Deliberately does NOT touch Referral.Status: the deal may have been
+  // hand-advanced since settlement, and the SLA/final-invoice gates key off
+  // the stamp, which is the frozen part.
+  let stampHealed = 0;
+  try {
+    const lookbackIso = new Date(
+      now - STAMP_CROSSCHECK_LOOKBACK_DAYS * DAY_MS,
+    ).toISOString();
+    // Bounded: succeeded rows captured inside the lookback window that carry
+    // the referral denorm. Rows predating {Referral Id Text} can't be joined
+    // cheaply — they also predate the settle path this guards, so skip them.
+    const settled = (await getAllRecords(
+      PAYMENTS_TABLE,
+      `AND({Status} = "succeeded", {${REFERRAL_ID_TEXT_FIELD}} != "", IS_AFTER({Captured At}, "${lookbackIso}"))`,
+    )) as any[];
+    for (const row of settled.slice(0, STAMP_CROSSCHECK_MAX)) {
+      const referralId = String(row[REFERRAL_ID_TEXT_FIELD] || '');
+      if (!referralId) continue;
+      try {
+        const referral: any = await getRecordById(TABLES.REFERRALS, referralId);
+        if (!referral) {
+          bump('stamp_referral_missing');
+          continue;
+        }
+        if (referral['Deposit Paid At']) continue; // healthy — the common case
+        // Re-run the stamp with the LEDGER's succeeded timestamp (Captured At
+        // is written by markDepositSucceeded on every settle path, including
+        // its schema-fallback retry). Deposit Amount mirrors the original
+        // stamp (rancher-portion dollars from 'Amount Cents').
+        const capturedAt = String(row['Captured At'] || row['Created At'] || '') ||
+          new Date().toISOString();
+        const depositCents = Number(row['Amount Cents'] || 0);
+        await updateRecord(TABLES.REFERRALS, referralId, {
+          'Deposit Paid At': capturedAt,
+          ...(depositCents > 0 ? { 'Deposit Amount': depositCents / 100 } : {}),
+        });
+        touched++;
+        stampHealed++;
+        bump('referral_stamp_healed');
+        try {
+          await sendTelegramUpdate(
+            `\u{1FA79} ORPHAN REAPER re-stamped a frozen deal — Payments row was succeeded but the ` +
+            `Referral had NO 'Deposit Paid At' (settlement stamp write failed).\n` +
+            `Referral: ${referralId}\nStamped Deposit Paid At: ${capturedAt}\n` +
+            `Check Referral Status by hand — settlement's 'Awaiting Payment' flip may also have been lost.`,
+          );
+        } catch {}
+        try {
+          await logAuditEntry({
+            actor: 'cron',
+            tool: 'orphan-checkout-reaper-stamp-heal',
+            targetType: 'Referral',
+            targetId: referralId,
+            args: { paymentRowId: row.id, capturedAt, depositCents },
+            result: { stamped: 'Deposit Paid At' },
+            reverseAction: {
+              type: 'noop',
+              reason: 'Re-derived from the settled Payments ledger — clearing it would re-freeze the deal',
+            },
+          });
+        } catch {}
+      } catch (e: any) {
+        bump('stamp_heal_failed');
+        errors.push(`stamp-heal ${referralId}: ${e?.message?.slice(0, 60) || 'unknown'}`);
+      }
+    }
+  } catch (e: any) {
+    bump('stamp_crosscheck_failed');
+    errors.push(`stamp-crosscheck query: ${e?.message?.slice(0, 60) || 'unknown'}`);
+  }
+
   return {
     status: errors.length ? 'partial' : 'success',
     recordsTouched: touched,
     notes:
       `candidates=${candidates.length} processed=${targets.length} touched=${touched} ` +
+      `stampHealed=${stampHealed} ` +
       `errs=${errors.length}${errors.length ? ' err1=' + errors[0].slice(0, 80) : ''}`,
     skipReasonBreakdown: breakdown,
   };

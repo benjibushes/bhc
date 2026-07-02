@@ -124,6 +124,42 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
     });
   } catch (e: any) {
     console.error('[stripe webhook] deposit referral stamp failed:', e?.message);
+    // W1 (ops-hardening 2026-07-01): this catch is the FROZEN-MONEY window.
+    // The Payments row above already flipped to 'succeeded' (the idempotency
+    // anchor), so: webhook 200s, Stripe redelivery short-circuits on the
+    // anchor, the orphan reaper's pending-scan never sees the row, and
+    // deposit-accept-sla keys off the 'Deposit Paid At' stamp that just
+    // failed. Money settled, deal frozen — a console.warn was the only
+    // signal. Fire a LOUD operator signal (deduped per referral) so a human
+    // can fix the referral by hand; the orphan-checkout-reaper's stamp
+    // cross-check also auto-heals 'Deposit Paid At' on its next daily run.
+    // Best-effort by construction: alerting must never throw into the
+    // settled webhook (a throw here would make Stripe redeliver a payment
+    // that already settled). Dynamic import mirrors the operatorSignal
+    // convention in lib/contracts/payments.ts.
+    try {
+      const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'loud',
+        kind: 'system-error',
+        summary: `deposit settled but referral stamp FAILED — deal frozen, fix by hand: referral ${referralId}`,
+        detail:
+          `PaymentIntent ${pi.id} settled (Payments row flipped to succeeded — the idempotency anchor), ` +
+          `but the Referral write (Status='Awaiting Payment' + 'Deposit Paid At' + 'Deposit Amount') FAILED: ` +
+          `${e?.message?.slice(0, 200) || 'unknown'}.\n` +
+          `Nothing retries this: redelivery no-ops on the anchor, the reaper only scans pending rows, ` +
+          `and the accept-SLA keys off the missing stamp.\n` +
+          `FIX BY HAND: set Status='Awaiting Payment', Deposit Amount=$${(depositCents / 100).toFixed(2)}, ` +
+          `Deposit Paid At=now on referral ${referralId}. ` +
+          `(The orphan reaper will auto-restamp 'Deposit Paid At' from the ledger on its next daily run, ` +
+          `but NOT the Status flip.)`,
+        refs: [{ type: 'referral', id: referralId }],
+        dedupeKey: `deposit-stamp-failed-${referralId}`,
+        dedupeWindowMs: 60 * 60 * 1000,
+      });
+    } catch (sigErr: any) {
+      console.error('[stripe webhook] stamp-failure operator signal failed:', sigErr?.message);
+    }
   }
 
   // ── Funnel event — deposit_paid (largest LTV event on platform) ──

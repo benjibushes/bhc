@@ -21,6 +21,7 @@
 // that break GSM-7 encoding.
 
 import { sendSMSToConsumer, sendSMS } from './twilio';
+import { smsEnabled } from './smsFlag';
 
 export type SMSEventType =
   | 'signup'
@@ -39,11 +40,10 @@ export type SMSEventType =
 // flag-gated by ENABLE_SMS so nothing fires until Twilio is live.
 export type RancherSMSEventType = 'deposit_paid_rancher';
 
-const SMS_FEATURE_FLAG = 'ENABLE_SMS';
-
-function isSMSEnabled(): boolean {
-  return process.env[SMS_FEATURE_FLAG] === '1';
-}
+// F3 (2026-07-01): gate unified into lib/smsFlag's smsEnabled() — this file
+// used to require ENABLE_SMS === '1' while the demand-router/orphan-reaper
+// crons required === 'true', so no single env value lit the whole channel.
+// smsEnabled() accepts '1' | 'true' (case-insensitive).
 
 interface SMSEventVars {
   firstName?: string;
@@ -87,7 +87,7 @@ export async function fireSMSEvent(input: {
   consumer: Record<string, any> | null | undefined;
   vars?: SMSEventVars;
 }): Promise<boolean> {
-  if (!isSMSEnabled()) {
+  if (!smsEnabled()) {
     // Feature off — silent skip. No console noise.
     return false;
   }
@@ -139,7 +139,7 @@ export async function fireRancherSMSEvent(input: {
   phone: string | null | undefined;
   vars?: RancherSMSEventVars;
 }): Promise<boolean> {
-  if (!isSMSEnabled()) return false;
+  if (!smsEnabled()) return false;
   const to = (input.phone || '').toString().trim();
   if (!to) return false;
   const body = buildRancherBody(input.type, input.vars || {});

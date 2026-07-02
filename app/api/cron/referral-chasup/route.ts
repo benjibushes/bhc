@@ -1,6 +1,6 @@
-import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { requireCron } from '@/lib/cronAuth';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
@@ -841,17 +841,13 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      const { searchParams } = new URL(request.url);
-      const secret = searchParams.get('secret');
-      if (secret !== cronSecret) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  // W5 (2026-07-01): migrated to requireCron. The old inline check (a) SKIPPED
+  // auth entirely when CRON_SECRET was unset — fail-open — and (b) accepted
+  // `?secret=`, leaking the secret into Vercel access logs. requireCron is
+  // fail-closed (lib/secrets throws at import if CRON_SECRET is missing),
+  // constant-time, and header-only.
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('referral-chasup', realHandler)(request);
 }
 
