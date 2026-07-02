@@ -13,6 +13,7 @@ import {
 import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification, sendRancherCheckIn, sendPipelineUpdateEmail } from '@/lib/email';
 import { callClaude } from '@/lib/ai';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
+import { goLiveRancher } from '@/lib/goLiveRancher';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { buildCronStatusCard, pauseCron, resumeCron } from '@/lib/cronIntrospection';
@@ -2696,7 +2697,6 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           const rancher: any = await getRecordById(TABLES.RANCHERS, rancherId);
           const name = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
           const slug = rancher['Slug'] || '';
-          const rancherEmail = rancher['Email'];
 
           // Idempotency guard — refuse re-fire if already live.
           // Without this, double-tap re-sends the launch email + re-runs the
@@ -2730,78 +2730,39 @@ Output ONLY the email body. First line should be the subject line prefixed with 
             return NextResponse.json({ ok: true });
           }
 
-          const { logAuditEntry: logGolive, buildAirtableUpdateReverse: buildGoliveReverse } = await import('@/lib/auditLog');
-          const previousPageLive = rancher['Page Live'] ?? null;
-          const previousOnboardingStatus = rancher['Onboarding Status'] ?? null;
-          const goliveReverse = buildGoliveReverse(TABLES.RANCHERS, rancherId, {
-            'Page Live': previousPageLive,
-            'Onboarding Status': previousOnboardingStatus,
+          // ── THE rail (slice B): goLiveRancher owns the gates, the canonical
+          // 4-field write, audit log, warmup trigger, waitlist blast, the
+          // go-live email, and the operator Telegram note. force=true keeps
+          // this button's legacy semantics — the operator already eyeballed
+          // the record, and the content checks above are this rail's gate.
+          const outcome = await goLiveRancher(rancherId, {
+            force: true,
+            actor: 'telegram-force-live',
           });
-          await updateRecord(TABLES.RANCHERS, rancherId, {
-            'Page Live': true,
-            'Onboarding Status': 'Live',
-            'Active Status': 'Active',
-          });
-          triggerLaunchWarmup(`telegram-rgolive:${rancherId}`);
-          await logGolive({
-            actor: 'manual',
-            tool: 'rgolive',
-            targetType: 'Rancher',
-            targetId: rancherId,
-            args: { callbackData },
-            result: { previousPageLive, previousOnboardingStatus, newPageLive: true, newOnboardingStatus: 'Live' },
-            reverseAction: goliveReverse,
-          });
-          await answerCallbackQuery(queryId, '🟢 Page is live!');
 
-          // Build tier-aware commission language
-          const rancherTierRgolive = tierFor(rancher);
-          const commissionLineRgolive = (() => {
-            if (rancherTierRgolive === 'pasture') return 'BuyHalfCow earns 7% commission on referred sales (per your Pasture tier).';
-            if (rancherTierRgolive === 'ranch') return 'BuyHalfCow earns 3% commission on referred sales (per your Ranch tier).';
-            if (rancherTierRgolive === 'operator') return 'No per-deal commission (per your Operator tier flat subscription).';
-            return 'Commission per your tier — see /rancher/billing for details.';
-          })();
-
-          // Notify the rancher they're live
-          if (rancherEmail) {
-            const liveUrl = `${SITE_URL}/ranchers/${slug}`;
-            await sendEmail({
-              to: rancherEmail,
-              subject: 'You\'re Live on BuyHalfCow!',
-              html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
-                <h1 style="font-family:Georgia,serif;font-size:22px;">You're Live!</h1>
-                <p>Hi ${escHtml(name)},</p>
-                <p>Your ranch page is now live on BuyHalfCow. Buyers can find you, learn about your operation, and purchase directly.</p>
-                <div style="margin:30px 0;text-align:center;">
-                  <a href="${liveUrl}" style="background:#2D5016;color:#fff;padding:14px 28px;text-decoration:none;font-weight:600;display:inline-block;">View Your Page</a>
-                </div>
-                <p><strong>What happens now:</strong></p>
-                <ul style="line-height:1.8;">
-                  <li>Buyers in your area will see your page in our rancher directory</li>
-                  <li>When a buyer clicks to purchase, you'll get an email notification</li>
-                  <li>We'll also send you qualified buyer leads directly via email</li>
-                  <li>${commissionLineRgolive}</li>
-                </ul>
-                <p>Share your page link with your own customers too: <a href="${liveUrl}">${liveUrl}</a></p>
-                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
-              </div>`,
-            });
+          if (!outcome.ok) {
+            await answerCallbackQuery(queryId, 'Go-live failed');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ Go-live failed for <b>${escHtml(name)}</b>: ${escHtml(outcome.message)}`);
+            }
+            return NextResponse.json({ ok: true });
           }
+
+          if (outcome.alreadyLive) {
+            // Rail-level idempotence (stricter than the status check above:
+            // all 3 live fields already converged) — no side effects re-fired.
+            await answerCallbackQuery(queryId, 'Already live');
+            if (chatId) {
+              await sendTelegramMessage(chatId, `⚠️ <b>${escHtml(name)}</b> is already live. Skipping re-fire.`);
+            }
+            return NextResponse.json({ ok: true });
+          }
+
+          await answerCallbackQuery(queryId, '🟢 Page is live!');
 
           if (chatId) {
             const liveUrl = `${SITE_URL}/ranchers/${slug}`;
-            await editTelegramMessage(chatId, messageId!, `🟢 <b>PAGE IS LIVE</b>\n\n🤠 ${escHtml(name)}\n🔗 ${liveUrl}\n📧 Rancher notified via email\n✅ Onboarding Status → Live`);
-          }
-
-          // Waitlist blast: auto-match waiting buyers in this rancher's state(s)
-          try {
-            const blast = await runWaitlistBlast(rancherId);
-            if (blast.matched > 0 && chatId) {
-              await sendTelegramMessage(chatId, `🚀 <b>${escHtml(blast.ranchName)}</b> is LIVE in <b>${escHtml(blast.state)}</b> — auto-matched <b>${blast.matched}</b> waiting buyer${blast.matched === 1 ? '' : 's'}`);
-            }
-          } catch (e) {
-            console.error('Waitlist blast error (rgolive):', e);
+            await editTelegramMessage(chatId, messageId!, `🟢 <b>PAGE IS LIVE</b>\n\n🤠 ${escHtml(name)}\n🔗 ${liveUrl}\n📧 Rancher notified via email\n✅ Onboarding Status → Live\n🚀 Auto-matched <b>${outcome.matched}</b> waiting buyer${outcome.matched === 1 ? '' : 's'}`);
           }
         } catch (e: any) {
           await answerCallbackQuery(queryId, `Error: ${e.message}`);

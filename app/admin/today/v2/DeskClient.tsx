@@ -364,6 +364,7 @@ export default function DeskClient() {
                       </span>
                     ) : null}
                   </span>
+                  <DealLink id={r.id} />
                   <button
                     type="button"
                     onClick={() =>
@@ -469,16 +470,19 @@ export default function DeskClient() {
                         {c.rancherName ? ` · → ${c.rancherName}` : ''}
                       </div>
                     </div>
-                    {joinUrl && (
-                      <a
-                        href={joinUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-2 border border-charcoal text-charcoal text-[11px] uppercase tracking-widest hover:bg-charcoal hover:text-bone transition-base whitespace-nowrap"
-                      >
-                        Join →
-                      </a>
-                    )}
+                    <div className="flex items-center gap-3">
+                      <DealLink id={c.id} />
+                      {joinUrl && (
+                        <a
+                          href={joinUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-2 border border-charcoal text-charcoal text-[11px] uppercase tracking-widest hover:bg-charcoal hover:text-bone transition-base whitespace-nowrap"
+                        >
+                          Join →
+                        </a>
+                      )}
+                    </div>
                   </li>
                 );
               })}
@@ -654,6 +658,7 @@ export default function DeskClient() {
                     {r.buyerEmail} → <strong>{r.rancherName}</strong> · {r.state}
                   </span>
                   <span className="text-saddle whitespace-nowrap">{fmtUsd(r.depositAmountCents)}</span>
+                  <DealLink id={r.id} />
                   <a
                     href={`mailto:${r.buyerEmail.toLowerCase()}?subject=Your%20BuyHalfCow%20deposit%20invoice`}
                     className="text-[11px] uppercase tracking-widest text-charcoal underline underline-offset-2 whitespace-nowrap"
@@ -686,6 +691,7 @@ export default function DeskClient() {
                     <span className="text-xs text-saddle ml-2">nudge rancher</span>
                   </span>
                   <span className="text-saddle whitespace-nowrap">{fmtUsd(r.depositAmountCents)}</span>
+                  <DealLink id={r.id} />
                   <AdvanceStageButton id={r.id} from="Awaiting Payment" onSuccess={tick} />
                 </li>
               ))}
@@ -730,6 +736,7 @@ export default function DeskClient() {
                           no final invoice yet — nudge rancher
                         </span>
                       )}
+                      <DealLink id={r.id} />
                       <AdvanceStageButton id={r.id} from="Slot Locked" onSuccess={tick} />
                     </span>
                   </li>
@@ -797,8 +804,11 @@ export default function DeskClient() {
                   <span className="text-charcoal">
                     {r.buyerEmail} · <strong>{r.rancherName}</strong>
                   </span>
-                  <span className="text-sage-dark font-semibold">
-                    ${Number(r.saleAmount || 0).toLocaleString()}
+                  <span className="flex items-center gap-3">
+                    <DealLink id={r.id} />
+                    <span className="text-sage-dark font-semibold">
+                      ${Number(r.saleAmount || 0).toLocaleString()}
+                    </span>
                   </span>
                 </li>
               ))}
@@ -909,6 +919,20 @@ function Tile({
       <div className="font-serif text-2xl text-charcoal mt-1">{value}</div>
       <div className="text-xs text-saddle mt-1">{sub}</div>
     </div>
+  );
+}
+
+// Every referral-backed row links into its deal cockpit
+// (/admin/desk/[referralId]) — the rows used to be dead ends.
+function DealLink({ id }: { id: string }) {
+  return (
+    <a
+      href={`/admin/desk/${id}`}
+      title="Open this deal's cockpit — full journey, actions, timeline"
+      className="text-[11px] uppercase tracking-widest text-saddle underline underline-offset-2 whitespace-nowrap hover:text-charcoal"
+    >
+      deal →
+    </a>
   );
 }
 

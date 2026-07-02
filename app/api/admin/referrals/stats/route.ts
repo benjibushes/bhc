@@ -69,7 +69,7 @@ export async function GET(request: Request) {
     // All-time unpaid commission across every Closed Won referral.
     const commissionUnpaid = computeUnpaidCommission(referrals);
 
-    // Stalled leads — mirror /api/admin/today logic: Intro Sent for longer than
+    // Stalled leads — Intro Sent for longer than
     // the operator-tunable stall threshold and not yet closed. Status is still
     // 'Intro Sent' here (a replied/closed lead would no longer be in that state).
     const DAY = 24 * 60 * 60 * 1000;

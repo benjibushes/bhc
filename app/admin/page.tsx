@@ -61,6 +61,10 @@ interface Rancher {
   ranch_tour_availability?: string;
   active_status?: string;
   onboarding_status?: string;
+  // Call stamps — drive the Call Booked / Call Done pipeline stages even when
+  // Onboarding Status hasn't been advanced by hand.
+  call_scheduled?: boolean;
+  call_completed_at?: string;
   current_active_referrals?: number;
   max_active_referrals?: number;
   monthly_capacity?: number;
@@ -419,14 +423,17 @@ export default function AdminPage() {
     }
   };
 
-  // Helper: get rancher pipeline stage
+  // Helper: get rancher pipeline stage. Call stages are no longer flattened
+  // into 'New' — Call Booked / Call Done derive from the Onboarding Status OR
+  // the Call Scheduled / Call Completed At stamps (whichever advanced first).
   const getRancherPipelineStage = (r: Rancher): string => {
     const s = r.onboarding_status;
-    if (!s || s === 'Pending' || s === 'Call Scheduled' || s === 'Call Complete') return 'New';
-    if (s === 'Docs Sent') return 'Docs Sent';
-    if (s === 'Agreement Signed') return 'Agreement Signed';
-    if (s === 'Verification Pending' || s === 'Verification Complete') return 'Verified';
     if (s === 'Live') return 'Live';
+    if (s === 'Verification Pending' || s === 'Verification Complete') return 'Verified';
+    if (s === 'Agreement Signed') return 'Agreement Signed';
+    if (s === 'Docs Sent') return 'Docs Sent';
+    if (s === 'Call Complete' || r.call_completed_at) return 'Call Done';
+    if (s === 'Call Scheduled' || r.call_scheduled) return 'Call Booked';
     return 'New';
   };
 
@@ -1133,9 +1140,11 @@ export default function AdminPage() {
                       >
                         All ({ranchers.length})
                       </button>
-                      {['New', 'Docs Sent', 'Agreement Signed', 'Verified', 'Live'].map(stage => {
+                      {['New', 'Call Booked', 'Call Done', 'Docs Sent', 'Agreement Signed', 'Verified', 'Live'].map(stage => {
                         const count = ranchers.filter(r => getRancherPipelineStage(r) === stage).length;
                         const stageHint = stage === 'New' ? 'Pending / just applied' :
+                          stage === 'Call Booked' ? 'Onboarding call scheduled' :
+                          stage === 'Call Done' ? 'Call complete, agreement not yet sent' :
                           stage === 'Docs Sent' ? 'Agreement emailed, awaiting signature' :
                           stage === 'Agreement Signed' ? 'Signed, needs verification' :
                           stage === 'Verified' ? 'Ready to go live' :
@@ -1189,7 +1198,9 @@ export default function AdminPage() {
 
                               // Determine next action button
                               const renderNextAction = () => {
-                                if (stage === 'New') {
+                                // Call Booked / Call Done used to be flattened into 'New';
+                                // next action for all three is (still) sending the agreement.
+                                if (stage === 'New' || stage === 'Call Booked' || stage === 'Call Done') {
                                   return (
                                     <button
                                       onClick={() => {

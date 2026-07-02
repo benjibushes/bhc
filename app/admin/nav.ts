@@ -28,12 +28,15 @@ export interface AdminNavItem {
 
 export const ADMIN_NAV: AdminNavItem[] = [
   // PIPELINE — admin-only: referral decisions, go-live, consumer PII
+  // (Manifest #17: the /admin/desk LIST entry was removed — /admin/today/v2 is
+  //  the daily surface and links straight into /admin/desk/[referralId] deal
+  //  cockpits, which stay routable.)
   {
-    group: 'PIPELINE', icon: '🎛', label: 'Sales desk', href: '/admin/desk', shortcut: 'g k',
+    group: 'PIPELINE', icon: '☀️', label: 'Today', href: '/admin/today/v2', shortcut: 'g t',
     visibleTo: ['admin', 'onboarding'],
   },
   {
-    group: 'PIPELINE', icon: '☀️', label: 'Today', href: '/admin/today/v2', shortcut: 'g t',
+    group: 'PIPELINE', icon: '🤠', label: 'Ranchers', href: '/admin/ranchers', shortcut: 'g k',
     visibleTo: ['admin', 'onboarding'],
   },
   { group: 'PIPELINE', icon: '📨', label: 'All deals', href: '/admin/referrals', shortcut: 'g r' },
@@ -75,7 +78,7 @@ export const ADMIN_NAV_GROUPS = ['PIPELINE', 'MONEY', 'GROWTH', 'SYSTEM'] as con
 
 /**
  * Longest-prefix active match so nested routes highlight exactly one item
- * (/admin/desk/rec123 lights Sales desk; /admin/consumers/rec123 falls
+ * (/admin/ranchers/rec123 lights Ranchers; /admin/consumers/rec123 falls
  * through to Full Dashboard, its parent surface).
  */
 export function activeNavHref(pathname: string): string | undefined {

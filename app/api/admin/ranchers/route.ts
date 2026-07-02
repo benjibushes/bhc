@@ -1,20 +1,14 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords } from '@/lib/airtable';
+import { getAllRecords, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { requireRole } from '@/lib/adminAuth';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 
 export const maxDuration = 60;
 
-export async function GET(request: Request) {
-  try {
-    // Opened to 'onboarding' partner: read-only rancher list for kanban/migration.
-    const __authResp = await requireRole(request, ['admin', 'onboarding']);
-    if (__authResp) return __authResp;
-    const records = await getAllRecords(TABLES.RANCHERS);
-    
-    // Transform Airtable field names to frontend-friendly names
-    const ranchers = records.map((record: any) => {
+// Transform an Airtable rancher record into the frontend view model.
+// Shared by the full-list read and the single-rancher ?id read.
+function toRancherView(record: any) {
       // Deposit-collection readiness — can this rancher actually collect a deposit
       // through the Stripe Connect rail RIGHT NOW? Surfaces flip-and-collect-ready
       // vs blocked (legacy = off-platform; Connect not active; price typo; paused).
@@ -155,7 +149,34 @@ export async function GET(request: Request) {
       page_gaps: _pageGaps,
       page_polish: _pagePolish,
       };
-    });
+}
+
+export async function GET(request: Request) {
+  try {
+    // Opened to 'onboarding' partner: read-only rancher list for kanban/migration.
+    const __authResp = await requireRole(request, ['admin', 'onboarding']);
+    if (__authResp) return __authResp;
+
+    // ?id=recXXX — single-rancher fetch. The detail page (/admin/ranchers/[id])
+    // opens ONE rancher; pulling the entire table for that was the
+    // full-table-fetch the audit flagged. Returns a 1-element array so
+    // existing clients (which .find() on an array) keep working unchanged.
+    const singleId = new URL(request.url).searchParams.get('id');
+    if (singleId) {
+      let record: any = null;
+      try {
+        record = await getRecordById(TABLES.RANCHERS, singleId);
+      } catch {
+        record = null;
+      }
+      if (!record) {
+        return NextResponse.json({ error: 'Rancher not found' }, { status: 404 });
+      }
+      return NextResponse.json([toRancherView(record)]);
+    }
+
+    const records = await getAllRecords(TABLES.RANCHERS);
+    const ranchers = records.map((record: any) => toRancherView(record));
 
     return NextResponse.json(ranchers);
   } catch (error: any) {
