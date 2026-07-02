@@ -130,6 +130,9 @@ export async function GET(request: Request) {
       // Pricing Model + tier + Stripe Connect status — surfaced so admin UI
       // can show v2 upgrade button for legacy ranchers + adoption funnel.
       pricing_model: record['Pricing Model'] || 'legacy',
+      // Raw Connect status — feeds isReadyToGoLive (lib/goLiveGates) so the
+      // admin UI only offers Go Live when the rail's gates would pass.
+      stripe_connect_status: record['Stripe Connect Status'] || '',
       tier: (() => {
         const t = record['Tier'];
         if (!t) return '';

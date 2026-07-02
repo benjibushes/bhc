@@ -5,6 +5,7 @@ import { normalizeStates, stringifyStates } from '@/lib/states';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import { MAX_ACTIVE_REFERRALS_FIELD, getLiveCapacity } from '@/lib/rancherCapacity';
 import { requireRancher } from '@/lib/rancherAuth';
+import { goLiveRancher } from '@/lib/goLiveRancher';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
 import { normalizeImageUrl } from '@/lib/imageUrl';
 import { validateAccountPatch, ACCOUNT_EDITABLE_KEYS } from '@/lib/accountProfile';
@@ -324,17 +325,36 @@ export async function PATCH(request: Request) {
       if (alreadyLive) return NextResponse.json({ success: true, live: true, message: "You're already live." });
 
       if (signed && hasSlug && hasPrice && canCollect) {
-        await updateRecord(TABLES.RANCHERS, session.rancherId, {
-          'Active Status': 'Active', 'Onboarding Status': 'Live', 'Page Live': true,
+        // Route through THE go-live rail (lib/goLiveRancher) instead of a
+        // divergent local write. Same 4-field union as the admin button
+        // (this path used to miss Status='Active'), same side effects the
+        // self-publish path used to skip: go-live email + waitlist blast +
+        // operator Telegram note, plus the warmup fire it already had.
+        // The route's own slug/price/collect pre-gates above stay — they're
+        // stricter than the rail's and drive the rancher-facing message.
+        const result = await goLiveRancher(session.rancherId, { actor: 'rancher-request-go-live' });
+        if (result.ok) {
+          return NextResponse.json({ success: true, live: true, message: "You're live! Buyers in your state can now find you." });
+        }
+        // Rail gate blocked (in practice: verification review still pending —
+        // signed/Connect are pre-checked above). Tell the rancher honestly and
+        // ping the operator with the Force Live escape hatch.
+        try {
+          await sendTelegramMessage(
+            TELEGRAM_ADMIN_CHAT_ID,
+            `🟡 <b>GO LIVE REQUEST</b> (blocked: ${result.code})\n\n🤠 ${name}\n${result.message}\n${slug ? `Preview: ${siteUrl}/ranchers/${slug}` : ''}`,
+            { inline_keyboard: [[{ text: '🟢 Force Live', callback_data: `rgolive_${session.rancherId}` }]] },
+          );
+        } catch (e) {
+          console.error('Telegram go-live notification error:', e);
+        }
+        return NextResponse.json({
+          success: false,
+          live: false,
+          message: result.code === 'verification_pending'
+            ? 'Almost there — your verification review is still in progress. We usually finish reviews within 24-48 hours.'
+            : 'Almost there — our team needs to take one more look before you go live. We\'ve been notified and will follow up shortly.',
         });
-        try {
-          const { triggerLaunchWarmup } = await import('@/lib/triggerLaunchWarmup');
-          triggerLaunchWarmup(`request-go-live:${session.rancherId}`);
-        } catch (e: any) { console.warn('[request-go-live] warmup trigger failed:', e?.message); }
-        try {
-          await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID, `🟢 <b>${name} is now LIVE</b> (self-published)\n${siteUrl}/ranchers/${slug}`);
-        } catch { /* non-fatal */ }
-        return NextResponse.json({ success: true, live: true, message: "You're live! Buyers in your state can now find you." });
       }
 
       const missing: string[] = [];

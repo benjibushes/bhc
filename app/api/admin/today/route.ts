@@ -95,10 +95,13 @@ export async function GET(request: Request) {
       return active === 0;
     });
     const pendingGoLive = ranchers.filter((r: any) => {
-      // Not yet operational, but in the onboarding pipeline
+      // Not yet operational, but far enough along that go-live is a sane next
+      // action. 'Docs Sent' is intentionally EXCLUDED — an unsigned rancher
+      // fails the go-live agreement gate (lib/goLiveGates), so offering the
+      // one-click Go Live there only manufactured 409s.
       if (isRancherOperationalForBuyers(r)) return false;
       const status = str(r['Onboarding Status']);
-      return status === 'Verification Complete' || status === 'Agreement Signed' || status === 'Docs Sent';
+      return status === 'Verification Complete' || status === 'Agreement Signed';
     });
 
     // Warmup-engaged buyers not yet matched
