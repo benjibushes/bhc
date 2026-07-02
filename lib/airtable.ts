@@ -133,9 +133,10 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>, label = 'Airtable'): 
 // Helper function to create a record (auto-strips problematic Airtable fields)
 export async function createRecord(tableName: string, fields: any) {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
-  // lib/demo/demoMode.ts. No-op create: return a fake record so buyer funnel
-  // signups / reserves succeed on camera without persisting or erroring.
-  if (isDemoMode()) return { id: `recDEMOcreated${Date.now().toString(36)}`.slice(0, 24), ...fields } as any;
+  // lib/demo/demoMode.ts. Append to the in-memory demo store so the created
+  // row PERSISTS for the session (a reserved buyer shows up in the pipeline on
+  // camera). Zero external calls; resets on dev-server restart.
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoCreate(tableName, fields);
   let currentFields = { ...fields };
   const maxRetries = 8;
 
@@ -265,10 +266,11 @@ export async function getAllRecords(
   opts?: { fields?: string[] },
 ) {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
-  // lib/demo/demoMode.ts. Return in-memory fixtures; the caller's own JS
-  // filtering narrows them (faithful formula-matching isn't required for one
-  // demo rancher's worth of data). opts.fields projection is respected loosely.
-  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoTableRecords(tableName);
+  // lib/demo/demoMode.ts. Return in-memory fixtures, best-effort formula-
+  // filtered (demoQuery honors simple {Field}="x" / LOWER(...) equality so
+  // existence checks like the reserve rail's email lookup behave correctly;
+  // unrecognized formulas fall back to all rows and the caller's JS narrows).
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoQuery(tableName, filterByFormula);
   try {
     const projected = !!(opts?.fields && opts.fields.length);
     const key = !filterByFormula && !projected ? _cacheKey(tableName) : null;
@@ -347,9 +349,9 @@ export async function getFirstRecord(
   filterByFormula: string,
 ): Promise<Record<string, any> | null> {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
-  // lib/demo/demoMode.ts. Return the first demo row for the table (loose match;
-  // one demo rancher's data means the first row is the sensible answer).
-  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoTableRecords(tableName)[0] || null;
+  // lib/demo/demoMode.ts. First row matching the (best-effort parsed) formula,
+  // so an existence check returns null when nothing matches.
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoQuery(tableName, filterByFormula)[0] || null;
   try {
     const records = await withRateLimitRetry(
       () =>
@@ -464,10 +466,10 @@ export async function getRecord(tableName: string, recordId: string) {
 // Helper function to update a record (auto-strips problematic Airtable fields)
 export async function updateRecord(tableName: string, recordId: string, fields: any) {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
-  // lib/demo/demoMode.ts. No-op update: return the merged record so "close
-  // sale", "request deposit", capacity edits etc. succeed on camera without
-  // touching Airtable (changes don't persist — the fixtures are the truth).
-  if (isDemoMode()) return { id: recordId, ...fields } as any;
+  // lib/demo/demoMode.ts. Merge into the in-memory demo record IN PLACE so the
+  // change PERSISTS on camera — "close sale", "request deposit", capacity /
+  // landing-page edits all stick for the session. Zero external calls.
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoUpdate(tableName, recordId, fields);
   let currentFields = { ...fields };
   const maxRetries = 8;
 
@@ -594,6 +596,12 @@ export async function updateRecord(tableName: string, recordId: string, fields: 
 
 // Helper function to delete a record
 export async function deleteRecord(tableName: string, recordId: string) {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Remove from the in-memory store, no external call.
+  if (isDemoMode()) {
+    (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoDelete(tableName, recordId);
+    return { id: recordId, fields: {} } as any;
+  }
   try {
     const deletedRecords = await withTimeout(base(tableName).destroy([recordId]), resolveAirtableTimeoutMs(), tableName);
     return deletedRecords[0];

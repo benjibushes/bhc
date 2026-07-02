@@ -26,6 +26,7 @@ import { NextResponse } from 'next/server';
 import { getRecordById, TABLES } from '@/lib/airtable';
 import { getStripe } from '@/lib/stripe';
 import { requireRancher } from '@/lib/rancherAuth';
+import { isDemoMode } from '@/lib/demo/demoMode';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 20;
@@ -50,6 +51,19 @@ export async function GET(req: Request) {
   const r = await requireRancher(req);
   if (r instanceof NextResponse) return r;
   const { session } = r;
+
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Believable payout figures so the money strip isn't a
+  // wall of nulls on camera. No Stripe call.
+  if (isDemoMode()) {
+    return NextResponse.json({
+      loginUrl: '#demo-stripe-dashboard',
+      availableCents: 184300,
+      pendingCents: 61000,
+      paidCents: 122500,
+      nextPayoutDateISO: null,
+    });
+  }
 
   // Build-dark gate — Connect not turned on in this environment.
   if (process.env.STRIPE_CONNECT_ENABLED !== 'true') {
