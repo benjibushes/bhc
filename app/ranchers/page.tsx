@@ -209,7 +209,7 @@ export default async function RanchersPage() {
           <div className="text-center space-y-4">
             <p className="text-saddle">Are you a rancher ready to partner with us?</p>
             <Link
-              href="/partner"
+              href="/sell"
               className="inline-block px-8 py-3 bg-charcoal text-bone text-sm tracking-wide uppercase hover:bg-saddle transition-colors"
             >
               Apply to partner

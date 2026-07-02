@@ -224,7 +224,7 @@ function RancherLoginInner() {
 
           <div className="mt-8 text-center space-y-3">
             <p className="text-sm text-dust">never partnered with us before?</p>
-            <Link href="/partner" className="inline-block text-charcoal hover:text-saddle transition-colors text-sm font-medium">
+            <Link href="/sell" className="inline-block text-charcoal hover:text-saddle transition-colors text-sm font-medium">
               Apply to Join the Network →
             </Link>
           </div>

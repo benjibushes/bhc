@@ -434,7 +434,7 @@ export default function FAQPage() {
                 Apply for access
               </Link>
               <Link
-                href="/partner"
+                href="/sell"
                 className="inline-block px-6 py-3 min-h-[48px] flex items-center justify-center bg-bone text-charcoal hover:bg-charcoal hover:text-bone transition-colors duration-300 font-medium tracking-wide uppercase text-sm border border-charcoal text-center"
               >
                 Rancher? Apply here

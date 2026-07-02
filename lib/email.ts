@@ -355,13 +355,14 @@ const resend = {
   }
 };
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
-// Booking link for "book a call" CTAs. Prefer the explicit env var, then the
-// NEXT_PUBLIC_ mirror (same value), and finally /contact — a REAL page that
-// routes to Ben. The old fallback (buyhalfcow.com/call) was a dead 404, so any
-// send with CALENDLY_LINK unset silently shipped a broken booking CTA — a
-// guaranteed zero-conversion bug for the whole self-submit drip.
-const CALENDLY_LINK =
-  process.env.CALENDLY_LINK || process.env.NEXT_PUBLIC_CALENDLY_LINK || `${SITE_URL}/book`;
+// Booking links for "book a call" CTAs. Both land on the on-site /book page
+// (ChromeGate-focused), which resolves Ben's LIVE Cal event server-side via
+// getOperatorBookingUrl() at click time — never a retired slug. The old
+// CALENDLY_LINK / NEXT_PUBLIC_CALENDLY_LINK envs pointed at a DELETED Calendly
+// event, so every send that composed from them shipped a dead booking CTA
+// (the entire rancher nurture drip included). Do not resurrect those envs.
+const BOOK_CALL_URL = `${SITE_URL}/book`; // buyer/general sales call
+const RANCHER_BOOK_CALL_URL = `${SITE_URL}/book?purpose=rancher`; // rancher onboarding call
 const MERCH_URL = process.env.MERCH_URL || 'https://www.sackett-ranch.com/pages/buy-half-cow';
 
 // =====================================================
@@ -2016,7 +2017,7 @@ h2{font-family:Georgia,serif;font-size:20px;margin:26px 0 8px;color:#0E0E0E;}
 <p>I'd like to walk you through it on a 15-min call. Pick whatever works:</p>
 
 <div style="text-align:center;">
-<a href="${esc(CALENDLY_LINK)}" class="cta">Book the upsell call</a>
+<a href="${RANCHER_BOOK_CALL_URL}" class="cta">Book the upsell call</a>
 </div>
 
 <p>If those slots don't fit, just hit reply with what does and we'll make it work. Either way — congrats on the milestone. Most ranchers we onboard never make it past lead #1. You blew through 4. Let's keep the momentum.</p>
@@ -2034,13 +2035,17 @@ h2{font-family:Georgia,serif;font-size:20px;margin:26px 0 8px;color:#0E0E0E;}
 // PARTNER EMAILS
 // =====================================================
 
+// Brand + land partner confirmation. Ranchers no longer flow through here —
+// the /api/partners rancher branch auto-approves and fires
+// sendRancherApplyAutoApproved with a minted setup-wizard link (same rail as
+// /api/apply), replacing the retired agreement-first packet + dead
+// Calendly-booking copy this template used to carry for type='rancher'.
 export async function sendPartnerConfirmation(data: {
-  type: 'rancher' | 'brand' | 'land';
+  type: 'brand' | 'land';
   name: string;
   email: string;
 }) {
   const typeLabels = {
-    rancher: 'Rancher',
     brand: 'Brand Partnership',
     land: 'Land Deal'
   };
@@ -2072,38 +2077,11 @@ export async function sendPartnerConfirmation(data: {
           <div class="container">
             <h1>${typeLabels[data.type]} Application Received</h1>
             <p>Hi ${esc(data.name)},</p>
-            <p>Thank you for your interest in ${data.type === 'rancher' ? 'joining the BuyHalfCow rancher network' : 'partnering with BuyHalfCow'}.</p>
+            <p>Thank you for your interest in partnering with BuyHalfCow.</p>
             <p>I've received your application and will review it personally.</p>
-            ${data.type === 'rancher' ? `
-              <p><strong>You're not joining a platform — you're joining the founding layer.</strong></p>
-            ` : ''}
             <div class="divider"></div>
             <p><strong>What Happens Next:</strong></p>
-            ${data.type === 'rancher' ? `
-              <p><strong>Watch for a second email in the next few minutes</strong> — it contains your Rancher Agreement and info packet. Sign it whenever you're ready; no rush, but we can't go live until it's signed.</p>
-              <p>Here's the full process:</p>
-              <ol style="line-height: 1.8; color: #6B4F3F;">
-                <li><strong>Sign the agreement</strong> — Arrives in a separate email right after this one</li>
-                <li><strong>Schedule your call</strong> — Book your 30-minute onboarding call on my calendar (see below)</li>
-                <li><strong>Onboarding call</strong> — We discuss your operation, answer questions, walk through how the network operates</li>
-                <li><strong>Verification</strong> — Share customer testimonials, operation photos, social proof (Google Reviews, social media), and processing facility info</li>
-                <li><strong>Certification</strong> — Once verified, your page goes live and you start receiving qualified buyer introductions</li>
-              </ol>
-              <div style="background: #0E0E0E; color: #F4F1EC; padding: 30px; margin: 30px 0; text-align: center;">
-                <h3 style="margin: 0 0 15px 0; font-size: 20px; color: #F4F1EC;">📞 NEXT STEP: Schedule Your Call</h3>
-                <p style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6;">
-                  <strong style="color: #F4F1EC;">Your application won't be reviewed until you book your onboarding call.</strong><br>
-                  Click below to see my available times and book your 30-minute call:
-                </p>
-                <a href="${CALENDLY_LINK}" style="display: inline-block; padding: 16px 32px; background: #F4F1EC; color: #0E0E0E !important; text-decoration: none; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; font-size: 14px; border: 2px solid #F4F1EC;">📅 View My Calendar & Book Now</a>
-                <p style="margin: 20px 0 0 0; font-size: 12px; color: #A7A29A;">
-                  Can't find a time? Reply to this email and we'll figure it out.
-                </p>
-              </div>
-              <p><strong>Important:</strong> I'm traveling through different states conducting ranch tours and certifications. If you're interested in a visit, we'll coordinate timing during our call.</p>
-            ` : `
-              <p>I manually review every partnership to ensure quality and trust. You'll hear from me within <strong>24-48 hours</strong>.</p>
-            `}
+            <p>I manually review every partnership to ensure quality and trust. You'll hear from me within <strong>24-48 hours</strong>.</p>
             <div class="divider"></div>
             <p>Questions? Reply to this email or contact <a href="mailto:hello@buyhalfcow.com" style="color: #0E0E0E;">hello@buyhalfcow.com</a></p>
             <div class="footer">
@@ -2273,7 +2251,7 @@ a{color:#0E0E0E;}
   <p>i'll personally review it and reach out within <strong>48 hours</strong> with next steps — which ranchers in your region can supply your volume, pricing, and how the supply relationship works.</p>
   <p>if you want to move faster, grab a time on my calendar below and we'll jump straight into the conversation.</p>
   <p style="text-align:center;margin:28px 0;">
-    <a href="${CALENDLY_LINK}" class="cta">book a call</a>
+    <a href="${BOOK_CALL_URL}" class="cta">book a call</a>
   </p>
   <p style="font-size:14px;color:#6B4F3F;">questions in the meantime? reply to this email — it lands directly with me.</p>
   <p style="margin-top:28px;">— Ben<br>BuyHalfCow</p>
@@ -2481,7 +2459,7 @@ a{color:#0E0E0E;}
   </p>
   <p style="font-size:14px;color:#6B4F3F;">
     Want to talk live? My calendar's at
-    <a href="${CALENDLY_LINK}">${CALENDLY_LINK}</a>. Reply to this email
+    <a href="${BOOK_CALL_URL}">${BOOK_CALL_URL}</a>. Reply to this email
     works too — it lands directly with me.
   </p>
   <p style="margin-top:28px;">— Ben</p>
@@ -4290,11 +4268,11 @@ export async function sendRancherSelfSubmitWelcome(data: {
   <div style="text-align:center;margin:30px 0;">
     <a href="${utm(setupUrl, 'self-submit-welcome', 'wizard')}" class="cta">Set up your page →</a>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Want to talk first? <a href="${utm(CALENDLY_LINK, 'self-submit-welcome', 'calendly')}">Book a 15-min call</a> instead.</p>
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Want to talk first? <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-welcome', 'book-call')}">Book a 15-min call</a> instead.</p>
   ` : `
   <p><strong>One next step:</strong> book a 15-minute call. I'll show you what we do, ask a few questions about how you sell today, and we figure out together if it's a fit.</p>
   <div style="text-align:center;margin:30px 0;">
-    <a href="${utm(CALENDLY_LINK, 'self-submit-welcome', 'cta')}" class="cta">Book the 15-min call</a>
+    <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-welcome', 'cta')}" class="cta">Book the 15-min call</a>
   </div>
   `}
   <div class="divider"></div>
@@ -4335,7 +4313,7 @@ export async function sendRancherCommunityIntro(data: {
   <p>I'm Ben, founder of BuyHalfCow. We help direct-to-consumer ranchers like you reach more families &mdash; the public map, marketing services, intros to buyers in your area. No middleman, no commodity pricing, you keep your margin.</p>
   <p>You're a yellow pin on the map right now: visible, but not getting routed customers. That only flips after a 15-minute call and a partner agreement. The call is free, low-pressure, and you'll know in 15 minutes whether it's a fit.</p>
   <div style="text-align:center;margin:30px 0;">
-    <a href="${utm(CALENDLY_LINK, 'community-intro', 'cta')}" class="cta">Book the 15-min call</a>
+    <a href="${utm(RANCHER_BOOK_CALL_URL, 'community-intro', 'cta')}" class="cta">Book the 15-min call</a>
   </div>
   <p style="font-size:13px;color:#6B4F3F;">If you'd rather we take you off the map, just reply with "remove" and you're gone. No questions.</p>
   <div class="divider"></div>
@@ -4367,9 +4345,9 @@ export async function sendRancherOnboardingDripDay2(data: {
     ? `<div style="text-align:center;margin:24px 0;">
     <a href="${utm(data.setupUrl, 'self-submit-drip', 'day2-wizard')}" class="cta">Set up your page &rarr; (5 min)</a>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;text-align:center;">No call needed &mdash; or if you'd rather talk first, <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day2-call')}">grab 15 min with me</a>.</p>`
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">No call needed &mdash; or if you'd rather talk first, <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day2-call')}">grab 15 min with me</a>.</p>`
     : `<div style="text-align:center;margin:24px 0;">
-    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day2')}" class="cta">Grab a slot</a>
+    <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day2')}" class="cta">Grab a slot</a>
   </div>`;
   return guardedSend({
     templateName: 'sendRancherOnboardingDripDay2',
@@ -4407,9 +4385,9 @@ export async function sendRancherOnboardingDripDay5(data: {
     ? `<div style="text-align:center;margin:24px 0;">
     <a href="${utm(data.setupUrl, 'self-submit-drip', 'day5-wizard')}" class="cta">Set up ${esc(data.ranchName)} &rarr; (5 min)</a>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Rather talk it through first? <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day5-call')}">Book 15 min with me</a>.</p>`
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Rather talk it through first? <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day5-call')}">Book 15 min with me</a>.</p>`
     : `<div style="text-align:center;margin:24px 0;">
-    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day5')}" class="cta">Book the call</a>
+    <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day5')}" class="cta">Book the call</a>
   </div>`;
   return guardedSend({
     templateName: 'sendRancherOnboardingDripDay5',
@@ -4451,9 +4429,9 @@ export async function sendRancherOnboardingDripDay14(data: {
     ? `<div style="text-align:center;margin:24px 0;">
     <a href="${utm(data.setupUrl, 'self-submit-drip', 'day14-wizard')}" class="cta">Set up in 5 min &rarr;</a>
   </div>
-  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Or <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day14-call')}">grab a quick call</a> if you'd rather.</p>`
+  <p style="font-size:13px;color:#6B4F3F;text-align:center;">Or <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day14-call')}">grab a quick call</a> if you'd rather.</p>`
     : `<div style="text-align:center;margin:24px 0;">
-    <a href="${utm(CALENDLY_LINK, 'self-submit-drip', 'day14')}" class="cta">Pick a slot</a>
+    <a href="${utm(RANCHER_BOOK_CALL_URL, 'self-submit-drip', 'day14')}" class="cta">Pick a slot</a>
   </div>`;
   return guardedSend({
     templateName: 'sendRancherOnboardingDripDay14',

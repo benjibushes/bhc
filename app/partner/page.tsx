@@ -41,6 +41,10 @@ function PartnerPageContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [ref, setRef] = useState('');
+  // Setup-wizard link minted by /api/partners on the rancher path (same
+  // auto-approve rail as /api/apply) — powers the "finish setup now" CTA in
+  // the rancher success state.
+  const [wizardUrl, setWizardUrl] = useState('');
 
   const searchParams = useSearchParams();
   // useSearchParams() returns a fresh object on every render — depending on
@@ -188,6 +192,9 @@ function PartnerPageContent() {
         return;
       }
 
+      if (typeof data?.wizardUrl === 'string' && data.wizardUrl) {
+        setWizardUrl(data.wizardUrl);
+      }
       setIsSubmitted(true);
       // Audit 6 P0 — paid-scale tracking gap: /partner had ZERO client
       // analytics. partner_submit_success → Meta Pixel Lead. Server CAPI
@@ -218,20 +225,32 @@ function PartnerPageContent() {
               <>
                 <div className="bg-charcoal text-bone p-6 md:p-8 space-y-5 md:space-y-6 text-left">
                   <h2 className="font-serif text-2xl md:text-3xl">
-                    Next step: book a 30-minute call
+                    {wizardUrl ? "You're approved — two paths to live" : 'Next step: book a 30-minute call'}
                   </h2>
                   <p className="text-base md:text-lg leading-relaxed text-bone/90">
-                    Your application is in. Pick a time so we can talk through
-                    your operation, walk through the agreement, and get you
-                    set up to take orders.
+                    {wizardUrl
+                      ? 'Your setup link is also in your inbox. Finish the 5-minute wizard now — prices, Stripe Connect, done — or book a call first and we’ll walk through it together.'
+                      : 'Your application is in. Pick a time so we can talk through your operation and get you set up to take orders.'}
                   </p>
+                  {wizardUrl && (
+                    <a
+                      href={wizardUrl}
+                      className="inline-block w-full sm:w-auto px-8 py-4 bg-bone text-charcoal hover:bg-bone-warm transition-colors duration-300 font-medium tracking-wider uppercase text-sm"
+                    >
+                      Finish setup now →
+                    </a>
+                  )}
                   <a
                     href="/book?purpose=rancher"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-block w-full sm:w-auto px-8 py-4 bg-bone text-charcoal hover:bg-bone-warm transition-colors duration-300 font-medium tracking-wider uppercase text-sm"
+                    className={
+                      wizardUrl
+                        ? 'inline-block w-full sm:w-auto px-8 py-4 sm:ml-3 border-2 border-bone text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase text-sm'
+                        : 'inline-block w-full sm:w-auto px-8 py-4 bg-bone text-charcoal hover:bg-bone-warm transition-colors duration-300 font-medium tracking-wider uppercase text-sm'
+                    }
                   >
-                    Schedule your call →
+                    {wizardUrl ? 'Book a call first →' : 'Schedule your call →'}
                   </a>
                   <p className="text-sm text-bone/70">
                     Can't find a time? Email{' '}
@@ -321,14 +340,34 @@ function PartnerPageContent() {
                     rancher application
                   </h2>
 
+                  {/* Current-rail pointer: /sell → /apply is the primary
+                      rancher entry (2-min fit check, instant setup link).
+                      This long form still works — it lands on the same
+                      auto-approve + wizard rail server-side. */}
+                  <div className="border border-charcoal bg-bone p-4 text-sm">
+                    <p className="text-charcoal">
+                      <strong>Short on time?</strong> The{' '}
+                      <Link href="/apply" className="underline hover:text-saddle">
+                        2-minute fit check
+                      </Link>{' '}
+                      gets you approved with your setup link instantly. This
+                      longer form works too — same result, more detail for us
+                      up front.
+                    </p>
+                  </div>
+
                   {/* Pricing transparency block. Ranchers were signing the
                       commission checkbox below with zero pricing context on
-                      this page — fixing the biggest trust gap in the funnel. */}
+                      this page — fixing the biggest trust gap in the funnel.
+                      Kept in lockstep with lib/tiers.ts: free-to-start
+                      Legacy Connect ($0/mo + 10%) + paid tiers $150–$500/mo
+                      at 7/3/0% — the old copy omitted the free path and
+                      contradicted /sell's "free to start" pitch. */}
                   <div className="bg-bone-warm border border-dust p-4 text-sm">
                     <p className="font-serif text-base text-charcoal mb-2">How it works</p>
                     <ul className="text-saddle space-y-1">
-                      <li>· Monthly subscription: <strong>$150–$500</strong> based on tier (you pick at setup)</li>
-                      <li>· Commission per closed deal: <strong>0–7%</strong> (lower commission on higher tiers)</li>
+                      <li>· <strong>Free to start:</strong> $0/mo — 10% only when a deal closes</li>
+                      <li>· Optional paid plans: <strong>$150–$500/mo</strong> with commission as low as <strong>0%</strong> (you pick at setup)</li>
                       <li>· Cancel anytime. No setup fee. No listing fee.</li>
                     </ul>
                     <p className="text-xs text-dust mt-2">

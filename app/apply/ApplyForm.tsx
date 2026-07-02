@@ -2,9 +2,11 @@
 
 // ApplyForm — client component.
 //
-// Submits to /api/apply. On success: redirects to /rancher/setup?token=<jwt>
-// if rancher is auto-qualified (head/year > 0), else shows a "thanks, we'll
-// review" success state and triggers a manual-review Telegram alert.
+// Submits to /api/apply. The server ALWAYS auto-approves and returns a
+// wizardUrl (setup-wizard token, 60d) — even for <5-head applicants, who are
+// only flagged for Ben's triage in the Telegram alert. The success state
+// offers two paths: book the 15-min discovery call (recommended) or skip
+// straight to the wizard.
 
 import { useState, useEffect } from 'react';
 
@@ -28,7 +30,7 @@ type Channel =
 export default function ApplyForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState<{ wizardUrl?: string; manualReview: boolean } | null>(null);
+  const [success, setSuccess] = useState<{ wizardUrl?: string } | null>(null);
 
   // Live discovery-call Cal link, resolved at runtime. The hardcoded slug and
   // the 142d-old NEXT_PUBLIC_CALENDLY_LINK env are both stale (those events were
@@ -114,7 +116,7 @@ export default function ApplyForm() {
         throw new Error(data.error || `Submit failed (${res.status})`);
       }
       const data = await res.json();
-      setSuccess({ wizardUrl: data.wizardUrl, manualReview: !!data.manualReview });
+      setSuccess({ wizardUrl: data.wizardUrl });
       // Don't auto-redirect — user picks between book-discovery vs skip-to-wizard
       // via UI in the success state (2-call architecture).
     } catch (err: any) {
@@ -142,18 +144,19 @@ export default function ApplyForm() {
     return (
       <div className="space-y-6 max-w-2xl">
         <div className="border border-dust bg-bone-warm p-8">
+          {/* The server always returns wizardUrl on a real submission — the
+              guards below only cover the hypothetical missing-field case
+              (e.g. the honeypot's decoy response, which no human ever sees). */}
           <p className="text-xs uppercase tracking-wider text-saddle font-semibold mb-3">
-            {success.wizardUrl ? 'pre-approved' : 'application received'}
+            pre-approved
           </p>
           <h2 className="font-serif text-2xl text-charcoal mb-4">
-            {success.wizardUrl
-              ? "You're in. Two paths to live."
-              : "Thanks — we'll be in touch."}
+            You&apos;re in. Two paths to live.
           </h2>
           <p className="text-saddle text-sm sm:text-base leading-relaxed mb-4">
-            {success.wizardUrl
-              ? "Step 1 (recommended): 15-min discovery call so we can answer questions and tailor your setup. Step 2: setup wizard (5 min). Or skip ahead and dive into the wizard now."
-              : "Ben reviews every application himself. Expect an email within 24 hours."}
+            Step 1 (recommended): 15-min discovery call so we can answer
+            questions and tailor your setup. Step 2: setup wizard (5 min). Or
+            skip ahead and dive into the wizard now.
           </p>
           {success.wizardUrl && (
             <a

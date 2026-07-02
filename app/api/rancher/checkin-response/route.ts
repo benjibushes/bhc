@@ -5,7 +5,10 @@ import jwt from 'jsonwebtoken';
 
 import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
-const CALENDLY_LINK = process.env.CALENDLY_LINK || 'https://www.buyhalfcow.com/call';
+// "Wants a call" lands on the on-site /book page (rancher-onboarding event,
+// resolved live via getOperatorBookingUrl). The old CALENDLY_LINK env pointed
+// at a deleted Calendly event and its fallback (/call) was a 404.
+const RANCHER_BOOK_CALL_URL = `${SITE_URL}/book?purpose=rancher`;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -64,8 +67,8 @@ export async function GET(request: Request) {
         `📞 <b>CHECK-IN: WANTS CALL</b>\n\n🤠 ${name} (${ranchName}) has questions\nEmail: ${rancher['Email'] || 'N/A'}\nPhone: ${rancher['Phone'] || 'N/A'}\nOnboarding: ${rancher['Onboarding Status'] || 'Unknown'}\n\nReach out today!`
       );
 
-      // Redirect to Calendly or a confirmation page
-      return NextResponse.redirect(CALENDLY_LINK);
+      // Redirect to the on-site booking page (rancher-onboarding event)
+      return NextResponse.redirect(RANCHER_BOOK_CALL_URL);
 
     } else if (action === 'out') {
       // Not interested — mark as declined. Active Status="Paused" (not the

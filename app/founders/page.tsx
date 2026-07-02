@@ -769,7 +769,7 @@ export default async function FoundersPage({
                 Buyer access
               </Link>
               <Link
-                href="/partner"
+                href="/sell"
                 className="text-sm px-5 py-2 border border-charcoal hover:bg-charcoal hover:text-bone transition-colors"
               >
                 Rancher partner
