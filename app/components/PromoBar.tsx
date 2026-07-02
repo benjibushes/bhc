@@ -48,7 +48,7 @@ export default function PromoBar() {
         target="_blank"
         rel="noopener noreferrer"
       >
-        🧢 NEW DROP — Rep the Herd · Free shipping over $35 →
+        NEW DROP — Rep the Herd · Free shipping over $35 →
       </a>
       <button
         onClick={dismiss}
