@@ -311,32 +311,65 @@ export async function POST(request: Request) {
         const piId: string =
           typeof charge?.payment_intent === 'string' ? charge.payment_intent : '';
         if (!piId) break;
+        // Pass the real partial/amount so a PARTIAL refund doesn't nuke the deal.
+        const refundedCents = Number(charge?.amount_refunded || 0);
+        const isPartial = refundedCents > 0 && refundedCents < Number(charge?.amount || 0);
+        let refundFlipped = false;
         try {
-          // Pass the real partial/amount so a PARTIAL refund doesn't nuke the deal.
-          const refundedCents = Number(charge?.amount_refunded || 0);
-          const isPartial = refundedCents > 0 && refundedCents < Number(charge?.amount || 0);
-          const { flipped } = await markDepositRefunded(piId, { partial: isPartial, refundedAmountCents: refundedCents });
-          if (flipped) {
+          ({ flipped: refundFlipped } = await markDepositRefunded(piId, { partial: isPartial, refundedAmountCents: refundedCents }));
+        } catch (e: any) {
+          // GO-LIVE MONEY HARDENING finding 2 (2026-07-02) — mirrors the
+          // platform webhook's charge.refunded fix AND this route's own
+          // payment_intent.succeeded pattern (C1). Pre-fix a transient
+          // markDepositRefunded failure was console.warn'd, the event row
+          // flipped 'processed', Stripe got a 200 and never redelivered —
+          // a real tier_v2 refund silently never landed on the Payments row.
+          // Transient → flip 'failed' + 5xx so Stripe redelivers (SAFE:
+          // markDepositRefunded is idempotent on re-call — full refunds
+          // early-return once Status==='refunded'; its only throw points are
+          // before/at the row write). Permanent (classified) → loud operator
+          // signal + 200 to stop pointless 3-day redelivery.
+          console.error('[stripe-connect charge.refunded] markDepositRefunded failed:', e);
+          await flipStripeEventFailed(event.id, e?.message || 'unknown');
+          if (isPermanentSettlementError(e)) {
+            try {
+              await sendOperatorSignal({
+                urgency: 'loud',
+                kind: 'system-error',
+                summary: 'REFUND NOT RECORDED (permanent) — manual reconcile needed',
+                detail: `charge.refunded for PI ${piId} ($${(refundedCents / 100).toFixed(2)}) failed permanently: ${e?.message || 'unknown'}. Money moved at Stripe but the Payments row/referral was NOT updated.`,
+                dedupeKey: `refund-mark-permanent:${piId}`,
+              });
+            } catch {}
+            return NextResponse.json({ received: true, permanent: true });
+          }
+          return NextResponse.json({ error: 'refund_mark_retry' }, { status: 500 });
+        }
+        // Post-mark side effects are BEST-EFFORT, each isolated — a Telegram
+        // or audit blip after a successfully recorded refund must never 5xx
+        // (that would redeliver a done refund just to retry a notification).
+        if (refundFlipped) {
+          try {
             await sendTelegramMessage(
               TELEGRAM_ADMIN_CHAT_ID,
               `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
             );
+          } catch (e: any) {
+            console.warn('[stripe-connect charge.refunded] telegram failed:', e?.message);
           }
-          // H-3 audit fix: Connect-side refund mirror was silent in audit
-          // log. Stripe-dashboard refunds on tier_v2 direct charges fire
-          // here, not on the platform webhook.
-          await logAuditEntry({
-            actor: 'cron',
-            tool: 'stripe-connect-charge-refunded',
-            targetType: 'Other',
-            targetId: piId,
-            args: { paymentIntentId: piId, chargeId: charge?.id, amount: (charge?.amount_refunded || 0) / 100 },
-            result: { paymentsRowFlipped: flipped },
-            reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },
-          }).catch(e => console.error('[audit] connect charge-refunded log failed:', e));
-        } catch (e: any) {
-          console.warn('[stripe-connect charge.refunded] handler:', e?.message);
         }
+        // H-3 audit fix: Connect-side refund mirror was silent in audit
+        // log. Stripe-dashboard refunds on tier_v2 direct charges fire
+        // here, not on the platform webhook.
+        await logAuditEntry({
+          actor: 'cron',
+          tool: 'stripe-connect-charge-refunded',
+          targetType: 'Other',
+          targetId: piId,
+          args: { paymentIntentId: piId, chargeId: charge?.id, amount: (charge?.amount_refunded || 0) / 100 },
+          result: { paymentsRowFlipped: refundFlipped },
+          reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },
+        }).catch(e => console.error('[audit] connect charge-refunded log failed:', e));
         break;
       }
 

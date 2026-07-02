@@ -17,7 +17,7 @@ import { createDepositCheckout } from '@/lib/stripeConnect';
 import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
-import { TIERS, type TierSlug } from '@/lib/tiers';
+import { depositCommissionRate, type TierSlug } from '@/lib/tiers';
 import { REFERRAL_ID_TEXT_FIELD } from '@/lib/contracts/payments';
 
 export const dynamic = 'force-dynamic';
@@ -143,11 +143,17 @@ export async function POST(req: Request) {
 
   const productLabel = `${cutTier} Cow — ${String(rancher['Ranch Name'] || rancher['Operator Name'] || 'Ranch')}`;
 
+  // RATE SOURCE (finding 1, 2026-07-02): locked Commission Rate wins over the
+  // tier constant — one rate for the Stripe application_fee AND the buyer
+  // email's "Today" figure, so quoted === charged === locked.
+  const feeRate = depositCommissionRate(rancher, tierSlug);
+
   // Create Stripe direct-charge Checkout. application_fee_amount is computed
-  // inside createDepositCheckout from the rancher's tier commission rate.
+  // inside createDepositCheckout from the locked-rate-aware rate above.
   const session = await createDepositCheckout({
     rancherConnectAccountId: connectAcct,
     tier: tierSlug,
+    commissionRate: feeRate,
     amountCents: depositCents,
     fullSaleCents,
     buyerEmail,
@@ -198,7 +204,7 @@ export async function POST(req: Request) {
       cutTier,
       depositCents,
       fullSaleCents,
-      chargedCents: depositCents + Math.round(fullSaleCents * TIERS[tierSlug].commissionRate),
+      chargedCents: depositCents + Math.round(fullSaleCents * feeRate),
       checkoutUrl: session.url,
     });
   } catch (e: any) {

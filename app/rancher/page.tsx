@@ -320,7 +320,12 @@ export default function RancherDashboardPage() {
   const [depositCut, setDepositCut] = useState<'Quarter' | 'Half' | 'Whole'>('Half');
   const [depositAmountInput, setDepositAmountInput] = useState('');
   const [depositSubmitting, setDepositSubmitting] = useState(false);
-  const [depositResult, setDepositResult] = useState<{ url: string; depositAmount: number; fullSaleAmount: number } | null>(null);
+  // emailSent/emailSuppressed (finding 3, 2026-07-02): the route now reports
+  // whether the buyer email actually went out (guardedSend can suppress
+  // bounced/unsubscribed buyers WITHOUT erroring). emailSent === false flips
+  // the result panel to an honest "share the link directly" state.
+  const [depositResult, setDepositResult] = useState<{ url: string; depositAmount: number; fullSaleAmount: number; emailSent?: boolean; emailSuppressed?: boolean } | null>(null);
+  const [depositLinkCopied, setDepositLinkCopied] = useState(false);
   const [pageForm, setPageForm] = useState<Record<string, string>>({});
   // SLICE G — sold cuts (Airtable 'Tier Specialty', multipleSelects). Which
   // share sizes the rancher sells; matching filters buyer Order Type on it.
@@ -1125,6 +1130,7 @@ export default function RancherDashboardPage() {
     setDepositModal(null);
     setDepositAmountInput('');
     setDepositResult(null);
+    setDepositLinkCopied(false);
   };
 
   // Switch cut in the modal → re-prefill the deposit from that cut's setup.
@@ -1174,7 +1180,12 @@ export default function RancherDashboardPage() {
         url: data.url,
         depositAmount: data.depositAmount ?? amount,
         fullSaleAmount: data.fullSaleAmount ?? full,
+        // Only an explicit false means "email did not go out" — older/other
+        // responses (alreadySent replay) omit the field and read as sent.
+        emailSent: data.emailSent !== false,
+        emailSuppressed: data.emailSuppressed === true,
       });
+      setDepositLinkCopied(false);
       // Refresh so the card flips to Awaiting Payment + the "requested" badge.
       await fetchDashboard();
     } catch {
@@ -4810,25 +4821,54 @@ export default function RancherDashboardPage() {
             </p>
 
             {depositResult ? (
-              <div className="border border-sage bg-sage/10 p-4 space-y-3">
-                <p className="text-sm text-sage-dark">
-                  <strong>deposit link sent.</strong> {depositModal.buyer_name} got an email with the Stripe link to pay
-                  {' '}<strong>${depositResult.depositAmount.toFixed(0)}</strong> and lock their {depositCut.toLowerCase()}
-                  {' '}(full sale ${depositResult.fullSaleAmount.toFixed(0)}). money lands straight in your stripe account.
-                </p>
+              <div className={`border p-4 space-y-3 ${depositResult.emailSent === false ? 'border-rust bg-rust/10' : 'border-sage bg-sage/10'}`}>
+                {depositResult.emailSent === false ? (
+                  // Email truth (finding 3, 2026-07-02): the link EXISTS but the
+                  // buyer was NOT emailed (suppressed address or send failure).
+                  // Say so plainly and hand the rancher the link to share.
+                  <p className="text-sm text-charcoal">
+                    <strong>link created — but the email didn&rsquo;t reach {depositModal.buyer_name}.</strong>{' '}
+                    {depositResult.emailSuppressed
+                      ? 'their email address has bounced or unsubscribed, so we can’t email them.'
+                      : 'the email send failed on our side.'}{' '}
+                    the payment link below still works — text it to them or share it directly to collect the
+                    {' '}<strong>${depositResult.depositAmount.toFixed(0)}</strong> deposit
+                    {' '}(full sale ${depositResult.fullSaleAmount.toFixed(0)}).
+                  </p>
+                ) : (
+                  <p className="text-sm text-sage-dark">
+                    <strong>deposit link sent.</strong> {depositModal.buyer_name} got an email with the Stripe link to pay
+                    {' '}<strong>${depositResult.depositAmount.toFixed(0)}</strong> and lock their {depositCut.toLowerCase()}
+                    {' '}(full sale ${depositResult.fullSaleAmount.toFixed(0)}). money lands straight in your stripe account.
+                  </p>
+                )}
                 <p className="text-xs text-saddle">
                   link:{' '}
                   <a href={depositResult.url} target="_blank" rel="noopener noreferrer" className="underline break-all">
                     {depositResult.url}
                   </a>
                 </p>
-                <button
-                  type="button"
-                  onClick={closeDepositModal}
-                  className="px-4 min-h-[44px] text-xs uppercase tracking-wider bg-sage text-bone hover:bg-sage-dark transition-colors"
-                >
-                  done
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(depositResult.url).then(
+                        () => setDepositLinkCopied(true),
+                        () => setDepositLinkCopied(false),
+                      );
+                    }}
+                    className="px-4 min-h-[44px] text-xs uppercase tracking-wider border border-charcoal text-charcoal hover:bg-charcoal hover:text-bone transition-colors"
+                  >
+                    {depositLinkCopied ? 'copied ✓' : 'copy link'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeDepositModal}
+                    className="px-4 min-h-[44px] text-xs uppercase tracking-wider bg-sage text-bone hover:bg-sage-dark transition-colors"
+                  >
+                    done
+                  </button>
+                </div>
               </div>
             ) : (
               <>

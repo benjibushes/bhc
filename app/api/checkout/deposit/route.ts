@@ -15,7 +15,7 @@ import { createDepositCheckout, getConnectAccountStatus } from '@/lib/stripeConn
 import { validateDepositConsent } from '@/lib/depositConsent';
 import { recordDeposit } from '@/lib/contracts/payments';
 import { MIN_TIER_PRICE, deriveDeposit, depositDisplay } from '@/lib/pricing';
-import { tierFor, TIERS, commissionRateForTier } from '@/lib/tiers';
+import { tierFor, depositCommissionRate } from '@/lib/tiers';
 import { resolveDepositAuth } from '@/lib/buyerAuth';
 import { claimOnce } from '@/lib/rancherCapacity';
 import { checkOriginGuard } from '@/lib/csrfGuard';
@@ -258,7 +258,14 @@ export async function POST(req: Request) {
   // so commission is paid in full at deposit time. ADDED ON TOP of the
   // rancher's deposit (rancher receives full deposit, buyer pays
   // deposit + platform fee).
-  const platformFeeCents = Math.round(fullSaleCents * TIERS[tier].commissionRate);
+  //
+  // RATE SOURCE (finding 1, 2026-07-02): the rancher's LOCKED Commission Rate
+  // wins over the tier constant (depositCommissionRate — same precedence the
+  // billing page displays and the tier-subscription webhook preserves).
+  // Charged fee === displayed fee === locked rate. Math is unchanged beyond
+  // the rate source.
+  const feeRate = depositCommissionRate(rancher, tier);
+  const platformFeeCents = Math.round(fullSaleCents * feeRate);
   const totalChargedCents = amountCents + platformFeeCents;
 
   // M5/C5 concurrent-create serialization. The re-pay guard above only trips
@@ -304,6 +311,9 @@ export async function POST(req: Request) {
     result = await createDepositCheckout({
       rancherConnectAccountId: connectAccountId,
       tier,
+      // Same locked-rate-aware rate as platformFeeCents above — the actual
+      // Stripe application_fee and the recorded fee can never diverge.
+      commissionRate: feeRate,
       amountCents,
       fullSaleCents,
       buyerEmail,
@@ -560,14 +570,14 @@ export async function GET(req: Request) {
   // depositDisplay helper (lib/pricing.ts) — same deposit resolution + fee
   // rounding order as the POST charge path, so dueNowCents is EXACTLY what
   // the card is charged (no surprises at Stripe). Rate resolved via
-  // tierFor(rancher) exactly like POST; falls back to the legacy default
-  // (commissionRateForTier) when tier is unset.
+  // depositCommissionRate exactly like POST (locked Commission Rate wins,
+  // else the tier constant, else the legacy default when tier is unset).
   //
   // FEE-INVISIBLE (founder directive 2026-07-01): the buyer UI renders ONLY
   // dueNowCents. depositCents/feeCents stay on the payload for API-shape
   // compat (and internal tooling) but are never displayed buyer-side.
   const tier = tierFor(rancher);
-  const commissionRate = tier ? TIERS[tier].commissionRate : commissionRateForTier(null);
+  const commissionRate = depositCommissionRate(rancher, tier);
   const depositFieldByCut: Record<string, string> = {
     quarter: 'Quarter Deposit',
     half: 'Half Deposit',

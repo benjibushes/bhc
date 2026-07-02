@@ -367,9 +367,11 @@ export async function POST(request: Request) {
                   : '';
                 if (depositField && priceField) {
                   const { depositDisplay } = await import('@/lib/pricing');
-                  const { tierFor, TIERS, commissionRateForTier } = await import('@/lib/tiers');
+                  const { tierFor, depositCommissionRate } = await import('@/lib/tiers');
                   const tierSlug = tierFor(rancher);
-                  const rate = tierSlug ? TIERS[tierSlug].commissionRate : commissionRateForTier(null);
+                  // Locked Commission Rate wins over the tier constant
+                  // (finding 1, 2026-07-02) — same rate the charge applies.
+                  const rate = depositCommissionRate(rancher, tierSlug);
                   const d = depositDisplay(Number(rancher?.[priceField]), Number(rancher?.[depositField]), rate);
                   depositAmount = d ? Math.round(d.dueNowCents / 100) : null;
                 }

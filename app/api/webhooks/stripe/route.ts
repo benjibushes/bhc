@@ -625,46 +625,84 @@ export async function POST(request: Request) {
       const charge = event.data.object as any;
       const piId = typeof charge?.payment_intent === 'string' ? charge.payment_intent : '';
       if (!piId) break;
+      // Pass the real partial/amount so a PARTIAL refund doesn't nuke the deal.
+      const refundedCents = Number(charge?.amount_refunded || 0);
+      const isPartial = refundedCents > 0 && refundedCents < Number(charge?.amount || 0);
+      let refundFlipped = false;
       try {
-        // Pass the real partial/amount so a PARTIAL refund doesn't nuke the deal.
-        const refundedCents = Number(charge?.amount_refunded || 0);
-        const isPartial = refundedCents > 0 && refundedCents < Number(charge?.amount || 0);
-        const { flipped } = await markDepositRefunded(piId, { partial: isPartial, refundedAmountCents: refundedCents });
-        if (flipped) {
+        ({ flipped: refundFlipped } = await markDepositRefunded(piId, { partial: isPartial, refundedAmountCents: refundedCents }));
+      } catch (e: any) {
+        // GO-LIVE MONEY HARDENING finding 2 (2026-07-02): pre-fix this catch
+        // console.warn'd and FELL THROUGH — the end-of-route idempotency flip
+        // then stamped the Stripe Events row 'processed' + returned 200, so
+        // Stripe never redelivered and a REAL refund silently never landed on
+        // the Payments row (deal stayed Closed Won, buyer kept getting
+        // post-purchase automation — money back, funnel says "won", forever).
+        // Mirror the payment_intent.succeeded settlement pattern: a TRANSIENT
+        // failure (Airtable 429/timeout) → flip event 'failed' + 5xx so
+        // Stripe redelivers and the refund self-heals. SAFE because
+        // markDepositRefunded is idempotent on re-call: full refunds
+        // early-return once Payments.Status === 'refunded', and its only
+        // throw points are BEFORE/AT the row write (the post-write referral
+        // restore is caught internally and never throws). A PERMANENT
+        // (classified) failure → loud operator signal + 200 to stop
+        // pointless 3-day redelivery.
+        console.error('[stripe webhook] charge.refunded markDepositRefunded failed:', e);
+        await flipStripeEventFailed(event.id, e?.message || 'unknown');
+        if (isPermanentSettlementError(e)) {
+          try {
+            const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+            await sendOperatorSignal({
+              urgency: 'loud',
+              kind: 'system-error',
+              summary: 'REFUND NOT RECORDED (permanent) — manual reconcile needed',
+              detail: `charge.refunded for PI ${piId} ($${(refundedCents / 100).toFixed(2)}) failed permanently: ${e?.message || 'unknown'}. Money moved at Stripe but the Payments row/referral was NOT updated.`,
+              dedupeKey: `refund-mark-permanent:${piId}`,
+            });
+          } catch {}
+          return NextResponse.json({ received: true, permanent: true });
+        }
+        return NextResponse.json({ error: 'refund_mark_retry' }, { status: 500 });
+      }
+      // Post-mark side effects are BEST-EFFORT, each isolated — a Telegram or
+      // audit blip after a successfully recorded refund must never 5xx (that
+      // would redeliver a done refund just to retry a notification).
+      if (refundFlipped) {
+        try {
           await sendTelegramMessage(
             TELEGRAM_ADMIN_CHAT_ID,
             `↩️ Deposit refunded — PI ${piId.slice(-8)}`,
           );
-        } else {
-          // ── P4-A Gap 3: founder lifetime refund ──
-          // No Payments row flipped → could be a founder lifetime (Founding 100
-          // / Title Founder) one-time refund. Pre-fix these were silent —
-          // money refunded in Stripe, founder still showed on the Wall +
-          // counter never released. Now: detect founder-tier metadata and
-          // flip Consumers row + release counter + audit log + Telegram.
-          // Best-effort: failure here does NOT roll back the deposit refund
-          // path above (which already returned flipped:false).
-          try {
-            await handleFounderLifetimeRefundOrDispute(piId, charge, 'refund');
-          } catch (e: any) {
-            console.warn('[stripe webhook] founder-lifetime refund detection failed:', e?.message);
-          }
+        } catch (e: any) {
+          console.warn('[stripe webhook] charge.refunded telegram failed:', e?.message);
         }
-        // H-3 audit fix: refund mutations were invisible to the audit log
-        // unless triggered via /api/admin/payments/refund. Stripe-dashboard
-        // refunds, partial refunds, automatic dispute refunds — all silent.
-        await logAuditEntry({
-          actor: 'cron',
-          tool: 'stripe-webhook-charge-refunded',
-          targetType: 'Other',
-          targetId: piId,
-          args: { paymentIntentId: piId, chargeId: charge?.id, amount: (charge?.amount_refunded || 0) / 100 },
-          result: { paymentsRowFlipped: flipped },
-          reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },
-        }).catch(e => console.error('[audit] charge-refunded log failed:', e));
-      } catch (e: any) {
-        console.warn('[stripe webhook] charge.refunded handler:', e?.message);
+      } else {
+        // ── P4-A Gap 3: founder lifetime refund ──
+        // No Payments row flipped → could be a founder lifetime (Founding 100
+        // / Title Founder) one-time refund. Pre-fix these were silent —
+        // money refunded in Stripe, founder still showed on the Wall +
+        // counter never released. Now: detect founder-tier metadata and
+        // flip Consumers row + release counter + audit log + Telegram.
+        // Best-effort: failure here does NOT roll back the deposit refund
+        // path above (which already returned flipped:false).
+        try {
+          await handleFounderLifetimeRefundOrDispute(piId, charge, 'refund');
+        } catch (e: any) {
+          console.warn('[stripe webhook] founder-lifetime refund detection failed:', e?.message);
+        }
       }
+      // H-3 audit fix: refund mutations were invisible to the audit log
+      // unless triggered via /api/admin/payments/refund. Stripe-dashboard
+      // refunds, partial refunds, automatic dispute refunds — all silent.
+      await logAuditEntry({
+        actor: 'cron',
+        tool: 'stripe-webhook-charge-refunded',
+        targetType: 'Other',
+        targetId: piId,
+        args: { paymentIntentId: piId, chargeId: charge?.id, amount: (charge?.amount_refunded || 0) / 100 },
+        result: { paymentsRowFlipped: refundFlipped },
+        reverseAction: { type: 'noop', reason: 'Stripe-driven refund — cannot un-refund via Airtable' },
+      }).catch(e => console.error('[audit] charge-refunded log failed:', e));
       break;
     }
 
