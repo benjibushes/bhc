@@ -35,11 +35,20 @@ function verifyJwt(token: string): any | null {
   return null;
 }
 
-// GET /api/rancher/activate?token=<JWT>
+// /api/rancher/activate?token=<JWT>
 //
-// One-click rancher activation. Token is sent in the "push-coming-to-shove"
-// pilot email. Clicking flips the rancher fully Live and queues the warmup
+// One-tap rancher activation. Token is sent in the "push-coming-to-shove"
+// pilot email. Confirming flips the rancher fully Live and queues the warmup
 // cron to send their state's Waitlisted buyers a launch email.
+//
+// PRE-FLIP GUARD (finding 4, 2026-07-01): GET no longer mutates. Corporate
+// mail scanners (SafeLinks / Mimecast) prefetch every GET link in the email —
+// the old GET-mutating handler let a scanner push a rancher LIVE (agreement
+// stamped, warmup blast queued, buyers emailed) without a human click. Now:
+// GET validates the token and renders a ONE-TAP confirm page; the POST from
+// that form performs the exact same activation (same idempotency: an
+// already-live rancher gets the read-only "already live" page, no writes).
+// URLs stay stable — the email links are unchanged.
 //
 // State changes (idempotent — re-clicking does nothing harmful):
 //   Agreement Signed       → true
@@ -85,55 +94,123 @@ ${opts.body}
 </div></body></html>`;
 }
 
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const token = searchParams.get('token');
+// Shared validation for GET (confirm page) + POST (activation). Returns
+// either the error/read-only response to send, or the verified context.
+async function validateActivate(request: Request): Promise<
+  | { error: NextResponse }
+  | {
+      error?: undefined;
+      payload: any;
+      rancher: any;
+      token: string;
+      ranchName: string;
+      operatorFirst: string;
+    }
+> {
+  const { searchParams } = new URL(request.url);
+  const token = searchParams.get('token');
 
-    if (!token) {
-      return new NextResponse(
+  if (!token) {
+    return {
+      error: new NextResponse(
         htmlPage({ title: 'Missing token', heading: '⚠️', body: '<h1>Link incomplete</h1><p>This activation link is missing its token. Reply to the email and I\'ll send a fresh link.</p>' }),
         { status: 400, headers: { 'Content-Type': 'text/html' } }
-      );
-    }
+      ),
+    };
+  }
 
-    const payload: any = verifyJwt(token);
-    if (!payload) {
-      return new NextResponse(
+  const payload: any = verifyJwt(token);
+  if (!payload) {
+    return {
+      error: new NextResponse(
         htmlPage({ title: 'Expired link', heading: '⏰', body: '<h1>Link expired</h1><p>This activation link is older than 60 days or invalid. Reply to the email and I\'ll send a new one.</p>' }),
         { status: 401, headers: { 'Content-Type': 'text/html' } }
-      );
-    }
+      ),
+    };
+  }
 
-    if (payload.type !== 'rancher-activate' || !payload.rancherId) {
-      return new NextResponse(
+  if (payload.type !== 'rancher-activate' || !payload.rancherId) {
+    return {
+      error: new NextResponse(
         htmlPage({ title: 'Invalid link', heading: '⚠️', body: '<h1>Link not recognized</h1><p>This token isn\'t a valid activation link.</p>' }),
         { status: 400, headers: { 'Content-Type': 'text/html' } }
-      );
-    }
+      ),
+    };
+  }
 
-    const rancher: any = await getRecordById(TABLES.RANCHERS, payload.rancherId);
-    if (!rancher) {
-      return new NextResponse(
+  const rancher: any = await getRecordById(TABLES.RANCHERS, payload.rancherId);
+  if (!rancher) {
+    return {
+      error: new NextResponse(
         htmlPage({ title: 'Not found', heading: '❓', body: '<h1>Ranch not found</h1><p>I couldn\'t find your record. Reply to the email and I\'ll fix it manually.</p>' }),
         { status: 404, headers: { 'Content-Type': 'text/html' } }
-      );
-    }
+      ),
+    };
+  }
 
-    const ranchName = rancher['Ranch Name'] || rancher['Operator Name'] || 'Your ranch';
-    const operatorFirst = String(rancher['Operator Name'] || '').trim().split(/\s+/)[0] || 'there';
-    const wasAlreadyLive = rancher['Active Status'] === 'Active' && rancher['Agreement Signed'] === true;
+  const ranchName = rancher['Ranch Name'] || rancher['Operator Name'] || 'Your ranch';
+  const operatorFirst = String(rancher['Operator Name'] || '').trim().split(/\s+/)[0] || 'there';
+  const wasAlreadyLive = rancher['Active Status'] === 'Active' && rancher['Agreement Signed'] === true;
 
-    if (wasAlreadyLive) {
-      return new NextResponse(
+  if (wasAlreadyLive) {
+    // Read-only — idempotency preserved: an already-live rancher never
+    // re-triggers activation from either verb.
+    return {
+      error: new NextResponse(
         htmlPage({
           title: 'Already live',
           heading: '✅',
           body: `<h1>${ranchName} is already live</h1><p>You're all set, ${operatorFirst}. Leads are routing to you. If you'd like to log into your dashboard, reply to my last email and I'll send a fresh login link.</p>`,
         }),
         { status: 200, headers: { 'Content-Type': 'text/html' } }
-      );
-    }
+      ),
+    };
+  }
+
+  return { payload, rancher, token, ranchName, operatorFirst };
+}
+
+// GET — validate + render the ONE-TAP confirm page. NO writes on GET.
+export async function GET(request: Request) {
+  try {
+    const v = await validateActivate(request);
+    if (v.error) return v.error;
+    const { token, ranchName, operatorFirst } = v;
+
+    const { pathname } = new URL(request.url);
+    return new NextResponse(
+      htmlPage({
+        title: 'Push me live',
+        heading: '🚀',
+        body:
+          `<h1>Ready to push ${ranchName} live, ${operatorFirst}?</h1>` +
+          `<p>One tap and you're active in the network: your page goes live, and qualified buyers in your state start getting matched to you.</p>` +
+          `<div class="box"><p style="margin:0;">Pilot terms: your first 4 closed deals are 100% yours — then we transition to full white-glove marketing.</p></div>` +
+          `<form method="post" action="${pathname}?token=${encodeURIComponent(token)}" style="margin-top:24px;">` +
+          `<button type="submit" style="padding:14px 32px;background:#0E0E0E;color:#F4F1EC;border:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;cursor:pointer;width:100%;">🎉 Yes — push me live</button>` +
+          `</form>`,
+      }),
+      { status: 200, headers: { 'Content-Type': 'text/html' } }
+    );
+  } catch (error: any) {
+    console.error('rancher-activate error:', error);
+    return new NextResponse(
+      htmlPage({
+        title: 'Something broke',
+        heading: '⚠️',
+        body: '<h1>Activation hit a snag</h1><p>I got an error on the server side. Reply to the email and I\'ll activate you manually within the hour.</p>',
+      }),
+      { status: 500, headers: { 'Content-Type': 'text/html' } }
+    );
+  }
+}
+
+// POST — the confirm form lands here; performs the original activation.
+export async function POST(request: Request) {
+  try {
+    const v = await validateActivate(request);
+    if (v.error) return v.error;
+    const { payload, rancher, ranchName, operatorFirst } = v;
 
     // ── tier_v2 Connect-active gate ─────────────────────────────────────────
     // A tier_v2 rancher collects buyer deposits via Stripe Connect. If their

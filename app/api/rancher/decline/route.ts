@@ -26,10 +26,10 @@ function verifyJwt(token: string): any | null {
   return null;
 }
 
-// GET /api/rancher/decline?token=<JWT>
+// /api/rancher/decline?token=<JWT>
 //
-// One-click rancher opt-out. Token is sent in the "push-coming-to-shove"
-// pilot email alongside the activate link. Clicking removes them from the
+// One-tap rancher opt-out. Token is sent in the "push-coming-to-shove"
+// pilot email alongside the activate link. Confirming removes them from the
 // pipeline cleanly:
 //   Status                 → "rejected"
 //   Unsubscribed           → true (kills all future operational + marketing email)
@@ -38,6 +38,14 @@ function verifyJwt(token: string): any | null {
 //
 // Telegram alerts Ben so he knows to remove from any active follow-up
 // queues. Returns an HTML confirmation page.
+//
+// PRE-FLIP GUARD (finding 4, 2026-07-01): GET no longer mutates. Corporate
+// mail scanners (SafeLinks / Mimecast) prefetch every GET link in the email —
+// the old GET-mutating handler let a scanner silently unsubscribe + reject a
+// rancher who never clicked. Now: GET validates the token and renders a
+// ONE-TAP confirm page; the POST from that form performs the exact same
+// mutation (same idempotency: already-declined ranchers skip the write).
+// URLs stay stable — the email links are unchanged.
 
 function htmlPage(opts: { title: string; heading: string; body: string }): string {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -56,34 +64,115 @@ ${opts.body}
 </div></body></html>`;
 }
 
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const token = searchParams.get('token');
+// Shared validation for GET (confirm page) + POST (mutation). Returns either
+// the error response to send, or the verified payload + rancher record.
+async function validateDecline(request: Request): Promise<
+  | { error: NextResponse }
+  | { error?: undefined; payload: any; rancher: any | null; token: string }
+> {
+  const { searchParams } = new URL(request.url);
+  const token = searchParams.get('token');
 
-    if (!token) {
-      return new NextResponse(
+  if (!token) {
+    return {
+      error: new NextResponse(
         htmlPage({ title: 'Missing token', heading: '⚠️', body: '<h1>Link incomplete</h1><p>Reply to the email and I\'ll handle it manually.</p>' }),
         { status: 400, headers: { 'Content-Type': 'text/html' } }
-      );
-    }
+      ),
+    };
+  }
 
-    const payload: any = verifyJwt(token);
-    if (!payload) {
-      return new NextResponse(
+  const payload: any = verifyJwt(token);
+  if (!payload) {
+    return {
+      error: new NextResponse(
         htmlPage({ title: 'Expired link', heading: '⏰', body: '<h1>Link expired</h1><p>Reply to the email and I\'ll remove you manually.</p>' }),
         { status: 401, headers: { 'Content-Type': 'text/html' } }
-      );
-    }
+      ),
+    };
+  }
 
-    if (payload.type !== 'rancher-decline' || !payload.rancherId) {
-      return new NextResponse(
+  if (payload.type !== 'rancher-decline' || !payload.rancherId) {
+    return {
+      error: new NextResponse(
         htmlPage({ title: 'Invalid link', heading: '⚠️', body: '<h1>Link not recognized</h1><p>This token isn\'t valid.</p>' }),
         { status: 400, headers: { 'Content-Type': 'text/html' } }
+      ),
+    };
+  }
+
+  const rancher: any = await getRecordById(TABLES.RANCHERS, payload.rancherId);
+  return { payload, rancher, token };
+}
+
+// GET — validate + render the ONE-TAP confirm page. NO writes on GET.
+export async function GET(request: Request) {
+  try {
+    const v = await validateDecline(request);
+    if (v.error) return v.error;
+    const { rancher, token } = v;
+
+    if (!rancher) {
+      return new NextResponse(
+        htmlPage({ title: 'Already removed', heading: '✓', body: '<h1>You\'re off the list</h1><p>I couldn\'t find your record — it may have already been removed. Either way, you won\'t hear from us again.</p>' }),
+        { status: 200, headers: { 'Content-Type': 'text/html' } }
       );
     }
 
-    const rancher: any = await getRecordById(TABLES.RANCHERS, payload.rancherId);
+    const ranchName = rancher['Ranch Name'] || rancher['Operator Name'] || 'your ranch';
+    const operatorFirst = String(rancher['Operator Name'] || '').trim().split(/\s+/)[0] || 'there';
+    const wasAlreadyDeclined = rancher['Status'] === 'rejected' || rancher['Unsubscribed'] === true;
+
+    if (wasAlreadyDeclined) {
+      // Already off the list — read-only page, nothing to confirm.
+      return new NextResponse(
+        htmlPage({
+          title: 'Removed',
+          heading: '✓',
+          body:
+            `<h1>You're already off the list, ${operatorFirst}.</h1>` +
+            `<p>${ranchName} was removed from the pipeline. No more emails, no follow-ups.</p>` +
+            `<p>If you ever want back in, just shoot me a text or email.</p>`,
+        }),
+        { status: 200, headers: { 'Content-Type': 'text/html' } }
+      );
+    }
+
+    const { pathname } = new URL(request.url);
+    return new NextResponse(
+      htmlPage({
+        title: 'Confirm removal',
+        heading: '👋',
+        body:
+          `<h1>Take ${ranchName} off the list?</h1>` +
+          `<p>One tap and you're out — no more emails, no follow-ups, ever.</p>` +
+          `<form method="post" action="${pathname}?token=${encodeURIComponent(token)}" style="margin-top:24px;">` +
+          `<button type="submit" style="padding:14px 32px;background:#0E0E0E;color:#F4F1EC;border:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:13px;cursor:pointer;width:100%;">Yes — take me off the list</button>` +
+          `</form>` +
+          `<p>Changed your mind? Just close this page.</p>`,
+      }),
+      { status: 200, headers: { 'Content-Type': 'text/html' } }
+    );
+  } catch (error: any) {
+    console.error('rancher-decline error:', error);
+    return new NextResponse(
+      htmlPage({
+        title: 'Something broke',
+        heading: '⚠️',
+        body: '<h1>Removal hit a snag</h1><p>I got an error on the server side. Reply to the email with "remove me" and I\'ll handle it manually within the hour.</p>',
+      }),
+      { status: 500, headers: { 'Content-Type': 'text/html' } }
+    );
+  }
+}
+
+// POST — the confirm form lands here; performs the original opt-out mutation.
+export async function POST(request: Request) {
+  try {
+    const v = await validateDecline(request);
+    if (v.error) return v.error;
+    const { payload, rancher } = v;
+
     if (!rancher) {
       return new NextResponse(
         htmlPage({ title: 'Already removed', heading: '✓', body: '<h1>You\'re off the list</h1><p>I couldn\'t find your record — it may have already been removed. Either way, you won\'t hear from us again.</p>' }),

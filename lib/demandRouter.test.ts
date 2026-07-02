@@ -87,7 +87,11 @@ test('stranded-qualified: Qualified At + score>=75 + no active referral', () => 
   );
 });
 
-test('a qualified buyer WITH an active referral is NOT stranded (it is in-deal → hot at best)', () => {
+test('a qualified buyer WITH an active referral is NOT stranded — and NOT selected at all (mid-deal)', () => {
+  // PRE-FLIP GUARD (finding 1, 2026-07-01): this test used to pin the buggy
+  // "in-deal → hot at best" behavior — a mid-deal buyer classified HOT and got
+  // a wave email pointing at a DIFFERENT rancher mid-payment. The rancher +
+  // operator own a mid-deal buyer: NO tier selects them.
   const t = classifyTier({
     'Qualified At': daysAgo(30),
     'Qualification Score': 90,
@@ -95,7 +99,7 @@ test('a qualified buyer WITH an active referral is NOT stranded (it is in-deal �
     'Ready to Buy': true,
   });
   assert.notEqual(t, 'stranded-qualified');
-  assert.equal(t, 'hot');
+  assert.equal(t, null);
 });
 
 test('hot: Ready to Buy OR Warmup Engaged', () => {
