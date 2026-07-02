@@ -322,6 +322,15 @@ export default function RancherDashboardPage() {
   const [depositSubmitting, setDepositSubmitting] = useState(false);
   const [depositResult, setDepositResult] = useState<{ url: string; depositAmount: number; fullSaleAmount: number } | null>(null);
   const [pageForm, setPageForm] = useState<Record<string, string>>({});
+  // SLICE G — sold cuts (Airtable 'Tier Specialty', multipleSelects). Which
+  // share sizes the rancher sells; matching filters buyer Order Type on it.
+  // Previously wizard-only — a LIVE rancher who stopped selling quarters kept
+  // getting quarter buyers with no way to turn them off. Mirrors the wizard's
+  // Step-3 'I sell' toggles: deselecting a cut nulls its price fields on save.
+  // Empty stored specialty = legacy "matches all sizes" → initialize all three
+  // ON so an untouched save writes the explicit equivalent.
+  const [soldCuts, setSoldCuts] = useState<Array<'Quarter' | 'Half' | 'Whole'>>([]);
+  const [soldCutsNote, setSoldCutsNote] = useState('');
   // One-input pricing (mirrors the setup wizard Step-3 pattern): rancher enters
   // the Whole price → Half/Quarter + each deposit derive via lib/pricing. Any
   // field the rancher has set/edited is "touched" — its value is kept verbatim
@@ -503,6 +512,16 @@ export default function RancherDashboardPage() {
       setUpdateErrorId(null);
       // Populate landing page form with current values
       const r = data.rancher;
+      // Sold cuts from the stored Tier Specialty. Empty/absent = the legacy
+      // "no restriction" default → treat as all three sold (functionally
+      // identical for matching; saving writes the explicit equivalent).
+      {
+        const spec = (Array.isArray(r.tierSpecialty) ? r.tierSpecialty : []).filter(
+          (c: string): c is 'Quarter' | 'Half' | 'Whole' =>
+            c === 'Quarter' || c === 'Half' || c === 'Whole'
+        );
+        setSoldCuts(spec.length > 0 ? spec : ['Quarter', 'Half', 'Whole']);
+      }
       setPageForm({
         'Slug': r.slug || '',
         'Logo URL': r.logoUrl || '',
@@ -1213,6 +1232,11 @@ export default function RancherDashboardPage() {
   const fillDerivedPrices = (
     f: Record<string, string>,
     touched: Set<string>,
+    // Sold cuts — wizard-parity (SLICE G): only derive into tiers the rancher
+    // actually SELLS, so a deselected cut never regrows a derived price that
+    // would ship to buyers. Defaults to current state; the toggle handler
+    // passes its freshly-computed array to avoid a stale closure.
+    sells: ReadonlyArray<string> = soldCuts,
   ): Record<string, string> => {
     const whole = Number(f['Whole Price']) || 0;
     const next = { ...f };
@@ -1220,19 +1244,42 @@ export default function RancherDashboardPage() {
     // Half/Quarter prices derive from the Whole anchor. When Whole is cleared,
     // blank the untouched derived prices too so a stale ladder can't linger.
     for (const tier of ['Half', 'Quarter'] as const) {
+      if (!sells.includes(tier)) continue;
       const key = `${tier} Price`;
       if (touched.has(key)) continue;
       next[key] = whole > 0 ? String(tier === 'Half' ? ladder.half : ladder.quarter) : '';
     }
-    // Deposits derive from each tier's (possibly overridden) price, not the
-    // ladder — so an overridden Half price still gets a matching deposit.
+    // Deposits derive from each SOLD tier's (possibly overridden) price, not
+    // the ladder — so an overridden Half price still gets a matching deposit.
     for (const tier of PRICE_TIERS) {
+      if (!sells.includes(tier)) continue;
       const depKey = `${tier} Deposit`;
       if (touched.has(depKey)) continue;
       const dep = deriveDeposit(Number(next[`${tier} Price`]) || 0);
       next[depKey] = dep > 0 ? String(dep) : '';
     }
     return next;
+  };
+  // Toggle a sold cut on/off (wizard toggleTier parity). Guard: at least one
+  // cut stays selected — an empty Tier Specialty means "matches ALL sizes" to
+  // the matching filter, the exact opposite of what a rancher deselecting
+  // everything intends. Re-enabling a cut re-runs derivation so its ladder
+  // price + deposit fill from the Whole anchor.
+  const toggleSoldCut = (cut: 'Quarter' | 'Half' | 'Whole') => {
+    setSoldCutsNote('');
+    if (soldCuts.includes(cut)) {
+      if (soldCuts.length === 1) {
+        setSoldCutsNote(
+          'Keep at least one share size — if you’re not taking orders at all, use Pause new leads on your Home tab instead.'
+        );
+        return;
+      }
+      setSoldCuts(soldCuts.filter((c) => c !== cut));
+    } else {
+      const next = [...soldCuts, cut];
+      setSoldCuts(next);
+      setPageForm((f) => fillDerivedPrices(f, touchedDerived, next));
+    }
   };
   // Whole-price input → recompute the whole ladder + deposits live.
   const onWholeChange = (v: string) =>
@@ -1288,6 +1335,21 @@ export default function RancherDashboardPage() {
         if (body[key]) body[key] = parseFloat(body[key]) || null;
         else body[key] = null;
       }
+      // Sold cuts → Tier Specialty, same multipleSelects string[] shape the
+      // wizard writes (matching reads this field — shape drift breaks routing
+      // fit). A deselected cut gets its five per-cut fields cleared exactly
+      // like the wizard's Step-3 null-on-deselect slice, so a stale price,
+      // deposit, fee, weight, or payment link can never ship to a buyer page
+      // (which renders any cut that has a price).
+      body['Tier Specialty'] = soldCuts;
+      for (const cut of ['Quarter', 'Half', 'Whole'] as const) {
+        if (soldCuts.includes(cut)) continue;
+        body[`${cut} Price`] = null;
+        body[`${cut} Deposit`] = null;
+        body[`${cut} Processing Fee`] = null;
+        body[`${cut} lbs`] = null;
+        body[`${cut} Payment Link`] = null;
+      }
       // Include custom products as JSON
       body['Custom Products'] = JSON.stringify(customProducts);
       body['Gallery Photos'] = JSON.stringify(galleryPhotos);
@@ -1323,6 +1385,9 @@ export default function RancherDashboardPage() {
       }
       setPageSaved(true);
       setTimeout(() => setPageSaved(false), 3000);
+      // Mirror the saved specialty into rancherInfo so the P1-4 no-pricing
+      // alarm reflects the new sold cuts without a full dashboard refetch.
+      setRancherInfo((ri) => (ri ? { ...ri, tierSpecialty: [...soldCuts] } : ri));
     } catch {
       setPageError('Network error. Please check your connection.');
     } finally {
@@ -3779,9 +3844,48 @@ export default function RancherDashboardPage() {
                     const lbsKnown = Number(hangingLbsInput) > 0;
                     const perLb = lbsKnown && whole > 0 ? whole / Number(hangingLbsInput) : 0;
                     const wholeOk = !(whole > 0) || checkWholePrice(whole).ok;
-                    const tiers: Array<'Quarter' | 'Half' | 'Whole'> = ['Quarter', 'Half', 'Whole'];
+                    // Only render rows for the cuts the rancher SELLS (wizard
+                    // Step-3 parity) — deselected cuts are nulled on save.
+                    const tiers: Array<'Quarter' | 'Half' | 'Whole'> = (
+                      ['Quarter', 'Half', 'Whole'] as const
+                    ).filter((t) => soldCuts.includes(t));
                     return (
                       <div className="space-y-4">
+                        {/* SLICE G — sold-cuts toggles (wizard 'I sell' parity).
+                            Matching filters buyers on Tier Specialty; this is
+                            how a live rancher stops receiving e.g. quarter
+                            buyers after they stop selling quarters. */}
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">I sell:</p>
+                          <div className="flex flex-wrap gap-2">
+                            {(['Quarter', 'Half', 'Whole'] as const).map((t) => {
+                              const active = soldCuts.includes(t);
+                              return (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  onClick={() => toggleSoldCut(t)}
+                                  className={`px-4 py-2 text-xs font-medium uppercase tracking-wide border transition-colors ${
+                                    active
+                                      ? 'bg-charcoal text-bone border-charcoal'
+                                      : 'bg-bone text-charcoal border-dust hover:border-saddle'
+                                  }`}
+                                >
+                                  {t} {active && <span aria-hidden>✓</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {soldCutsNote && (
+                            <p className="text-xs text-weathered">{soldCutsNote}</p>
+                          )}
+                          <p className="text-xs text-dust">
+                            Turning a size off clears its price and stops us
+                            routing buyers who want it. Takes effect when you
+                            save.
+                          </p>
+                        </div>
+
                         {/* Unit toggle: whole-cow total vs price per pound */}
                         <div className="flex flex-wrap gap-2">
                           {([['total', 'Price per whole cow'], ['perlb', 'Price per pound']] as const).map(([unit, label]) => (
@@ -3859,6 +3963,17 @@ export default function RancherDashboardPage() {
                               )}
                             </p>
                           </div>
+                        )}
+
+                        {/* Whole deselected → the whole-cow number above is only
+                            the derivation anchor (wizard semantics: unsold cuts
+                            save as cleared, so no Whole price ships to buyers). */}
+                        {!soldCuts.includes('Whole') && (
+                          <p className="text-xs text-dust">
+                            You&rsquo;re not selling wholes — the whole-cow number
+                            above is only used to work out your other prices and
+                            won&rsquo;t show on your page.
+                          </p>
                         )}
 
                         {/* Soft sanity warning — never blocks; the save route hard-blocks < $MIN_TIER_PRICE */}
@@ -3939,7 +4054,7 @@ export default function RancherDashboardPage() {
                             );
                           })}
                           <p className="text-xs text-saddle leading-relaxed">
-                            <strong>Deposit</strong> — what the buyer pays now to reserve their share. Auto-set to ~25% of each price; edit any and we&rsquo;ll keep your number. Leave a price at 0 if you don&rsquo;t sell that size.
+                            <strong>Deposit</strong> — what the buyer pays now to reserve their share. Auto-set to ~25% of each price; edit any and we&rsquo;ll keep your number. Don&rsquo;t sell a size? Turn it off under &ldquo;I sell&rdquo; above.
                           </p>
                         </div>
 
@@ -3954,7 +4069,7 @@ export default function RancherDashboardPage() {
                         {rancherInfo.pricingModel !== 'tier_v2' && (
                           <div className="border border-dust bg-white p-4 space-y-3">
                             <p className="text-sm font-medium">Payment links <span className="text-xs font-normal text-dust">(your Square, PayPal, or Stripe checkout)</span></p>
-                            {(['Quarter', 'Half', 'Whole'] as const).map((tier) => (
+                            {tiers.map((tier) => (
                               <div key={tier} className="space-y-1">
                                 <label className="text-xs text-dust">{tier} payment link</label>
                                 <input

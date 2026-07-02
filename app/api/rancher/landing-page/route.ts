@@ -16,6 +16,11 @@ import { validatePauseValue, validatePauseTransition } from '@/lib/pauseStatus';
 // Airtable multipleSelects field stores.
 const FULFILLMENT_TYPE_VALUES = ['Local Pickup', 'Local Delivery', 'Cold-Chain Shipping'];
 
+// Tier Specialty option values — the multipleSelects field matching filters
+// buyer Order Type on (app/api/matching/suggest isTierFit). Mirrors the
+// wizard's Step-3 'I sell' toggles; the exact strings are load-bearing.
+const TIER_SPECIALTY_VALUES = ['Quarter', 'Half', 'Whole'];
+
 // Reject obviously-broken image links (Google Drive / Dropbox / OneDrive share
 // URLs) server-side too, so a corrupt Gallery Photos array can never reach
 // Airtable even if a client skips the ImageUploader gate. Direct image URLs +
@@ -108,6 +113,11 @@ export async function PATCH(request: Request) {
       'Whole Processing Fee',
       'Whole lbs',
       'Whole Payment Link',
+      // Which share sizes the rancher sells (multipleSelects, wizard Step-3
+      // parity — SLICE G). Matching filters on it; a live rancher who stops
+      // selling quarters must be able to drop 'Quarter' here or they keep
+      // receiving quarter buyers forever. Sanitized below to known options.
+      'Tier Specialty',
       'Next Processing Date',
       'Reserve Link',
       'Custom Notes',
@@ -580,6 +590,21 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: 'Refund policy must be 500 characters or fewer.' }, { status: 400 });
       }
       fields['Refund Policy'] = fields['Refund Policy'].trim();
+    }
+
+    // ── Tier Specialty (multipleSelects) ─────────────────────────────────
+    // Same array shape the wizard PATCHes through /api/rancher/setup: a flat
+    // string[] of 'Quarter' | 'Half' | 'Whole' (possibly empty — empty means
+    // "no restriction, matches all sizes", the legacy default the matching
+    // filter honors). Keep only known option values so Airtable never rejects
+    // the write; always persist as an ARRAY (never a comma string) — matching
+    // reads this field and a shape drift breaks routing fit.
+    if ('Tier Specialty' in fields && fields['Tier Specialty'] !== null) {
+      const raw = fields['Tier Specialty'];
+      const arr: string[] = Array.isArray(raw)
+        ? raw.map((s) => String(s).trim())
+        : String(raw).split(',').map((s) => s.trim());
+      fields['Tier Specialty'] = arr.filter((v) => TIER_SPECIALTY_VALUES.includes(v));
     }
 
     // ── Fulfillment Types (multipleSelects) ──────────────────────────────

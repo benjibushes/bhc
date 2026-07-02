@@ -1235,13 +1235,14 @@ export default function RancherSetupWizard() {
 
             {/* Stat grid — concrete promises up front, before the prose. The
                 "boom-boom-bam" anchor so ranchers see the deal at a glance.
-                Subscription messaging is honest about tier_v2 (Step 6 picks
-                the actual monthly + commission rate) — earlier "$0 subscription"
-                wording contradicted the wizard's own pricing step. */}
+                Commission truth from lib/tiers.ts: the FREE plan is 10% per
+                closed sale (legacy_connect); the optional paid tiers cut that
+                to 7/3/0%. No step numbers — the flow is dynamic (legacy skips
+                the plan step entirely). */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
               {[
-                { stat: '0–7%', label: 'Commission on closed deals · tier-based' },
-                { stat: '$0', label: 'Setup fee · pick subscription at Step 6' },
+                { stat: '$0', label: 'To start · free plan, no monthly fee' },
+                { stat: '10%', label: 'Only when you sell · paid plans cut it to 0–7%' },
                 { stat: '5 min', label: 'From here to your live page' },
                 { stat: 'Anytime', label: 'Pause routing · leave clean' },
               ].map((s) => (
@@ -1286,10 +1287,11 @@ export default function RancherSetupWizard() {
               <p>
                 <strong>How it works for you:</strong> we send you pre-screened
                 buyers in your state who are ready to commit to a quarter,
-                half, or whole. You close the deal. We take 10% commission
-                on what closes &mdash; nothing on no-shows, nothing on
-                tire-kickers. You set your own prices, your own capacity,
-                your own pace.
+                half, or whole. You close the deal. On the free plan we take
+                10% commission on what closes &mdash; nothing on no-shows,
+                nothing on tire-kickers &mdash; and the optional paid plans
+                drop that to 0&ndash;7%. You set your own prices, your own
+                capacity, your own pace.
               </p>
               <p>
                 <strong>Non-exclusive.</strong> Sell direct, sell at farmers
@@ -1451,7 +1453,7 @@ export default function RancherSetupWizard() {
         {step === 1 && (
           <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
             <header>
-              <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 1</p>
+              <p className="text-xs uppercase tracking-widest text-saddle mb-2">Contact</p>
               <h2 className="font-serif text-2xl text-charcoal">Confirm your contact</h2>
             </header>
             <div className="space-y-4">
@@ -1586,7 +1588,7 @@ export default function RancherSetupWizard() {
         {step === 2 && (
           <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
             <header>
-              <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 2</p>
+              <p className="text-xs uppercase tracking-widest text-saddle mb-2">Your story</p>
               <h2 className="font-serif text-2xl text-charcoal">Tell families who you are</h2>
               <p className="text-sm text-saddle mt-1">
                 Skip what you don&rsquo;t have — you can fill it in later from your dashboard.
@@ -1829,7 +1831,7 @@ export default function RancherSetupWizard() {
         {step === 3 && (
           <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
             <header>
-              <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 3</p>
+              <p className="text-xs uppercase tracking-widest text-saddle mb-2">Pricing</p>
               <h2 className="font-serif text-2xl text-charcoal">Set your share prices</h2>
               <p className="text-sm text-saddle mt-1">
                 Optional — but pages with prices convert ~3× better. Fill in
@@ -2076,8 +2078,9 @@ export default function RancherSetupWizard() {
                     {price > 0 && Number.isFinite(fee) && fee >= 0 && (
                       <div className="bg-bone border border-dust p-3 text-xs text-charcoal/85 leading-relaxed">
                         {/* Tier-agnostic on purpose: BHC's commission depends on the
-                            plan you pick later (Step 7), and the rates differ per
-                            plan — so we DON'T assert a flat % here. The only numbers
+                            plan picked later (the flow is dynamic — no step numbers
+                            in copy), and the rates differ per plan — so we DON'T
+                            assert a flat % here. The only numbers
                             we can state for certain are the deposit, the processing
                             recoup, and your net on the listed price. */}
                         <p className="font-medium mb-1">How the math works on a {tier.toLowerCase()}:</p>
@@ -2092,7 +2095,7 @@ export default function RancherSetupWizard() {
                         </p>
                         <p className="text-saddle italic mt-1">
                           You keep your full listed ${price.toLocaleString()}. The buyer pays that plus BHC&rsquo;s
-                          commission on top — the exact rate is set by the plan you choose at Step 7.
+                          commission on top — the exact rate is set by the plan you choose at the end.
                         </p>
                       </div>
                     )}
@@ -2268,10 +2271,12 @@ export default function RancherSetupWizard() {
         {step === 4 && (
           <CallStep
             rancher={rancher}
+            token={token}
             callDone={canSkipBooking()}
             onContinue={() => setStep(1)}
             onBack={() => setStep(0)}
             onSelfServe={chooseSelfServe}
+            onRancherRefresh={setRancher}
           />
         )}
 
@@ -2863,11 +2868,22 @@ function SignStep({
 
   // Tier-aware commission copy. Source of truth lives in lib/tiers.ts;
   // mirrored here so the gist bullet matches the tier the rancher just
-  // picked at Step 6. Hard-coding "10%" contradicted tier_v2 rates.
+  // picked at the plan step. Hard-coding "10%" contradicted tier_v2 rates.
   const pricingModel = String((rancher as any)['Pricing Model'] || 'legacy');
   const tierSlug = tierSlugFromRancher(rancher);
   let commissionCopy: ReactNode;
-  if (pricingModel === 'tier_v2' && tierSlug === 'pasture') {
+  if (pricingModel === 'tier_v2' && tierSlug === 'legacy_connect') {
+    // FREE tier under tier_v2 — 10% per closed sale (lib/tiers.ts
+    // legacy_connect.commissionRate). Without this branch a free-plan rancher
+    // fell into the "haven't locked a tier yet" range copy, which was wrong —
+    // they HAVE a plan, and its rate is 10%.
+    commissionCopy = (
+      <>
+        <strong>10% commission</strong> on closed deals only (free plan).
+        Nothing on tire-kickers, nothing on no-shows.
+      </>
+    );
+  } else if (pricingModel === 'tier_v2' && tierSlug === 'pasture') {
     commissionCopy = (
       <>
         <strong>7% commission</strong> on closed deals only (Pasture tier).
@@ -2892,8 +2908,8 @@ function SignStep({
     // tier_v2 rancher who hasn't locked a tier yet — show the range.
     commissionCopy = (
       <>
-        <strong>Commission per your chosen tier</strong> (Pasture 7% · Ranch 3%
-        · Operator 0%). Locked when you finish Step 6.
+        <strong>Commission per your chosen tier</strong> (free plan 10% ·
+        Pasture 7% · Ranch 3% · Operator 0%). Locked when you pick your plan.
       </>
     );
   } else {
@@ -2909,7 +2925,7 @@ function SignStep({
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
-        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 4</p>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Partner agreement</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
           Lock it in &mdash; sign the partner agreement
         </h2>
@@ -3094,18 +3110,57 @@ function SignStep({
 //   "Call Scheduled"  → "you're booked, come back after your call"
 function CallStep({
   rancher,
+  token,
   callDone,
   onContinue,
   onBack,
   onSelfServe,
+  onRancherRefresh,
 }: {
   rancher: Rancher;
+  token: string;
   callDone: boolean;
   onContinue: () => void;
   onBack: () => void;
   onSelfServe?: () => void;
+  // Parent's setRancher — the poll below pushes fresh snapshots up so
+  // `callDone` (canSkipBooking) and the booked/unbooked states re-derive.
+  onRancherRefresh: (r: Rancher) => void;
 }) {
   const status = (rancher.onboardingStatus || '').toString();
+
+  // Poll for the Cal-webhook stamp. Booking happens inside the Cal iframe (or
+  // a new tab) and BOOKING_CREATED lands on the RANCHER ROW ('Call Scheduled',
+  // later 'Call Complete') — the wizard tab never hears about it on its own.
+  // Without this poll, a rancher who just booked returns to a step that still
+  // says "book your call" and assumes booking failed (audit finding, 2026-07).
+  // Mirrors TierPickStep's checkout poll: interval only while THIS step is
+  // mounted AND the gate is still closed (callDone stops it — nothing left to
+  // learn), cleared on unmount so no background polling from other steps.
+  useEffect(() => {
+    if (callDone) return; // gate already open — no polling needed
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/rancher/setup?token=${encodeURIComponent(token)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !data?.rancher) return;
+        onRancherRefresh(data.rancher as Rancher);
+      } catch {
+        /* non-fatal; next tick retries */
+      }
+    };
+    const id = setInterval(tick, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+    // onRancherRefresh is the parent's setState — stable identity by React
+    // contract, deliberately left out so the interval isn't reset per render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, callDone]);
   // Resolve Ben's LIVE onboarding Cal event at runtime. The hardcoded slug and
   // the 142d-old NEXT_PUBLIC_CALENDLY_LINK env are both stale (those events were
   // deleted), so embedding either renders a dead booker. /api/book/link confirms
@@ -3214,6 +3269,9 @@ function CallStep({
           <p className="text-xs text-dust leading-relaxed text-center">
             Once you book, we&rsquo;ll auto-stamp this step and unlock your setup.
             Come back here right after your call to finish.
+            <br />
+            Just booked? This page updates automatically within a few seconds
+            &mdash; no refresh needed.
           </p>
         </>
       )}
@@ -3223,8 +3281,9 @@ function CallStep({
           <p className="text-sm text-charcoal/85 leading-relaxed">
             <strong>You&rsquo;re booked.</strong> We&rsquo;ll get your page set up
             together on the call. Come back to this link right after &mdash; your
-            setup unlocks once we&rsquo;ve talked. Need to reschedule? Use the link
-            in your Cal.com confirmation email.
+            setup unlocks once we&rsquo;ve talked (this page checks automatically,
+            no refresh needed). Need to reschedule? Use the link in your Cal.com
+            confirmation email.
           </p>
           <a
             href={calBookingUrl}
@@ -3462,7 +3521,7 @@ function TierPickStep({
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
-        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 6 · Pick Your Plan</p>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Pick your plan</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
           Start free. Pay 10% only when you sell.
         </h2>
@@ -3822,7 +3881,7 @@ function FulfillmentStep({
   return (
     <section className="space-y-6 bg-bone border border-dust p-7 md:p-8">
       <header>
-        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Step 8 · Fulfillment</p>
+        <p className="text-xs uppercase tracking-widest text-saddle mb-2">Fulfillment</p>
         <h2 className="font-serif text-2xl md:text-3xl text-charcoal">
           How do you get the beef to buyers?
         </h2>
