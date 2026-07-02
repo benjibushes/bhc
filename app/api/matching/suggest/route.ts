@@ -19,6 +19,7 @@ import {
   retainerPriorityCompareWithOverride,
   parseRoutingWeightOverride,
 } from '@/lib/routingPriority';
+import { nationwideAllowed, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
 
 export const maxDuration = 90;
 
@@ -713,7 +714,26 @@ export async function POST(request: Request) {
       // deliberately double-flagged them, so an accidental flag can't misroute.
       // Lets an uncovered-state buyer get a real match (it ships) instead of
       // waitlisting, while keeping the local-first experience intact.
-      if (!topMatch) {
+      //
+      // ── BUYER PREFERENCE GATE (2026-07-01 founder directive) ──────────────
+      // Buyers can now opt OUT of the nationwide fallback (wait local) or opt
+      // IN (buy sooner) via Consumers.'Nationwide Preference' — set by the
+      // funnel waitlist choice or the /member toggle. Semantics enforced by
+      // the pure helper (lib/nationwidePreference.ts):
+      //   'local-only'          → skip the fallback (waitlist letter path fires
+      //                           exactly as before — same as no candidates)
+      //   'nationwide-ok'/unset → fallback allowed (unset = pre-feature
+      //                           behavior; existing buyers lose NOTHING)
+      // buyerRecForGate is the consumer row fetched fresh at the top of this
+      // request, so a preference written moments earlier (funnel choice →
+      // re-fire) is always visible here.
+      const buyerNationwideOk = nationwideAllowed(buyerRecForGate?.[NATIONWIDE_PREFERENCE_FIELD]);
+      if (!topMatch && !buyerNationwideOk) {
+        console.log(
+          `[match] Buyer ${buyerName || buyerId} opted local-only — skipping nationwide fallback (waitlisted for a local rancher).`,
+        );
+      }
+      if (!topMatch && buyerNationwideOk) {
         const nationwideEligible = allRanchers.filter((r: any) => {
           if (!isEligibleBase(r)) return false;
           if (!(r['Admin Approved Multi-State'] && r['Ships Nationwide'])) return false;

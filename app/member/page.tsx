@@ -134,6 +134,9 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
     memberState: string;
     memberSegment: string;
     affiliateCode?: string;
+    // '' (never asked) | 'nationwide-ok' | 'local-only' — drives the
+    // Matching Preference toggle below.
+    nationwidePreference?: string;
     hasOrderDetails: boolean;
     stateRanchers: Rancher[];
     otherRanchers: Rancher[];
@@ -640,6 +643,14 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                 </div>
               )}
 
+              {/* Matching preference (2026-07-01) — nationwide opt-in/opt-out.
+                  Mirrors the funnel waitlist choice; whichever surface the
+                  buyer touched last wins (both write the same Consumers
+                  field via POST /api/member/preferences). */}
+              {data && (
+                <MatchingPreferenceBlock initial={data.nationwidePreference || ''} />
+              )}
+
               {/* Order details card — shows for anyone who hasn't told us what they want */}
               {data && !data.hasOrderDetails && !upgradeSuccess && (
                 <div className="p-6 border-2 border-charcoal bg-white space-y-4">
@@ -825,6 +836,90 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
         </div>
       </Container>
     </main>
+  );
+}
+
+// Matching preference toggle (2026-07-01 founder directive). ON =
+// 'nationwide-ok' (if no local rancher is available, a vetted nationwide
+// shipper can be matched), OFF = 'local-only' (wait for a local rancher).
+// An unset field renders OFF-looking but is labeled as "not set" — matching
+// treats unset as nationwide-allowed (pre-feature behavior), so we tell the
+// buyer that honestly instead of pretending they opted out.
+function MatchingPreferenceBlock({ initial }: { initial: string }) {
+  const [on, setOn] = useState(initial === 'nationwide-ok');
+  const [touched, setTouched] = useState(initial === 'nationwide-ok' || initial === 'local-only');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState(false);
+
+  const toggle = async () => {
+    if (saving) return;
+    const next = !on;
+    // Optimistic flip; revert on failure.
+    setOn(next);
+    setTouched(true);
+    setSaving(true);
+    setSaved(false);
+    setError(false);
+    try {
+      const res = await fetch('/api/member/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nationwide: next }),
+      });
+      if (!res.ok) throw new Error('save failed');
+      setSaved(true);
+    } catch {
+      setOn(!next);
+      setError(true);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="p-6 border border-dust bg-white space-y-3">
+      <span className="text-xs uppercase tracking-widest text-saddle">Matching preference</span>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="font-serif text-xl text-charcoal">Open to nationwide shipping ranchers</h3>
+          <p className="mt-1 text-sm text-saddle leading-relaxed">
+            On — if no rancher is available in your state, we can match you with a vetted
+            rancher who ships nationwide. Off — we&apos;ll only match you locally, even if
+            that means waiting.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label="Open to nationwide shipping ranchers"
+          onClick={toggle}
+          disabled={saving}
+          className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors ${
+            on ? 'bg-charcoal border-charcoal' : 'bg-dust/40 border-dust'
+          } ${saving ? 'opacity-60' : ''}`}
+        >
+          <span
+            className={`inline-block h-5 w-5 transform rounded-full bg-bone transition-transform ${
+              on ? 'translate-x-6' : 'translate-x-1'
+            }`}
+          />
+        </button>
+      </div>
+      <p className="text-xs text-dust">
+        {saving
+          ? 'Saving…'
+          : error
+            ? 'Couldn’t save — please try again.'
+            : saved
+              ? 'Saved.'
+              : touched
+                ? on
+                  ? 'You’re open to nationwide shippers when no local rancher is available.'
+                  : 'Local only — we’ll hold your spot for a rancher in your state.'
+                : 'Not set — today we may match you nationwide if no local rancher is available. Flip the switch to make it your explicit choice.'}
+      </p>
+    </div>
   );
 }
 

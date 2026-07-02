@@ -93,6 +93,17 @@ interface QualifyResult {
   message?: string;
 }
 
+// ── Nationwide opt-in match payload (POST /api/member/preferences) ──────────
+// When the waitlisted buyer clicks "yes — match me with a shipping rancher",
+// the preference endpoint re-fires matching in-process; a hit comes back in
+// this shape and is merged into the QualifyResult so the reveal re-renders
+// as a real match (deposit CTA / rancher card) without leaving the page.
+interface NationwideMatch {
+  rancher: { id: string; name: string; state: string };
+  referralId: string | null;
+  pricingModel: string;
+}
+
 // Step index helpers — derived from the canonical FUNNEL_STEPS order so the
 // progress maths and Back logic never drift from the config.
 const STEP_INDEX: Record<StepKey, number> = FUNNEL_STEPS.reduce(
@@ -700,6 +711,22 @@ export default function BuyerFunnel({
             state={state}
             stats={stats}
             cut={tier}
+            // Nationwide opt-in hit — merge the fresh match into the reveal
+            // payload so the same Reveal flips from waitlist (Mode 3) to a
+            // real match (deposit CTA when tier_v2 + referral, Mode 0/2).
+            onNationwideMatch={(m) =>
+              setResult((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      routingOk: true,
+                      rancher: { name: m.rancher.name, state: m.rancher.state },
+                      referralId: m.referralId,
+                      pricingModel: m.pricingModel,
+                    }
+                  : prev,
+              )
+            }
           />
         )}
 
@@ -848,12 +875,17 @@ function Reveal({
   state,
   stats,
   cut,
+  onNationwideMatch,
 }: {
   result: QualifyResult | null;
   offerOperatorCall: boolean;
   state: string;
   stats: FunnelStats | null;
   cut: string;
+  // Fires when the waitlisted buyer opted into nationwide and matching found
+  // a shipping rancher on the spot — parent merges it into `result` so this
+  // reveal re-renders in matched mode.
+  onNationwideMatch?: (m: NationwideMatch) => void;
 }) {
   const matched = !!(result?.routingOk && result?.rancher && result.rancher.name);
   const rancher = result?.rancher;
@@ -1004,6 +1036,14 @@ function Reveal({
               you&apos;re a qualified buyer the moment a verified rancher opens up near you — and you&apos;ll
               be the first we reach out to. we&apos;re working on it.
             </p>
+            {/* Nationwide opt-in choice (2026-07-01 founder directive) — the
+                no-local-match moment is the highest-signal place to ask.
+                Qualified buyers only: the quiz pass minted their member
+                session cookie (the preference endpoint is member-authed),
+                and unqualified buyers aren't in the matching pool anyway. */}
+            {result?.qualified && (
+              <NationwideChoice state={state} onMatched={onNationwideMatch} />
+            )}
             {/* U19: the waitlist used to dead-end here. Give the qualified buyer
                 a forward path — many ranchers ship nationwide, so let them
                 browse + reach one now instead of only waiting. */}
@@ -1025,5 +1065,107 @@ function Reveal({
         </div>
       )}
     </section>
+  );
+}
+
+// ── Nationwide opt-in choice (waitlist reveal, 2026-07-01) ───────────────────
+// "Want your beef sooner?" — writes the buyer's matching preference via the
+// member-authed POST /api/member/preferences (the quiz pass minted the
+// bhc-member-auth cookie, so no token plumbing needed):
+//   yes → 'nationwide-ok' + refireMatching: an immediate in-process matching
+//         re-run. A hit bubbles up via onMatched (reveal flips to matched
+//         mode); a miss shows "you're in the nationwide pool" and the
+//         existing waitlist-retry cron takes it from there.
+//   no  → 'local-only' — the buyer keeps their first-in-line waitlist spot
+//         and the nationwide fallback will never route them.
+function NationwideChoice({
+  state,
+  onMatched,
+}: {
+  state: string;
+  onMatched?: (m: NationwideMatch) => void;
+}) {
+  const [phase, setPhase] = useState<'ask' | 'saving' | 'pool' | 'local' | 'error'>('ask');
+  // Which button the buyer pressed — keeps the untouched button enabled-looking
+  // logic simple and lets error retry re-offer both.
+  const [picked, setPicked] = useState<'yes' | 'no' | null>(null);
+
+  async function choose(nationwide: boolean) {
+    setPicked(nationwide ? 'yes' : 'no');
+    setPhase('saving');
+    try {
+      const res = await fetch('/api/member/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nationwide, ...(nationwide ? { refireMatching: true } : {}) }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPhase('error');
+        return;
+      }
+      if (nationwide && j?.match?.rancher?.name && onMatched) {
+        // Matched on the spot — parent re-renders the reveal in matched mode.
+        onMatched(j.match as NationwideMatch);
+        return;
+      }
+      setPhase(nationwide ? 'pool' : 'local');
+    } catch {
+      setPhase('error');
+    }
+  }
+
+  if (phase === 'pool') {
+    return (
+      <div
+        className="mt-5 rounded-md px-4 py-3 text-left text-sm font-medium text-bone"
+        style={{ backgroundColor: FUNNEL_ACCENT }}
+      >
+        you&apos;re in the nationwide pool — we&apos;ll match you with a shipping rancher shortly.
+      </div>
+    );
+  }
+  if (phase === 'local') {
+    return (
+      <div className="mt-5 rounded-md border border-dust bg-bone px-4 py-3 text-left text-sm text-saddle">
+        got it — we&apos;ll hold your spot for a rancher in {state || 'your state'}.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-5 border-t border-dust pt-5 text-left">
+      <p className="text-sm font-medium text-charcoal">
+        want your beef sooner? some of our ranchers ship nationwide.
+      </p>
+      <div className="mt-3 flex flex-col gap-2">
+        <Button
+          type="button"
+          variant="primary"
+          size="md"
+          fullWidth
+          onClick={() => choose(true)}
+          disabled={phase === 'saving'}
+          loading={phase === 'saving' && picked === 'yes'}
+        >
+          yes — match me with a shipping rancher
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => choose(false)}
+          disabled={phase === 'saving'}
+          loading={phase === 'saving' && picked === 'no'}
+        >
+          no thanks — i&apos;ll wait for local
+        </Button>
+      </div>
+      {phase === 'error' && (
+        <p className="mt-2 text-xs text-weathered">
+          couldn&apos;t save that — please try again.
+        </p>
+      )}
+    </div>
   );
 }
