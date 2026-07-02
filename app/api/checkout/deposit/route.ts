@@ -502,12 +502,22 @@ export async function GET(req: Request) {
     // deep-link and always fell back to /access. Best-effort: a lookup failure
     // just omits the slug (link degrades to the /access fallback, never dead).
     let paidSlug = '';
+    // T2.2 (2026-07-02): also surface the buyer's OWN affiliate code (minted
+    // silently at deposit-settle, stamped on Consumers). The success page
+    // appends it to the share link as ?ref=<code> so shared reservations
+    // attribute + pay the referrer at close. Best-effort — a missing code
+    // degrades the share link to untracked, never blocks the paid state.
+    let paidAffiliateCode = '';
     try {
       const paidRancherId = (referral['Rancher'] || referral['Suggested Rancher'] || [])[0];
-      if (paidRancherId) {
-        const paidRancher: any = await getRecordById(TABLES.RANCHERS, paidRancherId);
-        paidSlug = String(paidRancher?.['Slug'] || '');
-      }
+      const [paidRancher, paidConsumer]: any[] = await Promise.all([
+        paidRancherId
+          ? getRecordById(TABLES.RANCHERS, paidRancherId).catch(() => null)
+          : Promise.resolve(null),
+        getRecordById(TABLES.CONSUMERS, session.consumerId).catch(() => null),
+      ]);
+      paidSlug = String(paidRancher?.['Slug'] || '');
+      paidAffiliateCode = String(paidConsumer?.['Affiliate Code'] || '').trim();
     } catch {}
     return NextResponse.json(
       {
@@ -515,6 +525,7 @@ export async function GET(req: Request) {
         status: refStatus,
         // Surfaced so the success page can deep-link the share to the rancher.
         rancher: { slug: paidSlug },
+        affiliateCode: paidAffiliateCode,
         message: refStatus === 'Closed Lost'
           ? 'This referral is closed and can\'t be reopened — contact us to re-route.'
           : 'This reservation is already paid. Check your email for the confirmation.',

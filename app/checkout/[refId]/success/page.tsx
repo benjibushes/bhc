@@ -14,17 +14,28 @@ interface Info {
 // Pure: build the share deep-link a buyer sends to the neighbor they want to
 // split the cow with. Points at the rancher's public page (where the neighbor
 // can reserve their own share). Falls back to /access when the rancher slug is
-// unknown so the link is never dead. We deliberately do NOT append a ?ref
-// attribution param: the rancher page consumes no such param (the existing
-// ?ref pipeline is for affiliate CODES on the homepage, not buyer referral
-// IDs), so adding one promised tracking that never happened. Exported for
-// unit testing.
-export function buildShareLink(slug: string | undefined, _refId: string, origin = ''): string {
+// unknown so the link is never dead.
+//
+// T2.2 (2026-07-02): appends ?ref=<the buyer's affiliate code> when known.
+// This attribution is REAL now — both destinations consume ?ref (the rancher
+// page threads it through DepositReserveForm into /api/checkout/reserve, and
+// /access feeds it to /api/consumers), server-validated, and the referrer is
+// credited at Closed Won via creditAffiliateOnClose. Historically this link
+// carried no ref because nothing consumed it; that gap is closed. No code →
+// plain link (an untracked share beats a dead promise). Exported for unit
+// testing.
+export function buildShareLink(
+  slug: string | undefined,
+  _refId: string,
+  origin = '',
+  refCode = '',
+): string {
   const base = origin.replace(/\/+$/, '');
   const path = slug
     ? `/ranchers/${encodeURIComponent(slug)}`
     : '/access';
-  return `${base}${path}`;
+  const ref = refCode ? `?ref=${encodeURIComponent(refCode)}` : '';
+  return `${base}${path}${ref}`;
 }
 
 export default function DepositSuccessPage() {
@@ -43,6 +54,8 @@ function DepositSuccessContent() {
 
   const [info, setInfo] = useState<Info | null>(null);
   const [copied, setCopied] = useState(false);
+  // T2.2 — the buyer's own affiliate code, surfaced by the paid-branch 409.
+  const [affiliateCode, setAffiliateCode] = useState('');
   // A6 — only claim "confirmed" once payment is actually verified. The paid
   // signal is the referral flipping closed (GET returns referral_closed). Until
   // then (webhook lag, or a direct/bookmarked/back-button hit) we say
@@ -102,6 +115,9 @@ function DepositSuccessContent() {
             if (j.rancher?.slug && !info) {
               setInfo({ rancher: { name: '', ranchName: '', slug: j.rancher.slug } });
             }
+            // T2.2: the buyer's own share code (minted silently at settle) —
+            // upgrades the share link below from untracked to attributed.
+            if (j.affiliateCode) setAffiliateCode(String(j.affiliateCode));
             return;
           }
           // Any other error (load_failed, not-found, auth) — stop polling and
@@ -126,7 +142,7 @@ function DepositSuccessContent() {
   // the rancher's public page and is attributed back to this buyer via ?ref.
   // origin is only known client-side, so compute it lazily.
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const shareLink = buildShareLink(info?.rancher?.slug, refId, origin);
+  const shareLink = buildShareLink(info?.rancher?.slug, refId, origin, affiliateCode);
   const ranchLabel = info?.rancher?.ranchName || rancherName;
   const shareMessage =
     `I just reserved a share of beef from ${ranchLabel} on BuyHalfCow — want to split a cow? Grab your half here: ${shareLink}`;
@@ -219,6 +235,7 @@ function DepositSuccessContent() {
           <h2 className="font-serif text-lg md:text-xl mb-2">Split your cow &mdash; invite your other half</h2>
           <p className="text-sm md:text-base text-charcoal mb-4">
             A whole or half cow is a lot of beef. Send a neighbor, friend, or family member your link &mdash; they reserve their share from {rancherFirst}, and you split the haul.
+            {affiliateCode ? ' This link is yours — when someone orders through it, you earn a referral credit.' : ''}
           </p>
           <div className="flex flex-col sm:flex-row gap-2 mb-3">
             <input

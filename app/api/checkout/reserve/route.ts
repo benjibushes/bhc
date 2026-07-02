@@ -116,6 +116,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: gate.error, fallback: gate.fallback === true }, { status: gate.status });
   }
 
+  // T2.2 (2026-07-02): affiliate attribution on the reserve rail. The success
+  // page's share link appends ?ref=<code> and the rancher page threads it into
+  // this POST — validate it exactly like /api/consumers does (existence,
+  // Status=Active, self-referral email+phone block) and stamp 'Referred By'
+  // below. Invalid/self refs validate to '' and are silently dropped.
+  // Best-effort: an Airtable hiccup here must never block the reserve.
+  let referredBy = '';
+  try {
+    const rawRef = typeof body.ref === 'string' ? body.ref : '';
+    if (rawRef) {
+      const { validateAffiliateRefForSignup } = await import('@/lib/affiliates');
+      referredBy = await validateAffiliateRefForSignup(rawRef, {
+        email: emailInput,
+        phone: phoneInput,
+      });
+    }
+  } catch (e: any) {
+    console.warn('[checkout/reserve] affiliate ref validation skipped:', e?.message);
+  }
+
   // Resolve buyer identity. Track whether we CREATE the consumer vs adopt an
   // existing one — only a created consumer may be auto-sessioned (see SECURITY).
   let buyerEmail = existingSession?.email || emailInput;
@@ -152,6 +172,11 @@ export async function POST(req: Request) {
           patch['SMS Opt-In'] = true;
           patch['SMS Opt-In At'] = new Date().toISOString();
         }
+        // First-touch attribution: stamp Referred By only when BLANK — an
+        // earlier attribution (quiz signup or a prior share) always wins.
+        if (referredBy && !String(existing[0]['Referred By'] || '').trim()) {
+          patch['Referred By'] = referredBy;
+        }
         if (Object.keys(patch).length > 0) {
           try { await updateRecord(TABLES.CONSUMERS, consumerId, patch); }
           catch (e: any) { console.warn('[checkout/reserve] consumer backfill skipped:', e?.message); }
@@ -170,6 +195,7 @@ export async function POST(req: Request) {
             buyerPhone,
             buyerState,
             smsOptIn: smsOptInReserve,
+            referredBy,
           }),
         );
         consumerId = created.id;

@@ -6,7 +6,7 @@
 // "talk first" link for the operator-led path. Ineligible ranchers fall back to
 // the quiz via the 409 { fallback:true } response.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { track } from '@/lib/track';
 import { deriveDeposit } from '@/lib/pricing';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
@@ -53,6 +53,29 @@ export default function DepositReserveForm({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState('');
+  // T2.2 (2026-07-02): affiliate attribution. Success-page share links append
+  // ?ref=<code> to this rancher page; capture it client-side (the page itself
+  // is a server component — reading searchParams there would fragment its
+  // cache) and thread it into the reserve POST, where the server validates it
+  // (existence, Active, self-referral block) before stamping 'Referred By'.
+  // Also count the click once per browser session — same sessionStorage
+  // pattern as /access + /partner.
+  const [refCode, setRefCode] = useState('');
+  useEffect(() => {
+    try {
+      const ref = new URLSearchParams(window.location.search).get('ref') || '';
+      if (!ref || ref.length > 50) return;
+      setRefCode(ref);
+      const dedupeKey = `bhc-ref-click-${ref}`;
+      if (!sessionStorage.getItem(dedupeKey)) {
+        sessionStorage.setItem(dedupeKey, '1');
+        fetch(`/api/affiliates/track-click?ref=${encodeURIComponent(ref)}`, {
+          method: 'POST',
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch {}
+  }, []);
 
   const cd = (c: Cut) => data[c];
   // Prefer the server-computed all-in deposit (commission baked in — matches
@@ -85,11 +108,9 @@ export default function DepositReserveForm({
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         // smsOptIn rides along using the funnel's exact payload convention
-        // (→ Airtable `SMS Opt-In`). The reserve route is a money path and is
-        // untouched in this slice, so it currently drops the field — the
-        // checkbox under-promises (we store nothing, we send nothing) until
-        // the route picks it up in a follow-up slice.
-        body: JSON.stringify({ slug, cut, email, phone, state: stateCode, smsOptIn }),
+        // (→ Airtable `SMS Opt-In`). ref = affiliate attribution captured from
+        // the URL above; server-validated before any stamp.
+        body: JSON.stringify({ slug, cut, email, phone, state: stateCode, smsOptIn, ...(refCode ? { ref: refCode } : {}) }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
