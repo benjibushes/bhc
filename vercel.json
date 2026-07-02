@@ -180,6 +180,10 @@
     {
       "path": "/api/cron/replenishment",
       "schedule": "50 17 * * *"
+    },
+    {
+      "path": "/api/cron/referral-record-id-backfill",
+      "schedule": "15 * * * *"
     }
   ]
 }

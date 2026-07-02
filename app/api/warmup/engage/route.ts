@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById, updateRecord, createRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, createRecord, createReferral, TABLES } from '@/lib/airtable';
 import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
 import { normalizeState } from '@/lib/states';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -98,7 +98,7 @@ async function stageOnboardingApproval(args: {
 
   let stagedRefId: string | null = null;
   try {
-    const ref: any = await createRecord(TABLES.REFERRALS, {
+    const ref: any = await createReferral({
       'Buyer': [buyer.id],
       'Suggested Rancher': [rancherId],
       'Suggested Rancher Name': ranchName,

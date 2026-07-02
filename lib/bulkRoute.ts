@@ -1,4 +1,4 @@
-import { getAllRecords, updateRecord, createRecord, escapeAirtableValue, TABLES } from './airtable';
+import { getAllRecords, updateRecord, createRecord, createReferral, escapeAirtableValue, TABLES } from './airtable';
 import { sendEmail, sendBuyerIntroNotification } from './email';
 import { normalizeState, normalizeStates } from './states';
 import { isQualifiedForRouting } from './qualification';
@@ -262,7 +262,7 @@ export async function bulkRouteStateToRancher(opts: {
         }
       } else {
         if (!dryRun) {
-          const newRef: any = await createRecord(TABLES.REFERRALS, {
+          const newRef: any = await createReferral({
             'Buyer': [buyerId],
             'Status': 'Intro Sent',
             'Buyer Name': buyerName,

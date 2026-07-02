@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server';
 import {
   TABLES,
   createRecord,
+  createReferral,
   updateRecord,
   getAllRecords,
   getRancherBySlug,
@@ -221,8 +222,7 @@ export async function POST(req: Request) {
   // Create the deposit-intent referral pinned to the rancher.
   let referral: any;
   try {
-    referral = await createRecord(
-      TABLES.REFERRALS,
+    referral = await createReferral(
       buildReserveReferralFields({ rancher, consumerId, buyerName, buyerEmail, buyerPhone, buyerState, cut }),
     );
   } catch (e: any) {

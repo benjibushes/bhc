@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
   TABLES,
-  createRecord,
+  createRecord, createReferral,
   updateRecord,
   getAllRecords,
   getRancherBySlug,
@@ -254,7 +254,7 @@ export async function POST(req: Request) {
 
   let referral: any;
   try {
-    referral = await createRecord(TABLES.REFERRALS, referralFields);
+    referral = await createReferral(referralFields);
   } catch (e: any) {
     console.error('[orders/request] referral create failed:', e?.message);
     return NextResponse.json(

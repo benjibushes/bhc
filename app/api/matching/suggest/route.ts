@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, createRecord, updateRecord, getRecordById } from '@/lib/airtable';
+import { getAllRecords, createRecord, createReferral, updateRecord, getRecordById } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -901,7 +901,7 @@ export async function POST(request: Request) {
 
     let referral: any;
     try {
-      referral = await createRecord(TABLES.REFERRALS, referralFields);
+      referral = await createReferral(referralFields);
     } catch (e: any) {
       console.warn('Could not create referral record:', e?.message);
       return NextResponse.json({
