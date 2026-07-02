@@ -2164,9 +2164,17 @@ export default function RancherDashboardPage() {
                         });
                         if (res.ok) {
                           setVerificationSubmitted(true);
+                        } else {
+                          // Surface the failure inline (same pattern as
+                          // updateError/capacityError) — a silent revert left
+                          // ranchers thinking they'd submitted, waiting forever.
+                          // Form stays open + button re-clickable for retry.
+                          const data = await res.json().catch(() => ({}));
+                          setVerificationError(data.error || 'Failed to submit verification. Please try again.');
                         }
                       } catch (e) {
                         console.error('Verification request error:', e);
+                        setVerificationError('Network error. Please check your connection and try again.');
                       }
                       setVerificationSubmitting(false);
                     }}
@@ -6527,6 +6535,12 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
   // order stays stable across renders.
   const [recheckBusy, setRecheckBusy] = useState(false);
   const [recheckMsg, setRecheckMsg] = useState('');
+  // Busy flag for the Connect onboarding/restricted CTA handlers below. MUST
+  // live above the early return: if anyBanner flips mid-session (e.g. a
+  // Connect-status change on dashboard refresh), a hook declared after the
+  // return would change the hook count between renders and crash the cockpit
+  // (rules-of-hooks violation).
+  const [resuming, setResuming] = useState(false);
   // A Connect banner is showing for any of the three Stripe-onboarding states
   // (not a tier/subscription problem) → offer the self-serve re-check.
   const connectBannerShowing =
@@ -6538,7 +6552,6 @@ function DashboardBannerCascade({ rancher }: { rancher: RancherInfo }) {
   // onboarding when account already exists). start re-mints a FRESH account
   // link every call, so a rancher who abandoned mid-KYC (no bank / unaccepted
   // TOS) lands straight back at the next required step — no expired-link wall.
-  const [resuming, setResuming] = useState(false);
   async function openConnectOnboarding() {
     setBannerErr('');
     setResuming(true);
