@@ -91,6 +91,10 @@ export const EXCLUDED_CRONS_24H: Readonly<Record<string, string>> = {
     "Cron Runs row exists while dark and the watchdog would alarm daily by design. " +
     "'dry-run' and 'true' modes DO write Cron Runs rows — MOVE to EXPECTED_CRONS_24H when " +
     "the flag goes live (or move its gate inside realHandler like demand-router's).",
+  'replenishment':
+    "dark-by-default: same three-state REPLENISHMENT_ENABLED contract as waiting-activation " +
+    "(gate before withCronRun → no Cron Runs row while dark). MOVE to EXPECTED_CRONS_24H " +
+    "when the flag goes live.",
 };
 
 export interface CronRunSummary {
