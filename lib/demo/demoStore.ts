@@ -47,14 +47,19 @@ const DEMO_RANCHER: Record<string, any> = {
   Phone: '(406) 555-0142',
   'Verification Status': 'Verified',
   'Active Status': 'Active',
-  'Onboarding Status': 'Complete',
+  // 'Live' (not 'Complete') — isRancherOperationalForBuyers gates onboarding
+  // to '' | 'Live', so a demo buyer's reserve/quiz actually goes through
+  // instead of 409ing "not taking orders". (2026-07-02 demo interactivity.)
+  'Onboarding Status': 'Live',
   'Agreement Signed': true,
   'Agreement Signed At': daysAgo(45),
   'Page Live': true,
   'Public Map Hidden': false,
   // Money model
   'Pricing Model': 'tier_v2',
-  Tier: 'Partner',
+  // 'Ranch' — a VALID tier_v2 tier (VALID_TIER_NAMES: pasture/ranch/operator/
+  // legacy_connect). 'Partner' failed hasValidTier, blocking online deposit.
+  Tier: 'Ranch',
   'Stripe Connect Status': 'active',
   'Subscription Status': 'active',
   'Commission Rate': 0.06,
@@ -529,10 +534,15 @@ const DEMO_THREAD_MESSAGES: Ref[] = [
 ];
 
 // ── Table → fixtures index ────────────────────────────────────────────────
-// Keyed by the REAL Airtable table names (TABLES.*) so demoTableRecords(table)
-// resolves for any caller that passes a table constant. Unknown tables return
-// [] (a table with no demo data simply renders empty, never errors).
-const TABLE_FIXTURES: Record<string, Ref[]> = {
+// Keyed by the REAL Airtable table names (TABLES.*).
+//
+// SHARED across ALL routes via globalThis (the standard Next.js dev pattern):
+// Next bundles /api/checkout/* and /api/rancher/* as SEPARATE server modules,
+// so a plain module-level `const` would give each route its OWN store — a
+// buyer's reserve (checkout bundle) would never reach the rancher dashboard
+// (rancher bundle). Pinning the mutable store on globalThis makes every route
+// in the single dev process see the same interactive data. Reseeds on restart.
+const _seed = (): Record<string, Ref[]> => ({
   [TABLES.RANCHERS]: [DEMO_RANCHER],
   [TABLES.REFERRALS]: DEMO_REFERRALS,
   [TABLES.CONSUMERS]: DEMO_CONSUMERS,
@@ -541,7 +551,10 @@ const TABLE_FIXTURES: Record<string, Ref[]> = {
   ['Thread Messages']: DEMO_THREAD_MESSAGES,
   [TABLES.BRANDS]: [],
   [TABLES.AFFILIATES]: [],
-};
+});
+const _g = globalThis as unknown as { __BHC_DEMO_STORE__?: Record<string, Ref[]> };
+if (!_g.__BHC_DEMO_STORE__) _g.__BHC_DEMO_STORE__ = _seed();
+const TABLE_FIXTURES: Record<string, Ref[]> = _g.__BHC_DEMO_STORE__;
 
 /**
  * All demo fixtures for a table, each shaped like a flattened Airtable record
@@ -551,6 +564,40 @@ const TABLE_FIXTURES: Record<string, Ref[]> = {
  */
 export function demoTableRecords(tableName: string): any[] {
   return (TABLE_FIXTURES[tableName] || []).slice();
+}
+
+/**
+ * Best-effort formula-aware read for the demo store (getAllRecords
+ * interception). Most callers filter their result in JS anyway, so returning
+ * everything is usually fine — BUT existence checks like the reserve rail's
+ * `LOWER({Email}) = "x"` MUST return [] for a genuinely-new email, or the
+ * route thinks the buyer already exists and sends a magic link instead of
+ * creating the lead on camera. So we parse the simple equality patterns
+ * (`{Field} = "v"`, `LOWER({Field}) = "v"`, AND-ed) and filter on them;
+ * anything we don't recognize falls back to returning all rows.
+ */
+export function demoQuery(tableName: string, formula?: string): any[] {
+  const rows = TABLE_FIXTURES[tableName] || [];
+  if (!formula || !formula.trim()) return rows.slice();
+  // Pull every `{Field} = "value"` / `LOWER({Field}) = "value"` clause.
+  const clauses: Array<{ field: string; value: string; lower: boolean }> = [];
+  const re = /(LOWER\()?\{([^}]+)\}\)?\s*=\s*"((?:[^"\\]|\\.)*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(formula)) !== null) {
+    clauses.push({ lower: !!m[1], field: m[2], value: m[3].replace(/\\"/g, '"').replace(/\\\\/g, '\\') });
+  }
+  if (clauses.length === 0) return rows.slice();
+  // OR(...) → any clause matches (the rancher-scoped referral read is
+  // `OR({Rancher Record Id}=x, {Suggested Rancher Record Id}=x)`, and a fresh
+  // reserve/quiz lead only has one of the two — so AND would hide it). Default
+  // AND for the common single-field existence check.
+  const isOr = /^\s*OR\s*\(/i.test(formula);
+  const test = (r: any, c: { field: string; value: string; lower: boolean }) => {
+    const cell = r[c.field];
+    const cellStr = Array.isArray(cell) ? cell.map(String).join(',') : String(cell ?? '');
+    return c.lower ? cellStr.toLowerCase() === c.value.toLowerCase() : cellStr === c.value;
+  };
+  return rows.filter((r) => (isOr ? clauses.some((c) => test(r, c)) : clauses.every((c) => test(r, c))));
 }
 
 /**
@@ -580,14 +627,71 @@ export function demoRecordsByIds(tableName: string, ids: unknown): any[] {
  * mode, for ANY slug (so a mistyped slug in a screen recording still lands on
  * the demo page instead of a 404). Returns the rancher record or null.
  */
-export function demoRancherForSlug(slug: string): any | null {
-  // In demo mode every slug resolves to the one demo rancher. The exact-match
-  // is kept explicit for readability; the fallthrough handles typos on camera.
-  if (!slug) return DEMO_RANCHER;
-  return DEMO_RANCHER;
+export function demoRancherForSlug(_slug: string): any | null {
+  // Every slug (incl. a typo on camera) resolves to the one demo rancher. Read
+  // from the SHARED store so a landing-page edit made in the dashboard shows on
+  // the public page.
+  return (TABLE_FIXTURES[TABLES.RANCHERS] || [])[0] || DEMO_RANCHER;
+}
+
+// ── MUTABLE demo store (in-session interactivity) ─────────────────────────
+// So a demo VIDEO is interactive: closing a sale, requesting a deposit,
+// editing the landing page, or a buyer reserving all PERSIST for the life of
+// the dev-server process (module-level backing arrays). A server restart
+// reseeds to the fixtures above — the reset button is Ctrl-C + npm run dev.
+// Still zero external calls: these mutate memory only, never Airtable.
+
+let _demoSeq = 0;
+/** Deterministic-ish demo record id (17-char rec shape) for a created row. */
+function demoNewId(prefix = 'created'): string {
+  _demoSeq += 1;
+  // rec + 14 chars. Pad the sequence so ids stay the valid 17-char shape.
+  return (`recDEMO${prefix}${_demoSeq}`.replace(/[^A-Za-z0-9]/g, '') + '00000000000000').slice(0, 17);
+}
+
+function backingArray(tableName: string): Ref[] | null {
+  return TABLE_FIXTURES[tableName] || null;
+}
+
+/**
+ * Append a record to the live demo table (createRecord interception). Returns
+ * the flattened record. A brand-new table name is created on the fly so a demo
+ * write to an un-seeded table still succeeds instead of vanishing.
+ */
+export function demoCreate(tableName: string, fields: Record<string, any>): any {
+  if (!TABLE_FIXTURES[tableName]) TABLE_FIXTURES[tableName] = [];
+  const nowIso = new Date().toISOString();
+  const rec: any = { id: demoNewId(), ...fields, _createdTime: nowIso };
+  TABLE_FIXTURES[tableName].push(rec);
+  return rec;
+}
+
+/**
+ * Merge fields into an existing demo record IN PLACE (updateRecord
+ * interception) so the change is visible on the next read — close a sale, and
+ * the dashboard's next fetch recomputes stats from the mutated row. Unknown id
+ * → returns the merged shape without persisting (matches the old no-op so a
+ * stray update can't throw).
+ */
+export function demoUpdate(tableName: string, id: string, fields: Record<string, any>): any {
+  const rows = backingArray(tableName);
+  const rec = rows?.find((r) => r.id === id);
+  if (rec) {
+    Object.assign(rec, fields);
+    return rec;
+  }
+  return { id, ...fields };
+}
+
+/** Remove a demo record (deleteRecord interception). No-throw on unknown id. */
+export function demoDelete(tableName: string, id: string): void {
+  const rows = backingArray(tableName);
+  if (!rows) return;
+  const i = rows.findIndex((r) => r.id === id);
+  if (i >= 0) rows.splice(i, 1);
 }
 
 /** The demo rancher record id (for the auth bypass + session object). */
 export function demoRancher(): any {
-  return DEMO_RANCHER;
+  return (TABLE_FIXTURES[TABLES.RANCHERS] || [])[0] || DEMO_RANCHER;
 }
