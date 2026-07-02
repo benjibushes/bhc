@@ -657,21 +657,24 @@ async function handleDispute(event: any): Promise<void> {
     }
   }
 
-  // LOUD Telegram alert — ops needs to act fast on disputes.
-  try {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🚨 STRIPE DISPUTE — ${eventType}\n` +
-        `Amount: $${amount}\n` +
-        `Reason: ${reason}\n` +
-        `Status: ${status}\n` +
-        `Charge: ${chargeId}\n` +
-        `Stripe: https://dashboard.stripe.com/payments/${chargeId}` +
-        (paymentRecordId ? `\nPayments row: ${paymentRecordId}` : ''),
-    );
-  } catch (e: any) {
-    console.warn('[stripe-connect dispute] telegram alert failed:', e?.message);
-  }
+  // LOUD alert — ops needs to act fast on disputes. Rides sendOperatorSignal
+  // (2026-07-02) so a dead Telegram wire falls back to SMS/email
+  // (lib/signalDelivery.ts) instead of swallowing a chargeback. Never throws.
+  // Dedupe keys on eventType + dispute id: created/funds_withdrawn/closed are
+  // distinct lifecycle moments and must each fire.
+  await sendOperatorSignal({
+    urgency: 'loud',
+    kind: 'dispute',
+    summary: `STRIPE DISPUTE — ${eventType}`,
+    detail:
+      `Amount: $${amount}\n` +
+      `Reason: ${reason}\n` +
+      `Status: ${status}\n` +
+      `Charge: ${chargeId}\n` +
+      `Stripe: https://dashboard.stripe.com/payments/${chargeId}` +
+      (paymentRecordId ? `\nPayments row: ${paymentRecordId}` : ''),
+    dedupeKey: `dispute:${eventType}:${dispute?.id || chargeId || piId || 'unknown'}`,
+  });
 
   // H-3 audit fix: mirror dispute audit log on Connect path. tier_v2
   // disputes fire on the connected account webhook, not the platform.
@@ -725,19 +728,20 @@ async function handlePayoutFailed(event: any): Promise<void> {
     console.error('[stripe-connect payout.failed] rancher lookup failed:', e?.message);
   }
 
-  // LOUD Telegram alert to ops.
-  try {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🚨 STRIPE PAYOUT FAILED\n` +
-        `Rancher: ${rancherName || accountId}\n` +
-        `Amount: $${amount}\n` +
-        `Reason: ${failureMessage} (${failureCode})\n` +
-        `Stripe: https://dashboard.stripe.com/connect/accounts/${accountId}`,
-    );
-  } catch (e: any) {
-    console.warn('[stripe-connect payout.failed] telegram alert failed:', e?.message);
-  }
+  // LOUD alert to ops — rides sendOperatorSignal (2026-07-02) so a dead
+  // Telegram wire falls back to SMS/email (lib/signalDelivery.ts): a failed
+  // payout is a rancher silently not getting paid. Never throws.
+  await sendOperatorSignal({
+    urgency: 'loud',
+    kind: 'payout',
+    summary: 'STRIPE PAYOUT FAILED',
+    detail:
+      `Rancher: ${rancherName || accountId}\n` +
+      `Amount: $${amount}\n` +
+      `Reason: ${failureMessage} (${failureCode})\n` +
+      `Stripe: https://dashboard.stripe.com/connect/accounts/${accountId}`,
+    dedupeKey: `payout-failed:${payout?.id || accountId}`,
+  });
 
   // Email the rancher with the fix path.
   if (rancherEmail) {
@@ -814,17 +818,16 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
 
   if (!rancher) {
     // No matching rancher — event still valid (e.g. a test acct, or a
-    // rancher we already wiped). Telegram so ops sees the orphan, then
-    // return. The outer handler still marks the Stripe Events row
-    // processed.
-    try {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `🔌 CONNECT DETACHED — no Ranchers row matches acct ${accountId}. Orphan webhook — verify if this acct was previously wiped.`,
-      );
-    } catch (e: any) {
-      console.warn('[stripe-connect deauthorized] orphan telegram failed:', e?.message);
-    }
+    // rancher we already wiped). Loud signal (SMS/email fallback rail) so
+    // ops sees the orphan even with Telegram down, then return. The outer
+    // handler still marks the Stripe Events row processed.
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'connect',
+      summary: 'CONNECT DETACHED — orphan account',
+      detail: `No Ranchers row matches acct ${accountId}. Orphan webhook — verify if this acct was previously wiped.`,
+      dedupeKey: `connect-deauthorized:${accountId}`,
+    });
     return;
   }
 
@@ -889,15 +892,17 @@ async function handleConnectDeauthorized(event: any): Promise<void> {
     }
   }
 
-  // LOUD Telegram to ops.
-  try {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🔌 CONNECT DETACHED — ${rancherLabel} disconnected Stripe Connect. Routing paused. Action: contact rancher to re-onboard OR mark legacy.`,
-    );
-  } catch (e: any) {
-    console.warn('[stripe-connect deauthorized] telegram alert failed:', e?.message);
-  }
+  // LOUD alert to ops — rides sendOperatorSignal (2026-07-02) so a dead
+  // Telegram wire falls back to SMS/email (lib/signalDelivery.ts): a detach
+  // kills the rancher's deposit rail, ops must hear it. Never throws.
+  await sendOperatorSignal({
+    urgency: 'loud',
+    kind: 'connect',
+    summary: `CONNECT DETACHED — ${rancherLabel}`,
+    detail: `${rancherLabel} disconnected Stripe Connect. Routing paused. Action: contact rancher to re-onboard OR mark legacy.`,
+    refs: [{ type: 'rancher', id: rancherId, label: String(rancherLabel) }],
+    dedupeKey: `connect-deauthorized:${accountId}`,
+  });
 
   // Audit log — reverseAction is noop because re-authorizing Connect
   // requires the rancher to walk back through Stripe Express onboarding.

@@ -10,6 +10,7 @@ import {
 } from '@/lib/airtable';
 import { sendBrandListingConfirmation, sendFoundingHerdWelcome, sendPostPurchaseWelcome } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { commissionRateForTier, TierSlug } from '@/lib/tiers';
 import { isCommissionRateFieldEmpty } from '@/lib/commission';
 import { rancherIdFromSubscription } from '@/lib/stripeSubscription';
@@ -1632,21 +1633,25 @@ async function handleDispute(event: any): Promise<void> {
     }
   }
 
-  // LOUD Telegram alert — ops needs to act fast on disputes.
-  try {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🚨 STRIPE DISPUTE — ${eventType}\n` +
-        `Amount: $${amount}\n` +
-        `Reason: ${reason}\n` +
-        `Status: ${status}\n` +
-        `Charge: ${chargeId}\n` +
-        `Stripe: https://dashboard.stripe.com/payments/${chargeId}` +
-        (paymentRecordId ? `\nPayments row: ${paymentRecordId}` : ''),
-    );
-  } catch (e: any) {
-    console.warn('[dispute] telegram alert failed:', e?.message);
-  }
+  // LOUD alert — ops needs to act fast on disputes. Rides sendOperatorSignal
+  // (2026-07-02) so a dead Telegram wire falls back to SMS/email
+  // (lib/signalDelivery.ts) instead of swallowing a chargeback. Never throws.
+  // Dedupe keys on eventType + dispute id: created/funds_withdrawn/closed are
+  // distinct lifecycle moments and must each fire; Stripe re-fires of the
+  // SAME event are suppressed.
+  await sendOperatorSignal({
+    urgency: 'loud',
+    kind: 'dispute',
+    summary: `STRIPE DISPUTE — ${eventType}`,
+    detail:
+      `Amount: $${amount}\n` +
+      `Reason: ${reason}\n` +
+      `Status: ${status}\n` +
+      `Charge: ${chargeId}\n` +
+      `Stripe: https://dashboard.stripe.com/payments/${chargeId}` +
+      (paymentRecordId ? `\nPayments row: ${paymentRecordId}` : ''),
+    dedupeKey: `dispute:${eventType}:${dispute?.id || chargeId || piId || 'unknown'}`,
+  });
 
   // H-3 audit fix: dispute writes were invisible. Log the chargeback so
   // ops can reconstruct the timeline post-mortem (created → withdrew →
@@ -2203,18 +2208,23 @@ async function handleFounderLifetimeRefundOrDispute(
     }
   }
 
-  // ── LOUD Telegram alert ──
-  try {
+  // ── Operator alert ──
+  // The DISPUTE variant is a chargeback — failure-class, so it rides the
+  // loud sendOperatorSignal rail (SMS/email fallback when Telegram is down —
+  // lib/signalDelivery.ts). The refund variant stays 'normal' urgency
+  // (Telegram-only, delivery-equivalent to the old raw wire — refunds can be
+  // self-initiated and don't warrant a 2am SMS). Never throws.
+  {
     const name = String(consumer['Full Name'] || consumer['Email'] || consumerId);
     const amountDollars = (amountCents / 100).toFixed(2);
-    const emoji = kind === 'refund' ? '↩️' : '🚨';
     const headline = kind === 'refund' ? 'FOUNDER LIFETIME REFUNDED' : 'FOUNDER LIFETIME DISPUTED';
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `${emoji} <b>${headline}</b>\n<b>${name}</b>\nTier: ${tierLabel || '(unknown)'}\nAmount: $${amountDollars}\nReason: ${reason}\nPI ${piId.slice(-8)}\n\nWall placement removed. Seat counter released.`,
-    );
-  } catch (e: any) {
-    console.warn(`[founder-lifetime-${kind}] telegram alert failed:`, e?.message);
+    await sendOperatorSignal({
+      urgency: kind === 'refund' ? 'normal' : 'loud',
+      kind: kind === 'refund' ? 'sale' : 'dispute',
+      summary: headline,
+      detail: `<b>${name}</b>\nTier: ${tierLabel || '(unknown)'}\nAmount: $${amountDollars}\nReason: ${reason}\nPI ${piId.slice(-8)}\n\nWall placement removed. Seat counter released.`,
+      dedupeKey: `founder-lifetime-${kind}:${piId || consumerId}`,
+    });
   }
 
   try {
