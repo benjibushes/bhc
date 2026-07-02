@@ -1,4 +1,7 @@
 import { getOperatorBookingUrl } from '@/lib/calBooking';
+// DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+// lib/demo/demoMode.ts. Pure import, no side effect when the flag is off.
+import { isDemoMode } from '@/lib/demo/demoMode';
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_ADMIN_CHAT_ID = process.env.TELEGRAM_ADMIN_CHAT_ID || '';
@@ -33,6 +36,12 @@ async function _gateForChat(chatId: string, fn: () => Promise<any>): Promise<any
 }
 
 async function sendTelegramMessage(chatId: string, text: string, replyMarkup?: any) {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. The chokepoint for every Telegram send — no-op so a
+  // demo action never pings the founder's real chat.
+  if (isDemoMode()) {
+    return null;
+  }
   if (!TELEGRAM_BOT_TOKEN || !chatId) {
     console.warn('Telegram not configured, skipping notification');
     return null;
