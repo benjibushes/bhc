@@ -57,6 +57,7 @@ export const EXPECTED_CRONS_24H = [
   'onboarding-stuck',
   'orphan-checkout-reaper',
   'qualified-no-action',
+  'referral-record-id-backfill',
   'rancher-followup',
   'rancher-go-live-sync',
   'rancher-launch-warmup',

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createRecord, updateRecord, getRecordById, TABLES } from '@/lib/airtable';
+import { createRecord, createReferral, updateRecord, getRecordById, TABLES } from '@/lib/airtable';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     }
 
     const now = new Date().toISOString();
-    const referral = await createRecord(TABLES.REFERRALS, {
+    const referral = await createReferral({
       'Buyer': [buyerId],
       'Rancher': [rancherId],
       'Suggested Rancher': [rancherId],

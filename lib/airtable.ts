@@ -202,6 +202,18 @@ export async function createRecord(tableName: string, fields: any) {
   throw new Error(`Failed to create record in ${tableName} after ${maxRetries} retries`);
 }
 
+// Create a Referrals row with the denormalized rancher-record-id text fields
+// stamped from the Rancher / Suggested Rancher links (scale-ladder #1,
+// 2026-07-02). Every referral CREATE must go through this — a fresh lead is
+// then filterable on the /rancher dashboard the instant it exists instead of
+// forcing a full-table scan. stampRancherRecordIds is pure + no-ops when no
+// link is present (waitlist referrals). The backfill cron is the self-heal
+// belt for the reassign/approve UPDATE paths that don't create.
+export async function createReferral(fields: any) {
+  const { stampRancherRecordIds } = await import('./referralRecordId');
+  return createRecord(TABLES.REFERRALS, stampRancherRecordIds(fields));
+}
+
 // ── In-process cache for hot tables ─────────────────────────────────────
 // Spike-readiness: matching/suggest + consumers signup both call
 // getAllRecords(RANCHERS) on every hit. At 30+ signups/sec that detonates

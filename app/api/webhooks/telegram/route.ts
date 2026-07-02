@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById, updateRecord, createRecord, escapeAirtableValue } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, createRecord, createReferral, escapeAirtableValue } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { getMaxActiveReferrals, getLiveCapacity, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
@@ -799,7 +799,7 @@ async function processUpdate(update: any) {
           } catch { /* fall through on Airtable read failure */ }
 
           const now = new Date().toISOString();
-          const refRecord: any = await createRecord(TABLES.REFERRALS, {
+          const refRecord: any = await createReferral({
             'Buyer': [buyer.id],
             'Rancher': [rancher.id],
             'Suggested Rancher': [rancher.id],

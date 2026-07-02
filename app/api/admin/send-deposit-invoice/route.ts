@@ -11,7 +11,7 @@
 // + persists Referral if missing + fires email.
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById, createRecord, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
+import { getAllRecords, getRecordById, createRecord, createReferral, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
 import { createDepositCheckout } from '@/lib/stripeConnect';
 import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
@@ -116,7 +116,7 @@ export async function POST(req: Request) {
       console.warn('[send-deposit-invoice] referral update failed:', e?.message);
     }
   } else {
-    const created = await createRecord(TABLES.REFERRALS, {
+    const created = await createReferral({
       'Buyer': [buyer.id],
       'Rancher': [rancherId],
       'Buyer Email': buyerEmail,

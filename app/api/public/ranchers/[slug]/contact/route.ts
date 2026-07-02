@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getRancherBySlug, getAllRecords, createRecord, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
+import { getRancherBySlug, getAllRecords, createRecord, createReferral, updateRecord, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { sendTrackedContactEmail } from '@/lib/email';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
@@ -162,7 +162,7 @@ export async function POST(
           Rancher: [rancher.id],
         };
         if (consumerId) referralFields.Buyer = [consumerId];
-        await createRecord(TABLES.REFERRALS, referralFields);
+        await createReferral(referralFields);
       }
     } catch (e) {
       console.error('Error tracking contact referral:', e);
