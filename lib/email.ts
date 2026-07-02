@@ -4047,7 +4047,7 @@ export async function sendAbandonedRecoveryEmail(data: {
   const subject = data.stage === 1
     ? 'You started something on BuyHalfCow — finish in 60 seconds?'
     : data.stage === 2
-      ? 'Still want in? Your spot is held'
+      ? 'Still want in? Picking up where you left off'
       : 'Last touch — what BuyHalfCow actually does';
 
   const body = data.stage === 1
@@ -4065,7 +4065,7 @@ export async function sendAbandonedRecoveryEmail(data: {
       : `
       <p>${greeting}</p>
       <p>Last note from me — I won't keep emailing.</p>
-      <p>BuyHalfCow isn't a marketplace. It's a private network where I personally introduce serious buyers to verified ranchers. Most members save 30-50% vs grocery beef and end up with 6-12 months of premium cuts in their freezer.</p>
+      <p>BuyHalfCow isn't a marketplace. It's a private network where I personally introduce serious buyers to verified ranchers. Members end up with 6-12 months of premium, traceable cuts in the freezer — from one animal, one rancher they can actually call, raised the way they'd raise it themselves.</p>
       <p>If you're still interested, finishing the form takes a minute. If not, no hard feelings — I'll stop the emails after this one.</p>`;
 
   return guardedSend({

@@ -15,6 +15,7 @@ import { depositDisplay } from '@/lib/pricing';
 import { tierFor, depositCommissionRate } from '@/lib/tiers';
 import { getMaxActiveReferrals } from '@/lib/rancherCapacity';
 import { normalizeImageUrl } from '@/lib/imageUrl';
+import { safeExternalUrl, heroPillText, formatCustomProductPrice } from '@/lib/rancherPageGuards';
 import RancherOrderForm from './RancherOrderForm';
 import DepositReserveForm from './DepositReserveForm';
 import RancherPageAnalytics, { RancherPricingCTA } from './RancherPageAnalytics';
@@ -179,9 +180,13 @@ export default async function RancherPage(
   const calCtaUrl = isOperatorTier
     ? benSalesCalUrl
     : `https://cal.com/${calComSlug}`;
-  const googleReviewsUrl = r['Google Reviews URL'] || '';
-  const facebookUrl = r['Facebook URL'] || '';
-  const instagramUrl = r['Instagram URL'] || '';
+  // safeExternalUrl (2026-07-02 audit): these free-text fields were rendered
+  // straight into href. A rancher typing a handle ("ZK Ranches") or a status
+  // ("coming soon") produced a link resolving to a broken RELATIVE path on our
+  // own origin. Only absolute http(s) URLs survive; anything else hides the link.
+  const googleReviewsUrl = safeExternalUrl(r['Google Reviews URL']);
+  const facebookUrl = safeExternalUrl(r['Facebook URL']);
+  const instagramUrl = safeExternalUrl(r['Instagram URL']);
   const processingFacility = r['Processing Facility'] || '';
   const refundPolicy = r['Refund Policy'] || '';
 
@@ -446,8 +451,12 @@ export default async function RancherPage(
   // comparing so "Bar M Ranch" === "bar m ranch ". Only a genuine third-party
   // facility earns the "USDA inspected" quick-fact.
   const normName = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  // The USDA quick-fact strip renders "USDA inspected: <Plant Name>" inline —
+  // it expects a short facility NAME. A rancher who pasted two sentences into
+  // this field blew out the strip into a runaway paragraph. Gate on a short,
+  // single-line value (2026-07-02 audit); longer prose still lives in About.
   const hasRealProcessingFacility =
-    !!processingFacility && normName(processingFacility) !== normName(name);
+    !!heroPillText(processingFacility) && normName(processingFacility) !== normName(name);
 
   const locationLine = [city, state].filter(Boolean).join(', ');
 
@@ -510,8 +519,8 @@ export default async function RancherPage(
                 {locationLine && (
                   <Pill tone="inverted">{locationLine}</Pill>
                 )}
-                {beefTypes && (
-                  <Pill tone="inverted">{beefTypes}</Pill>
+                {heroPillText(beefTypes) && (
+                  <Pill tone="inverted">{heroPillText(beefTypes)}</Pill>
                 )}
                 {/* Hero rating summary (P1 #7) — only when ≥1 real review. */}
                 {reviewCount > 0 && (
@@ -666,7 +675,7 @@ export default async function RancherPage(
               {hasRealProcessingFacility && (
                 <span>
                   <span className="text-saddle">USDA inspected</span>{' '}
-                  <strong>{processingFacility}</strong>
+                  <strong>{heroPillText(processingFacility)}</strong>
                 </span>
               )}
               {statesServed && statesServed !== state && (
@@ -871,7 +880,11 @@ export default async function RancherPage(
               <p className="text-saddle leading-relaxed text-lg">
                 {name} is a direct-to-consumer cattle ranch
                 {locationLine ? ` in ${locationLine}` : ''}
-                {beefTypes ? `, raising ${beefTypes.toLowerCase()} beef` : ''}
+                {/* Only splice Beef Types into the sentence when it's a short
+                    phrase — a multi-sentence/checklist value produced broken
+                    grammar ("…pastures. beef for families"). heroPillText
+                    enforces short single-line (2026-07-02 audit). */}
+                {heroPillText(beefTypes) ? `, raising ${heroPillText(beefTypes).toLowerCase()} beef` : ''}
                 {' '}for families who want to know exactly where their meat comes
                 from. Order direct, skip the grocery-store middleman, and fill
                 your freezer with beef raised the way it should be.
@@ -1101,9 +1114,11 @@ export default async function RancherPage(
                   <Card key={i} variant="default" padding="lg" className="flex flex-col">
                     <div className="flex-1 space-y-2.5">
                       <h3 className="font-serif text-2xl text-charcoal">{product.name}</h3>
-                      <p className="font-serif text-3xl text-saddle">
-                        ${product.price}
-                      </p>
+                      {formatCustomProductPrice(product.price, product.name, product.description) && (
+                        <p className="font-serif text-3xl text-saddle">
+                          {formatCustomProductPrice(product.price, product.name, product.description)}
+                        </p>
+                      )}
                       {product.description && (
                         <p className="text-sm text-charcoal/75 leading-relaxed">
                           {product.description}

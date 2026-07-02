@@ -981,8 +981,17 @@ function Reveal({
             no rush either way — {rancher.name} has your details and will reach out within 24&ndash;48 hours.
           </p>
         </div>
-      ) : offerOperatorCall ? (
-        /* ── Mode 1: operator sales call (non-deposit-capable only) ──────────── */
+      ) : offerOperatorCall && result?.qualified ? (
+        /* ── Mode 1: operator sales call (non-deposit-capable only) ──────────────
+           Gated on result.qualified (2026-07-02 funnel audit F1): a buyer who
+           COMPLETES the quiz but scores below the routing gate gets
+           qualified:false with NO operatorCalLink from /api/qualify. Without
+           the qualified check, this branch rendered a confident "book your
+           call with ben … and get you matched" screen whose booker then
+           collapsed to "booking temporarily unavailable" (a copy-lie
+           dead-end that also offered the sales path to an explicitly-
+           unqualified buyer, against qualify-before-route). Unqualified now
+           falls through to the honest waitlist/nurture reveal below. */
         <div className="space-y-4 text-left">
           <div className="space-y-1">
             <p className="text-xs uppercase tracking-widest text-saddle">next step · about 15 minutes</p>
