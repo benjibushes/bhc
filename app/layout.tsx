@@ -12,6 +12,9 @@ import Footer from "./components/Footer";
 import ChromeGate from "./components/ChromeGate";
 import FocusedHeader from "./components/FocusedHeader";
 import ConsentBanner from "./components/ConsentBanner";
+// DEMO MODE watermark — renders nothing unless NEXT_PUBLIC_DEMO_MODE==='true'
+// (a local-only flag never set in Vercel). See lib/demo/demoMode.ts.
+import DemoBanner from "./components/DemoBanner";
 
 const playfair = Playfair_Display({
   variable: "--font-playfair",
@@ -125,6 +128,8 @@ export default function RootLayout({
             covers every page, including focused flows. GPC browsers are
             opted out silently and never see it. */}
         <ConsentBanner />
+        {/* DEMO MODE watermark — no-op unless NEXT_PUBLIC_DEMO_MODE==='true'. */}
+        <DemoBanner />
         {/* C4 — Vercel RUM (page analytics + Core Web Vitals). Both are
             no-ops off Vercel and add nothing until deployed there. */}
         <Analytics />

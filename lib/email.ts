@@ -8,6 +8,9 @@ import {
   OPERATOR_BOOKING_FALLBACK_URL,
 } from './calBooking';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from './telegram';
+// DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+// lib/demo/demoMode.ts. Pure import, no side effect when the flag is off.
+import { isDemoMode } from './demo/demoMode';
 
 // DOMPurify allowlist for /admin/broadcast HTML mode. P0 audit fix (C-5)
 // hardened in P4-F: operator-supplied HTML was forwarded raw to Resend — a
@@ -426,6 +429,13 @@ async function guardedSend(opts: {
    */
   campaign?: string;
 }): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. The single chokepoint for every outbound email
+  // (sendEmail, sendMagicLink, and every template sender route through here) —
+  // return a benign success without sending or logging.
+  if (isDemoMode()) {
+    return { success: true };
+  }
   const gate = await checkFrequencyCap(opts.recipientEmail, opts.templateName);
   if (!gate.ok) {
     await logEmailSend({

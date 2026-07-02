@@ -13,8 +13,25 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
+// DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+// lib/demo/demoMode.ts.
+import { isDemoMode } from '@/lib/demo/demoMode';
 
 const BHC_RANCHER_COOKIE = 'bhc-rancher-auth';
+
+// The demo rancher session — returned with NO cookie when demo mode is on, so
+// every /api/rancher/* route auto-authenticates as the flagship demo rancher.
+// Field values mirror the demo Ranchers fixture (lib/demo/demoStore.ts).
+function demoRancherSession(): RancherSession {
+  return {
+    rancherId: 'recDEMOrancher01x',
+    email: 'sam@democreekcattle.example',
+    name: 'Sam Rivers',
+    ranchName: 'Demo Creek Cattle Co',
+    state: 'MT',
+    impersonatedBy: null,
+  };
+}
 
 export interface RancherSession {
   rancherId: string;
@@ -38,6 +55,9 @@ export interface RancherSession {
 export async function resolveRancherSession(
   _request: Request,
 ): Promise<RancherSession | null> {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Auto-authenticate as the demo rancher with no cookie.
+  if (isDemoMode()) return demoRancherSession();
   const cookieStore = await cookies();
   const cookie = cookieStore.get(BHC_RANCHER_COOKIE);
   if (!cookie?.value) return null;

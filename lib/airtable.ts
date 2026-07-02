@@ -1,5 +1,11 @@
 import Airtable from 'airtable';
 import { withTimeout, AirtableTimeoutError, resolveAirtableTimeoutMs } from './airtableTimeout';
+// DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+// lib/demo/demoMode.ts. Static import is safe: the module is pure and has no
+// side effect when the flag is off (announceDemoModeOnce short-circuits). The
+// fixture store is required LAZILY inside each gated branch below so its data
+// never loads in production.
+import { isDemoMode } from './demo/demoMode';
 
 // Re-export so callers can `instanceof AirtableTimeoutError` without a
 // separate import path.
@@ -126,6 +132,10 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>, label = 'Airtable'): 
 
 // Helper function to create a record (auto-strips problematic Airtable fields)
 export async function createRecord(tableName: string, fields: any) {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. No-op create: return a fake record so buyer funnel
+  // signups / reserves succeed on camera without persisting or erroring.
+  if (isDemoMode()) return { id: `recDEMOcreated${Date.now().toString(36)}`.slice(0, 24), ...fields } as any;
   let currentFields = { ...fields };
   const maxRetries = 8;
 
@@ -254,6 +264,11 @@ export async function getAllRecords(
   filterByFormula?: string,
   opts?: { fields?: string[] },
 ) {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Return in-memory fixtures; the caller's own JS
+  // filtering narrows them (faithful formula-matching isn't required for one
+  // demo rancher's worth of data). opts.fields projection is respected loosely.
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoTableRecords(tableName);
   try {
     const projected = !!(opts?.fields && opts.fields.length);
     const key = !filterByFormula && !projected ? _cacheKey(tableName) : null;
@@ -300,6 +315,10 @@ export async function getRecordsByIds(
   tableName: string,
   ids: unknown, // typically a link-field value: string[] | undefined
 ): Promise<Record<string, any>[]> {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Return only the requested demo rows (so each demo
+  // thread shows just its own messages).
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoRecordsByIds(tableName, ids);
   const valid = (Array.isArray(ids) ? ids : []).filter(
     (id): id is string => typeof id === 'string' && AIRTABLE_RECORD_ID_SHAPE.test(id),
   );
@@ -327,6 +346,10 @@ export async function getFirstRecord(
   tableName: string,
   filterByFormula: string,
 ): Promise<Record<string, any> | null> {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Return the first demo row for the table (loose match;
+  // one demo rancher's data means the first row is the sensible answer).
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoTableRecords(tableName)[0] || null;
   try {
     const records = await withRateLimitRetry(
       () =>
@@ -349,6 +372,13 @@ export async function getFirstRecord(
 
 // Helper function to get a single record by ID
 export async function getRecordById(tableName: string, recordId: string) {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Resolve the demo record by id, else a sensible demo
+  // row for the table (so the dashboard's rancher lookup always resolves).
+  if (isDemoMode()) {
+    const demo = require('./demo/demoStore') as typeof import('./demo/demoStore');
+    return demo.demoRecordById(tableName, recordId) || demo.demoTableRecords(tableName)[0] || null;
+  }
   try {
     const record = await withRateLimitRetry(() => base(tableName).find(recordId), tableName);
     return {
@@ -408,6 +438,15 @@ export async function findReferralByBuyerEmail(email: string) {
 
 // Alias for consistency
 export async function getRecord(tableName: string, recordId: string) {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. This helper returns the { id, fields } shape.
+  if (isDemoMode()) {
+    const demo = require('./demo/demoStore') as typeof import('./demo/demoStore');
+    const rec = demo.demoRecordById(tableName, recordId) || demo.demoTableRecords(tableName)[0];
+    if (!rec) return { id: recordId, fields: {} };
+    const { id, _createdTime, ...fields } = rec;
+    return { id, fields };
+  }
   try {
     // C3: this helper never had retry; give the bare SDK call the same
     // per-attempt timeout so a hung connection throws instead of dangling.
@@ -424,6 +463,11 @@ export async function getRecord(tableName: string, recordId: string) {
 
 // Helper function to update a record (auto-strips problematic Airtable fields)
 export async function updateRecord(tableName: string, recordId: string, fields: any) {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. No-op update: return the merged record so "close
+  // sale", "request deposit", capacity edits etc. succeed on camera without
+  // touching Airtable (changes don't persist — the fixtures are the truth).
+  if (isDemoMode()) return { id: recordId, ...fields } as any;
   let currentFields = { ...fields };
   const maxRetries = 8;
 
@@ -561,6 +605,10 @@ export async function deleteRecord(tableName: string, recordId: string) {
 
 // Get all ranchers with active landing pages (Page Live = true)
 export async function getActiveRancherPages() {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. The demo rancher is Page Live, so it's the one
+  // active page (drives generateStaticParams + the discovery map).
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoTableRecords(TABLES.RANCHERS);
   try {
     const records = await withTimeout(
       base(TABLES.RANCHERS)
@@ -581,6 +629,9 @@ export async function getActiveRancherPages() {
 
 // Get a single rancher by their URL slug
 export async function getRancherBySlug(slug: string) {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Any slug resolves to the demo rancher.
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoRancherForSlug(slug);
   try {
     const safeSlug = escapeAirtableValue(slug);
     const records = await withTimeout(
@@ -720,6 +771,10 @@ export async function findOrCreateRancherByEmail(
 // hasn't been claimed yet. Filters out hidden / removed records so opted-out
 // ranchers cannot be reached even by direct URL.
 export async function getRancherOrProspectBySlug(slug: string) {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Any slug resolves to the demo rancher so the public
+  // landing page renders.
+  if (isDemoMode()) return (require('./demo/demoStore') as typeof import('./demo/demoStore')).demoRancherForSlug(slug);
   try {
     const safeSlug = escapeAirtableValue(slug);
     // U17: wrap in withRateLimitRetry — this powers the PUBLIC rancher page,

@@ -17,6 +17,9 @@
 //     this helper so the gate can't be bypassed by a future careless caller.
 
 import twilio from 'twilio';
+// DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+// lib/demo/demoMode.ts. Pure import, no side effect when the flag is off.
+import { isDemoMode } from '@/lib/demo/demoMode';
 
 const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
@@ -41,6 +44,12 @@ export async function sendSMS(input: {
   to: string;
   body: string;
 }): Promise<boolean> {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Report success without calling Twilio.
+  if (isDemoMode()) {
+    console.log(`[twilio] DEMO MODE — skipping SMS to ${input.to}`);
+    return true;
+  }
   if (!client || !FROM_NUMBER) {
     console.warn('[twilio] account SID/auth token/from number missing — skip send');
     return false;

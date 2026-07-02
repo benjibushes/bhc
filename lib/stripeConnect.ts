@@ -41,6 +41,9 @@
 // v2.core.account[requirements].updated).
 
 import Stripe from 'stripe';
+// DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+// lib/demo/demoMode.ts. Pure import, no side effect when the flag is off.
+import { isDemoMode } from '@/lib/demo/demoMode';
 
 // Lazy Stripe client init — constructing at module load fails Vercel's
 // build-time page-data collection (env vars not available). Defer until
@@ -287,6 +290,17 @@ export interface CreateDepositCheckoutInput {
 }
 
 export async function createDepositCheckout(input: CreateDepositCheckoutInput): Promise<{ url: string; paymentIntentId: string; sessionId: string; connectAccountId: string }> {
+  // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
+  // lib/demo/demoMode.ts. Return a fake checkout so the reserve/deposit button
+  // doesn't error mid-video — NO Stripe call, no charge.
+  if (isDemoMode()) {
+    return {
+      url: '/checkout/DEMO/deposit',
+      paymentIntentId: 'pi_DEMO_deposit',
+      sessionId: 'cs_DEMO_deposit',
+      connectAccountId: 'acct_DEMO',
+    };
+  }
   // Locked-rate precedence lives at the caller (depositCommissionRate) —
   // this function just applies the rate it was handed. Math below is
   // byte-identical to the old TIERS[tier].commissionRate path.
