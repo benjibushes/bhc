@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { transition } from '@/lib/deal/transitionLive';
+import { recordClose } from '@/lib/contracts/rancher';
 import {
   calcCommissionForRancher,
   hasLockedCommissionRate,
@@ -109,24 +109,39 @@ export async function POST(
     const rate = getRancherCommissionRate(rancher);
 
     const nowIso = new Date().toISOString();
-    const _t = await transition(id, {
-      to: 'CLOSED_WON',
-      actor: `rancher:${decoded.rancherId}`,
+    // MONEY-TRUTH TAIL finding 2 (2026-07-01): close THROUGH recordClose — the
+    // single source of truth every other close path uses — instead of a bespoke
+    // state-machine write. The old transition() call flipped Status + stamps but
+    // SKIPPED recordClose's close mechanics: capacity DECR (the Awaiting Payment
+    // slot stayed held forever → phantom-full rancher), Buyer Stage → CLOSED,
+    // the close:won funnel event, affiliate enrollment + welcome email, and the
+    // gated Meta CAPI Purchase. recordClose handles all of that; this route's
+    // payment-confirmation stamps ('Commission Due', 'Payment Confirmed At',
+    // 'Payment Confirmation Method', plus the preserved 'Closed At') ride the
+    // same single Referrals write via extraFields. The route's own gates above
+    // (Awaiting Payment status check + pending-Stripe-deposit guard) already
+    // enforce the only legal entry state, so the state machine's legality check
+    // is not lost. Trade-off: the optional 'Deal Events' audit row is no longer
+    // written on this path — recordClose's funnel event is the canonical record.
+    const closeRes = await recordClose({
+      referralId: id,
+      rancherId: decoded.rancherId,
+      outcome: 'won',
+      saleAmount,
       reason: 'off-platform payment confirmed',
       extraFields: {
-        'Sale Amount': saleAmount,
         'Commission Due': commission,
         'Payment Confirmed At': nowIso,
         'Payment Confirmation Method': method,
         'Closed At': ref['Closed At'] || nowIso,
-        'Last Rancher Activity At': nowIso,
-        'Rancher Engaged Flag': true,
       },
     });
-    if (!_t.ok && !_t.noop) {
-      // Safety net: the state machine must NEVER block a real close. Fall back to
-      // the original direct write and alert the operator.
-      console.error('[confirm-payment] transition rejected, falling back to direct write:', _t.error);
+    if (!closeRes.ok) {
+      // Safety net (mirrors the old transition fallback): a confirmed payment
+      // must NEVER be blocked. recordClose only reports !ok when the referral
+      // read-back failed — fall back to the direct write and alert the operator
+      // so the skipped close mechanics (capacity/buyer/funnel) get reconciled.
+      console.error('[confirm-payment] recordClose reported not-ok, falling back to direct write');
       await updateRecord(TABLES.REFERRALS, id, {
         Status: 'Closed Won',
         'Sale Amount': saleAmount,
@@ -139,7 +154,7 @@ export async function POST(
       });
       try {
         const { sendOperatorSignal } = await import('@/lib/operatorSignal');
-        await sendOperatorSignal({ urgency: 'normal', kind: 'system-error', summary: `Deal ${id}: state-machine rejected Closed Won (used fallback). Check lib/deal.`, dedupeKey: `transition-fallback-${id}`, dedupeWindowMs: 3600_000 });
+        await sendOperatorSignal({ urgency: 'normal', kind: 'system-error', summary: `Deal ${id}: recordClose failed on confirm-payment (used direct-write fallback). Capacity/Buyer Stage/funnel NOT updated — reconcile manually.`, dedupeKey: `confirm-payment-fallback-${id}`, dedupeWindowMs: 3600_000 });
       } catch {}
     }
 

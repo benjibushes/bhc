@@ -33,7 +33,12 @@
 //       check again next run.
 //
 // SKIP REASON BREAKDOWN buckets (surface signal in Cron Runs day-over-day):
-//   - stripe_pi_missing  — Payments row missing Stripe Payment Intent Id (data bug)
+//   - stripe_pi_missing  — row has NO Stripe Payment Intent Id AND no resolvable
+//                          Checkout Session id (pre-fix Clover rows / data bug).
+//                          Rows with an empty PI but a stored Session id are now
+//                          HEALED via checkout.sessions.retrieve → payment_intent
+//                          (finding 3, 2026-07-01); nonzero here fires a Telegram
+//                          alert with the manual backfill fix.
 //   - rancher_missing    — Payments row has no rancher link (data bug)
 //   - no_connect_acct    — rancher has no Stripe Connect Account Id (orphan platform-mode rows)
 //   - stripe_404         — PI not found on Stripe (test mode / wrong account)
@@ -61,8 +66,10 @@ import { smsEnabled } from '@/lib/smsFlag';
 import {
   markDepositAbandoned,
   markDepositRequiresReplay,
+  markDepositRowAbandoned,
   PAYMENTS_TABLE,
   REFERRAL_ID_TEXT_FIELD,
+  CHECKOUT_SESSION_ID_FIELD,
 } from '@/lib/contracts/payments';
 import { settleBuyerDeposit } from '@/lib/stripeSettlement';
 
@@ -172,8 +179,18 @@ async function realHandler(_request: Request): Promise<ReaperResult> {
 
   for (const row of targets) {
     const paymentRowId = row.id as string;
-    const piId = String(row['Stripe Payment Intent Id'] || '');
-    if (!piId) {
+    let piId = String(row['Stripe Payment Intent Id'] || '');
+    // MONEY-TRUTH TAIL finding 3 (2026-07-01): Clover creates the PaymentIntent
+    // at PAY time, so every checkout-created row has an EMPTY PI id until the
+    // settlement webhook backfills it — a stuck row with no PI used to be
+    // UNHEALABLE here (bucketed stripe_pi_missing forever). recordDeposit now
+    // stores the Checkout Session id at create; when the PI is empty we resolve
+    // it via checkout.sessions.retrieve below (needs the Connect account, so
+    // the lookup happens after rancher resolution).
+    const checkoutSessionId = String(row[CHECKOUT_SESSION_ID_FIELD] || '');
+    if (!piId && !checkoutSessionId) {
+      // No PI and no session id — truly unresolvable (pre-fix Clover rows).
+      // Counted + alerted on after the loop.
       bump('stripe_pi_missing');
       continue;
     }
@@ -201,6 +218,81 @@ async function realHandler(_request: Request): Promise<ReaperResult> {
     if (!connectAccountId) {
       bump('no_connect_acct');
       continue;
+    }
+
+    // Clover fallback: PI empty but we hold the Checkout Session id — ask
+    // Stripe for the session (on the connected account; deposit sessions are
+    // created there) and take its payment_intent.
+    if (!piId) {
+      let session: any;
+      try {
+        session = await stripe.checkout.sessions.retrieve(checkoutSessionId, {
+          stripeAccount: connectAccountId,
+        });
+      } catch (e: any) {
+        // Session unretrievable (404 / API error) → unresolvable this run.
+        bump('stripe_pi_missing');
+        errors.push(`${paymentRowId}: session retrieve ${e?.message?.slice(0, 60)}`);
+        continue;
+      }
+      const sessionPi =
+        typeof session?.payment_intent === 'string'
+          ? session.payment_intent
+          : session?.payment_intent?.id || '';
+      if (sessionPi) {
+        piId = sessionPi;
+        // Backfill the PI onto the row so webhooks / refund lookups / future
+        // reaper runs match by PI directly. Best-effort — the resolved piId
+        // drives THIS run either way.
+        try {
+          await updateRecord(PAYMENTS_TABLE, paymentRowId, {
+            'Stripe Payment Intent Id': piId,
+          });
+        } catch (e: any) {
+          console.warn(
+            `[orphan-checkout-reaper] PI backfill failed for ${paymentRowId}: ${e?.message?.slice(0, 80)}`,
+          );
+        }
+        // fall through to the normal PI-status flow below
+      } else if (String(session?.status || '') === 'expired') {
+        // Session expired before the buyer paid → under Clover no PI will
+        // EVER exist for this row. Certain abandonment — flip by row id
+        // (markDepositAbandoned's PI lookup can't reach a PI-less row).
+        try {
+          const flip = await markDepositRowAbandoned(paymentRowId, {
+            reason: 'clover_session_expired_no_pi',
+          });
+          if (flip.flipped) {
+            touched++;
+            bump('abandoned_flipped');
+            try {
+              await logAuditEntry({
+                actor: 'cron',
+                tool: 'orphan-checkout-reaper-abandon',
+                targetType: 'Other',
+                targetId: paymentRowId,
+                args: { checkoutSessionId, sessionStatus: 'expired', connectAccountId },
+                result: { flippedTo: 'abandoned' },
+                reverseAction: {
+                  type: 'noop',
+                  reason: 'Stripe checkout session expired — cannot un-expire',
+                },
+              });
+            } catch {}
+          } else {
+            bump('already_flipped');
+          }
+        } catch (e: any) {
+          bump('stripe_error');
+          errors.push(`${paymentRowId}: session-abandon flip failed ${e?.message?.slice(0, 60)}`);
+        }
+        continue;
+      } else {
+        // Session still open (Clover PI not created yet) — buyer could still
+        // pay. Recheck next run.
+        bump('still_processing');
+        continue;
+      }
     }
 
     // Retrieve PI status from Stripe (on the connected account — direct-charge
@@ -421,6 +513,22 @@ async function realHandler(_request: Request): Promise<ReaperResult> {
     // processing / requires_action / requires_confirmation / requires_capture
     // are mid-flight. Skip — the reaper sees them again tomorrow.
     bump('still_processing');
+  }
+
+  // Finding 3 alert: any row the reaper could not resolve to a PaymentIntent
+  // (no PI id AND no usable Checkout Session id) is money-state we cannot see —
+  // it will sit 'pending' forever without a hand. Loud once per run, with the
+  // manual fix.
+  if ((breakdown['stripe_pi_missing'] || 0) > 0) {
+    try {
+      await sendTelegramUpdate(
+        `\u{26A0} ORPHAN REAPER: ${breakdown['stripe_pi_missing']} pending Payments row(s) are UNRESOLVABLE — ` +
+        `no Stripe Payment Intent Id and no retrievable Checkout Session (pre-fix Clover rows or malformed writes). ` +
+        `The reaper cannot heal or classify these. Manual fix: find the row in Airtable (Status=pending, empty ` +
+        `'Stripe Payment Intent Id'), locate the charge/session in the rancher's Stripe account, and backfill ` +
+        `'${CHECKOUT_SESSION_ID_FIELD}' or the PI id — the next run then heals it.`,
+      );
+    } catch {}
   }
 
   // ── W1 cross-check: settled money, missing referral stamp ────────────────

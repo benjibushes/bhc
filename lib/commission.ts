@@ -44,19 +44,68 @@ export function calcCommission(saleAmount: number): number {
 }
 
 /**
+ * Normalize a raw 'Commission Rate' field value into a canonical fraction —
+ * MONEY-TRUTH TAIL (2026-07-01), finding 1c.
+ *
+ * THE BUG: the field is human-editable in Airtable. An operator typing "4"
+ * (meaning 4%) used to pass the old `raw > 0` check and clamp to 1 → the
+ * close path billed 100% of the sale instead of 4%. And a locked 0 (Operator
+ * tier — zero commission) read as "no rate", falling back to the 10% default.
+ *
+ * DECISION TABLE (pinned in lib/commission.test.ts):
+ *   null / undefined / ''            → null   (unset — the no-rate close gate fires)
+ *   non-numeric garbage / NaN / ±Inf → null
+ *   negative                        → null   (never a valid rate)
+ *   0                               → 0      (VALID — Operator tier 0%)
+ *   0 < raw < 1                     → raw    (already a fraction)
+ *   1 ≤ raw < 100                   → raw/100 (typed as percent: 4 → 0.04,
+ *                                     10 → 0.10; boundary 1 → 0.01 — no BHC
+ *                                     rate is 100%, a literal 1 is a typo for 1%)
+ *   raw ≥ 100                       → null   (implausible as fraction OR percent
+ *                                     — gate the close, don't guess with money)
+ *
+ * Numeric strings ("4", "0.04", "4%") are tolerated — Airtable values pass
+ * through String() coercions in several routes.
+ *
+ * null means "no usable locked rate": hasLockedCommissionRate() returns false
+ * and the close-path HARD GATE blocks until the operator fixes the field.
+ */
+export function normalizeCommissionRate(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const num =
+    typeof raw === 'number' ? raw : Number(String(raw).replace('%', '').trim() || 'NaN');
+  if (!Number.isFinite(num)) return null;
+  if (num < 0) return null;
+  if (num === 0) return 0;
+  const fraction = num >= 1 ? num / 100 : num;
+  if (fraction >= 1) return null;
+  return fraction;
+}
+
+/**
+ * Is the raw 'Commission Rate' FIELD truly empty (never written)?
+ * Distinct from normalizeCommissionRate() === null: garbage ('abc', 400) is
+ * NOT empty — it's an operator-owned value (a mistyped negotiated rate) that
+ * automated writers (the tier-subscription webhook upsert) must NEVER
+ * overwrite. The close gate surfaces garbage; a human resolves it.
+ */
+export function isCommissionRateFieldEmpty(raw: unknown): boolean {
+  return raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '');
+}
+
+/**
  * Per-rancher commission rate. Reads the rancher's `Commission Rate` field
- * (locked at sign-agreement time), falls back to env default when empty.
- * Bounded [0, 1].
+ * (locked at sign-agreement time) through normalizeCommissionRate, falls back
+ * to env default only when the field is unset/unusable. Bounded [0, 1).
  *
  * Use this on all close paths so a rancher's invoice always matches what
  * they signed up for. Drift between deals = the Ashcraft-pattern dispute
- * (2026-05-20 incident).
+ * (2026-05-20 incident). A locked 0 (Operator tier) returns 0 — NEVER the
+ * env default.
  */
 export function getRancherCommissionRate(rancher: any): number {
-  const raw = rancher?.['Commission Rate'];
-  if (typeof raw === 'number' && !Number.isNaN(raw) && raw > 0) {
-    return Math.min(Math.max(raw, 0), 1);
-  }
+  const normalized = normalizeCommissionRate(rancher?.['Commission Rate']);
+  if (normalized !== null) return normalized;
   return getCommissionRate();
 }
 
@@ -71,13 +120,18 @@ export function calcCommissionForRancher(rancher: any, saleAmount: number): numb
 }
 
 /**
- * Has this rancher locked an explicit commission rate? Used by close paths
- * to refuse Closed Won when the rate is missing — forces the ambiguity to
- * be resolved BEFORE money flows.
+ * Has this rancher locked a USABLE explicit commission rate? Used by close
+ * paths to refuse Closed Won when the rate is missing — forces the ambiguity
+ * to be resolved BEFORE money flows.
+ *
+ * Finding 1b (2026-07-01): 0 is a VALID locked rate — the Operator tier is
+ * explicitly zero-commission. The old `raw > 0` check hard-gated every
+ * Operator close (or, on paths that skipped the gate, fell back to billing
+ * the 10% default). Emptiness and zero are now distinct: unset/garbage →
+ * false (gate), locked 0 → true (close proceeds, commission = $0).
  */
 export function hasLockedCommissionRate(rancher: any): boolean {
-  const raw = rancher?.['Commission Rate'];
-  return typeof raw === 'number' && !Number.isNaN(raw) && raw > 0;
+  return normalizeCommissionRate(rancher?.['Commission Rate']) !== null;
 }
 
 /**

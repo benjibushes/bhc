@@ -18,6 +18,7 @@ import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { TIERS, type TierSlug } from '@/lib/tiers';
+import { REFERRAL_ID_TEXT_FIELD } from '@/lib/contracts/payments';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -164,6 +165,11 @@ export async function POST(req: Request) {
       'Buyer Email': buyerEmail,
       'Rancher': [rancherId],
       'Referral': [referralId],
+      // Denormalized referral id (finding 3, 2026-07-01) — under Clover
+      // session.paymentIntentId below is EMPTY at create time, so settlement
+      // finds this row BY REFERRAL via {Referral Id Text}. Without it, an
+      // admin-invoiced deposit row could never settle.
+      [REFERRAL_ID_TEXT_FIELD]: referralId,
       // Final-sweep fix (2026-06-10): schema field is `Stripe Payment Intent Id`
       // (spaced). The unspaced name was silent-stripped → markDepositSucceeded
       // could never find the Payments row for admin-invoiced deposits.

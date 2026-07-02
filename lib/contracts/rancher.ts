@@ -32,6 +32,40 @@ export interface RecordCloseInput {
   saleAmount?: number;
   reason?: string;
   closeReason?: 'no_response' | 'price' | 'timing' | 'other';
+  // MONEY-TRUTH TAIL finding 2 (2026-07-01): caller-specific stamps that must
+  // ride the SAME single Referrals write as the close (atomicity — a second
+  // update could fail separately, leaving a closed deal without its stamps).
+  // Merged AFTER the base fields so a caller may override (confirm-payment
+  // preserves a pre-existing 'Closed At'). Existing callers pass nothing and
+  // are byte-identical — pinned in rancher.recordCloseUpdates.test.ts.
+  extraFields?: Record<string, any>;
+}
+
+/**
+ * Pure field-builder for recordClose's single Referrals write. Extracted so
+ * the byte-preservation guarantee (existing callers) and the extraFields
+ * merge order (new confirm-payment delegation) are unit-testable without
+ * mocking Airtable.
+ */
+export function buildRecordCloseUpdates(
+  input: RecordCloseInput,
+  nowIso: string,
+): Record<string, any> {
+  const nextStatus: ReferralStatus =
+    input.outcome === 'won' ? 'Closed Won' :
+    input.outcome === 'lost' ? 'Closed Lost' :
+    'Awaiting Payment';
+  const updates: Record<string, any> = {
+    'Status': nextStatus,
+    'Closed At': nowIso,
+    'Last Rancher Activity At': nowIso,
+    'Rancher Engaged Flag': true,
+  };
+  if (input.outcome === 'won' && typeof input.saleAmount === 'number') {
+    updates['Sale Amount'] = input.saleAmount;
+  }
+  if (input.extraFields) Object.assign(updates, input.extraFields);
+  return updates;
 }
 
 export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolean; capacityFreed: boolean }> {
@@ -45,16 +79,7 @@ export async function recordClose(input: RecordCloseInput): Promise<{ ok: boolea
     input.outcome === 'lost' ? 'Closed Lost' :
     'Awaiting Payment';
 
-  const updates: Record<string, any> = {
-    'Status': nextStatus,
-    'Closed At': now,
-    'Last Rancher Activity At': now,
-    'Rancher Engaged Flag': true,
-  };
-  if (input.outcome === 'won' && typeof input.saleAmount === 'number') {
-    updates['Sale Amount'] = input.saleAmount;
-  }
-  await updateRecord(TABLES.REFERRALS, input.referralId, updates);
+  await updateRecord(TABLES.REFERRALS, input.referralId, buildRecordCloseUpdates(input, now));
 
   // Wave-2 fix: the DECR decision derives from the canonical held set
   // (HELD_REFERRAL_STATUSES via shouldDecrementOnClose), not the old local
