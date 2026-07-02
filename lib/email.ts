@@ -811,6 +811,50 @@ export async function sendWaitingActivationNudge(data: {
   });
 }
 
+// ── T2.3 (2026-07-02): replenishment nudge ───────────────────────────────────
+// A share runs out on a schedule (quarter ~4mo, half ~6mo, whole ~10mo). This
+// is the reorder ask at the freezer-low moment — sent by the replenishment
+// cron, once per deal ever ('Replenishment Nudged At' stamp).
+export async function sendReplenishmentNudge(data: {
+  firstName: string;
+  email: string;
+  orderTypeLabel: string; // e.g. 'Half Beef' — used for "your half"
+  ranchName: string;
+  reorderUrl: string;
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const first = data.firstName || 'there';
+  const cutWord = /quarter/i.test(data.orderTypeLabel)
+    ? 'quarter'
+    : /whole/i.test(data.orderTypeLabel)
+      ? 'whole cow'
+      : 'half';
+  const subject = 'Freezer running low? Your next share takes 2 minutes';
+  return guardedSend({
+    templateName: 'sendReplenishmentNudge',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.cta{display:inline-block;padding:16px 36px;background:#0E0E0E;color:#F4F1EC !important;text-decoration:none;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;font-size:14px}.divider{height:1px;background:#A7A29A;margin:24px 0}</style>
+</head><body><div class="container">
+  <h1>Hey ${esc(first)} —</h1>
+  <p>By my math, the ${esc(cutWord)} you got from ${esc(data.ranchName)} is probably running low about now.</p>
+  <p>If the freezer's getting empty, reserving your next share takes about two minutes — same rancher if you loved them, or I'll match you with whoever has the best fit right now.</p>
+  <div style="text-align:center;margin:30px 0;">
+    <a href="${data.reorderUrl}" class="cta">Reserve my next share &rarr;</a>
+  </div>
+  <p style="font-size:14px;color:#6B4F3F;">Still stocked? Ignore this — I won't nag. And if anything about the last share wasn't right, just reply and tell me.</p>
+  <div class="divider"></div>
+  <p style="font-size:12px;color:#A7A29A;">- Ben<br>BuyHalfCow</p>
+</div></body></html>`,
+    }),
+  });
+}
+
 // ── WAITING + Day 7 / monthly: founder letter ────────────────────────────────
 // Built from the rescued Day3 + Day10 founder copy (lib/_rescued-copy.md). One
 // function, three letter variants based on which letter in the rolling cadence

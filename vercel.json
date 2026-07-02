@@ -176,6 +176,10 @@
     {
       "path": "/api/cron/waiting-activation",
       "schedule": "40 17 * * *"
+    },
+    {
+      "path": "/api/cron/replenishment",
+      "schedule": "50 17 * * *"
     }
   ]
 }
