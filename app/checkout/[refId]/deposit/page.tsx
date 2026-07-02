@@ -11,6 +11,7 @@ import { trackEvent, metaEventId } from '@/lib/analytics';
 import { CutBreakdown, type Tier } from '@/app/components/CutBreakdown';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
+import { closedReferralUiState } from '@/lib/referralClosedState';
 
 // Map deposit cut slug → CutBreakdown tier. Slug is lowercase from
 // Stripe Price metadata; tier is the capitalized human-readable label.
@@ -76,6 +77,10 @@ function DepositPageContent() {
   // to warm, actionable copy — never a raw Stripe/dev string to the buyer.
   const [errCode, setErrCode] = useState('');
   const [errSlug, setErrSlug] = useState(''); // rancher slug from an error payload (e.g. referral_closed)
+  // Referral Status riding the referral_closed 409 — distinguishes a DEAD
+  // reservation (Closed Lost/Refunded → honest "no longer active" state)
+  // from a paid/held one (→ the positive "already reserved" state).
+  const [errStatus, setErrStatus] = useState('');
   const [selectedCut, setSelectedCut] = useState<string>('half');
   const [submitting, setSubmitting] = useState(false);
   // F2/A4 — explicit ToS + refund-policy acceptance at the payment point.
@@ -107,7 +112,11 @@ function DepositPageContent() {
       .then((j) => {
         if (j?.error) {
           setErrCode(String(j.error));
+          if (j.status) setErrStatus(String(j.status));
+          // GET referral_closed sends `rancher: { slug }`; other payloads use
+          // the flat `rancherSlug` — accept either.
           if (j.rancherSlug) setErrSlug(String(j.rancherSlug));
+          else if (j.rancher?.slug) setErrSlug(String(j.rancher.slug));
           setError(String(j.message || j.error));
         } else {
           setInfo(j);
@@ -144,6 +153,7 @@ function DepositPageContent() {
           return;
         }
         if (j?.rancherSlug) setErrSlug(String(j.rancherSlug));
+        if (j?.status) setErrStatus(String(j.status));
         setErrCode(String(j?.error || 'checkout_failed'));
         setError(String(j?.message || j?.error || 'checkout_failed'));
         setSubmitting(false);
@@ -189,8 +199,27 @@ function DepositPageContent() {
       </>
     );
 
-    // A4 — already reserved: a positive state, not an error.
+    // A4 — the referral_closed 409 covers two OPPOSITE realities, split on the
+    // referral Status the API sends alongside it:
+    //   • Closed Lost / Refunded — the reservation is DEAD. Telling this buyer
+    //     "you're already reserved ✓" leaves them waiting for beef that never
+    //     comes. Render the honest state + live forward paths instead.
+    //   • Slot Locked / Closed Won / paid — genuinely reserved; positive state.
     if (code.includes('referral_closed') || code.includes('already')) {
+      if (closedReferralUiState(errStatus) === 'inactive') {
+        return (
+          <Shell>
+            <h1 className="font-serif text-2xl">this reservation is no longer active</h1>
+            <p className="text-saddle">this one was closed, so no beef is coming from it — but reserving fresh takes about a minute, and we&apos;ll get you squared away.</p>
+            <div className="flex flex-col gap-2">
+              <Link href="/ranchers" className="px-6 py-3 bg-charcoal text-bone text-sm uppercase tracking-wide">find another rancher →</Link>
+              <Link href="/access" className="underline text-saddle text-sm">retake the quiz — we&apos;ll match you</Link>
+            </div>
+            <p className="text-xs text-saddle">think this is a mistake, or have a question about a deposit? {supportLink}.</p>
+          </Shell>
+        );
+      }
+      // already reserved: a positive state, not an error.
       return (
         <Shell>
           <h1 className="font-serif text-2xl">you&apos;re already reserved ✓</h1>

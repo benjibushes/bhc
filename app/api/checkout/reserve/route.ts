@@ -28,9 +28,11 @@ import { generateMemberLoginToken } from '@/lib/secrets';
 import { sendBuyerIntroNotification } from '@/lib/email';
 import {
   assertReserveEligible,
+  buildReserveConsumerFields,
   buildReserveReferralFields,
   depositPathFor,
   normalizeReservePhone,
+  reserveConsumerStatusPatch,
   CUT_LABELS,
   type Cut,
 } from '@/lib/reserveDeposit';
@@ -137,6 +139,11 @@ export async function POST(req: Request) {
         const patch: Record<string, any> = {};
         if (buyerPhone && !String(existing[0]['Phone'] || '').trim()) patch['Phone'] = buyerPhone;
         if (buyerState && !String(existing[0]['State'] || '').trim()) patch['State'] = buyerState;
+        // A reserving buyer must ALWAYS be able to log in: promote a blank/
+        // Pending Status to Approved so the magic link we're about to email
+        // passes the member LOGIN_ALLOWED gate instead of 302ing to /access.
+        // Never touches login-allowed or deliberately-set (Rejected) statuses.
+        Object.assign(patch, reserveConsumerStatusPatch(existing[0]['Status']));
         // SMS consent: opting in always writes true + stamps the consent time;
         // no tick leaves the existing value untouched (mirrors /api/consumers'
         // funnel-path semantics — never silently revoke). Rides the existing
@@ -150,29 +157,21 @@ export async function POST(req: Request) {
           catch (e: any) { console.warn('[checkout/reserve] consumer backfill skipped:', e?.message); }
         }
       } else {
-        const created: any = await createRecord(TABLES.CONSUMERS, {
-          'Full Name': buyerName || '',
-          'Email': buyerEmail,
-          'Phone': buyerPhone,
-          ...(buyerState ? { 'State': buyerState } : {}),
-          'Segment': 'Beef Buyer',
-          'Source': `rancher-page-deposit:${slug}`,
-          'Order Type': CUT_LABELS[cut],
-          // FIX (store-reserve 500): 'Interest Beef' is a singleLineText field —
-          // writing boolean `true` 422'd Airtable (typecast can't coerce
-          // bool→text), the catch returned 500, and reserve aborted BEFORE the
-          // referral was created → EVERY new store buyer's deposit failed. The
-          // real, read-everywhere field is 'Interests' (multipleSelects); match
-          // the main funnel (/api/consumers). typecast auto-creates 'Beef'.
-          'Interests': ['Beef'],
-          'Intent Score': 90,
-          'Intent Classification': 'High',
-          // SMS consent (TCPA): seed the checkbox explicitly on a brand-new
-          // Consumer so the Twilio gate starts in a known state; stamp the
-          // consent time only on a real opt-in. Mirrors /api/consumers ~545.
-          'SMS Opt-In': smsOptInReserve,
-          ...(smsOptInReserve ? { 'SMS Opt-In At': new Date().toISOString() } : {}),
-        });
+        // Field set lives in lib/reserveDeposit (buildReserveConsumerFields,
+        // tested) — includes Status='Approved' so the buyer can always log in
+        // (member LOGIN_ALLOWED gate), plus the Interests/SMS-consent fixes.
+        const created: any = await createRecord(
+          TABLES.CONSUMERS,
+          buildReserveConsumerFields({
+            slug,
+            cut,
+            buyerName,
+            buyerEmail,
+            buyerPhone,
+            buyerState,
+            smsOptIn: smsOptInReserve,
+          }),
+        );
         consumerId = created.id;
       }
     } catch (e: any) {

@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assertReserveEligible,
+  buildReserveConsumerFields,
   buildReserveReferralFields,
   depositPathFor,
   normalizeReservePhone,
+  reserveConsumerStatusPatch,
   resolveBuyerContact,
 } from './reserveDeposit';
 
@@ -136,4 +138,63 @@ test('resolveBuyerContact falls back to consumer when referral lacks them', () =
 test('resolveBuyerContact tolerates a missing consumer', () => {
   const got = resolveBuyerContact({ 'Buyer Phone': '+12705550182' });
   assert.deepEqual(got, { phone: '+12705550182', state: '' });
+});
+
+// ── Reserve-rail consumer status (buyer-trust tail #2) ──────────────────────
+// The member auth gates (login + verify) only admit Status in
+// ['approved','active','waitlisted']. A reserve-created consumer with a blank
+// Status could pay a deposit yet NEVER log in — the magic link 302'd them to
+// /access?reason=not-approved. A reserving buyer must ALWAYS be able to log in.
+
+const MEMBER_LOGIN_ALLOWED = ['approved', 'active', 'waitlisted'];
+
+test('reserve-created consumer gets a login-allowed Status at create', () => {
+  const fields = buildReserveConsumerFields({
+    slug: 'renick-valley',
+    cut: 'half',
+    buyerName: 'Jane Doe',
+    buyerEmail: 'jane@example.com',
+    buyerPhone: '+12705550182',
+    buyerState: 'KY',
+    smsOptIn: true,
+  });
+  assert.ok(
+    MEMBER_LOGIN_ALLOWED.includes(String(fields['Status']).toLowerCase()),
+    `Status "${fields['Status']}" must be login-allowed`,
+  );
+  assert.ok(fields['Approved At'], 'Approved At must be stamped');
+});
+
+test('reserve consumer fields mirror the route field set', () => {
+  const fields = buildReserveConsumerFields({
+    slug: 'renick-valley',
+    cut: 'quarter',
+    buyerName: '',
+    buyerEmail: 'jane@example.com',
+    buyerPhone: '+12705550182',
+    buyerState: '',
+    smsOptIn: false,
+  });
+  assert.equal(fields['Segment'], 'Beef Buyer');
+  assert.equal(fields['Source'], 'rancher-page-deposit:renick-valley');
+  assert.equal(fields['Order Type'], 'Quarter Cow');
+  assert.deepEqual(fields['Interests'], ['Beef']);
+  assert.equal(fields['SMS Opt-In'], false);
+  assert.equal('SMS Opt-In At' in fields, false);
+  assert.equal('State' in fields, false);
+});
+
+test('statusPatch promotes blank/pending existing consumers to Approved', () => {
+  assert.equal(reserveConsumerStatusPatch('')['Status'], 'Approved');
+  assert.ok(reserveConsumerStatusPatch('')['Approved At']);
+  assert.equal(reserveConsumerStatusPatch(undefined)['Status'], 'Approved');
+  assert.equal(reserveConsumerStatusPatch('Pending')['Status'], 'Approved');
+});
+
+test('statusPatch never touches login-allowed or rejected statuses', () => {
+  assert.deepEqual(reserveConsumerStatusPatch('Approved'), {});
+  assert.deepEqual(reserveConsumerStatusPatch('Active'), {});
+  assert.deepEqual(reserveConsumerStatusPatch('Waitlisted'), {});
+  // Rejected is a deliberate admin decision — reserve must not undo it.
+  assert.deepEqual(reserveConsumerStatusPatch('Rejected'), {});
 });

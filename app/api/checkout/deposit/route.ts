@@ -270,13 +270,19 @@ export async function POST(req: Request) {
   // complete both and pay TWO deposits. Serialize session creation per
   // referral with a short-lived atomic claim (SET NX EX via claimOnce).
   // No release helper exists — on any failure after the claim (Stripe error,
-  // recordDeposit fail) the 120s TTL expires naturally and the buyer retries.
-  // Redis-down: claimOnce degrades OPEN (returns true) — availability over
-  // serialization; identical-cut double-submits are still deduped by the
-  // cut-specific Stripe idempotency key.
+  // recordDeposit fail) the TTL expires naturally and the buyer retries.
+  //
+  // TTL 30s (was 120s — buyer-trust tail #3): the claim also traps the
+  // HIGHEST-recovery buyer — one who cancels on Stripe's hosted page and
+  // immediately retries hits this 409 until the TTL lapses. 120s meant up to
+  // two minutes locked out at the exact moment they were ready to pay again.
+  // 30s still comfortably covers the concurrent-tab create window (the Stripe
+  // session create is sub-second; serial stacking barely changes), while the
+  // cancel→retry path is usually past 30s by the time the buyer is back and
+  // re-clicks. Copy below matches the number so the wait is honest.
   let depositCreateClaimed = true;
   try {
-    depositCreateClaimed = await claimOnce(`deposit-create:${referralId}`, 120);
+    depositCreateClaimed = await claimOnce(`deposit-create:${referralId}`, 30);
   } catch (claimErr: any) {
     // Never let claim infrastructure block a legitimate buyer — fail open.
     console.warn('[checkout/deposit] deposit-create claim errored (allowing):', claimErr?.message);
@@ -286,7 +292,7 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error: 'checkout_in_progress',
-        message: 'Hang on — your checkout is already being prepared in another tab. Use that tab, or wait a few seconds and try again.',
+        message: 'Hang on — a checkout for this reservation was just started (maybe in another tab). Use that tab, or give it ~30 seconds and try again.',
       },
       { status: 409 },
     );

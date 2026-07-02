@@ -153,9 +153,13 @@ export default async function middleware(request: NextRequest) {
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-XSS-Protection', '1; mode=block');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // geolocation=(self) — NOT (): the /map "near me" feature calls
+  // navigator.geolocation first-party, and a blanket deny made the browser
+  // reject it for 100% of users before the permission prompt could even show.
+  // (self) allows only our own origin; third-party iframes stay blocked.
   response.headers.set(
     'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=()'
+    'camera=(), microphone=(), geolocation=(self)'
   );
 
   if (process.env.NODE_ENV === 'production') {
