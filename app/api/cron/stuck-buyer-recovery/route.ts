@@ -4,6 +4,7 @@ import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { CRON_SECRET } from '@/lib/secrets';
 import { withCronRun } from '@/lib/cronRun';
+import { isActiveDealReferral } from '@/lib/capacityCount';
 
 // Stuck-buyer recovery — runs daily and retries matching for buyers who
 // engaged (clicked YES on warmup) but never got matched to a rancher.
@@ -23,7 +24,8 @@ import { withCronRun } from '@/lib/cronRun';
 // Stop conditions:
 //   - Buyer Stage = MATCHED (already has a rancher)
 //   - Buyer Stage = CLOSED (already bought)
-//   - Active referral exists (Intro Sent / Rancher Contacted / Negotiation)
+//   - Active referral exists (any held status: Intro Sent → Slot Locked,
+//     or Pending Approval with a linked rancher — see isActiveDealReferral)
 //   - Status = Rejected / Pending review for too long
 //   - Last matching attempt within 24h (don't hammer)
 //
@@ -36,19 +38,6 @@ import { withCronRun } from '@/lib/cronRun';
 //   - Telegram digest summarizes what was retried + outcomes
 
 export const maxDuration = 60;
-
-// LOCK-aware (2026-06-06): every status that means a rancher is engaged or
-// the buyer is in flight. Re-routing a buyer with one of these blocks would
-// overlap leads + frustrate both the working rancher and the buyer. Stays
-// in sync with lib/referralLock.ts LOCKED_STATUSES (plus the non-locked
-// Pending Approval / Intro Sent which are also "in motion").
-const ACTIVE_REFERRAL_STATUSES = [
-  'Pending Approval',
-  'Intro Sent',
-  'Rancher Contacted',
-  'Negotiation',
-  'Awaiting Payment',
-];
 
 async function realHandler(_request: Request): Promise<{ status: 'success' | 'maintenance-blocked'; recordsTouched: number; notes: string; skipReasonBreakdown?: Record<string, number> }> {
   if (isMaintenanceMode()) {
@@ -68,22 +57,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     ]);
 
     // Build a set of buyer IDs who already have an active referral.
+    // isActiveDealReferral (lib/capacityCount) is the canonical "live deal
+    // blocks a new match" predicate: all HELD statuses (Intro Sent → Slot
+    // Locked), plus Pending Approval ONLY with a linked rancher — which
+    // preserves the 2026-05-09 orphan-Pending-Approval fix (orphans are
+    // failed-match residue and stay recoverable).
     //
-    // BUG-FIX 2026-05-09: previously counted "Pending Approval" with NO
-    // linked rancher as active. Those are orphan records from a failed
-    // matching attempt (capacity full, all candidates excluded). Treating
-    // them as active blocked stuck-buyer-recovery from retrying. Fix:
-    // Pending Approval only counts as active if a rancher is linked.
+    // BLOCKER-4 FIX (2026-07-01): the previous local literal omitted
+    // 'Slot Locked', so a buyer whose deposit was already LOCKED could be
+    // re-routed by this cron into a second referral.
     const buyersWithActiveRef = new Set<string>();
     for (const ref of referrals) {
-      const status = (ref['Status'] || '').toString();
-      if (!ACTIVE_REFERRAL_STATUSES.includes(status)) continue;
-      if (status === 'Pending Approval') {
-        const hasRancher =
-          (Array.isArray(ref['Rancher']) && ref['Rancher'].length > 0) ||
-          (Array.isArray(ref['Suggested Rancher']) && ref['Suggested Rancher'].length > 0);
-        if (!hasRancher) continue; // orphan, recoverable
-      }
+      if (!isActiveDealReferral(ref)) continue;
       const buyerLinks: string[] = ref['Buyer'] || [];
       for (const id of buyerLinks) buyersWithActiveRef.add(id);
     }

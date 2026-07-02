@@ -350,12 +350,29 @@ export async function POST(request: Request) {
               pricingModel = String(rancher?.['Pricing Model'] || 'legacy');
               if (pricingModel === 'tier_v2') {
                 // Pick deposit field matching the buyer's chosen tier.
+                // FEE-INVISIBLE (founder directive 2026-07-01): surface the
+                // ALL-IN deposit (commission baked in) via depositDisplay —
+                // the same number the checkout page quotes and the card is
+                // charged. Never the rancher-portion split. Display only;
+                // the charge path computes its own money.
                 const depositField =
                   tier === 'Quarter' ? 'Quarter Deposit'
                   : tier === 'Half' ? 'Half Deposit'
                   : tier === 'Whole' ? 'Whole Deposit'
                   : '';
-                if (depositField) depositAmount = Number(rancher?.[depositField]) || null;
+                const priceField =
+                  tier === 'Quarter' ? 'Quarter Price'
+                  : tier === 'Half' ? 'Half Price'
+                  : tier === 'Whole' ? 'Whole Price'
+                  : '';
+                if (depositField && priceField) {
+                  const { depositDisplay } = await import('@/lib/pricing');
+                  const { tierFor, TIERS, commissionRateForTier } = await import('@/lib/tiers');
+                  const tierSlug = tierFor(rancher);
+                  const rate = tierSlug ? TIERS[tierSlug].commissionRate : commissionRateForTier(null);
+                  const d = depositDisplay(Number(rancher?.[priceField]), Number(rancher?.[depositField]), rate);
+                  depositAmount = d ? Math.round(d.dueNowCents / 100) : null;
+                }
               }
               // Surface rancher trust fields for the match-page card —
               // pulled live from Airtable so /qualify always shows latest

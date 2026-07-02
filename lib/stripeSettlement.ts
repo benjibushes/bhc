@@ -193,7 +193,12 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
           // Deposit-path: lead with an explicit "deposit received: $X · balance ~$Y"
           // confirmation (the buyer's biggest-intent moment) instead of the
           // legacy "closing day" framing.
-          depositAmount: depositCents / 100,
+          // FEE-INVISIBLE (founder directive 2026-07-01): confirm the TOTAL
+          // charged (deposit + baked-in commission = pi.amount) — the one
+          // price the buyer saw at checkout and on their card statement.
+          // depositCents (rancher portion) stays the number for Sale Amount,
+          // funnel LTV, and the rancher notify below — those are untouched.
+          depositAmount: totalChargedCents / 100,
           balanceDue: fulfillmentBalanceCents / 100,
           // refId turns the confirmation into a handoff tool — links the buyer
           // to the preferences form (delivery/pickup + cut sheet) for the rancher.

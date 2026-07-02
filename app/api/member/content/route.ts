@@ -4,6 +4,7 @@ import { TABLES } from '@/lib/airtable';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import { resolveBuyerSession } from '@/lib/buyerAuth';
 import { FULFILLMENT_FIELDS } from '@/lib/fulfillmentTracking';
+import { normalizeNationwidePreference, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
 
 export const maxDuration = 60;
 
@@ -149,10 +150,18 @@ export async function GET(request: Request) {
     // buyers (auto-enrolled per I-9) can refer friends + earn.
     const affiliateCode = String((memberConsumer as any)?.['Affiliate Code'] || '');
 
+    // Nationwide matching preference (2026-07-01) — drives the /member
+    // "Matching preference" toggle. Normalized to '' | 'nationwide-ok' |
+    // 'local-only'; '' = never asked (matching treats it as allowed).
+    const nationwidePreference = normalizeNationwidePreference(
+      (memberConsumer as any)?.[NATIONWIDE_PREFERENCE_FIELD],
+    );
+
     return NextResponse.json({
       memberState,
       memberSegment,
       affiliateCode,
+      nationwidePreference,
       hasOrderDetails: !!memberOrderType,
       stateRanchers,
       otherRanchers,

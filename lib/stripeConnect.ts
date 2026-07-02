@@ -289,7 +289,6 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
   // to rancher's Connect acct, then transfers application_fee_amount to
   // the BHC platform acct).
   const totalChargedCents = input.amountCents + platformFeeCents;
-  const feePct = Math.round(feeRate * 100);
   // Balance the rancher will collect later at fulfillment (outside BHC).
   // Stamped in metadata so the rancher dashboard + buyer receipt can
   // surface it without re-computing.
@@ -298,33 +297,28 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
   // Direct charge w/ application_fee_amount. stripeAccount header routes
   // the total charge to the rancher's Connect account; Stripe splits funds
   // automatically (rancher gets total - fee = deposit, platform gets fee).
-  // Two line items chosen over one so the buyer's Stripe-hosted receipt
-  // shows the breakdown explicitly — "deposit" + "BHC service fee" — and
-  // there's no ambiguity about what the buyer is paying.
+  // ONE line item (founder directive 2026-07-01): the BHC commission is baked
+  // into the deposit price — the buyer must never see a "service fee" split.
+  // Previously two line items ("deposit" + "BuyHalfCow service fee"); the fee
+  // itemization caused checkout drop-off. unit_amount = totalChargedCents, so
+  // the charge total is byte-identical to the old two-line sum; only the
+  // hosted page/receipt PRESENTATION changed. application_fee_amount (below)
+  // still routes the commission to the platform — rancher-side reporting is
+  // untouched. Metadata keeps the full split for settlement/refund math.
   const stripe = getStripeClient();
   const lineItems: any[] = [
     {
       price_data: {
         currency: 'usd',
-        product_data: { name: input.productLabel },
-        unit_amount: input.amountCents,
+        product_data: {
+          name: `Deposit — ${input.productLabel}`,
+          description: 'Reserves your share. Remaining balance is paid directly to the rancher at fulfillment.',
+        },
+        unit_amount: totalChargedCents,
       },
       quantity: 1,
     },
   ];
-  if (platformFeeCents > 0) {
-    lineItems.push({
-      price_data: {
-        currency: 'usd',
-        product_data: {
-          name: 'BuyHalfCow service fee',
-          description: `${feePct}% of full sale price ($${(input.fullSaleCents / 100).toFixed(2)}) — covers Stripe processing and platform routing.`,
-        },
-        unit_amount: platformFeeCents,
-      },
-      quantity: 1,
-    });
-  }
 
   const session = await stripe.checkout.sessions.create(
     {

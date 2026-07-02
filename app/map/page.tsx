@@ -5,6 +5,7 @@ import { normalizeImageUrl } from '@/lib/imageUrl';
 import Container from '../components/Container';
 import StickyMobileCTA from '../components/StickyMobileCTA';
 import DiscoverMapClient from './components/DiscoverMapClient';
+import MapLegend from './components/MapLegend';
 import RancherList from './components/RancherList';
 
 // Revalidate the public map every 30 minutes — fresh enough for new
@@ -228,78 +229,88 @@ export default async function MapPage() {
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      <section className="py-16 md:py-20 border-b border-divider/10">
-        <Container>
-          <div className="max-w-3xl space-y-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-saddle">find a rancher near you</p>
-            <h1 className="font-serif text-4xl md:text-6xl leading-tight lowercase">
-              {stats.verified > 0 ? (
-                <>
-                  {stats.verified} rancher{stats.verified === 1 ? '' : 's'} shipping
-                  beef today
-                </>
-              ) : (
-                <>every direct-to-consumer rancher in america</>
-              )}
-            </h1>
-            <p className="text-lg text-charcoal/80 leading-relaxed">
-              Drop a pin in your state and reserve a quarter, half, or whole direct
-              from the rancher who raised it. Green pins are verified partners
-              shipping right now — orange and grey show who&rsquo;s coming next.
-            </p>
-            {/* Lead with what a buyer can act on TODAY (verified + states).
-                Pipeline-vanity counts (onboarding/self-submitted/prospect) are
-                demoted to a quieter second line so the hero sells availability,
-                not a CRM funnel. */}
-            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 pt-1">
-              <span className="text-saddle text-sm">
-                <strong className="text-charcoal text-xl align-baseline">{stats.verified}</strong>{' '}
-                shipping today
-              </span>
-              <span className="text-saddle text-sm">
-                <strong className="text-charcoal text-xl align-baseline">{stats.statesCovered}</strong>{' '}
-                states on the map
-              </span>
-            </div>
-            <p className="text-xs text-dust">
-              Pipeline: {stats.onboarding} onboarding · {stats.selfSubmitted} self-submitted ·{' '}
-              {stats.prospects} prospects we&rsquo;re working to bring in.
-            </p>
-            <div className="flex flex-wrap gap-3 pt-3">
-              <a
-                href="/access"
-                className="inline-flex items-center gap-2 px-6 py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
-              >
-                Find a rancher near you
-                <span aria-hidden>→</span>
-              </a>
-              <a
-                href="/map/add-a-rancher"
-                className="inline-flex items-center gap-2 px-6 py-3 border-2 border-charcoal text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
-              >
-                Add a rancher
-                <span aria-hidden>→</span>
-              </a>
-            </div>
-          </div>
-        </Container>
+      {/* ── Immersive map hero ─────────────────────────────────────────────
+          Full-bleed, viewport-filling map with a slim on-map title bar (the
+          h1 lives inside DiscoverMapClient — a client component still SSRs
+          its initial HTML). The map module itself is ssr:false (Leaflet
+          touches `window`), so Google would otherwise index an empty <div>;
+          we pass a fully server-rendered, crawlable <ul> of ranchers
+          (name · City, ST · from $X · link) as `listSlot`. It renders inside
+          the hero's slide-in list panel, but the markup is always in the
+          initial HTML for SEO. */}
+      <section className="relative">
+        <DiscoverMapClient
+          pins={pins}
+          verifiedCount={stats.verified}
+          statesCovered={stats.statesCovered}
+          listSlot={<RancherList pins={pins} />}
+        />
       </section>
 
-      <section className="py-10 md:py-12">
+      {/* ── Below the fold: the story + how to read the map ──────────────── */}
+      <section className="py-12 md:py-16 border-t border-divider/10">
         <Container>
-          {/* The map module is ssr:false (Leaflet touches `window`), so Google
-              would otherwise index an empty <div>. We pass a fully server-
-              rendered, crawlable <ul> of ranchers (name · City, ST · from $X ·
-              link) as `listSlot`; the client wrapper toggles list/map view but
-              the list markup is always in the initial HTML for SEO. */}
-          <DiscoverMapClient
-            pins={pins}
-            listSlot={<RancherList pins={pins} />}
-          />
-          <p className="mt-6 text-xs text-dust">
-            Are you on this map and want it removed? Use the &ldquo;remove me&rdquo; link on
-            your listing&rsquo;s page.
-          </p>
+          <div className="grid md:grid-cols-2 gap-10 md:gap-14 items-start">
+            <div className="space-y-5">
+              <p className="text-xs uppercase tracking-[0.2em] text-saddle">
+                find a rancher near you
+              </p>
+              <h2 className="font-serif text-3xl md:text-4xl leading-tight lowercase">
+                a live map of the network
+              </h2>
+              <p className="text-charcoal/80 leading-relaxed">
+                Drop a pin in your state and reserve a quarter, half, or whole direct
+                from the rancher who raised it. Green pins are verified partners
+                taking reservations right now — amber and grey show who&rsquo;s coming
+                next.
+              </p>
+              {/* Lead with what a buyer can act on TODAY (verified + states).
+                  Pipeline-vanity counts (onboarding/self-submitted/prospect) are
+                  demoted to a quieter second line so the page sells availability,
+                  not a CRM funnel. */}
+              <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 pt-1">
+                <span className="text-saddle text-sm">
+                  <strong className="text-charcoal text-xl align-baseline">{stats.verified}</strong>{' '}
+                  shipping today
+                </span>
+                <span className="text-saddle text-sm">
+                  <strong className="text-charcoal text-xl align-baseline">{stats.statesCovered}</strong>{' '}
+                  states on the map
+                </span>
+              </div>
+              <p className="text-xs text-dust">
+                Pipeline: {stats.onboarding} onboarding · {stats.selfSubmitted} self-submitted ·{' '}
+                {stats.prospects} prospects we&rsquo;re working to bring in.
+              </p>
+              <div className="flex flex-wrap gap-3 pt-3">
+                <a
+                  href="/access"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+                >
+                  Find a rancher near you
+                  <span aria-hidden>→</span>
+                </a>
+                <a
+                  href="/map/add-a-rancher"
+                  className="inline-flex items-center gap-2 px-6 py-3 border-2 border-charcoal text-charcoal text-sm font-medium tracking-wide uppercase transition-base hover:bg-charcoal hover:text-bone"
+                >
+                  Add a rancher
+                  <span aria-hidden>→</span>
+                </a>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="space-y-4">
+                <h3 className="font-serif text-xl lowercase">what the pins mean</h3>
+                <MapLegend />
+              </div>
+              <p className="text-xs text-dust">
+                Are you on this map and want it removed? Use the &ldquo;remove me&rdquo; link on
+                your listing&rsquo;s page.
+              </p>
+            </div>
+          </div>
         </Container>
       </section>
 

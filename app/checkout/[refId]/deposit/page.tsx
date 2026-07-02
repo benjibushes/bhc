@@ -28,7 +28,9 @@ interface Cut {
   price: number | null;
   lbs: string;
   // Money breakdown (cents) from GET /api/checkout/deposit. The buyer's card is
-  // charged dueNowCents = depositCents + feeCents (fee ADDED ON TOP of deposit).
+  // charged dueNowCents (= depositCents + feeCents server-side). FEE-INVISIBLE
+  // (founder directive 2026-07-01): only dueNowCents is ever rendered — the
+  // deposit/fee split stays on the payload for API compat but is never shown.
   // balanceCents is paid rancher-direct at pickup. Null on legacy/unpriced cuts.
   depositCents?: number | null;
   feeCents?: number | null;
@@ -429,27 +431,20 @@ function DepositPageContent() {
             </div>
           )}
 
-          {/* What you pay today — itemized. Buyer's card is charged
-              deposit + BHC service fee (fee ADDED ON TOP, mirrors the API +
-              Stripe line items). Balance is paid rancher-direct at pickup.
-              Replaces the old "commission off the top" copy, which was false:
-              the fee is added on top, so the card is charged MORE than the
-              share price, not less. */}
+          {/* What you pay today — ONE number. Founder directive (2026-07-01):
+              the BHC commission is baked into the deposit price and never
+              itemized buyer-side (the split caused drop-off). dueNowCents =
+              deposit + commission = exactly what the card is charged (mirrors
+              the API + the single Stripe line item). The API still sends
+              depositCents/feeCents; the UI simply never renders the split.
+              Balance is paid rancher-direct at pickup. */}
           <div className="bg-white border border-dust p-3 md:p-4">
             <div className="text-xs uppercase tracking-wider text-saddle mb-3">What you pay today</div>
             {selectedCutData && selectedCutData.dueNowCents != null ? (
               <>
                 <div className="text-sm space-y-2">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span>Reserve your {selectedCutData.label.toLowerCase()}</span>
-                    <span className="font-medium whitespace-nowrap">{fmtCents(selectedCutData.depositCents)}</span>
-                  </div>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span>BuyHalfCow service fee</span>
-                    <span className="font-medium whitespace-nowrap">{fmtCents(selectedCutData.feeCents)}</span>
-                  </div>
-                  <div className="flex items-baseline justify-between gap-3 border-t border-dust pt-2 font-serif text-lg">
-                    <span>Due today</span>
+                  <div className="flex items-baseline justify-between gap-3 font-serif text-lg">
+                    <span>Deposit today — reserves your {selectedCutData.label.toLowerCase()}</span>
                     <span className="whitespace-nowrap">{fmtCents(selectedCutData.dueNowCents)}</span>
                   </div>
                 </div>
@@ -457,12 +452,12 @@ function DepositPageContent() {
                   Remaining <strong className="text-charcoal">{fmtCents(selectedCutData.balanceCents)}</strong> is paid directly to {info.rancher.name} at pickup — not now.
                 </p>
                 <p className="text-xs text-saddle mt-3 leading-relaxed">
-                  Your {fmtCents(selectedCutData.depositCents)} reserve routes to {info.rancher.name} through Stripe; the {fmtCents(selectedCutData.feeCents)} service fee is BuyHalfCow&apos;s commission, added on top so the rancher keeps their full price. That&apos;s how we stay free for buyers — the rancher pays the commission, never you on top of the beef. {info.rancher.name} handles pickup, delivery, or shipping; you two coordinate the details in your message thread.
+                  Your deposit is processed securely through Stripe and reserves your slot with {info.rancher.name}. {info.rancher.name} handles pickup, delivery, or shipping; you two coordinate the details in your message thread.
                 </p>
               </>
             ) : (
               <p className="text-sm text-saddle leading-relaxed">
-                Your reserve routes to {info.rancher.name} through Stripe, plus a small BuyHalfCow service fee shown at checkout. The rancher pays our commission — that&apos;s how we stay free for buyers. {info.rancher.name} handles pickup, delivery, or shipping; you two coordinate the details in your message thread.
+                Your deposit is processed securely through Stripe and reserves your slot with {info.rancher.name}. {info.rancher.name} handles pickup, delivery, or shipping; you two coordinate the details in your message thread.
               </p>
             )}
           </div>

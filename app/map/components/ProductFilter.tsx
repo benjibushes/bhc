@@ -10,12 +10,12 @@ export default function ProductFilter({
   onChange: (v: string) => void;
 }) {
   return (
-    <label className="text-sm flex items-center gap-2">
-      <span className="text-saddle">Product</span>
+    <label className="flex items-center gap-1.5 text-xs">
+      <span className="text-[10px] uppercase tracking-wide text-saddle">Product</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="px-3 py-2 border border-dust text-sm bg-bone text-charcoal"
+        className="border border-dust bg-bone px-2 py-1.5 text-xs text-charcoal focus:border-charcoal focus:outline-none"
       >
         <option value="">All products</option>
         {options.map((p) => (

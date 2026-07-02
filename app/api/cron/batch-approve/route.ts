@@ -435,8 +435,13 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
         }
         const cState = consumer['State'];
         if (!cState) continue;
+        // BLOCKER-4 FIX (2026-07-01): use the canonical held set. The old
+        // 3-status literal omitted 'Awaiting Payment' + 'Slot Locked', so a
+        // buyer mid-payment could be picked up by the waitlisted-retry queue
+        // and re-routed (matching/suggest's alreadyActive guard is the
+        // backstop, but the skip belongs here — no wasted route attempt).
         const existingRefStatus = consumer['Referral Status'] || '';
-        if (['Intro Sent', 'Rancher Contacted', 'Negotiation'].includes(existingRefStatus)) continue;
+        if (HELD_REFERRAL_STATUSES.has(existingRefStatus)) continue;
 
         // ── QUALIFICATION GATE ──────────────────────────────────────────
         // Only buyers who have actively raised their hand get routed.

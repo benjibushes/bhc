@@ -10,6 +10,7 @@ import { isSmsWindow } from '@/lib/sendWindow';
 import { normalizeState, normalizeStates } from '@/lib/states';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { isActiveDealReferral } from '@/lib/capacityCount';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { requireAdmin } from '@/lib/adminAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
@@ -19,6 +20,7 @@ import {
   retainerPriorityCompareWithOverride,
   parseRoutingWeightOverride,
 } from '@/lib/routingPriority';
+import { nationwideAllowed, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
 
 export const maxDuration = 90;
 
@@ -221,22 +223,18 @@ export async function POST(request: Request) {
           TABLES.REFERRALS,
           `LOWER({Buyer Email}) = "${buyerEmail.trim().toLowerCase()}"`
         ) as any[];
-        // Active short-circuit. Pending Approval requires a linked rancher
-        // — otherwise it's an orphan record from a failed match attempt and
-        // should NOT block retries.
-        const active = existingRefs.find((r) => {
-          const status = r['Status'];
-          if (!['Intro Sent', 'Rancher Contacted', 'Negotiation', 'Pending Approval'].includes(status)) {
-            return false;
-          }
-          if (status === 'Pending Approval') {
-            const hasRancher =
-              (Array.isArray(r['Rancher']) && r['Rancher'].length > 0) ||
-              (Array.isArray(r['Suggested Rancher']) && r['Suggested Rancher'].length > 0);
-            return hasRancher;
-          }
-          return true;
-        });
+        // Active short-circuit — isActiveDealReferral is the canonical
+        // "live deal blocks a new match" predicate: all HELD statuses
+        // (Intro Sent → Slot Locked), plus Pending Approval ONLY with a
+        // linked rancher (orphans are failed-match residue and must NOT
+        // block retries).
+        //
+        // BLOCKER-4 FIX (2026-07-01): the previous local literal omitted
+        // 'Awaiting Payment' + 'Slot Locked', so a buyer with a live
+        // deposit request who re-hit this endpoint (ready-to-buy click,
+        // nationwide re-fire, crons) got a SECOND referral + competing
+        // intro — or a false Waitlist — mid-payment.
+        const active = existingRefs.find(isActiveDealReferral);
         if (active) {
           // Resolve the already-matched rancher so the funnel reveal shows the
           // MATCH (Mode 2) instead of a false "we're bringing ranches to your
@@ -713,7 +711,26 @@ export async function POST(request: Request) {
       // deliberately double-flagged them, so an accidental flag can't misroute.
       // Lets an uncovered-state buyer get a real match (it ships) instead of
       // waitlisting, while keeping the local-first experience intact.
-      if (!topMatch) {
+      //
+      // ── BUYER PREFERENCE GATE (2026-07-01 founder directive) ──────────────
+      // Buyers can now opt OUT of the nationwide fallback (wait local) or opt
+      // IN (buy sooner) via Consumers.'Nationwide Preference' — set by the
+      // funnel waitlist choice or the /member toggle. Semantics enforced by
+      // the pure helper (lib/nationwidePreference.ts):
+      //   'local-only'          → skip the fallback (waitlist letter path fires
+      //                           exactly as before — same as no candidates)
+      //   'nationwide-ok'/unset → fallback allowed (unset = pre-feature
+      //                           behavior; existing buyers lose NOTHING)
+      // buyerRecForGate is the consumer row fetched fresh at the top of this
+      // request, so a preference written moments earlier (funnel choice →
+      // re-fire) is always visible here.
+      const buyerNationwideOk = nationwideAllowed(buyerRecForGate?.[NATIONWIDE_PREFERENCE_FIELD]);
+      if (!topMatch && !buyerNationwideOk) {
+        console.log(
+          `[match] Buyer ${buyerName || buyerId} opted local-only — skipping nationwide fallback (waitlisted for a local rancher).`,
+        );
+      }
+      if (!topMatch && buyerNationwideOk) {
         const nationwideEligible = allRanchers.filter((r: any) => {
           if (!isEligibleBase(r)) return false;
           if (!(r['Admin Approved Multi-State'] && r['Ships Nationwide'])) return false;

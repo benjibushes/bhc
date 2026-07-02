@@ -13,7 +13,11 @@ import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 import SmsConsentCheckbox, { TermsNotice } from '@/app/components/SmsConsentCheckbox';
 
 type Cut = 'quarter' | 'half' | 'whole';
-interface CutData { price: number; lbs?: any }
+// depositDue: the ALL-IN deposit (commission baked in, whole dollars) computed
+// server-side by the rancher page via lib/pricing depositDisplay — matches the
+// checkout page + Stripe charge exactly. FEE-INVISIBLE (founder directive
+// 2026-07-01): the buyer sees one number, never a deposit/fee split.
+interface CutData { price: number; lbs?: any; depositDue?: number }
 
 interface Props {
   slug: string;
@@ -51,7 +55,13 @@ export default function DepositReserveForm({
   const [sent, setSent] = useState('');
 
   const cd = (c: Cut) => data[c];
+  // Prefer the server-computed all-in deposit (commission baked in — matches
+  // checkout + the card charge). deriveDeposit fallback only guards a missing
+  // prop (e.g. stale caller) and understates by the commission; the server
+  // page always passes depositDue for Connect ranchers.
   const depositOf = (c: Cut) => {
+    const due = cd(c)?.depositDue;
+    if (typeof due === 'number' && due > 0) return due;
     const p = cd(c)?.price || 0;
     return p > 0 ? deriveDeposit(p) : 0;
   };
@@ -193,7 +203,7 @@ export default function DepositReserveForm({
           {loading ? 'Starting…' : `Reserve your ${CUT_LABEL[cut]} — $${depositOf(cut).toLocaleString()} deposit →`}
         </button>
         <p className="text-[11px] text-dust text-center">
-          {REFUND_POLICY_SHORT}. a small BuyHalfCow service fee is added at checkout — {operatorFirst} ships your beef straight to you.
+          {REFUND_POLICY_SHORT}. {operatorFirst} ships your beef straight to you.
         </p>
         <TermsNotice />
       </form>
