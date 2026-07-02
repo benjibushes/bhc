@@ -100,7 +100,11 @@ const ALLOWED_ACTIONS = new Set(['in_talks', 'won', 'lost', 'pass']);
 // Awaiting Payment would re-fire createCommissionInvoice + persist a fresh
 // Stripe Invoice URL over the existing one. Stripe idempotencyKey saves the
 // actual double-charge, but the URL/ID overwrite still confuses the dashboard.
-const TERMINAL_STATUSES = ['Closed Won', 'Closed Lost', 'Awaiting Payment'];
+// Blocker-3 (2026-07-01): 'Slot Locked' added — deposit PAID, slot held. A
+// 30-day-old Pass link (or a mail scanner prefetching it) on a Slot Locked
+// deal closed it Lost, freed the slot, and re-routed the paying buyer toward
+// a SECOND deposit. Set shape is pinned by lib/referralLock.test.ts.
+const TERMINAL_STATUSES = ['Closed Won', 'Closed Lost', 'Awaiting Payment', 'Slot Locked'];
 
 function htmlPage(
   title: string,
@@ -145,7 +149,24 @@ async function applyAction(
   }
 
   const currentStatus = referral['Status'] || '';
-  const wasActiveBefore = !TERMINAL_STATUSES.includes(currentStatus);
+
+  // MONEY LOCK (Blocker-3 2026-07-01): once the deposit has settled
+  // (Deposit Paid At stamped by the Stripe webhook), NO one-click email link
+  // may mutate this referral — not pass, not in_talks, not won, not lost.
+  // A stale link or a corporate mail scanner's GET prefetch could otherwise
+  // close a PAID deal, free the slot, and re-route the paying buyer toward a
+  // second deposit. Refusal fires BEFORE any write (including the activity
+  // stamp): money in ⇒ the dashboard's explicit flows are the only mutation
+  // path. Renders on the standard refusal page with its dashboard CTA.
+  {
+    const { isDepositLocked, DEPOSIT_LOCKED_MESSAGE } = await import('@/lib/referralLock');
+    if (isDepositLocked(referral['Deposit Paid At'])) {
+      console.log(
+        `[quick-action] money-lock refusal: action=${action} referral=${decoded.referralId} status=${currentStatus} (Deposit Paid At stamped)`,
+      );
+      return { ok: false, message: DEPOSIT_LOCKED_MESSAGE };
+    }
+  }
 
   // EVERY rancher action — including no-op repeats — stamps Last Rancher
   // Activity At + Rancher Engaged Flag. This extends the freshness window
@@ -160,6 +181,16 @@ async function applyAction(
   let summary = '';
 
   if (action === 'in_talks') {
+    // Blocker-3: terminal guard — in_talks previously had NONE, so a stale
+    // "in talks" link on a closed/settled deal flipped it back to 'Rancher
+    // Contacted' (the state-machine fallback below writes Status directly).
+    // Mirror the other actions: stamp activity, report, change nothing.
+    if (TERMINAL_STATUSES.includes(currentStatus)) {
+      try {
+        await updateRecord(TABLES.REFERRALS, decoded.referralId, updates);
+      } catch {}
+      return { ok: true, message: `This deal is already "${currentStatus}" — nothing changed. Manage it from your dashboard.` };
+    }
     if (currentStatus === 'Rancher Contacted' || currentStatus === 'Negotiation') {
       // Even on no-op, stamp activity so cron freshness window extends.
       try {

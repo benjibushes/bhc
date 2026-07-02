@@ -47,6 +47,30 @@ export function refundReferralClearFields(
   };
 }
 
+/**
+ * Statuses from which a FULL deposit refund restores the linked Referral
+ * (lib/contracts/payments.ts restoreReferralAfterRefund).
+ *
+ * Blocker-2 widening (2026-07-01): the COMMON refund is pre-close — the
+ * policy-advertised NRD-window refund lands while the deal sits at
+ * 'Awaiting Payment' (or 'Slot Locked' for a post-accept make-whole), NOT at
+ * 'Closed Won'. Pre-fix the restore early-returned for anything but
+ * 'Closed Won', so those refunds left Status + Deposit Paid At stamped: the
+ * rancher could still send the final invoice, dunning kept firing, the slot
+ * stayed held forever, and the buyer was 409-blocked from re-depositing.
+ *
+ * Statuses NOT in this set skip the restore — restoreReferralAfterRefund
+ * raises an operator signal instead (an odd-state refund must never be
+ * invisible). Capacity stays correct automatically per prior status via
+ * shouldDecrementOnRefundRestore below: held (AP/SL) → free the slot;
+ * 'Closed Won' → no decrement (recordClose already freed it at close time).
+ */
+export const RESTORABLE_REFUND_STATUSES: ReadonlySet<string> = new Set([
+  'Closed Won',
+  'Awaiting Payment',
+  'Slot Locked',
+]);
+
 /** Statuses in which a final invoice must NEVER be sent — the buyer owes nothing. */
 export const FINAL_INVOICE_BLOCKED_STATUSES = ['Refunded', 'Closed Lost'] as const;
 

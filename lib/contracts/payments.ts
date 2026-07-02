@@ -11,7 +11,7 @@ import { createRecord, updateRecord, getAllRecords, getFirstRecord, getRecordByI
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { logAuditEntry } from '@/lib/auditLog';
 import { sendTelegramUpdate } from '@/lib/telegram';
-import { refundReferralClearFields, shouldDecrementOnRefundRestore } from '@/lib/refundLifecycle';
+import { refundReferralClearFields, shouldDecrementOnRefundRestore, RESTORABLE_REFUND_STATUSES } from '@/lib/refundLifecycle';
 
 export type PaymentStatus = 'pending' | 'succeeded' | 'refunded' | 'failed' | 'abandoned' | 'requires_webhook_replay';
 export type PayoutStatus = 'pending' | 'paid' | 'failed';
@@ -535,7 +535,8 @@ export async function markDepositRefunded(
   // purchase cron emailed the buyer. Money back, funnel says "won". Disaster.
   //
   // On any FULL (non-partial) refund of a buyer-deposit Payments row whose
-  // Referral was Closed Won, revert the deal:
+  // Referral is in a RESTORABLE state (Closed Won / Awaiting Payment /
+  // Slot Locked — Blocker-2 widening, lib/refundLifecycle.ts), revert the deal:
   //   - Referral.Status → 'Refunded' (new option, typecast-created)
   //   - Clear Closed At, Sale Amount, Commission Due, Commission Status
   //   - Stamp Refunded At
@@ -550,8 +551,9 @@ export async function markDepositRefunded(
   // sale amount. Operator can manually convert to full refund if desired.
   //
   // Idempotency: the early-return on Status==='refunded' above already
-  // prevents double-restore. We also guard on Referral.Status==='Closed Won'
-  // so re-running against an already-restored Referral is a no-op.
+  // prevents double-restore. We also guard on Referral.Status ∈
+  // RESTORABLE_REFUND_STATUSES (already-Refunded no-ops first) so re-running
+  // against an already-restored Referral is a no-op.
   if (isFullRefund) {
     try {
       await restoreReferralAfterRefund(payment, stripePaymentIntentId);
@@ -598,17 +600,46 @@ async function restoreReferralAfterRefund(
   }
 
   const currentStatus = String(referral['Status'] || '');
-  // Idempotency: only restore from a Closed Won state. If the Referral was
-  // already flipped to Refunded (re-run), or never reached Closed Won (refund
-  // before close), skip the buyer/rancher restore — operator handles edge cases.
+  // Idempotency FIRST: an already-Refunded Referral is a re-run (Stripe
+  // webhook redelivery) — always a silent no-op, never a restore, never an
+  // operator signal.
   if (currentStatus === 'Refunded') {
     console.log('[restoreReferralAfterRefund] Referral already Refunded, no-op', referralId);
     return;
   }
-  if (currentStatus !== 'Closed Won') {
+  // Blocker-2 widening (2026-07-01): restore from every RESTORABLE status,
+  // not just 'Closed Won'. The COMMON refund is pre-close — the policy-
+  // advertised NRD-window refund lands at 'Awaiting Payment' (or 'Slot
+  // Locked' post-accept make-whole). Pre-fix those refunds skipped the
+  // restore entirely: the referral kept its status + Deposit Paid At stamp,
+  // so the rancher could send the final invoice, dunning kept firing, the
+  // slot stayed held forever, and the buyer was 409-blocked from
+  // re-depositing. Set is pure + pinned in lib/refundLifecycle.test.ts.
+  //
+  // Anything OUTSIDE the restorable set still skips — but never silently:
+  // a full refund landing in an odd state (pre-deposit, Closed Lost, garbage)
+  // means something upstream is wrong, and the operator has to see it.
+  if (!RESTORABLE_REFUND_STATUSES.has(currentStatus)) {
     console.warn(
-      `[restoreReferralAfterRefund] Referral ${referralId} status=${currentStatus} (not Closed Won) — skipping restore. Operator should review.`,
+      `[restoreReferralAfterRefund] Referral ${referralId} status=${currentStatus} (not restorable) — skipping restore. Operator signal sent.`,
     );
+    try {
+      const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'system-error',
+        summary: `Full deposit refund hit referral in odd state "${currentStatus || '?'}" — NOT auto-restored`,
+        detail:
+          `Referral ${referralId} (PI …${stripePaymentIntentId.slice(-8)}) received a FULL refund while in status ` +
+          `"${currentStatus || '?'}". Auto-restore only runs from ${[...RESTORABLE_REFUND_STATUSES].join(' / ')}. ` +
+          `Review the referral: it may still carry a stale Deposit Paid At stamp, a held slot, or a live dunning sequence.`,
+        refs: [{ type: 'referral', id: referralId }],
+        dedupeKey: `refund-restore-skip-${referralId}`,
+        dedupeWindowMs: 60 * 60 * 1000,
+      });
+    } catch (sigErr: any) {
+      console.warn('[restoreReferralAfterRefund] operator signal failed:', sigErr?.message);
+    }
     return;
   }
 
@@ -641,9 +672,10 @@ async function restoreReferralAfterRefund(
   // let the matcher over-book a genuinely-full rancher (compounding on every
   // close→refund cycle). Only decrement when the status captured BEFORE the
   // refund flip (currentStatus) still occupied a slot — pure decision,
-  // unit-tested in lib/refundLifecycle.test.ts. On today's path currentStatus
-  // is always 'Closed Won' (early-returns above), so this never fires; the
-  // gate keeps any future widening of the restore path capacity-correct.
+  // unit-tested in lib/refundLifecycle.test.ts. Since the Blocker-2 widening
+  // this gate does BOTH jobs on live paths: 'Awaiting Payment'/'Slot Locked'
+  // are canonically held → decrement (the refund genuinely frees the slot);
+  // 'Closed Won' → skip (recordClose already freed it at close time).
   // syncCapacityToAirtable only runs when the counter actually moved.
   let capacityDecremented = false;
   if (rancherId && shouldDecrementOnRefundRestore(currentStatus)) {

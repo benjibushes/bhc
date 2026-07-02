@@ -61,6 +61,24 @@ export async function POST(request: Request) {
 
   if (!sig || !CONNECT_WEBHOOK_SECRET) {
     console.error('[stripe-connect webhook] missing signature or STRIPE_CONNECT_WEBHOOK_SECRET');
+    // Blocker-5: sig PRESENT + secret missing/empty = Stripe is genuinely
+    // knocking and we can't answer — same "deposits cannot settle" condition
+    // as a bad signature (env-var drift to EMPTY has happened before), same
+    // dedupe key. Unsigned junk POSTs (no stripe-signature header) stay quiet.
+    if (sig && !CONNECT_WEBHOOK_SECRET) {
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: 'Connect webhook signature verification FAILING — deposits cannot settle',
+          detail:
+            'STRIPE_CONNECT_WEBHOOK_SECRET is missing or empty in this environment — every Connect money event is being dropped with a 400. Set it in Vercel from the Connect endpoint signing secret in Stripe Dashboard.',
+          dedupeKey: 'connect-sig-fail',
+          dedupeWindowMs: 15 * 60 * 1000,
+        });
+      } catch {}
+    }
     return NextResponse.json({ error: 'Missing signature' }, { status: 400 });
   }
 
@@ -123,6 +141,24 @@ export async function POST(request: Request) {
         err?.message,
         v2HydrateError ? `(v2 hydrate also failed: ${v2HydrateError})` : '',
       );
+      // Blocker-5 (mirrors app/api/webhooks/stripe/route.ts T5): this is the
+      // ONLY money-event webhook — if the signing secret drifts, every
+      // deposit settlement silently 400s forever (it already happened once:
+      // "0 deposits ever settled"). Alert LOUD; dedupe 15min because Stripe
+      // retries the same event for days, so a real drift fires this
+      // repeatedly. The 400 below stays — Stripe must see the failure so it
+      // keeps retrying until the secret is fixed.
+      try {
+        const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+        await sendOperatorSignal({
+          urgency: 'loud',
+          kind: 'system-error',
+          summary: 'Connect webhook signature verification FAILING — deposits cannot settle',
+          detail: `${err?.message?.slice(0, 100) || 'unknown'} — verify STRIPE_CONNECT_WEBHOOK_SECRET in Vercel matches the Connect endpoint signing secret in Stripe Dashboard.`,
+          dedupeKey: 'connect-sig-fail',
+          dedupeWindowMs: 15 * 60 * 1000,
+        });
+      } catch {}
       return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
     }
   }
