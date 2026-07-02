@@ -221,8 +221,8 @@ const sections: Section[] = [
         q: 'Can I set my own pricing and terms?',
         a: (
           <p>
-            Yes &mdash; entirely. You set per-cut pricing, processing dates, pickup/delivery options,
-            refund policy. BHC enforces a platform-level trust floor (the BHC Promise) but
+            Yes &mdash; entirely. You set per-cut pricing, processing dates, and pickup/delivery
+            options. BHC enforces a platform-level trust floor (the BHC Promise) but
             otherwise you run your business.
           </p>
         ),

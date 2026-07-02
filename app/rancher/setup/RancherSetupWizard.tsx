@@ -3803,9 +3803,6 @@ function FulfillmentStep({
   const hasDelivery = types.includes('Local Delivery');
   const hasShipping = types.includes('Cold-Chain Shipping');
 
-  const refundPolicy: string = String(form['Refund Policy'] || '');
-  const refundLen = refundPolicy.trim().length;
-
   // Next Processing Date (YYYY-MM-DD). Buyers see this as the "next available
   // processing date" so they know when they'll get their beef. Compare against
   // today's LOCAL date (string compare on YYYY-MM-DD is safe + tz-stable) to
@@ -3852,15 +3849,6 @@ function FulfillmentStep({
         return;
       }
     }
-    if (refundLen < 20) {
-      setLocalError('Refund policy must be at least 20 characters — buyers see this verbatim.');
-      return;
-    }
-    if (refundLen > 500) {
-      setLocalError('Refund policy must be 500 characters or fewer.');
-      return;
-    }
-
     // PATCH the new fields. Coerce numerics so Airtable stores them as
     // numbers (the route casts price fields but not these); we send Number
     // values so they round-trip cleanly.
@@ -3869,7 +3857,6 @@ function FulfillmentStep({
       'Pickup City': hasPickup ? String(form['Pickup City'] || '').trim() : '',
       'Delivery Radius Miles': hasDelivery ? Number(form['Delivery Radius Miles']) : null,
       'Shipping Lead Time Days': hasShipping ? Number(form['Shipping Lead Time Days']) : null,
-      'Refund Policy': refundPolicy.trim(),
       'Fulfillment Cost Notes': String(form['Fulfillment Cost Notes'] || '').trim(),
       // ISO date string or '' to clear. Optional — no validation gate.
       'Next Processing Date': nextProcessingDate || '',
@@ -3983,30 +3970,9 @@ function FulfillmentStep({
         )}
       </label>
 
-      <div className="space-y-1.5">
-        <TextareaField
-          label="Refund policy (required, 20–500 chars)"
-          value={form['Refund Policy']}
-          onChange={(v) =>
-            setFieldAndAutoSave('Refund Policy', v, {
-              // Auto-save only when within valid range so we don't churn
-              // PATCHes while the rancher is mid-sentence.
-              isValid: (val: any) => {
-                const s = String(val || '');
-                return s.length >= 20 && s.length <= 500;
-              },
-            })
-          }
-          rows={4}
-          placeholder={`Tip: "Full refund within 7 days if cattle isn't processed yet. After processing, store credit only."`}
-        />
-        <p className="text-xs text-saddle italic">
-          Shown verbatim to buyers on the pre-payment page. {refundLen}/500
-          {refundLen < 20 && ' — need at least 20'}
-          {refundLen > 500 && ' — too long, trim it down'}
-          <AutoSaveIndicator status={autoSaveStatus['Refund Policy']} />
-        </p>
-      </div>
+      {/* Per-rancher refund policy step removed 2026-07-02 (founder directive:
+          the rancher's own refund policy is not something we promote). The
+          BuyHalfCow Promise is the deposit-terms surface buyers see. */}
 
       <div className="bg-bone-warm border border-dust p-4 text-sm text-saddle">
         <strong className="text-charcoal">Why we ask:</strong> buyers see the
