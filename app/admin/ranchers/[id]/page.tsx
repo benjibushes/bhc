@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import Container from '../../../components/Container';
 import AdminAuthGuard from '../../../components/AdminAuthGuard';
 import { normalizeStates, stringifyStates, US_STATES } from '@/lib/states';
+import { isReadyToGoLive, goLiveBlockersView } from '@/lib/goLiveGates';
+import { toast } from '@/lib/toast';
 
 interface Testimonial {
   name: string;
@@ -32,6 +34,9 @@ export default function AdminRancherDetailPage() {
   const [error, setError] = useState('');
   const [regeocodingPin, setRegeocodingPin] = useState(false);
   const [regeocodeMsg, setRegeocodeMsg] = useState('');
+  // Actions bar (ported from the orphaned /admin/today v1 drawer — Manifest #16):
+  // per-action busy key so buttons don't all flicker together.
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   // Form state
   const [form, setForm] = useState({
@@ -208,6 +213,161 @@ export default function AdminRancherDetailPage() {
     }
   }
 
+  // ── Actions bar plumbing ──────────────────────────────────────────────────
+  // Every button below wires to an EXISTING endpoint and surfaces the server's
+  // error verbatim — no new go-live/pause logic lives client-side.
+  async function postAction(
+    key: string,
+    path: string,
+    opts?: { body?: any; failTitle?: string },
+  ): Promise<any | null> {
+    setActionBusy(key);
+    try {
+      const res = await fetch(`/api/admin/ranchers/${id}/${path}`, {
+        method: 'POST',
+        ...(opts?.body
+          ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts.body) }
+          : {}),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.error) {
+        toast.error(opts?.failTitle || `${key} failed`, payload?.error || `HTTP ${res.status}`);
+        return null;
+      }
+      return payload;
+    } catch (e: any) {
+      toast.error(opts?.failTitle || `${key} failed`, e?.message);
+      return null;
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  const rancherName = () => rancher?.ranch_name || rancher?.operator_name || 'this rancher';
+
+  // Go Live — rides the ONE rail (lib/goLiveRancher via POST /go-live).
+  // Gated client-side by the same shared predicate the server enforces;
+  // force=true is the operator escape hatch for mis-tagged records.
+  async function handleGoLive(force: boolean) {
+    const warning = force
+      ? `FORCE go-live for "${rancherName()}"?\n\nThis OVERRIDES the gates (${goLiveBlockersView(rancher).join('; ') || 'none failing'}). An unsigned rancher silently receives zero buyers; a tier_v2 rancher without active Connect can't take deposits. Continue anyway?`
+      : `Go live: publish "${rancherName()}" and email every waiting buyer in their state. This cannot be undone. Continue?`;
+    if (!window.confirm(warning)) return;
+    const payload = await postAction(force ? 'force-go-live' : 'go-live', 'go-live', {
+      body: force ? { force: true } : undefined,
+      failTitle: 'Go-Live failed',
+    });
+    if (payload) {
+      toast.success(
+        `${rancherName()} is live`,
+        payload?.matched ? `Auto-matched ${payload.matched} waiting buyers` : undefined,
+      );
+      await fetchRancher();
+    }
+  }
+
+  // Pause — matching engine stops routing leads (vacation / processing month).
+  async function handlePause() {
+    const reason = window.prompt(`Pause ${rancherName()} — no new leads until resumed. Reason (optional):`, '');
+    if (reason === null) return; // cancelled
+    const payload = await postAction('pause', 'pause', {
+      body: reason.trim() ? { reason: reason.trim() } : {},
+      failTitle: 'Pause failed',
+    });
+    if (payload) {
+      toast.success(`${rancherName()} paused`, payload?.message || 'No new leads until resumed');
+      await fetchRancher();
+    }
+  }
+
+  // Resume — back to Active (or At Capacity if their slots are full).
+  async function handleResume() {
+    const payload = await postAction('resume', 'resume', { failTitle: 'Resume failed' });
+    if (payload) {
+      toast.success(`${rancherName()} resumed`, payload?.message || 'Accepting new leads again');
+      await fetchRancher();
+    }
+  }
+
+  // Resync Connect — live Stripe read → persist true Connect status. Fixes
+  // "stuck at onboarding" ranchers whose account.updated webhook never landed.
+  async function handleResyncConnect() {
+    const payload = await postAction('resync-connect', 'resync-connect', {
+      failTitle: 'Resync failed',
+    });
+    if (payload) {
+      toast.success('Connect resynced', payload?.message);
+      await fetchRancher();
+    }
+  }
+
+  // Mark Legacy Connect — hybrid path: tier_v2 deposits at legacy 10%
+  // commission, no subscription. Returns the Stripe onboarding URL to send.
+  async function handleMarkLegacyConnect() {
+    if (
+      !window.confirm(
+        `Flag ${rancherName()} as Legacy Connect? This flips Pricing Model to tier_v2 (deposits via Stripe Connect) at the legacy 10% commission with no subscription, and creates their Connect account if needed.`,
+      )
+    )
+      return;
+    const payload = await postAction('mark-legacy-connect', 'mark-legacy-connect', {
+      failTitle: 'Mark Legacy Connect failed',
+    });
+    if (payload) {
+      toast.success('Marked Legacy Connect', payload?.message);
+      if (payload?.onboardingUrl) {
+        window.prompt('Send this Stripe onboarding URL to the rancher (⌘C to copy):', payload.onboardingUrl);
+      }
+      await fetchRancher();
+    }
+  }
+
+  // Send v2 upgrade invite — 5-min wizard: pick tier, Stripe Connect, deposits.
+  async function handleSendV2Upgrade() {
+    if (
+      !window.confirm(
+        `Send v2 upgrade invite to ${rancherName()}? Email explains the deposit standardization + opens wizard for tier subscription + Stripe Connect.`,
+      )
+    )
+      return;
+    // Target plan: a paid tier (pasture/ranch/operator) lands the rancher
+    // PRE-SELECTED on that plan + sent straight to its checkout. Blank = the
+    // free Legacy Connect default.
+    const targetTier = (
+      window.prompt(
+        'Target plan? Type "pasture", "ranch", or "operator" for a PAID tier (lands them straight on that plan). Leave blank for free Legacy Connect.',
+        'pasture',
+      ) || ''
+    )
+      .trim()
+      .toLowerCase();
+    const payload = await postAction('send-v2-upgrade', 'send-v2-upgrade', {
+      body: { targetTier },
+      failTitle: 'Upgrade invite failed',
+    });
+    if (payload) {
+      toast.success('Upgrade invite sent', `Sent to ${rancher?.email || 'rancher'}`);
+      await fetchRancher();
+    }
+  }
+
+  // Resend setup email — fresh 60-day wizard link, stamps Docs Sent At.
+  async function handleResendSetup() {
+    if (
+      !window.confirm(
+        `Email ${rancherName()} a fresh setup-wizard link (valid 60 days)? Stamps Docs Sent At.`,
+      )
+    )
+      return;
+    const payload = await postAction('resend-setup', 'resend-setup', {
+      failTitle: 'Resend setup failed',
+    });
+    if (payload) {
+      toast.success('Setup link sent', payload?.sentTo ? `Sent to ${payload.sentTo}` : undefined);
+      await fetchRancher();
+    }
+  }
+
   function addTestimonial() {
     if (!newTestimonial.name || !newTestimonial.quote) return;
     setTestimonials([...testimonials, { ...newTestimonial }]);
@@ -255,8 +415,8 @@ export default function AdminRancherDetailPage() {
             {/* Header */}
             <div className="flex items-center justify-between">
               <div>
-                <button onClick={() => router.push('/admin')} className="text-sm text-saddle hover:underline mb-2 block">
-                  &larr; Back to Admin
+                <button onClick={() => router.push('/admin/ranchers')} className="text-sm text-saddle hover:underline mb-2 block">
+                  &larr; Back to Ranchers
                 </button>
                 <h1 className="font-[family-name:var(--font-playfair)] text-3xl">
                   {rancher.ranch_name || rancher.operator_name}
@@ -282,33 +442,6 @@ export default function AdminRancherDetailPage() {
                 >
                   🕵️ View Dashboard as Rancher
                 </button>
-                {String(rancher.pricing_model || '').toLowerCase() !== 'tier_v2' && (
-                  <button
-                    onClick={async () => {
-                      if (!confirm(`Send v2 upgrade invite to ${rancher.operator_name || rancher.ranch_name}? Email explains the deposit standardization + opens wizard for tier subscription + Stripe Connect.`)) return;
-                      // Target plan: a paid tier (pasture/ranch/operator) lands the
-                      // rancher PRE-SELECTED on that plan + sent straight to its
-                      // checkout. Blank = the free Legacy Connect default.
-                      const targetTier = (prompt('Target plan? Type "pasture", "ranch", or "operator" for a PAID tier (lands them straight on that plan). Leave blank for free Legacy Connect.', 'pasture') || '').trim().toLowerCase();
-                      const res = await fetch(`/api/admin/ranchers/${id}/send-v2-upgrade`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ targetTier }),
-                      });
-                      if (!res.ok) {
-                        const t = await res.text();
-                        alert('Upgrade invite failed — check console');
-                        console.error(t);
-                        return;
-                      }
-                      alert(`✓ Upgrade invite sent to ${rancher.email}`);
-                    }}
-                    className="px-4 py-2 text-sm border border-amber-dark bg-amber/15 text-charcoal hover:bg-amber/30"
-                    title="Sends the rancher a 5-min wizard link to pick a tier, complete Stripe Connect, and start collecting deposits via the platform. Currently shows because Pricing Model is not tier_v2."
-                  >
-                    🚀 Send V2 Upgrade Invite
-                  </button>
-                )}
                 <button
                   onClick={handleSave}
                   disabled={saving}
@@ -357,6 +490,116 @@ export default function AdminRancherDetailPage() {
                 </label>
               </div>
             </div>
+
+            {/* ── Actions bar — every operational lever, one place ─────────────
+                Ported from the orphaned /admin/today v1 drawer (Manifest #16).
+                Each button hits its existing endpoint; server errors surface
+                verbatim. Go Live is gated by the SAME predicate the server
+                enforces (lib/goLiveGates) — force is the explicit override. */}
+            <section className="p-4 border border-charcoal bg-white space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="font-[family-name:var(--font-playfair)] text-xl">Actions</h2>
+                {rancher.onboarding_status === 'Live' ? (
+                  <span className="px-2 py-0.5 text-xs border border-sage/40 bg-sage/15 text-sage-dark">
+                    ● Live{rancher.active_status && rancher.active_status !== 'Active' ? ` · ${rancher.active_status}` : ''}
+                  </span>
+                ) : isReadyToGoLive(rancher) ? (
+                  <span className="px-2 py-0.5 text-xs border border-sage/40 bg-sage/15 text-sage-dark">
+                    ⚡ ready to go live
+                  </span>
+                ) : (
+                  <span
+                    className="px-2 py-0.5 text-xs border border-amber-dark text-amber-dark"
+                    title={goLiveBlockersView(rancher).join('; ')}
+                  >
+                    blocked: {goLiveBlockersView(rancher).join('; ')}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {/* Go Live — only offered when the rail would accept the click */}
+                {rancher.onboarding_status !== 'Live' && isReadyToGoLive(rancher) && (
+                  <button
+                    onClick={() => handleGoLive(false)}
+                    disabled={actionBusy === 'go-live'}
+                    className="px-4 py-2 text-sm bg-sage-dark text-white hover:opacity-90 disabled:opacity-50"
+                    title="One click: publishes the page, flips routing on, emails the rancher, warmup-blasts + auto-matches waiting buyers in their state."
+                  >
+                    {actionBusy === 'go-live' ? '…' : '🚀 Go Live'}
+                  </button>
+                )}
+                {rancher.onboarding_status !== 'Live' && !isReadyToGoLive(rancher) && (
+                  <button
+                    onClick={() => handleGoLive(true)}
+                    disabled={actionBusy === 'force-go-live'}
+                    className="px-4 py-2 text-sm border border-rust text-rust-dark hover:bg-rust/10 disabled:opacity-50"
+                    title={`Gates failing: ${goLiveBlockersView(rancher).join('; ')}. Force overrides ALL gates — escape hatch for mis-tagged records only.`}
+                  >
+                    {actionBusy === 'force-go-live' ? '…' : '⚠️ Force Go Live'}
+                  </button>
+                )}
+                {/* Pause / Resume — routing on/off switch */}
+                {rancher.active_status === 'Paused' ? (
+                  <button
+                    onClick={handleResume}
+                    disabled={actionBusy === 'resume'}
+                    className="px-4 py-2 text-sm border border-sage text-sage-dark hover:bg-sage/10 disabled:opacity-50"
+                    title="Re-open this rancher to new leads (Active, or At Capacity if slots are full)"
+                  >
+                    {actionBusy === 'resume' ? '…' : '▶ Resume'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handlePause}
+                    disabled={actionBusy === 'pause'}
+                    className="px-4 py-2 text-sm border border-amber-dark text-amber-dark hover:bg-amber/10 disabled:opacity-50"
+                    title="Stop this rancher from receiving new leads (vacation, processing month, sickness)"
+                  >
+                    {actionBusy === 'pause' ? '…' : '⏸ Pause'}
+                  </button>
+                )}
+                {/* Resync Connect — live Stripe read, unsticks the deposit gate */}
+                <button
+                  onClick={handleResyncConnect}
+                  disabled={actionBusy === 'resync-connect'}
+                  className="px-4 py-2 text-sm border border-saddle text-saddle hover:bg-saddle/10 disabled:opacity-50"
+                  title="Re-pull Stripe Connect account status live from Stripe and persist it. Fixes ranchers stuck at 'onboarding' when the webhook never landed."
+                >
+                  {actionBusy === 'resync-connect' ? '…' : '↻ Resync Connect'}
+                </button>
+                {String(rancher.pricing_model || '').toLowerCase() !== 'tier_v2' && (
+                  <>
+                    {/* Mark Legacy Connect — hybrid: Connect deposits, 10%, no subscription */}
+                    <button
+                      onClick={handleMarkLegacyConnect}
+                      disabled={actionBusy === 'mark-legacy-connect'}
+                      className="px-4 py-2 text-sm border border-dust hover:bg-bone disabled:opacity-50"
+                      title="Flip to the hybrid path: platform deposits via Stripe Connect at the legacy 10% commission, no monthly subscription. Creates the Connect account + returns the onboarding link."
+                    >
+                      {actionBusy === 'mark-legacy-connect' ? '…' : '🪢 Mark Legacy Connect'}
+                    </button>
+                    {/* Send v2 upgrade — subscription tier + Connect wizard */}
+                    <button
+                      onClick={handleSendV2Upgrade}
+                      disabled={actionBusy === 'send-v2-upgrade'}
+                      className="px-4 py-2 text-sm border border-amber-dark bg-amber/15 text-charcoal hover:bg-amber/30 disabled:opacity-50"
+                      title="Sends the rancher a 5-min wizard link to pick a tier, complete Stripe Connect, and start collecting deposits via the platform. Shows because Pricing Model is not tier_v2."
+                    >
+                      {actionBusy === 'send-v2-upgrade' ? '…' : '🚀 Send V2 Upgrade Invite'}
+                    </button>
+                  </>
+                )}
+                {/* Resend setup email — fresh 60-day wizard link */}
+                <button
+                  onClick={handleResendSetup}
+                  disabled={actionBusy === 'resend-setup'}
+                  className="px-4 py-2 text-sm border border-dust hover:bg-bone disabled:opacity-50"
+                  title="Emails the rancher a fresh 60-day setup-wizard link and stamps Docs Sent At."
+                >
+                  {actionBusy === 'resend-setup' ? '…' : '📨 Resend Setup Email'}
+                </button>
+              </div>
+            </section>
 
             {/* Location / Map Pin */}
             <section className="p-6 border border-dust bg-white space-y-4">
@@ -713,8 +956,8 @@ export default function AdminRancherDetailPage() {
 
             {/* Bottom save */}
             <div className="flex justify-between items-center pt-4">
-              <button onClick={() => router.push('/admin')} className="text-sm text-saddle hover:underline">
-                &larr; Back to Admin
+              <button onClick={() => router.push('/admin/ranchers')} className="text-sm text-saddle hover:underline">
+                &larr; Back to Ranchers
               </button>
               <button
                 onClick={handleSave}

@@ -403,7 +403,7 @@ export async function GET(request: Request) {
         .slice(0, 8);
 
       // (b) Ranchers stalled — operationally live but 0 active referrals
-      //     (idle capacity). Mirrors /api/admin/today "underused".
+      //     (idle capacity). (The retired today-v1 API called this "underused".)
       const stalledRanchers = ranchers
         .filter((r: any) => isRancherOperationalForBuyers(r) && num(r['Current Active Referrals']) === 0)
         .map((r: any) => ({

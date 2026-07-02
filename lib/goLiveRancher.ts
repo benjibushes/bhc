@@ -2,7 +2,7 @@
 // goLiveRancher() so gates, writes, and side effects can never diverge again.
 //
 // Callers (all thin wrappers around this):
-//   - POST /api/admin/ranchers/[id]/go-live      (admin Go Live buttons, /admin/today, desk)
+//   - POST /api/admin/ranchers/[id]/go-live      (admin Go Live buttons: /admin/ranchers list + hub)
 //   - PATCH /api/admin/ranchers/[id]             (onboarding_status='Live' branch:
 //                                                 "Mark Live" + handleRelease)
 //   - /api/rancher/landing-page _action=request-go-live (rancher self-publish)
