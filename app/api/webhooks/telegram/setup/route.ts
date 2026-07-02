@@ -1,21 +1,24 @@
 import { NextResponse } from 'next/server';
+import { requireCron } from '@/lib/cronAuth';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
 // One-time setup endpoint to register the Telegram webhook URL with the Telegram Bot API.
-// Hit GET /api/webhooks/telegram/setup?secret=YOUR_ADMIN_PASSWORD to register.
-// Hit GET /api/webhooks/telegram/setup?secret=YOUR_ADMIN_PASSWORD&action=info to check current status.
-// Hit GET /api/webhooks/telegram/setup?secret=YOUR_ADMIN_PASSWORD&action=delete to remove webhook.
+//
+// Auth: `Authorization: Bearer <CRON_SECRET>` (requireCron). The old
+// `?secret=ADMIN_PASSWORD` query auth leaked the admin password into Vercel
+// access logs on every hit — removed in the cron-auth sweep.
+//
+//   curl -H "Authorization: Bearer $CRON_SECRET" $SITE/api/webhooks/telegram/setup                 # register
+//   curl -H "Authorization: Bearer $CRON_SECRET" "$SITE/api/webhooks/telegram/setup?action=info"   # current status
+//   curl -H "Authorization: Bearer $CRON_SECRET" "$SITE/api/webhooks/telegram/setup?action=delete" # remove webhook
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const secret = searchParams.get('secret');
-  const action = searchParams.get('action') || 'register';
+  const denied = requireCron(request);
+  if (denied) return denied;
 
-  // Simple auth — use ADMIN_PASSWORD
-  if (secret !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const { searchParams } = new URL(request.url);
+  const action = searchParams.get('action') || 'register';
 
   if (!TELEGRAM_BOT_TOKEN) {
     return NextResponse.json(

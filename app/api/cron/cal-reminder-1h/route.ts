@@ -20,7 +20,7 @@ import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { sendEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
-import { CRON_SECRET } from '@/lib/secrets';
+import { requireCron } from '@/lib/cronAuth';
 
 export const maxDuration = 120;
 
@@ -182,20 +182,13 @@ async function realHandler(_request: Request): Promise<CronResult> {
   };
 }
 
-// Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`. Also accept
-// `?secret=` for manual/admin triggers. This was the ONLY mutating cron with
-// no auth gate — it fires buyer email + SMS, so an unauthenticated caller
-// could spam booked buyers. CRON_SECRET is requireEnv (fail-loud) in lib/secrets.
-function isAuthedCron(request: Request): boolean {
-  const authHeader = request.headers.get('authorization');
-  if (authHeader === `Bearer ${CRON_SECRET}`) return true;
-  const { searchParams } = new URL(request.url);
-  return searchParams.get('secret') === CRON_SECRET;
-}
-
+// Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` — the only auth
+// requireCron accepts (the `?secret=` fallback leaked the secret into Vercel
+// access logs and was removed in the cron-auth sweep). This was the ONLY
+// mutating cron with no auth gate — it fires buyer email + SMS, so an
+// unauthenticated caller could spam booked buyers.
 export async function GET(request: Request) {
-  if (!isAuthedCron(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('cal-reminder-1h', realHandler)(request);
 }

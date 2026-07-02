@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { CRON_SECRET } from '@/lib/secrets';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 
 // Re-warm cohort cron — reanimates buyers stuck in the "warmed but never
 // engaged" state.
@@ -122,15 +122,8 @@ async function realHandler(
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  if (CRON_SECRET) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${CRON_SECRET}`) {
-      const { searchParams } = new URL(request.url);
-      if (searchParams.get('secret') !== CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('re-warm-cohort', realHandler)(request);
 }
 

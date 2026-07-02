@@ -57,6 +57,7 @@ import { sendSMSToConsumer } from '@/lib/twilio';
 import { smsEnabled } from '@/lib/smsFlag';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 import { logAuditEntry } from '@/lib/auditLog';
 import { getMaxActiveReferrals, getLiveCapacity } from '@/lib/rancherCapacity';
 import { mintCampaignReserveToken } from '@/lib/campaignReserve';
@@ -1128,15 +1129,8 @@ async function realHandler(_request: Request): Promise<CronResult> {
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  const { CRON_SECRET } = await import('@/lib/secrets');
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${CRON_SECRET}`) {
-    const url = new URL(request.url);
-    const secret = url.searchParams.get('secret');
-    if (secret !== CRON_SECRET) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('demand-router', realHandler)(request);
 }
 

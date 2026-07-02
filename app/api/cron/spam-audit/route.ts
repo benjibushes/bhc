@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { withCronRun } from '@/lib/cronRun';
+import { requireCron } from '@/lib/cronAuth';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
-import { CRON_SECRET } from '@/lib/secrets';
 
 export const maxDuration = 300;
 
@@ -94,15 +94,8 @@ async function realHandler(
 }
 
 async function authedHandler(request: Request): Promise<Response> {
-  if (CRON_SECRET) {
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${CRON_SECRET}`) {
-      const { searchParams } = new URL(request.url);
-      if (searchParams.get('secret') !== CRON_SECRET) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    }
-  }
+  const denied = requireCron(request);
+  if (denied) return denied;
   return withCronRun('spam-audit', realHandler)(request);
 }
 
