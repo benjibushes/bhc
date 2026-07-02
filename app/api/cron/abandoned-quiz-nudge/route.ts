@@ -78,9 +78,9 @@ function buildEmail(touchNum: number, firstName: string, quizUrl: string, state:
       body: `Sixty seconds and I'll match you with a real ${st} rancher and lock in your cut breakdown. No payment to take it — it just tells me what you actually want.`,
     },
     3: {
-      subject: `Your rancher spot in ${state} is still open — for now`,
+      subject: `${first}, still want matched with a ${state} rancher?`,
       lead: `Quick heads up, ${first}.`,
-      body: `Spots with our ${st} ranchers fill as families come through. Yours is still open, but I can't hold it without knowing what you're after. The 60-second quiz locks it in.`,
+      body: `Our ${st} ranchers take a limited number of families each season, and slots fill as buyers come through. The 60-second quiz is what gets you matched to the right one — there's nothing to pay and nothing you're on the hook for, it just tells me what you're after.`,
     },
     4: {
       subject: `Last call, ${firstName || 'there'} — should I close your file?`,

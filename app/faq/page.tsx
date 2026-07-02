@@ -246,7 +246,7 @@ const sections: Section[] = [
               <li><strong className="text-charcoal">Herd:</strong> $9/mo or $90/yr &mdash; monthly letter, patch, state heads-up.</li>
               <li><strong className="text-charcoal">Outlaw:</strong> $25/mo or $250/yr &mdash; Herd + public Wall + quarterly drops.</li>
               <li><strong className="text-charcoal">Steward:</strong> $75/mo or $750/yr &mdash; Outlaw + group call + direct email.</li>
-              <li><strong className="text-charcoal">Founding 100:</strong> $1,000 lifetime, cap 100 &mdash; numbered Wall placement.</li>
+              <li><strong className="text-charcoal">Founding 100:</strong> lifetime, cap 100 &mdash; numbered Wall placement (current price on <Link href="/founders" className="underline">/founders</Link>).</li>
               <li><strong className="text-charcoal">Title Founder:</strong> $15,000 lifetime, cap 10 &mdash; top of Wall + co-build access.</li>
             </ul>
             <p className="mt-3">
