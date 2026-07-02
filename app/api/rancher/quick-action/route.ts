@@ -658,22 +658,34 @@ export async function GET(request: Request) {
     );
   }
 
-  // in_talks + pass: confirm + apply
-  const result = await applyAction(decoded, action);
-  if (!result.ok) {
+  // ── in_talks + pass: GET renders a ONE-TAP confirm page; the POST from the
+  // form performs the mutation (pre-flip guard, finding 4, 2026-07-01).
+  // Corporate mail scanners (SafeLinks / Mimecast) prefetch GET links straight
+  // out of the intro email — a bare GET-mutation here auto-fired pass /
+  // in_talks on unpaid deals (paid deals were already deposit-locked). URLs
+  // stay stable: the same email link now shows the confirm; the existing POST
+  // handler (same applyAction — all idempotency, deposit-lock and engaged-
+  // lock guards unchanged) does the write. Mirrors the won/lost form pattern
+  // this route already used.
+  if (action === 'in_talks') {
     return new NextResponse(
-      htmlPage('Couldn\'t update', `<h1>${result.message}</h1>`, {
-        href: 'https://www.buyhalfcow.com/rancher',
-        label: 'Open dashboard',
-      }),
+      htmlPage('Confirm — in talks', `<h1>You're in talks with this buyer?</h1>
+<p>One tap to confirm. This marks the referral "Rancher Contacted" so we know the conversation is live and hold off the follow-up nudges.</p>
+<form method="post" action="${url.pathname}?token=${encodeURIComponent(token)}&action=in_talks">
+  <button type="submit">💬 Yes — we're in talks</button>
+</form>`),
       { headers: { 'content-type': 'text/html' } }
     );
   }
+
+  // action === 'pass' (the only remaining allowed action)
   return new NextResponse(
-    htmlPage('Updated', `<h1>Done.</h1><p>${result.message}</p>`, {
-      href: 'https://www.buyhalfcow.com/rancher',
-      label: 'Open dashboard',
-    }),
+    htmlPage('Confirm — pass on this lead', `<h1>Pass on this lead?</h1>
+<p>One tap to confirm. The referral closes and the buyer is re-routed to another rancher right away.</p>
+<p class="note">Already talking to this buyer? Don't pass here — manage the deal from your dashboard instead.</p>
+<form method="post" action="${url.pathname}?token=${encodeURIComponent(token)}&action=pass">
+  <button type="submit">⏭ Yes — pass and re-route the buyer</button>
+</form>`),
     { headers: { 'content-type': 'text/html' } }
   );
 }

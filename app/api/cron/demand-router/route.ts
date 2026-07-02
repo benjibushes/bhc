@@ -69,6 +69,8 @@ import {
   rancherPageUrl,
   parseCampaignRancherIds,
   campaignRancherForState,
+  activeDealBuyerKeys,
+  type ActiveDealKeys,
   CAMPAIGN_RANCHER_IDS_ENV,
   openSlotsFor,
   countRecentDeposits,
@@ -311,6 +313,31 @@ async function readBuyers(): Promise<CampaignBuyer[]> {
     ')';
   const rows = (await getAllRecords(TABLES.CONSUMERS, formula)) as any[];
   return rows.map((r) => ({ id: r.id, fields: r as Record<string, unknown> }));
+}
+
+/**
+ * FINDING 1 (pre-flip guard, 2026-07-01): pull the raw ACTIVE-DEAL referral
+ * rows so the pure planner can exclude every mid-deal buyer (deposit pending,
+ * slot locked, live intro) from ALL tiers + waves via isActiveDealReferral —
+ * the SAME canonical predicate matching/suggest uses for its already-in-a-deal
+ * guard. The formula pulls the held statuses + Pending Approval (the pure
+ * index re-judges each row, so a linked-rancher check never lives in the
+ * formula). Fail-open to the Consumer mirror fields on a read error — the
+ * planner still enforces hasActiveReferral on its own; the warn surfaces it.
+ */
+async function readActiveDealReferrals(): Promise<Array<Record<string, unknown>>> {
+  try {
+    return (await getAllRecords(
+      TABLES.REFERRALS,
+      `OR({Status} = "Intro Sent", {Status} = "Rancher Contacted", {Status} = "Negotiation", {Status} = "Awaiting Payment", {Status} = "Slot Locked", {Status} = "Pending Approval")`,
+    )) as Array<Record<string, unknown>>;
+  } catch (e: any) {
+    console.warn(
+      '[demand-router] active-deal referral read failed — mid-deal exclusion falls back to Consumer mirror fields only:',
+      e?.message,
+    );
+    return [];
+  }
 }
 
 // ── Disposition stamps (LIVE only) ─────────────────────────────────────────
@@ -589,15 +616,25 @@ async function runSmsRecovery(
   smsOn: boolean,
   proof: SocialProof,
   targets: CampaignRanchers,
+  activeDeals: ActiveDealKeys,
   failures: string[],
 ): Promise<{ planned: number; sent: number; deferred: number }> {
   const nowMs = now.getTime();
   const smsRecoveryHours = Number(process.env.CAMPAIGN_SMS_RECOVERY_HOURS || DEFAULT_SMS_RECOVERY_HOURS);
 
+  // FINDING 1 (pre-flip guard): a mid-deal buyer per referral truth must not
+  // get a recovery SMS either — isSmsRecoveryEligible only sees the Consumer
+  // mirror fields, which can be stale.
+  const isMidDeal = (b: CampaignBuyer): boolean => {
+    if (activeDeals.ids.has(b.id)) return true;
+    const email = String(b.fields['Email'] || '').trim().toLowerCase();
+    return !!email && activeDeals.emails.has(email);
+  };
+
   // Pure eligibility: opted-in, emailed ≥N h ago, in-arc, unconverted, not yet
   // SMS-recovered. Then require a routable state (for the link's rancher + tz).
-  const eligible = buyers.filter((b) =>
-    isSmsRecoveryEligible(b.fields, nowMs, { smsRecoveryHours }),
+  const eligible = buyers.filter(
+    (b) => isSmsRecoveryEligible(b.fields, nowMs, { smsRecoveryHours }) && !isMidDeal(b),
   );
 
   let planned = 0;
@@ -1004,12 +1041,17 @@ async function realHandler(_request: Request): Promise<CronResult> {
   // 1. Capacity + 2. buyers + Upgrade B social proof + Upgrade A recovery
   // referrals (parallel reads). Recovery rows are read BEFORE the plan so their
   // buyers can be excluded from the wave arc (A4 double-touch fix).
-  const [cap, buyers, proof, recoveryRows] = await Promise.all([
+  const [cap, buyers, proof, recoveryRows, activeDealRows] = await Promise.all([
     readCapacity(campaignRancherIds),
     readBuyers(),
     readSocialProof(nowMs, campaignRancherIds),
     readRecoveryReferrals(nowMs, campaignRancherIdSet),
+    readActiveDealReferrals(),
   ]);
+
+  // FINDING 1: index the mid-deal buyers once (referral truth) — shared by the
+  // pure planner (wave arc) and the SMS-recovery pass below.
+  const activeDeals = activeDealBuyerKeys(activeDealRows);
 
   // A4: consumer ids that have an OPEN abandoned-reserve referral → owned by
   // reserve-recovery this run, so the wave arc must skip them (no buyer gets BOTH
@@ -1031,6 +1073,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
     conversionBuffer: Number(process.env.CAMPAIGN_CONVERSION_BUFFER || 3),
     smsWaves: new Set(), // email-led; SMS handled by runSmsRecovery
     excludeBuyerIds, // A4: skip buyers owned by reserve-recovery this run
+    activeDealReferrals: activeDealRows, // finding 1: mid-deal buyers are hands-off
     ranchers: cap.targets, // A2: configured + operational-gated rancher per pool
   });
 
@@ -1079,7 +1122,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   }
 
   // 4. Upgrade C — SMS recovery touch (runs in dry-run as a plan count too).
-  const smsRec = await runSmsRecovery(buyers, now, live, smsOn, proof, cap.targets, failures);
+  const smsRec = await runSmsRecovery(buyers, now, live, smsOn, proof, cap.targets, activeDeals, failures);
 
   // 5. Upgrade A — abandoned-reserve recovery (email then later SMS). Reuses the
   // already-read recoveryRows (scoped + age-bounded — A7) so no double read.

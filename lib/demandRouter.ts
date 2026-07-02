@@ -40,6 +40,7 @@
 
 import { normalizeState } from './states';
 import { BEN_SALES_CAL_URL } from './salesContact';
+import { isActiveDealReferral } from './capacityCount';
 
 // ─────────────────────────────────────────────────────────────────────
 // COAST → RANCHER ROUTING
@@ -237,6 +238,49 @@ export function hasActiveReferral(buyer: Record<string, unknown>): boolean {
   return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// ACTIVE-DEAL EXCLUSION (pre-flip guard, finding 1, 2026-07-01)
+//
+// The campaign must NEVER select a buyer who is MID-DEAL (deposit pending,
+// slot locked, live intro) — a hot/warm wave email would route them toward a
+// DIFFERENT rancher mid-payment (the same double-route class BLOCKER-4 fixed
+// in matching/suggest). Truth source = the Referrals table, judged by the ONE
+// canonical predicate isActiveDealReferral (lib/capacityCount): all HELD
+// statuses + Pending Approval with a linked rancher. The Consumer mirror
+// fields (hasActiveReferral above) stay as a belt for callers without rows.
+// ─────────────────────────────────────────────────────────────────────
+
+export interface ActiveDealKeys {
+  /** Consumer record ids linked from active-deal referrals (Buyer link). */
+  ids: Set<string>;
+  /** Lowercased Buyer Email of active-deal referrals (legacy rows w/o link). */
+  emails: Set<string>;
+}
+
+/**
+ * Index the buyers who currently hold an ACTIVE deal, from raw Referral rows.
+ * A row counts iff isActiveDealReferral says so (held statuses; Pending
+ * Approval only with a linked rancher — orphans are failed-match residue and
+ * must NOT suppress). Keys are BOTH the Buyer link id and the lowercased
+ * Buyer Email so stale/legacy rows still match. Pure + throw-safe.
+ */
+export function activeDealBuyerKeys(
+  referrals: Array<Record<string, unknown>> | null | undefined,
+): ActiveDealKeys {
+  const ids = new Set<string>();
+  const emails = new Set<string>();
+  for (const ref of referrals || []) {
+    if (!ref || !isActiveDealReferral(ref)) continue;
+    const links = ref['Buyer'];
+    if (Array.isArray(links)) {
+      for (const id of links) if (id) ids.add(String(id));
+    }
+    const email = String(ref['Buyer Email'] || '').trim().toLowerCase();
+    if (email) emails.add(email);
+  }
+  return { ids, emails };
+}
+
 /**
  * Classify the buyer's warm-back tier, or null if the buyer doesn't qualify
  * for ANY tier (no intent signal at all → not contacted this round).
@@ -245,18 +289,29 @@ export function hasActiveReferral(buyer: Record<string, unknown>): boolean {
  *   active referral — the highest-value "we dropped the ball" cohort.
  * hot: explicit purchase intent — Ready to Buy OR Warmup Engaged At.
  * warm: any other still-contactable lead with a usable intent score.
+ *
+ * PRE-FLIP GUARD (finding 1, 2026-07-01): NO tier selects a mid-deal buyer.
+ * Previously only stranded-qualified checked hasActiveReferral — a buyer with
+ * a live deposit request (Awaiting Payment / Slot Locked) who was also Ready
+ * to Buy classified HOT and got a wave email pointing at a DIFFERENT rancher.
+ * The rancher + operator own a mid-deal buyer; the campaign is hands-off.
  */
 export function classifyTier(
   buyer: Record<string, unknown>,
   opts: { warmMinIntent?: number } = {},
 ): Tier | null {
   const warmMinIntent = opts.warmMinIntent ?? 1;
+  const inDeal = hasActiveReferral(buyer);
 
   const qualifiedAt = buyer['Qualified At'];
   const qualScore = num(buyer['Qualification Score']);
-  if (qualifiedAt && qualScore >= 75 && !hasActiveReferral(buyer)) {
+  if (qualifiedAt && qualScore >= 75 && !inDeal) {
     return 'stranded-qualified';
   }
+
+  // Mid-deal → NEVER hot/warm (finding 1). Terminal statuses (Closed Lost /
+  // Waitlisted / Dormant) are not "in deal" and stay re-marketable.
+  if (inDeal) return null;
 
   const readyToBuy = asBool(buyer['Ready to Buy']);
   const engaged = !!buyer['Warmup Engaged At'];
@@ -312,7 +367,10 @@ export type SuppressReason =
   | 'already-sunset'
   // Buyer has an OPEN abandoned-reserve referral → owned by reserve-recovery
   // this run, skipped in the backfill wave arc (A4 double-touch fix).
-  | 'in-reserve-recovery';
+  | 'in-reserve-recovery'
+  // Buyer is MID-DEAL (active referral per isActiveDealReferral truth or the
+  // Consumer mirror fields) → the campaign is hands-off (finding 1).
+  | 'active-deal';
 
 // RFC 2606 / RFC 6761 reserved TLDs — these can NEVER be real, deliverable
 // domains. Matched on the domain SUFFIX so subdomains count too
@@ -609,6 +667,10 @@ export function sizeBatch(
 export function countOutstandingInvites(
   buyers: CampaignBuyer[],
   coastOf: (f: Record<string, unknown>) => Coast | null,
+  // Optional referral-truth converted check (finding 1): a buyer whose deal is
+  // live per the Referrals table has converted even if their Consumer mirror
+  // fields are stale. Defaults to the fields mirror alone (legacy behavior).
+  isConverted: (b: CampaignBuyer) => boolean = (b) => hasActiveReferral(b.fields),
 ): { west: number; eastCentral: number } {
   let west = 0;
   let eastCentral = 0;
@@ -618,7 +680,7 @@ export function countOutstandingInvites(
     const invited = stage === 'Msg1 Sent' || stage === 'Msg2 Sent' || stage === 'Msg3 Sent';
     if (!invited) continue;
     if (f['Campaign Sunset At']) continue; // sunset → slot released
-    if (hasActiveReferral(f)) continue; // converted/in-deal → consumes a real slot, not an invite
+    if (isConverted(b)) continue; // converted/in-deal → consumes a real slot, not an invite
     const coast = coastOf(f);
     if (!coast) continue;
     if (coast === 'WEST') west++;
@@ -733,6 +795,14 @@ export interface BuildPlanOpts {
    */
   excludeBuyerIds?: ReadonlySet<string>;
   /**
+   * Raw ACTIVE-DEAL referral rows (finding 1). The planner indexes them with
+   * activeDealBuyerKeys (isActiveDealReferral truth) and excludes every
+   * matching buyer — by Buyer link id or Buyer Email — from ALL tiers and
+   * waves, tallied under suppressed['active-deal']. Omit → the Consumer
+   * mirror fields (hasActiveReferral) are still enforced on their own.
+   */
+  activeDealReferrals?: Array<Record<string, unknown>>;
+  /**
    * The campaign rancher per coast pool (A2). Omit for the default pair
    * (Foodstead WEST, Silverline EAST+CENTRAL) — byte-identical legacy
    * behavior. A `null` pool means "no operational campaign rancher this run"
@@ -762,6 +832,7 @@ function emptySuppressed(): Record<SuppressReason, number> {
     '18-month-dead': 0,
     'already-sunset': 0,
     'in-reserve-recovery': 0,
+    'active-deal': 0,
   };
 }
 
@@ -803,10 +874,23 @@ export function buildCampaignPlan(
   const suppressed = emptySuppressed();
   const sunset: PlannedSunset[] = [];
 
+  // FINDING 1 (pre-flip guard): index the buyers who hold an ACTIVE deal per
+  // the Referrals table (isActiveDealReferral truth). Combined with the
+  // Consumer mirror fields below, this is the "campaign never emails a
+  // mid-deal buyer" gate — for EVERY tier and EVERY wave.
+  const activeDeals = activeDealBuyerKeys(opts.activeDealReferrals);
+  const isMidDeal = (b: CampaignBuyer): boolean => {
+    if (hasActiveReferral(b.fields)) return true;
+    if (activeDeals.ids.has(b.id)) return true;
+    const email = String(b.fields['Email'] || '').trim().toLowerCase();
+    return !!email && activeDeals.emails.has(email);
+  };
+
   // Cumulative term: how many already-invited, unconverted, non-sunset buyers
   // each coast is already carrying. New (Msg1) invites are budgeted against
   // openSlots×buffer MINUS this — so re-runs can't re-fill the same slots.
-  const outstanding = countOutstandingInvites(buyers, (f) => coastForState(f['State']));
+  // Converted = the same mid-deal predicate (referral truth + fields mirror).
+  const outstanding = countOutstandingInvites(buyers, (f) => coastForState(f['State']), isMidDeal);
 
   // Eligible-to-send candidates, bucketed by coast (EAST + CENTRAL share
   // Silverline's slot pool, so we bucket them together as "eastCentral").
@@ -836,6 +920,15 @@ export function buildCampaignPlan(
     const sr = suppressionReason(f, now);
     if (sr) {
       suppressed[sr]++;
+      continue;
+    }
+
+    // 1.5. ACTIVE DEAL (finding 1) — a mid-deal buyer (deposit pending, slot
+    // locked, live intro) is owned by their rancher + the operator. The
+    // campaign sends NOTHING (no new wave, no continuation, no stamp) — a
+    // wave email here would pull them toward a DIFFERENT rancher mid-payment.
+    if (isMidDeal(b)) {
+      suppressed['active-deal']++;
       continue;
     }
 

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Container from '../../../components/Container';
 import AdminAuthGuard from '../../../components/AdminAuthGuard';
-import { normalizeStates, stringifyStates, US_STATES } from '@/lib/states';
+import { normalizeState, normalizeStates, stringifyStates, US_STATES } from '@/lib/states';
 import { isReadyToGoLive, goLiveBlockersView } from '@/lib/goLiveGates';
 import { toast } from '@/lib/toast';
 
@@ -171,11 +171,24 @@ export default function AdminRancherDetailPage() {
       // routed states (floor(max/N)) — so a wide enumeration silently floors to 0
       // and rejects every cold lead. Writing State Capacity Override = {ST: slots}
       // per routed state guarantees each state gets its slots regardless of N.
+      //
+      // PRE-FLIP GUARD (finding 2, 2026-07-01): the override map must include
+      // the HOME state. The matcher's served set is home ∪ Routing States, so
+      // an override keyed only on Routing States left the home state on the
+      // floor(max/N) fallback — which could be 0 — silently zeroing the
+      // rancher's OWN state the moment multi-state flipped on. Home is now
+      // always in the map with the same per-state slots. The override is also
+      // written whenever the served set is >1 state (was: only when Routing
+      // States alone was >1), matching exactly when the matcher's sub-cap
+      // activates. (The matcher-side equal split additionally floors at 1 —
+      // lib/stateSubCap — so even a missing override can't zero a state.)
       const routedCodes = form.admin_approved_multi_state ? normalizeStates(form.routing_states) : [];
+      const homeCode = normalizeState(rancher?.state || '');
+      const servedCodes = Array.from(new Set([homeCode, ...routedCodes].filter(Boolean)));
       const perState = Math.max(1, parseInt(String(form.slots_per_state), 10) || 5);
       const stateCapacityOverride =
-        routedCodes.length > 1
-          ? JSON.stringify(Object.fromEntries(routedCodes.map((c) => [c, perState])))
+        form.admin_approved_multi_state && servedCodes.length > 1
+          ? JSON.stringify(Object.fromEntries(servedCodes.map((c) => [c, perState])))
           : '';
       // slots_per_state is a UI-only helper; the PATCH endpoint has no mapping
       // for it, so it rides along in the payload harmlessly (unmapped = ignored).
@@ -765,7 +778,11 @@ export default function AdminRancherDetailPage() {
                     if (!form.admin_approved_multi_state) return '⚠️ Toggle Multi-State ON for these states to actually route.';
                     if (codes.length === 0) return 'No states selected yet.';
                     const per = Math.max(1, parseInt(String(form.slots_per_state), 10) || 5);
-                    return `✅ Will route ${codes.length} state${codes.length === 1 ? '' : 's'}: ${codes.join(', ')} · ${per} slots each. (To COLLECT, confirm the readiness banner above is green.)`;
+                    // Home state is ALWAYS in the served set (finding 2) — show
+                    // it so the operator sees exactly what the matcher will do.
+                    const home = normalizeState(rancher?.state || '');
+                    const served = Array.from(new Set([home, ...codes].filter(Boolean)));
+                    return `✅ Will route ${served.length} state${served.length === 1 ? '' : 's'}: ${served.join(', ')}${home ? ` (home ${home} always served)` : ''} · ${per} slots each. (To COLLECT, confirm the readiness banner above is green.)`;
                   })()}
                 </p>
               </div>

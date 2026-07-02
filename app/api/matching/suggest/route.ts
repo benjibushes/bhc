@@ -11,6 +11,7 @@ import { normalizeState, normalizeStates } from '@/lib/states';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isActiveDealReferral } from '@/lib/capacityCount';
+import { equalStateSubCap } from '@/lib/stateSubCap';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { requireAdmin } from '@/lib/adminAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
@@ -379,11 +380,19 @@ export async function POST(request: Request) {
       if (states.length <= 1) return maxReferrals;
       const override = parseStateOverride(rancher['State Capacity Override']);
       if (override && override[state] !== undefined) return override[state];
-      // Equal-floor split. floor() can leave a slot or two unallocated
-      // (e.g. 10 / 3 = 3 per state, total 9). That's intentional — the
-      // global cap above stays authoritative, but the sub-cap prevents
-      // any single state from hogging more than its fair share.
-      return Math.max(0, Math.floor(maxReferrals / states.length));
+      // Equal-floor split (pure math in lib/stateSubCap — unit-tested).
+      // floor() can leave a slot or two unallocated (e.g. 10 / 3 = 3 per
+      // state, total 9). That's intentional — the global cap above stays
+      // authoritative, but the sub-cap prevents any single state from
+      // hogging more than its fair share.
+      //
+      // PRE-FLIP GUARD (finding 2, 2026-07-01): the split floors at 1, never
+      // 0 — a low-capacity rancher approved for many states (max 5 across 6)
+      // used to get 0 slots in EVERY state and silently reject every cold
+      // lead in states they were explicitly approved to serve. An approved
+      // state always gets at least one slot; the global cap (checked before
+      // the sub-cap) still bounds total load, so this can never over-route.
+      return equalStateSubCap(maxReferrals, states.length);
     };
     const getActiveInState = (rancherId: string, state: string): number => {
       return activeRefsByRancherState.get(rancherId)?.get(state) || 0;
@@ -402,6 +411,46 @@ export async function POST(request: Request) {
     // multiple states with no in-state competition). 1.2× keeps the safety
     // valve for hot leads but bounds the worst case to "20% over max."
     const HARD_CEILING_MULTIPLIER = 1.2;
+    // ── tier_v2 sub-floor / no-price guard (2026-06-22, cut-specific 2026-06-23) ─
+    // A tier_v2 rancher who hasn't validly priced the buyer's SPECIFIC cut
+    // cannot accept that buyer's deposit: /api/checkout/deposit derives the
+    // deposit from the requested cut's price and 409s when THAT cut is missing
+    // or below MIN_TIER_PRICE (route.ts ~193, the DD-Ranch $7.40-whole-cow
+    // class of mis-entry). The old guard only required *some* cut to clear the
+    // floor — so a Half (or Whole) buyer routed to a rancher who priced ONLY a
+    // different cut sailed past matching and dead-ended at the deposit 409.
+    // FIX: when we know the buyer's tier, require THAT cut to be priced
+    // ≥ MIN_TIER_PRICE. When the tier is ambiguous/unset (buyerTier === null,
+    // e.g. "Not Sure"/blank Order Type), keep the original any-cut behavior so
+    // we don't over-exclude a buyer whose cut isn't pinned down yet — they can
+    // still land on any validly-priced cut at checkout. Mirrors the deposit
+    // route's floor exactly. Legacy / Payment-Link ranchers use a DIFFERENT
+    // checkout (their own links on /ranchers/[slug]) that doesn't enforce this
+    // floor, so the guard is scoped to tier_v2 only — never applied to legacy.
+    //
+    // Extracted as a named predicate (pre-flip guard, finding 3, 2026-07-01)
+    // so the DIRECT-match path below enforces the SAME floor as the general
+    // path — a ?rancher= / campaign pin used to skip it entirely.
+    const passesTierV2CutFloor = (r: any): boolean => {
+      if (String(r['Pricing Model'] || 'legacy') !== 'tier_v2') return true;
+      const hasFloorPrice = (p: any) => {
+        const n = Number(p);
+        return Number.isFinite(n) && n >= MIN_TIER_PRICE;
+      };
+      // Map the buyer's requested cut → the matching tier price field.
+      // buyerTier (Quarter|Half|Whole|null) is derived from Order Type below.
+      const requestedCutPrice =
+        buyerTier === 'Quarter' ? r['Quarter Price']
+        : buyerTier === 'Half' ? r['Half Price']
+        : buyerTier === 'Whole' ? r['Whole Price']
+        : null;
+      if (buyerTier) {
+        // Specific cut known — the rancher must have validly priced THAT cut.
+        return hasFloorPrice(requestedCutPrice);
+      }
+      // Ambiguous/unset tier — fall back to any-cut (don't over-exclude).
+      return [r['Quarter Price'], r['Half Price'], r['Whole Price']].some(hasFloorPrice);
+    };
     const isEligibleBase = (r: any) => {
       if (excludeIds.has(r.id)) return false;
       // Operational check (Active + Agreement Signed + Onboarding Live) lives
@@ -409,44 +458,8 @@ export async function POST(request: Request) {
       // the signup gate + warmup cron. Don't inline a copy here — drift is
       // exactly how 48 buyers got stranded in TN/OR waitlists.
       if (!isRancherOperationalForBuyers(r)) return false;
-      // ── tier_v2 sub-floor / no-price guard (2026-06-22, cut-specific 2026-06-23) ─
-      // A tier_v2 rancher who hasn't validly priced the buyer's SPECIFIC cut
-      // cannot accept that buyer's deposit: /api/checkout/deposit derives the
-      // deposit from the requested cut's price and 409s when THAT cut is missing
-      // or below MIN_TIER_PRICE (route.ts ~193, the DD-Ranch $7.40-whole-cow
-      // class of mis-entry). The old guard only required *some* cut to clear the
-      // floor — so a Half (or Whole) buyer routed to a rancher who priced ONLY a
-      // different cut sailed past matching and dead-ended at the deposit 409.
-      // FIX: when we know the buyer's tier, require THAT cut to be priced
-      // ≥ MIN_TIER_PRICE. When the tier is ambiguous/unset (buyerTier === null,
-      // e.g. "Not Sure"/blank Order Type), keep the original any-cut behavior so
-      // we don't over-exclude a buyer whose cut isn't pinned down yet — they can
-      // still land on any validly-priced cut at checkout. Mirrors the deposit
-      // route's floor exactly. Legacy / Payment-Link ranchers use a DIFFERENT
-      // checkout (their own links on /ranchers/[slug]) that doesn't enforce this
-      // floor, so the guard is scoped to tier_v2 only — never applied to legacy.
-      if (String(r['Pricing Model'] || 'legacy') === 'tier_v2') {
-        const hasFloorPrice = (p: any) => {
-          const n = Number(p);
-          return Number.isFinite(n) && n >= MIN_TIER_PRICE;
-        };
-        // Map the buyer's requested cut → the matching tier price field.
-        // buyerTier (Quarter|Half|Whole|null) is derived from Order Type below.
-        const requestedCutPrice =
-          buyerTier === 'Quarter' ? r['Quarter Price']
-          : buyerTier === 'Half' ? r['Half Price']
-          : buyerTier === 'Whole' ? r['Whole Price']
-          : null;
-        if (buyerTier) {
-          // Specific cut known — the rancher must have validly priced THAT cut.
-          if (!hasFloorPrice(requestedCutPrice)) return false;
-        } else {
-          // Ambiguous/unset tier — fall back to any-cut (don't over-exclude).
-          const anyCutPriced = [r['Quarter Price'], r['Half Price'], r['Whole Price']]
-            .some(hasFloorPrice);
-          if (!anyCutPriced) return false;
-        }
-      }
+      // tier_v2 sub-floor / no-price guard — see passesTierV2CutFloor above.
+      if (!passesTierV2CutFloor(r)) return false;
       const maxReferrals = getMaxActiveReferrals(r);
       const currentReferrals = r['Current Active Referrals'] || 0;
       if (isHotLead) {
@@ -580,11 +593,27 @@ export async function POST(request: Request) {
     let matchType: string | null = null;
     if (campaign && campaign.startsWith('rancher-')) {
       const rancherSlug = campaign.replace('rancher-', '');
-      directMatchRancher = allRanchers.find((r: any) => {
+      const pinned = allRanchers.find((r: any) => {
         const slug = r['Slug'] || '';
         return slug === rancherSlug && isRancherOperationalForBuyers(r);
       });
-      if (directMatchRancher) {
+      // ── PRE-FLIP GUARD (finding 3, 2026-07-01): direct pins get the SAME
+      // price gate as the general path. Previously a ?rancher= deep-link /
+      // campaign pin skipped isEligibleBase entirely — so the tier_v2
+      // MIN_TIER_PRICE cut floor AND the budget isPriceFit never ran, and the
+      // DD-Ranch $7.10-whole-cow mis-entry class came back on the HIGHEST-
+      // intent path: the buyer sailed to checkout and dead-ended at the
+      // deposit 409. A pin that fails the gate falls through to general
+      // matching below (which excludes it via the same predicates), so the
+      // buyer still gets the best eligible rancher or a clean waitlist.
+      // Gate ADDITION only — capacity/exclusion semantics of the direct path
+      // are unchanged for pins that pass.
+      if (pinned && (!passesTierV2CutFloor(pinned) || !isPriceFit(pinned))) {
+        console.log(
+          `[match] direct pin ${rancherSlug} failed the price gate (tier_v2 floor or budget fit) for ${buyerName || buyerId} — falling through to general matching`,
+        );
+      } else if (pinned) {
+        directMatchRancher = pinned;
         matchType = 'direct';
       }
     }
