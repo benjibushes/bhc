@@ -101,6 +101,81 @@ export function assertReserveEligible(rancher: any, cut: Cut): ReserveEligibilit
 }
 
 /**
+ * Airtable field set for the Consumer minted by the reserve rail (no quiz).
+ *
+ * `Status: 'Approved'` is load-bearing (buyer-trust tail #2): the member auth
+ * gates (app/api/auth/member/login + /verify) only admit Status in
+ * ['approved','active','waitlisted']. The reserve rail previously created the
+ * Consumer with NO Status — the buyer could pay a deposit, then every magic
+ * link 302'd them to /access?reason=not-approved (an unexplained quiz) and
+ * the login route silently sent a "still under review" email. Mirrors
+ * /api/consumers, whose deriveStatus() unconditionally returns 'Approved' for
+ * funnel signups — a buyer putting money down is at least as approved.
+ */
+export function buildReserveConsumerFields(args: {
+  slug: string;
+  cut: Cut;
+  buyerName: string;
+  buyerEmail: string;
+  buyerPhone: string;
+  buyerState?: string;
+  smsOptIn: boolean;
+  nowIso?: string;
+}): Record<string, any> {
+  const nowIso = args.nowIso || new Date().toISOString();
+  return {
+    'Full Name': args.buyerName || '',
+    'Email': args.buyerEmail,
+    'Phone': args.buyerPhone,
+    ...(args.buyerState ? { 'State': args.buyerState } : {}),
+    'Segment': 'Beef Buyer',
+    'Status': 'Approved',
+    'Approved At': nowIso,
+    'Source': `rancher-page-deposit:${args.slug}`,
+    'Order Type': CUT_LABELS[args.cut],
+    // FIX (store-reserve 500): 'Interest Beef' is a singleLineText field —
+    // writing boolean `true` 422'd Airtable (typecast can't coerce bool→text),
+    // the catch returned 500, and reserve aborted BEFORE the referral was
+    // created → EVERY new store buyer's deposit failed. The real,
+    // read-everywhere field is 'Interests' (multipleSelects); match the main
+    // funnel (/api/consumers). typecast auto-creates 'Beef'.
+    'Interests': ['Beef'],
+    'Intent Score': 90,
+    'Intent Classification': 'High',
+    // SMS consent (TCPA): seed the checkbox explicitly on a brand-new Consumer
+    // so the Twilio gate starts in a known state; stamp the consent time only
+    // on a real opt-in. Mirrors /api/consumers ~545.
+    'SMS Opt-In': args.smsOptIn,
+    ...(args.smsOptIn ? { 'SMS Opt-In At': nowIso } : {}),
+  };
+}
+
+// Statuses the member login/verify gates accept (mirrors LOGIN_ALLOWED in
+// app/api/auth/member/{login,verify}/route.ts — keep in sync).
+const RESERVE_LOGIN_ALLOWED = new Set(['approved', 'active', 'waitlisted']);
+
+/**
+ * Patch for an EXISTING Consumer adopted by the reserve rail. Blank/'Pending'
+ * statuses are promoted to 'Approved' so the reserve magic link can actually
+ * log them in (see buildReserveConsumerFields rationale). Already-allowed
+ * statuses are left untouched, and anything else (e.g. 'Rejected') is a
+ * deliberate admin decision the reserve rail must not undo — those buyers
+ * still reach support, they just don't get silently re-approved.
+ */
+export function reserveConsumerStatusPatch(
+  existingStatus: unknown,
+  nowIso?: string,
+): Record<string, any> {
+  const s = String(existingStatus ?? '').trim().toLowerCase();
+  if (RESERVE_LOGIN_ALLOWED.has(s)) return {}; // already able to log in
+  if (s === '' || s === 'pending') {
+    return { 'Status': 'Approved', 'Approved At': nowIso || new Date().toISOString() };
+  }
+  // Any other status (e.g. 'Rejected') is deliberate — no silent re-approval.
+  return {};
+}
+
+/**
  * Airtable field set for a deposit-intent referral. Pins Rancher + Buyer so
  * the deposit route's ownership + rancher lookup succeed. Deliberately omits
  * 'Approval Status' so it is NOT treated as a callback lead.

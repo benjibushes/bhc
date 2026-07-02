@@ -2168,7 +2168,7 @@ export async function sendRenewalReminder(data: {
   // 'brand-partner' | 'founder' — picks the salutation tone.
   recipientType: 'brand-partner' | 'founder';
   planName?: string;
-  // Stripe-hosted billing portal or manage URL. Falls back to /account or
+  // Stripe-hosted billing portal or manage URL. Falls back to /founders or
   // /brand-partners depending on recipientType.
   manageUrl?: string;
 }) {
@@ -2176,9 +2176,13 @@ export async function sendRenewalReminder(data: {
   const amount = `$${data.amountDollars.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
   const days = Math.max(1, Math.round(data.daysUntilRenewal));
   const plan = esc(data.planName || 'your bhc subscription');
+  // NOTE: /account does not exist (was a 404 in every founder renewal email —
+  // buyer-trust tail #5). /founders is the real founder-program surface (tier
+  // table, FAQ, contact); the Stripe portal manageUrl is still preferred when
+  // the caller passes it.
   const fallbackUrl = data.recipientType === 'brand-partner'
     ? `${SITE_URL}/brand-partners`
-    : `${SITE_URL}/account`;
+    : `${SITE_URL}/founders`;
   const manageUrl = data.manageUrl || fallbackUrl;
   const subject = `bhc — heads up, ${plan} renews in ${days} ${days === 1 ? 'day' : 'days'}`;
 
@@ -3092,7 +3096,7 @@ p { color: #6B4F3F; margin: 12px 0; }
   <p><strong>While you wait, here's what you can do:</strong></p>
   <ul style="color: #6B4F3F; line-height: 2;">
     <li>Follow us on <a href="https://www.instagram.com/buyhalfcow" style="color:#0E0E0E;">Instagram</a> for real-time ranch visit updates</li>
-    <li>Know a rancher who sells direct? Send them to <a href="${SITE_URL}/partners" style="color:#0E0E0E;">buyhalfcow.com/partners</a> — it speeds things up in your area</li>
+    <li>Know a rancher who sells direct? Send them to <a href="${SITE_URL}/sell" style="color:#0E0E0E;">buyhalfcow.com/sell</a> — it speeds things up in your area</li>
     <li>Tell a friend who wants better beef — more demand in your state = faster supply</li>
   </ul>
   <div class="divider"></div>
