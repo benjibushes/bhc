@@ -46,6 +46,81 @@ export function closePurchaseEnabled(): boolean {
 }
 
 /**
+ * Opt-in switch for the attributed DEPOSIT Purchase fired from settleBuyerDeposit().
+ *
+ * This is the money-moment conversion for paid ads: a deposit is paid the SAME
+ * DAY the buyer clicks the ad, so optimizing Meta on the deposit Purchase (not
+ * the weeks-later Closed-Won Purchase) gives the algorithm same-session signal.
+ *
+ * OFF (default): byte-identical to prior behavior — settleBuyerDeposit fires
+ * only its server-side InitiateCheckout (intent), no Purchase at deposit.
+ *
+ * ON: settleBuyerDeposit fires ONE attributed Purchase at deposit-paid
+ * (event_id=depositEventId(referralId), value=buyer-paid total, real fbc from
+ * the buyer's stored fbclid). The success-page client Pixel fires the matching
+ * Purchase with the SAME event_id so browser + server dedup into one.
+ *
+ * Independent of META_CLOSE_PURCHASE_ENABLED: a deposit deal counts ONCE, at
+ * deposit — the Closed-Won Purchase is SUPPRESSED for any referral whose
+ * deposit already fired (see shouldFireClosePurchase). Legacy no-deposit closes
+ * still count at close.
+ *
+ * Flip to 'true' only after (1) the privacy policy discloses Meta measurement
+ * data-sharing and (2) a Test Events dry-run (META_CAPI_TEST_CODE set) confirms
+ * the deposit Purchase arrives with fbc present + dedups against the client fire.
+ * fireCapi already fails open if the pixel/token env is missing, so this can
+ * never block a deposit settlement.
+ */
+export function depositPurchaseEnabled(): boolean {
+  return process.env.META_DEPOSIT_PURCHASE_ENABLED === 'true';
+}
+
+/**
+ * Stable event_id for the DEPOSIT Purchase (server CAPI + client Pixel dedup).
+ *
+ *   depositEventId(referralId) = `deposit_<referralId>`
+ *
+ * DELIBERATELY DISTINCT from metaEventId(referralId) (the raw referral id used
+ * by the Closed-Won Purchase and the deposit InitiateCheckout). The deposit
+ * Purchase and the Closed-Won Purchase share event_name='Purchase'; if they
+ * shared an event_id, Meta's ~48h dedup window would silently collapse a real
+ * double-count into one event, masking the bug instead of the code preventing
+ * it. Keeping them distinct means shouldFireClosePurchase() — a hard code guard,
+ * not Meta's fragile window — is what makes a deposit deal count exactly once.
+ *
+ * The prefixed id is legal per the analytics dedup convention because the deposit
+ * Purchase's client pair (success-page Pixel) uses this EXACT same prefixed id.
+ */
+export function depositEventId(referralId: string): string {
+  return `deposit_${referralId}`;
+}
+
+/**
+ * Pure dedup predicate: should the Closed-Won Purchase fire for this referral?
+ *
+ * The deposit Purchase is the PRIMARY conversion for paid-ad optimization. A
+ * tier_v2 deposit deal fires Purchase at deposit-paid and MUST NOT re-fire it at
+ * Closed Won — that would double-count the deal's value in Meta. Legacy closes
+ * with no deposit still fire Purchase at close (their only conversion moment).
+ *
+ * Guard: when the deposit-Purchase flag is ON *and* the referral has a
+ * `Deposit Paid At` stamp (proof a deposit was collected → its Purchase already
+ * counted), suppress the close Purchase. Otherwise fire it as before.
+ *
+ * When the deposit flag is OFF, this is a no-op guard (returns true) — nothing
+ * fired at deposit, so the close remains the sole Purchase. Byte-identical to
+ * pre-deposit behavior when the flag is unset.
+ */
+export function shouldFireClosePurchase(input: {
+  depositPurchaseEnabled: boolean;
+  depositPaidAt?: string | null;
+}): boolean {
+  if (!input.depositPurchaseEnabled) return true;
+  const hasDeposit = !!(input.depositPaidAt && String(input.depositPaidAt).trim());
+  return !hasDeposit;
+}
+
+/**
  * Rebuild Meta's _fbc click-id match key from a stored raw fbclid + the
  * millisecond timestamp of when the click was first observed.
  *

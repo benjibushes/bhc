@@ -11,7 +11,14 @@ import { transitionBuyerStage } from './buyer';
 import { funnelRecord } from '@/lib/funnelMetrics';
 import { ensureBuyerAffiliate } from '@/lib/affiliates';
 import { sendAffiliateWelcome } from '@/lib/email';
-import { fireCapi, buildUserData, reconstructFbc, closePurchaseEnabled } from '@/lib/metaCapi';
+import {
+  fireCapi,
+  buildUserData,
+  reconstructFbc,
+  closePurchaseEnabled,
+  depositPurchaseEnabled,
+  shouldFireClosePurchase,
+} from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 
 const AFFILIATE_SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
@@ -232,6 +239,20 @@ async function fireClosedWonPurchase(args: {
   saleAmount: number;
   closedAtIso: string;
 }): Promise<void> {
+  // DEDUP GUARD (deposit vs close). The deposit Purchase is the PRIMARY paid-ad
+  // conversion and counts ONCE per deal. When the deposit-Purchase flag is on
+  // AND this referral already paid a deposit (Deposit Paid At stamped by
+  // settleBuyerDeposit), its Purchase already fired at deposit-paid — firing
+  // again here would double-count the deal's value in Meta. Suppress. Legacy
+  // no-deposit closes (no stamp) still fire — the close is their only Purchase.
+  // A read failure fails OPEN to the pre-deposit behavior (fire) so a transient
+  // Airtable blip never silently drops a real close conversion.
+  const refForGuard: any = await getRecordById(TABLES.REFERRALS, args.referralId).catch(() => null);
+  const depositPaidAt = refForGuard?.['Deposit Paid At'];
+  if (!shouldFireClosePurchase({ depositPurchaseEnabled: depositPurchaseEnabled(), depositPaidAt })) {
+    return;
+  }
+
   const buyer: any = await getRecordById(TABLES.CONSUMERS, args.buyerId).catch(() => null);
   if (!buyer?.['Email']) return; // no match key → nothing useful to send
 

@@ -6,6 +6,12 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { trackEvent, metaEventId } from '@/lib/analytics';
+import { track } from '@/lib/track';
+
+// Client-safe mirror of lib/metaCapi depositEventId (that module imports node
+// `crypto`, so it must not be pulled into this 'use client' bundle). The server
+// deposit Purchase (settleBuyerDeposit) fires with this EXACT id — keep in sync.
+const depositEventId = (refId: string) => `deposit_${refId}`;
 
 interface Info {
   rancher: { name: string; ranchName: string; slug?: string };
@@ -61,6 +67,10 @@ function DepositSuccessContent() {
   // then (webhook lag, or a direct/bookmarked/back-button hit) we say
   // "confirming…" instead of a false "Deposit confirmed."
   const [paidConfirmed, setPaidConfirmed] = useState(false);
+  // Buyer-paid deposit total (dollars), surfaced by the referral_closed 409 —
+  // the value for the client Purchase Pixel below (matches the server CAPI
+  // deposit Purchase value exactly, both = pi.amount).
+  const [depositValue, setDepositValue] = useState(0);
   // U2 — once polling exhausts (webhook lag > ~15s) or errors, STOP claiming
   // "confirming…" forever. Flip to a terminal reassurance state (the Stripe
   // return means the charge already succeeded) with a manual "Check again".
@@ -83,6 +93,38 @@ function DepositSuccessContent() {
       event_id: metaEventId(refId),
     });
   }, [refId, sessionId]);
+
+  // DEPOSIT-LEVEL META CONVERSION (2026-07-04) — client Purchase Pixel.
+  // Fires the browser-side Meta Purchase ONLY once the deposit is CONFIRMED PAID
+  // (paidConfirmed = the referral_closed GET landed), with the SAME event_id the
+  // server CAPI deposit Purchase uses (deposit_<refId>) so browser + server dedup
+  // into ONE Purchase.
+  //
+  // DARK BY DEFAULT — three gates, all must pass:
+  //   1. NEXT_PUBLIC_META_PIXEL_ID present (else PixelTracker never loads fbq and
+  //      track() no-ops anyway — this is the belt).
+  //   2. NEXT_PUBLIC_META_DEPOSIT_PURCHASE_ENABLED === 'true' — the client mirror
+  //      of the server META_DEPOSIT_PURCHASE_ENABLED flag, so browser + server
+  //      turn on TOGETHER (a lone client Purchase with no server pair, or vice
+  //      versa, never happens). Off = byte-identical (no Purchase fires here).
+  //   3. paidConfirmed — a Purchase must NEVER fire without a verified paid
+  //      deposit (unlike the InitiateCheckout above, an intent signal safe on
+  //      landing). No fire on an unconfirmed/direct/back-button hit.
+  // Idempotency ref prevents a re-fire on poll re-render / remount.
+  const depositPurchaseFired = useRef(false);
+  useEffect(() => {
+    if (depositPurchaseFired.current || !refId || !paidConfirmed) return;
+    const pixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID;
+    const flagOn = process.env.NEXT_PUBLIC_META_DEPOSIT_PURCHASE_ENABLED === 'true';
+    if (!pixelId || !flagOn) return;
+    depositPurchaseFired.current = true;
+    track('Purchase', {
+      value: depositValue,
+      currency: 'USD',
+      content_category: 'buyer-deposit',
+      event_id: depositEventId(refId),
+    });
+  }, [refId, paidConfirmed, depositValue]);
 
   useEffect(() => {
     let alive = true;
@@ -118,6 +160,11 @@ function DepositSuccessContent() {
             // T2.2: the buyer's own share code (minted silently at settle) —
             // upgrades the share link below from untracked to attributed.
             if (j.affiliateCode) setAffiliateCode(String(j.affiliateCode));
+            // Buyer-paid total for the client Purchase Pixel (fired below once
+            // paid is confirmed). 0 when unreadable — the Pixel still fires,
+            // matching the server (value defaults to 0 there too under the same
+            // read failure), so dedup by (event_name, event_id) is unaffected.
+            if (typeof j.depositValue === 'number') setDepositValue(j.depositValue);
             return;
           }
           // Any other error (load_failed, not-found, auth) — stop polling and
