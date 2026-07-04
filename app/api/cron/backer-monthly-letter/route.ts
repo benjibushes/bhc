@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, updateRecord, TABLES, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendBackerMonthlyLetter } from '@/lib/email';
+import { statusOrFormula } from '@/lib/cronReadFilters';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
@@ -32,10 +33,26 @@ async function realHandler(
   }
 
   // Pull all consumers + referrals (live stats source) in parallel.
+  // SCALE (#3): the referrals array feeds ONLY monthClosedWon (Closed Won), so
+  // pull just Closed Won rows instead of the whole table; the JS Status +
+  // month-window checks stay as the exact belt. Fall back to the unfiltered
+  // scan on an INVALID_FILTER_BY_FORMULA-class error. Consumers stays
+  // unfiltered — it feeds disjoint stats (approved buyerCount, Founder Tier
+  // eligible list, Founding 100 count) that together need every row.
+  const readClosedWonReferrals = async (): Promise<any[]> => {
+    const formula = statusOrFormula(['Closed Won'])!;
+    try {
+      return (await getAllRecords(TABLES.REFERRALS, formula)) as any[];
+    } catch (e: any) {
+      if (!isInvalidFilterFormulaError(e)) throw e;
+      console.warn('[backer-monthly-letter] Closed Won filter rejected; falling back to full Referrals scan:', e?.message);
+      return (await getAllRecords(TABLES.REFERRALS)) as any[];
+    }
+  };
   const [consumers, ranchers, referrals] = await Promise.all([
     getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
     getAllRecords(TABLES.RANCHERS) as Promise<any[]>,
-    getAllRecords(TABLES.REFERRALS) as Promise<any[]>,
+    readClosedWonReferrals(),
   ]);
 
   const now = new Date();

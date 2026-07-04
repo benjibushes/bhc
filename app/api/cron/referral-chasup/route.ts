@@ -1,5 +1,6 @@
-import { getAllRecords, updateRecord, getRecordById } from '@/lib/airtable';
+import { getAllRecords, updateRecord, getRecordById, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { unsubscribedConsumersFormula } from '@/lib/cronReadFilters';
 import { requireCron } from '@/lib/cronAuth';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, sendTelegramUpdate, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -41,8 +42,18 @@ async function realHandler(request: Request): Promise<{ status: 'success' | 'par
       'OR({Status} = "Intro Sent", {Status} = "Rancher Contacted")'
     ) as any[];
 
-    // Fetch unsubscribed emails to skip them
-    const consumers = await getAllRecords(TABLES.CONSUMERS) as any[];
+    // Fetch unsubscribed emails to skip them. SCALE (#3): this read ONLY needs
+    // unsubscribed rows, so filter server-side instead of scanning every
+    // consumer. The JS `c['Unsubscribed']` check stays as the exact belt. Fall
+    // back to the unfiltered scan on an INVALID_FILTER_BY_FORMULA-class error.
+    let consumers: any[];
+    try {
+      consumers = await getAllRecords(TABLES.CONSUMERS, unsubscribedConsumersFormula()) as any[];
+    } catch (e: any) {
+      if (!isInvalidFilterFormulaError(e)) throw e;
+      console.warn('[chasup] unsubscribed filter rejected; falling back to full Consumers scan:', e?.message);
+      consumers = await getAllRecords(TABLES.CONSUMERS) as any[];
+    }
     const unsubscribedEmails = new Set(
       consumers
         .filter((c: any) => c['Unsubscribed'])
