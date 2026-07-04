@@ -1,10 +1,36 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, updateRecord, TABLES, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { isActiveDealReferral } from '@/lib/capacityCount';
+import { readyStuckBuyersFormula, activeDealReferralsFormula } from '@/lib/cronReadFilters';
+
+// SCALE (#3): filtered reads with graceful fallback. This cron only processes
+// consumers at Buyer Stage=READY and only needs active-deal referrals to build
+// the "already recovered" exclusion set. Push both filters to Airtable; on an
+// INVALID_FILTER_BY_FORMULA-class error (e.g. a future field rename) fall back
+// to the unfiltered scan + a one-time warn so behavior never breaks. The JS
+// predicates (stage checks / isActiveDealReferral) remain the exact belt.
+async function readReadyConsumers(): Promise<any[]> {
+  try {
+    return (await getAllRecords(TABLES.CONSUMERS, readyStuckBuyersFormula())) as any[];
+  } catch (e: any) {
+    if (!isInvalidFilterFormulaError(e)) throw e;
+    console.warn('[stuck-buyer-recovery] READY filter rejected; falling back to full Consumers scan:', e?.message);
+    return (await getAllRecords(TABLES.CONSUMERS)) as any[];
+  }
+}
+async function readActiveDealReferrals(): Promise<any[]> {
+  try {
+    return (await getAllRecords(TABLES.REFERRALS, activeDealReferralsFormula())) as any[];
+  } catch (e: any) {
+    if (!isInvalidFilterFormulaError(e)) throw e;
+    console.warn('[stuck-buyer-recovery] active-deal filter rejected; falling back to full Referrals scan:', e?.message);
+    return (await getAllRecords(TABLES.REFERRALS)) as any[];
+  }
+}
 
 // Stuck-buyer recovery — runs daily and retries matching for buyers who
 // engaged (clicked YES on warmup) but never got matched to a rancher.
@@ -52,8 +78,8 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     const DAY_MS = 86_400_000;
 
     const [consumers, referrals] = await Promise.all([
-      getAllRecords(TABLES.CONSUMERS) as Promise<any[]>,
-      getAllRecords(TABLES.REFERRALS) as Promise<any[]>,
+      readReadyConsumers(),
+      readActiveDealReferrals(),
     ]);
 
     // Build a set of buyer IDs who already have an active referral.

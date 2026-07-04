@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord } from '@/lib/airtable';
+import { getAllRecords, updateRecord, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { mailableConsumersFormula } from '@/lib/cronReadFilters';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendBroadcastEmail } from '@/lib/email';
 import { withCronRun } from '@/lib/cronRun';
@@ -46,7 +47,22 @@ async function getRecipients(audienceType: string, _selectedStates?: string[]) {
     audienceType === 'consumers-community' ||
     audienceType.startsWith('state:')
   ) {
-    const consumers = await getAllRecords(TABLES.CONSUMERS);
+    // SCALE (#3): every audience branch below ends by dropping unsubscribed/
+    // bounced/complained rows (isMailable). Push that suppression drop to
+    // Airtable — the one dimension common to ALL branches — so the scheduler
+    // stops pulling the entire consumer table each hourly tick. Segment/State
+    // narrowing STAYS in JS (consumers-community keeps blank-Segment rows, so
+    // Segment can't be pushed down safely). isMailable + the state/segment
+    // filters remain the exact belt. Fall back to the unfiltered scan on an
+    // INVALID_FILTER_BY_FORMULA-class error so a bad formula never drops sends.
+    let consumers: any[];
+    try {
+      consumers = (await getAllRecords(TABLES.CONSUMERS, mailableConsumersFormula())) as any[];
+    } catch (e: any) {
+      if (!isInvalidFilterFormulaError(e)) throw e;
+      console.warn('[send-scheduled] mailable filter rejected; falling back to full Consumers scan:', e?.message);
+      consumers = (await getAllRecords(TABLES.CONSUMERS)) as any[];
+    }
     let filtered: any[] = consumers;
     if (audienceType.startsWith('state:')) {
       const stateList = audienceType.replace('state:', '').split(',').map(s => s.trim()).filter(Boolean);

@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById, updateRecord } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import {
+  sequenceRancherMapReferralsFormula,
+  activeDealReferralsFormula,
+  statusOrFormula,
+} from '@/lib/cronReadFilters';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramUpdate } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
@@ -248,7 +253,19 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     const buyerClosedWonRancher = new Map<string, string>(); // consumerId -> rancherName
     const buyerActiveRancher = new Map<string, string>();    // consumerId -> rancherName
     {
-      const allRefs = await getAllRecords(TABLES.REFERRALS) as any[];
+      // SCALE (#3): the two maps below only read Closed Won (closed-won map)
+      // and Intro Sent / Rancher Contacted / Negotiation / Pending Approval
+      // (active map). Pull exactly that status union instead of the whole
+      // table; the JS status branches stay as the exact belt. Fall back to the
+      // unfiltered scan on an INVALID_FILTER_BY_FORMULA-class error.
+      let allRefs: any[];
+      try {
+        allRefs = await getAllRecords(TABLES.REFERRALS, sequenceRancherMapReferralsFormula()) as any[];
+      } catch (e: any) {
+        if (!isInvalidFilterFormulaError(e)) throw e;
+        console.warn('[email-sequences] rancher-map status filter rejected; falling back to full Referrals scan:', e?.message);
+        allRefs = await getAllRecords(TABLES.REFERRALS) as any[];
+      }
       for (const ref of allRefs) {
         const buyerIds = ref['Buyer'] || [];
         if (!buyerIds.length) continue;
@@ -334,7 +351,18 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           // leads + frustrates everyone. Operator can revisit via /admin.
           try {
             const { LOCKED_STATUSES } = await import('@/lib/referralLock');
-            const allRefsForLockCheck = (await getAllRecords(TABLES.REFERRALS)) as any[];
+            // SCALE (#3): LOCKED_STATUSES ⊆ the active-deal status set, so the
+            // active-deal formula is a safe superset for this lock check. The
+            // JS LOCKED_STATUSES.has(...) test stays as the exact belt. Fall
+            // back to the full scan on an INVALID_FILTER_BY_FORMULA-class error.
+            let allRefsForLockCheck: any[];
+            try {
+              allRefsForLockCheck = (await getAllRecords(TABLES.REFERRALS, activeDealReferralsFormula())) as any[];
+            } catch (fe: any) {
+              if (!isInvalidFilterFormulaError(fe)) throw fe;
+              console.warn('[match-now LOCK check] active-deal filter rejected; falling back to full scan:', fe?.message);
+              allRefsForLockCheck = (await getAllRecords(TABLES.REFERRALS)) as any[];
+            }
             const hasLockedActive = allRefsForLockCheck.some((r: any) => {
               const buyers = Array.isArray(r['Buyer']) ? r['Buyer'] : [];
               if (!buyers.includes(consumerId)) return false;
@@ -364,7 +392,19 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
           // (mirrors /bulkfire telegram command logic) before falling
           // through to matching/suggest.
           try {
-            const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+            // SCALE (#3): this lookup keeps only Pending Approval rows, so ask
+            // Airtable for exactly those. The JS `Status !== 'Pending Approval'`
+            // guard stays as the exact belt. Fall back to the full scan on an
+            // INVALID_FILTER_BY_FORMULA-class error.
+            let allRefs: any[];
+            const pendingFormula = statusOrFormula(['Pending Approval'])!;
+            try {
+              allRefs = (await getAllRecords(TABLES.REFERRALS, pendingFormula)) as any[];
+            } catch (fe: any) {
+              if (!isInvalidFilterFormulaError(fe)) throw fe;
+              console.warn('[match-now Pending-Approval check] filter rejected; falling back to full scan:', fe?.message);
+              allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+            }
             const stuckRef = allRefs.find((r: any) => {
               if (r['Status'] !== 'Pending Approval') return false;
               const buyers = Array.isArray(r['Buyer']) ? r['Buyer'] : [];

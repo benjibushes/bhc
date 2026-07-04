@@ -41,10 +41,11 @@
 // will self-heal on reactivation via the lazy-bootstrap paths.
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, TABLES } from '@/lib/airtable';
+import { getAllRecords, TABLES, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { peekRedisCapacity, setCapacityCounter } from '@/lib/rancherCapacity';
 import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
+import { heldReferralsFormula } from '@/lib/cronReadFilters';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 
@@ -95,7 +96,20 @@ async function realHandler(_request: Request): Promise<DriftResult> {
   // computed by id match, not by the broken ARRAYJOIN-of-names formula.
   let heldCounts: Record<string, number>;
   try {
-    const allReferrals = (await getAllRecords(TABLES.REFERRALS)) as any[];
+    // SCALE (#3): only held-status referrals contribute to the count, so ask
+    // Airtable for exactly those instead of scanning all 24+ pages. The JS
+    // buildHeldCountsByRancher re-applies HELD_STATUSES as the exact belt.
+    // On an INVALID_FILTER_BY_FORMULA-class error (e.g. a future rename of the
+    // {Status} field) fall back to today's unfiltered scan so a bad formula
+    // degrades instead of breaking the reconciler.
+    let allReferrals: any[];
+    try {
+      allReferrals = (await getAllRecords(TABLES.REFERRALS, heldReferralsFormula())) as any[];
+    } catch (e: any) {
+      if (!isInvalidFilterFormulaError(e)) throw e;
+      console.warn('[capacity-drift-check] held-status filter rejected; falling back to full Referrals scan:', e?.message);
+      allReferrals = (await getAllRecords(TABLES.REFERRALS)) as any[];
+    }
     heldCounts = buildHeldCountsByRancher(allReferrals);
   } catch (e: any) {
     console.error('[capacity-drift-check] Referrals read failed:', e?.message);

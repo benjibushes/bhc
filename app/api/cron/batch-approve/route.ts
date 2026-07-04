@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords, updateRecord } from '@/lib/airtable';
+import { getAllRecords, updateRecord, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { heldReferralsFormula } from '@/lib/cronReadFilters';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendConsumerApproval, sendWaitlistEmail, sendBackfillEmail, sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -46,7 +47,20 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     let capacityFixed = 0;
     try {
       const allRanchers = await getAllRecords(TABLES.RANCHERS) as any[];
-      const allReferrals = await getAllRecords(TABLES.REFERRALS) as any[];
+      // SCALE (#3): only held-status referrals are counted below, so pull just
+      // those from Airtable instead of scanning the whole table. The JS
+      // HELD_REFERRAL_STATUSES.has(...) check stays as the exact belt. Fall
+      // back to the unfiltered scan on an INVALID_FILTER_BY_FORMULA-class error
+      // so a bad formula degrades to today's behavior rather than breaking the
+      // self-heal.
+      let allReferrals: any[];
+      try {
+        allReferrals = await getAllRecords(TABLES.REFERRALS, heldReferralsFormula()) as any[];
+      } catch (e: any) {
+        if (!isInvalidFilterFormulaError(e)) throw e;
+        console.warn('[batch-approve] held-status filter rejected; falling back to full Referrals scan:', e?.message);
+        allReferrals = await getAllRecords(TABLES.REFERRALS) as any[];
+      }
       // Count held referrals per rancher using the CANONICAL rule (shared via
       // lib/capacityCount with capacity-drift-check, the admin-health readout,
       // and the Redis bootstrap): Status ∈ HELD_REFERRAL_STATUSES AND the

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getAllRecords } from '@/lib/airtable';
+import { getAllRecords, isInvalidFilterFormulaError } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
+import { dailyDigestReferralsFormula } from '@/lib/cronReadFilters';
 import { isMaintenanceMode } from '@/lib/maintenance';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { callClaude } from '@/lib/ai';
@@ -21,10 +22,27 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
+    // SCALE (#3): the referrals read only feeds status-bucketed COUNTS
+    // (pending / recent intros / month wins / stalled), so pull just those
+    // statuses instead of the full table. Every recency/month window that
+    // narrows further stays in JS as the exact belt. On an
+    // INVALID_FILTER_BY_FORMULA-class error fall back to the unfiltered scan so
+    // a bad formula can never silently under-count the digest.
+    // Consumers stays unfiltered — the digest reports whole-table totals
+    // (recent signups, pending, total members) that need every row.
+    const readReferrals = async (): Promise<any[]> => {
+      try {
+        return (await getAllRecords(TABLES.REFERRALS, dailyDigestReferralsFormula())) as any[];
+      } catch (e: any) {
+        if (!isInvalidFilterFormulaError(e)) throw e;
+        console.warn('[daily-digest] referral status filter rejected; falling back to full Referrals scan:', e?.message);
+        return (await getAllRecords(TABLES.REFERRALS)) as any[];
+      }
+    };
     const [consumers, ranchers, referrals] = await Promise.all([
       getAllRecords(TABLES.CONSUMERS),
       getAllRecords(TABLES.RANCHERS),
-      getAllRecords(TABLES.REFERRALS),
+      readReferrals(),
     ]);
 
     const recentSignups = consumers.filter((c: any) => {
