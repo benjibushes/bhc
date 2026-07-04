@@ -225,15 +225,27 @@ export async function createReferral(fields: any) {
   return createRecord(TABLES.REFERRALS, stampRancherRecordIds(fields));
 }
 
-// ── In-process cache for hot tables ─────────────────────────────────────
+// ── Two-layer cache for hot tables (L1 in-process + L2 shared Redis) ──────
 // Spike-readiness: matching/suggest + consumers signup both call
 // getAllRecords(RANCHERS) on every hit. At 30+ signups/sec that detonates
 // the Airtable 5 req/sec per-base limit, which then triggers exponential
-// backoff inside withRateLimitRetry and blows past maxDuration. Cache the
-// ranchers full-list for a short TTL so steady-state concurrent signups
-// share one read. Single-record reads (getRecordById) still bypass cache,
-// so capacity bumps stay live-correct. Filtered selects skip cache because
-// the formula space is unbounded.
+// backoff inside withRateLimitRetry and blows past maxDuration.
+//
+// L1 (this module's _cache): per-lambda in-process, CACHE_TTL_MS. Absorbs a
+//   burst served by a single warm instance without touching Redis.
+// L2 (lib/sharedCache → Upstash Redis): SHARED across all serverless
+//   instances, same CACHE_TTL_MS. Under ad-driven fan-out, N cold lambdas
+//   with empty L1 share ONE Airtable read instead of each re-reading — this
+//   is scale-ladder item #2. Fail-open: if Upstash env is unset (local/dev/
+//   test) or Redis errors, L2 is a transparent no-op and behavior is EXACTLY
+//   the pre-Redis in-process path.
+//
+// Single-record reads (getRecordById) still bypass cache, so capacity bumps
+// stay live-correct. Filtered/projected selects skip cache because the
+// formula space is unbounded and a projected result stored under the full
+// key would starve other callers of fields.
+import { cacheGet as sharedCacheGet, cacheSet as sharedCacheSet, cacheDel as sharedCacheDel } from './sharedCache';
+
 type Cached = { ts: number; data: Array<Record<string, any>> };
 const CACHE_TTL_MS = 10_000;
 const _cache: Record<string, Cached> = {};
@@ -243,10 +255,33 @@ function _cacheKey(tableName: string): string | null {
   // consumers would break the capacity logic.
   return tableName === TABLES.RANCHERS ? `${tableName}::full` : null;
 }
+// Redis (L2) key for a table's full-list cache. Distinct namespace from the
+// L1 key so the shared value is self-describing across instances/services.
+function _redisCacheKey(tableName: string): string {
+  return `airtable:cache:${tableName}`;
+}
 export function invalidateAirtableCache(tableName?: string): void {
-  if (!tableName) { for (const k of Object.keys(_cache)) delete _cache[k]; return; }
-  for (const k of Object.keys(_cache)) {
-    if (k.startsWith(`${tableName}::`)) delete _cache[k];
+  // L1: synchronous clear (unchanged contract — callers invoke this inline
+  // after a create/update without awaiting).
+  if (!tableName) {
+    for (const k of Object.keys(_cache)) delete _cache[k];
+  } else {
+    for (const k of Object.keys(_cache)) {
+      if (k.startsWith(`${tableName}::`)) delete _cache[k];
+    }
+  }
+  // L2: fire-and-forget delete of the shared Redis key(s) so an edit on one
+  // instance clears the cache for ALL instances immediately (otherwise a
+  // stale rancher list would linger up to CACHE_TTL_MS across the fleet after
+  // an edit). cacheDel never throws; the .catch is belt-and-suspenders so an
+  // unexpected rejection can't surface as an unhandled promise. Fire-and-
+  // forget keeps this function synchronous, preserving every existing call
+  // site (createRecord/updateRecord invoke it inline).
+  if (!tableName) {
+    // Clear-all: only RANCHERS is cached today, so clear its shared key.
+    void sharedCacheDel(_redisCacheKey(TABLES.RANCHERS)).catch(() => {});
+  } else if (_cacheKey(tableName)) {
+    void sharedCacheDel(_redisCacheKey(tableName)).catch(() => {});
   }
 }
 
@@ -275,8 +310,20 @@ export async function getAllRecords(
     const projected = !!(opts?.fields && opts.fields.length);
     const key = !filterByFormula && !projected ? _cacheKey(tableName) : null;
     if (key) {
+      // L1: in-process. A warm lambda serving a burst answers from here and
+      // never touches Redis or Airtable.
       const hit = _cache[key];
       if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return hit.data;
+      // L2: shared Redis. On an L1 miss (cold instance, or L1 expired), pull
+      // the value another instance already read. Populate L1 and return so
+      // this instance's subsequent hits stay in-process. Fail-open: cacheGet
+      // returns undefined when Upstash is unset or Redis errors → falls
+      // through to the Airtable read below (today's behavior).
+      const shared = await sharedCacheGet<Array<Record<string, any>>>(_redisCacheKey(tableName));
+      if (shared !== undefined) {
+        _cache[key] = { ts: Date.now(), data: shared };
+        return shared;
+      }
     }
     const records = await withRateLimitRetry(() =>
       base(tableName)
@@ -297,7 +344,14 @@ export async function getAllRecords(
       _createdTime: (record as any)._rawJson?.createdTime || '',
       ...record.fields,
     }));
-    if (key) _cache[key] = { ts: Date.now(), data };
+    if (key) {
+      // Write BOTH layers. L1 synchronously; L2 shared so the NEXT cold
+      // instance skips Airtable. Await the L2 write (it's fail-safe internally
+      // — never throws) so we don't leave a dangling promise; cost is one
+      // fast REST round-trip on the miss path only, not on every read.
+      _cache[key] = { ts: Date.now(), data };
+      await sharedCacheSet(_redisCacheKey(tableName), data, CACHE_TTL_MS);
+    }
     return data;
   } catch (error) {
     console.error(`Error fetching records from ${tableName}:`, error);
