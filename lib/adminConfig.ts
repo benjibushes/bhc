@@ -23,6 +23,7 @@ export type { AdminConfig } from './adminConfigTypes';
 export { ADMIN_CONFIG_DEFAULTS } from './adminConfigTypes';
 import type { AdminConfig } from './adminConfigTypes';
 import { ADMIN_CONFIG_DEFAULTS } from './adminConfigTypes';
+import { cacheGet as sharedCacheGet, cacheSet as sharedCacheSet, cacheDel as sharedCacheDel } from './sharedCache';
 
 // ── Airtable key → AdminConfig field mapping ──────────────────────────────
 const KEY_MAP: Record<string, keyof AdminConfig> = {
@@ -61,18 +62,49 @@ function getBase() {
  */
 let _cfgCache: { value: AdminConfig; at: number } | null = null;
 const CFG_TTL_MS = 60_000;
+// L2 shared-cache key. Distinct namespace from the Airtable-table cache.
+const CFG_REDIS_KEY = 'adminconfig:cache';
 
 export async function getAdminConfig(): Promise<AdminConfig> {
-  // Module TTL cache — /access (the paid-ad front door) calls this on EVERY
+  // Two-layer TTL cache — /access (the paid-ad front door) calls this on EVERY
   // render. The Airtable read can error (permission) and fall back to defaults,
   // so without a cache every ad hit pays a failing round-trip on the critical
-  // render path (a root cause of "things hardly load"). Cache the resolved
-  // value (even the default) for 60s so at most one read/min happens. Config
-  // toggles rarely; 60s staleness is acceptable.
+  // render path (a root cause of "things hardly load").
+  //
+  // L1 (in-process, 60s): a warm lambda answers instantly.
+  // L2 (shared Redis, 60s): under ad fan-out, a cold instance with empty L1
+  //   pulls the value another instance already resolved instead of paying its
+  //   own Airtable round-trip. Fail-open: when Upstash env is unset (local/
+  //   dev/test) or Redis errors, L2 is a transparent no-op and this behaves
+  //   EXACTLY as the pre-Redis in-process path. Config toggles rarely; 60s
+  //   staleness is acceptable.
   if (_cfgCache && Date.now() - _cfgCache.at < CFG_TTL_MS) return _cfgCache.value;
+
+  // L2: shared Redis. On L1 miss, adopt a value another instance already read.
+  const shared = await sharedCacheGet<AdminConfig>(CFG_REDIS_KEY);
+  if (shared !== undefined) {
+    // Merge over defaults defensively so an older shared shape (missing a
+    // newly-added key) never drops a field.
+    const merged = { ...ADMIN_CONFIG_DEFAULTS, ...shared };
+    _cfgCache = { value: merged, at: Date.now() };
+    return merged;
+  }
+
   const value = await _loadAdminConfig();
   _cfgCache = { value, at: Date.now() };
+  // Populate L2 for the next cold instance. Fail-safe (never throws).
+  await sharedCacheSet(CFG_REDIS_KEY, value, CFG_TTL_MS);
   return value;
+}
+
+/**
+ * Clear the admin-config cache in BOTH layers immediately. Called after a
+ * save so the next read reflects the write instead of a stale cached value.
+ * L1 is cleared synchronously; L2 delete is awaited (fail-safe internally).
+ */
+async function invalidateAdminConfigCache(): Promise<void> {
+  _cfgCache = null;
+  await sharedCacheDel(CFG_REDIS_KEY);
 }
 
 async function _loadAdminConfig(): Promise<AdminConfig> {
@@ -128,7 +160,12 @@ export async function saveAdminConfig(
   updates: Partial<AdminConfig>,
 ): Promise<AdminConfig> {
   const base = getBase();
-  if (!base) return getAdminConfig();
+  if (!base) {
+    // No Airtable → nothing persisted, but still bust the cache so a stale
+    // in-memory/shared value doesn't mask the (defaults) truth.
+    await invalidateAdminConfigCache();
+    return getAdminConfig();
+  }
 
   try {
     // Fetch existing rows so we know which keys already have a record id
@@ -169,5 +206,9 @@ export async function saveAdminConfig(
     // Return defaults-merged result even if save failed
   }
 
+  // Bust BOTH cache layers so the read below (and every other instance) sees
+  // the write instead of the pre-save cached value. Must run BEFORE the
+  // getAdminConfig() call or that call would just return the stale L1/L2 value.
+  await invalidateAdminConfigCache();
   return getAdminConfig();
 }
