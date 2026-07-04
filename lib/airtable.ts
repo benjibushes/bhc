@@ -39,6 +39,12 @@ export const TABLES = {
   EMAIL_SENDS: 'Email Sends',
   PAYMENTS: 'Payments',
   AD_SPEND: 'Ad Spend',
+  // Affiliate-products layer (Move 1). BHC recommends curated on-brand gear to
+  // its own buyers and earns affiliate commission. RECOMMENDED_PRODUCTS is the
+  // curated catalog (only Active=true renders anywhere); GEAR_CLICKS is the
+  // best-effort click log fired by /go/product/[id] before the outbound 302.
+  RECOMMENDED_PRODUCTS: 'Recommended Products',
+  GEAR_CLICKS: 'Gear Clicks',
 };
 
 // Escape a string value for use in Airtable filterByFormula to prevent injection

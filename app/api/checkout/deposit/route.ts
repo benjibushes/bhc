@@ -551,6 +551,11 @@ export async function GET(req: Request) {
         // Surfaced so the success page can deep-link the share to the rancher.
         rancher: { slug: paidSlug },
         affiliateCode: paidAffiliateCode,
+        // Buyer's share size (raw Order Type). The success page's affiliate
+        // GearBlock maps this via cutForBuyer to pick cut-appropriate gear
+        // (whole-cow → pins a chest freezer first). Best-effort; a blank
+        // Order Type just yields universal-only gear (cut=null).
+        orderType: String(referral['Order Type'] || ''),
         // Buyer-paid deposit total (dollars) — the success page fires the client
         // Purchase Pixel with this value + event_id=deposit_<refId> to dedup
         // against the server CAPI deposit Purchase.
