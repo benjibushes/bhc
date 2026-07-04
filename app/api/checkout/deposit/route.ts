@@ -518,16 +518,31 @@ export async function GET(req: Request) {
     // attribute + pay the referrer at close. Best-effort — a missing code
     // degrades the share link to untracked, never blocks the paid state.
     let paidAffiliateCode = '';
+    // Buyer-paid total (deposit + baked-in commission) for the success-page
+    // client Purchase Pixel. Read from the settled Payments row's Total Charged
+    // Cents so the client Purchase value MATCHES the server CAPI deposit Purchase
+    // exactly (both = pi.amount). Falls back to the referral's Deposit Amount
+    // (rancher portion) when the Payments row/field is unreadable — a value the
+    // buyer still recognizes; never blocks the paid state. In the SAME parallel
+    // batch as the rancher/consumer reads, so it adds no latency.
+    let depositValue = 0;
     try {
       const paidRancherId = (referral['Rancher'] || referral['Suggested Rancher'] || [])[0];
-      const [paidRancher, paidConsumer]: any[] = await Promise.all([
+      const { findPaymentsByReferral } = await import('@/lib/contracts/payments');
+      const [paidRancher, paidConsumer, paidPayments]: any[] = await Promise.all([
         paidRancherId
           ? getRecordById(TABLES.RANCHERS, paidRancherId).catch(() => null)
           : Promise.resolve(null),
         getRecordById(TABLES.CONSUMERS, session.consumerId).catch(() => null),
+        findPaymentsByReferral(referralId, { statusClause: `{Status} = "succeeded"` }).catch(() => []),
       ]);
       paidSlug = String(paidRancher?.['Slug'] || '');
       paidAffiliateCode = String(paidConsumer?.['Affiliate Code'] || '').trim();
+      const settledRow = Array.isArray(paidPayments) ? paidPayments[0] : null;
+      const totalChargedCents = Number(settledRow?.['Total Charged Cents'] || 0);
+      depositValue = totalChargedCents > 0
+        ? totalChargedCents / 100
+        : Number(referral['Deposit Amount'] || 0);
     } catch {}
     return NextResponse.json(
       {
@@ -536,6 +551,10 @@ export async function GET(req: Request) {
         // Surfaced so the success page can deep-link the share to the rancher.
         rancher: { slug: paidSlug },
         affiliateCode: paidAffiliateCode,
+        // Buyer-paid deposit total (dollars) — the success page fires the client
+        // Purchase Pixel with this value + event_id=deposit_<refId> to dedup
+        // against the server CAPI deposit Purchase.
+        depositValue,
         message: refStatus === 'Closed Lost'
           ? 'This referral is closed and can\'t be reopened — contact us to re-route.'
           : 'This reservation is already paid. Check your email for the confirmation.',

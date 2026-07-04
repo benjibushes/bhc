@@ -54,7 +54,15 @@ import { markDepositSucceeded } from '@/lib/contracts/payments';
 import { claimOnce } from '@/lib/rancherCapacity';
 import { enrollClosedWonAffiliate, recordClose } from '@/lib/contracts/rancher';
 import { funnelRecord } from '@/lib/funnelMetrics';
-import { fireCapi, buildUserData, closePurchaseEnabled } from '@/lib/metaCapi';
+import {
+  fireCapi,
+  buildUserData,
+  closePurchaseEnabled,
+  depositPurchaseEnabled,
+  depositEventId,
+  reconstructFbc,
+  shouldFireClosePurchase,
+} from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { logAuditEntry } from '@/lib/auditLog';
 
@@ -205,7 +213,17 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
   // weeks later — missing the immediate confirmation moment.
   // Best-effort: failure does NOT roll back the close.
   // Also: reuse the fetched buyer below for Meta CAPI Purchase user_data.
-  let buyerForCapi: { email?: string; firstName?: string; lastName?: string } = {};
+  // fbc is rebuilt from the buyer's stored fbclid + click-time ms (captured at
+  // funnel/quiz/reserve entry, denormalized onto the Consumer). This is the same
+  // attribution rail recordClose's Closed-Won Purchase rides — off-session, no
+  // buyer browser at settle time, so the stored click id is the only match key.
+  let buyerForCapi: {
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+    state?: string;
+    fbc?: string;
+  } = {};
   try {
     const buyerLinksForEmail: string[] = (referralRow?.['Buyer'] || []) as string[];
     const buyerIdForEmail = buyerLinksForEmail[0] || '';
@@ -215,10 +233,14 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
     if (buyer?.['Email']) {
       const fullName = String(buyer['Full Name'] || '').trim();
       const nameParts = fullName.split(/\s+/);
+      const fbclid = String(buyer['fbclid'] || '').trim();
+      const fbclidTs = Number(buyer['fbclid_ts'] || 0);
       buyerForCapi = {
         email: String(buyer['Email']).toLowerCase(),
         firstName: nameParts[0] || undefined,
         lastName: nameParts.slice(1).join(' ') || undefined,
+        state: String(buyer['State'] || '') || undefined,
+        fbc: reconstructFbc(fbclid, fbclidTs),
       };
       if (rancherRow) {
         await sendPostPurchaseWelcome({
@@ -282,6 +304,42 @@ export async function settleBuyerDeposit(pi: any): Promise<void> {
       content_category: 'buyer-deposit',
     },
   }]).catch((e) => console.error('[meta-capi] buyer_deposit InitiateCheckout fire failed:', e));
+
+  // ── Meta Conversions API: attributed DEPOSIT `Purchase` (the money moment) ──
+  // Deposit is paid SAME-DAY as the ad click, so this is THE conversion paid ads
+  // should optimize on (vs the weeks-later Closed-Won Purchase). Fires ONLY when
+  // META_DEPOSIT_PURCHASE_ENABLED='true' (dark until Ben flips it, independent of
+  // the close flag). Attribution rides the buyer's stored fbclid → fbc (built
+  // into buyerForCapi above). event_id = depositEventId(referralId) =
+  // `deposit_<referralId>` — a STABLE id the success-page client Pixel fires with
+  // too, so browser + server dedup into one Purchase. DELIBERATELY distinct from
+  // the Closed-Won Purchase's event_id (raw referralId): the code guard
+  // (shouldFireClosePurchase, applied in recordClose) — NOT Meta's fragile dedup
+  // window — is what makes a deposit deal count exactly once. value = buyer-paid
+  // total (deposit + baked-in commission = pi.amount), matching the InitiateCheckout
+  // value + the buyer's card statement. Wrapped so a CAPI error never touches the
+  // (already-completed) settlement path — fire-and-forget, best-effort.
+  if (depositPurchaseEnabled()) {
+    try {
+      fireCapi([{
+        event_name: 'Purchase',
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: depositEventId(referralId),
+        action_source: 'system_generated',
+        user_data: buildUserData(buyerForCapi),
+        custom_data: {
+          value: totalChargedDollars,
+          currency: 'usd',
+          content_name: `Beef deposit — ${tier || 'unknown'} tier`,
+          content_category: 'buyer-deposit',
+        },
+      }]).catch((e) => console.error('[meta-capi] buyer_deposit Purchase fire failed:', e));
+    } catch (e: any) {
+      // Belt for a synchronous throw before the promise even forms — settlement
+      // has already succeeded above; a pixel fire must never surface here.
+      console.error('[meta-capi] buyer_deposit Purchase setup failed:', e?.message || e);
+    }
+  }
 
   // Telegram celebration to admin chat. Shows the full deal shape:
   // deposit to rancher / BHC commission / fulfillment balance still
@@ -411,8 +469,21 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
   // 'website'. Firing here too would double-count on the same event_id (only
   // saved by Meta's idempotency window), so we suppress it. This branch is the
   // unattributed (system_generated, no fbc) fallback for the flag-off state.
+  //
+  // DEDUP GUARD (deposit vs close): even in the legacy flag-off close path, if
+  // the deposit-Purchase flag is on AND this deal already paid a deposit, the
+  // deposit Purchase already counted it — suppress the close Purchase so the
+  // deal counts ONCE. shouldFireClosePurchase mirrors the recordClose guard so
+  // BOTH close-Purchase paths (attributed + legacy) dedup identically. referralRow
+  // was read above; a null 'Deposit Paid At' (legacy no-deposit close) still fires.
   // Fire-and-forget — never block the webhook response.
-  if (!closePurchaseEnabled()) (async () => {
+  if (
+    !closePurchaseEnabled() &&
+    shouldFireClosePurchase({
+      depositPurchaseEnabled: depositPurchaseEnabled(),
+      depositPaidAt: referralRow?.['Deposit Paid At'],
+    })
+  ) (async () => {
     try {
       const buyerLinks: string[] = (referralRow?.['Buyer'] || []) as string[];
       const buyerId = buyerLinks[0] || '';
