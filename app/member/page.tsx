@@ -5,6 +5,8 @@ import Container from '../components/Container';
 import Divider from '../components/Divider';
 import MemberAuthGuard from '../components/MemberAuthGuard';
 import ContactRancherButton from '../components/ContactRancherButton';
+import GearBlock from '../components/GearBlock';
+import { cutForBuyer } from '@/lib/demandRouter';
 import Link from 'next/link';
 import { trackEvent } from '@/lib/analytics';
 import { normalizeImageUrl } from '@/lib/imageUrl';
@@ -668,6 +670,36 @@ function MemberDashboard({ member }: { member: { id: string; name: string; email
                   </div>
                 </div>
               )}
+
+              {/* Affiliate gear — curated on-brand gear, stage-aware. Stage is
+                  derived from the buyer's latest referral: a delivered/closed
+                  order → "keep your beef at its best" (delivered); anything
+                  active → "while you wait…" (waiting). cutForBuyer maps the
+                  referral's Order Type → cut. Self-fetches /api/gear; renders
+                  NOTHING when the catalog is empty (today's reality). */}
+              {(() => {
+                const refs = data?.memberReferrals || [];
+                // Latest referral by created_at (falls back to array order).
+                const latest = refs.length
+                  ? refs.slice().sort((a, b) =>
+                      (Date.parse(b.created_at || '') || 0) - (Date.parse(a.created_at || '') || 0),
+                    )[0]
+                  : null;
+                const delivered =
+                  latest?.status === 'Closed Won' || !!latest?.fulfillment_confirmed_at;
+                const gearStage: 'waiting' | 'delivered' = delivered ? 'delivered' : 'waiting';
+                const gearCut = cutForBuyer({ 'Order Type': latest?.order_type || '' });
+                return (
+                  <div className="space-y-2">
+                    <GearBlock stage={gearStage} cut={gearCut} surface="member" />
+                    <p className="text-xs text-dust">
+                      <Link href="/gear" className="underline hover:text-charcoal">
+                        see all the gear we trust →
+                      </Link>
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Matching preference (2026-07-01) — nationwide opt-in/opt-out.
                   Mirrors the funnel waitlist choice; whichever surface the

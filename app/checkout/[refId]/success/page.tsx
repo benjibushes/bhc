@@ -7,6 +7,8 @@ import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { trackEvent, metaEventId } from '@/lib/analytics';
 import { track } from '@/lib/track';
+import GearBlock from '@/app/components/GearBlock';
+import { cutForBuyer } from '@/lib/demandRouter';
 
 // Client-safe mirror of lib/metaCapi depositEventId (that module imports node
 // `crypto`, so it must not be pulled into this 'use client' bundle). The server
@@ -62,6 +64,9 @@ function DepositSuccessContent() {
   const [copied, setCopied] = useState(false);
   // T2.2 — the buyer's own affiliate code, surfaced by the paid-branch 409.
   const [affiliateCode, setAffiliateCode] = useState('');
+  // Buyer's share size (raw Order Type), surfaced by the referral_closed 409 —
+  // feeds the affiliate GearBlock's cut selection (whole → freezer-first gear).
+  const [orderType, setOrderType] = useState('');
   // A6 — only claim "confirmed" once payment is actually verified. The paid
   // signal is the referral flipping closed (GET returns referral_closed). Until
   // then (webhook lag, or a direct/bookmarked/back-button hit) we say
@@ -160,6 +165,8 @@ function DepositSuccessContent() {
             // T2.2: the buyer's own share code (minted silently at settle) —
             // upgrades the share link below from untracked to attributed.
             if (j.affiliateCode) setAffiliateCode(String(j.affiliateCode));
+            // Order Type → drives the affiliate GearBlock's cut selection.
+            if (j.orderType) setOrderType(String(j.orderType));
             // Buyer-paid total for the client Purchase Pixel (fired below once
             // paid is confirmed). 0 when unreadable — the Pixel still fires,
             // matching the server (value defaults to 0 there too under the same
@@ -315,6 +322,22 @@ function DepositSuccessContent() {
               Share by email
             </a>
           </div>
+        </div>
+
+        {/* Affiliate gear — "while you wait, here's what you'll want". A buyer
+            who just reserved (share not yet delivered) is the moment to surface
+            the freezer/sealer/knives they'll need. cutForBuyer maps Order Type
+            → cut so a whole-cow buyer sees a chest freezer pinned first. The
+            block renders NOTHING when the catalog is empty (today's reality),
+            so this is invisible until Ben activates products. */}
+        <div className="mb-6">
+          <GearBlock
+            stage="waiting"
+            cut={cutForBuyer({ 'Order Type': orderType })}
+            buyerId=""
+            refId={refId}
+            surface="success"
+          />
         </div>
 
         {/* BHC Promise reminder — paid-ad buyers landing here for the first time
