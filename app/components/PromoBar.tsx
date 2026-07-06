@@ -18,8 +18,16 @@ export default function PromoBar() {
     try {
       if (typeof window === 'undefined') return;
       // Suppress on admin/dashboard surfaces — keep operator screens clean.
+      // Also suppress on the low-ticket money step (product checkout + order
+      // outcome): a Hats ad at the payment moment is a conversion leak.
       const p = window.location.pathname;
-      if (p.startsWith('/admin') || p.startsWith('/rancher') || p.startsWith('/member')) return;
+      if (
+        p.startsWith('/admin') ||
+        p.startsWith('/rancher') ||
+        p.startsWith('/member') ||
+        p.startsWith('/shop/checkout') ||
+        p.startsWith('/order')
+      ) return;
       const dismissed = localStorage.getItem(STORAGE_KEY);
       if (!dismissed) setHidden(false);
     } catch {

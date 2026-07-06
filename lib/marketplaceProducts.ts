@@ -103,7 +103,7 @@ export const MARKETPLACE_GROUPS: {
   {
     key: 'boxes',
     title: 'boxes & bundles',
-    sub: 'a curated spread of cuts, shipped frozen to your door',
+    sub: 'a mixed box of cuts from one ranch, shipped frozen to your door',
     categories: ['Sampler Box', 'Bundle'],
   },
   {

@@ -1,12 +1,13 @@
 // app/shop/[id]/page.tsx
 //
 // Product detail page (PDP). One product, the full story: hero photo, what's in
-// the box, price, ships note, Buy. Three jobs:
+// the box, price, ships note, Buy. Jobs:
 //   1. Give every product a shareable URL (/shop/<id>) an ad can point straight at.
 //   2. Show the photo + "what's in the box" — the #1 low-ticket buy-driver.
-//   3. Emit Product JSON-LD so the product is eligible for rich results + is
-//      legible to AI crawlers.
-// The Buy path stays one tap (same public buy endpoint); the detail is the lift.
+//   3. Carry the trust the brand owns (verified ranch, real person, shipping
+//      included) onto the exact page ads point at.
+//   4. Emit Product JSON-LD (with free-shipping shippingDetails) for rich results.
+// The Buy path stays one tap; the detail is the lift.
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -14,6 +15,7 @@ import type { Metadata } from 'next';
 import { getRecordById, TABLES } from '@/lib/airtable';
 
 import BuyButton from '../BuyButton';
+import ProductImage from '../ProductImage';
 import ProductViewTracker from './ProductViewTracker';
 
 export const revalidate = 300;
@@ -24,6 +26,8 @@ interface Prod {
   id: string;
   name: string;
   rancher: string;
+  rancherSlug: string; // '' unless the ranch has a live public page
+  rancherState: string;
   category: string;
   price: number;
   base: number;
@@ -56,10 +60,28 @@ async function loadProduct(id: string): Promise<Prod | null> {
     base > 0 &&
     base <= price;
   if (!sellable) return null;
+
+  // Best-effort: resolve the rancher's public page slug + state for the verified
+  // trust link. Only link when the ranch has a LIVE page (never a dead link).
+  let rancherSlug = '';
+  let rancherState = '';
+  const rancherRecId = String(r['Rancher Record ID'] || '').trim();
+  if (rancherRecId) {
+    try {
+      const rr: any = await getRecordById(TABLES.RANCHERS, rancherRecId);
+      if (rr) {
+        rancherState = String(rr['State'] || '');
+        if (rr['Page Live'] && !rr['Public Map Hidden']) rancherSlug = String(rr['Slug'] || '');
+      }
+    } catch { /* non-fatal — fall back to plain text */ }
+  }
+
   return {
     id: r.id,
     name: String(r['Product Name'] || ''),
     rancher: String(r['Rancher Name'] || ''),
+    rancherSlug,
+    rancherState,
     category: String(sel(r['Category']) || ''),
     price,
     base,
@@ -73,19 +95,17 @@ async function loadProduct(id: string): Promise<Prod | null> {
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const p = await loadProduct(id);
-  if (!p) return { title: 'Shop real ranch beef, shipped nationwide | BuyHalfCow' };
-  const title = `${p.name} — ${p.rancher} | BuyHalfCow`;
-  const description = p.description || 'Real beef, shipped to your door from a family ranch.';
+  if (!p) return { title: 'Shop real ranch beef, shipped nationwide' };
+  // Title has no "| BuyHalfCow" — the layout template appends " — BuyHalfCow".
+  const title = `${p.name} — ${p.rancher}`;
+  const description = p.description || 'Real beef, shipped to your door from a family ranch. Shipping included.';
+  const images = p.image ? [{ url: p.image }] : [];
   return {
     title,
     description,
     alternates: { canonical: `/shop/${p.id}` },
-    openGraph: {
-      title,
-      description,
-      url: `/shop/${p.id}`,
-      images: p.image ? [{ url: p.image }] : [],
-    },
+    openGraph: { title: `${title} | BuyHalfCow`, description, url: `/shop/${p.id}`, images },
+    twitter: { card: 'summary_large_image', title: `${title} | BuyHalfCow`, description, images: p.image ? [p.image] : [] },
   };
 }
 
@@ -95,6 +115,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   if (!p) notFound();
 
   // Product JSON-LD — only when an image + price exist (Google requires image).
+  // shippingDetails declares FREE US shipping (price is genuinely all-in).
   const jsonLd =
     p.image && p.price > 0
       ? {
@@ -111,6 +132,11 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             priceCurrency: 'USD',
             availability: 'https://schema.org/InStock',
             url: `${SITE_URL}/shop/${p.id}`,
+            shippingDetails: {
+              '@type': 'OfferShippingDetails',
+              shippingRate: { '@type': 'MonetaryAmount', value: '0', currency: 'USD' },
+              shippingDestination: { '@type': 'DefinedRegion', addressCountry: 'US' },
+            },
           },
         }
       : null;
@@ -128,14 +154,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 28, marginTop: 18, alignItems: 'start' }}>
           {/* Photo */}
           <div style={{ background: '#EAE6DE', border: '1px solid #A7A29A', aspectRatio: '1 / 1', overflow: 'hidden' }}>
-            {p.image ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={p.image} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-            ) : (
-              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#A7A29A', fontSize: 13 }}>
-                photo coming soon
-              </div>
-            )}
+            <ProductImage src={p.image} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
           </div>
 
           {/* Story + Buy */}
@@ -143,7 +162,13 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             <div>
               <h1 style={{ fontFamily: 'Georgia,serif', fontSize: 'clamp(26px,5vw,34px)', margin: '0 0 4px', lineHeight: 1.15 }}>{p.name}</h1>
               <div style={{ fontSize: 14, color: '#6B4F3F' }}>
-                {p.rancher}{p.weight ? ` · ${p.weight}` : ''}
+                {p.rancherSlug ? (
+                  <Link href={`/ranchers/${p.rancherSlug}`} style={{ color: '#6B4F3F', textDecoration: 'underline' }}>{p.rancher}</Link>
+                ) : (
+                  p.rancher
+                )}
+                <span style={{ color: '#55603F' }}> · verified ranch{p.rancherState ? ` · ${p.rancherState}` : ''}</span>
+                {p.weight ? ` · ${p.weight}` : ''}
               </div>
             </div>
 
@@ -154,26 +179,28 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             ) : null}
 
             <div style={{ fontSize: 13, color: '#55603F' }}>
-              {p.shelfStable ? 'shelf-stable · ships anywhere, no freezer needed' : 'ships frozen, direct from the ranch · nationwide'}
+              {p.shelfStable
+                ? 'shelf-stable · ships free, no freezer needed'
+                : 'ships frozen, direct from the ranch · shipping included, nationwide'}
             </div>
 
             <div style={{ marginTop: 4 }}>
               <BuyButton productId={p.id} price={p.price} />
             </div>
 
-            <p style={{ fontSize: 12, color: '#A7A29A', margin: '2px 0 0', lineHeight: 1.5 }}>
-              checkout secured by Stripe · shipping calculated at checkout where it applies · questions? reply to your receipt — a real person answers.
+            <p style={{ fontSize: 12.5, color: '#6B4F3F', margin: '2px 0 0', lineHeight: 1.55 }}>
+              the price you see is the price you pay — shipping included. checkout secured by Stripe. questions? reply to your receipt — a real person answers. &mdash; Ben
             </p>
           </div>
         </div>
 
-        {/* Anchor on the share — the box is a rung, not a substitute. */}
+        {/* Anchor on the share — below the fold, a rung UP, de-emphasized CTA. */}
         <div style={{ background: '#E6E9DC', borderLeft: '3px solid #55603F', padding: '14px 18px', marginTop: 36, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 220 }}>
             <div style={{ fontFamily: 'Georgia,serif', fontSize: 17 }}>ready for a freezer-fill?</div>
             <div style={{ fontSize: 13, color: '#3D362D' }}>a half or whole share is the best price per pound — one animal, one ranch, all year.</div>
           </div>
-          <Link href="/map" style={{ padding: '10px 20px', background: '#17130E', color: '#F4F1EC', textDecoration: 'none', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          <Link href="/map" style={{ padding: '9px 18px', background: 'transparent', color: '#17130E', textDecoration: 'none', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', border: '1.5px solid #55603F' }}>
             find a ranch &rarr;
           </Link>
         </div>

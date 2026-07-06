@@ -6,7 +6,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/admin', '/api/', '/checkout/', '/member/', '/rancher/', '/_next/'],
+        disallow: ['/admin', '/api/', '/checkout/', '/shop/checkout/', '/order/', '/member/', '/rancher/', '/_next/'],
       },
     ],
     sitemap: 'https://www.buyhalfcow.com/sitemap.xml',

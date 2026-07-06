@@ -22,7 +22,7 @@ export default function BuyButton({ productId, price }: { productId: string; pri
         textDecoration: 'none',
       }}
     >
-      buy — ${price.toFixed(0)}
+      buy — ${price.toFixed(2)}
     </Link>
   );
 }
