@@ -55,10 +55,13 @@ export default async function MarketplacePage() {
         </p>
 
         {/* Trust strip — honest, non-fabricated, on the exact page ads point at.
-            Risk-reversal stated as operational certainty, not support-desk maybe. */}
+            Risk-reversal stated as operational certainty ("we make it right"),
+            not support-desk uncertainty — the #1 conversion lever for new-food
+            buyers per the journey-overhaul research (Phase 4). */}
         <p className="text-[13.5px] text-sage mt-2.5 mb-7 leading-normal max-w-[60ch]">
           every ranch here is verified — a real family operation.{' '}
-          <strong>shipping&rsquo;s included in the price you see.</strong> checkout secured by
+          <strong>shipping&rsquo;s included in the price you see.</strong> if a cut ever shows up
+          wrong or freezer-burned, we make it right — no forms, no runaround. checkout secured by
           Stripe, and a real person answers your receipt. &mdash; Ben
         </p>
 
