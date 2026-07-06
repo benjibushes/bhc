@@ -26,13 +26,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   const msLabel = (c: any) => c?.ok ? `${c.ms}ms` : (c?.error || 'failed');
 
   if (data.status === 'healthy') {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `🟢 <b>All Systems Go</b> — ${new Date().toLocaleString('en-US', { timeZone: 'America/Denver', dateStyle: 'short', timeStyle: 'short' })}\n\n` +
-      `${icon(checks.airtable?.ok)} Airtable — ${msLabel(checks.airtable)}\n` +
-      `${icon(checks.resend?.ok)} Resend — ${msLabel(checks.resend)}\n` +
-      `${icon(checks.telegram?.ok)} Telegram — ${msLabel(checks.telegram)}\n` +
-      `${icon(checks.ai?.ok)} AI — ${msLabel(checks.ai)}`
+    // NOISE CUT (2026-07-05): a per-run "all systems go" pulse is the textbook
+    // cry-wolf pattern — trains the operator to ignore the channel. Only a
+    // DOWN/DEGRADED health check pings now; healthy runs log silently.
+    console.info(
+      `[healthcheck] all systems go — airtable=${msLabel(checks.airtable)} resend=${msLabel(checks.resend)} ` +
+      `telegram=${msLabel(checks.telegram)} ai=${msLabel(checks.ai)}`,
     );
   } else {
     const failedChecks = Object.entries(checks)

@@ -42,7 +42,6 @@
 
 import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES, isInvalidFilterFormulaError } from '@/lib/airtable';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { peekRedisCapacity, setCapacityCounter } from '@/lib/rancherCapacity';
 import { HELD_REFERRAL_STATUSES } from '@/lib/capacityCount';
 import { heldReferralsFormula } from '@/lib/cronReadFilters';
@@ -149,20 +148,11 @@ async function realHandler(_request: Request): Promise<DriftResult> {
     const { redisOk, airtableOk } = await setCapacityCounter(rancherId, queryCount);
     if (redisOk && airtableOk) {
       driftFixed++;
-      // One Telegram per drift so the operator sees the diff. Wrapped so a
-      // Telegram outage can't break the audit loop — drift is fixed either
-      // way; the alert is observability not control.
-      try {
-        if (TELEGRAM_ADMIN_CHAT_ID) {
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `🔧 <b>CAPACITY DRIFT FIXED</b> — ${name}\n` +
-              `Redis=${redisDisplay} Airtable=${airtableCount} Query=${queryCount} — set to ${queryCount}`,
-          );
-        }
-      } catch (e: any) {
-        console.error('[capacity-drift-check] Telegram alert failed:', e?.message);
-      }
+      // NOISE CUT (2026-07-05): the drift is auto-fixed — this was self-heal
+      // observability, not an action item. Logged, not pinged.
+      console.info(
+        `[capacity-drift-check] fixed ${name} — redis=${redisDisplay} airtable=${airtableCount} query=${queryCount} → set ${queryCount}`,
+      );
     } else {
       failedRepairs.push(
         `${name}: repair partial (redis=${redisOk} airtable=${airtableOk})`,
