@@ -169,18 +169,14 @@ export async function POST(request: Request) {
     const qualScore = Number(buyerRecForGate['Qualification Score'] || 0);
     const hasQualified = !!buyerRecForGate['Qualified At'] && qualScore >= 75;
     if (!hasQualified && !isOperatorOverride) {
-      // Loud Telegram so the operator sees every bypass attempt — even
-      // automated cron calls that try to bypass without override.
-      try {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `🛑 <b>ROUTING BLOCKED — buyer not qualified</b>\n\n` +
-            `Buyer: ${buyerLabel} (${buyerRecForGate['State'] || '?'})\n` +
-            `Qualified At: ${buyerRecForGate['Qualified At'] || 'missing'}\n` +
-            `Score: ${qualScore}/100 (need ≥75)\n\n` +
-            `<i>Caller attempted matching/suggest without operatorOverride. 412 returned. Direct buyer to /qualify or pass operatorOverride={reason}.</i>`,
-        );
-      } catch {}
+      // NOISE CUT (2026-07-05): this fired on EVERY unqualified routing attempt,
+      // including the daily waitlist-retry cron re-hitting the same unqualified
+      // buyers — a documented by-design skip that spammed the phone daily. The
+      // 412 already blocks the route; log it, don't ping.
+      console.info(
+        `[matching/suggest] routing blocked (unqualified) — ${buyerLabel} (${buyerRecForGate['State'] || '?'}) ` +
+          `qualifiedAt=${buyerRecForGate['Qualified At'] || 'missing'} score=${qualScore}/100`,
+      );
       return NextResponse.json({
         error: 'Buyer has not completed /qualify quiz — routing blocked',
         buyer: buyerLabel,

@@ -209,19 +209,13 @@ export async function POST(request: Request) {
     } catch (e: any) {
       console.error('[/api/qualify] consumer update failed:', e?.message);
     }
-    // B4 (2026-07-01): Telegram is operator-visibility only — the buyer's
-    // waitlist reveal doesn't depend on it. after() defers it past the
-    // response flush (Vercel runs it via waitUntil, so it still completes).
-    after(async () => {
-      try {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `🛑 <b>QUIZ DROP-OFF</b> — ${consumer['Full Name'] || consumer['Email']} (${consumer['State'] || '?'})\n` +
-            `Score: ${score}/100 | Tier: ${tier} | Timing: ${timing} | Storage: ${storage} | Ack: ${ack ? '✓' : '✗'}\n` +
-            `<i>Not routed. Stays in nurture.</i>`
-        );
-      } catch {}
-    });
+    // NOISE CUT (2026-07-05): quiz drop-off fired a Telegram ping on EVERY
+    // sub-75 quiz — pure alert fatigue, not actionable (the buyer stays in
+    // nurture automatically). Keep the record in the logs, off the phone.
+    console.info(
+      `[qualify] quiz drop-off — ${consumer['Full Name'] || consumer['Email']} (${consumer['State'] || '?'}) ` +
+        `score=${score} tier=${tier} timing=${timing} storage=${storage} ack=${ack} — not routed, stays in nurture`,
+    );
     return NextResponse.json({
       qualified: false,
       score,
