@@ -107,7 +107,11 @@ export default async function MarketplacePage() {
           </>
         )}
 
-        <p style={{ fontSize: 12, color: '#A7A29A', marginTop: 40, borderTop: '1px solid #D8D0C2', paddingTop: 16 }}>
+        <p style={{ fontSize: 13.5, color: '#6B4F3F', marginTop: 34, textAlign: 'center' }}>
+          <Link href="/gear" style={{ color: '#6B4F3F', textDecoration: 'underline' }}>ben&rsquo;s gear — the stuff i use to store, cut &amp; cook it &rarr;</Link>
+        </p>
+
+        <p style={{ fontSize: 12, color: '#A7A29A', marginTop: 24, borderTop: '1px solid #D8D0C2', paddingTop: 16 }}>
           checkout is secured by Stripe · your beef ships direct from the ranch · questions? reply to your receipt — a real person answers.
         </p>
       </div>

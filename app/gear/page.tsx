@@ -11,48 +11,48 @@
 import Container from '../components/Container';
 import Divider from '../components/Divider';
 import AffiliateDisclosure from '../components/AffiliateDisclosure';
-import { getGearCatalog, type GearProduct, type GearCategory } from '@/lib/gear';
+import { getGearCatalog, type GearProduct } from '@/lib/gear';
 
 export const dynamic = 'force-dynamic';
 
 export const metadata = {
-  title: 'Gear We Trust',
+  title: "Ben's Gear",
   description:
-    'The freezers, vacuum sealers, cast iron, knives and rubs we’d put in our own kitchen. Curated by BuyHalfCow.',
+    'The freezers, grills, cast iron, knives and coolers Ben actually uses to store, cut, and cook a half a cow. Curated by BuyHalfCow.',
   openGraph: {
-    title: 'Gear We Trust',
+    title: "Ben's Gear",
     description:
-      'The freezers, vacuum sealers, cast iron, knives and rubs we’d put in our own kitchen. Curated by BuyHalfCow.',
+      'The freezers, grills, cast iron, knives and coolers Ben actually uses to store, cut, and cook a half a cow.',
     url: 'https://www.buyhalfcow.com/gear',
     images: ['/og-image.png'],
   },
   twitter: {
     card: 'summary_large_image' as const,
-    title: 'Gear We Trust',
-    description: 'The gear we’d put in our own freezer. Curated by BuyHalfCow.',
+    title: "Ben's Gear",
+    description: 'The gear Ben actually uses to store, cut, and cook real beef.',
     images: ['/og-image.png'],
   },
 };
 
-// Human labels + display order for the category buckets.
+// Human labels + display order for the category buckets (Ben's taxonomy).
 const CATEGORY_LABELS: Record<string, string> = {
-  freezer: 'freezers',
-  'vacuum-sealer': 'vacuum sealers',
-  'cast-iron': 'cast iron',
-  'rub-salt': 'rubs & salt',
-  knives: 'knives',
-  supplements: 'supplements',
-  cooler: 'coolers',
+  freezer: '❄️ freezers',
+  grills: '🔥 grills & outdoor cooking',
+  cooking: '🍳 cooking essentials',
+  'kitchen-prep': '🔪 kitchen prep',
+  seasonings: '🌶️ seasonings',
+  'grill-accessories': '🧰 grilling accessories',
+  coolers: '🧊 coolers & adventure',
   other: 'more gear',
 };
-const CATEGORY_ORDER: GearCategory[] = [
+const CATEGORY_ORDER: string[] = [
   'freezer',
-  'vacuum-sealer',
-  'cast-iron',
-  'knives',
-  'rub-salt',
-  'supplements',
-  'cooler',
+  'grills',
+  'cooking',
+  'kitchen-prep',
+  'seasonings',
+  'grill-accessories',
+  'coolers',
   'other',
 ];
 
@@ -93,12 +93,12 @@ export default async function GearPage() {
       <Container>
         <div className="max-w-3xl mx-auto space-y-10">
           <div className="text-center space-y-5">
-            <h1 className="font-serif text-4xl md:text-5xl">gear we trust</h1>
+            <h1 className="font-serif text-4xl md:text-5xl">ben&rsquo;s gear</h1>
             <Divider />
             <p className="text-lg leading-relaxed text-saddle">
-              the freezers, sealers, cast iron and knives we&rsquo;d put in our
-              own kitchen. no fluff &mdash; just what makes a half a cow easier
-              to store, cut, and cook.
+              the stuff i actually use to store, cut, and cook a half a cow
+              &mdash; freezers, grills, cast iron, knives, coolers. no fluff,
+              just what earns a spot in my kitchen. &mdash; Ben
             </p>
             <AffiliateDisclosure className="max-w-xl mx-auto" />
           </div>
