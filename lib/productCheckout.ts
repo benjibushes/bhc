@@ -69,8 +69,19 @@ export interface CreateProductCheckoutInput {
   productId: string;               // Rancher Products record id (webhook lookup)
   rancherId: string;               // Ranchers record id
   rancherName: string;
-  successUrl: string;
-  cancelUrl: string;
+  // WHITELABEL (2026-07-06): checkout surface.
+  //   'hosted'   (default) → Stripe-hosted redirect (checkout.stripe.com).
+  //                          Operator texted links + the graceful fallback when
+  //                          the storefront can't run embedded (no publishable key).
+  //   'embedded' → <EmbeddedCheckout> in an iframe ON buyhalfcow.com. No redirect,
+  //                BHC-domain. Money model is byte-identical (same direct charge,
+  //                same application_fee, same metadata, same webhook).
+  mode?: 'embedded' | 'hosted';
+  // Hosted mode uses success/cancel. Embedded mode uses returnUrl instead (Stripe
+  // 400s if you mix them). Each is required only for its own mode.
+  successUrl?: string;
+  cancelUrl?: string;
+  returnUrl?: string;              // required for embedded; absolute https URL
   // PRODUCTS-IN-STRIPE (2026-07-06): when set, the line item references this
   // real Stripe Price (created on the connected account by ensureStripePrice)
   // instead of an inline price_data. The margin (application_fee) is unchanged.
@@ -87,18 +98,33 @@ export interface CreateProductCheckoutInput {
  */
 export async function createProductCheckout(
   input: CreateProductCheckoutInput,
-): Promise<{ url: string; sessionId: string }> {
+): Promise<{ url?: string; clientSecret?: string; sessionId: string }> {
   const charge = computeProductCharge({ displayCents: input.displayCents, baseCents: input.baseCents });
+  const isEmbedded = input.mode === 'embedded';
+
+  // Fail loud on a mode/URL mismatch — a half-configured session must never
+  // reach Stripe (embedded needs return_url; hosted needs success+cancel).
+  if (isEmbedded && !input.returnUrl) {
+    throw new Error('embedded checkout requires a returnUrl');
+  }
+  if (!isEmbedded && (!input.successUrl || !input.cancelUrl)) {
+    throw new Error('hosted checkout requires successUrl and cancelUrl');
+  }
 
   // DEMO MODE (local only) — never true in prod. No Stripe call.
   if (isDemoMode()) {
-    return { url: '/checkout/DEMO/product', sessionId: 'cs_DEMO_product' };
+    return isEmbedded
+      ? { clientSecret: 'cs_DEMO_product_secret', sessionId: 'cs_DEMO_product' }
+      : { url: '/checkout/DEMO/product', sessionId: 'cs_DEMO_product' };
   }
 
   const stripe = getStripeClient();
   const session = await stripe.checkout.sessions.create(
     {
       mode: 'payment',
+      // Whitelabel: embedded renders in an iframe on buyhalfcow.com. The direct
+      // charge, application_fee, metadata, and webhook are all identical to hosted.
+      ...(isEmbedded ? { ui_mode: 'embedded' as const } : {}),
       // Prefill for operator links; omit for self-serve (Stripe collects it).
       ...(input.buyerEmail ? { customer_email: input.buyerEmail } : {}),
       // Rancher ships → we must collect where. No shipping_options: the
@@ -137,12 +163,20 @@ export async function createProductCheckout(
           marginCents: String(charge.applicationFeeCents),
         },
       },
-      success_url: input.successUrl,
-      cancel_url: input.cancelUrl,
+      // Embedded ⇒ return_url (Stripe redirects the parent page out of the iframe
+      // on completion). Hosted ⇒ success/cancel. Never both — Stripe 400s.
+      ...(isEmbedded
+        ? { return_url: input.returnUrl }
+        : { success_url: input.successUrl, cancel_url: input.cancelUrl }),
     },
     { stripeAccount: input.rancherConnectAccountId },
   );
 
+  if (isEmbedded) {
+    // session.url is null in embedded mode — the client mounts on client_secret.
+    if (!session.client_secret) throw new Error('Stripe did not return a client secret');
+    return { clientSecret: session.client_secret, sessionId: session.id };
+  }
   if (!session.url) throw new Error('Stripe did not return a checkout URL');
   return { url: session.url, sessionId: session.id };
 }

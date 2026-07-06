@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeProductCharge } from './productCheckout';
+import { computeProductCharge, createProductCheckout } from './productCheckout';
 
 test('computeProductCharge: margin = display − base; buyer pays display; rancher nets base', () => {
   // Silverline jerky: $25 display, $21.25 base → $3.75 BHC margin
@@ -39,4 +39,44 @@ test('computeProductCharge: THROWS on non-positive / garbage', () => {
   assert.throws(() => computeProductCharge({ displayCents: 0, baseCents: 0 }), /invalid display/);
   assert.throws(() => computeProductCharge({ displayCents: 2500, baseCents: 0 }), /invalid rancher base/);
   assert.throws(() => computeProductCharge({ displayCents: NaN as any, baseCents: 100 }), /invalid display/);
+});
+
+// --- WHITELABEL mode/URL guards (fire before any Stripe call) ---
+
+const baseInput = {
+  rancherConnectAccountId: 'acct_test',
+  productName: 'Original Beef Jerky',
+  displayCents: 2500,
+  baseCents: 2125,
+  productId: 'recAAAAAAAAAAAAAA',
+  rancherId: 'recBBBBBBBBBBBBBB',
+  rancherName: 'Test Ranch',
+};
+
+test('createProductCheckout: embedded mode requires a returnUrl (throws before Stripe)', async () => {
+  await assert.rejects(
+    createProductCheckout({ ...baseInput, mode: 'embedded', successUrl: 'https://x/s', cancelUrl: 'https://x/c' }),
+    /embedded checkout requires a returnUrl/,
+  );
+});
+
+test('createProductCheckout: hosted mode requires success + cancel URLs (throws before Stripe)', async () => {
+  await assert.rejects(
+    createProductCheckout({ ...baseInput, mode: 'hosted' }),
+    /hosted checkout requires successUrl and cancelUrl/,
+  );
+});
+
+test('createProductCheckout: default (no mode) is hosted and still requires success + cancel', async () => {
+  await assert.rejects(
+    createProductCheckout({ ...baseInput }),
+    /hosted checkout requires successUrl and cancelUrl/,
+  );
+});
+
+test('createProductCheckout: bad money is rejected regardless of mode', async () => {
+  await assert.rejects(
+    createProductCheckout({ ...baseInput, baseCents: 9999, mode: 'embedded', returnUrl: 'https://x/r' }),
+    /exceeds display/,
+  );
 });

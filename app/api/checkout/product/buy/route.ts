@@ -87,8 +87,13 @@ export async function POST(request: Request) {
     }
   } catch { /* fall back to inline price */ }
 
+  // Whitelabel: the storefront requests { mode: 'embedded' } to render checkout
+  // ON buyhalfcow.com. If it can't (no publishable key), it asks for hosted and
+  // we return a redirect URL — checkout never breaks. Same direct charge either way.
+  const wantEmbedded = body?.mode === 'embedded';
+
   try {
-    const { url } = await createProductCheckout({
+    const result = await createProductCheckout({
       rancherConnectAccountId: connectAccountId,
       productName: String(product['Product Name'] || 'Product'),
       displayCents,
@@ -98,10 +103,17 @@ export async function POST(request: Request) {
       productId: product.id,
       rancherId,
       rancherName: String(product['Rancher Name'] || rancher['Ranch Name'] || 'the ranch'),
+      mode: wantEmbedded ? 'embedded' : 'hosted',
+      returnUrl: `${SITE_URL}/order/success`,
       successUrl: `${SITE_URL}/order/success`,
       cancelUrl: `${SITE_URL}/order/cancelled`,
     });
-    return NextResponse.json({ url });
+    if (wantEmbedded) {
+      // connectAccountId is NOT a secret — the browser needs it to scope Stripe.js
+      // to the connected account for the direct-charge embedded form.
+      return NextResponse.json({ clientSecret: result.clientSecret, connectAccountId });
+    }
+    return NextResponse.json({ url: result.url });
   } catch (e: any) {
     console.error('[checkout/product/buy] session create failed:', e?.message);
     return NextResponse.json({ error: 'Could not start checkout. Try again.' }, { status: 502 });
