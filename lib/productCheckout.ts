@@ -68,6 +68,11 @@ export interface CreateProductCheckoutInput {
   rancherName: string;
   successUrl: string;
   cancelUrl: string;
+  // PRODUCTS-IN-STRIPE (2026-07-06): when set, the line item references this
+  // real Stripe Price (created on the connected account by ensureStripePrice)
+  // instead of an inline price_data. The margin (application_fee) is unchanged.
+  // Omitted → falls back to inline price_data (demo / not-yet-synced).
+  stripePriceId?: string;
 }
 
 /**
@@ -95,18 +100,23 @@ export async function createProductCheckout(
       // Rancher ships → we must collect where. No shipping_options: the
       // Display Price is all-in, so we don't add a separate shipping charge.
       shipping_address_collection: { allowed_countries: ['US'] },
+      // Prefer a real Stripe Price (on the connected account) when synced;
+      // otherwise inline price_data. Either way the charge total = display and
+      // the application_fee (margin) below is unchanged.
       line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: `${input.productName} — ${input.rancherName}`,
-              description: 'Ships direct from the ranch.',
+        input.stripePriceId
+          ? { price: input.stripePriceId, quantity: 1 }
+          : {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: `${input.productName} — ${input.rancherName}`,
+                  description: 'Ships direct from the ranch.',
+                },
+                unit_amount: charge.totalChargedCents,
+              },
+              quantity: 1,
             },
-            unit_amount: charge.totalChargedCents,
-          },
-          quantity: 1,
-        },
       ],
       payment_intent_data: {
         application_fee_amount: charge.applicationFeeCents,
