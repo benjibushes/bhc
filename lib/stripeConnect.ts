@@ -56,7 +56,7 @@ import { isDemoMode } from '@/lib/demo/demoMode';
 // in your request header." We confirmed this empirically against the BHC
 // sandbox on 2026-06-09.
 let _stripeClient: Stripe | null = null;
-function getStripeClient(): Stripe {
+export function getStripeClient(): Stripe {
   if (_stripeClient) return _stripeClient;
   const apiKey = process.env.STRIPE_SECRET_KEY;
   if (!apiKey) {
