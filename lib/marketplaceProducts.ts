@@ -30,6 +30,13 @@ export interface MarketplaceProduct {
   shelfStable: boolean;
   image: string;
   description: string;
+  // DEPOSIT-STYLE (price-range products, e.g. the $95–355 ground beef box):
+  // Display Price is charged as a DEPOSIT today; the rancher confirms size/
+  // details with the buyer and collects the balance before shipping. Pure
+  // presentation flags — the checkout mechanics (charge Display Price, skim
+  // Display−Base as the fee) are identical to a fixed-price product.
+  depositStyle: boolean;
+  priceRange: string;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -75,6 +82,8 @@ export async function loadMarketplaceProducts(): Promise<MarketplaceProduct[]> {
       shelfStable: !!r['Shelf Stable'],
       image: String(r['Image URL'] || ''),
       description: String(r['Description'] || ''),
+      depositStyle: r['Deposit Style'] === true,
+      priceRange: String(r['Price Range'] || ''),
     }))
     .sort((a, b) => a.price - b.price);
 }

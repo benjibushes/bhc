@@ -69,9 +69,33 @@ export default async function MarketplacePage() {
           <p className="text-saddle">the shop is stocking up — check back shortly.</p>
         ) : (
           <>
+            {/* Category quick-nav — the page's structural spine. One glance =
+                the whole store's shape; one tap = the section you came for.
+                Anchor links (no JS), scroll-mt on sections clears the sticky
+                header. Only shows when there's more than one section. */}
+            {groups.length > 1 && (
+              <nav aria-label="shop sections" className="flex flex-wrap gap-2 mb-10">
+                {groups.map((g) => (
+                  <a
+                    key={g.key}
+                    href={`#${g.key}`}
+                    className="px-3.5 py-2 border border-dust text-[13px] text-charcoal hover:bg-charcoal hover:text-bone transition-base"
+                  >
+                    {g.title} <span className="text-dust">·</span>{' '}
+                    <span className="tabular-nums">{g.items.length}</span>
+                  </a>
+                ))}
+              </nav>
+            )}
+
             {groups.map((group) => (
-              <section key={group.key} className="mb-11">
-                <h2 className="font-serif text-2xl mb-0.5 lowercase">{group.title}</h2>
+              <section key={group.key} id={group.key} className="mb-12 scroll-mt-24">
+                <div className="flex items-baseline justify-between gap-3 border-b border-dust pb-2 mb-1">
+                  <h2 className="font-serif text-2xl lowercase">{group.title}</h2>
+                  <span className="text-xs text-dust tabular-nums shrink-0">
+                    {group.items.length} {group.items.length === 1 ? 'product' : 'products'}
+                  </span>
+                </div>
                 <div className="text-[13.5px] text-saddle mb-4">{group.sub}</div>
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
                   {group.items.map((p) => (
