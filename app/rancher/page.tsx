@@ -9,6 +9,7 @@ import ImageUploader from '../components/ImageUploader';
 import Link from 'next/link';
 import { deriveLadder, deriveDeposit, checkWholePrice, MIN_TIER_PRICE } from '@/lib/pricing';
 import { netEarningsFor } from '@/lib/commission';
+import { gradeLead, gradeSortWeight } from '@/lib/leadGrade';
 import {
   groupReferralsByBuyer,
   deriveActivityEvents,
@@ -264,7 +265,11 @@ export default function RancherDashboardPage() {
   // My Buyers tab — filter + sort. Helps ranchers triage when they have 20+
   // active leads. Defaults to all + newest-first so the latest intros surface.
   const [buyerFilter, setBuyerFilter] = useState<'all' | 'Intro Sent' | 'Rancher Contacted' | 'Negotiation' | 'stale'>('all');
-  const [buyerSort, setBuyerSort] = useState<'newest' | 'oldest' | 'stalest'>('newest');
+  // LEAD GRADE (2026-07-06): 'hottest' = A-grade leads first (deposit-page
+  // openers, Dana-class quiz signals), then B, then C; recency breaks ties.
+  // Default — rancher-engaged leads advance ~15x more, so the rancher's first
+  // glance should always be their hottest workable lead.
+  const [buyerSort, setBuyerSort] = useState<'hottest' | 'newest' | 'oldest' | 'stalest'>('hottest');
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState('');
   // U11: which referral row the last inline status update failed on. Set only
@@ -2624,6 +2629,7 @@ export default function RancherDashboardPage() {
                       onChange={(e) => setBuyerSort(e.target.value as any)}
                       className="px-3 py-1.5 border border-dust bg-bone text-charcoal text-xs uppercase tracking-wide focus:outline-none focus:border-charcoal"
                     >
+                      <option value="hottest">Hottest first (A→C)</option>
                       <option value="newest">Newest first</option>
                       <option value="oldest">Oldest first</option>
                       <option value="stalest">Stalest activity</option>
@@ -2676,7 +2682,20 @@ export default function RancherDashboardPage() {
                 } else if (buyerFilter !== 'all') {
                   filtered = filtered.filter((r) => r.status === buyerFilter);
                 }
-                if (buyerSort === 'newest') {
+                if (buyerSort === 'hottest') {
+                  // A→B→C by lead grade (deposit-page openers + Dana-class
+                  // signals first), recency breaks ties. Paid/graded-null rows
+                  // sink with C — they're customers or terminal, not calls to make.
+                  const now = Date.now();
+                  filtered.sort((a, b) => {
+                    const ga = gradeLead({ notes: a.notes, createdAt: a.created_at, depositLinkOpenedAt: a.deposit_link_opened_at, depositPaidAt: a.deposit_paid_at, nowMs: now });
+                    const gb = gradeLead({ notes: b.notes, createdAt: b.created_at, depositLinkOpenedAt: b.deposit_link_opened_at, depositPaidAt: b.deposit_paid_at, nowMs: now });
+                    const w = gradeSortWeight(ga?.grade) - gradeSortWeight(gb?.grade);
+                    if (w !== 0) return w;
+                    return new Date(b.intro_sent_at || b.created_at).getTime() -
+                      new Date(a.intro_sent_at || a.created_at).getTime();
+                  });
+                } else if (buyerSort === 'newest') {
                   filtered.sort((a, b) =>
                     new Date(b.intro_sent_at || b.created_at).getTime() -
                     new Date(a.intro_sent_at || a.created_at).getTime()
@@ -5716,6 +5735,36 @@ function PipelineExplainer({ depositEligible }: { depositEligible?: boolean }) {
   );
 }
 
+// LEAD GRADE badge (2026-07-06, conversion slice 1): A/B/C with receipts in
+// the tooltip so the rancher knows WHY this lead is worth the next call.
+// A = opened their deposit page (hottest) or Dana-class (85+ · buying soon ·
+// fresh). B = solid 75+ and current. C = stale/weak — work A/B first.
+// Paid rows return null (they're customers; the paid badge covers them).
+function LeadGradeBadge({ referral }: { referral: Referral }) {
+  const g = gradeLead({
+    notes: referral.notes,
+    createdAt: referral.created_at,
+    depositLinkOpenedAt: referral.deposit_link_opened_at,
+    depositPaidAt: referral.deposit_paid_at,
+    nowMs: Date.now(),
+  });
+  if (!g) return null;
+  const styles: Record<string, string> = {
+    A: 'bg-sage text-bone',
+    B: 'bg-amber/25 text-amber-dark',
+    C: 'bg-dust/25 text-saddle',
+  };
+  const label = g.grade === 'A' ? '🔥 A' : g.grade;
+  return (
+    <span
+      className={`inline-block px-2 py-0.5 text-xs font-bold ${styles[g.grade]}`}
+      title={`${g.grade}-grade lead — ${g.reasons.join(' · ')}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 function DepositBadge({ referral }: { referral: Referral }) {
   const isTerminal = referral.status === 'Closed Won' || referral.status === 'Closed Lost';
   if (isTerminal) return null;
@@ -5876,6 +5925,7 @@ function ReferralCard({
             <span className={`inline-block px-2 py-0.5 text-xs font-medium ${statusStyles[referral.status] || 'bg-bone-warm text-saddle'}`}>
               {referral.status}
             </span>
+            <LeadGradeBadge referral={referral} />
             <FreshnessIndicator referral={referral} />
             <ResponseDeadline referral={referral} />
             <RancherRotBadge days={referral.days_since_activity ?? null} />
