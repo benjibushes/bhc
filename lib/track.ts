@@ -10,7 +10,9 @@
 // for CAPI client+server dedup. Passing event_id inside params (instead
 // of as the 4th arg) caused 100% dedup failure platform-wide.
 
-type AnalyticsParams = Record<string, string | number | boolean | undefined | null>;
+// string[] is allowed so product events can pass content_ids: ['recXXX'] —
+// Meta's product-catalog match key must be an array, not a scalar.
+type AnalyticsParams = Record<string, string | number | boolean | undefined | null | string[]>;
 
 declare global {
   interface Window {

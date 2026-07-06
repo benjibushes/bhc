@@ -76,6 +76,25 @@ export function depositPurchaseEnabled(): boolean {
 }
 
 /**
+ * Opt-in switch for the low-ticket PRODUCT Purchase fired from
+ * settleProductPurchase(). INDEPENDENT of the deposit/close flags so the product
+ * rail can be measured on Meta without touching the deposit rail's optimization.
+ *
+ * OFF (default): no Purchase fires at product settlement (ViewContent +
+ * InitiateCheckout still flow — they're intent signals, not the sensitive
+ * conversion). ON: one attributed server Purchase per product sale
+ * (event_id=`product_purchase_<pi.id>`, always unique so Meta never collapses
+ * two real sales into one). fireCapi fails open if the pixel/token env is
+ * missing, so this can never block a settlement.
+ *
+ * Flip to 'true' only after a Test Events dry-run (META_CAPI_TEST_CODE) confirms
+ * the product Purchase arrives with content_ids.
+ */
+export function productPurchaseEnabled(): boolean {
+  return process.env.META_PRODUCT_PURCHASE_ENABLED === 'true';
+}
+
+/**
  * Stable event_id for the DEPOSIT Purchase (server CAPI + client Pixel dedup).
  *
  *   depositEventId(referralId) = `deposit_<referralId>`

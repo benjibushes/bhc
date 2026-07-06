@@ -1,34 +1,43 @@
 // app/shop/[id]/page.tsx
 //
 // Product detail page (PDP). One product, the full story: hero photo, what's in
-// the box, price, ships note, Buy. Two jobs:
+// the box, price, ships note, Buy. Three jobs:
 //   1. Give every product a shareable URL (/shop/<id>) an ad can point straight at.
-//   2. Show the photo + "what's in the box" — CRO research flagged that as the
-//      #1 buy-driver for low-ticket food. The Buy path stays one tap (same public
-//      buy endpoint as the storefront); the detail is the conversion lift, not a
-//      new step in the way.
+//   2. Show the photo + "what's in the box" — the #1 low-ticket buy-driver.
+//   3. Emit Product JSON-LD so the product is eligible for rich results + is
+//      legible to AI crawlers.
+// The Buy path stays one tap (same public buy endpoint); the detail is the lift.
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getRecordById, TABLES } from '@/lib/airtable';
-import BuyButton from '../BuyButton';
 
-export const dynamic = 'force-dynamic';
+import BuyButton from '../BuyButton';
+import ProductViewTracker from './ProductViewTracker';
+
+export const revalidate = 300;
+
+const SITE_URL = 'https://www.buyhalfcow.com';
 
 interface Prod {
   id: string;
   name: string;
   rancher: string;
+  category: string;
   price: number;
   base: number;
   weight: string;
   shelfStable: boolean;
-  active: boolean;
   image: string;
   description: string;
 }
 
+const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
+
+// Only a SELLABLE product gets a page — same rule as the marketplace grid:
+// Active + Ships Nationwide + priced with a non-negative margin. Anything else
+// returns null → notFound().
 async function loadProduct(id: string): Promise<Prod | null> {
   if (!/^rec[A-Za-z0-9]{14}$/.test(id)) return null;
   let r: any;
@@ -38,15 +47,24 @@ async function loadProduct(id: string): Promise<Prod | null> {
     return null;
   }
   if (!r) return null;
+  const price = Number(r['Display Price'] || 0);
+  const base = Number(r['Rancher Base'] || 0);
+  const sellable =
+    r['Active'] === true &&
+    r['Ships Nationwide'] !== false &&
+    price > 0 &&
+    base > 0 &&
+    base <= price;
+  if (!sellable) return null;
   return {
     id: r.id,
     name: String(r['Product Name'] || ''),
     rancher: String(r['Rancher Name'] || ''),
-    price: Number(r['Display Price'] || 0),
-    base: Number(r['Rancher Base'] || 0),
+    category: String(sel(r['Category']) || ''),
+    price,
+    base,
     weight: String(r['Weight / Size'] || ''),
     shelfStable: !!r['Shelf Stable'],
-    active: !!r['Active'],
     image: String(r['Image URL'] || ''),
     description: String(r['Description'] || ''),
   };
@@ -55,15 +73,17 @@ async function loadProduct(id: string): Promise<Prod | null> {
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const p = await loadProduct(id);
-  if (!p || !p.active) return { title: 'shop — real beef, shipped | BuyHalfCow' };
+  if (!p) return { title: 'Shop real ranch beef, shipped nationwide | BuyHalfCow' };
   const title = `${p.name} — ${p.rancher} | BuyHalfCow`;
-  const description = p.description || 'real beef, shipped to your door from a family ranch.';
+  const description = p.description || 'Real beef, shipped to your door from a family ranch.';
   return {
     title,
     description,
+    alternates: { canonical: `/shop/${p.id}` },
     openGraph: {
       title,
       description,
+      url: `/shop/${p.id}`,
       images: p.image ? [{ url: p.image }] : [],
     },
   };
@@ -72,11 +92,36 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const p = await loadProduct(id);
-  // Only sellable products get a page. Not-found / inactive / unpriced → 404.
-  if (!p || !p.active || !(p.price > 0)) notFound();
+  if (!p) notFound();
+
+  // Product JSON-LD — only when an image + price exist (Google requires image).
+  const jsonLd =
+    p.image && p.price > 0
+      ? {
+          '@context': 'https://schema.org',
+          '@type': 'Product',
+          name: p.name,
+          image: [p.image],
+          ...(p.description ? { description: p.description } : {}),
+          ...(p.category ? { category: p.category } : {}),
+          brand: { '@type': 'Brand', name: p.rancher },
+          offers: {
+            '@type': 'Offer',
+            price: p.price.toFixed(2),
+            priceCurrency: 'USD',
+            availability: 'https://schema.org/InStock',
+            url: `${SITE_URL}/shop/${p.id}`,
+          },
+        }
+      : null;
 
   return (
     <main style={{ background: '#F4F1EC', minHeight: '100vh', padding: '32px 20px 56px', fontFamily: '-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif', color: '#17130E' }}>
+      {jsonLd ? (
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      ) : null}
+      <ProductViewTracker productId={p.id} name={p.name} price={p.price} />
+
       <div style={{ maxWidth: 860, margin: '0 auto' }}>
         <Link href="/shop" style={{ fontSize: 13.5, color: '#6B4F3F', textDecoration: 'none' }}>&larr; all products</Link>
 

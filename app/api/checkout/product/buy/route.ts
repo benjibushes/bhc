@@ -14,6 +14,7 @@ import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { createProductCheckout } from '@/lib/productCheckout';
 import { ensureStripePrice } from '@/lib/productStripeSync';
 import { rateLimit } from '@/lib/rateLimit';
+import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -108,6 +109,33 @@ export async function POST(request: Request) {
       successUrl: `${SITE_URL}/order/success`,
       cancelUrl: `${SITE_URL}/order/cancelled`,
     });
+    // ── Meta Conversions API: server-side InitiateCheckout ──────────────
+    // Buyer started checkout for this product. Server fire survives ATT/adblock
+    // and carries fbp/fbc from the request cookies (best match quality). Deduped
+    // per checkout session so two different buyers of the same product each
+    // count. content_ids=[productId] is what a Meta retargeting audience matches
+    // on. Fire-and-forget — fireCapi fails open, never blocks the checkout.
+    try {
+      const capiIp = clientIp(request);
+      const capiUserAgent = request.headers.get('user-agent') || undefined;
+      const { fbp, fbc } = getMetaCookiesFromRequest(request);
+      void fireCapi([{
+        event_name: 'InitiateCheckout',
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: `product_ic_${result.sessionId}`,
+        action_source: 'website',
+        event_source_url: `${SITE_URL}/shop/${product.id}`,
+        user_data: buildUserData({ ip: capiIp, userAgent: capiUserAgent, fbp, fbc }),
+        custom_data: {
+          value: displayCents / 100,
+          currency: 'usd',
+          content_ids: [product.id],
+          content_type: 'product',
+          content_name: String(product['Product Name'] || 'Product'),
+        },
+      }]).catch(() => {});
+    } catch { /* analytics only — never blocks checkout */ }
+
     if (wantEmbedded) {
       // connectAccountId is NOT a secret — the browser needs it to scope Stripe.js
       // to the connected account for the direct-charge embedded form.
