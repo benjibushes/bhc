@@ -4,7 +4,7 @@
 
 **Goal:** Fix BHC's lacking conversion rate by hand-holding every visitor from a content click to the *right* offer tier (whole/half **share** · low-ticket **shop** · affiliate **gear**), and unify the whole journey onto ONE design system so it feels like one seamless company.
 
-**Architecture:** Two workstreams. (A) **Journey** — add a tri-tier self-segmentation *fork* on the homepage + a low-ticket escape inside the share quiz, so lower-ticket/freezer-less traffic stops hitting a $1k+ wall and bouncing. (B) **Design** — the site is ~90% on one Tailwind-v4 brand system; the new low-ticket shop rail opted out into inline styles + invented colors. Migrate it back. No new design language — enforce the one that exists.
+**Architecture:** Three workstreams. (A) **Journey** — add a tri-tier self-segmentation *fork* on the homepage + a low-ticket escape inside the share quiz, so lower-ticket/freezer-less traffic stops hitting a $1k+ wall and bouncing. (B) **Design** — the site is ~90% on one Tailwind-v4 brand system; the new low-ticket shop rail opted out into inline styles + invented colors. Migrate it back. No new design language — enforce the one that exists. (C) **Supply** — let any Connect-active rancher self-serve add low-ticket products from their dashboard so they **auto-list on `/shop`** (today products enter the catalog only by hand in Airtable). So ad traffic always lands on real, growing inventory.
 
 **Tech stack:** Next.js 16 App Router · Tailwind v4 (tokens in `app/globals.css` via `@theme inline`, NO tailwind.config.js) · Playfair Display + Inter (next/font, `app/layout.tsx`) · shared primitives in `app/components` (`Button`, `Card`, `Container`, `Divider`) · Stripe Connect (money path — DO NOT TOUCH, see guardrails) · Airtable system-of-record · tests via `tsx --test`.
 
@@ -75,6 +75,8 @@ Tokens live in `app/globals.css` under `@theme inline`. **Use semantic class nam
 4. **Share-anchor on `/shop`:** stays the LAST section, de-emphasized (secondary Button). Keep current behavior.
 5. **Emoji category labels:** keep on `/gear` only; `/shop` stays emoji-free (premium/owned).
 6. **`app/admin/products`:** migrate it in Phase 3 for consistency (internal, low cost).
+7. **Product margin model (Phase 6):** the rancher enters **retail** (what the buyer pays = `Display Price`); the system derives their net (`Rancher Base`) by subtracting the standard category margin, and shows them "you net $X · buyhalfcow's cut $Y" transparently. Margin rates: reuse the existing config if one exists (grep for the 10/15/20% tiering); else jerky/impulse 20%, boxes/bundles 15%, default 15%.
+8. **New products go live automatically (Phase 6):** a Connect-active rancher's product is `Active=true` on create and auto-lists (Ben's ask). Guard it behind a `REQUIRE_PRODUCT_APPROVAL` env flag (default off) so Ben can flip on a moderation gate later without a code change.
 
 **Ben-supplied (NOT your tasks — leave hooks, don't block):**
 - **Photography.** You wire the *frame* (aspect ratios, `ProductImage` fallbacks, warm-tone classes); Ben drops in real ranch/family/cut photos later. Do not generate or source stock photos.
@@ -338,9 +340,63 @@ Expected set (~7): `app/shop/page.tsx`, `app/shop/[id]/page.tsx`, `app/shop/BuyB
 
 ---
 
+# PHASE 6 — Rancher self-serve marketplace products (the auto-list supply loop) (own PR)
+
+**Why:** closes the supply loop so the marketplace fills itself. **Today NO product-create UI exists** — products enter the `Rancher Products` table only by hand in Airtable; the operator `/admin/products` tool merely generates a checkout link for an *already-existing* product. Ben wants any Connect-active rancher to add their own low-ticket products from their dashboard and have them **auto-appear on `/shop`**. More ranchers → more products → fatter marketplace, zero operator touch — which makes ad traffic land on real inventory.
+
+**Independence:** this is a rancher-dashboard surface, not a buyer-journey change — it can be built in **parallel** with Phases 3–5 (own branch, own PR). It touches the money path (Stripe price creation on a connected account) so it gets the full verify gate + money-path discipline.
+
+**Reuse these EXACT anchors (do not fork them):**
+- **Auth:** `requireRancher(request)` from `lib/rancherAuth.ts` → `{ session }`, `session.rancherId` (cookie `bhc-rancher-auth`, `JWT_SECRET`). Pattern: `const r = await requireRancher(request); if (r instanceof NextResponse) return r; const { session } = r;`
+- **Ownership check:** load the product by id; `(product['Rancher Record ID'] || []).includes(session.rancherId)` else `403` — same shape as `app/api/rancher/referrals/[id]/route.ts:61-74`.
+- **Connect-active gate:** `isRancherOnConnect(rancher)` from `lib/rancherEligibility.ts` (`Pricing Model==='tier_v2' && Stripe Connect Status==='active'`, case-insensitive). Rancher's account id = `rancher['Stripe Connect Account Id']`.
+- **Stripe price:** `ensureStripePrice(input)` from `lib/productStripeSync.ts` — creates the Product+Price on the rancher's connected account and stamps `Stripe Product Id` / `Stripe Price Id` / `Stripe Price Cents` back onto the row.
+- **Sellability gate (what makes it list):** `isSellableRow` in `lib/marketplaceProducts.ts` — needs `Active===true`, `Ships Nationwide!==false`, `Display Price>0`, `Rancher Base>0`, `Rancher Base<=Display Price`.
+- **Photo upload:** `POST /api/rancher/upload` (Vercel Blob, `BLOB_READ_WRITE_TOKEN`, returns a public URL) — the same route the landing-page gallery uses.
+- **Rancher Products fields to write:** `Product Name`, `Description`, `Display Price`, `Rancher Base`, `Weight / Size`, `Category` (link), `Resistance Tier` (link, optional), `Ships Nationwide`, `Shelf Stable`, `Image URL`, `Rancher Name`, `Rancher Record ID` (link → the rancher), `Active`.
+- **Instant listing:** `/shop` is ISR `revalidate=300` (5 min). Call `revalidatePath('/shop')` + `revalidatePath('/shop/'+id)` on create/edit so it lists in ~seconds, not 5 min.
+
+**Branch:** `git checkout -B feat/rancher-self-serve-products origin/main`
+
+### Task 6.1 — Pure pricing + validation helpers (TDD)
+
+**Files (create):** `lib/rancherProductInput.ts`, `test/rancherProductInput.test.ts`
+
+- [ ] **`deriveProductPricing({ displayCents, category })` → `{ displayCents, baseCents, marginCents, marginRate }`.** Rancher enters retail (`Display Price` in dollars → cents); derive `baseCents = round(displayCents * (1 - rate))`, `marginCents = displayCents - baseCents`. Rate by category: **first grep the repo for an existing margin config** (the 10/15/20% tiering — likely `lib/pricing.ts` or a map keyed by `Category`/`Resistance Tier`). Reuse it if found. Else define `MARGIN_BY_CATEGORY` here: jerky/sticks + impulse = 0.20, boxes/bundles + eighth = 0.15, ground = 0.15, default 0.15. Assert the `isSellableRow` invariant holds: `baseCents > 0 && baseCents <= displayCents`.
+- [ ] **`validateProductInput(body)` → `{ ok, fields } | { ok:false, error }`.** Normalize + validate: `Product Name` 1–80 chars; `Display Price` ≥ a floor ($5); `Category` ∈ the `MARKETPLACE_GROUPS` keys from `lib/marketplaceProducts.ts` (so `groupProducts` buckets it correctly); `Description` ≤ 1000; `Weight / Size` ≤ 60; `Image URL` must be a direct/Blob URL (**reuse the landing-page URL validator that rejects Google-Drive/Dropbox/OneDrive share links** — find it in `app/api/rancher/landing-page/route.ts`); `Ships Nationwide` bool (default `true`); `Shelf Stable` bool.
+- [ ] Write tests first (red→green): margin math for each category, the sellability invariant, cloud-share URL rejection, name/price bounds, unknown category rejected. Verify gate. Commit: `feat(products): pure pricing + validation helpers (TDD)`.
+
+### Task 6.2 — Rancher product API: create / edit / hide
+
+**File (create):** `app/api/rancher/products/route.ts`
+
+- [ ] `GET` — list this rancher's products: filter `Rancher Products` where `Rancher Record ID` includes `session.rancherId`; return each with a `live` boolean (= `isSellableRow`).
+- [ ] `POST` (create): auth → load rancher → **Connect-active gate** (`isRancherOnConnect`, else 403 "finish your Stripe setup to sell products"). `validateProductInput` + `deriveProductPricing`. Create the `Rancher Products` row with the fields above, `Rancher Record ID = [session.rancherId]`, `Rancher Name = rancher['Ranch Name'] || session.name`, and `Active = true` UNLESS `process.env.REQUIRE_PRODUCT_APPROVAL === 'true'` (then `Active=false` + Telegram Ben "new product pending"). Then `ensureStripePrice({ productRecordId: newId, productName, displayCents, connectAccountId: rancher['Stripe Connect Account Id'] })`. Then `revalidatePath('/shop')` + `revalidatePath('/shop/'+newId)`. Return the created product.
+- [ ] `PATCH` (edit / hide): load product by id → **ownership check** (`Rancher Record ID` includes `session.rancherId`, else 403). Write only the allowlist fields (same set as create) + allow toggling `Active` (hide/show). If `Display Price` changed, re-run `deriveProductPricing` + `ensureStripePrice`. `revalidatePath` after. 
+- [ ] **Money-path guardrail:** this route sets `Display Price` / `Rancher Base` + creates the Stripe *price*. It must NOT touch `createProductCheckout`, `productSettlement`, webhooks, or the `application_fee` math (that stays in the existing checkout path, computed as `Display − Base`). Re-read your diff to confirm.
+- [ ] Verify gate (esp. `rm -rf .next && npm run build`). Commit: `feat(products): rancher self-serve product create/edit/hide API`.
+
+### Task 6.3 — "Products" tab in the rancher dashboard
+
+**Files:** `app/rancher/page.tsx` (add tab), `app/api/rancher/dashboard/route.ts` (surface products if you didn't use the new GET)
+
+- [ ] Add `'products'` to the `Tab` type and a **"Products"** entry to the primary tab nav (it's a revenue surface — make it primary, not buried under "More").
+- [ ] Tab UI, on-brand (reuse `Card`, `Button`, `Input`/`Select`, and the new `PriceTag` from Phase 3): (a) a list of the rancher's products — photo, name, `<PriceTag>`, a **"live on the marketplace" / "hidden"** status pill, edit + hide buttons; (b) an **"add a product"** form — name, retail price (on input, live-show **"you net $X · buyhalfcow's cut $Y"** from `deriveProductPricing`), photo upload (POST `/api/rancher/upload`), description, weight/size, category `<Select>` (the `MARKETPLACE_GROUPS` keys), ships-nationwide toggle (default on), shelf-stable toggle. Submit → POST `/api/rancher/products` → optimistic add + confirmation "live on the marketplace in a few seconds."
+- [ ] **Connect gate in the UI:** if the rancher is NOT Connect-active, replace the form with a nudge — "finish your Stripe setup to sell products →" (mirror the existing go-live gate copy/CTA). Do not show a form they can't submit.
+- [ ] Brand voice on all copy (lowercase, honest, no NO-words, `— Ben` where a signature belongs). Verify gate. Commit: `feat(products): rancher dashboard Products tab`.
+
+### Task 6.4 — Tie the share sale into the same surface (light)
+
+- [ ] Share selling (whole/half/quarter) already lives in the **"My Page"** editor (`Quarter/Half/Whole Price` fields) + the public rancher page — do not rebuild it. On the new Products tab, add one cross-link line: **"selling a whole or half share? set your share pricing in my page →"** so the rancher sees both revenue paths (shares + marketplace products) in one mental model. No new share logic.
+- [ ] Verify gate. Commit. Push, open PR, **STOP for Ben.**
+
+**Acceptance:** a Connect-active rancher adds a product from their dashboard → a `Rancher Products` row is created with a Stripe Price on *their* connected account → it appears on `/shop` and its PDP within seconds (on-demand revalidate) → a buyer purchases it through the **existing, unchanged** checkout/settlement path (`application_fee = Display − Base`) → the rancher fulfills it via the existing fulfillment tracker. Non-Connect ranchers see a setup nudge. Money path byte-identical. Build + tests green.
+
+---
+
 ## SELF-REVIEW (the executing agent runs this before declaring done)
 
-- [ ] **Coverage:** every phase shipped as its own merged PR; the fork exists; `/shop` + `/gear` reachable from the homepage; the funnel has a `/shop` escape + freezer help; the 7 shop-rail files carry no inline hex; 3 primitives exist and are used.
+- [ ] **Coverage:** every phase shipped as its own merged PR; the fork exists; `/shop` + `/gear` reachable from the homepage; the funnel has a `/shop` escape + freezer help; the 7 shop-rail files carry no inline hex; 3 primitives exist and are used; a Connect-active rancher can add a product from their dashboard and it auto-lists on `/shop`.
 - [ ] **Money path untouched:** `git diff` across all PRs shows zero changes to charge/settlement/webhook/qualify-scoring/Stripe-embed logic — only markup/className/copy.
 - [ ] **Brand voice:** every new string is lowercase, honest, no NO-words, no fake scarcity, `— Ben` where a signature belongs; the share is never cannibalized (de-emphasized on low-ticket surfaces).
 - [ ] **Green everywhere:** final `main` after all merges → `tsc` 0, `npm test` ≥941 pass, boundaries 0, `next build` ✓.
