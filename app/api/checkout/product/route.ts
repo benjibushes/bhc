@@ -9,8 +9,9 @@
 
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
-import { getRecordById, getAllRecords, TABLES, escapeAirtableValue } from '@/lib/airtable';
+import { getRecordById, getAllRecords, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { createProductCheckout } from '@/lib/productCheckout';
+import { ensureStripePrice } from '@/lib/productStripeSync';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -77,12 +78,39 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Rancher Stripe Connect Account missing' }, { status: 409 });
   }
 
+  // PRODUCTS-IN-STRIPE: ensure a real Stripe Product + Price on the connected
+  // account (mint-on-first-sell). Best-effort — if the sync fails, checkout
+  // falls back to inline price_data so a sale is never blocked on a sync blip.
+  let stripePriceId: string | undefined;
+  try {
+    const sync = await ensureStripePrice({
+      productRecordId: product.id,
+      productName: String(product['Product Name'] || 'Product'),
+      displayCents,
+      connectAccountId,
+      existingProductId: String(product['Stripe Product Id'] || '').trim() || undefined,
+      existingPriceId: String(product['Stripe Price Id'] || '').trim() || undefined,
+      existingPriceCents: Number(product['Stripe Price Cents'] || 0) || undefined,
+    });
+    stripePriceId = sync.priceId;
+    if (sync.changed) {
+      updateRecord(TABLES.RANCHER_PRODUCTS, product.id, {
+        'Stripe Product Id': sync.productId,
+        'Stripe Price Id': sync.priceId,
+        'Stripe Price Cents': sync.priceCents,
+      }).catch((e: any) => console.warn('[checkout/product] stripe-id stamp failed (non-fatal):', e?.message));
+    }
+  } catch (e: any) {
+    console.warn('[checkout/product] ensureStripePrice failed — inline price fallback:', e?.message);
+  }
+
   try {
     const { url } = await createProductCheckout({
       rancherConnectAccountId: connectAccountId,
       productName: String(product['Product Name'] || 'Product'),
       displayCents,
       baseCents,
+      stripePriceId,
       buyerEmail,
       buyerName: buyerName || undefined,
       productId: product.id,
