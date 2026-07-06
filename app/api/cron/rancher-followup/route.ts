@@ -126,14 +126,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
     let prospectNudgesSent = 0;
 
     if (stalled.length === 0) {
-      // Only emit the "all clear" pulse on Monday — the daily-only new-applicant
-      // path being empty is normal and not worth daily noise.
-      if (isMonday) {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          '✅ <b>Rancher Follow-Up Check</b>\n\nAll ranchers are progressing on schedule. Nothing stalled.'
-        );
-      }
+      // NOISE CUT (2026-07-05): no news is good news. An "all clear, nothing
+      // stalled" ping is exactly the kind of non-actionable pulse that trains
+      // the operator to ignore the channel. Log it; only STALLED ranchers ping.
+      console.info('[rancher-followup] all ranchers progressing on schedule — nothing stalled');
     } else {
       // Send one Telegram alert per stalled rancher.
       // For new-applicants we ALSO send a gentle reminder email to the prospect

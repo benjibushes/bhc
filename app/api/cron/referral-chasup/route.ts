@@ -765,9 +765,12 @@ Order interest: ${referral['Order Type'] || 'bulk beef'}, Budget: ${referral['Bu
           </div>`,
         });
 
-        // Info-only Telegram notification
-        await sendTelegramMessage(TELEGRAM_ADMIN_CHAT_ID,
-          `🎯 <b>AUTO CHASE-UP #${chaseCount}/${MAX_CHASE_UPS}</b>\n👤 ${buyerName} → 🤠 ${rancherName}\n📧 Sent to ${buyerEmail}\n${chaseCount >= MAX_CHASE_UPS ? '⚠️ Final follow-up — will auto-close if no response' : ''}`
+        // NOISE CUT (2026-07-05): "info-only" auto chase-up pinged the phone
+        // per buyer, per run — automated, not actionable. The run summary
+        // below already reports the total. Log the detail instead.
+        console.info(
+          `[referral-chasup] auto chase-up #${chaseCount}/${MAX_CHASE_UPS} — ${buyerName} → ${rancherName} (${buyerEmail})` +
+            `${chaseCount >= MAX_CHASE_UPS ? ' — final, will auto-close if no response' : ''}`,
         );
 
         sent++;

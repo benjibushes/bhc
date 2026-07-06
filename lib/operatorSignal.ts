@@ -75,6 +75,25 @@ export async function sendOperatorSignal(input: SignalInput): Promise<{ sent: bo
     }
     _dedupe[dedupeKey] = Date.now();
   }
+
+  // ── URGENCY FLOOR (2026-07-05, noise cut) ────────────────────────────────
+  // Historically urgency ONLY drove the SMS/email fallback — every signal, even
+  // 'digest', still blasted Telegram in real time. That's alert fatigue: the
+  // operator stops seeing the money alerts under the chatter. Now urgency gates
+  // the Telegram wire too. OPERATOR_SIGNAL_TELEGRAM_FLOOR (default 'normal'):
+  //   'digest' → realtime silence (rolls into the daily digest / logs only)
+  //   'normal' → the default floor (loud + normal ring)
+  //   'loud'   → MONEY-ONLY mode: only 'loud' rings; set this to go quiet.
+  // Below-floor signals are logged and skipped BEFORE the wire — no fallback
+  // (a deliberate skip is not a delivery failure), so nothing SMS-storms.
+  const RANK: Record<SignalUrgency, number> = { digest: 0, normal: 1, loud: 2 };
+  const floorRaw = String(process.env.OPERATOR_SIGNAL_TELEGRAM_FLOOR || 'normal').toLowerCase();
+  const floorRank = floorRaw === 'loud' ? 2 : floorRaw === 'digest' ? 0 : 1;
+  if (RANK[urgency] < floorRank) {
+    console.info(`[operatorSignal] below floor(${floorRaw}) — skipped realtime: ${kind}/${urgency} ${summary}`);
+    return { sent: false, reason: `below-floor:${floorRaw}` };
+  }
+
   const head = `${URGENCY_EMOJI[urgency]} <b>${kind.toUpperCase()}</b> ${summary}`;
   const lines = [head];
   if (detail) lines.push('', detail);
