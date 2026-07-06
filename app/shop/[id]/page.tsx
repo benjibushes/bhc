@@ -39,6 +39,10 @@ interface Prod {
   shelfStable: boolean;
   image: string;
   description: string;
+  // Deposit-style (price-range) product: price above is the DEPOSIT charged;
+  // the rancher confirms size/details + the balance before shipping.
+  depositStyle: boolean;
+  priceRange: string;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -93,6 +97,8 @@ async function loadProduct(id: string): Promise<Prod | null> {
     shelfStable: !!r['Shelf Stable'],
     image: String(r['Image URL'] || ''),
     description: String(r['Description'] || ''),
+    depositStyle: r['Deposit Style'] === true,
+    priceRange: String(r['Price Range'] || ''),
   };
 }
 
@@ -120,6 +126,33 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
   // Product JSON-LD — only when an image + price exist (Google requires image).
   // shippingDetails declares FREE US shipping (price is genuinely all-in).
+  // Deposit-style (price-range) products emit an honest AggregateOffer with
+  // low/high parsed from the Price Range — never a flat price that undersells
+  // what the buyer ultimately pays.
+  const rangeMatch = p.depositStyle
+    ? p.priceRange.replace(/,/g, '').match(/(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)/)
+    : null;
+  const offers = rangeMatch
+    ? {
+        '@type': 'AggregateOffer',
+        lowPrice: Number(rangeMatch[1]).toFixed(2),
+        highPrice: Number(rangeMatch[2]).toFixed(2),
+        priceCurrency: 'USD',
+        availability: 'https://schema.org/InStock',
+        url: `${SITE_URL}/shop/${p.id}`,
+      }
+    : {
+        '@type': 'Offer',
+        price: p.price.toFixed(2),
+        priceCurrency: 'USD',
+        availability: 'https://schema.org/InStock',
+        url: `${SITE_URL}/shop/${p.id}`,
+        shippingDetails: {
+          '@type': 'OfferShippingDetails',
+          shippingRate: { '@type': 'MonetaryAmount', value: '0', currency: 'USD' },
+          shippingDestination: { '@type': 'DefinedRegion', addressCountry: 'US' },
+        },
+      };
   const jsonLd =
     p.image && p.price > 0
       ? {
@@ -130,18 +163,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           ...(p.description ? { description: p.description } : {}),
           ...(p.category ? { category: p.category } : {}),
           brand: { '@type': 'Brand', name: p.rancher },
-          offers: {
-            '@type': 'Offer',
-            price: p.price.toFixed(2),
-            priceCurrency: 'USD',
-            availability: 'https://schema.org/InStock',
-            url: `${SITE_URL}/shop/${p.id}`,
-            shippingDetails: {
-              '@type': 'OfferShippingDetails',
-              shippingRate: { '@type': 'MonetaryAmount', value: '0', currency: 'USD' },
-              shippingDestination: { '@type': 'DefinedRegion', addressCountry: 'US' },
-            },
-          },
+          offers,
         }
       : null;
 
@@ -182,29 +204,51 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 </div>
               </div>
 
-              <PriceTag amount={p.price} size="lg" />
+              {p.depositStyle ? (
+                <div>
+                  <div className="font-serif text-3xl text-charcoal">
+                    from {p.priceRange || `$${p.price.toFixed(0)}`}
+                  </div>
+                  <p className="text-[13px] text-saddle mt-1.5 leading-relaxed">
+                    sizes vary, so this one works like a share: put down a{' '}
+                    <strong>${p.price.toFixed(0)} deposit</strong> today, and{' '}
+                    {p.rancher || 'your rancher'} reaches out to confirm the size you want + the
+                    balance before anything ships.
+                  </p>
+                </div>
+              ) : (
+                <PriceTag amount={p.price} size="lg" />
+              )}
 
               {p.description ? (
                 <p className="text-[15.5px] text-charcoal/85 leading-relaxed m-0">{p.description}</p>
               ) : null}
 
               <div className="text-[13px] text-sage">
-                {p.shelfStable
-                  ? 'shelf-stable · ships free, no freezer needed'
-                  : 'ships frozen, direct from the ranch · shipping included, nationwide'}
+                {p.depositStyle
+                  ? 'deposit today · rancher confirms size + balance · ships frozen, nationwide'
+                  : p.shelfStable
+                    ? 'shelf-stable · ships free, no freezer needed'
+                    : 'ships frozen, direct from the ranch · shipping included, nationwide'}
               </div>
 
               <div className="mt-1">
-                <BuyButton productId={p.id} price={p.price} />
+                <BuyButton
+                  productId={p.id}
+                  price={p.price}
+                  label={p.depositStyle ? `reserve — $${p.price.toFixed(0)} deposit` : undefined}
+                />
               </div>
 
               {/* Risk-reversal above the fold, right at the buy decision —
                   operational certainty, not "contact support" (Phase 4). */}
               <p className="text-[12.5px] text-saddle leading-relaxed mt-0.5">
-                the price you see is the price you pay — shipping included. if a cut ever shows up
-                wrong or freezer-burned, we make it right — no forms, no runaround. checkout
-                secured by Stripe. questions? reply to your receipt — a real person answers.
-                &mdash; Ben
+                {p.depositStyle
+                  ? 'your deposit counts toward the total — the balance is only settled after you and the rancher confirm the details. '
+                  : 'the price you see is the price you pay — shipping included. '}
+                if a cut ever shows up wrong or freezer-burned, we make it right — no forms, no
+                runaround. checkout secured by Stripe. questions? reply to your receipt — a real
+                person answers. &mdash; Ben
               </p>
             </div>
           </div>

@@ -22,6 +22,10 @@ export default function OrderSuccessPage() {
           your order&rsquo;s in — the ranch is packing it up and shipping it direct to you. a receipt
           is on its way to your inbox, and you&rsquo;ll get tracking as soon as it ships.
         </p>
+        <p className="text-xs text-saddle leading-relaxed -mt-3 mb-5">
+          reserved with a deposit? the rancher reaches out first to confirm your size + the balance
+          — your deposit counts toward it.
+        </p>
         <div className="border-t border-dust pt-5 mt-1 space-y-3">
           <p className="text-sm text-saddle">
             liked what you tasted? a half or whole share is the same beef by the freezer-full.

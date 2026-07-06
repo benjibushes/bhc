@@ -47,10 +47,28 @@ export default async function ProductCheckoutPage({ params }: { params: Promise<
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-serif text-[17px] leading-tight">{p.name}</div>
-            <div className="text-xs text-saddle mt-0.5">{p.rancher} · ships direct from the ranch</div>
+            <div className="text-xs text-saddle mt-0.5">
+              {p.rancher} · {p.depositStyle ? 'deposit — details confirmed with you' : 'ships direct from the ranch'}
+            </div>
           </div>
-          <PriceTag amount={p.price} size="sm" className="whitespace-nowrap" />
+          <div className="text-right">
+            <PriceTag amount={p.price} size="sm" className="whitespace-nowrap" />
+            {p.depositStyle ? (
+              <div className="text-[10px] uppercase tracking-wider text-saddle">deposit</div>
+            ) : null}
+          </div>
         </Card>
+
+        {/* Deposit-style: say exactly what today's charge is BEFORE the card
+            form — no surprise-balance pattern, ever. */}
+        {p.depositStyle ? (
+          <p className="text-[12.5px] text-saddle leading-relaxed mb-4 -mt-1">
+            you&rsquo;re paying a <strong>${p.price.toFixed(0)} deposit</strong> today
+            {p.priceRange ? <> toward a {p.priceRange} total</> : null}. {p.rancher} will reach out
+            to confirm your size + the balance before anything ships — and your deposit counts
+            toward it.
+          </p>
+        ) : null}
 
         <CheckoutMount productId={p.id} />
 

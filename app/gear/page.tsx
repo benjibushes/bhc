@@ -11,6 +11,7 @@
 import Container from '../components/Container';
 import Divider from '../components/Divider';
 import AffiliateDisclosure from '../components/AffiliateDisclosure';
+import ProductImage from '../shop/ProductImage';
 import { getGearCatalog, type GearProduct } from '@/lib/gear';
 
 export const dynamic = 'force-dynamic';
@@ -91,56 +92,89 @@ export default async function GearPage() {
   return (
     <main className="min-h-screen py-16 md:py-24 bg-bone text-charcoal">
       <Container>
-        <div className="max-w-3xl mx-auto space-y-10">
-          <div className="text-center space-y-5">
-            <h1 className="font-serif text-4xl md:text-5xl">ben&rsquo;s gear</h1>
-            <Divider />
-            <p className="text-lg leading-relaxed text-saddle">
-              the stuff i actually use to store, cut, and cook a half a cow
-              &mdash; freezers, grills, cast iron, knives, coolers. no fluff,
-              just what earns a spot in my kitchen. &mdash; Ben
-            </p>
-            <AffiliateDisclosure className="max-w-xl mx-auto" />
-          </div>
+        <div className="max-w-3xl mx-auto text-center space-y-5 mb-12">
+          <h1 className="font-serif text-4xl md:text-5xl">ben&rsquo;s gear</h1>
+          <Divider />
+          <p className="text-lg leading-relaxed text-saddle">
+            the stuff i actually use to store, cut, and cook a half a cow
+            &mdash; freezers, grills, cast iron, knives, coolers. no fluff,
+            just what earns a spot in my kitchen. &mdash; Ben
+          </p>
+          <AffiliateDisclosure className="max-w-xl mx-auto" />
+        </div>
 
-          {groups.length === 0 ? (
-            <div className="p-8 border border-dust text-center bg-white">
-              <p className="text-saddle">
-                we&rsquo;re still curating our list &mdash; check back soon.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-12">
+        {groups.length === 0 ? (
+          <div className="p-8 border border-dust text-center bg-bone-warm max-w-3xl mx-auto">
+            <p className="text-saddle">
+              we&rsquo;re still curating our list &mdash; check back soon.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Category quick-nav — same structural spine as /shop, so the two
+                browse surfaces read as siblings. Anchors, no JS. */}
+            {groups.length > 1 && (
+              <nav aria-label="gear sections" className="flex flex-wrap gap-2 mb-10 justify-center">
+                {groups.map(([cat, list]) => (
+                  <a
+                    key={cat}
+                    href={`#gear-${cat}`}
+                    className="px-3.5 py-2 border border-dust text-[13px] text-charcoal hover:bg-charcoal hover:text-bone transition-base"
+                  >
+                    {CATEGORY_LABELS[cat] || cat} <span className="text-dust">·</span>{' '}
+                    <span className="tabular-nums">{list.length}</span>
+                  </a>
+                ))}
+              </nav>
+            )}
+
+            <div className="space-y-14">
               {groups.map(([cat, list]) => (
-                <section key={cat} className="space-y-4">
-                  <h2 className="font-serif text-2xl">
-                    {CATEGORY_LABELS[cat] || cat}
-                  </h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <section key={cat} id={`gear-${cat}`} className="scroll-mt-24">
+                  <div className="flex items-baseline justify-between gap-3 border-b border-dust pb-2 mb-5">
+                    <h2 className="font-serif text-2xl">{CATEGORY_LABELS[cat] || cat}</h2>
+                    <span className="text-xs text-dust tabular-nums shrink-0">
+                      {list.length} {list.length === 1 ? 'pick' : 'picks'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {list.map((p) => (
-                      <div key={p.id} className="flex gap-4 border border-dust bg-white p-4">
-                        {p['Image URL'] ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={p['Image URL']}
+                      <div
+                        key={p.id}
+                        className="bg-bone border border-dust flex flex-col transition-base hover:border-charcoal"
+                      >
+                        {/* Image-forward card — the photo slot renders the
+                            branded placeholder until Ben adds an Image URL, so
+                            the grid never looks broken while photos land. */}
+                        <a
+                          href={`/go/product/${p.id}?surface=gear`}
+                          target="_blank"
+                          rel="nofollow sponsored noopener noreferrer"
+                          className="block aspect-[4/3] overflow-hidden bg-bone-deep"
+                        >
+                          <ProductImage
+                            src={String(p['Image URL'] || '')}
                             alt={p.Name}
-                            loading="lazy"
-                            className="w-20 h-20 object-cover border border-dust flex-shrink-0 bg-bone"
+                            className="w-full h-full object-cover block"
                           />
-                        ) : null}
-                        <div className="min-w-0 flex flex-col">
-                          <p className="font-medium text-charcoal">{p.Name}</p>
+                        </a>
+                        <div className="p-4 flex flex-col gap-2 flex-1">
+                          <p className="font-serif text-lg leading-tight text-charcoal line-clamp-2">
+                            {p.Name}
+                          </p>
                           {p.Blurb ? (
-                            <p className="text-sm text-saddle mt-1">{p.Blurb}</p>
+                            <p className="text-[13px] text-saddle leading-snug line-clamp-2">{p.Blurb}</p>
                           ) : null}
-                          <a
-                            href={`/go/product/${p.id}?surface=gear`}
-                            target="_blank"
-                            rel="nofollow sponsored noopener noreferrer"
-                            className="mt-auto pt-2 text-xs uppercase tracking-wider text-charcoal hover:text-saddle font-medium"
-                          >
-                            shop &rarr;
-                          </a>
+                          <div className="mt-auto pt-2">
+                            <a
+                              href={`/go/product/${p.id}?surface=gear`}
+                              target="_blank"
+                              rel="nofollow sponsored noopener noreferrer"
+                              className="inline-flex w-full items-center justify-center px-4 py-2.5 border border-charcoal text-xs font-medium uppercase tracking-wide text-charcoal hover:bg-charcoal hover:text-bone transition-base"
+                            >
+                              see it on amazon &rarr;
+                            </a>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -148,8 +182,21 @@ export default async function GearPage() {
                 </section>
               ))}
             </div>
-          )}
-        </div>
+
+            {/* Cross-link back to the beef — gear is the sidecar, never the
+                destination. */}
+            <p className="text-[13.5px] text-saddle mt-12 text-center">
+              here for the beef?{' '}
+              <a href="/shop" className="underline hover:text-charcoal transition-colors">
+                jerky &amp; boxes, shipped &rarr;
+              </a>{' '}
+              · or{' '}
+              <a href="/access" className="underline hover:text-charcoal transition-colors">
+                take the quiz for a full share &rarr;
+              </a>
+            </p>
+          </>
+        )}
       </Container>
     </main>
   );

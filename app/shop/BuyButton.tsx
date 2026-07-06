@@ -7,11 +7,22 @@ import Button from '../components/Button';
 //
 // Uses the shared Button primitive (design-system migration, Phase 3) so a
 // shop buy button and a deposit CTA are literally the same component.
+//
+// `label` override: deposit-style (price-range) products say
+// "reserve — $95 deposit" instead of "buy — $95" (Phase 7).
 
-export default function BuyButton({ productId, price }: { productId: string; price: number }) {
+export default function BuyButton({
+  productId,
+  price,
+  label,
+}: {
+  productId: string;
+  price: number;
+  label?: string;
+}) {
   return (
     <Button href={`/shop/checkout/${productId}`} fullWidth>
-      buy — ${price.toFixed(2)}
+      {label || `buy — $${price.toFixed(2)}`}
     </Button>
   );
 }
