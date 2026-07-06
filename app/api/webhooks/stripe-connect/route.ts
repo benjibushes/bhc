@@ -28,7 +28,7 @@ import {
   TABLES,
 } from '@/lib/airtable';
 import { settleBuyerDeposit, settleFinalInvoice, isPermanentSettlementError } from '@/lib/stripeSettlement';
-import { settleProductPurchase } from '@/lib/productSettlement';
+import { settleProductPurchase, reconcileProductOrderRefund } from '@/lib/productSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail } from '@/lib/email';
@@ -315,6 +315,19 @@ export async function POST(request: Request) {
         // Pass the real partial/amount so a PARTIAL refund doesn't nuke the deal.
         const refundedCents = Number(charge?.amount_refunded || 0);
         const isPartial = refundedCents > 0 && refundedCents < Number(charge?.amount || 0);
+        // LOW-TICKET PRODUCT refund (audit finding 2): a product PI has no
+        // Payments row, so markDepositRefunded below would no-op and the order
+        // would stay 'New' (rancher could ship a refunded box). A PI is EITHER
+        // a deposit OR a product — reconcile the product order + short-circuit.
+        // Throws on transient → 5xx redeliver (reconcile is idempotent).
+        try {
+          const wasProduct = await reconcileProductOrderRefund(piId, { kind: 'refund', amountCents: refundedCents });
+          if (wasProduct) break;
+        } catch (e: any) {
+          console.error('[stripe-connect charge.refunded] product reconcile failed:', e);
+          await flipStripeEventFailed(event.id, e?.message || 'unknown').catch(() => {});
+          return NextResponse.json({ error: 'product_refund_retry' }, { status: 500 });
+        }
         let refundFlipped = false;
         try {
           ({ flipped: refundFlipped } = await markDepositRefunded(piId, { partial: isPartial, refundedAmountCents: refundedCents }));
