@@ -61,7 +61,10 @@ export interface CreateProductCheckoutInput {
   productName: string;
   displayCents: number;            // buyer pays
   baseCents: number;               // rancher nets
-  buyerEmail: string;
+  // Optional: prefilled for operator-generated links; OMITTED for self-serve
+  // storefront buys — Stripe Checkout collects the email itself, and the
+  // webhook falls back to the charge's billing email.
+  buyerEmail?: string;
   buyerName?: string;
   productId: string;               // Rancher Products record id (webhook lookup)
   rancherId: string;               // Ranchers record id
@@ -96,7 +99,8 @@ export async function createProductCheckout(
   const session = await stripe.checkout.sessions.create(
     {
       mode: 'payment',
-      customer_email: input.buyerEmail,
+      // Prefill for operator links; omit for self-serve (Stripe collects it).
+      ...(input.buyerEmail ? { customer_email: input.buyerEmail } : {}),
       // Rancher ships → we must collect where. No shipping_options: the
       // Display Price is all-in, so we don't add a separate shipping charge.
       shipping_address_collection: { allowed_countries: ['US'] },
@@ -126,7 +130,7 @@ export async function createProductCheckout(
           productName: input.productName,
           rancherId: input.rancherId,
           rancherName: input.rancherName,
-          buyerEmail: input.buyerEmail,
+          buyerEmail: input.buyerEmail || '',
           buyerName: input.buyerName || '',
           displayCents: String(charge.totalChargedCents),
           baseCents: String(charge.rancherNetCents),
