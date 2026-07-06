@@ -13,7 +13,11 @@ export interface FunnelStepCopy {
 export const FUNNEL_STEPS: StepKey[] = ['size', 'timing', 'contact', 'storage', 'reveal'];
 
 export const FUNNEL_COPY: Record<StepKey, FunnelStepCopy> = {
-  size: { title: 'how much beef are you after?', sub: 'pick the closest — your rancher helps you dial it in.' },
+  // sub softened 2026-07-06 (journey overhaul Phase 2): the size step is the
+  // funnel's first screen for cold /access traffic and used to read as a bare
+  // $1k-5k commitment gate. "nothing's locked in" lowers the stakes without
+  // touching option values (scorer contract intact).
+  size: { title: 'how much beef are you after?', sub: 'pick the closest — nothing’s locked in, your rancher helps you dial it in.' },
   timing: { title: 'when do you want the freezer full?', sub: 'no wrong answer.' },
   contact: { title: 'claim your match', sub: 'private & approval-only. no spam, never resold.' },
   storage: { title: 'how will you store it?', sub: 'almost there — last one.' },
