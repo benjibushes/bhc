@@ -188,6 +188,10 @@
     {
       "path": "/api/cron/deposit-request-nudge",
       "schedule": "45 * * * *"
+    },
+    {
+      "path": "/api/cron/product-recovery",
+      "schedule": "35 18 * * *"
     }
   ]
 }

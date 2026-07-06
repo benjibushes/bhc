@@ -97,6 +97,10 @@ export const EXCLUDED_CRONS_24H: Readonly<Record<string, string>> = {
     "dark-by-default: same three-state REPLENISHMENT_ENABLED contract as waiting-activation " +
     "(gate before withCronRun → no Cron Runs row while dark). MOVE to EXPECTED_CRONS_24H " +
     "when the flag goes live.",
+  'product-recovery':
+    "dark-by-default: same three-state PRODUCT_RECOVERY_ENABLED contract as replenishment " +
+    "(gate before withCronRun → no Cron Runs row while dark). MOVE to EXPECTED_CRONS_24H " +
+    "when the flag goes live.",
 };
 
 export interface CronRunSummary {
