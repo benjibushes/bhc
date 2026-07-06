@@ -94,6 +94,15 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // can be silently frequency-capped -> "did my payment go through?" anxiety,
   // refund requests, and chargebacks on the deposit.
   'sendPostPurchaseWelcome',
+  // Low-ticket PRODUCT rail parity (2026-07-06): the product buyer receipt +
+  // the rancher ship-it email. Same argument as sendPostPurchaseWelcome /
+  // sendRancherDepositPaid — one-shot per PI (settleProductPurchase is idempotent
+  // via claimOnce + existing-order lookup), so whitelisting cannot create volume.
+  // Without it, a buyer/rancher already at the 3/week cap silently loses the
+  // "did my payment go through?" confirmation (buyer) or the ship-to + reply-with-
+  // tracking email (rancher — the hands-off fulfillment leg the product rail needs).
+  'product_receipt',
+  'rancher_order_notify',
   // Sales-floor pivot 2026-06-09: 4 new minimal-pipeline templates. All
   // are 1:1 transactional triggered by buyer state changes (signup, quiz
   // complete, sales-call close, rancher accept). Capping any of these
