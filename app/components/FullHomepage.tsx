@@ -4,6 +4,7 @@ import Image from 'next/image';
 import Container from './Container';
 import Divider from './Divider';
 import Button from './Button';
+import Card from './Card';
 import LiveCounter, { useNetworkStats } from './LiveCounter';
 import StickyMobileCTA from './StickyMobileCTA';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
@@ -68,13 +69,15 @@ export default function FullHomepage() {
 
       <Divider />
 
-      {/* BUYER-PRIMARY CTA — pre-rebuild this was a 4-card "pick your path" grid
-          (buyer + rancher + land + brand) which forced visitors to self-segment
-          before doing anything. The buyer card was 1 of 4 equal-size, which made
-          our highest-volume audience indistinguishable from non-buyer audiences
-          on the homepage. Demoted rancher / land / brand to a single discreet
-          partner link below — they still have flows at /partner, just not on
-          the buyer's primary surface. */}
+      {/* BUYER-PRIMARY CTA + TRI-TIER INTENT FORK — history: pre-rebuild there
+          was a 4-card AUDIENCE grid (buyer + rancher + land + brand) that made
+          our highest-volume audience 1-of-4; it was killed and rancher/land/
+          brand demoted to the partner link below. The fork below is NOT that
+          grid resurrected: all three cards are BUYER paths, self-sorted by
+          intent (share / low-ticket shop / gear), share-anchored — the share
+          card is visually primary, shop + gear are rungs, never peers. Fixes
+          the old leak where 100% of traffic was routed into the $1k+ share
+          quiz while /shop and /gear sat orphaned. */}
       <section className="py-20">
         <Container>
           <div className="max-w-3xl mx-auto text-center">
@@ -85,24 +88,43 @@ export default function FullHomepage() {
               Answer a few questions and we match you with a verified rancher serving your area — or put you first in line as we bring one to your state. You talk to them direct, set your cuts, pick your processing date. You pay the rancher, not a marketplace.
               {totalMembers ? ` Join ${totalMembers.toLocaleString()}+ members already sourcing direct.` : ''}
             </p>
-            {/* The two front doors: get matched (funnel) or browse the
-                ranchers (store). The old secondary CTA sent unsure buyers to
-                /start — kept below as a text link — which buried the browse
-                path entirely; /ranchers wasn't linked anywhere on this page. */}
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Button href="/access" size="lg">
-                Get matched in 90 seconds
-              </Button>
-              <Button href="/ranchers" variant="secondary" size="lg">
-                Browse the ranchers
-              </Button>
+            {/* Tri-tier intent fork. Cards are NOT links themselves (a Card
+                href would nest <a> inside <a> with the Buttons) — the Buttons
+                carry the navigation; the card is the frame. */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 mt-10 text-left">
+              {/* SHARE — primary, widest */}
+              <Card as="article" padding="lg" variant="warm" className="md:col-span-6 flex flex-col">
+                <p className="text-xs uppercase tracking-widest text-saddle mb-2">stock the freezer</p>
+                <h3 className="font-serif text-2xl mb-2 lowercase">a half or whole share</h3>
+                <p className="text-saddle text-sm mb-6 flex-1">
+                  a year of beef, direct from a verified ranch near you. take the 90-second quiz and we match you.
+                </p>
+                <span className="inline-flex"><Button href="/access" size="md">take the quiz →</Button></span>
+                <p className="text-xs text-saddle mt-3">
+                  or <a href="/ranchers" className="underline hover:text-charcoal transition-colors">browse the ranchers</a>
+                </p>
+              </Card>
+
+              {/* SHOP — secondary rung */}
+              <Card as="article" padding="lg" variant="default" className="md:col-span-3 flex flex-col">
+                <p className="text-xs uppercase tracking-widest text-saddle mb-2">try it first</p>
+                <h3 className="font-serif text-xl mb-2 lowercase">jerky &amp; boxes, shipped</h3>
+                <p className="text-saddle text-sm mb-6 flex-1">
+                  smaller, shipped nationwide. no freezer needed.
+                </p>
+                <span className="inline-flex"><Button href="/shop" variant="secondary" size="sm">shop beef →</Button></span>
+              </Card>
+
+              {/* GEAR — lightest third rung */}
+              <Card as="article" padding="lg" variant="default" className="md:col-span-3 flex flex-col">
+                <p className="text-xs uppercase tracking-widest text-saddle mb-2">gear up</p>
+                <h3 className="font-serif text-xl mb-2 lowercase">the tools ben uses</h3>
+                <p className="text-saddle text-sm mb-6 flex-1">
+                  freezers, grills, knives — the gear behind the beef.
+                </p>
+                <span className="inline-flex"><Button href="/gear" variant="ghost" size="sm">see the gear →</Button></span>
+              </Card>
             </div>
-            <p className="text-sm text-saddle mt-5">
-              Not sure yet?{' '}
-              <a href="/start" className="underline hover:text-charcoal transition-colors">
-                Start here
-              </a>
-            </p>
             <p className="text-xs text-saddle mt-6">
               Raise cattle?{' '}
               <a href="/sell" className="underline hover:text-charcoal transition-colors">
