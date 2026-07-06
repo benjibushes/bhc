@@ -254,9 +254,37 @@ export async function POST(request: Request) {
       // emailed; now we stamp the Payments row + LOUD Telegram alert.
       case 'charge.dispute.created':
       case 'charge.dispute.funds_withdrawn':
-      case 'charge.dispute.closed':
+      case 'charge.dispute.closed': {
+        // LOW-TICKET PRODUCT dispute parity (2026-07-06): a product PI has no
+        // Payments row, so handleDispute's markDepositDisputed no-ops and the
+        // disputed product order would stay 'New' — a rancher could ship a
+        // charged-back box. Flip it FIRST, mirroring the charge.refunded arm.
+        // Only on funds-withdrawing points (NOT 'closed', which may be a WIN
+        // that returns the funds). reconcileProductOrderRefund(kind:'dispute')
+        // flips Status→Refunded + fires its own loud STOP-SHIP alert, and is
+        // idempotent. Throws on a transient Airtable error → 5xx so Stripe
+        // redelivers. A PI is EITHER a deposit OR a product → short-circuit the
+        // deposit-oriented handleDispute when a product order matched.
+        if (event.type === 'charge.dispute.created' || event.type === 'charge.dispute.funds_withdrawn') {
+          const dispObj = event?.data?.object as any;
+          const dispPi: string =
+            typeof dispObj?.payment_intent === 'string'
+              ? dispObj.payment_intent
+              : dispObj?.payment_intent?.id || '';
+          if (dispPi) {
+            try {
+              const wasProduct = await reconcileProductOrderRefund(dispPi, { kind: 'dispute', amountCents: dispObj?.amount || 0 });
+              if (wasProduct) break;
+            } catch (e: any) {
+              console.error('[stripe-connect dispute] product reconcile failed:', e);
+              await flipStripeEventFailed(event.id, e?.message || 'unknown').catch(() => {});
+              return NextResponse.json({ error: 'product_dispute_retry' }, { status: 500 });
+            }
+          }
+        }
         await handleDispute(event);
         break;
+      }
 
       // ── Audit F7 — payout.failed handler ──
       // Rancher's bank rejects the BHC payout (typo'd routing, closed acct,
