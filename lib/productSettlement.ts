@@ -51,18 +51,31 @@ export async function settleProductPurchase(pi: any): Promise<void> {
   const productName = String(pi?.metadata?.productName || 'a product');
   const rancherId = String(pi?.metadata?.rancherId || '');
   const rancherName = String(pi?.metadata?.rancherName || 'the ranch');
-  const buyerEmail = String(pi?.metadata?.buyerEmail || '').trim().toLowerCase();
-  const buyerName = String(pi?.metadata?.buyerName || '').trim();
+  // Email: operator links stamp metadata.buyerEmail; self-serve storefront buys
+  // don't (Stripe collects it) → fall back to the charge's billing/receipt email.
+  const charge0 = pi?.charges?.data?.[0] || {};
+  const buyerEmail = (
+    String(pi?.metadata?.buyerEmail || '').trim() ||
+    String(charge0?.billing_details?.email || '').trim() ||
+    String(pi?.receipt_email || '').trim()
+  ).toLowerCase();
+  // Name: metadata (operator) → the shipping/billing name Stripe collected.
+  const buyerName = (
+    String(pi?.metadata?.buyerName || '').trim() ||
+    String(pi?.shipping?.name || charge0?.shipping?.name || charge0?.billing_details?.name || '').trim()
+  );
   const displayCents = Number(pi?.metadata?.displayCents || 0);
   const baseCents = Number(pi?.metadata?.baseCents || 0);
   const marginCents = Number(pi?.metadata?.marginCents || Math.max(0, displayCents - baseCents));
 
-  if (!pi?.id || !buyerEmail || !displayCents) {
+  if (!pi?.id || !displayCents) {
     // Malformed → can never settle. Permanent so Stripe stops the 3-day retry.
     throw new PermanentSettlementError(
-      `product_purchase missing required fields — piId=${!!pi?.id} buyerEmail=${!!buyerEmail} displayCents=${displayCents}`,
+      `product_purchase missing required fields — piId=${!!pi?.id} displayCents=${displayCents}`,
     );
   }
+  // Email may legitimately be blank in a rare Stripe edge — record the order
+  // anyway (never lose a paid sale) and just skip the buyer receipt below.
   // Audit finding 4: re-assert the money invariant at settle time — a PI that
   // somehow stamped base>display must never record an inverted-margin order.
   if (baseCents > displayCents) {
@@ -142,17 +155,19 @@ export async function settleProductPurchase(pi: any): Promise<void> {
 
   // Buyer receipt (brand voice). All interpolated strings HTML-escaped.
   const buyerFirst = escapeHtml(buyerName ? buyerName.split(/\s+/)[0] : 'there');
-  await sendEmail({
-    to: buyerEmail,
-    subject: `you're set — ${productName} is on its way`,
-    html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
-      <p>hey ${buyerFirst},</p>
-      <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for a <strong>${escapeHtml(productName)}</strong> and will ship it direct to you.</p>
-      <p style="font-size:14px;color:#5A5752">paid: $${dollars(displayCents)}. you'll get tracking as soon as it's on the way.</p>
-      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
-    </div>`,
-    templateName: 'product_receipt',
-  }).catch(() => {});
+  if (buyerEmail) {
+    await sendEmail({
+      to: buyerEmail,
+      subject: `you're set — ${productName} is on its way`,
+      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+        <p>hey ${buyerFirst},</p>
+        <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for a <strong>${escapeHtml(productName)}</strong> and will ship it direct to you.</p>
+        <p style="font-size:14px;color:#5A5752">paid: $${dollars(displayCents)}. you'll get tracking as soon as it's on the way.</p>
+        <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+      </div>`,
+      templateName: 'product_receipt',
+    }).catch(() => {});
+  }
 
   // Rancher ship-it notification (operational — clear, not marketing).
   try {
