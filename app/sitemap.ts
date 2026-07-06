@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { getActiveRancherPages, getAllRecords, TABLES } from '@/lib/airtable';
+import { loadMarketplaceProducts } from '@/lib/marketplaceProducts';
 import { US_STATES } from '@/lib/states';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -24,6 +25,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${baseUrl}/about`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
     { url: `${baseUrl}/faq`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
     { url: `${baseUrl}/ranchers`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.8 },
+    { url: `${baseUrl}/shop`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.9 },
     { url: `${baseUrl}/map`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.8 },
     { url: `${baseUrl}/map/add-a-rancher`, lastModified: new Date(), changeFrequency: 'monthly', priority: 0.7 },
     { url: `${baseUrl}/land`, lastModified: new Date(), changeFrequency: 'weekly', priority: 0.7 },
@@ -63,6 +65,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // Don't fail if news fetch fails
   }
 
+  // Nationwide-shippable products — one /shop/{id} per sellable product.
+  let productRoutes: MetadataRoute.Sitemap = [];
+  try {
+    const products = await loadMarketplaceProducts(); // already filters to sellable + catches errors
+    productRoutes = products.map((p) => ({
+      url: `${baseUrl}/shop/${p.id}`,
+      lastModified: new Date(),
+      changeFrequency: 'weekly' as const,
+      priority: 0.7,
+    }));
+  } catch {
+    // Don't fail the sitemap if products can't load
+  }
+
   // Programmatic state landing pages — one /access/{state} per US state + DC.
   // SSG'd by `app/access/[state]/page.tsx` and serves state-localized organic
   // SEO traffic ("buy half cow texas", "grass-fed beef montana", etc).
@@ -73,5 +89,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.7,
   }));
 
-  return [...staticRoutes, ...stateRoutes, ...rancherRoutes, ...newsRoutes];
+  return [...staticRoutes, ...stateRoutes, ...rancherRoutes, ...newsRoutes, ...productRoutes];
 }

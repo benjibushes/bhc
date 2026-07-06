@@ -24,6 +24,7 @@ import { claimOnce } from '@/lib/rancherCapacity';
 import { PermanentSettlementError } from '@/lib/stripeSettlement';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail } from '@/lib/email';
+import { fireCapi, buildUserData, productPurchaseEnabled } from '@/lib/metaCapi';
 
 function escapeHtml(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -191,6 +192,72 @@ export async function settleProductPurchase(pi: any): Promise<void> {
       }).catch(() => {});
     }
   } catch { /* non-fatal — the operator signal already carries the ship-to */ }
+
+  // ── Meta Conversions API: server-side Purchase (the ROAS conversion) ──────
+  // Gated on productPurchaseEnabled() (privacy dry-run first). No fbp/fbc at
+  // webhook time → action_source='system_generated' + email match (same posture
+  // as the deposit Purchase). event_id=product_purchase_<pi.id> is unique per
+  // sale so Meta can never collapse two real sales into one. content_ids=
+  // [productId] feeds the past-buyer / lookalike-seed audiences. Fire-and-forget
+  // — fireCapi fails open, so this can never affect settlement.
+  if (productPurchaseEnabled()) {
+    try {
+      const firstName = buyerName ? buyerName.split(/\s+/)[0] : undefined;
+      const productId = String(pi?.metadata?.productId || '').trim();
+      void fireCapi([{
+        event_name: 'Purchase',
+        event_time: Math.floor(Date.now() / 1000),
+        event_id: `product_purchase_${pi.id}`,
+        action_source: 'system_generated',
+        user_data: buildUserData({ email: buyerEmail || undefined, firstName }),
+        custom_data: {
+          value: displayCents / 100,
+          currency: 'usd',
+          content_ids: productId ? [productId] : [],
+          content_type: 'product',
+          content_name: productName,
+        },
+      }]).catch(() => {});
+    } catch { /* analytics only — never affects settlement */ }
+  }
+
+  // ── Product-buyer → Consumers bridge (owned-side remarketing) ─────────────
+  // A product sale otherwise leaves ONLY a Rancher Orders row — invisible to the
+  // repeat/cross-sell crons + to lookalike seeds. Upsert the buyer as a Consumer
+  // stamped PRODUCT_BUYER so the owned-side crons can reach them. Best-effort: a
+  // missing field / stage option (until the Airtable schema is added) is caught
+  // and NEVER blocks the sale. Never DEMOTES a real share-funnel buyer — it only
+  // claims the stage when they have none.
+  if (buyerEmail) {
+    try {
+      const nowIso = new Date().toISOString();
+      const productFields: Record<string, any> = {
+        'Last Product Bought': productName,
+        'Last Product Bought At': nowIso,
+        'Product Buyer Rancher': rancherName,
+      };
+      const existingConsumers = (await getAllRecords(
+        TABLES.CONSUMERS,
+        `LOWER({Email}) = "${escapeAirtableValue(buyerEmail)}"`,
+      )) as any[];
+      if (Array.isArray(existingConsumers) && existingConsumers.length > 0) {
+        const c = existingConsumers[0];
+        const stage = String(c['Buyer Stage'] || '').trim();
+        const fields =
+          !stage || stage === 'PRODUCT_BUYER'
+            ? { ...productFields, 'Buyer Stage': 'PRODUCT_BUYER' }
+            : productFields; // already in the share funnel — keep their stage
+        await updateRecord(TABLES.CONSUMERS, c.id, fields);
+      } else {
+        await createRecord(TABLES.CONSUMERS, {
+          'Full Name': buyerName || '',
+          'Email': buyerEmail,
+          'Buyer Stage': 'PRODUCT_BUYER',
+          ...productFields,
+        });
+      }
+    } catch { /* schema not ready or transient — non-fatal, never blocks the sale */ }
+  }
 }
 
 // ── REFUND / DISPUTE RECONCILE (audit finding 2) ─────────────────────────────
