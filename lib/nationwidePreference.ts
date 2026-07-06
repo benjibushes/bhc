@@ -45,3 +45,23 @@ export function normalizeNationwidePreference(raw: unknown): string {
 export function nationwideAllowed(raw: unknown): boolean {
   return normalizeNationwidePreference(raw) !== LOCAL_ONLY;
 }
+
+/**
+ * GLOBAL nationwide-routing kill switch (founder directive 2026-07-05: do NOT
+ * route new leads nationwide until we have real local supply — grow local
+ * density first). The nationwide FALLBACK in app/api/matching/suggest (a buyer
+ * with no in-state rancher matched to a Ships-Nationwide + Admin-Approved-
+ * Multi-State rancher) fires ONLY when this returns true.
+ *
+ * Default FALSE — so a no-in-state-supply buyer WAITS (waitlisted for a local
+ * rancher) instead of being shipped a far rancher. This is deliberate policy,
+ * not an accident of "no rancher is double-flagged yet": even after an operator
+ * double-flags a rancher for supply reasons, nationwide routing stays OFF until
+ * NATIONWIDE_ROUTING_ENABLED is explicitly set to 'true' in Vercel.
+ *
+ * Per-buyer opt-out (nationwideAllowed) still applies on TOP of this — both
+ * must pass for the fallback to fire.
+ */
+export function nationwideRoutingEnabled(): boolean {
+  return process.env.NATIONWIDE_ROUTING_ENABLED === 'true';
+}

@@ -2,11 +2,31 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   nationwideAllowed,
+  nationwideRoutingEnabled,
   normalizeNationwidePreference,
   NATIONWIDE_OK,
   LOCAL_ONLY,
   NATIONWIDE_PREFERENCE_FIELD,
 } from './nationwidePreference';
+
+// ── nationwideRoutingEnabled: the GLOBAL kill switch (2026-07-05) ────────────
+// Default OFF — no nationwide routing until supply is ready + an explicit flip.
+test('nationwideRoutingEnabled: only exactly "true" enables it; default OFF', () => {
+  const saved = process.env.NATIONWIDE_ROUTING_ENABLED;
+  try {
+    delete process.env.NATIONWIDE_ROUTING_ENABLED;
+    assert.equal(nationwideRoutingEnabled(), false); // unset → local supply only
+    process.env.NATIONWIDE_ROUTING_ENABLED = 'false';
+    assert.equal(nationwideRoutingEnabled(), false);
+    process.env.NATIONWIDE_ROUTING_ENABLED = '1';
+    assert.equal(nationwideRoutingEnabled(), false); // not 'true' → off
+    process.env.NATIONWIDE_ROUTING_ENABLED = 'true';
+    assert.equal(nationwideRoutingEnabled(), true);
+  } finally {
+    if (saved === undefined) delete process.env.NATIONWIDE_ROUTING_ENABLED;
+    else process.env.NATIONWIDE_ROUTING_ENABLED = saved;
+  }
+});
 
 // ── nationwideAllowed: the matching gate ────────────────────────────────────
 // Semantics (founder directive, 2026-07-01):

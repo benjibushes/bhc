@@ -21,7 +21,7 @@ import {
   retainerPriorityCompareWithOverride,
   parseRoutingWeightOverride,
 } from '@/lib/routingPriority';
-import { nationwideAllowed, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
+import { nationwideAllowed, nationwideRoutingEnabled, NATIONWIDE_PREFERENCE_FIELD } from '@/lib/nationwidePreference';
 
 export const maxDuration = 90;
 
@@ -754,12 +754,18 @@ export async function POST(request: Request) {
       // request, so a preference written moments earlier (funnel choice →
       // re-fire) is always visible here.
       const buyerNationwideOk = nationwideAllowed(buyerRecForGate?.[NATIONWIDE_PREFERENCE_FIELD]);
-      if (!topMatch && !buyerNationwideOk) {
+      // GLOBAL kill switch (founder directive 2026-07-05): don't route new
+      // leads nationwide until we have local supply. Default OFF → a buyer with
+      // no in-state rancher WAITS (waitlisted below) instead of shipping to a
+      // far rancher. Flip NATIONWIDE_ROUTING_ENABLED=true in Vercel only when
+      // supply is ready. Applies ON TOP of the per-buyer opt-out.
+      const nationwideOn = nationwideRoutingEnabled();
+      if (!topMatch && (!buyerNationwideOk || !nationwideOn)) {
         console.log(
-          `[match] Buyer ${buyerName || buyerId} opted local-only — skipping nationwide fallback (waitlisted for a local rancher).`,
+          `[match] Buyer ${buyerName || buyerId} — nationwide fallback skipped (${!nationwideOn ? 'NATIONWIDE_ROUTING_ENABLED off — local supply only' : 'buyer opted local-only'}); waitlisted for a local rancher.`,
         );
       }
-      if (!topMatch && buyerNationwideOk) {
+      if (!topMatch && buyerNationwideOk && nationwideOn) {
         const nationwideEligible = allRanchers.filter((r: any) => {
           if (!isEligibleBase(r)) return false;
           if (!(r['Admin Approved Multi-State'] && r['Ships Nationwide'])) return false;
