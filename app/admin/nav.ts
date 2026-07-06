@@ -51,6 +51,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
 
   // GROWTH — broadcast/affiliates/campaigns admin-only; analytics+funnel open to ads
   { group: 'GROWTH', icon: '📢', label: 'Broadcast', href: '/admin/broadcast' },
+  { group: 'GROWTH', icon: '🥩', label: 'Product Links', href: '/admin/products' },
   { group: 'GROWTH', icon: '📣', label: 'Campaigns', href: '/admin/campaigns' },
   { group: 'GROWTH', icon: '🤝', label: 'Affiliates', href: '/admin/affiliates' },
   {
