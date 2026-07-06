@@ -28,6 +28,7 @@ import {
   TABLES,
 } from '@/lib/airtable';
 import { settleBuyerDeposit, settleFinalInvoice, isPermanentSettlementError } from '@/lib/stripeSettlement';
+import { settleProductPurchase } from '@/lib/productSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { sendEmail } from '@/lib/email';
@@ -396,6 +397,23 @@ export async function POST(request: Request) {
       case 'payment_intent.succeeded': {
         const pi = event?.data?.object;
         const metaType = pi?.metadata?.type;
+        // LOW-TICKET PRODUCT sale (2026-07-06). No referralId — it's a direct
+        // product purchase. Money already split by Stripe; settle records the
+        // order + notifies. 5xx-on-transient so Stripe redelivers (settle is
+        // idempotent via claimOnce + existing-order lookup); permanent → 200.
+        if (metaType === 'product_purchase') {
+          try {
+            await settleProductPurchase(pi);
+          } catch (e: any) {
+            console.error('[stripe-connect] product_purchase settlement failed:', e);
+            await flipStripeEventFailed(event.id, e?.message || 'unknown').catch(() => {});
+            if (isPermanentSettlementError(e)) {
+              return NextResponse.json({ received: true, permanent: true });
+            }
+            return NextResponse.json({ error: 'product settlement failed' }, { status: 500 });
+          }
+          break;
+        }
         if (metaType !== 'buyer_deposit' && metaType !== 'final_invoice') break;
         const referralId = String(pi?.metadata?.referralId || '');
         if (!referralId) break;

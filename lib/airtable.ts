@@ -45,6 +45,13 @@ export const TABLES = {
   // best-effort click log fired by /go/product/[id] before the outbound 302.
   RECOMMENDED_PRODUCTS: 'Recommended Products',
   GEAR_CLICKS: 'Gear Clicks',
+  // Low-ticket rancher products (jerky/sticks/boxes) + their orders — the
+  // ship-nationwide, low-resistance offer. RANCHER_PRODUCTS = catalog (Display
+  // Price = buyer pays, Rancher Base = rancher nets, spread = BHC margin skimmed
+  // as the Stripe application fee, same money model as the deposit).
+  // RANCHER_ORDERS = created by the product-purchase webhook.
+  RANCHER_PRODUCTS: 'Rancher Products',
+  RANCHER_ORDERS: 'Rancher Orders',
 };
 
 // Escape a string value for use in Airtable filterByFormula to prevent injection
