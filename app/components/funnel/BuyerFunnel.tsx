@@ -545,12 +545,24 @@ export default function BuyerFunnel({
 
         {/* ── STEP 1 — SIZE ────────────────────────────────────────────────── */}
         {stepKey === 'size' && (
-          <CardGrid
-            options={SIZE_OPTIONS}
-            selected={tier}
-            flashing={flashing}
-            onSelect={(v) => selectAndAdvance(setTier, v, 'size')}
-          />
+          <>
+            <CardGrid
+              options={SIZE_OPTIONS}
+              selected={tier}
+              flashing={flashing}
+              onSelect={(v) => selectAndAdvance(setTier, v, 'size')}
+            />
+            {/* Low-ticket escape — the $1k+ size ask is the funnel's biggest
+                balk point; a balk becomes a /shop sale instead of a bounce.
+                Deliberately a de-emphasized text link (not a fifth card) so it
+                never competes with the share choice — the share is the anchor. */}
+            <p className="mt-4 text-center text-sm text-saddle">
+              not ready for a whole share?{' '}
+              <a href="/shop" className="underline hover:text-charcoal transition-colors">
+                try a box or jerky first &rarr;
+              </a>
+            </p>
+          </>
         )}
 
         {/* ── STEP 2 — TIMING ──────────────────────────────────────────────── */}
@@ -696,6 +708,17 @@ export default function BuyerFunnel({
               disabled={submitting}
               onSelect={(v) => submitStorage(v)}
             />
+            {/* Freezer objection → help, not a dead end. Always-visible helper
+                (selecting an option auto-submits, so there's no moment to show
+                per-option copy): "need freezer space" is the biggest high-ticket
+                objection — answer it with the rancher-holds option that's
+                already on this screen + the chest freezer on /gear. */}
+            <p className="text-center text-sm text-saddle">
+              no freezer? your rancher can hold it in batches — or grab the chest freezer ben uses on{' '}
+              <a href="/gear" className="underline hover:text-charcoal transition-colors">
+                the gear page &rarr;
+              </a>
+            </p>
             {submitting && (
               <p className="text-center text-sm text-saddle">Locking in your match…</p>
             )}
@@ -1070,6 +1093,15 @@ function Reveal({
                 See who ships nationwide &rarr;
               </a>
             </div>
+            {/* Low-ticket escape on the NON-deposit reveal only (the deposit
+                reveal never gets this — no downsell at the peak money moment).
+                A waitlisted buyer can taste the beef today while they wait. */}
+            <p className="mt-4 text-center text-sm text-saddle">
+              or start smaller while you wait — {' '}
+              <a href="/shop" className="underline hover:text-charcoal transition-colors">
+                jerky &amp; boxes, shipped &rarr;
+              </a>
+            </p>
           </div>
         </div>
       )}
