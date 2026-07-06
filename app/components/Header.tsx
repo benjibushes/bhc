@@ -15,6 +15,7 @@ const HATS_NAV_URL =
 const NAV_LINKS = [
   { href: '/map', label: 'Map' },
   { href: '/ranchers', label: 'Ranchers' },
+  { href: '/shop', label: 'Shop' },
   { href: '/sell', label: 'Sell Your Beef' },
   { href: '/wins', label: 'Wins' },
   { href: '/founders', label: 'Founders' },
@@ -28,7 +29,7 @@ const NAV_LINKS = [
 // Desktop top-level nav — trimmed to the 6 highest-intent destinations so the
 // bar doesn't wrap/overflow before the CTAs. The rest (Brands, Wholesale,
 // About, Wins) stay reachable in the mobile menu + the site footer.
-const PRIMARY_NAV_LABELS = new Set(['Map', 'Ranchers', 'Sell Your Beef', 'Founders', 'Hats', 'FAQ']);
+const PRIMARY_NAV_LABELS = new Set(['Map', 'Ranchers', 'Shop', 'Sell Your Beef', 'Founders', 'Hats']);
 const PRIMARY_NAV_LINKS = NAV_LINKS.filter((l) => PRIMARY_NAV_LABELS.has(l.label));
 
 export default function Header() {
