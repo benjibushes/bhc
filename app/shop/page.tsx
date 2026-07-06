@@ -24,6 +24,8 @@ interface Prod {
   base: number;
   weight: string;
   shelfStable: boolean;
+  image: string;
+  description: string;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -46,6 +48,8 @@ async function loadProducts(): Promise<Prod[]> {
       base: Number(r['Rancher Base'] || 0),
       weight: String(r['Weight / Size'] || ''),
       shelfStable: !!r['Shelf Stable'],
+      image: String(r['Image URL'] || ''),
+      description: String(r['Description'] || ''),
     }))
     .sort((a, b) => a.price - b.price);
 }
@@ -57,19 +61,31 @@ const RUNGS: { key: string; title: string; sub: string; tiers: string[] }[] = [
 ];
 
 function Card({ p }: { p: Prod }) {
+  const href = `/shop/${p.id}`;
   return (
-    <div style={{ background: '#fff', border: '1px solid #A7A29A', padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div>
-        <div style={{ fontFamily: 'Georgia,serif', fontSize: 18, lineHeight: 1.2 }}>{p.name}</div>
-        <div style={{ fontSize: 12.5, color: '#6B4F3F', marginTop: 2 }}>
-          {p.rancher}{p.weight ? ` · ${p.weight}` : ''}
+    <div style={{ background: '#fff', border: '1px solid #A7A29A', display: 'flex', flexDirection: 'column' }}>
+      {p.image ? (
+        <Link href={href} style={{ display: 'block', aspectRatio: '4 / 3', overflow: 'hidden', background: '#EAE6DE' }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={p.image} alt={p.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        </Link>
+      ) : null}
+      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
+        <div>
+          <Link href={href} style={{ fontFamily: 'Georgia,serif', fontSize: 18, lineHeight: 1.2, color: '#17130E', textDecoration: 'none' }}>{p.name}</Link>
+          <div style={{ fontSize: 12.5, color: '#6B4F3F', marginTop: 2 }}>
+            {p.rancher}{p.weight ? ` · ${p.weight}` : ''}
+          </div>
         </div>
-      </div>
-      <div style={{ fontSize: 12, color: '#55603F' }}>
-        {p.shelfStable ? 'shelf-stable · ships anywhere' : 'ships frozen, nationwide'}
-      </div>
-      <div style={{ marginTop: 'auto' }}>
-        <BuyButton productId={p.id} price={p.price} />
+        {p.description ? (
+          <p style={{ fontSize: 13, color: '#3D362D', lineHeight: 1.45, margin: 0 }}>{p.description}</p>
+        ) : null}
+        <div style={{ fontSize: 12, color: '#55603F' }}>
+          {p.shelfStable ? 'shelf-stable · ships anywhere' : 'ships frozen, nationwide'}
+        </div>
+        <div style={{ marginTop: 'auto', paddingTop: 4 }}>
+          <BuyButton productId={p.id} price={p.price} />
+        </div>
       </div>
     </div>
   );
