@@ -21,7 +21,12 @@ import { usePathname } from 'next/navigation';
 // full marketing site (nav exit-links, footer, hat-merch promo bar) at the peak
 // deposit-anxiety moment. Un-sealing it is exactly the pattern that tanked
 // completion to 4.8% (see the demand-funnel history above).
-const FOCUSED_PREFIXES = ['/qualify', '/access', '/book', '/checkout'];
+// '/shop/checkout' + '/order' are the LOW-TICKET money step (2026-07-06) — the
+// product-marketplace checkout + post-purchase pages. Sealed for the SAME reason:
+// a cold Meta buyer one tap from paying must not see 8+ nav exits + a Hats promo
+// bar. NOTE: '/shop' (the marketplace browse) is deliberately NOT sealed — it
+// keeps its nav; only the checkout + order-outcome pages seal.
+const FOCUSED_PREFIXES = ['/qualify', '/access', '/book', '/checkout', '/shop/checkout', '/order'];
 
 export function isFocusedRoute(pathname: string | null | undefined): boolean {
   const p = pathname || '';
