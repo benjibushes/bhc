@@ -19,6 +19,7 @@ import {
   type ActivityEvent,
   type CrmReferral,
 } from '@/lib/rancherCrm';
+import ProductsTab from './ProductsTab';
 
 interface RancherInfo {
   id: string;
@@ -188,7 +189,7 @@ interface NetworkBenefit {
 // 'marketing'/'earnings'/'benefits' stay reachable under the secondary "More"
 // affordance. SLICE F: the legacy 'overview' tab is gone — it duplicated
 // Home/Deals; its capacity + pause controls live in Home's Buyer slots card.
-type Tab = 'home' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers';
+type Tab = 'home' | 'referrals' | 'marketing' | 'earnings' | 'benefits' | 'my_page' | 'customers' | 'products';
 
 // WAVE 3a (2026-06-30): localStorage key for activity-feed read-state. No
 // Airtable field exists for per-rancher read receipts, so mark-as-read is
@@ -1694,6 +1695,9 @@ export default function RancherDashboardPage() {
     { key: 'home', label: 'Home' },
     { key: 'referrals', label: `Deals${activeRefs.length > 0 ? ` (${activeRefs.length})` : ''}` },
     { key: 'customers', label: `Customers${customersList.length > 0 ? ` (${customersList.length})` : ''}` },
+    // Products — the self-serve marketplace rail (journey overhaul Phase 6).
+    // A revenue surface, so it earns a primary spine slot, not the More drawer.
+    { key: 'products', label: 'Products' },
     { key: 'my_page', label: 'My Page' },
   ];
   const moreTabs: { key: Tab; label: string }[] = [
@@ -2494,6 +2498,17 @@ export default function RancherDashboardPage() {
               onGoToDeals={() => setActiveTab('referrals')}
               onGoToMyPage={() => setActiveTab('my_page')}
               slotsPanel={buyerSlotsPanel}
+            />
+          )}
+
+          {/* Products Tab — rancher self-serve marketplace products (journey
+              overhaul Phase 6). Connect-active gate lives inside the component;
+              depositEligible is the exact same tier_v2+Connect-active check the
+              product checkout enforces server-side. */}
+          {activeTab === 'products' && (
+            <ProductsTab
+              connectActive={depositEligible}
+              onGoToMyPage={() => setActiveTab('my_page')}
             />
           )}
 

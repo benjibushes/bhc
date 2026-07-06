@@ -1,0 +1,164 @@
+// lib/rancherProductInput.ts
+//
+// Pure pricing + validation for the rancher self-serve product rail (journey
+// overhaul Phase 6). A Connect-active rancher enters the RETAIL price (what
+// the buyer pays = Display Price); we derive their net (Rancher Base) by
+// subtracting the standard category margin, and the UI shows "you net $X ·
+// buyhalfcow's cut $Y" transparently. The margin is skimmed at checkout as the
+// Stripe application_fee (Display − Base) by the EXISTING checkout path —
+// nothing here touches money movement; this module only decides the numbers
+// that get written onto the Rancher Products row.
+//
+// LOAD-BEARING INVARIANT (mirrors isSellableRow in lib/marketplaceProducts):
+//   0 < Rancher Base <= Display Price
+// A self-served product must never mint a negative-margin or free row.
+
+// Canonical Category values — must match the `categories` arrays inside
+// MARKETPLACE_GROUPS (lib/marketplaceProducts.ts) so a new product buckets
+// into a browse section instead of falling through to "more from the ranch".
+export const PRODUCT_CATEGORIES = [
+  'Jerky',
+  'Snack Sticks',
+  'Sampler Box',
+  'Bundle',
+  'Ground Box',
+  'Eighth Share',
+] as const;
+
+// Margin tiering (founder-approved 2026-07-04: "whatever protects my margin"):
+// impulse/shelf-stable items carry 20%, frozen boxes/bundles/shares 15%.
+export const MARGIN_BY_CATEGORY: Record<string, number> = {
+  Jerky: 0.2,
+  'Snack Sticks': 0.2,
+  'Sampler Box': 0.15,
+  Bundle: 0.15,
+  'Ground Box': 0.15,
+  'Eighth Share': 0.15,
+};
+const DEFAULT_MARGIN = 0.15;
+
+// $5 floor — below this, Stripe's fixed fee eats the margin and the row reads
+// as a data-entry mistake, not a product.
+export const MIN_PRODUCT_PRICE_CENTS = 500;
+
+export interface ProductPricing {
+  displayCents: number;
+  baseCents: number;
+  marginCents: number;
+  marginRate: number;
+}
+
+/**
+ * Derive the rancher's net from the retail price via the category margin.
+ * Base is rounded (not floored) then clamped so the sellability invariant
+ * holds at any cent value; margin is the exact remainder so cents reconcile.
+ */
+export function deriveProductPricing({
+  displayCents,
+  category,
+}: {
+  displayCents: number;
+  category: string;
+}): ProductPricing {
+  const marginRate = MARGIN_BY_CATEGORY[category] ?? DEFAULT_MARGIN;
+  let baseCents = Math.round(displayCents * (1 - marginRate));
+  // Clamp into the invariant: 0 < base <= display.
+  if (baseCents < 1) baseCents = 1;
+  if (baseCents > displayCents) baseCents = displayCents;
+  return {
+    displayCents,
+    baseCents,
+    marginCents: displayCents - baseCents,
+    marginRate,
+  };
+}
+
+// Cloud-share links (Drive/Dropbox/OneDrive) render as HTML pages, not images —
+// they'd show as broken photos to paid traffic. Same rejection rule the
+// landing-page editor applies to gallery photos.
+function isUsableImageUrl(u: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(u);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+  const s = u.toLowerCase();
+  return !(
+    s.includes('drive.google.com') ||
+    s.includes('docs.google.com') ||
+    s.includes('dropbox.com') ||
+    s.includes('1drv.ms') ||
+    s.includes('onedrive.live.com') ||
+    s.includes('icloud.com')
+  );
+}
+
+export interface ProductInput {
+  name?: string;
+  displayPrice?: number; // dollars, as typed by the rancher
+  category?: string;
+  description?: string;
+  weight?: string;
+  imageUrl?: string;
+  shipsNationwide?: boolean;
+  shelfStable?: boolean;
+}
+
+export type ValidatedProduct =
+  | {
+      ok: true;
+      /** Airtable-ready field patch (pricing fields NOT included — the route
+       *  derives + stamps those from displayCents so they can never disagree
+       *  with the margin math). */
+      fields: Record<string, string | number | boolean>;
+      displayCents: number;
+    }
+  | { ok: false; error: string };
+
+/** Normalize + validate a rancher's product submission. Pure. */
+export function validateProductInput(body: ProductInput): ValidatedProduct {
+  const name = String(body.name || '').trim();
+  if (!name) return { ok: false, error: 'give the product a name.' };
+  if (name.length > 80) return { ok: false, error: 'name is too long (80 characters max).' };
+
+  const price = Number(body.displayPrice);
+  if (!Number.isFinite(price)) return { ok: false, error: 'enter a price.' };
+  const displayCents = Math.round(price * 100);
+  if (displayCents < MIN_PRODUCT_PRICE_CENTS) {
+    return { ok: false, error: 'price must be at least $5.' };
+  }
+
+  const category = String(body.category || '').trim();
+  if (!(PRODUCT_CATEGORIES as readonly string[]).includes(category)) {
+    return { ok: false, error: 'pick a category.' };
+  }
+
+  const description = String(body.description || '').trim();
+  if (description.length > 1000) return { ok: false, error: 'description is too long (1000 max).' };
+
+  const weight = String(body.weight || '').trim();
+  if (weight.length > 60) return { ok: false, error: 'weight/size is too long (60 max).' };
+
+  const imageUrl = String(body.imageUrl || '').trim();
+  if (imageUrl && !isUsableImageUrl(imageUrl)) {
+    return {
+      ok: false,
+      error: 'that image link won’t render as a photo — upload the image itself (no Drive/Dropbox share links).',
+    };
+  }
+
+  const fields: Record<string, string | number | boolean> = {
+    'Product Name': name,
+    'Display Price': displayCents / 100,
+    Category: category,
+    Description: description,
+    'Weight / Size': weight,
+    'Image URL': imageUrl,
+    'Ships Nationwide': body.shipsNationwide === false ? false : true,
+    'Shelf Stable': !!body.shelfStable,
+  };
+
+  return { ok: true, fields, displayCents };
+}
