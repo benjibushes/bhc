@@ -31,7 +31,7 @@ import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { generateMemberLoginToken } from '@/lib/secrets';
-import { selectDepositNudges } from '@/lib/depositRequestNudge';
+import { selectDepositNudges, selectDepositAbandonNudges } from '@/lib/depositRequestNudge';
 
 export const maxDuration = 120;
 
@@ -48,6 +48,13 @@ interface CronResult {
 // everything JS-side, so the formula is purely an I/O optimization.
 const CANDIDATE_FORMULA =
   `AND({Status}="Awaiting Payment", NOT({Deposit Requested At}=""), {Deposit Paid At}="")`;
+
+// DEPOSIT-ABANDON RAIL (2026-07-05): quiz-complete deposit invites (Deposit
+// Invite Sent At set) that were never paid and aren't past the deposit ask.
+// Disjoint from the rancher-request rail via the empty Deposit Requested At
+// clause; the JS selector re-checks age/cap/cooldown/terminal-status.
+const ABANDON_CANDIDATE_FORMULA =
+  `AND(NOT({Deposit Invite Sent At}=""), {Deposit Requested At}="", {Deposit Paid At}="")`;
 
 async function realHandler(_request: Request): Promise<CronResult> {
   if (isMaintenanceMode()) {
@@ -69,7 +76,32 @@ async function realHandler(_request: Request): Promise<CronResult> {
     }
   }
 
-  const selected = selectDepositNudges(candidates, { nowMs, batchCap: 25 });
+  // Rail B — deposit-abandon (quiz-complete invites unpaid). Best-effort: a
+  // read failure here must NOT sink the rancher-request rail above.
+  let abandonCandidates: any[] = [];
+  try {
+    abandonCandidates = (await getAllRecords(TABLES.REFERRALS, ABANDON_CANDIDATE_FORMULA)) as any[];
+  } catch (e: any) {
+    if (isInvalidFilterFormulaError(e)) {
+      console.warn('[deposit-request-nudge] abandon formula rejected; falling back to full scan');
+      abandonCandidates = (await getAllRecords(TABLES.REFERRALS)) as any[];
+    } else {
+      console.warn('[deposit-request-nudge] abandon read failed (non-fatal):', e?.message);
+      abandonCandidates = [];
+    }
+  }
+
+  // Merge both rails, dedupe by id (the two selectors are disjoint by design,
+  // but dedupe is cheap insurance), total capped so one run never floods.
+  const railA = selectDepositNudges(candidates, { nowMs, batchCap: 25 });
+  const railB = selectDepositAbandonNudges(abandonCandidates, { nowMs, batchCap: 25 });
+  const seen = new Set<string>();
+  const selected = [...railA, ...railB].filter((r) => {
+    const id = String(r.id || '');
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  }).slice(0, 25);
 
   let sent = 0;
   let suppressed = 0;
@@ -146,7 +178,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
       urgency: 'normal',
       kind: 'other',
       summary: `deposit-request-nudge: ${sent} buyer nudge${sent === 1 ? '' : 's'} sent`,
-      detail: `candidates=${candidates.length} selected=${selected.length} sent=${sent} suppressed=${suppressed} errs=${errors.length}`,
+      detail: `request=${candidates.length} abandon=${abandonCandidates.length} selected=${selected.length} sent=${sent} suppressed=${suppressed} errs=${errors.length}`,
       dedupeKey: 'deposit-request-nudge-summary',
       dedupeWindowMs: 6 * 60 * 60 * 1000,
     }).catch(() => {});

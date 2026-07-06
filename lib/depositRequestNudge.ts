@@ -103,3 +103,70 @@ export function selectDepositNudges<T extends DepositNudgeReferralLike>(
     .sort((a, b) => (parseMs(a['Deposit Requested At']) ?? 0) - (parseMs(b['Deposit Requested At']) ?? 0))
     .slice(0, cap);
 }
+
+// ── DEPOSIT-ABANDON RAIL (2026-07-05) ────────────────────────────────────────
+// The rancher-request rail above only fires when a RANCHER hit "request
+// deposit" (Deposit Requested At set). But a quiz-complete buyer routed to a
+// deposit-capable rancher gets a deposit link too — sendQuizCompleteDepositInvite
+// stamps 'Deposit Invite Sent At' — and if they don't pay, NOTHING chased them.
+// That's the "abandoned cart" of the funnel (the single highest-ROI trigger in
+// the research). Same copy, same caps, same claim-before-send; only the entry
+// signal differs. Deliberately mutually exclusive with the rail above
+// (requires Deposit Requested At EMPTY) so a referral is never double-nudged.
+//
+// Terminal statuses stop the nudge: a paid, accepted (Slot Locked), or closed
+// referral is done. Denylist (not allowlist) so a new mid-funnel status can't
+// silently strand a buyer.
+
+// Statuses that mean "stop nudging — the deal moved past the deposit ask."
+const ABANDON_STOP_STATUSES = new Set(['Closed Won', 'Closed Lost', 'Slot Locked']);
+
+/**
+ * Pure per-row predicate for the deposit-ABANDON rail: a quiz-complete deposit
+ * invite that was sent, never paid, and isn't terminal. Shares the same cap +
+ * cooldown fields as the rancher-request rail so a referral that somehow
+ * qualifies for both is still capped once.
+ */
+export function isDepositAbandonEligible(
+  r: DepositNudgeReferralLike,
+  nowMs: number,
+): boolean {
+  // Must be a quiz-complete invite (invite stamp set) — and NOT a rancher
+  // request (that's the other rail; keeps the two disjoint).
+  const invitedMs = parseMs(r['Deposit Invite Sent At']);
+  if (invitedMs === null) return false;
+  if (String(r['Deposit Requested At'] || '').trim()) return false;
+
+  // Unpaid + not past the deposit ask.
+  if (String(r['Deposit Paid At'] || '').trim()) return false;
+  if (ABANDON_STOP_STATUSES.has(statusName(r['Status']))) return false;
+
+  // Give the original invite 24h before the first nudge.
+  if (nowMs - invitedMs < DEPOSIT_NUDGE_MIN_AGE_MS) return false;
+
+  // Shared lifetime cap: 2 buyer nudges, then silence.
+  if (nudgeCount(r) >= DEPOSIT_NUDGE_LIFETIME_CAP) return false;
+
+  // Shared cooldown. Corrupt stamp => treat as recent (skip) — no nudge storm.
+  const lastRaw = String(r['Deposit Nudge Last Sent At'] || '').trim();
+  if (lastRaw) {
+    const lastMs = Date.parse(lastRaw);
+    if (!Number.isFinite(lastMs)) return false;
+    if (nowMs - lastMs < DEPOSIT_NUDGE_COOLDOWN_MS) return false;
+  }
+
+  return true;
+}
+
+/** Select deposit-abandon referrals to nudge this run — oldest invite first. */
+export function selectDepositAbandonNudges<T extends DepositNudgeReferralLike>(
+  referrals: T[],
+  opts: { nowMs: number; batchCap?: number },
+): T[] {
+  const cap = Math.floor(opts.batchCap ?? 25);
+  if (!Array.isArray(referrals) || referrals.length === 0 || cap <= 0) return [];
+  return referrals
+    .filter((r) => isDepositAbandonEligible(r, opts.nowMs))
+    .sort((a, b) => (parseMs(a['Deposit Invite Sent At']) ?? 0) - (parseMs(b['Deposit Invite Sent At']) ?? 0))
+    .slice(0, cap);
+}

@@ -472,6 +472,18 @@ export async function POST(request: Request) {
             depositAmount,
             nextProcessingDate: suggestedRancher?.nextProcessingDate || '',
           });
+          // DEPOSIT-ABANDON RAIL (2026-07-05): stamp the invite so the
+          // deposit-request-nudge cron chases this quiz-complete buyer if they
+          // don't pay. Fire-and-forget — a stamp failure must never block the
+          // qualify response or the (already-sent) email. Only stamps when the
+          // invite actually went out (inside the success path).
+          if (referralId) {
+            updateRecord(TABLES.REFERRALS, referralId, {
+              'Deposit Invite Sent At': new Date().toISOString(),
+            }).catch((e: any) =>
+              console.warn('[/api/qualify] deposit-invite stamp failed (non-fatal):', e?.message),
+            );
+          }
         } catch (e: any) {
           console.warn('[/api/qualify] deposit invite fire failed:', e?.message);
         }
