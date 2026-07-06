@@ -17,6 +17,10 @@ import { getRecordById, TABLES } from '@/lib/airtable';
 import BuyButton from '../BuyButton';
 import ProductImage from '../ProductImage';
 import ProductViewTracker from './ProductViewTracker';
+import Container from '../../components/Container';
+import Card from '../../components/Card';
+import Button from '../../components/Button';
+import PriceTag from '../../components/PriceTag';
 
 export const revalidate = 300;
 
@@ -142,69 +146,83 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       : null;
 
   return (
-    <main style={{ background: '#F4F1EC', minHeight: '100vh', padding: '32px 20px 56px', fontFamily: '-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif', color: '#17130E' }}>
+    <main className="min-h-screen bg-bone text-charcoal pt-8 pb-14">
       {jsonLd ? (
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       ) : null}
       <ProductViewTracker productId={p.id} name={p.name} price={p.price} />
 
-      <div style={{ maxWidth: 860, margin: '0 auto' }}>
-        <Link href="/shop" style={{ fontSize: 13.5, color: '#6B4F3F', textDecoration: 'none' }}>&larr; all products</Link>
+      <Container>
+        <div className="max-w-[860px] mx-auto">
+          <Link href="/shop" className="text-[13.5px] text-saddle hover:text-charcoal transition-colors">
+            &larr; all products
+          </Link>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 28, marginTop: 18, alignItems: 'start' }}>
-          {/* Photo */}
-          <div style={{ background: '#EAE6DE', border: '1px solid #A7A29A', aspectRatio: '1 / 1', overflow: 'hidden' }}>
-            <ProductImage src={p.image} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-7 mt-4 items-start">
+            {/* Photo — locked to a square frame on a bone-deep placeholder so
+                uneven rancher uploads still present cleanly. */}
+            <div className="bg-bone-deep border border-dust aspect-square overflow-hidden">
+              <ProductImage src={p.image} alt={p.name} className="w-full h-full object-cover block" />
+            </div>
+
+            {/* Story + Buy */}
+            <div className="flex flex-col gap-3.5">
+              <div>
+                <h1 className="font-serif text-[clamp(26px,5vw,34px)] leading-tight mb-1">{p.name}</h1>
+                <div className="text-sm text-saddle">
+                  {p.rancherSlug ? (
+                    <Link href={`/ranchers/${p.rancherSlug}`} className="underline hover:text-charcoal transition-colors">
+                      {p.rancher}
+                    </Link>
+                  ) : (
+                    p.rancher
+                  )}
+                  <span className="text-sage"> · verified ranch{p.rancherState ? ` · ${p.rancherState}` : ''}</span>
+                  {p.weight ? ` · ${p.weight}` : ''}
+                </div>
+              </div>
+
+              <PriceTag amount={p.price} size="lg" />
+
+              {p.description ? (
+                <p className="text-[15.5px] text-charcoal/85 leading-relaxed m-0">{p.description}</p>
+              ) : null}
+
+              <div className="text-[13px] text-sage">
+                {p.shelfStable
+                  ? 'shelf-stable · ships free, no freezer needed'
+                  : 'ships frozen, direct from the ranch · shipping included, nationwide'}
+              </div>
+
+              <div className="mt-1">
+                <BuyButton productId={p.id} price={p.price} />
+              </div>
+
+              <p className="text-[12.5px] text-saddle leading-relaxed mt-0.5">
+                the price you see is the price you pay — shipping included. checkout secured by
+                Stripe. questions? reply to your receipt — a real person answers. &mdash; Ben
+              </p>
+            </div>
           </div>
 
-          {/* Story + Buy */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div>
-              <h1 style={{ fontFamily: 'Georgia,serif', fontSize: 'clamp(26px,5vw,34px)', margin: '0 0 4px', lineHeight: 1.15 }}>{p.name}</h1>
-              <div style={{ fontSize: 14, color: '#6B4F3F' }}>
-                {p.rancherSlug ? (
-                  <Link href={`/ranchers/${p.rancherSlug}`} style={{ color: '#6B4F3F', textDecoration: 'underline' }}>{p.rancher}</Link>
-                ) : (
-                  p.rancher
-                )}
-                <span style={{ color: '#55603F' }}> · verified ranch{p.rancherState ? ` · ${p.rancherState}` : ''}</span>
-                {p.weight ? ` · ${p.weight}` : ''}
+          {/* Anchor on the share — below the fold, a rung UP, de-emphasized CTA. */}
+          <Card
+            variant="warm"
+            padding="sm"
+            className="border-l-2 border-l-sage mt-9 flex items-center gap-4 flex-wrap"
+          >
+            <div className="flex-1 min-w-[220px]">
+              <div className="font-serif text-[17px]">ready for a freezer-fill?</div>
+              <div className="text-[13px] text-charcoal/80">
+                a half or whole share is the best price per pound — one animal, one ranch, all year.
               </div>
             </div>
-
-            <div style={{ fontFamily: 'Georgia,serif', fontSize: 26 }}>${p.price.toFixed(2)}</div>
-
-            {p.description ? (
-              <p style={{ fontSize: 15.5, color: '#3D362D', lineHeight: 1.55, margin: 0 }}>{p.description}</p>
-            ) : null}
-
-            <div style={{ fontSize: 13, color: '#55603F' }}>
-              {p.shelfStable
-                ? 'shelf-stable · ships free, no freezer needed'
-                : 'ships frozen, direct from the ranch · shipping included, nationwide'}
-            </div>
-
-            <div style={{ marginTop: 4 }}>
-              <BuyButton productId={p.id} price={p.price} />
-            </div>
-
-            <p style={{ fontSize: 12.5, color: '#6B4F3F', margin: '2px 0 0', lineHeight: 1.55 }}>
-              the price you see is the price you pay — shipping included. checkout secured by Stripe. questions? reply to your receipt — a real person answers. &mdash; Ben
-            </p>
-          </div>
+            <Button href="/map" variant="secondary" size="sm">
+              find a ranch &rarr;
+            </Button>
+          </Card>
         </div>
-
-        {/* Anchor on the share — below the fold, a rung UP, de-emphasized CTA. */}
-        <div style={{ background: '#E6E9DC', borderLeft: '3px solid #55603F', padding: '14px 18px', marginTop: 36, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ fontFamily: 'Georgia,serif', fontSize: 17 }}>ready for a freezer-fill?</div>
-            <div style={{ fontSize: 13, color: '#3D362D' }}>a half or whole share is the best price per pound — one animal, one ranch, all year.</div>
-          </div>
-          <Link href="/map" style={{ padding: '9px 18px', background: 'transparent', color: '#17130E', textDecoration: 'none', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', border: '1.5px solid #55603F' }}>
-            find a ranch &rarr;
-          </Link>
-        </div>
-      </div>
+      </Container>
     </main>
   );
 }

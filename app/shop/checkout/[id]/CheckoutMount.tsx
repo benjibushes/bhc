@@ -61,9 +61,11 @@ export default function CheckoutMount({ productId }: { productId: string }) {
 
   if (err) {
     return (
-      <div style={{ background: '#fff', border: '1px solid #A7A29A', padding: 20 }}>
-        <p style={{ color: '#8C3A2B', fontSize: 14, margin: '0 0 12px' }}>{err}</p>
-        <Link href="/shop" style={{ fontSize: 14, fontWeight: 600, color: '#17130E' }}>&larr; back to the shop</Link>
+      <div className="bg-bone border border-dust p-5">
+        <p className="text-weathered text-sm mb-3">{err}</p>
+        <Link href="/shop" className="text-sm font-semibold text-charcoal underline underline-offset-4">
+          &larr; back to the shop
+        </Link>
       </div>
     );
   }
@@ -71,13 +73,17 @@ export default function CheckoutMount({ productId }: { productId: string }) {
   if (stripePromise && clientSecret) {
     return (
       <>
-        <div style={{ background: '#fff', border: '1px solid #A7A29A', padding: 4 }}>
+        <div className="bg-white border border-dust p-1">
           <EmbeddedCheckoutProvider stripe={stripePromise} options={{ fetchClientSecret }}>
             <EmbeddedCheckout />
           </EmbeddedCheckoutProvider>
         </div>
-        <p style={{ fontSize: 12.5, color: '#6B4F3F', marginTop: 12, textAlign: 'center' }}>
-          changed your mind? <Link href="/shop" style={{ color: '#6B4F3F' }}>&larr; back to shop</Link> — no charge until you finish.
+        <p className="text-xs text-saddle mt-3 text-center">
+          changed your mind?{' '}
+          <Link href="/shop" className="underline hover:text-charcoal transition-colors">
+            &larr; back to shop
+          </Link>{' '}
+          — no charge until you finish.
         </p>
       </>
     );
@@ -85,11 +91,11 @@ export default function CheckoutMount({ productId }: { productId: string }) {
 
   // Live skeleton — reads as "working", not "broken", from the first paint.
   return (
-    <div style={{ background: '#fff', border: '1px solid #A7A29A', padding: 20 }}>
-      <div style={{ color: '#6B4F3F', fontSize: 14, marginBottom: 16 }}>securing your checkout&hellip;</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="bg-bone border border-dust p-5">
+      <div className="text-saddle text-sm mb-4">securing your checkout&hellip;</div>
+      <div className="flex flex-col gap-3">
         {[92, 100, 70, 100, 55].map((w, i) => (
-          <div key={i} style={{ height: 12, width: `${w}%`, background: '#EAE6DE', borderRadius: 3 }} />
+          <div key={i} className="h-3 bg-bone-deep rounded-[3px]" style={{ width: `${w}%` }} />
         ))}
       </div>
     </div>
