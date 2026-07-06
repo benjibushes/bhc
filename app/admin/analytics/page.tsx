@@ -19,7 +19,9 @@ interface CampaignStats {
 interface SourceRow {
   source: string;
   signups: number;
+  qualified?: number;       // slice 4: quiz-passers
   matches: number;
+  depositsPaid?: number;    // slice 4: real tier_v2 money
   closes: number;
   commissionDue: number;
   saleRevenue?: number;
@@ -28,6 +30,10 @@ interface SourceRow {
   roas?: number | null;
   // sale $ / spend (standard marketing ROAS)
   gmvRoas?: number | null;
+  // slice 4 funnel-quality rates
+  qualifiedRate?: number | null;
+  payRate?: number | null;
+  qualifiedToPaidRate?: number | null;
 }
 
 interface AnalyticsData {
@@ -490,7 +496,10 @@ export default function AnalyticsPage() {
                       <tr className="border-b border-dust bg-bone">
                         <th className="text-left p-4 font-medium">Source</th>
                         <th className="text-right p-4 font-medium">Signups</th>
+                        <th className="text-right p-4 font-medium" title="Quiz-passers ÷ signups — does this source send people who qualify at all? (top-of-funnel quality)">Qual %</th>
                         <th className="text-right p-4 font-medium">Matches</th>
+                        <th className="text-right p-4 font-medium" title="Paid deposits — real tier_v2 money from this source (the truest 'this source pays' signal)">Deposits</th>
+                        <th className="text-right p-4 font-medium" title="Paid deposits ÷ signups — end-to-end signup→money. Compare with Qual % to see WHERE a source leaks (top vs middle).">Pay %</th>
                         <th className="text-right p-4 font-medium">Closes</th>
                         <th className="text-right p-4 font-medium">Commission $</th>
                         <th className="text-right p-4 font-medium">Spend</th>
@@ -505,7 +514,10 @@ export default function AnalyticsPage() {
                           <tr key={idx} className="border-b border-dust hover:bg-bone">
                             <td className="p-4 font-medium">{s.source}</td>
                             <td className="p-4 text-right">{s.signups}</td>
+                            <td className="p-4 text-right text-sm text-saddle">{s.qualifiedRate != null ? formatPercent(s.qualifiedRate) : '—'}</td>
                             <td className="p-4 text-right">{s.matches}</td>
+                            <td className="p-4 text-right font-semibold">{s.depositsPaid ?? 0}</td>
+                            <td className="p-4 text-right text-sm">{s.payRate != null ? <span className={(s.payRate || 0) > 0 ? 'text-sage-dark font-semibold' : 'text-saddle'}>{formatPercent(s.payRate)}</span> : <span className="text-dust">—</span>}</td>
                             <td className="p-4 text-right">{s.closes}</td>
                             <td className="p-4 text-right font-semibold">{formatCurrency(s.commissionDue)}</td>
                             <td className="p-4 text-right text-saddle">{s.spend ? formatCurrency(s.spend) : '—'}</td>

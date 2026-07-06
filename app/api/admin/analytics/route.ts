@@ -3,6 +3,7 @@ import { getAllRecords } from '@/lib/airtable';
 import { TABLES } from '@/lib/airtable';
 import { requireRole } from '@/lib/adminAuth';
 import { getSpendInRange } from '@/lib/adSpend';
+import { sourceQualityRates } from '@/lib/sourceQuality';
 import { deriveSalesMetrics, isLegacyInquirySale } from '@/lib/salesMetrics';
 
 export const maxDuration = 60;
@@ -110,14 +111,16 @@ export async function GET(request: Request) {
     const sourceMap = new Map<string, {
       source: string;
       signups: number;
+      qualified: number;      // slice 4: Qualified At set — passed the quiz
       matches: number;
+      depositsPaid: number;   // slice 4: Deposit Paid At — real tier_v2 money
       closes: number;
       commissionDue: number;
       saleRevenue: number;
     }>();
     const bucket = (key: string) => {
       if (!sourceMap.has(key)) {
-        sourceMap.set(key, { source: key, signups: 0, matches: 0, closes: 0, commissionDue: 0, saleRevenue: 0 });
+        sourceMap.set(key, { source: key, signups: 0, qualified: 0, matches: 0, depositsPaid: 0, closes: 0, commissionDue: 0, saleRevenue: 0 });
       }
       return sourceMap.get(key)!;
     };
@@ -136,6 +139,8 @@ export async function GET(request: Request) {
     consumersInRange.forEach((c: any) => {
       const source = (c['Source'] || 'organic').toString().trim() || 'organic';
       bucket(source).signups++;
+      // slice 4: quiz-passers per source (top-of-funnel quality signal).
+      if (c['Qualified At']) bucket(source).qualified++;
     });
 
     // Walk Referrals — link to Buyer to get Source. If a referral has no
@@ -156,6 +161,11 @@ export async function GET(request: Request) {
         bucket(source).commissionDue += Number(r['Commission Due'] || 0);
         bucket(source).saleRevenue += Number(r['Sale Amount'] || 0);
       }
+      // slice 4: real tier_v2 money per source — independent of Closed Won.
+      // A paid deposit is the truest "this source pays" signal (the deposit
+      // funnel writes money to Referrals, not Closed Won). Counted once per
+      // referral that has a Deposit Paid At stamp.
+      if (r['Deposit Paid At']) bucket(source).depositsPaid++;
     });
 
     // Join paid-ad spend (same date range) to each source → ROAS.
@@ -164,11 +174,16 @@ export async function GET(request: Request) {
     const spend = await getSpendInRange(cutoff);
     const breakdownRows = Array.from(sourceMap.values()).map((s) => {
       const sp = spend.bySource.get(s.source.trim().toLowerCase()) || 0;
+      // slice 4: funnel-quality rates — which source sends ready-to-buy leads
+      // that actually PAY. qualifiedRate = top-funnel targeting; payRate =
+      // signup→money; qualifiedToPaidRate = of quiz-passers, who paid.
+      const quality = sourceQualityRates(s);
       return {
         ...s,
         spend: sp,
         roas: sp > 0 ? s.commissionDue / sp : null,
         gmvRoas: sp > 0 ? s.saleRevenue / sp : null,
+        ...quality,
       };
     });
     // Surface spend on sources that have no signups in range (pure waste) so
@@ -177,8 +192,9 @@ export async function GET(request: Request) {
     spend.bySource.forEach((sp, src) => {
       if (!seenSources.has(src)) {
         breakdownRows.push({
-          source: src, signups: 0, matches: 0, closes: 0, commissionDue: 0,
+          source: src, signups: 0, qualified: 0, matches: 0, depositsPaid: 0, closes: 0, commissionDue: 0,
           saleRevenue: 0, spend: sp, roas: 0, gmvRoas: 0,
+          qualifiedRate: null, payRate: null, qualifiedToPaidRate: null,
         });
       }
     });
