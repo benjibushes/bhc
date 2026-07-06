@@ -198,9 +198,13 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 <BuyButton productId={p.id} price={p.price} />
               </div>
 
+              {/* Risk-reversal above the fold, right at the buy decision —
+                  operational certainty, not "contact support" (Phase 4). */}
               <p className="text-[12.5px] text-saddle leading-relaxed mt-0.5">
-                the price you see is the price you pay — shipping included. checkout secured by
-                Stripe. questions? reply to your receipt — a real person answers. &mdash; Ben
+                the price you see is the price you pay — shipping included. if a cut ever shows up
+                wrong or freezer-burned, we make it right — no forms, no runaround. checkout
+                secured by Stripe. questions? reply to your receipt — a real person answers.
+                &mdash; Ben
               </p>
             </div>
           </div>
