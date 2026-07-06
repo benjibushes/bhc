@@ -285,10 +285,9 @@ export async function PATCH(request: Request) {
 
       try {
         if (autoApprove) {
-          await sendTelegramMessage(
-            TELEGRAM_ADMIN_CHAT_ID,
-            `✅ <b>AUTO-VERIFIED</b>\n\n🤠 ${name}\n📋 Signals: ${signalCount}/6 (${methods.join(', ')})\n${slug ? `Preview: ${siteUrl}/ranchers/${slug}` : ''}\n\n<i>Auto-approved — batch-approve cron will flip Page Live at next 9am MT run if slug + prices are set. Revert manually if needed.</i>`
-          );
+          // NOISE CUT (2026-07-05): auto-verify passes silently; only a LOW-signal
+          // verification request (the else branch) needs the operator's eyes.
+          console.info(`[landing-page] auto-verified ${name} — signals ${signalCount}/6 (${methods.join(', ')})`);
         } else {
           await sendTelegramMessage(
             TELEGRAM_ADMIN_CHAT_ID,

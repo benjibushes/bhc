@@ -214,16 +214,9 @@ async function realHandler(_request: Request): Promise<E2EResult> {
     };
   }
 
-  try {
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `✅ <b>SYNTHETIC E2E PASSED</b>\n\n` +
-        `Signup → qualify → match → Intro Sent all green.\n` +
-        `Consumer: <code>${consumerId}</code>\n` +
-        `Referral: <code>${referralId}</code>\n\n` +
-        `<i>Run ID: ${runId}</i>`,
-    );
-  } catch {}
+  // NOISE CUT (2026-07-05): a green synthetic run every cron tick is pure
+  // noise — only a FAILED run (handled above) is actionable. Log the pass.
+  console.info(`[synthetic-e2e] PASSED — consumer=${consumerId} referral=${referralId} run=${runId}`);
 
   return {
     status: 'success',

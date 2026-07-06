@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 
@@ -55,15 +54,13 @@ async function realHandler(): Promise<{ status: 'success' | 'partial'; recordsTo
     }
   }
 
-  if (cleared.length && TELEGRAM_ADMIN_CHAT_ID) {
-    try {
-      await sendTelegramMessage(
-        TELEGRAM_ADMIN_CHAT_ID,
-        `🟢 <b>Auto-verified ${cleared.length} stale rancher${cleared.length === 1 ? '' : 's'}</b> (pending >24h)\n` +
-          `${cleared.slice(0, 10).join(', ')}${cleared.length > 10 ? ` +${cleared.length - 10} more` : ''}\n\n` +
-          `<i>Provisional — spot-check their materials when you can. They still must finish Connect + price to go live.</i>`,
-      );
-    } catch { /* non-fatal */ }
+  if (cleared.length) {
+    // NOISE CUT (2026-07-05): provisional auto-verify is a routine batch action,
+    // not an alert — logged. (The run summary in the return still records it.)
+    console.info(
+      `[auto-verify-stale] auto-verified ${cleared.length} stale rancher(s): ${cleared.slice(0, 10).join(', ')}` +
+        `${cleared.length > 10 ? ` +${cleared.length - 10} more` : ''}`,
+    );
   }
 
   return {

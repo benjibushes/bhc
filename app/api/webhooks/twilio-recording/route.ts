@@ -17,7 +17,6 @@ import { NextResponse } from 'next/server';
 import twilio from 'twilio';
 import { createRecord, TABLES } from '@/lib/airtable';
 import { transcribeRecording } from '@/lib/twilioRecording';
-import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -89,12 +88,9 @@ export async function POST(req: Request) {
       console.warn('[twilio-recording] Conversations createRecord failed:', e?.message);
     }
 
-    await sendTelegramMessage(
-      TELEGRAM_ADMIN_CHAT_ID,
-      `📞 <b>Call recorded</b>\n\nDuration: ${duration}s\nTranscript: ${
-        transcript ? transcript.slice(0, 280) : '(transcription failed)'
-      }`
-    ).catch(() => {});
+    // NOISE CUT (2026-07-05): a "call recorded" ping is informational — the
+    // transcript is saved to Conversations above. Logged, not pinged.
+    console.info(`[twilio-recording] call recorded — ${duration}s, transcript ${transcript ? 'saved' : 'failed'}`);
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {

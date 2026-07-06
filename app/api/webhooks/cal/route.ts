@@ -244,10 +244,8 @@ export async function POST(request: Request) {
                 ? { 'Onboarding Status': 'Call Complete', 'Call Completed At': new Date().toISOString().slice(0, 10) }
                 : {}),
             }).catch((e: any) => console.warn('[cal webhook] migration completed stamp failed:', e?.message));
-            await sendTelegramMessage(
-              TELEGRAM_ADMIN_CHAT_ID,
-              `✅ <b>Migration call ended</b>\n\n${rancher['Operator Name'] || rancher['Ranch Name']} — next step: Stripe Connect + wizard step 4 (tier_v2 deposits live).`
-            ).catch(() => {});
+            // NOISE CUT (2026-07-05): informational auto-advance; logged.
+            console.info(`[cal webhook] migration call ended — ${rancher['Operator Name'] || rancher['Ranch Name']} → next: Connect + wizard step 4`);
           }
           return NextResponse.json({
             success: true,
@@ -692,10 +690,8 @@ export async function POST(request: Request) {
               result: { status: 'Call Complete' },
               reverseAction: reverse,
             });
-            await sendTelegramMessage(
-              TELEGRAM_ADMIN_CHAT_ID,
-              `✅ <b>CALL COMPLETE (auto)</b>\n\n🤠 ${rancherName}\n📧 ${attendeeEmail}\n\n<i>Onboarding Status auto-advanced to Call Complete via Cal.com MEETING_ENDED. Wizard signing step is now unblocked for them.</i>`
-            );
+            // NOISE CUT (2026-07-05): auto-advance is informational; logged.
+            console.info(`[cal webhook] call complete (auto) — ${rancherName} (${attendeeEmail}); signing step unblocked`);
           }
         } catch (e) {
           console.error('[cal webhook] MEETING_ENDED update failed:', e);

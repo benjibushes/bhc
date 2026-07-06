@@ -200,17 +200,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     // Only message when there's something to act on (cards posted). Silent runs
     // — including pure auto-mute sweeps — don't ping.
     if (posted > 0) {
-      try {
-        await sendTelegramMessage(
-          TELEGRAM_ADMIN_CHAT_ID,
-          `📊 <b>Close detector swept</b>\n\n` +
-          `Posted ${posted} check-in card${posted === 1 ? '' : 's'}\n` +
-          `Stale referrals scanned: ${candidates.length}\n` +
-          (muted > 0 ? `Auto-muted (dead >${MAX_DAYS_SINCE_INTRO}d): ${muted}\n` : '') +
-          `Failed: ${failed}` +
-          (skippedReasons.length ? `\n\n⚠️ ${skippedReasons[0]}` : '')
-        );
-      } catch {}
+      // NOISE CUT (2026-07-05): a per-run sweep summary is observability, not
+      // an action item — logged, not pinged.
+      console.info(
+        `[close-detector] swept — posted=${posted} scanned=${candidates.length} muted=${muted} failed=${failed}` +
+        (skippedReasons.length ? ` skipped=${skippedReasons[0]}` : ''),
+      );
     }
 
     return {

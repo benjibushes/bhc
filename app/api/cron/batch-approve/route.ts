@@ -360,15 +360,13 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
                   scheduledAt: tomorrow9amMT,
                 });
                 if (result.ok && (result.summary.processed > 0)) {
-                  await sendTelegramMessage(
-                    TELEGRAM_ADMIN_CHAT_ID,
-                    `🚀 <b>AUTO-ROUTED on go-live</b>\n\n` +
-                    `${operatorName} (${ranchName}) just went LIVE in ${stateCode}\n\n` +
-                    `✅ Processed: ${result.summary.processed} stuck buyers\n` +
-                    `🔄 Updated stuck refs: ${result.summary.updated_stuck_referral}\n` +
-                    `🆕 New refs: ${result.summary.created_new_referral}\n` +
-                    `📧 Emails scheduled for 9am MT tomorrow\n` +
-                    `${result.summary.errors.length > 0 ? `⚠️ Errors: ${result.summary.errors.length}` : '✨ No errors'}`
+                  // NOISE CUT (2026-07-05): the rancher going LIVE already pings
+                  // via goLiveRancher ("LIVE in <state>"); this auto-route detail
+                  // is redundant. Logged.
+                  console.info(
+                    `[batch-approve] auto-routed on go-live — ${operatorName} (${ranchName}) LIVE in ${stateCode}: ` +
+                    `processed=${result.summary.processed} updated=${result.summary.updated_stuck_referral} ` +
+                    `new=${result.summary.created_new_referral} errors=${result.summary.errors.length}`,
                   );
                 }
               } catch (e: any) {
