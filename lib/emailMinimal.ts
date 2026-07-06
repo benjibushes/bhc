@@ -33,13 +33,13 @@ export async function sendBuyerSignupConfirmation(opts: {
 }) {
   return sendEmail({
     to: opts.to,
-    subject: `Got your application — take the 90-second quiz to get matched`,
+    subject: `got your application — one 90-second quiz to get matched`,
     html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
-      <p>Hey ${escape(opts.firstName)},</p>
-      <p>Application received. To get matched with a rancher in your area, finish this 90-second quiz:</p>
+      <p>hey ${escape(opts.firstName)},</p>
+      <p>got your application. one 90-second quiz and i'll match you with a rancher in your area:</p>
       <p style="margin:28px 0">
-        <a href="${opts.quizUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">
-          Start the quiz →
+        <a href="${opts.quizUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">
+          start the quiz →
         </a>
       </p>
       <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
@@ -59,14 +59,14 @@ export async function sendQuizCompleteCalInvite(opts: {
   const cal = opts.calUrl || (await getOperatorBookingUrl('sales'));
   return sendEmail({
     to: opts.to,
-    subject: `You qualified. Book a 15-min call to lock your beef.`,
+    subject: `you qualified — book a 15-min call to lock your beef`,
     html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
-      <p>Hey ${escape(opts.firstName)},</p>
-      <p>Quiz score: <strong>${opts.score}/100</strong>. You qualified.</p>
-      <p>Next: 15-min call with me. I'll match you with a rancher in your area and lock your share.</p>
+      <p>hey ${escape(opts.firstName)},</p>
+      <p>quiz score: <strong>${opts.score}/100</strong>. you qualified.</p>
+      <p>next is a 15-min call with me. i'll match you with a rancher in your area and lock your share.</p>
       <p style="margin:28px 0">
-        <a href="${cal}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">
-          Book the call →
+        <a href="${cal}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">
+          book the call →
         </a>
       </p>
       <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
@@ -180,30 +180,29 @@ export async function sendBuyerDepositInvoice(opts: {
   // states the real urgency (slots are first-come until the deposit lands).
   const rancherFirst = escape(String(opts.rancherName || '').trim().split(/\s+/)[0] || 'your rancher');
   const phoneLine = opts.rancherPhone
-    ? `Questions? Text ${rancherFirst} at <a href="sms:${escape(opts.rancherPhone)}" style="color:#0E0E0E;font-weight:600;">${escape(opts.rancherPhone)}</a> — or just reply to this email.`
-    : `Questions? Just reply to this email — it gets to ${rancherFirst}.`;
+    ? `questions? text ${rancherFirst} at <a href="sms:${escape(opts.rancherPhone)}" style="color:#0E0E0E;font-weight:600;">${escape(opts.rancherPhone)}</a> — or just reply to this email.`
+    : `questions? just reply to this email — it gets to ${rancherFirst}.`;
   return sendEmail({
     to: opts.buyerEmail,
-    subject: `Reserve your ${opts.cutTier} from ${opts.rancherName} — $${dep} deposit`,
+    subject: `${opts.rancherName} set aside your ${opts.cutTier} — $${dep} deposit`,
     html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
-      <p>Hey ${escape(opts.buyerName)},</p>
+      <p>hey ${escape(opts.buyerName)},</p>
       <p><strong>${escape(opts.rancherName)}</strong> set aside a <strong>${escape(opts.cutTier)}</strong> for you and sent over your deposit link.</p>
       <div style="background:#FFFFFF;border:1px solid #A7A29A;padding:18px;margin:20px 0;font-size:15px">
-        <strong>Today:</strong> $${dep} deposit<br>
-        <strong>At pickup:</strong> $${balance} balance to ${escape(opts.rancherName)}
+        <strong>today:</strong> $${dep} deposit<br>
+        <strong>at pickup:</strong> $${balance} balance to ${escape(opts.rancherName)}
       </div>
       <p style="margin:28px 0">
-        <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">
-          Pay deposit + lock your slot →
+        <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">
+          pay deposit + lock your slot →
         </a>
       </p>
       <p style="font-size:14px;color:#2A2A2A;line-height:1.6">
-        Heads up: your slot isn't held until the deposit lands — ${rancherFirst}'s processing dates fill first-come.
+        heads up — your slot isn't held until the deposit lands. ${rancherFirst}'s processing dates fill first-come.
       </p>
       <p style="font-size:14px;color:#2A2A2A;line-height:1.6">${phoneLine}</p>
       <p style="font-size:13px;color:#5A5752;line-height:1.6">
-        Fully refundable until ${escape(opts.rancherName)} accepts your slot. After they accept, deposit is non-refundable per our NRD policy.
-        If the rancher declines, you get a full refund within 2 business days.
+        fully refundable until ${escape(opts.rancherName)} accepts your slot. after they accept, the deposit is non-refundable. if the rancher declines, you get a full refund within 2 business days.
       </p>
       <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
@@ -229,25 +228,25 @@ export async function sendDepositRequestNudge(opts: {
 }) {
   const rancherFirst = escape(String(opts.rancherName || '').trim().split(/\s+/)[0] || 'your rancher');
   const phoneLine = opts.rancherPhone
-    ? ` Questions? Text ${rancherFirst} at <a href="sms:${escape(opts.rancherPhone)}" style="color:#0E0E0E;font-weight:600;">${escape(opts.rancherPhone)}</a> or reply to this email.`
-    : ` Questions? Just reply to this email.`;
+    ? ` questions? text ${rancherFirst} at <a href="sms:${escape(opts.rancherPhone)}" style="color:#0E0E0E;font-weight:600;">${escape(opts.rancherPhone)}</a> or reply to this email.`
+    : ` questions? just reply to this email.`;
   const first = opts.touch === 1;
   const subject = first
-    ? `Your ${opts.cutTier} from ${opts.rancherName} is still waiting`
-    : `Should ${opts.rancherName} hold your ${opts.cutTier}?`;
+    ? `your ${opts.cutTier} from ${opts.rancherName} is still waiting`
+    : `should ${opts.rancherName} hold your ${opts.cutTier}?`;
   const body = first
-    ? `<p>Hey ${escape(opts.buyerName)},</p>
+    ? `<p>hey ${escape(opts.buyerName)},</p>
       <p><strong>${escape(opts.rancherName)}</strong> still has your <strong>${escape(opts.cutTier)}</strong> set aside — but the slot isn't held until your deposit lands, and ${rancherFirst}'s processing dates fill first-come.</p>
       <p style="margin:26px 0">
-        <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">Pay deposit + lock your slot →</a>
+        <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">pay deposit + lock your slot →</a>
       </p>
-      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">Fully refundable until ${rancherFirst} accepts your slot.${phoneLine}</p>`
-    : `<p>Hey ${escape(opts.buyerName)},</p>
-      <p>Last note from me on this one — <strong>${escape(opts.rancherName)}</strong> has been holding a <strong>${escape(opts.cutTier)}</strong> for you. If the timing's wrong, no hard feelings; if you still want it, here's your link:</p>
+      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">fully refundable until ${rancherFirst} accepts your slot.${phoneLine}</p>`
+    : `<p>hey ${escape(opts.buyerName)},</p>
+      <p>last note from me on this one — <strong>${escape(opts.rancherName)}</strong> has been holding a <strong>${escape(opts.cutTier)}</strong> for you. if the timing's wrong, no hard feelings; if you still want it, here's your link:</p>
       <p style="margin:26px 0">
-        <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">Lock it in →</a>
+        <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">lock it in →</a>
       </p>
-      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">Want us to release the spot instead, or hold it a bit longer? Reply and tell me.${phoneLine}</p>`;
+      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">want us to release the spot instead, or hold it a bit longer? reply and tell me.${phoneLine}</p>`;
   return sendEmail({
     to: opts.buyerEmail,
     subject,
@@ -272,16 +271,16 @@ export async function sendStillLookingReconfirm(opts: {
   const where = opts.state ? ` in ${escape(opts.state)}` : ' near you';
   return sendEmail({
     to: opts.buyerEmail,
-    subject: `Still looking for beef${opts.state ? ` in ${opts.state}` : ''}?`,
+    subject: `still looking for beef${opts.state ? ` in ${opts.state}` : ''}?`,
     html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
-      <p>Hey ${escape(opts.buyerName)},</p>
-      <p>You signed up for a beef share a little while back. Ranchers${where} have open slots now — but I only send them buyers who are actually in the market.</p>
+      <p>hey ${escape(opts.buyerName)},</p>
+      <p>you signed up for a beef share a little while back. ranchers${where} have open slots now — but i only send them buyers who are actually in the market.</p>
       <p style="margin:28px 0">
-        <a href="${opts.confirmUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">
-          Yes — still looking, match me →
+        <a href="${opts.confirmUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#FAF8F4;text-decoration:none;font-size:15px;font-weight:600">
+          yes — still looking, match me →
         </a>
       </p>
-      <p style="font-size:13px;color:#5A5752;line-height:1.6">One click and you're back at the front of the line. If the timing's wrong now, just ignore this — no hard feelings, no more nags about it.</p>
+      <p style="font-size:13px;color:#5A5752;line-height:1.6">one click and you're back at the front of the line. if the timing's wrong now, just ignore this — no hard feelings, no more nags about it.</p>
       <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'still_looking_reconfirm',
@@ -298,12 +297,12 @@ export async function sendSlotLockedConfirmation(opts: {
 }) {
   return sendEmail({
     to: opts.to,
-    subject: `Slot locked — ${opts.rancherName} processing ${opts.processingDate}`,
+    subject: `slot locked — ${opts.rancherName} processing ${opts.processingDate}`,
     html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
-      <p>Hey ${escape(opts.firstName)},</p>
-      <p><strong>${escape(opts.rancherName)}</strong> accepted your reservation. Your beef will be processed on <strong>${escape(opts.processingDate)}</strong>.</p>
-      <p>A few days before pickup, ${escape(opts.rancherName)} will send your final invoice for the balance — paid through BuyHalfCow, straight to them.</p>
-      <p>See you at pickup.</p>
+      <p>hey ${escape(opts.firstName)},</p>
+      <p><strong>${escape(opts.rancherName)}</strong> accepted your reservation. your beef will be processed on <strong>${escape(opts.processingDate)}</strong>.</p>
+      <p>a few days before pickup, ${escape(opts.rancherName)} will send your final invoice for the balance — paid through BuyHalfCow, straight to them.</p>
+      <p>see you at pickup.</p>
       <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'slot_locked_confirmation',
