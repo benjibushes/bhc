@@ -53,5 +53,11 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
     "typescript": "^5"
+  },
+  "overrides": {
+    "@calcom/atoms": {
+      "@stripe/react-stripe-js": "$@stripe/react-stripe-js",
+      "@stripe/stripe-js": "$@stripe/stripe-js"
+    }
   }
 }
