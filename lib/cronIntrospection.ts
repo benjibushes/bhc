@@ -55,6 +55,7 @@ export const EXPECTED_CRONS_24H = [
   'migration-deadline',
   'nightly-rancher-audit',
   'onboarding-stuck',
+  'deposit-request-nudge',
   'orphan-checkout-reaper',
   'qualified-no-action',
   'referral-record-id-backfill',

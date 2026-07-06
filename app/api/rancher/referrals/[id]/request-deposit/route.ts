@@ -281,6 +281,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       fullSaleCents,
       chargedCents: depositCents + Math.round(fullSaleCents * feeRate),
       checkoutUrl,
+      // LEAK 1 (2026-07-05): give the buyer a human to text — the rancher's
+      // phone from the already-fetched rancher record. Optional downstream.
+      rancherPhone: String(rancher?.['Phone'] || '').trim() || undefined,
     });
     emailOutcome = depositEmailOutcome(sendResult);
   } catch (e: any) {

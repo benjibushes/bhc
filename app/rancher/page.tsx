@@ -153,6 +153,9 @@ interface Referral {
   // the "re-request" button label. Present but no deposit_paid_at = waiting on
   // the buyer to complete the checkout.
   deposit_requested_at?: string;
+  // LEAK 3 (2026-07-05): stamped once when the buyer first LOADS their deposit
+  // page — proof they saw the link. Drives the sent→opened→paid status line.
+  deposit_link_opened_at?: string;
   // NRD (2026-06-05): non-refundable lock cutoff. Stamped by /accept endpoint.
   // When present, deposit is locked; refund endpoint requires admin override.
   rancher_accepted_at?: string;
@@ -4834,7 +4837,22 @@ export default function RancherDashboardPage() {
                     {depositResult.url}
                   </a>
                 </p>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
+                  {/* LEAK 4 (2026-07-05): "text the link" — opens the rancher's
+                      OWN sms app prefilled with a personal message + the link.
+                      Works around the platform SMS block entirely; a text from
+                      the rancher's real number is the highest-converting nudge.
+                      Renders only when we have the buyer's phone. */}
+                  {depositModal.buyer_phone ? (
+                    <a
+                      href={`sms:${depositModal.buyer_phone}?&body=${encodeURIComponent(
+                        `Hey ${String(depositModal.buyer_name || '').split(' ')[0] || 'there'} — it's ${rancherInfo?.name?.split(' ')[0] || 'your rancher'} from ${rancherInfo?.ranchName || 'the ranch'}. Set aside your ${depositCut.toLowerCase()} — here's your deposit link to lock it in: ${depositResult.url}`,
+                      )}`}
+                      className="px-4 min-h-[44px] inline-flex items-center text-xs uppercase tracking-wider bg-charcoal text-bone hover:bg-charcoal/85 transition-colors"
+                    >
+                      text them the link
+                    </a>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => {
@@ -4921,6 +4939,24 @@ export default function RancherDashboardPage() {
                       </div>
                     </div>
                   )}
+
+                  {/* LEAK 4 (2026-07-05): show the rancher EXACTLY what the buyer
+                      receives — the send is no longer a black box. Mirrors the
+                      real sendBuyerDepositInvoice subject + opening line. */}
+                  <div className="bg-white border border-dust p-4 text-xs leading-relaxed">
+                    <div className="text-[10px] uppercase tracking-widest text-saddle mb-2">what {depositModal.buyer_name?.split(' ')[0] || 'the buyer'} will receive</div>
+                    <p className="text-charcoal font-medium mb-1">
+                      Subject: Reserve your {depositCut} from {rancherInfo?.ranchName || 'your ranch'} — ${parseFloat(depositAmountInput || '0') > 0 ? Math.round(parseFloat(depositAmountInput)) : '—'} deposit
+                    </p>
+                    <p className="text-charcoal/75 italic">
+                      &ldquo;Hey {depositModal.buyer_name?.split(' ')[0] || 'there'}, {rancherInfo?.ranchName || 'your ranch'} set aside a {depositCut} for you and sent over your deposit link…&rdquo; — with a pay button, your phone number to text with questions, and the refund terms.
+                    </p>
+                  </div>
+
+                  {/* LEAK 4 coach: honest, never blocking. */}
+                  <div className="bg-bone-warm border-l-4 border-amber p-3 text-xs text-charcoal/85 leading-relaxed">
+                    <strong>tip:</strong> deposits get paid far more often after a quick call or text. talk first if you can — then send. after sending, you can also <strong>text them the link directly</strong> from the confirmation.
+                  </div>
 
                   <div className="bg-bone-warm border border-dust p-4 text-xs text-charcoal/85 leading-relaxed">
                     <strong>how this works:</strong> buyer gets an email with a stripe link to pay the deposit. the deposit is refundable until you accept the slot. once they pay, this card flips to <strong>accept slot → send final invoice</strong>.
@@ -5694,9 +5730,31 @@ function DepositBadge({ referral }: { referral: Referral }) {
   }
   if (referral.deposit_requested_at) {
     const when = new Date(referral.deposit_requested_at).toLocaleDateString();
+    // LEAK 3 (2026-07-05): the badge now tells the sent→opened truth so the
+    // rancher can SEE whether the buyer ever saw the link. Opened = the buyer
+    // loaded their deposit page (stamped server-side; independent of email-
+    // open tracking). Sent >48h with no open = amber warning: the email
+    // probably didn't land or didn't get noticed — text the link instead.
+    if (referral.deposit_link_opened_at) {
+      const openedWhen = new Date(referral.deposit_link_opened_at).toLocaleDateString();
+      return (
+        <span className="inline-block px-2 py-0.5 text-xs font-medium bg-sage/15 text-sage-dark" title={`Buyer OPENED their deposit page ${openedWhen} — they've seen it; hasn't paid yet.`}>
+          link opened {openedWhen} · not paid yet
+        </span>
+      );
+    }
+    const sentMs = new Date(referral.deposit_requested_at).getTime();
+    const staleUnopened = Number.isFinite(sentMs) && Date.now() - sentMs > 48 * 60 * 60 * 1000;
+    if (staleUnopened) {
+      return (
+        <span className="inline-block px-2 py-0.5 text-xs font-medium bg-clay/20 text-clay-dark" style={{ background: 'rgba(140,58,43,.12)', color: '#8C3A2B' }} title="Sent over 48h ago and the buyer hasn't opened their deposit page — the email may not have landed. Text them the link directly (button below).">
+          sent {when} · never opened — text it
+        </span>
+      );
+    }
     return (
-      <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber/20 text-amber-dark" title="Buyer has a deposit link — waiting on them to pay.">
-        deposit requested{when ? ` · ${when}` : ''}
+      <span className="inline-block px-2 py-0.5 text-xs font-medium bg-amber/20 text-amber-dark" title="Deposit link sent — buyer hasn't opened it yet.">
+        deposit sent{when ? ` · ${when}` : ''} · not opened yet
       </span>
     );
   }
