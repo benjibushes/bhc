@@ -1511,7 +1511,7 @@ export async function sendBuyerIntroNotification(data: {
     ? `<div class="contact-box">
     <p><strong>${esc(data.rancherName)}</strong></p>
     <p style="margin-top:12px;">
-      <a href="${utm(`${SITE_URL}/ranchers/${data.rancherSlug}/contact`, 'intro-notification', 'contact-rancher')}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC!important;text-decoration:none;font-weight:600;text-transform:uppercase;letter-spacing:1px;font-size:13px;">Contact ${esc(data.rancherName)} &rarr;</a>
+      <a href="${utm(`${SITE_URL}/ranchers/${data.rancherSlug}/contact`, 'intro-notification', 'contact-rancher')}" style="display:inline-block;padding:10px 22px;background:#F4F1EC;color:#0E0E0E!important;border:1px solid #6B4F3F;text-decoration:none;font-weight:600;font-size:13px;">Message ${esc(data.rancherName)}</a>
     </p>
   </div>`
     : `<div class="contact-box">
@@ -1618,8 +1618,20 @@ export async function sendBuyerIntroNotification(data: {
   // lowercase founder-voice keeps inbox placement.
   const readyPrefix = data.readyToBuy ? 'ready to buy — ' : '';
   const readyBlock = data.readyToBuy
-    ? `<p style="background:#FFF6E0;border:1px solid #C99A2E;padding:12px 16px;font-size:14px;color:#0E0E0E;"><strong>You confirmed you're ready to buy in the next 1–2 months.</strong> ${esc(data.rancherName)} has been notified and will reach out within 24–48 hours.</p>`
+    ? `<p style="background:#FFF6E0;border:1px solid #C99A2E;padding:12px 16px;font-size:14px;color:#0E0E0E;"><strong>You told us you're ready to buy in the next 1–2 months</strong> — so ${esc(data.rancherName)} is prioritizing your intro.</p>`
     : '';
+  // WARM HANDOFF (2026-07-05, rancher-connect investigation): the #1 reason
+  // ranchers couldn't connect was the buyer was NEVER told to expect an inbound
+  // text/call — so the rancher's outreach from an unknown number read as spam
+  // (only 0.6% of intro'd buyers ever responded). This block ALWAYS renders
+  // (the "will reach out" promise was previously gated behind readyToBuy) and
+  // primes the buyer to expect + answer the rancher, naming the channel + that
+  // the number is unfamiliar.
+  const rancherFirst = esc(String(data.rancherName || '').trim().split(/\s+/)[0] || data.rancherName || 'your rancher');
+  const fromNumber = data.rancherPhone
+    ? ` — likely from <strong>${esc(data.rancherPhone)}</strong>, a number you won't recognize`
+    : '';
+  const expectBlock = `<p style="background:#EEF3EE;border-left:3px solid #3F5B44;padding:14px 18px;font-size:15px;color:#0E0E0E;margin:16px 0;"><strong>${esc(data.rancherName)} is reaching out to you directly.</strong> Expect a text, call, or email in the next 24&ndash;48 hours${fromNumber}. That&rsquo;s ${rancherFirst} &mdash; not spam &mdash; so please pick up or reply when it lands.</p>`;
   const introSubject = `${readyPrefix}Meet your rancher — ${esc(data.rancherName)}`;
   return guardedSend({
     templateName: 'sendBuyerIntroNotification',
@@ -1653,7 +1665,9 @@ export async function sendBuyerIntroNotification(data: {
   <h1>Your Rancher Introduction</h1>
   <p>Hi ${esc(data.firstName)},</p>
   ${readyBlock}
-  <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They know you're coming — here's what to do next.</p>
+  <p>I've personally vetted and matched you with <strong>${esc(data.rancherName)}</strong>. They've got your details and they're reaching out — here's what to expect.</p>
+  ${expectBlock}
+  <p style="font-size:13px;color:#6B4F3F;margin-bottom:4px;">Prefer to reach ${rancherFirst} first? Here's their info:</p>
   ${contactBlock}
   ${pricingBlock}
   ${hasMagicLink
@@ -1665,7 +1679,7 @@ export async function sendBuyerIntroNotification(data: {
     <li>Processing timeline and delivery options</li>
     <li>Any questions about their operation</li>
   </ul>
-  <p>They'll walk you through everything. No pressure, no rush — this is a direct relationship between you and your rancher.</p>
+  <p>${rancherFirst} will walk you through cuts, pricing, and timing. This is a direct relationship between you and your rancher — they'll take it from here.</p>
   <div class="divider"></div>
   <p style="font-size:13px;">If you don't hear back within 48 hours, reply to this email and I'll follow up on my end.</p>
   <div class="footer">

@@ -1434,7 +1434,7 @@ export async function POST(request: Request) {
               sendSMSToConsumer({
                 consumer: consumerForSms,
                 phone: buyerPhone,
-                body: `hey ${buyerFirstName} — we just connected you w/ ${rancherName} for half-cow. they'll email you in the next 24h. reply STOP to opt out. — Ben @ BuyHalfCow`,
+                body: `hey ${buyerFirstName} — we just connected you w/ ${rancherName} for half-cow. they'll text or call you in the next 24-48h from a number you won't recognize — that's them, pick up! reply STOP to opt out. — Ben @ BuyHalfCow`,
                 reason: 'matching/suggest intro touchpoint',
               }).catch(() => {});
             } catch (e) {
