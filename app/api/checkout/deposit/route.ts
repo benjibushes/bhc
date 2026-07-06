@@ -490,6 +490,20 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  // LEAK 3 (2026-07-05, deposit-rail visibility): stamp 'Deposit Link Opened
+  // At' ONCE on the buyer's first authed load of their deposit page — proof
+  // the buyer SAW the link, independent of email-open tracking (which is
+  // unwired). Drives the sent→opened→paid status line on the rancher card.
+  // Fire-and-forget + once-only: NEVER blocks or fails the GET; a strip
+  // (field missing) just loses the breadcrumb, nothing else.
+  if (!referral['Deposit Link Opened At']) {
+    updateRecord(TABLES.REFERRALS, referralId, {
+      'Deposit Link Opened At': new Date().toISOString(),
+    }).catch((e: any) =>
+      console.warn('[checkout/deposit] opened-at stamp failed (non-fatal):', e?.message),
+    );
+  }
+
   // Terminal-status gate. A closed referral must not be re-paid — without
   // this, a buyer who hits the deposit page after closure can pay a second
   // PaymentIntent, create a duplicate Payments row, re-fire recordClose,

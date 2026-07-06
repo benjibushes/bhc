@@ -164,31 +164,98 @@ export async function sendBuyerDepositInvoice(opts: {
   // rancher-portion figure the Stripe page would then contradict.
   chargedCents?: number;
   checkoutUrl: string;
+  // 2026-07-05 deposit-rail LEAK 1: the rancher's phone, so the buyer can
+  // text/call a real person about a real reservation. Optional — callers
+  // without it keep working; the "text <first>" line simply drops.
+  rancherPhone?: string;
 }) {
   const dep = ((opts.chargedCents ?? opts.depositCents) / 100).toFixed(0);
   const balance = ((opts.fullSaleCents - opts.depositCents) / 100).toFixed(0);
+  // LEAK 1 (2026-07-05, rancher-sent deposits 0-for-7): the old copy opened
+  // "Great call." — presuming a phone call that (for cold dashboard sends)
+  // never happened — with Ben as the actor. Buyers got thanked for a
+  // conversation they never had → read as phishy → ignored. The rewrite makes
+  // the RANCHER the protagonist ("set aside a <Cut> for you"), reads true
+  // whether or not a call happened, gives the buyer a human to text, and
+  // states the real urgency (slots are first-come until the deposit lands).
+  const rancherFirst = escape(String(opts.rancherName || '').trim().split(/\s+/)[0] || 'your rancher');
+  const phoneLine = opts.rancherPhone
+    ? `Questions? Text ${rancherFirst} at <a href="sms:${escape(opts.rancherPhone)}" style="color:#0E0E0E;font-weight:600;">${escape(opts.rancherPhone)}</a> — or just reply to this email.`
+    : `Questions? Just reply to this email — it gets to ${rancherFirst}.`;
   return sendEmail({
     to: opts.buyerEmail,
     subject: `Reserve your ${opts.cutTier} from ${opts.rancherName} — $${dep} deposit`,
     html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
       <p>Hey ${escape(opts.buyerName)},</p>
-      <p>Great call. Here's the deposit link to lock your <strong>${escape(opts.cutTier)}</strong> from <strong>${escape(opts.rancherName)}</strong>:</p>
+      <p><strong>${escape(opts.rancherName)}</strong> set aside a <strong>${escape(opts.cutTier)}</strong> for you and sent over your deposit link.</p>
       <div style="background:#FFFFFF;border:1px solid #A7A29A;padding:18px;margin:20px 0;font-size:15px">
         <strong>Today:</strong> $${dep} deposit<br>
         <strong>At pickup:</strong> $${balance} balance to ${escape(opts.rancherName)}
       </div>
       <p style="margin:28px 0">
         <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">
-          Pay deposit + lock slot →
+          Pay deposit + lock your slot →
         </a>
       </p>
+      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">
+        Heads up: your slot isn't held until the deposit lands — ${rancherFirst}'s processing dates fill first-come.
+      </p>
+      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">${phoneLine}</p>
       <p style="font-size:13px;color:#5A5752;line-height:1.6">
-        Refundable until ${escape(opts.rancherName)} accepts your slot. After they accept, deposit is non-refundable per our NRD policy.
+        Fully refundable until ${escape(opts.rancherName)} accepts your slot. After they accept, deposit is non-refundable per our NRD policy.
         If the rancher declines, you get a full refund within 2 business days.
       </p>
       <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
     </div>`,
     templateName: 'buyer_deposit_invoice',
+  });
+}
+
+// 3b. LEAK 2 (2026-07-05): buyer-facing nudge on an UNPAID deposit request.
+//     Previously an unpaid request got zero buyer follow-up for 14 days (and
+//     that net pinged the rancher). Two touches, capped by the cron's
+//     selector: nudge 1 (~24h) urgency, nudge 2 (~72h+) soft last-touch.
+//     The link is the magic-link → deposit-page hop (NOT the stored Stripe
+//     session URL — those expire in ~24h, exactly when this fires).
+export async function sendDepositRequestNudge(opts: {
+  buyerEmail: string;
+  buyerName: string;
+  rancherName: string;
+  cutTier: string;
+  checkoutUrl: string; // magic-link hop to /checkout/<refId>/deposit
+  rancherPhone?: string;
+  /** 1 = first nudge (urgency), 2 = final soft touch. */
+  touch: 1 | 2;
+}) {
+  const rancherFirst = escape(String(opts.rancherName || '').trim().split(/\s+/)[0] || 'your rancher');
+  const phoneLine = opts.rancherPhone
+    ? ` Questions? Text ${rancherFirst} at <a href="sms:${escape(opts.rancherPhone)}" style="color:#0E0E0E;font-weight:600;">${escape(opts.rancherPhone)}</a> or reply to this email.`
+    : ` Questions? Just reply to this email.`;
+  const first = opts.touch === 1;
+  const subject = first
+    ? `Your ${opts.cutTier} from ${opts.rancherName} is still waiting`
+    : `Should ${opts.rancherName} hold your ${opts.cutTier}?`;
+  const body = first
+    ? `<p>Hey ${escape(opts.buyerName)},</p>
+      <p><strong>${escape(opts.rancherName)}</strong> still has your <strong>${escape(opts.cutTier)}</strong> set aside — but the slot isn't held until your deposit lands, and ${rancherFirst}'s processing dates fill first-come.</p>
+      <p style="margin:26px 0">
+        <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">Pay deposit + lock your slot →</a>
+      </p>
+      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">Fully refundable until ${rancherFirst} accepts your slot.${phoneLine}</p>`
+    : `<p>Hey ${escape(opts.buyerName)},</p>
+      <p>Last note from me on this one — <strong>${escape(opts.rancherName)}</strong> has been holding a <strong>${escape(opts.cutTier)}</strong> for you. If the timing's wrong, no hard feelings; if you still want it, here's your link:</p>
+      <p style="margin:26px 0">
+        <a href="${opts.checkoutUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">Lock it in →</a>
+      </p>
+      <p style="font-size:14px;color:#2A2A2A;line-height:1.6">Want us to release the spot instead, or hold it a bit longer? Reply and tell me.${phoneLine}</p>`;
+  return sendEmail({
+    to: opts.buyerEmail,
+    subject,
+    html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+      ${body}
+      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
+    </div>`,
+    templateName: first ? 'deposit_request_nudge_1' : 'deposit_request_nudge_2',
   });
 }
 

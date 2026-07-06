@@ -60,7 +60,7 @@ const REFERRAL_DASHBOARD_FIELDS = [
   'Fulfillment Method', 'Shipping Carrier', 'Tracking Number',
   'Fulfillment Updated At',
   // deposit + final invoice rail
-  'Deposit Paid At', 'Deposit Amount', 'Deposit Requested At',
+  'Deposit Paid At', 'Deposit Amount', 'Deposit Requested At', 'Deposit Link Opened At',
   'Final Invoice URL', 'Final Invoice Sent At', 'Final Invoice Amount',
   'Final Paid At', 'Total Sale Amount', 'Processing Fee', 'Processing Date',
 ];
@@ -295,6 +295,10 @@ export async function GET(request: Request) {
       // self-serves a deposit ask. Drives the amber "deposit requested" badge +
       // the re-request label before the buyer pays.
       deposit_requested_at: r['Deposit Requested At'] || '',
+      // LEAK 3 (2026-07-05): stamped once when the buyer first loads their
+      // deposit page — proof they SAW the link. Drives the sent→opened→paid
+      // status line + the "hasn't been opened — text it to them" hint.
+      deposit_link_opened_at: r['Deposit Link Opened At'] || '',
       // NRD (2026-06-05): non-refundable lock cutoff. Set when rancher hits
       // "Accept Slot" — POST /api/rancher/referrals/[id]/accept. Refund
       // endpoint guards against post-accept refunds without operator override.
