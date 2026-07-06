@@ -162,3 +162,24 @@ export function isReadyToBuy(buyer: any): boolean {
   if (!buyer) return false;
   return !!buyer['Ready to Buy'];
 }
+
+// ── QUALIFICATION FRESHNESS (2026-07-06, conversion slice 2) ─────────────────
+// "Qualified in April" is not "ready in July." Routing a stale qualification
+// hands the rancher a lead that won't answer — the #1 driver of the perceived
+// lead-quality problem (1,953 WAITING incl. months-old signups). A lead whose
+// quiz stamp is older than QUALIFICATION_FRESH_DAYS must RE-CONFIRM (one
+// click, no re-quiz) before it routes. Operator override still bypasses.
+
+export const QUALIFICATION_FRESH_DAYS = 28;
+
+/**
+ * True when the Qualified At stamp is present, parseable, and within
+ * QUALIFICATION_FRESH_DAYS of `nowMs`. Missing/garbage stamps are NOT fresh
+ * (fail-closed here — the caller's base gate already 412s unqualified buyers;
+ * this only ever ADDS a stale-block, never lets anyone through).
+ */
+export function isQualificationFresh(qualifiedAt: unknown, nowMs: number): boolean {
+  const t = Date.parse(String(qualifiedAt || ''));
+  if (!Number.isFinite(t)) return false;
+  return nowMs - t <= QUALIFICATION_FRESH_DAYS * 86_400_000;
+}
