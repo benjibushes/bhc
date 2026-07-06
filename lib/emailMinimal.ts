@@ -259,6 +259,35 @@ export async function sendDepositRequestNudge(opts: {
   });
 }
 
+// 3c. FRESHNESS RE-CONFIRM (2026-07-06, conversion slice 2): a buyer whose
+//     quiz stamp is >28 days old must one-click confirm they're still in the
+//     market before routing to a rancher — no re-quiz, one tap. Keeps rancher
+//     pipelines current-buyers-only.
+export async function sendStillLookingReconfirm(opts: {
+  buyerEmail: string;
+  buyerName: string;
+  state?: string;
+  confirmUrl: string;
+}) {
+  const where = opts.state ? ` in ${escape(opts.state)}` : ' near you';
+  return sendEmail({
+    to: opts.buyerEmail,
+    subject: `Still looking for beef${opts.state ? ` in ${opts.state}` : ''}?`,
+    html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+      <p>Hey ${escape(opts.buyerName)},</p>
+      <p>You signed up for a beef share a little while back. Ranchers${where} have open slots now — but I only send them buyers who are actually in the market.</p>
+      <p style="margin:28px 0">
+        <a href="${opts.confirmUrl}" style="display:inline-block;padding:14px 28px;background:#0E0E0E;color:#F4F1EC;text-decoration:none;text-transform:uppercase;letter-spacing:2px;font-size:13px;font-weight:600">
+          Yes — still looking, match me →
+        </a>
+      </p>
+      <p style="font-size:13px;color:#5A5752;line-height:1.6">One click and you're back at the front of the line. If the timing's wrong now, just ignore this — no hard feelings, no more nags about it.</p>
+      <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow<br><em>Connecting every household to a ranch they trust.</em></p>
+    </div>`,
+    templateName: 'still_looking_reconfirm',
+  });
+}
+
 // 4. Stripe webhook fires after rancher hits "Accept Slot" — buyer gets
 //    "you're locked in" notification w/ processing date.
 export async function sendSlotLockedConfirmation(opts: {

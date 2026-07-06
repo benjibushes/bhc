@@ -13,6 +13,7 @@ import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapaci
 import { isActiveDealReferral } from '@/lib/capacityCount';
 import { equalStateSubCap } from '@/lib/stateSubCap';
 import { isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
+import { isQualificationFresh } from '@/lib/qualification';
 import { requireAdmin } from '@/lib/adminAuth';
 import { MIN_TIER_PRICE } from '@/lib/pricing';
 import { tierFor } from '@/lib/tiers';
@@ -185,6 +186,39 @@ export async function POST(request: Request) {
         buyer: buyerLabel,
         qualifyUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/qualify`,
         hint: 'Direct buyer to complete /qualify, OR pass operatorOverride=true + operatorOverrideReason for admin manual route.',
+      }, { status: 412 });
+    }
+
+    // GUARD-2b — QUALIFICATION FRESHNESS (2026-07-06, conversion slice 2).
+    // Qualified-in-April is not ready-in-July: routing a stale quiz stamp
+    // hands the rancher a lead that won't answer (the core of the perceived
+    // lead-quality problem). Stale (> QUALIFICATION_FRESH_DAYS) → fire the
+    // one-click "still looking?" re-confirm email (best-effort, suppression-
+    // aware) and 412. The YES click re-stamps Qualified At via
+    // /api/buyer/reconfirm and the lead routes with a same-day stamp.
+    // Operator override bypasses; the base unqualified gate above is untouched.
+    if (hasQualified && !isOperatorOverride && !isQualificationFresh(buyerRecForGate['Qualified At'], Date.now())) {
+      try {
+        const buyerEmailForReconfirm = String(buyerRecForGate['Email'] || '').trim().toLowerCase();
+        if (buyerEmailForReconfirm && !buyerRecForGate['Unsubscribed'] && !buyerRecForGate['Bounced'] && !buyerRecForGate['Complained']) {
+          const { sendStillLookingReconfirm } = await import('@/lib/emailMinimal');
+          const { generateMemberLoginToken } = await import('@/lib/secrets');
+          const token = generateMemberLoginToken(buyerId, buyerEmailForReconfirm);
+          await sendStillLookingReconfirm({
+            buyerEmail: buyerEmailForReconfirm,
+            buyerName: String(buyerRecForGate['Full Name'] || 'there').split(/\s+/)[0],
+            state: String(buyerRecForGate['State'] || '').trim() || undefined,
+            confirmUrl: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com'}/api/buyer/reconfirm?token=${token}`,
+          });
+        }
+      } catch (e: any) {
+        console.warn('[matching/suggest] re-confirm email failed (non-fatal):', e?.message);
+      }
+      return NextResponse.json({
+        error: 'stale_qualification',
+        buyer: buyerLabel,
+        qualifiedAt: buyerRecForGate['Qualified At'],
+        hint: 'Qualified >28 days ago — one-click re-confirm emailed; lead routes as soon as they confirm (or pass operatorOverride to route now).',
       }, { status: 412 });
     }
 
