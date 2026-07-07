@@ -29,9 +29,15 @@ export const maxDuration = 30;
 // might reply weeks later. 120d gives plenty of headroom.
 export const REVIEW_TOKEN_TTL = '120d';
 
+// PRODUCT REVIEWS (2026-07-06): the same rail now serves marketplace orders.
+// A token carries EITHER referralId (share review → Referrals row) OR orderId
+// (product review → Rancher Orders row). Field names are identical on both
+// tables (Buyer Rating / Buyer Review / Review Submitted At), so everything
+// below is table-parameterized rather than forked.
 interface ReviewTokenPayload {
   type: 'review-submit';
-  referralId: string;
+  referralId?: string;
+  orderId?: string;
   iat?: number;
   exp?: number;
 }
@@ -39,13 +45,24 @@ interface ReviewTokenPayload {
 function verifyReviewToken(token: string): ReviewTokenPayload | null {
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
-    if (decoded && decoded.type === 'review-submit' && typeof decoded.referralId === 'string') {
+    if (
+      decoded &&
+      decoded.type === 'review-submit' &&
+      (typeof decoded.referralId === 'string' || typeof decoded.orderId === 'string')
+    ) {
       return decoded as ReviewTokenPayload;
     }
     return null;
   } catch {
     return null;
   }
+}
+
+// Resolve which table + record a token points at.
+function tokenTarget(payload: ReviewTokenPayload): { table: string; id: string } {
+  return payload.orderId
+    ? { table: TABLES.RANCHER_ORDERS, id: payload.orderId }
+    : { table: TABLES.REFERRALS, id: payload.referralId! };
 }
 
 export async function POST(request: Request) {
@@ -67,17 +84,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
     }
 
-    // Confirm referral still exists. Don't 500 if it was deleted — return a
-    // friendly 410 so the page can render "this review link is no longer
-    // valid" instead of a generic error.
-    let referral: any;
+    // Confirm the target row still exists. Don't 500 if it was deleted —
+    // return a friendly 410 so the page can render "this review link is no
+    // longer valid" instead of a generic error.
+    const target = tokenTarget(payload);
+    let row: any;
     try {
-      referral = await getRecordById(TABLES.REFERRALS, payload.referralId);
-      if (!referral) {
-        return NextResponse.json({ error: 'Referral not found' }, { status: 410 });
+      row = await getRecordById(target.table, target.id);
+      if (!row) {
+        return NextResponse.json({ error: 'Record not found' }, { status: 410 });
       }
     } catch {
-      return NextResponse.json({ error: 'Referral not found' }, { status: 410 });
+      return NextResponse.json({ error: 'Record not found' }, { status: 410 });
     }
 
     // F-4 audit fix: idempotency guard. Pre-fix the 120d JWT magic link
@@ -85,7 +103,7 @@ export async function POST(request: Request) {
     // Review. Now: if Review Submitted At is already set, return 409 +
     // the prior submittedAt so the form can show "you already submitted
     // a review" instead of a generic error or silent overwrite.
-    const existingSubmittedAt = referral['Review Submitted At'];
+    const existingSubmittedAt = row['Review Submitted At'];
     if (existingSubmittedAt) {
       return NextResponse.json({
         error: 'Review already submitted',
@@ -95,18 +113,30 @@ export async function POST(request: Request) {
 
     // updateRecord auto-strips unknown field names → these three fields
     // can be added to Airtable on demand without a code redeploy.
-    await updateRecord(TABLES.REFERRALS, payload.referralId, {
+    await updateRecord(target.table, target.id, {
       'Buyer Rating': Math.round(rating),
       'Buyer Review': review,
       'Review Submitted At': new Date().toISOString(),
     });
 
-    // Non-fatal funnel event. funnelRecord swallows its own errors.
-    funnelRecord({
-      stage: 'review_collected',
-      referralId: payload.referralId,
-      metadata: { rating: Math.round(rating), reviewLength: review.length },
-    }).catch(() => {});
+    // Product reviews land on the PDP within the ISR window; refresh sooner.
+    if (payload.orderId) {
+      try {
+        const { revalidatePath } = await import('next/cache');
+        const productId = String(row['Product Record ID'] || '').trim();
+        if (productId) revalidatePath(`/shop/${productId}`);
+        revalidatePath('/shop');
+      } catch { /* ISR backstop */ }
+    }
+
+    // Non-fatal funnel event (share rail only — orders have no referral).
+    if (payload.referralId) {
+      funnelRecord({
+        stage: 'review_collected',
+        referralId: payload.referralId,
+        metadata: { rating: Math.round(rating), reviewLength: review.length },
+      }).catch(() => {});
+    }
 
     return NextResponse.json({ success: true });
   } catch (e: any) {
@@ -128,8 +158,9 @@ export async function GET(request: Request) {
   const payload = verifyReviewToken(token);
   if (!payload) return NextResponse.json({ ok: false, reason: 'invalid-token' }, { status: 401 });
   try {
-    const ref: any = await getRecordById(TABLES.REFERRALS, payload.referralId);
-    if (!ref) return NextResponse.json({ ok: false, reason: 'referral-not-found' }, { status: 410 });
+    const target = tokenTarget(payload);
+    const ref: any = await getRecordById(target.table, target.id);
+    if (!ref) return NextResponse.json({ ok: false, reason: 'record-not-found' }, { status: 410 });
     const submittedAt = ref['Review Submitted At'];
     if (submittedAt) {
       return NextResponse.json({ ok: true, alreadySubmitted: true, submittedAt });

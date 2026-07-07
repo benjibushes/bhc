@@ -12,7 +12,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { getRecordById, TABLES } from '@/lib/airtable';
+import { getRecordById, getAllRecords, TABLES } from '@/lib/airtable';
 
 import BuyButton from '../BuyButton';
 import ProductImage from '../ProductImage';
@@ -143,10 +143,38 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   };
 }
 
+// Verified-purchase reviews for this product (trust flywheel, 2026-07-06).
+// Reads Rancher Orders rows the review-ask cron + tokened submit filled in.
+// First name + state privacy rule matches the share-side testimonial wall.
+async function loadProductReviews(
+  productId: string,
+): Promise<{ rating: number; text: string; who: string }[]> {
+  try {
+    const rows = (await getAllRecords(
+      TABLES.RANCHER_ORDERS,
+      `AND({Product Record ID}="${productId}", NOT({Review Submitted At}=""))`,
+    )) as any[];
+    return rows
+      .filter((r) => Number(r['Buyer Rating']) >= 1)
+      .map((r) => ({
+        rating: Math.min(5, Math.max(1, Number(r['Buyer Rating']))),
+        text: String(r['Buyer Review'] || '').trim(),
+        who: String(r['Buyer Name'] || '').trim().split(/\s+/)[0] || 'verified buyer',
+      }))
+      .sort((a, b) => b.rating - a.rating);
+  } catch {
+    return []; // reviews are additive — a read blip never breaks the PDP
+  }
+}
+
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const p = await loadProduct(id);
   if (!p) notFound();
+  const reviews = await loadProductReviews(id);
+  const avgRating = reviews.length
+    ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
+    : 0;
 
   // Product JSON-LD — only when an image + price exist (Google requires image).
   // shippingDetails declares FREE US shipping (price is genuinely all-in).
@@ -194,6 +222,17 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           ...(p.category ? { category: p.category } : {}),
           brand: { '@type': 'Brand', name: p.rancher },
           ...(offers ? { offers } : {}),
+          // REAL ratings only — from verified-purchase reviews on this exact
+          // product. Never fabricated (brand rule + FTC Fake Reviews Rule).
+          ...(reviews.length > 0
+            ? {
+                aggregateRating: {
+                  '@type': 'AggregateRating',
+                  ratingValue: avgRating.toFixed(1),
+                  reviewCount: reviews.length,
+                },
+              }
+            : {}),
         }
       : null;
 
@@ -357,6 +396,34 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 runaround. checkout secured by Stripe. questions? reply to your receipt — a real
                 person answers. &mdash; Ben
               </p>
+
+              {/* WHAT BUYERS SAY — verified-purchase reviews only (the ask
+                  cron + tokened submit fill these; first names only). Renders
+                  nothing until real reviews exist — never fabricated. */}
+              {reviews.length > 0 && (
+                <div className="border-t border-dust pt-3">
+                  <p className="text-xs uppercase tracking-widest text-saddle mb-2">
+                    what buyers say · {avgRating.toFixed(1)}★ ({reviews.length})
+                  </p>
+                  <div className="space-y-2.5">
+                    {reviews.slice(0, 3).map((r, i) => (
+                      <blockquote key={i} className="m-0 border-l-2 border-sage pl-3">
+                        <span className="text-[13px] text-sage" aria-label={`${r.rating} out of 5 stars`}>
+                          {'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}
+                        </span>
+                        {r.text && (
+                          <p className="text-[13.5px] text-charcoal/85 leading-snug mt-0.5 mb-0.5">
+                            &ldquo;{r.text}&rdquo;
+                          </p>
+                        )}
+                        <footer className="text-[11.5px] text-saddle not-italic">
+                          — {r.who}, verified buyer
+                        </footer>
+                      </blockquote>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Capture-leak patch: the PDP bouncer leaves with nothing —
                   offer the guide as the zero-risk exit ramp. */}
