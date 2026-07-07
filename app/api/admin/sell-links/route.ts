@@ -21,7 +21,7 @@ import { requireAdmin } from '@/lib/adminAuth';
 import { getAllRecords, createRecord, getRancherBySlug, escapeAirtableValue, TABLES } from '@/lib/airtable';
 import { isRancherOnConnect, isRancherOperationalForBuyers } from '@/lib/rancherEligibility';
 import { mintCampaignReserveToken } from '@/lib/campaignReserve';
-import { deriveDeposit } from '@/lib/pricing';
+import { deriveDeposit, MIN_TIER_PRICE } from '@/lib/pricing';
 import { CUT_LABELS, type Cut } from '@/lib/reserveDeposit';
 
 export const runtime = 'nodejs';
@@ -70,9 +70,17 @@ export async function POST(request: Request) {
       { status: 409 },
     );
   }
+  // GTM-hardening F1: the mint gate must MATCH the redemption gate.
+  // /r/d → assertReserveEligible rejects price < MIN_TIER_PRICE, so minting
+  // below the floor produces a link that bounces on tap (and deriveDeposit on
+  // a mis-keyed $50 yields a nonsense $0 deposit). `>=` is NaN-safe: a
+  // non-numeric Airtable value fails the comparison and 409s here.
   const tierPrice = Number(rancher[TIER_FIELD[cut]] || 0);
-  if (tierPrice <= 0) {
-    return NextResponse.json({ error: `${rancher['Ranch Name']} has no ${cut} price set.` }, { status: 409 });
+  if (!(tierPrice >= MIN_TIER_PRICE)) {
+    return NextResponse.json(
+      { error: `${rancher['Ranch Name']} has no valid ${cut} price (must be at least $${MIN_TIER_PRICE} — check the Airtable field).` },
+      { status: 409 },
+    );
   }
 
   // Find-or-create the Consumer (mirrors app/api/orders/request).

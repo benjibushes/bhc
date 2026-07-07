@@ -17,6 +17,7 @@
 import { NextResponse } from 'next/server';
 import { requireRancher } from '@/lib/rancherAuth';
 import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { claimOnce } from '@/lib/rancherCapacity';
 import { sendEmail } from '@/lib/email';
 
 export const runtime = 'nodejs';
@@ -96,6 +97,14 @@ export async function POST(request: Request) {
   }
   if (status === 'Shipped') {
     return NextResponse.json({ error: 'Already marked shipped.' }, { status: 409 });
+  }
+
+  // GTM-hardening (TOCTOU): a double-click fires two concurrent POSTs that
+  // both read Status='New' before either writes — claim-before-send (same
+  // rail the crons use; fails open if Redis is down, where the status guard
+  // above still catches sequential retries).
+  if (!(await claimOnce(`order-ship:${orderId}`, 60))) {
+    return NextResponse.json({ error: 'Already in flight — give it a second.' }, { status: 409 });
   }
 
   await updateRecord(TABLES.RANCHER_ORDERS, orderId, {

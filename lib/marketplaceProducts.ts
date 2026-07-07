@@ -16,7 +16,7 @@
 // Share) is the browse axis. Resistance Tier stays available for the warm
 // downsell entry but is NOT how the marketplace organizes itself.
 
-import { getAllRecords, TABLES } from '@/lib/airtable';
+import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
 
 export interface MarketplaceProduct {
   id: string;
@@ -111,6 +111,58 @@ export async function loadMarketplaceProduct(id: string): Promise<MarketplacePro
   if (!/^rec[A-Za-z0-9]{14}$/.test(id)) return null;
   const all = await loadMarketplaceProducts();
   return all.find((p) => p.id === id) || null;
+}
+
+/**
+ * Load one product ALLOWING sold-out (GTM-hardening F4). The checkout wrapper
+ * needs to render an honest "just sold out" state for a buyer arriving from a
+ * stale (ISR) PDP — a 404 there burns exactly the ad clicks the sold-out PDP
+ * design exists to save. Anything unsellable for a non-stock reason is still
+ * null (real 404). soldOut mirrors hasStock, fail-closed on junk values.
+ */
+export async function loadMarketplaceProductAnyStock(
+  id: string,
+): Promise<{ product: MarketplaceProduct; soldOut: boolean } | null> {
+  if (!/^rec[A-Za-z0-9]{14}$/.test(id)) return null;
+  let r: any;
+  try {
+    r = await getRecordById(TABLES.RANCHER_PRODUCTS, id);
+  } catch {
+    return null;
+  }
+  if (!r) return null;
+  const price = Number(r['Display Price'] || 0);
+  const base = Number(r['Rancher Base'] || 0);
+  const sellableExceptStock =
+    r['Active'] === true &&
+    r['Ships Nationwide'] !== false &&
+    price > 0 &&
+    base > 0 &&
+    base <= price;
+  if (!sellableExceptStock) return null;
+  const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
+  return {
+    product: {
+      id: r.id,
+      name: String(r['Product Name'] || ''),
+      rancher: String(r['Rancher Name'] || ''),
+      category: String(sel(r['Category']) || 'Other'),
+      tier: String(sel(r['Resistance Tier']) || ''),
+      price,
+      base,
+      weight: String(r['Weight / Size'] || ''),
+      shelfStable: !!r['Shelf Stable'],
+      image: String(r['Image URL'] || ''),
+      description: String(r['Description'] || ''),
+      depositStyle: r['Deposit Style'] === true,
+      priceRange: String(r['Price Range'] || ''),
+      ordersLeft:
+        r['Orders Left'] === undefined || r['Orders Left'] === null || r['Orders Left'] === ''
+          ? null
+          : Number(r['Orders Left']),
+    },
+    soldOut: !hasStock(r),
+  };
 }
 
 // Browse sections: the 6 Category values collapse into 4 shopper-intent groups.

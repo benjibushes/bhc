@@ -78,7 +78,9 @@ async function loadProduct(id: string): Promise<Prod | null> {
   const leftRaw = r['Orders Left'];
   const ordersLeft =
     leftRaw === undefined || leftRaw === null || leftRaw === '' ? null : Number(leftRaw);
-  const soldOut = ordersLeft !== null && ordersLeft <= 0;
+  // Fail-closed like hasStock: junk/NaN counts as sold out (never renders a
+  // buyable page whose checkout then rejects).
+  const soldOut = ordersLeft !== null && !(ordersLeft > 0);
 
   // Best-effort: resolve the rancher's public page slug + state for the verified
   // trust link. Only link when the ranch has a LIVE page (never a dead link).

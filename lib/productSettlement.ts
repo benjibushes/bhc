@@ -115,6 +115,9 @@ export async function settleProductPurchase(pi: any): Promise<void> {
     // Deposit-style orders carry the marker in the ref so the ops view reads
     // the truth at a glance (no schema change needed).
     'Order Ref': `${depositStyle ? 'DEPOSIT — ' : ''}${productName} — ${buyerName || buyerEmail}`,
+    // GTM-hardening F2: link back to the product row so a refund/dispute can
+    // RESTORE its 'Orders Left' (inventory symmetry with the decrement below).
+    'Product Record ID': String(pi?.metadata?.productId || ''),
     'Product Name': productName,
     'Rancher Name': rancherName,
     'Rancher Record ID': rancherId,
@@ -356,10 +359,38 @@ export async function reconcileProductOrderRefund(
   const order = rows[0];
   if (String(order['Status'] || '') === 'Refunded') return true; // already reconciled
 
-  await updateRecord(TABLES.RANCHER_ORDERS, order.id, {
-    'Status': 'Refunded',
-    'Refunded At': new Date().toISOString(),
-  });
+  // GTM-hardening F2 (secondary): flip EVERY row for this PI — the Redis-down
+  // race guard can leave a rare duplicate row, and a 'New' twin would sit on
+  // the rancher's ship list after the refund.
+  for (const row of rows) {
+    if (String(row['Status'] || '') === 'Refunded') continue;
+    await updateRecord(TABLES.RANCHER_ORDERS, row.id, {
+      'Status': 'Refunded',
+      'Refunded At': new Date().toISOString(),
+    }).catch(() => {});
+  }
+
+  // GTM-hardening F2 (primary): RESTORE inventory — the settle path burned one
+  // 'Orders Left'; a refunded unit goes back on the shelf so the product
+  // doesn't sit sold-out losing sales until the monthly check-in. Best-effort,
+  // mirrors the decrement (blank = unlimited = nothing to restore).
+  try {
+    const productId = String(order['Product Record ID'] || '').trim();
+    if (productId) {
+      const prod: any = await getRecordById(TABLES.RANCHER_PRODUCTS, productId).catch(() => null);
+      const left = prod?.['Orders Left'];
+      if (prod && left !== undefined && left !== null && left !== '') {
+        await updateRecord(TABLES.RANCHER_PRODUCTS, productId, { 'Orders Left': Number(left) + 1 });
+        try {
+          const { revalidatePath } = await import('next/cache');
+          revalidatePath('/shop');
+          revalidatePath(`/shop/${productId}`);
+        } catch { /* ISR backstop */ }
+      }
+    }
+  } catch (e: any) {
+    console.warn('[productSettlement] refund stock restore skipped (non-fatal):', e?.message);
+  }
 
   const product = String(order['Product Name'] || 'a product');
   const rancher = String(order['Rancher Name'] || 'the ranch');
