@@ -59,6 +59,12 @@ export function metaEventId(recordId: string): string {
 export type AnalyticsEventName =
   | 'access_view'
   | 'access_quiz_submit'
+  // Bio hub (/links, 2026-07-06) — which rung bio traffic actually takes.
+  | 'links_view'
+  | 'links_shop'
+  | 'links_access'
+  | 'links_guide'
+  | 'links_gear'
   | 'quiz_started'
   | 'quiz_step_completed'
   | 'founders_view'

@@ -144,6 +144,16 @@ export default async function MarketplacePage() {
 
         <div className="mt-6 border-t border-dust pt-4">
           <TrustStrip className="text-xs" />
+
+          {/* Capture-leak patch (2026-07-06 journey map): a browse-and-bounce
+              visitor used to leave with nothing captured. One quiet line —
+              /guide does the actual capture (email+SMS). */}
+          <p className="text-[13px] text-saddle mt-4">
+            still deciding?{' '}
+            <a href="/guide" className="underline hover:text-charcoal transition-colors">
+              get the free guide — what a half cow actually costs &rarr;
+            </a>
+          </p>
         </div>
       </Container>
     </main>
