@@ -103,6 +103,11 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // tracking email (rancher — the hands-off fulfillment leg the product rail needs).
   'product_receipt',
   'rancher_order_notify',
+  // Phase 10 (2026-07-06): the tracking email the receipt promises. One-shot —
+  // POST /api/rancher/orders rejects a second mark-shipped (409 Already), so
+  // whitelisting cannot create volume. Without it a buyer at cap never learns
+  // their beef shipped.
+  'product_shipped',
   // Sales-floor pivot 2026-06-09: 4 new minimal-pipeline templates. All
   // are 1:1 transactional triggered by buyer state changes (signup, quiz
   // complete, sales-call close, rancher accept). Capping any of these

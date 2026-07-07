@@ -22,6 +22,22 @@ import {
   MIN_PRODUCT_PRICE_CENTS,
 } from '@/lib/rancherProductInput';
 
+interface RancherOrder {
+  id: string;
+  ref: string;
+  productName: string;
+  buyerName: string;
+  buyerEmail: string;
+  shipTo: string;
+  buyerPaid: number;
+  payout: number;
+  status: string;
+  orderedAt: string;
+  shippedAt: string;
+  trackingNumber: string;
+  depositStyle: boolean;
+}
+
 interface RancherProduct {
   id: string;
   name: string;
@@ -66,6 +82,13 @@ export default function ProductsTab({
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
 
+  // Orders loop (Phase 10): the rancher's marketplace orders live HERE, next
+  // to the products that generate them — see it, ship it, paste tracking.
+  const [orders, setOrders] = useState<RancherOrder[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [shippingId, setShippingId] = useState<string | null>(null);
+  const [trackingDraft, setTrackingDraft] = useState<Record<string, string>>({});
+
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -88,7 +111,41 @@ export default function ProductsTab({
         setLoading(false);
       }
     })();
+    (async () => {
+      try {
+        const res = await fetch('/api/rancher/orders');
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) setOrders(data.orders || []);
+      } catch {
+        /* orders section just stays empty; products still work */
+      } finally {
+        setOrdersLoading(false);
+      }
+    })();
   }, []);
+
+  async function markShipped(o: RancherOrder) {
+    setShippingId(o.id);
+    try {
+      const res = await fetch('/api/rancher/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: o.id, trackingNumber: (trackingDraft[o.id] || '').trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'update failed');
+      if (data.order?.productName) {
+        setOrders((list) => list.map((x) => (x.id === o.id ? data.order : x)));
+      } else {
+        setOrders((list) => list.map((x) => (x.id === o.id ? { ...x, status: 'Shipped' } : x)));
+      }
+      setSavedNote('marked shipped — the buyer just got the tracking email.');
+    } catch (e: any) {
+      setSaveErr(e?.message || 'could not mark shipped');
+    } finally {
+      setShippingId(null);
+    }
+  }
 
   // Live net preview from the SAME pure math the API applies — no drift.
   const priceNum = Number(form.displayPrice);
@@ -423,6 +480,74 @@ export default function ProductsTab({
               cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── Orders (Phase 10 — the loop that was missing: an order used to be
+             one email, then gone. Now: see it, ship it, paste tracking, buyer
+             gets the email automatically.) ── */}
+      {!ordersLoading && orders.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="font-serif text-lg border-b border-dust pb-1.5">
+            orders{orders.filter((o) => o.status === 'New').length > 0
+              ? ` — ${orders.filter((o) => o.status === 'New').length} to handle`
+              : ''}
+          </h3>
+          {orders.map((o) => (
+            <div key={o.id} className="border border-dust bg-bone p-3 space-y-2">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="font-serif text-[15px]">{o.productName}</span>
+                {o.depositStyle && (
+                  <span className="text-[10px] uppercase tracking-wider bg-rust text-bone px-1.5 py-0.5">
+                    deposit — confirm size + balance first
+                  </span>
+                )}
+                <span
+                  className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 ${
+                    o.status === 'Shipped'
+                      ? 'bg-sage text-bone'
+                      : o.status === 'Refunded'
+                        ? 'border border-dust text-saddle'
+                        : 'bg-charcoal text-bone'
+                  }`}
+                >
+                  {o.status}
+                </span>
+                <span className="text-xs text-saddle ml-auto">
+                  {o.orderedAt ? new Date(o.orderedAt).toLocaleDateString() : ''}
+                </span>
+              </div>
+              <div className="text-xs text-saddle">
+                {o.buyerName || o.buyerEmail} · paid {money(o.buyerPaid)} · you net {money(o.payout)}
+              </div>
+              {o.shipTo && (
+                <div className="text-xs text-charcoal/80 whitespace-pre-line bg-bone-warm border border-dust p-2">
+                  {o.shipTo}
+                </div>
+              )}
+              {o.status === 'New' && (
+                <div className="flex gap-2 flex-wrap items-center">
+                  <input
+                    type="text"
+                    placeholder="tracking number (optional)"
+                    value={trackingDraft[o.id] || ''}
+                    onChange={(e) => setTrackingDraft((d) => ({ ...d, [o.id]: e.target.value }))}
+                    className="flex-1 min-w-[180px] p-2.5 border border-dust bg-bone-warm text-sm"
+                  />
+                  <button
+                    onClick={() => markShipped(o)}
+                    disabled={shippingId === o.id}
+                    className="px-4 py-2.5 bg-charcoal text-bone text-xs uppercase tracking-wider hover:bg-saddle transition-colors disabled:opacity-50"
+                  >
+                    {shippingId === o.id ? 'sending…' : 'mark shipped →'}
+                  </button>
+                </div>
+              )}
+              {o.status === 'Shipped' && o.trackingNumber && (
+                <div className="text-xs text-sage">tracking: {o.trackingNumber}</div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
