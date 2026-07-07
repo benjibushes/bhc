@@ -47,6 +47,11 @@ interface Prod {
   // honest sold-out state instead of a 404 that wastes spend.
   soldOut: boolean;
   ordersLeft: number | null;
+  // Product info (Phase 12) — what the buyer GETS + how the process works.
+  whatsIncluded: string;
+  shipsInDays: number | null;
+  packaging: string;
+  feeds: string;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -114,6 +119,10 @@ async function loadProduct(id: string): Promise<Prod | null> {
     priceRange: String(r['Price Range'] || ''),
     soldOut,
     ordersLeft,
+    whatsIncluded: String(r["What's Included"] || ''),
+    shipsInDays: Number(r['Ships In Days']) > 0 ? Number(r['Ships In Days']) : null,
+    packaging: String(r['Packaging'] || ''),
+    feeds: String(r['Feeds'] || ''),
   };
 }
 
@@ -244,6 +253,64 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               {p.description ? (
                 <p className="text-[15.5px] text-charcoal/85 leading-relaxed m-0">{p.description}</p>
               ) : null}
+
+              {/* WHAT YOU GET (Phase 12) — the information gap killer. A buyer
+                  must be able to answer "what exactly shows up at my door"
+                  without leaving this screen. */}
+              {p.whatsIncluded ? (
+                <div className="border border-dust bg-bone-warm p-4">
+                  <p className="text-xs uppercase tracking-widest text-saddle mb-2">what you get</p>
+                  <ul className="m-0 pl-4 space-y-1">
+                    {p.whatsIncluded.split('\n').filter(Boolean).map((line, i) => (
+                      <li key={i} className="text-[14px] text-charcoal leading-snug">{line}</li>
+                    ))}
+                  </ul>
+                  {p.feeds ? (
+                    <p className="text-[12.5px] text-saddle mt-2.5 mb-0">{p.feeds}</p>
+                  ) : null}
+                </div>
+              ) : p.feeds ? (
+                <p className="text-[13px] text-saddle m-0">{p.feeds}</p>
+              ) : null}
+
+              {/* HOW IT WORKS — the process, in order, no mystery. Deposit-style
+                  gets the 4-step confirm-first version; fixed-price the 3-step.
+                  Honest fallbacks when a field is blank. */}
+              <div className="border-t border-dust pt-3">
+                <p className="text-xs uppercase tracking-widest text-saddle mb-2">how it works</p>
+                <ol className="m-0 pl-4 space-y-1.5">
+                  {p.depositStyle ? (
+                    <>
+                      <li className="text-[13.5px] text-charcoal/85 leading-snug">
+                        reserve with a ${p.price.toFixed(0)} deposit — it counts toward your total
+                      </li>
+                      <li className="text-[13.5px] text-charcoal/85 leading-snug">
+                        {p.rancher || 'your rancher'} reaches out to confirm the size you want + the balance
+                      </li>
+                      <li className="text-[13.5px] text-charcoal/85 leading-snug">
+                        {p.packaging || 'packed and shipped frozen, direct from the ranch'}
+                        {p.shipsInDays ? ` — ships within ~${p.shipsInDays} days of confirming` : ' once you’ve confirmed'}
+                      </li>
+                      <li className="text-[13.5px] text-charcoal/85 leading-snug">
+                        tracking lands in your inbox the moment it ships
+                      </li>
+                    </>
+                  ) : (
+                    <>
+                      <li className="text-[13.5px] text-charcoal/85 leading-snug">
+                        order now — {p.rancher || 'the ranch'} gets it immediately
+                      </li>
+                      <li className="text-[13.5px] text-charcoal/85 leading-snug">
+                        {p.packaging || 'packed and shipped direct from the ranch'}
+                        {p.shipsInDays ? ` — ships within ~${p.shipsInDays} days` : ''}
+                      </li>
+                      <li className="text-[13.5px] text-charcoal/85 leading-snug">
+                        tracking lands in your inbox the moment it ships
+                      </li>
+                    </>
+                  )}
+                </ol>
+              </div>
 
               <div className="text-[13px] text-sage">
                 {p.depositStyle

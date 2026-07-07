@@ -57,6 +57,10 @@ interface RancherProduct {
   depositStyle?: boolean;
   priceRange?: string;
   ordersLeft?: number | null;
+  whatsIncluded?: string;
+  shipsInDays?: number | null;
+  packaging?: string;
+  feeds?: string;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -71,6 +75,10 @@ const EMPTY_FORM = {
   shipsNationwide: true,
   shelfStable: false,
   ordersLeft: '' as string, // blank = unlimited
+  whatsIncluded: '',
+  shipsInDays: '' as string,
+  packaging: '',
+  feeds: '',
 };
 
 export default function ProductsTab({
@@ -180,6 +188,10 @@ export default function ProductsTab({
       shipsNationwide: p.shipsNationwide,
       shelfStable: p.shelfStable,
       ordersLeft: p.ordersLeft == null ? '' : String(p.ordersLeft),
+      whatsIncluded: p.whatsIncluded || '',
+      shipsInDays: p.shipsInDays == null ? '' : String(p.shipsInDays),
+      packaging: p.packaging || '',
+      feeds: p.feeds || '',
     });
     setEditingId(p.id);
     setSaveErr('');
@@ -219,6 +231,10 @@ export default function ProductsTab({
         shipsNationwide: form.shipsNationwide,
         shelfStable: form.shelfStable,
         ordersLeft: form.ordersLeft.trim() === '' ? '' : Number(form.ordersLeft),
+        whatsIncluded: form.whatsIncluded,
+        shipsInDays: form.shipsInDays.trim() === '' ? '' : Number(form.shipsInDays),
+        packaging: form.packaging,
+        feeds: form.feeds,
       };
       const res = await fetch('/api/rancher/products', {
         method: editingId ? 'PATCH' : 'POST',
@@ -416,6 +432,69 @@ export default function ProductsTab({
                 maxLength={60}
                 onChange={(e) => setForm((f) => ({ ...f, weight: e.target.value }))}
                 placeholder="3 oz · 10 sticks · ~12 lbs"
+                className="w-full p-3 border border-dust bg-bone text-[15px]"
+              />
+            </label>
+          </div>
+
+          {/* THE INFORMATION GAP (Phase 12): buyers buy what they understand.
+              These four fields are what make a listing actually sell. */}
+          <label className="block">
+            <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
+              what&rsquo;s in the box — one item per line (this is what sells it)
+            </span>
+            <textarea
+              value={form.whatsIncluded}
+              maxLength={1000}
+              rows={4}
+              onChange={(e) => setForm((f) => ({ ...f, whatsIncluded: e.target.value }))}
+              placeholder={'8 lbs ground beef\n3 lbs stew meat\n9 lbs mixed roasts (chuck, arm, rump)'}
+              className="w-full p-3 border border-dust bg-bone text-[15px] leading-relaxed"
+            />
+            <span className="block text-[11px] text-saddle mt-1">
+              buyers see this as &ldquo;what you get&rdquo; on your product page — be exact, it&rsquo;s the #1 thing they check before paying.
+            </span>
+          </label>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label className="block">
+              <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
+                ships within (days)
+              </span>
+              <input
+                type="number"
+                min="1"
+                max="60"
+                step="1"
+                value={form.shipsInDays}
+                onChange={(e) => setForm((f) => ({ ...f, shipsInDays: e.target.value }))}
+                placeholder="e.g. 3"
+                className="w-full p-3 border border-dust bg-bone text-[15px]"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
+                how it arrives
+              </span>
+              <input
+                type="text"
+                value={form.packaging}
+                maxLength={200}
+                onChange={(e) => setForm((f) => ({ ...f, packaging: e.target.value }))}
+                placeholder="vacuum-sealed, shipped frozen with dry ice"
+                className="w-full p-3 border border-dust bg-bone text-[15px]"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
+                feeds (plain words)
+              </span>
+              <input
+                type="text"
+                value={form.feeds}
+                maxLength={200}
+                onChange={(e) => setForm((f) => ({ ...f, feeds: e.target.value }))}
+                placeholder="~80 servings — a month of dinners"
                 className="w-full p-3 border border-dust bg-bone text-[15px]"
               />
             </label>

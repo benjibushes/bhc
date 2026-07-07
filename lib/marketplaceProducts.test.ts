@@ -33,6 +33,7 @@ test('isSellableRow: missing price or base is never sellable', () => {
 const mk = (id: string, category: string): MarketplaceProduct => ({
   id, name: id, rancher: 'R', category, tier: '', price: 10, base: 8, weight: '', shelfStable: false, image: '', description: '',
   depositStyle: false, priceRange: '', ordersLeft: null,
+  whatsIncluded: '', shipsInDays: null, packaging: '', feeds: '',
 });
 
 test('groupProducts: collapses categories into display groups, in order', () => {

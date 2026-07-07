@@ -65,6 +65,17 @@ created.
 
 **Agent D — Rancher dashboard surface read**
 
+Also read (2026-07-06 additions — the marketplace + operator rails):
+- `app/api/rancher/products/route.ts` (self-serve products: auth order,
+  ownership, Connect gate, deposit-style fence, stock-only PATCH path)
+- `app/api/rancher/orders/route.ts` (orders loop: ownership, mark-shipped
+  claimOnce guard, tracking email)
+- `app/api/admin/sell-links` + `sell-options` (operator console: mint gate
+  must equal redemption floor MIN_TIER_PRICE)
+- `lib/marketplaceProducts.ts` (isSellableRow + hasStock invariants)
+- `lib/productSettlement.ts` (deposit-style truth in emails, inventory
+  decrement + refund restore symmetry)
+
 Read all of `app/rancher/page.tsx` + `app/api/rancher/*/route.ts` for
 known failure modes:
 - Close-sale flow (saleAmount validation, commission helper used,
@@ -106,6 +117,9 @@ When user asks a small-scope question, skip the full audit:
 - "Did Y rancher get their warmup?" → Pull rancher + check Warmup Last Batch At + Launch Warmup Triggered
 - "Why didn't Z buyer route?" → Pull buyer + check Warmup Engaged At + Ready to Buy + Buyer Health
 - "Is endpoint /foo broken?" → `curl -s -o /dev/null -w "%{http_code}" https://www.buyhalfcow.com/foo`
+- "Is the marketplace healthy?" → curl /shop (200 + category anchors), a PDP
+  (200 + Product JSON-LD; ground box recLQdfYMnP1NxRgL should show
+  AggregateOffer 95–355), /api/rancher/products unauth (expect 401)
 
 ## Known recurring failure patterns
 

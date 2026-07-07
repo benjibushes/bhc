@@ -115,6 +115,9 @@ from BHC.md's "KEY URLS" table:
 | Case-study post | `https://www.buyhalfcow.com/ranchers/[slug]` |
 | Wins page | `https://www.buyhalfcow.com/wins` |
 | Map | `https://www.buyhalfcow.com/map` |
+| Low-ticket / marketplace | `https://www.buyhalfcow.com/shop` |
+| Single product ad/post | `https://www.buyhalfcow.com/shop/[recId]` |
+| Gear / affiliate | `https://www.buyhalfcow.com/gear` |
 
 For Instagram captions, write "link in bio" instead of pasting the URL.
 
@@ -143,6 +146,27 @@ offer one of:
 - "Translate to email format?"
 
 Don't volunteer an "explanation" of the copy — Ben reads it, ships it.
+
+## Product copy (marketplace listings — added 2026-07-06)
+
+When the request is "write copy for a product" / "product description" /
+"PDP copy", follow BHC.md's MARKETPLACE COPY RULES section. The deliverable is
+the FIELD KIT, not prose — output all six fields ready to paste into Airtable
+Rancher Products:
+
+```
+Product Name:     (plain, searchable — "20lb Freezer Teezer" not "The Bundle")
+Description:      (2-3 lowercase sentences, brand voice, why-this-exists)
+What's Included:  (one item per line, EXACT quantities — this is what sells)
+Packaging:        (one line — "vacuum-sealed, shipped frozen with dry ice")
+Ships In Days:    (number or BLANK — never guess a lead time)
+Feeds:            ("~80 servings — a month of dinners" — plain-words math)
+```
+
+Rules: exact quantities beat adjectives; deposit-style products always say
+"$X deposit · rancher confirms size + balance"; scarcity only from the real
+Orders Left count; ladder-up line optional at the end ("love it? a whole
+share is the better price per pound").
 
 ## Quick references
 

@@ -40,6 +40,13 @@ export interface MarketplaceProduct {
   // Inventory: null = unlimited (blank in Airtable); a number = orders left.
   // Real scarcity only — surfaces may show "N left" because it's true.
   ordersLeft: number | null;
+  // PRODUCT INFO (Phase 12 — the information gap): what a buyer actually GETS
+  // and how the process works. All optional; PDP falls back to honest generic
+  // copy when blank. whatsIncluded is newline-separated (renders as a list).
+  whatsIncluded: string;
+  shipsInDays: number | null;
+  packaging: string;
+  feeds: string;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -102,6 +109,10 @@ export async function loadMarketplaceProducts(): Promise<MarketplaceProduct[]> {
         r['Orders Left'] === undefined || r['Orders Left'] === null || r['Orders Left'] === ''
           ? null
           : Number(r['Orders Left']),
+      whatsIncluded: String(r["What's Included"] || ''),
+      shipsInDays: Number(r['Ships In Days']) > 0 ? Number(r['Ships In Days']) : null,
+      packaging: String(r['Packaging'] || ''),
+      feeds: String(r['Feeds'] || ''),
     }))
     .sort((a, b) => a.price - b.price);
 }
@@ -160,6 +171,10 @@ export async function loadMarketplaceProductAnyStock(
         r['Orders Left'] === undefined || r['Orders Left'] === null || r['Orders Left'] === ''
           ? null
           : Number(r['Orders Left']),
+      whatsIncluded: String(r["What's Included"] || ''),
+      shipsInDays: Number(r['Ships In Days']) > 0 ? Number(r['Ships In Days']) : null,
+      packaging: String(r['Packaging'] || ''),
+      feeds: String(r['Feeds'] || ''),
     },
     soldOut: !hasStock(r),
   };
