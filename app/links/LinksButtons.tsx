@@ -14,6 +14,7 @@ const LINKS: {
   sub: string;
   event: AnalyticsEventName;
   primary?: boolean;
+  external?: boolean;
 }[] = [
   {
     href: '/shop',
@@ -40,6 +41,13 @@ const LINKS: {
     sub: 'freezers, grills, knives — the tools behind the beef',
     event: 'links_gear',
   },
+  {
+    href: 'https://merch.buyhalfcow.com?utm_source=buyhalfcow&utm_medium=links&utm_campaign=bio-hub',
+    title: '🧢 the merch — hats & tees',
+    sub: '"buy beef. not bullshit." — rep the herd, from $20',
+    event: 'links_merch',
+    external: true,
+  },
 ];
 
 export default function LinksButtons() {
@@ -49,23 +57,35 @@ export default function LinksButtons() {
 
   return (
     <div className="space-y-3">
-      {LINKS.map((l) => (
-        <Link
-          key={l.href}
-          href={l.href}
-          onClick={() => trackEvent(l.event)}
-          className={
-            l.primary
-              ? 'block bg-charcoal text-bone p-4 text-center transition-base hover:bg-saddle'
-              : 'block bg-bone-warm border border-charcoal text-charcoal p-4 text-center transition-base hover:bg-bone-deep'
-          }
-        >
-          <span className="block font-medium text-[15.5px]">{l.title}</span>
-          <span className={`block text-[12px] mt-1 ${l.primary ? 'text-bone/75' : 'text-saddle'}`}>
-            {l.sub}
-          </span>
-        </Link>
-      ))}
+      {LINKS.map((l) => {
+        const cls = l.primary
+          ? 'block bg-charcoal text-bone p-4 text-center transition-base hover:bg-saddle'
+          : 'block bg-bone-warm border border-charcoal text-charcoal p-4 text-center transition-base hover:bg-bone-deep';
+        const inner = (
+          <>
+            <span className="block font-medium text-[15.5px]">{l.title}</span>
+            <span className={`block text-[12px] mt-1 ${l.primary ? 'text-bone/75' : 'text-saddle'}`}>
+              {l.sub}
+            </span>
+          </>
+        );
+        return l.external ? (
+          <a
+            key={l.href}
+            href={l.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => trackEvent(l.event)}
+            className={cls}
+          >
+            {inner}
+          </a>
+        ) : (
+          <Link key={l.href} href={l.href} onClick={() => trackEvent(l.event)} className={cls}>
+            {inner}
+          </Link>
+        );
+      })}
     </div>
   );
 }

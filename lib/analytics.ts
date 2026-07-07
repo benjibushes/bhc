@@ -65,6 +65,7 @@ export type AnalyticsEventName =
   | 'links_access'
   | 'links_guide'
   | 'links_gear'
+  | 'links_merch'
   | 'quiz_started'
   | 'quiz_step_completed'
   | 'founders_view'
