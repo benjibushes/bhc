@@ -37,6 +37,9 @@ export interface MarketplaceProduct {
   // Display−Base as the fee) are identical to a fixed-price product.
   depositStyle: boolean;
   priceRange: string;
+  // Inventory: null = unlimited (blank in Airtable); a number = orders left.
+  // Real scarcity only — surfaces may show "N left" because it's true.
+  ordersLeft: number | null;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -56,8 +59,19 @@ export function isSellableRow(r: any): boolean {
     r?.['Ships Nationwide'] !== false &&
     price > 0 &&
     base > 0 &&
-    base <= price
+    base <= price &&
+    // INVENTORY (Phase 11, ad-readiness): 'Orders Left' blank = unlimited
+    // (every pre-inventory row keeps selling); a number must be > 0. A
+    // sold-out product must never be listed or charged — ads can't oversell.
+    hasStock(r)
   );
+}
+
+/** Inventory gate, standalone so charge-time routes can reuse it verbatim. */
+export function hasStock(r: any): boolean {
+  const left = r?.['Orders Left'];
+  if (left === undefined || left === null || left === '') return true; // blank = unlimited
+  return Number(left) > 0;
 }
 
 /** Load every sellable nationwide-shippable product, cheapest first. */
@@ -84,6 +98,10 @@ export async function loadMarketplaceProducts(): Promise<MarketplaceProduct[]> {
       description: String(r['Description'] || ''),
       depositStyle: r['Deposit Style'] === true,
       priceRange: String(r['Price Range'] || ''),
+      ordersLeft:
+        r['Orders Left'] === undefined || r['Orders Left'] === null || r['Orders Left'] === ''
+          ? null
+          : Number(r['Orders Left']),
     }))
     .sort((a, b) => a.price - b.price);
 }

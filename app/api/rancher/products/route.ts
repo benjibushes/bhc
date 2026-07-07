@@ -62,6 +62,10 @@ function toClientProduct(r: any) {
     // labels them and the API fences their content edits (audit fix C-2e).
     depositStyle: r['Deposit Style'] === true,
     priceRange: String(r['Price Range'] || ''),
+    ordersLeft:
+      r['Orders Left'] === undefined || r['Orders Left'] === null || r['Orders Left'] === ''
+        ? null
+        : Number(r['Orders Left']),
   };
 }
 
@@ -221,7 +225,7 @@ export async function PATCH(request: Request) {
 
   const patch: Record<string, any> = {};
 
-  const editing = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable']
+  const editing = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable', 'ordersLeft']
     .some((k) => k in body);
 
   // Audit fix C-2e: DEPOSIT-STYLE rows are ops-managed price-range products
@@ -267,6 +271,7 @@ export async function PATCH(request: Request) {
       imageUrl: body.imageUrl ?? String(product['Image URL'] || ''),
       shipsNationwide: body.shipsNationwide ?? product['Ships Nationwide'] !== false,
       shelfStable: body.shelfStable ?? !!product['Shelf Stable'],
+      ordersLeft: 'ordersLeft' in body ? body.ordersLeft : (product['Orders Left'] ?? null),
     };
     const v = validateProductInput(merged);
     if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });

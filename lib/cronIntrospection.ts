@@ -84,6 +84,9 @@ export const EXPECTED_CRONS_24H = [
 export const EXCLUDED_CRONS_24H: Readonly<Record<string, string>> = {
   'spam-audit':
     'weekly (Sat 14:00 UTC) — a 24h expectation would false-alarm 6 days a week',
+  'product-stock-checkin':
+    'monthly (1st, 16:00 UTC) — a 24h expectation would false-alarm ~29 days a month; ' +
+    'also dark-by-default (PRODUCT_STOCK_CHECKIN_ENABLED gate returns before withCronRun)',
   'backer-monthly-letter':
     'monthly (1st, 14:00 UTC) — a 24h expectation would false-alarm ~29 days a month',
   'rancher-reactivation':

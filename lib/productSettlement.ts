@@ -235,6 +235,32 @@ export async function settleProductPurchase(pi: any): Promise<void> {
     }
   } catch { /* non-fatal — the operator signal already carries the ship-to */ }
 
+  // ── INVENTORY DECREMENT (Phase 11, ad-readiness) ──────────────────────────
+  // If the product tracks 'Orders Left', burn one on every settled order and
+  // refresh /shop so a sell-out disappears from the grid in seconds (the
+  // sellability gate + charge-time checks make it un-buyable regardless).
+  // Best-effort + non-fatal: Airtable has no atomic decrement, and an
+  // off-by-one under heavy simultaneous sales self-corrects at the monthly
+  // stock check-in — never worth failing a settled order over.
+  try {
+    const productId = String(pi?.metadata?.productId || '').trim();
+    if (productId) {
+      const prod: any = await getRecordById(TABLES.RANCHER_PRODUCTS, productId).catch(() => null);
+      const left = prod?.['Orders Left'];
+      if (prod && left !== undefined && left !== null && left !== '') {
+        const next = Math.max(0, Number(left) - 1);
+        await updateRecord(TABLES.RANCHER_PRODUCTS, productId, { 'Orders Left': next });
+        try {
+          const { revalidatePath } = await import('next/cache');
+          revalidatePath('/shop');
+          revalidatePath(`/shop/${productId}`);
+        } catch { /* ISR backstop */ }
+      }
+    }
+  } catch (e: any) {
+    console.warn('[productSettlement] inventory decrement skipped (non-fatal):', e?.message);
+  }
+
   // ── Meta Conversions API: server-side Purchase (the ROAS conversion) ──────
   // Gated on productPurchaseEnabled() (privacy dry-run first). No fbp/fbc at
   // webhook time → action_source='system_generated' + email match (same posture

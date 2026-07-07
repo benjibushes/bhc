@@ -133,3 +133,14 @@ test('margin map covers every canonical category', () => {
     assert.ok(MARGIN_BY_CATEGORY[c] !== undefined, c);
   }
 });
+
+test('ordersLeft: blank = unlimited (null field), integers pass, junk rejected', () => {
+  const blank = validateProductInput({ ...GOOD });
+  assert.equal(blank.ok && blank.fields['Orders Left'], null);
+  const set = validateProductInput({ ...GOOD, ordersLeft: 12 });
+  assert.equal(set.ok && set.fields['Orders Left'], 12);
+  const zero = validateProductInput({ ...GOOD, ordersLeft: 0 });
+  assert.equal(zero.ok && zero.fields['Orders Left'], 0); // deliberate sold-out pause
+  assert.equal(validateProductInput({ ...GOOD, ordersLeft: 2.5 as any }).ok, false);
+  assert.equal(validateProductInput({ ...GOOD, ordersLeft: -1 as any }).ok, false);
+});

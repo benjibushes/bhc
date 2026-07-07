@@ -10,6 +10,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/adminAuth';
 import { getRecordById, getAllRecords, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
+import { hasStock } from '@/lib/marketplaceProducts';
 import { createProductCheckout } from '@/lib/productCheckout';
 import { ensureStripePrice } from '@/lib/productStripeSync';
 
@@ -62,6 +63,10 @@ export async function POST(request: Request) {
   }
   if (baseCents > displayCents) {
     return NextResponse.json({ error: 'Rancher Base exceeds Display Price — fix the margin before selling' }, { status: 409 });
+  }
+  // INVENTORY (Phase 11): operator links respect stock too.
+  if (!hasStock(product)) {
+    return NextResponse.json({ error: 'Sold out — Orders Left is 0 on this product.' }, { status: 409 });
   }
 
   // Rancher — must be Connect-active to take a direct charge.
