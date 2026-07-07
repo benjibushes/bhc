@@ -26,7 +26,9 @@ import { usePathname } from 'next/navigation';
 // a cold Meta buyer one tap from paying must not see 8+ nav exits + a Hats promo
 // bar. NOTE: '/shop' (the marketplace browse) is deliberately NOT sealed — it
 // keeps its nav; only the checkout + order-outcome pages seal.
-const FOCUSED_PREFIXES = ['/qualify', '/access', '/book', '/checkout', '/shop/checkout', '/order'];
+// '/links' (the bio hub, 2026-07-06) is sealed too: it's a routing room — the
+// ranked buttons ARE the page; nav/footer would leak the tap Ben paid for.
+const FOCUSED_PREFIXES = ['/qualify', '/access', '/book', '/checkout', '/shop/checkout', '/order', '/links'];
 
 export function isFocusedRoute(pathname: string | null | undefined): boolean {
   const p = pathname || '';

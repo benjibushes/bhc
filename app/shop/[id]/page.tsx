@@ -357,6 +357,15 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 runaround. checkout secured by Stripe. questions? reply to your receipt — a real
                 person answers. &mdash; Ben
               </p>
+
+              {/* Capture-leak patch: the PDP bouncer leaves with nothing —
+                  offer the guide as the zero-risk exit ramp. */}
+              <p className="text-[12px] text-saddle">
+                not today?{' '}
+                <a href="/guide" className="underline hover:text-charcoal transition-colors">
+                  grab the free half-cow cost guide instead &rarr;
+                </a>
+              </p>
             </div>
           </div>
 
