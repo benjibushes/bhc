@@ -90,6 +90,10 @@ export default function ProductsTab({
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [shippingId, setShippingId] = useState<string | null>(null);
   const [trackingDraft, setTrackingDraft] = useState<Record<string, string>>({});
+  // Stock-only inline editor for deposit-style rows (full edit is ops-fenced,
+  // but stock must stay rancher-updatable — the monthly check-in depends on it).
+  const [stockDraft, setStockDraft] = useState<Record<string, string>>({});
+  const [stockSavingId, setStockSavingId] = useState<string | null>(null);
 
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -245,6 +249,30 @@ export default function ProductsTab({
       setSaveErr(e?.message || 'could not save — try again');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveStock(p: RancherProduct) {
+    setStockSavingId(p.id);
+    setSaveErr('');
+    try {
+      const raw = (stockDraft[p.id] ?? '').trim();
+      const res = await fetch('/api/rancher/products', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: p.id, ordersLeft: raw === '' ? '' : Number(raw) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'stock update failed');
+      if (data.product?.name) {
+        setProducts((list) => list.map((x) => (x.id === p.id ? data.product : x)));
+      }
+      setSavedNote('stock updated — the marketplace reflects it in a few seconds.');
+      setStockDraft((d) => ({ ...d, [p.id]: '' }));
+    } catch (e: any) {
+      setSaveErr(e?.message || 'could not update stock');
+    } finally {
+      setStockSavingId(null);
     }
   }
 
@@ -627,10 +655,30 @@ export default function ProductsTab({
                     view
                   </a>
                 )}
+                {p.depositStyle && (
+                  <span className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder={p.ordersLeft == null ? 'stock' : String(p.ordersLeft)}
+                      value={stockDraft[p.id] ?? ''}
+                      onChange={(e) => setStockDraft((d) => ({ ...d, [p.id]: e.target.value }))}
+                      className="w-[70px] p-2 border border-dust bg-bone-warm text-xs"
+                    />
+                    <button
+                      onClick={() => saveStock(p)}
+                      disabled={stockSavingId === p.id || (stockDraft[p.id] ?? '') === ''}
+                      className="text-xs uppercase tracking-wider border border-dust px-2 py-2 hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40"
+                    >
+                      {stockSavingId === p.id ? '…' : 'set'}
+                    </button>
+                  </span>
+                )}
                 <button
                   onClick={() => startEdit(p)}
                   disabled={p.depositStyle}
-                  title={p.depositStyle ? 'deposit-style product — text ben to change details or pricing' : ''}
+                  title={p.depositStyle ? 'deposit-style product — text ben to change details or pricing; update stock with the box to the left' : ''}
                   className="text-xs uppercase tracking-wider border border-dust px-3 py-2 hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   edit

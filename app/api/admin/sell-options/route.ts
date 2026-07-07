@@ -20,7 +20,7 @@ import {
   isRancherOnConnect,
   isRancherOperationalForBuyers,
 } from '@/lib/rancherEligibility';
-import { deriveDeposit } from '@/lib/pricing';
+import { deriveDeposit, MIN_TIER_PRICE } from '@/lib/pricing';
 import { loadMarketplaceProducts } from '@/lib/marketplaceProducts';
 import { CUT_LABELS, type Cut } from '@/lib/reserveDeposit';
 
@@ -51,7 +51,12 @@ export async function GET(request: Request) {
     .map((r) => {
       const tiers = TIER_FIELDS.map(({ cut, field }) => {
         const price = Number(r[field] || 0);
-        return price > 0 ? { cut, label: CUT_LABELS[cut], price, deposit: deriveDeposit(price) } : null;
+        // GTM-hardening F1: only surface tiers the redemption path will accept
+        // (>= MIN_TIER_PRICE, NaN-safe) — the console must never show a
+        // clickable tier that mints a bouncing link.
+        return price >= MIN_TIER_PRICE
+          ? { cut, label: CUT_LABELS[cut], price, deposit: deriveDeposit(price) }
+          : null;
       }).filter(Boolean);
       // Coverage: home state, admin routing states, or legacy States Served —
       // same precedence the routing engine uses (Routing States first).

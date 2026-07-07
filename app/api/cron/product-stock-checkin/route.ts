@@ -68,11 +68,25 @@ async function realHandler(_request: Request): Promise<CronResult> {
 
   // Group by rancher — one digest per rancher, never per product.
   const byRancher = new Map<string, any[]>();
+  let orphanRows = 0;
   for (const p of products) {
     const rid = String(p['Rancher Record ID'] || '').trim();
-    if (!rid) continue;
+    if (!rid) { orphanRows++; continue; } // counted in notes — never silent
     if (!byRancher.has(rid)) byRancher.set(rid, []);
     byRancher.get(rid)!.push(p);
+  }
+
+  // Noise filter: a rancher whose listings are ALL unlimited has no count to
+  // confirm — skip the email (the check-in exists to keep NUMBERS honest).
+  let allUnlimitedSkipped = 0;
+  for (const [rid, list] of [...byRancher.entries()]) {
+    const hasCounted = list.some(
+      (p) => !(p['Orders Left'] === undefined || p['Orders Left'] === null || p['Orders Left'] === ''),
+    );
+    if (!hasCounted) {
+      byRancher.delete(rid);
+      allUnlimitedSkipped++;
+    }
   }
 
   if (dryRun) {
@@ -151,7 +165,10 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status: errors.length ? 'partial' : 'success',
     recordsTouched: sent,
-    notes: `ranchers=${byRancher.size} products=${products.length} sent=${sent} errs=${errors.length}` + (errors.length ? ` err1=${errors[0].slice(0, 80)}` : ''),
+    notes:
+      `ranchers=${byRancher.size} products=${products.length} sent=${sent} errs=${errors.length}` +
+      ` allUnlimitedSkipped=${allUnlimitedSkipped} orphanRows=${orphanRows}` +
+      (errors.length ? ` err1=${errors[0].slice(0, 80)}` : ''),
   };
 }
 

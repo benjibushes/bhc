@@ -11,7 +11,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
-import { loadMarketplaceProduct } from '@/lib/marketplaceProducts';
+import { loadMarketplaceProductAnyStock } from '@/lib/marketplaceProducts';
 import ProductImage from '../../ProductImage';
 import CheckoutMount from './CheckoutMount';
 import Card from '../../../components/Card';
@@ -27,8 +27,35 @@ export const metadata: Metadata = {
 
 export default async function ProductCheckoutPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const p = await loadMarketplaceProduct(id);
-  if (!p) notFound(); // bad / inactive / unsellable id → immediate 404, no loading flash
+  const loaded = await loadMarketplaceProductAnyStock(id);
+  if (!loaded) notFound(); // bad / inactive / unsellable id → immediate 404, no loading flash
+  const { product: p, soldOut } = loaded;
+
+  // GTM-hardening F4: a buyer arriving from a stale (ISR) PDP after a
+  // sell-out gets an honest sold-out state — never a 404 one tap from paying.
+  // This page is force-dynamic, so the state here is always fresh truth.
+  if (soldOut) {
+    return (
+      <main className="min-h-screen bg-bone text-charcoal pt-7 pb-14 px-4">
+        <div className="max-w-[640px] mx-auto text-center">
+          <Card padding="lg">
+            <h1 className="font-serif text-2xl mb-2 lowercase">just sold out</h1>
+            <p className="text-sm text-saddle leading-relaxed mb-4">
+              <strong>{p.name}</strong> from {p.rancher} sold its last order moments ago — this
+              batch is spoken for, and the ranch restocks as the next animals come through. nothing
+              was charged.
+            </p>
+            <Link
+              href="/shop"
+              className="inline-block px-5 py-3 bg-charcoal text-bone text-sm font-medium uppercase tracking-wider hover:bg-saddle transition-colors"
+            >
+              see what&rsquo;s available now &rarr;
+            </Link>
+          </Card>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-bone text-charcoal pt-7 pb-14 px-4">

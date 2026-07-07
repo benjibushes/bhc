@@ -225,19 +225,44 @@ export async function PATCH(request: Request) {
 
   const patch: Record<string, any> = {};
 
-  const editing = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable', 'ordersLeft']
-    .some((k) => k in body);
+  // GTM-hardening F3: 'ordersLeft' is NOT a content edit — stock must stay
+  // rancher-updatable on EVERY row (the monthly check-in email sends them
+  // here to do exactly that), including deposit-style rows, without touching
+  // the hand-set Base/price. Content keys drive the deposit fence; a
+  // stock-only PATCH takes the dedicated path below.
+  const CONTENT_KEYS = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable'];
+  const editing = CONTENT_KEYS.some((k) => k in body);
+  const stockOnly = 'ordersLeft' in body && !editing;
 
   // Audit fix C-2e: DEPOSIT-STYLE rows are ops-managed price-range products
   // (Display Price = the deposit, Rancher Base is hand-set, Price Range is a
   // display contract). A self-serve content edit would re-derive Base off the
   // category margin (clobbering the ops Base) or reprice the deposit under a
-  // stale range. Ranchers may hide/show them; content changes go through Ben.
+  // stale range. Ranchers may hide/show them + update STOCK; content changes
+  // go through Ben.
   if (editing && product['Deposit Style'] === true) {
     return NextResponse.json(
-      { error: 'this is a deposit-style (price-range) product — text ben to change its details or pricing. you can still hide/show it.' },
+      { error: 'this is a deposit-style (price-range) product — text ben to change its details or pricing. you can still hide/show it and update its stock.' },
       { status: 409 },
     );
+  }
+
+  // Stock-only path — validate the count alone, write ONLY 'Orders Left'.
+  if (stockOnly) {
+    const rawLeft = body.ordersLeft;
+    const blank = rawLeft === undefined || rawLeft === null || rawLeft === '';
+    if (blank) {
+      patch['Orders Left'] = null; // unlimited
+    } else {
+      const n = Number(rawLeft);
+      if (!Number.isInteger(n) || n < 0 || n > 100000) {
+        return NextResponse.json(
+          { error: 'orders available must be a whole number (leave blank for unlimited).' },
+          { status: 400 },
+        );
+      }
+      patch['Orders Left'] = n;
+    }
   }
 
   // Hide/show is the one non-content field a rancher may toggle. Re-showing
