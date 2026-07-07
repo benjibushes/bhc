@@ -87,6 +87,12 @@ export interface CreateProductCheckoutInput {
   // instead of an inline price_data. The margin (application_fee) is unchanged.
   // Omitted → falls back to inline price_data (demo / not-yet-synced).
   stripePriceId?: string;
+  // DEPOSIT-STYLE (2026-07-06 audit fix C-1.5): price-range products (e.g. the
+  // $95–355 ground box) charge Display Price as a DEPOSIT; the rancher confirms
+  // size + balance before shipping. Threading the flag into PI metadata lets
+  // settlement send truthful emails ("deposit paid — confirm details") instead
+  // of "paid, ship it". Charge mechanics are IDENTICAL either way.
+  depositStyle?: boolean;
 }
 
 /**
@@ -141,7 +147,11 @@ export async function createProductCheckout(
                 currency: 'usd',
                 product_data: {
                   name: `${input.productName} — ${input.rancherName}`,
-                  description: 'Ships direct from the ranch.',
+                  // Deposit-style must be honest INSIDE Stripe too — the hosted
+                  // fallback + operator-texted links show only this page.
+                  description: input.depositStyle
+                    ? 'Deposit — the ranch confirms your size + the balance with you before shipping.'
+                    : 'Ships direct from the ranch.',
                 },
                 unit_amount: charge.totalChargedCents,
               },
@@ -161,6 +171,8 @@ export async function createProductCheckout(
           displayCents: String(charge.totalChargedCents),
           baseCents: String(charge.rancherNetCents),
           marginCents: String(charge.applicationFeeCents),
+          // C-1.5: settlement branches receipt/rancher/operator copy on this.
+          depositStyle: input.depositStyle ? 'true' : 'false',
         },
       },
       // Embedded ⇒ return_url (Stripe redirects the parent page out of the iframe

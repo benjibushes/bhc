@@ -116,6 +116,8 @@ export async function POST(request: Request) {
       productId: product.id,
       rancherId,
       rancherName: String(product['Rancher Name'] || rancher['Ranch Name'] || 'the ranch'),
+      // C-1.5: deposit truth rides into settlement + the Stripe line item.
+      depositStyle: product['Deposit Style'] === true,
       successUrl: `${SITE_URL}/order/success`,
       cancelUrl: `${SITE_URL}/order/cancelled`,
     });
@@ -124,6 +126,8 @@ export async function POST(request: Request) {
       product: product['Product Name'],
       buyerPays: displayCents / 100,
       yourMargin: (displayCents - baseCents) / 100,
+      depositStyle: product['Deposit Style'] === true,
+      priceRange: String(product['Price Range'] || ''),
     });
   } catch (e: any) {
     console.error('[checkout/product] session create failed:', e?.message);

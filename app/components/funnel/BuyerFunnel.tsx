@@ -1103,11 +1103,15 @@ function Reveal({
               >
                 Browse ranchers on the map &rarr;
               </a>
+              {/* Audit fix D-2: this promised "who ships nationwide" but linked
+                  to the unfiltered /ranchers directory (zero shipping info) —
+                  a broken promise to the highest-intent stranded buyer. /shop
+                  IS the ships-to-you surface; the button now tells the truth. */}
               <a
-                href="/ranchers"
+                href="/shop"
                 className="flex-1 text-center border border-charcoal text-charcoal px-5 py-3 min-h-[48px] flex items-center justify-center uppercase tracking-wider text-sm transition hover:bg-charcoal hover:text-bone"
               >
-                See who ships nationwide &rarr;
+                Get beef shipped now &rarr;
               </a>
             </div>
           </div>
@@ -1117,11 +1121,13 @@ function Reveal({
               offer with photos + one-tap checkout, not a text-link whisper.
               This reveal is also where "still deciding" + below-gate buyers
               land — their entire monetizable next step lives here. */}
+          {/* Title makes no per-state claim (audit D-3): "we ship to {state}"
+              rested on blank-counts-as-shippable checkboxes + AK/HI edge. */}
           <LowTicketRail
             picks={lowTicketPicks || []}
             variant="full"
             eyebrow="while you wait — shipped this week"
-            title={`taste it before the share${state ? ` — we ship to ${state}` : ''}`}
+            title="taste it before the share — shipped to your door"
           />
         </div>
       )}

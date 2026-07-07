@@ -17,6 +17,8 @@ interface Product {
   rancherBase: number;
   margin: number;
   shelfStable: boolean;
+  depositStyle?: boolean;
+  priceRange?: string;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -83,7 +85,9 @@ export default function AdminProductsPage() {
   }
 
   const smsText = result && selected
-    ? `Hey${buyerName ? ' ' + buyerName.split(' ')[0] : ''} — it's Ben from BuyHalfCow. Not ready for a whole share yet? Try ${selected.rancher}'s beef first — here's your link: ${result.url}`
+    ? selected.depositStyle
+      ? `Hey${buyerName ? ' ' + buyerName.split(' ')[0] : ''} — it's Ben from BuyHalfCow. Here's the ${selected.name} from ${selected.rancher}: ${result.url} — ${money(selected.displayPrice)} reserves it, they confirm your size + the balance before it ships.`
+      : `Hey${buyerName ? ' ' + buyerName.split(' ')[0] : ''} — it's Ben from BuyHalfCow. Not ready for a whole share yet? Try ${selected.rancher}'s beef first — here's your link: ${result.url}`
     : '';
 
   return (
@@ -108,7 +112,10 @@ export default function AdminProductsPage() {
               <option value="">— pick a product —</option>
               {products.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {money(p.displayPrice)} · {p.name} — {p.rancher} {p.shelfStable ? '(ships anywhere)' : ''}
+                  {p.depositStyle
+                    ? `${money(p.displayPrice)} DEPOSIT (${p.priceRange || 'range'})`
+                    : money(p.displayPrice)}{' '}
+                  · {p.name} — {p.rancher} {p.shelfStable ? '(ships anywhere)' : ''}
                 </option>
               ))}
             </select>
@@ -116,7 +123,15 @@ export default function AdminProductsPage() {
 
           {selected && (
             <div className="bg-bone-warm border-l-2 border-l-sage px-3.5 py-2.5 text-[13px] text-charcoal/85">
-              buyer pays <strong>{money(selected.displayPrice)}</strong> · rancher nets {money(selected.rancherBase)} · <strong>you keep {money(selected.margin)}</strong>
+              {selected.depositStyle ? (
+                <>
+                  <strong>deposit-style:</strong> buyer pays a <strong>{money(selected.displayPrice)} deposit</strong> toward a {selected.priceRange || 'range'} total — the rancher confirms size + balance before shipping. you keep {money(selected.margin)} of the deposit · rancher nets {money(selected.rancherBase)}
+                </>
+              ) : (
+                <>
+                  buyer pays <strong>{money(selected.displayPrice)}</strong> · rancher nets {money(selected.rancherBase)} · <strong>you keep {money(selected.margin)}</strong>
+                </>
+              )}
             </div>
           )}
 
