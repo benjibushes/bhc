@@ -50,7 +50,7 @@ export default async function ReviewSubmitPage({ searchParams }: PageProps) {
       <div className="max-w-md w-full bg-white border border-dust p-6 md:p-10">
         <h1 className="font-serif text-2xl mb-2">Quick favor.</h1>
         <p className="text-saddle mb-6 leading-relaxed">
-          One rating + one sentence about your beef share. Real words, your voice. Takes 30 seconds &mdash;
+          One rating + one sentence about your beef. Real words, your voice. Takes 30 seconds &mdash;
           your review helps the next family find verified beef.
         </p>
         <ReviewSubmitForm token={token} />
