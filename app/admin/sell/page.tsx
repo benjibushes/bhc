@@ -175,6 +175,29 @@ export default function AdminSellPage() {
     navigator.clipboard?.writeText(result.url).then(() => setCopied(true), () => setCopied(false));
   }
 
+  // ── Demand heatmap (the rancher-recruiting weapon, backlog #114) ──
+  const [heat, setHeat] = useState<{ state: string; waitingBuyers: number; activeRanchers: number; pitch: string }[] | null>(null);
+  const [heatBusy, setHeatBusy] = useState(false);
+  const [pitchCopied, setPitchCopied] = useState('');
+
+  async function loadHeatmap() {
+    setHeatBusy(true);
+    try {
+      const res = await fetch('/api/admin/demand-heatmap');
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setHeat(data.rows || []);
+    } finally {
+      setHeatBusy(false);
+    }
+  }
+
+  function copyPitch(state: string, pitch: string) {
+    navigator.clipboard?.writeText(pitch).then(
+      () => setPitchCopied(state),
+      () => setPitchCopied(''),
+    );
+  }
+
   // ── Shop-drop campaign (the waitlist monetizer) ──
   const [dropBusy, setDropBusy] = useState(false);
   const [dropStatus, setDropStatus] = useState('');
@@ -376,6 +399,53 @@ export default function AdminSellPage() {
           </section>
         </div>
       )}
+
+      {/* ── Demand heatmap — the rancher-recruiting weapon. Supply is the
+             platform's one real constraint; this is the pitch that fills it:
+             per-state waiting-buyer counts vs covering ranchers, gap-sorted,
+             with the recruiting line ready to paste into any DM. ── */}
+      <section className="mt-12 border-t border-dust pt-6">
+        <h2 className="font-serif text-xl mb-1">supply gaps — where to recruit ranchers</h2>
+        <p className="text-saddle text-[13px] mb-3 max-w-2xl">
+          qualified WAITING buyers per state vs. deposit-capable ranchers covering it. the copy
+          button gives you the exact recruiting line: <em>&ldquo;N buyers are waiting in your
+          radius — you fill them, we already found them.&rdquo;</em>
+        </p>
+        {!heat ? (
+          <button
+            onClick={loadHeatmap}
+            disabled={heatBusy}
+            className="px-4 py-2.5 border border-charcoal text-[13px] cursor-pointer transition-base hover:bg-charcoal hover:text-bone disabled:opacity-50"
+          >
+            {heatBusy ? 'crunching…' : 'load the board'}
+          </button>
+        ) : heat.length === 0 ? (
+          <p className="text-sm text-saddle">no state-tagged waiting demand found.</p>
+        ) : (
+          <div className="space-y-1.5 max-w-2xl">
+            {heat.slice(0, 15).map((r) => (
+              <div key={r.state} className="flex items-center gap-3 border border-dust bg-bone px-3 py-2">
+                <span className="font-serif text-lg w-10">{r.state}</span>
+                <span className="text-[13px] text-charcoal tabular-nums">
+                  <strong>{r.waitingBuyers}</strong> waiting
+                </span>
+                <span className={`text-[13px] tabular-nums ${r.activeRanchers === 0 ? 'text-weathered font-semibold' : 'text-sage'}`}>
+                  {r.activeRanchers} rancher{r.activeRanchers === 1 ? '' : 's'} covering
+                </span>
+                <button
+                  onClick={() => copyPitch(r.state, r.pitch)}
+                  className="ml-auto px-3 py-1.5 border border-dust text-[11.5px] uppercase tracking-wider cursor-pointer transition-base hover:bg-charcoal hover:text-bone"
+                >
+                  {pitchCopied === r.state ? 'copied ✓' : 'copy pitch'}
+                </button>
+              </div>
+            ))}
+            {heat.length > 15 && (
+              <p className="text-xs text-saddle">+ {heat.length - 15} more states with demand</p>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* ── Campaigns — the waitlist shop drop (money-map lever #1). One-time
              "the shop is open" announcement to WAITING buyers, batched, once
