@@ -101,9 +101,9 @@ export default function AddRancherForm() {
             {isSelf ? (
               <>
                 <strong>{result.ranchName}</strong> just landed as a yellow pin on the
-                public discover map. Check your inbox — I just sent over what this is and
-                how to book a 15-minute call to see if BuyHalfCow is a fit for your
-                operation.
+                public discover map. Fastest path from here: grab 15 minutes with me and
+                we&rsquo;ll see if BuyHalfCow is a fit for your operation — the same link
+                is in your inbox too.
               </>
             ) : (
               <>
@@ -115,13 +115,30 @@ export default function AddRancherForm() {
             )}
           </p>
         </div>
+        {/* Rancher-call-path fix (2026-07-06): this success card is the LAST
+            warm touch before the rancher leaves the browser — it used to rely
+            100% on email delivery for the next step. The discovery call is now
+            the primary CTA on the self path. */}
         <div className="flex flex-wrap gap-3 pt-2">
-          <Button href="/map" variant="primary" size="md">
-            View the map
-          </Button>
-          <Button href="/founders" variant="secondary" size="md">
-            Back the build
-          </Button>
+          {isSelf ? (
+            <>
+              <Button href="/book?purpose=rancher" variant="primary" size="md">
+                Book the 15-min call with Ben →
+              </Button>
+              <Button href="/map" variant="secondary" size="md">
+                View the map
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button href="/map" variant="primary" size="md">
+                View the map
+              </Button>
+              <Button href="/founders" variant="secondary" size="md">
+                Back the build
+              </Button>
+            </>
+          )}
         </div>
       </Card>
     );

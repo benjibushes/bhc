@@ -132,14 +132,22 @@ export default function ApplyForm() {
     // leads who self-redirect to the wizard immediately, but recommended
     // for everyone else. Cal.com embed inline below CTA so they can book
     // without leaving the page.
+    // Rancher-call-path fix (2026-07-06): the old 4th fallback was the
+    // hardcoded 'ben-beauchman-1itnsg' slug whose events were DELETED in the
+    // 2026-06-14 incident — a dead 404 iframe at the exact moment a rancher
+    // says yes. No live link → render a button to /book?purpose=rancher
+    // (the on-site page that resolves the live event server-side and can
+    // never 404) instead of embedding anything stale.
     const DISCOVERY_CAL =
       resolvedDiscoveryCal ||
       process.env.NEXT_PUBLIC_CALENDLY_DISCOVERY_LINK ||
       process.env.NEXT_PUBLIC_CALENDLY_LINK ||
-      'https://cal.com/ben-beauchman-1itnsg';
-    const calEmbed = DISCOVERY_CAL.includes('?')
-      ? `${DISCOVERY_CAL}&embed=true&theme=light`
-      : `${DISCOVERY_CAL}?embed=true&theme=light`;
+      '';
+    const calEmbed = DISCOVERY_CAL
+      ? DISCOVERY_CAL.includes('?')
+        ? `${DISCOVERY_CAL}&embed=true&theme=light`
+        : `${DISCOVERY_CAL}?embed=true&theme=light`
+      : '';
 
     return (
       <div className="space-y-6 max-w-2xl">
@@ -183,17 +191,26 @@ export default function ApplyForm() {
                 the wizard.
               </p>
             </div>
-            <div
-              className="relative w-full overflow-hidden border border-dust"
-              style={{ paddingBottom: '85%' }}
-            >
-              <iframe
-                src={calEmbed}
-                title="Book discovery call with Ben"
-                className="absolute inset-0 w-full h-full"
-                frameBorder={0}
-              />
-            </div>
+            {calEmbed ? (
+              <div
+                className="relative w-full overflow-hidden border border-dust"
+                style={{ paddingBottom: '85%' }}
+              >
+                <iframe
+                  src={calEmbed}
+                  title="Book discovery call with Ben"
+                  className="absolute inset-0 w-full h-full"
+                  frameBorder={0}
+                />
+              </div>
+            ) : (
+              <a
+                href="/book?purpose=rancher"
+                className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+              >
+                Book the 15-min call →
+              </a>
+            )}
             <p className="text-xs text-saddle italic">
               After booking, your wizard link stays available — we'll
               email it again with the calendar invite. Or skip the call

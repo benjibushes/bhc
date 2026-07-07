@@ -47,7 +47,10 @@ export default function AddRancherPage() {
             <p className="text-sm text-saddle leading-relaxed">
               Self-submitted ranchers go on the map immediately as a yellow pin.
               You&rsquo;re not routed customers until you&rsquo;ve had a 15-minute call
-              with Ben and signed a partner agreement.
+              with Ben and signed a partner agreement.{' '}
+              <a href="/book?purpose=rancher" className="underline hover:text-charcoal transition-colors">
+                Rather talk first? Book the call now &rarr;
+              </a>
             </p>
           </div>
         </Container>
