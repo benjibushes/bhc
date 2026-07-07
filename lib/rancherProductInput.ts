@@ -107,6 +107,12 @@ export interface ProductInput {
   // Inventory: blank/undefined = unlimited; an integer >= 0 = orders left
   // (0 = deliberately paused as sold out). Decremented per settled order.
   ordersLeft?: number | '' | null;
+  // Product info (Phase 12): what the buyer gets + how it arrives. Optional —
+  // but the form nudges hard, because buyers buy what they understand.
+  whatsIncluded?: string; // newline-separated list
+  shipsInDays?: number | '' | null;
+  packaging?: string;
+  feeds?: string;
 }
 
 export type ValidatedProduct =
@@ -165,6 +171,23 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     ordersLeftField = n;
   }
 
+  // Product info (all optional, length-capped; blank clears).
+  const whatsIncluded = String(body.whatsIncluded || '').trim();
+  if (whatsIncluded.length > 1000) return { ok: false, error: "what's included is too long (1000 max)." };
+  const packaging = String(body.packaging || '').trim();
+  if (packaging.length > 200) return { ok: false, error: 'packaging is too long (200 max).' };
+  const feeds = String(body.feeds || '').trim();
+  if (feeds.length > 200) return { ok: false, error: 'feeds is too long (200 max).' };
+  let shipsInDaysField: number | null = null;
+  const rawDays = body.shipsInDays;
+  if (!(rawDays === undefined || rawDays === null || rawDays === '')) {
+    const d = Number(rawDays);
+    if (!Number.isInteger(d) || d < 1 || d > 60) {
+      return { ok: false, error: 'ships-in days must be a whole number of days (1–60), or blank.' };
+    }
+    shipsInDaysField = d;
+  }
+
   const fields: Record<string, string | number | boolean | null> = {
     'Product Name': name,
     'Display Price': displayCents / 100,
@@ -175,6 +198,10 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     'Ships Nationwide': body.shipsNationwide === false ? false : true,
     'Shelf Stable': !!body.shelfStable,
     'Orders Left': ordersLeftField,
+    "What's Included": whatsIncluded,
+    'Ships In Days': shipsInDaysField,
+    Packaging: packaging,
+    Feeds: feeds,
   };
 
   return { ok: true, fields, displayCents };

@@ -65,6 +65,16 @@ export default async function MarketplacePage() {
           Stripe, and a real person answers your receipt. &mdash; Ben
         </p>
 
+        {/* HOW IT WORKS (Phase 12 — the information gap): the whole store's
+            process in one glance, before any product decision. Three plain
+            steps, no mystery — every PDP repeats its own product-specific
+            version of this. */}
+        <div className="flex flex-wrap gap-x-6 gap-y-1.5 mb-8 text-[13px] text-charcoal/80">
+          <span><strong className="text-charcoal">1.</strong> pick your beef — every listing says exactly what&rsquo;s in the box</span>
+          <span><strong className="text-charcoal">2.</strong> the ranch packs it — vacuum-sealed, shipped frozen (jerky ships shelf-stable)</span>
+          <span><strong className="text-charcoal">3.</strong> tracking hits your inbox — it&rsquo;s at your door days later</span>
+        </div>
+
         {groups.length === 0 ? (
           <p className="text-saddle">the shop is stocking up — check back shortly.</p>
         ) : (

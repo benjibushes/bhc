@@ -447,9 +447,43 @@ Median time: 7-30 days from outreach to paid.
 | `/rancher/setup?token=` | Self-serve onboarding wizard |
 | `/rancher` | Rancher dashboard (post-onboarding) |
 | `/member` | Buyer dashboard (post-quiz) |
+| `/shop` | THE MARKETPLACE — jerky/boxes/shares, shipped nationwide, on-domain checkout |
+| `/shop/[id]` | Product page (PDP) — the per-product ad target |
+| `/gear` | Ben's Gear — affiliate picks (Amazon), click-tracked via /go/product |
+| `/admin/sell` | Operator sell console — state-aware deposit + product links (internal) |
 | `/partner` | Legacy intake form |
 | `/about` · `/faq` · `/news` | Static / editorial |
 | `/terms` · `/privacy` · `/unsubscribe` | Legal |
+
+---
+
+## MARKETPLACE COPY RULES (added 2026-07-06 — Phase 12 information-gap fix)
+
+The marketplace (/shop) sells to COLD buyers who have never heard of us. Every
+listing must answer three questions without the buyer leaving the screen:
+
+1. **WHAT do I get?** — the `What's Included` field, one item per line, exact
+   ("8 lbs ground beef", never "premium selection"). Renders as the PDP's
+   "what you get" list. A listing without it is a listing that doesn't sell.
+2. **HOW does it work?** — every PDP renders a "how it works" step list
+   (order → packed/shipped frozen → tracking emailed). Deposit-style products
+   get the 4-step version (deposit → rancher confirms size + balance → ships →
+   tracking). Never leave process to the imagination.
+3. **HOW MUCH is it, really?** — fixed products: all-in price, shipping
+   included, no surprises. Deposit-style (price-range) products: ALWAYS "from
+   $X–Y · $X deposit" + "rancher confirms the balance before shipping" — the
+   deposit is never presented as the full price, anywhere (card, PDP, Stripe,
+   receipt, rancher email).
+
+Field kit per product (Airtable Rancher Products): `What's Included`
+(multiline list), `Ships In Days` (dispatch lead time — leave blank rather
+than guess), `Packaging` (one line, how it arrives), `Feeds` (serving math in
+plain words), `Orders Left` (real inventory — powers TRUE scarcity only).
+
+Writing rules: lowercase brand voice; exact quantities beat adjectives; "ships
+frozen"/"shelf-stable" stated explicitly; real counts only ("12 orders left"
+comes from the inventory field, never invented); the share remains the anchor
+— every low-ticket surface may ladder UP to the share, never the reverse.
 
 ---
 

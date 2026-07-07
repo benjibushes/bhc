@@ -66,6 +66,10 @@ function toClientProduct(r: any) {
       r['Orders Left'] === undefined || r['Orders Left'] === null || r['Orders Left'] === ''
         ? null
         : Number(r['Orders Left']),
+    whatsIncluded: String(r["What's Included"] || ''),
+    shipsInDays: Number(r['Ships In Days']) > 0 ? Number(r['Ships In Days']) : null,
+    packaging: String(r['Packaging'] || ''),
+    feeds: String(r['Feeds'] || ''),
   };
 }
 
@@ -230,7 +234,7 @@ export async function PATCH(request: Request) {
   // here to do exactly that), including deposit-style rows, without touching
   // the hand-set Base/price. Content keys drive the deposit fence; a
   // stock-only PATCH takes the dedicated path below.
-  const CONTENT_KEYS = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable'];
+  const CONTENT_KEYS = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable', 'whatsIncluded', 'shipsInDays', 'packaging', 'feeds'];
   const editing = CONTENT_KEYS.some((k) => k in body);
   const stockOnly = 'ordersLeft' in body && !editing;
 
@@ -297,6 +301,10 @@ export async function PATCH(request: Request) {
       shipsNationwide: body.shipsNationwide ?? product['Ships Nationwide'] !== false,
       shelfStable: body.shelfStable ?? !!product['Shelf Stable'],
       ordersLeft: 'ordersLeft' in body ? body.ordersLeft : (product['Orders Left'] ?? null),
+      whatsIncluded: 'whatsIncluded' in body ? body.whatsIncluded : product["What's Included"],
+      shipsInDays: 'shipsInDays' in body ? body.shipsInDays : (product['Ships In Days'] ?? null),
+      packaging: 'packaging' in body ? body.packaging : product['Packaging'],
+      feeds: 'feeds' in body ? body.feeds : product['Feeds'],
     };
     const v = validateProductInput(merged);
     if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
