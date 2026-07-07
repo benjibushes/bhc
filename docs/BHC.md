@@ -436,7 +436,7 @@ Median time: 7-30 days from outreach to paid.
 | Path | Purpose |
 |------|---------|
 | `/` | Homepage — buyer-primary CTA + rancher/founder/brand exits |
-| `/access` | Buyer quiz (90-sec) — primary buyer entry |
+| `/access` | Buyer quiz (90-sec) — SHARE-INTENT entry (BOFU). Cold/broad buyer content points at `/shop` instead — see the pointer rule below |
 | `/map` | Public discover map — D2C rancher hit list |
 | `/map/add-a-rancher` | Self-submit + community-submit form |
 | `/wins` | Public case study wall — closed deals |
@@ -447,7 +447,7 @@ Median time: 7-30 days from outreach to paid.
 | `/rancher/setup?token=` | Self-serve onboarding wizard |
 | `/rancher` | Rancher dashboard (post-onboarding) |
 | `/member` | Buyer dashboard (post-quiz) |
-| `/shop` | THE MARKETPLACE — jerky/boxes/shares, shipped nationwide, on-domain checkout |
+| `/shop` | THE MARKETPLACE — jerky/boxes/shares, shipped nationwide, on-domain checkout. **COLD-BUYER DEFAULT for all broad social/content** |
 | `/shop/[id]` | Product page (PDP) — the per-product ad target |
 | `/gear` | Ben's Gear — affiliate picks (Amazon), click-tracked via /go/product |
 | `/admin/sell` | Operator sell console — state-aware deposit + product links (internal) |
@@ -509,7 +509,7 @@ Skill should:
 3. Voice: founder-led, lowercase, plain
 4. Pull stats: `/api/casestudy/au-beef` (or Telegram `/casestudy au-beef`)
 5. Pattern: Instagram rancher onboard reel caption
-6. CTA: "link in bio" → `/access` (buyer-primary)
+6. CTA: "link in bio" → `/shop` (cold-buyer default; use `/access` only when the post is explicitly share-intent — see THE POINTER RULE)
 7. Output:
    ```
    AU Beef just hit 5 closed deals on the network.

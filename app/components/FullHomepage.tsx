@@ -547,7 +547,17 @@ export default function FullHomepage() {
 
       {/* Mobile: keep the primary door one thumb-tap away on a page this
           long. Same primitive /start, /map, and /wins already mount. */}
-      <StickyMobileCTA href="/access" label="Get matched in 90 seconds" />
+      {/* CONTENT-POINTER FLIP (2026-07-06 reach research): the always-visible
+          mobile bar is what 40k social followers land on — and ~95% of a cold
+          audience can't say yes to a $2k share as their FIRST interaction.
+          Lead mobile with the $13-95 shop (the tripwire anyone can act on);
+          the tri-tier fork above still carries the share as the primary card
+          for scrollers with share intent. */}
+      <StickyMobileCTA
+        href="/shop"
+        label="Shop real beef — shipped"
+        subLabel="or take the 90-second quiz for a full share"
+      />
       </main>
   );
 }
