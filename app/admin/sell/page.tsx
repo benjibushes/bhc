@@ -175,6 +175,34 @@ export default function AdminSellPage() {
     navigator.clipboard?.writeText(result.url).then(() => setCopied(true), () => setCopied(false));
   }
 
+  // ── Shop-drop campaign (the waitlist monetizer) ──
+  const [dropBusy, setDropBusy] = useState(false);
+  const [dropStatus, setDropStatus] = useState('');
+
+  async function fireDrop(mode: 'dry-run' | 'live') {
+    if (mode === 'live' && !window.confirm('send the shop announcement to the next 100 waitlist buyers?')) return;
+    setDropBusy(true);
+    setDropStatus('');
+    try {
+      const res = await fetch('/api/admin/campaigns/shop-drop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `failed (${res.status})`);
+      setDropStatus(
+        mode === 'dry-run'
+          ? `pool: ${data.pool} waitlist buyers never told about the shop · next batch would send ${data.wouldSend} · featuring: ${(data.picks || []).join(' · ')}`
+          : `sent ${data.sent} (${data.suppressed} skipped by frequency cap) · ${data.remaining} remaining — fire again to continue`,
+      );
+    } catch (e: any) {
+      setDropStatus(e?.message || 'failed');
+    } finally {
+      setDropBusy(false);
+    }
+  }
+
   const inState = ranchers.filter((r) => r.inState);
   const shipsAnyway = ranchers.filter((r) => !r.inState && r.nationwide);
   const rest = ranchers.filter((r) => !r.inState && !r.nationwide);
@@ -348,6 +376,35 @@ export default function AdminSellPage() {
           </section>
         </div>
       )}
+
+      {/* ── Campaigns — the waitlist shop drop (money-map lever #1). One-time
+             "the shop is open" announcement to WAITING buyers, batched, once
+             ever per buyer, frequency-capped. Dry run first, always. ── */}
+      <section className="mt-12 border-t border-dust pt-6">
+        <h2 className="font-serif text-xl mb-1">campaigns</h2>
+        <p className="text-saddle text-[13px] mb-3 max-w-2xl">
+          <strong>shop drop</strong> — tell the waitlist the shop exists. WAITING buyers are
+          share-intent demand you couldn&rsquo;t serve locally; the marketplace ships to all of
+          them. once ever per buyer, 100 per batch, frequency-capped. dry run shows the pool.
+        </p>
+        <div className="flex gap-2 flex-wrap items-center">
+          <button
+            onClick={() => fireDrop('dry-run')}
+            disabled={dropBusy}
+            className="px-4 py-2.5 border border-charcoal text-[13px] cursor-pointer transition-base hover:bg-charcoal hover:text-bone disabled:opacity-50"
+          >
+            {dropBusy ? 'working…' : 'dry run (counts only)'}
+          </button>
+          <button
+            onClick={() => fireDrop('live')}
+            disabled={dropBusy}
+            className="px-4 py-2.5 bg-charcoal text-bone text-[13px] cursor-pointer transition-base hover:bg-saddle disabled:opacity-50"
+          >
+            send next batch of 100 →
+          </button>
+        </div>
+        {dropStatus && <p className="text-[13px] text-charcoal/85 mt-3 max-w-2xl">{dropStatus}</p>}
+      </section>
     </div>
   );
 }
