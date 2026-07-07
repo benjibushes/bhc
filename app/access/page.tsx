@@ -14,6 +14,7 @@
 
 import { getAdminConfig } from '@/lib/adminConfig';
 import { normalizeState } from '@/lib/states';
+import { loadMarketplaceProducts, pickFunnelProducts } from '@/lib/marketplaceProducts';
 import BuyerFunnel from '@/app/components/funnel/BuyerFunnel';
 
 export default async function AccessPage({
@@ -24,7 +25,16 @@ export default async function AccessPage({
   // dropdown; the buyer can still change it.
   searchParams: Promise<{ rancher?: string; state?: string; error?: string }>;
 }) {
-  const [{ rancher, state, error }, cfg] = await Promise.all([searchParams, getAdminConfig()]);
+  // Low-ticket picks (Phase 8): ≤3 real marketplace products for the reveal's
+  // not-ready rail, so a buyer who balks at bulk still leaves with a priced
+  // next step. loadMarketplaceProducts catches its own errors → [] → the rail
+  // simply doesn't render; the quiz can never break on a catalog blip.
+  const [{ rancher, state, error }, cfg, products] = await Promise.all([
+    searchParams,
+    getAdminConfig(),
+    loadMarketplaceProducts(),
+  ]);
+  const lowTicketPicks = pickFunnelProducts(products);
   // normalizeState accepts "CA", "california", " ca ", etc. and returns the
   // canonical 2-letter code or '' for anything unrecognized — so a junk
   // ?state= param simply leaves the dropdown empty rather than seeding garbage.
@@ -45,6 +55,7 @@ export default async function AccessPage({
       offerOperatorCall={cfg.funnelOfferOperatorCall}
       initialState={initialState}
       notice={notice}
+      lowTicketPicks={lowTicketPicks}
     />
   );
 }

@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isSellableRow, groupProducts, type MarketplaceProduct } from './marketplaceProducts';
+import { isSellableRow, groupProducts, pickFunnelProducts, type MarketplaceProduct } from './marketplaceProducts';
 
 const ok = { 'Active': true, 'Ships Nationwide': true, 'Display Price': 25, 'Rancher Base': 21.25 };
 
@@ -52,4 +52,26 @@ test('groupProducts: unmapped category falls through to "more" (never dropped)',
 
 test('groupProducts: empty input → no groups', () => {
   assert.deepEqual(groupProducts([]), []);
+});
+
+// ── pickFunnelProducts (Phase 8 — the reveal's low-ticket rail) ───────────────
+
+test('pickFunnelProducts: one per non-share group, cheapest first, shares excluded', () => {
+  const picks = pickFunnelProducts([
+    mk('jerky-cheap', 'Jerky'), mk('jerky-2', 'Jerky'), mk('box', 'Sampler Box'),
+    mk('ground', 'Ground Box'), mk('share', 'Eighth Share'),
+  ]);
+  assert.deepEqual(picks.map((p) => p.id), ['jerky-cheap', 'box', 'ground']);
+});
+
+test('pickFunnelProducts: backfills from non-share products when a group is empty', () => {
+  const picks = pickFunnelProducts([
+    mk('j1', 'Jerky'), mk('j2', 'Jerky'), mk('share', 'Eighth Share'),
+  ]);
+  assert.deepEqual(picks.map((p) => p.id), ['j1', 'j2']); // share never backfills
+});
+
+test('pickFunnelProducts: caps at 3 and never picks a share even when sparse', () => {
+  const picks = pickFunnelProducts([mk('share', 'Eighth Share')]);
+  assert.deepEqual(picks, []);
 });

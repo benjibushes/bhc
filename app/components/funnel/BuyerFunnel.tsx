@@ -48,6 +48,8 @@ import { trackEvent, metaEventId } from '@/lib/analytics';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { isDepositCapableMatch } from '@/lib/depositOptionality';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
+import LowTicketRail from './LowTicketRail';
+import type { MarketplaceProduct } from '@/lib/marketplaceProducts';
 
 // ── Props ──────────────────────────────────────────────────────────────────
 interface BuyerFunnelProps {
@@ -62,6 +64,11 @@ interface BuyerFunnelProps {
   // Friendly banner shown at the top (e.g. an expired re-engagement link
   // redirected here with ?error=). Dismissible; never blocks the funnel.
   notice?: string;
+  // Low-ticket rail (Phase 8): ≤3 real marketplace products, loaded server-
+  // side on /access via pickFunnelProducts. Rendered on the NOT-READY reveal
+  // outcomes (waitlist/nurture full, matched/call compact) so every buyer has
+  // a priced next step. Deposit-capable reveal never shows it.
+  lowTicketPicks?: MarketplaceProduct[];
 }
 
 // ── Live social-proof stats (GET /api/funnel/stats) ──────────────────────────
@@ -138,6 +145,7 @@ export default function BuyerFunnel({
   offerOperatorCall,
   initialState,
   notice,
+  lowTicketPicks,
 }: BuyerFunnelProps) {
   const [noticeOpen, setNoticeOpen] = useState(!!notice);
   // resume mode jumps straight to Storage — size/timing/contact already exist
@@ -734,6 +742,7 @@ export default function BuyerFunnel({
             state={state}
             stats={stats}
             cut={tier}
+            lowTicketPicks={lowTicketPicks}
             // Nationwide opt-in hit — merge the fresh match into the reveal
             // payload so the same Reveal flips from waitlist (Mode 3) to a
             // real match (deposit CTA when tier_v2 + referral, Mode 0/2).
@@ -899,12 +908,14 @@ function Reveal({
   stats,
   cut,
   onNationwideMatch,
+  lowTicketPicks,
 }: {
   result: QualifyResult | null;
   offerOperatorCall: boolean;
   state: string;
   stats: FunnelStats | null;
   cut: string;
+  lowTicketPicks?: MarketplaceProduct[];
   // Fires when the waitlisted buyer opted into nationwide and matching found
   // a shipping rancher on the spot — parent merges it into `result` so this
   // reveal re-renders in matched mode.
@@ -1031,6 +1042,9 @@ function Reveal({
             email={result?.buyerEmail}
             referralId={result?.referralId}
           />
+          {/* Compact low-ticket line (Phase 8) — the call is the primary path;
+              this quietly catches the buyer who books nothing today. */}
+          <LowTicketRail picks={lowTicketPicks || []} variant="compact" />
         </div>
       ) : matched && rancher ? (
         /* ── Mode 2: matched rancher reveal (non-deposit-capable) ────────────── */
@@ -1055,6 +1069,9 @@ function Reveal({
               ? <>check your email — ben gets in touch to lock in your share with {rancher.name}. no payment now.</>
               : <>keep an eye on your phone — your rancher reaches out directly, no middleman.</>}
           </p>
+          {/* Compact low-ticket line (Phase 8) — share intro is in motion;
+              never compete with it, just leave a taste-today door open. */}
+          <LowTicketRail picks={lowTicketPicks || []} variant="compact" />
         </div>
       ) : (
         /* ── Mode 3: honest waitlist (no in-state rancher / no match) ────────── */
@@ -1093,16 +1110,19 @@ function Reveal({
                 See who ships nationwide &rarr;
               </a>
             </div>
-            {/* Low-ticket escape on the NON-deposit reveal only (the deposit
-                reveal never gets this — no downsell at the peak money moment).
-                A waitlisted buyer can taste the beef today while they wait. */}
-            <p className="mt-4 text-center text-sm text-saddle">
-              or start smaller while you wait — {' '}
-              <a href="/shop" className="underline hover:text-charcoal transition-colors">
-                jerky &amp; boxes, shipped &rarr;
-              </a>
-            </p>
           </div>
+
+          {/* MERCHANDISED low-ticket section (Phase 8) — the waitlist/nurture
+              buyer has NOTHING else to buy today, so this is a real, sectioned
+              offer with photos + one-tap checkout, not a text-link whisper.
+              This reveal is also where "still deciding" + below-gate buyers
+              land — their entire monetizable next step lives here. */}
+          <LowTicketRail
+            picks={lowTicketPicks || []}
+            variant="full"
+            eyebrow="while you wait — shipped this week"
+            title={`taste it before the share${state ? ` — we ship to ${state}` : ''}`}
+          />
         </div>
       )}
     </section>

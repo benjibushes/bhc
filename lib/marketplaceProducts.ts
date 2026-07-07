@@ -129,6 +129,32 @@ export const MARKETPLACE_GROUPS: {
   },
 ];
 
+/**
+ * Funnel picks — the ≤3-product low-ticket rail shown on the /access reveal's
+ * NOT-READY outcomes (waitlist / nurture / call), so a buyer who isn't ready
+ * for a whole-or-bulk order always has a real, priced next step (Phase 8).
+ *
+ * Selection: one product per non-share group (jerky → boxes → ground), the
+ * cheapest in each; backfill with the next-cheapest non-share products if a
+ * group is empty. Shares are EXCLUDED — this rail exists precisely for the
+ * buyer who balked at bulk. Pure so it's unit-testable.
+ */
+export function pickFunnelProducts(products: MarketplaceProduct[]): MarketplaceProduct[] {
+  const nonShare = products.filter((p) => !(MARKETPLACE_GROUPS.find((g) => g.key === 'shares')?.categories || []).includes(p.category));
+  const picks: MarketplaceProduct[] = [];
+  for (const g of MARKETPLACE_GROUPS) {
+    if (g.key === 'shares') continue;
+    const cheapest = nonShare.find((p) => g.categories.includes(p.category) && !picks.includes(p));
+    if (cheapest) picks.push(cheapest);
+    if (picks.length >= 3) return picks;
+  }
+  for (const p of nonShare) {
+    if (picks.length >= 3) break;
+    if (!picks.includes(p)) picks.push(p);
+  }
+  return picks;
+}
+
 /** Split products into the display groups above, preserving group order. */
 export function groupProducts(products: MarketplaceProduct[]): {
   key: string;
