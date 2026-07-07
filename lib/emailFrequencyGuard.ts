@@ -112,6 +112,10 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // products — 1/rancher/month by cron schedule; operational, must not be
   // suppressed by the cap or inventory truth rots.
   'product_stock_checkin',
+  // Reach lever #2 (2026-07-06): the lead-magnet guide the visitor explicitly
+  // requested seconds ago — transactional delivery, one-shot per request,
+  // rate-limited at the route. Suppressing it = a broken promise on first touch.
+  'halfcow_guide',
   // Sales-floor pivot 2026-06-09: 4 new minimal-pipeline templates. All
   // are 1:1 transactional triggered by buyer state changes (signup, quiz
   // complete, sales-call close, rancher accept). Capping any of these
