@@ -1,9 +1,26 @@
-'use client';
+// /news — SERVER-RENDERED (SSR fix, 2026-07-06).
+//
+// This page was a 'use client' shell that fetched /api/news in a useEffect —
+// crawlers (and AI search) saw an EMPTY page, so the one blog-shaped surface
+// contributed zero SEO. Now it reads Airtable server-side and ships full HTML:
+// every post title/excerpt is crawlable, and the page is the permanent home
+// the evergreen-content plan (reach research) publishes into.
+//
+// ISR (5 min) keeps Airtable reads negligible while new posts appear fast.
 
-import { useState, useEffect } from 'react';
+import type { Metadata } from 'next';
+import Link from 'next/link';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
-import Link from 'next/link';
+import { getAllRecords, TABLES } from '@/lib/airtable';
+
+export const revalidate = 300;
+
+export const metadata: Metadata = {
+  title: 'News & Updates — BuyHalfCow',
+  description:
+    'Weekly insights from the ranch, real beef economics, and the BuyHalfCow community.',
+};
 
 interface NewsPost {
   id: string;
@@ -14,71 +31,44 @@ interface NewsPost {
   author: string;
 }
 
-export default function NewsPage() {
-  const [posts, setPosts] = useState<NewsPost[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
-
-  useEffect(() => {
-    fetchPosts();
-  }, []);
-
-  const fetchPosts = async () => {
-    try {
-      const response = await fetch('/api/news');
-      const data = await response.json();
-      // Drop records that can't render (no title or slug) — half-filled
-      // Airtable rows shouldn't produce blank articles on the public feed.
-      const publishable = Array.isArray(data)
-        ? data.filter((p: NewsPost) => p?.title && p?.slug)
-        : [];
-      setPosts(publishable);
-    } catch (error) {
-      console.error('Error fetching news:', error);
-      setLoadError(true);
-    }
-    setLoading(false);
-  };
-
-  if (loading) {
-    return (
-      <main className="min-h-screen py-24 bg-bone text-charcoal">
-        <Container>
-          <div className="text-center">
-            <p className="text-lg text-saddle">Pulling the latest from the ranch...</p>
-          </div>
-        </Container>
-      </main>
-    );
+async function loadPosts(): Promise<NewsPost[]> {
+  try {
+    const rows = (await getAllRecords(TABLES.NEWS_POSTS, "{Status} = 'Published'")) as any[];
+    return rows
+      .map((r) => ({
+        id: String(r.id),
+        title: String(r['title'] || ''),
+        slug: String(r['slug'] || ''),
+        excerpt: String(r['excerpt'] || ''),
+        published_date: String(r['published_date'] || ''),
+        author: String(r['author'] || ''),
+      }))
+      // Half-filled Airtable rows shouldn't produce blank articles.
+      .filter((p) => p.title && p.slug)
+      .sort((a, b) => (b.published_date || '').localeCompare(a.published_date || ''));
+  } catch {
+    return []; // honest empty state — never a broken page
   }
+}
+
+export default async function NewsPage() {
+  const posts = await loadPosts();
 
   return (
     <main className="min-h-screen py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-3xl mx-auto space-y-12">
-          {/* Header */}
           <div className="text-center space-y-6">
-            <h1 className="font-serif text-4xl md:text-5xl">
-              News & Updates
-            </h1>
+            <h1 className="font-serif text-4xl md:text-5xl">News &amp; Updates</h1>
             <Divider />
             <p className="text-lg leading-relaxed text-saddle">
               Weekly insights from the ranch, land deals, and the BuyHalfCow community.
             </p>
           </div>
 
-          {/* Posts List */}
-          {loadError && !loading ? (
+          {posts.length === 0 ? (
             <div className="text-center py-12">
-              <p className="text-lg text-saddle">
-                Couldn&apos;t load the news feed - the server didn&apos;t respond. Refresh the page, or check back in a few minutes.
-              </p>
-            </div>
-          ) : posts.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-lg text-saddle">
-                No posts yet. Check back soon for updates.
-              </p>
+              <p className="text-lg text-saddle">No posts yet. Check back soon for updates.</p>
             </div>
           ) : (
             <div className="space-y-12">
@@ -95,21 +85,23 @@ export default function NewsPage() {
                     </h2>
                     <div className="flex gap-4 text-sm text-saddle">
                       {post.published_date && !Number.isNaN(new Date(post.published_date).getTime()) && (
-                        <span>{new Date(post.published_date).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric'
-                        })}</span>
+                        <span>
+                          {new Date(post.published_date).toLocaleDateString('en-US', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                          })}
+                        </span>
                       )}
                       {post.author && <span>by {post.author}</span>}
                     </div>
                   </div>
-                  <p className="text-lg leading-relaxed">{post.excerpt}</p>
+                  {post.excerpt && <p className="text-lg leading-relaxed">{post.excerpt}</p>}
                   <Link
                     href={`/news/${post.slug}`}
                     className="inline-block text-charcoal hover:text-saddle transition-colors font-medium"
                   >
-                    Read more →
+                    Read more &rarr;
                   </Link>
                   <Divider />
                 </article>
@@ -117,15 +109,27 @@ export default function NewsPage() {
             </div>
           )}
 
-          <div className="text-center pt-8">
-            <Link href="/" className="text-charcoal hover:text-saddle transition-colors">
-              ← Back to home
-            </Link>
+          {/* Every content surface carries a money path (journey rule) —
+              the old footer was just "back to home". */}
+          <div className="text-center pt-8 space-y-3">
+            <p className="text-[14px] text-saddle">
+              here for the beef?{' '}
+              <a href="/shop" className="underline hover:text-charcoal transition-colors">
+                shop the ranches &rarr;
+              </a>{' '}
+              · or{' '}
+              <a href="/guide" className="underline hover:text-charcoal transition-colors">
+                get the free half-cow guide &rarr;
+              </a>
+            </p>
+            <p>
+              <Link href="/" className="text-sm text-saddle hover:text-charcoal transition-colors">
+                &larr; Back to home
+              </Link>
+            </p>
           </div>
         </div>
       </Container>
     </main>
   );
 }
-
-
