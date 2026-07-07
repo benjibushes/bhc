@@ -108,6 +108,10 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // whitelisting cannot create volume. Without it a buyer at cap never learns
   // their beef shipped.
   'product_shipped',
+  // Phase 11 (2026-07-06): monthly inventory digest to ranchers with listed
+  // products — 1/rancher/month by cron schedule; operational, must not be
+  // suppressed by the cap or inventory truth rots.
+  'product_stock_checkin',
   // Sales-floor pivot 2026-06-09: 4 new minimal-pipeline templates. All
   // are 1:1 transactional triggered by buyer state changes (signup, quiz
   // complete, sales-call close, rancher accept). Capping any of these

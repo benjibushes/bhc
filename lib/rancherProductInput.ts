@@ -104,6 +104,9 @@ export interface ProductInput {
   imageUrl?: string;
   shipsNationwide?: boolean;
   shelfStable?: boolean;
+  // Inventory: blank/undefined = unlimited; an integer >= 0 = orders left
+  // (0 = deliberately paused as sold out). Decremented per settled order.
+  ordersLeft?: number | '' | null;
 }
 
 export type ValidatedProduct =
@@ -111,8 +114,8 @@ export type ValidatedProduct =
       ok: true;
       /** Airtable-ready field patch (pricing fields NOT included — the route
        *  derives + stamps those from displayCents so they can never disagree
-       *  with the margin math). */
-      fields: Record<string, string | number | boolean>;
+       *  with the margin math). null clears a field (unlimited inventory). */
+      fields: Record<string, string | number | boolean | null>;
       displayCents: number;
     }
   | { ok: false; error: string };
@@ -149,7 +152,20 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     };
   }
 
-  const fields: Record<string, string | number | boolean> = {
+  // Inventory: blank stays blank (unlimited — Airtable field cleared via
+  // null); a value must be a whole number >= 0.
+  let ordersLeftField: number | null = null;
+  const rawLeft = body.ordersLeft;
+  const hasLeft = !(rawLeft === undefined || rawLeft === null || rawLeft === '');
+  if (hasLeft) {
+    const n = Number(rawLeft);
+    if (!Number.isInteger(n) || n < 0 || n > 100000) {
+      return { ok: false, error: 'orders available must be a whole number (leave blank for unlimited).' };
+    }
+    ordersLeftField = n;
+  }
+
+  const fields: Record<string, string | number | boolean | null> = {
     'Product Name': name,
     'Display Price': displayCents / 100,
     Category: category,
@@ -158,6 +174,7 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     'Image URL': imageUrl,
     'Ships Nationwide': body.shipsNationwide === false ? false : true,
     'Shelf Stable': !!body.shelfStable,
+    'Orders Left': ordersLeftField,
   };
 
   return { ok: true, fields, displayCents };

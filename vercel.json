@@ -192,6 +192,10 @@
     {
       "path": "/api/cron/product-recovery",
       "schedule": "35 18 * * *"
+    },
+    {
+      "path": "/api/cron/product-stock-checkin",
+      "schedule": "0 16 1 * *"
     }
   ]
 }

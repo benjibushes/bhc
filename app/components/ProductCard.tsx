@@ -33,6 +33,7 @@ export interface ProductCardProduct {
   shelfStable?: boolean;
   depositStyle?: boolean;
   priceRange?: string;
+  ordersLeft?: number | null;
 }
 
 export default function ProductCard({ p }: { p: ProductCardProduct }) {
@@ -77,6 +78,14 @@ export default function ProductCard({ p }: { p: ProductCardProduct }) {
               ? 'shelf-stable · ships free, no freezer needed'
               : 'ships frozen · shipping included'}
         </div>
+
+        {/* Real scarcity only — the grid never shows sold-out rows, so any
+            count here is a true remaining-batch number. */}
+        {p.ordersLeft != null && p.ordersLeft > 0 && p.ordersLeft <= 10 && (
+          <div className="text-[11px] text-saddle">
+            {p.ordersLeft} {p.ordersLeft === 1 ? 'order' : 'orders'} left from this batch
+          </div>
+        )}
 
         <div className="mt-auto pt-1">
           <BuyButton

@@ -43,6 +43,10 @@ interface Prod {
   // the rancher confirms size/details + the balance before shipping.
   depositStyle: boolean;
   priceRange: string;
+  // Sold out (Orders Left = 0) — the page stays ALIVE for ad clicks with an
+  // honest sold-out state instead of a 404 that wastes spend.
+  soldOut: boolean;
+  ordersLeft: number | null;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -61,13 +65,20 @@ async function loadProduct(id: string): Promise<Prod | null> {
   if (!r) return null;
   const price = Number(r['Display Price'] || 0);
   const base = Number(r['Rancher Base'] || 0);
-  const sellable =
+  // Same rule as isSellableRow EXCEPT stock: a sold-out (Orders Left = 0)
+  // product keeps its page (ads point here — render "sold out", never 404);
+  // anything else unsellable is a real 404.
+  const sellableExceptStock =
     r['Active'] === true &&
     r['Ships Nationwide'] !== false &&
     price > 0 &&
     base > 0 &&
     base <= price;
-  if (!sellable) return null;
+  if (!sellableExceptStock) return null;
+  const leftRaw = r['Orders Left'];
+  const ordersLeft =
+    leftRaw === undefined || leftRaw === null || leftRaw === '' ? null : Number(leftRaw);
+  const soldOut = ordersLeft !== null && ordersLeft <= 0;
 
   // Best-effort: resolve the rancher's public page slug + state for the verified
   // trust link. Only link when the ranch has a LIVE page (never a dead link).
@@ -99,6 +110,8 @@ async function loadProduct(id: string): Promise<Prod | null> {
     description: String(r['Description'] || ''),
     depositStyle: r['Deposit Style'] === true,
     priceRange: String(r['Price Range'] || ''),
+    soldOut,
+    ordersLeft,
   };
 }
 
@@ -143,7 +156,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           lowPrice: Number(rangeMatch[1]).toFixed(2),
           highPrice: Number(rangeMatch[2]).toFixed(2),
           priceCurrency: 'USD',
-          availability: 'https://schema.org/InStock',
+          availability: p.soldOut ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
           url: `${SITE_URL}/shop/${p.id}`,
         }
       : null
@@ -151,7 +164,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         '@type': 'Offer',
         price: p.price.toFixed(2),
         priceCurrency: 'USD',
-        availability: 'https://schema.org/InStock',
+        availability: p.soldOut ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
         url: `${SITE_URL}/shop/${p.id}`,
         shippingDetails: {
           '@type': 'OfferShippingDetails',
@@ -238,12 +251,31 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                     : 'ships frozen, direct from the ranch · shipping included, nationwide'}
               </div>
 
+              {/* Real scarcity only — shown because it's literally true. */}
+              {!p.soldOut && p.ordersLeft !== null && p.ordersLeft <= 10 && (
+                <div className="text-[12px] text-saddle">
+                  {p.ordersLeft} {p.ordersLeft === 1 ? 'order' : 'orders'} left from this batch
+                </div>
+              )}
+
               <div className="mt-1">
-                <BuyButton
-                  productId={p.id}
-                  price={p.price}
-                  label={p.depositStyle ? `reserve — $${p.price.toFixed(0)} deposit` : undefined}
-                />
+                {p.soldOut ? (
+                  <div className="border border-dust bg-bone-warm p-4 text-center">
+                    <div className="font-serif text-lg mb-1">sold out</div>
+                    <p className="text-[13px] text-saddle mb-3">
+                      this batch is spoken for — the ranch restocks as the next animals come through.
+                    </p>
+                    <Button href="/shop" variant="secondary" size="sm">
+                      see what&rsquo;s available now &rarr;
+                    </Button>
+                  </div>
+                ) : (
+                  <BuyButton
+                    productId={p.id}
+                    price={p.price}
+                    label={p.depositStyle ? `reserve — $${p.price.toFixed(0)} deposit` : undefined}
+                  />
+                )}
               </div>
 
               {/* Risk-reversal above the fold, right at the buy decision —

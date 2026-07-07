@@ -56,6 +56,7 @@ interface RancherProduct {
   // fences them). Hide/show still works.
   depositStyle?: boolean;
   priceRange?: string;
+  ordersLeft?: number | null;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -69,6 +70,7 @@ const EMPTY_FORM = {
   imageUrl: '',
   shipsNationwide: true,
   shelfStable: false,
+  ordersLeft: '' as string, // blank = unlimited
 };
 
 export default function ProductsTab({
@@ -173,6 +175,7 @@ export default function ProductsTab({
       imageUrl: p.image,
       shipsNationwide: p.shipsNationwide,
       shelfStable: p.shelfStable,
+      ordersLeft: p.ordersLeft == null ? '' : String(p.ordersLeft),
     });
     setEditingId(p.id);
     setSaveErr('');
@@ -211,6 +214,7 @@ export default function ProductsTab({
         imageUrl: form.imageUrl,
         shipsNationwide: form.shipsNationwide,
         shelfStable: form.shelfStable,
+        ordersLeft: form.ordersLeft.trim() === '' ? '' : Number(form.ordersLeft),
       };
       const res = await fetch('/api/rancher/products', {
         method: editingId ? 'PATCH' : 'POST',
@@ -388,6 +392,24 @@ export default function ProductsTab({
               />
             </label>
           </div>
+
+          <label className="block sm:max-w-[260px]">
+            <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
+              orders available (blank = unlimited)
+            </span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={form.ordersLeft}
+              onChange={(e) => setForm((f) => ({ ...f, ordersLeft: e.target.value }))}
+              placeholder="e.g. 25"
+              className="w-full p-3 border border-dust bg-bone text-[15px]"
+            />
+            <span className="block text-[11px] text-saddle mt-1">
+              counts down as orders come in — at 0 the product auto-hides so you never oversell.
+            </span>
+          </label>
 
           {/* Transparent margin math — the same numbers the API will write. */}
           {preview && (
@@ -581,6 +603,9 @@ export default function ProductsTab({
                     ? <>from {p.priceRange || money(p.price)} · {money(p.price)} deposit · buyer confirms size + balance with you</>
                     : <>{money(p.price)} · you net {money(p.base)}</>}
                   {p.category ? ` · ${p.category}` : ''}
+                  {p.ordersLeft != null && (
+                    <> · {p.ordersLeft > 0 ? `${p.ordersLeft} left` : 'SOLD OUT'}</>
+                  )}
                 </div>
               </div>
               <span

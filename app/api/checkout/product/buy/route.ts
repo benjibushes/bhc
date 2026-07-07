@@ -11,6 +11,7 @@
 
 import { NextResponse } from 'next/server';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { hasStock } from '@/lib/marketplaceProducts';
 import { createProductCheckout } from '@/lib/productCheckout';
 import { ensureStripePrice } from '@/lib/productStripeSync';
 import { rateLimit } from '@/lib/rateLimit';
@@ -56,6 +57,11 @@ export async function POST(request: Request) {
   // un-shippable). Blank counts as shippable, same as the marketplace gate.
   if (product['Ships Nationwide'] === false) {
     return NextResponse.json({ error: 'That product is unavailable.' }, { status: 404 });
+  }
+  // INVENTORY (Phase 11): sold-out is un-buyable at charge time too — an ad
+  // click or stale link can never oversell a rancher's stock.
+  if (!hasStock(product)) {
+    return NextResponse.json({ error: 'That one just sold out — more coming.' }, { status: 409 });
   }
 
   const displayCents = Math.round(Number(product['Display Price'] || 0) * 100);

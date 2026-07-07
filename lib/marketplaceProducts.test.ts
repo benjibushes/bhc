@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isSellableRow, groupProducts, pickFunnelProducts, type MarketplaceProduct } from './marketplaceProducts';
+import { isSellableRow, hasStock, groupProducts, pickFunnelProducts, type MarketplaceProduct } from './marketplaceProducts';
 
 const ok = { 'Active': true, 'Ships Nationwide': true, 'Display Price': 25, 'Rancher Base': 21.25 };
 
@@ -32,7 +32,7 @@ test('isSellableRow: missing price or base is never sellable', () => {
 
 const mk = (id: string, category: string): MarketplaceProduct => ({
   id, name: id, rancher: 'R', category, tier: '', price: 10, base: 8, weight: '', shelfStable: false, image: '', description: '',
-  depositStyle: false, priceRange: '',
+  depositStyle: false, priceRange: '', ordersLeft: null,
 });
 
 test('groupProducts: collapses categories into display groups, in order', () => {
@@ -74,4 +74,25 @@ test('pickFunnelProducts: backfills from non-share products when a group is empt
 test('pickFunnelProducts: caps at 3 and never picks a share even when sparse', () => {
   const picks = pickFunnelProducts([mk('share', 'Eighth Share')]);
   assert.deepEqual(picks, []);
+});
+
+// ── inventory gate (Phase 11 — ad-readiness) ──────────────────────────────────
+
+test('isSellableRow: blank Orders Left = unlimited (pre-inventory rows keep selling)', () => {
+  assert.equal(isSellableRow({ ...ok }), true);
+  assert.equal(isSellableRow({ ...ok, 'Orders Left': null }), true);
+  assert.equal(isSellableRow({ ...ok, 'Orders Left': '' }), true);
+});
+
+test('isSellableRow: positive stock sells, zero/negative is sold out', () => {
+  assert.equal(isSellableRow({ ...ok, 'Orders Left': 12 }), true);
+  assert.equal(isSellableRow({ ...ok, 'Orders Left': 1 }), true);
+  assert.equal(isSellableRow({ ...ok, 'Orders Left': 0 }), false);
+  assert.equal(isSellableRow({ ...ok, 'Orders Left': -3 }), false);
+});
+
+test('hasStock mirrors the inventory clause exactly', () => {
+  assert.equal(hasStock({}), true);
+  assert.equal(hasStock({ 'Orders Left': 5 }), true);
+  assert.equal(hasStock({ 'Orders Left': 0 }), false);
 });
