@@ -37,6 +37,10 @@ export async function GET(request: Request) {
         rancherBase: base,
         margin: Math.max(0, display - base),
         shelfStable: !!r['Shelf Stable'],
+        // Deposit-style truth (audit fix C-1.6): the operator must never text
+        // a $95-355 range box as a plain $95 purchase.
+        depositStyle: r['Deposit Style'] === true,
+        priceRange: String(r['Price Range'] || ''),
       };
     })
     // Cheapest first — the impulse rungs the operator pushes to cold leads.

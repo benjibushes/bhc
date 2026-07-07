@@ -35,6 +35,11 @@ interface RancherProduct {
   shelfStable: boolean;
   active: boolean;
   live: boolean;
+  // Deposit-style (price-range) rows are ops-managed: the price shown is the
+  // DEPOSIT, Base is hand-set, and content edits go through Ben (the API
+  // fences them). Hide/show still works.
+  depositStyle?: boolean;
+  priceRange?: string;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -159,7 +164,10 @@ export default function ProductsTab({
       if (!res.ok) throw new Error(data?.error || `save failed (${res.status})`);
 
       if (editingId) {
-        setProducts((list) => list.map((p) => (p.id === editingId ? data.product : p)));
+        // Same blank-row guard as toggleActive.
+        if (data.product?.name) {
+          setProducts((list) => list.map((p) => (p.id === editingId ? data.product : p)));
+        }
         setSavedNote('saved — the marketplace updates in a few seconds.');
       } else {
         setProducts((list) => [data.product, ...list]);
@@ -189,7 +197,14 @@ export default function ProductsTab({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'update failed');
-      setProducts((list) => list.map((x) => (x.id === p.id ? data.product : x)));
+      // Blank-row guard: the route's fresh re-fetch can fail and return only
+      // {id} — never swap a full row for a stub; keep the old row instead.
+      if (data.product?.name) {
+        setProducts((list) => list.map((x) => (x.id === p.id ? data.product : x)));
+      }
+      if (data.pendingApproval) {
+        setSavedNote('sent for a quick review — it lists as soon as ben approves it.');
+      }
     } catch {
       /* leave list as-is; next load reconciles */
     } finally {
@@ -437,7 +452,9 @@ export default function ProductsTab({
               <div className="flex-1 min-w-[180px]">
                 <div className="font-serif text-[15px] leading-tight">{p.name}</div>
                 <div className="text-xs text-saddle mt-0.5">
-                  {money(p.price)} · you net {money(p.base)}
+                  {p.depositStyle
+                    ? <>from {p.priceRange || money(p.price)} · {money(p.price)} deposit · buyer confirms size + balance with you</>
+                    : <>{money(p.price)} · you net {money(p.base)}</>}
                   {p.category ? ` · ${p.category}` : ''}
                 </div>
               </div>
@@ -462,7 +479,9 @@ export default function ProductsTab({
                 )}
                 <button
                   onClick={() => startEdit(p)}
-                  className="text-xs uppercase tracking-wider border border-dust px-3 py-2 hover:bg-charcoal hover:text-bone transition-colors"
+                  disabled={p.depositStyle}
+                  title={p.depositStyle ? 'deposit-style product — text ben to change details or pricing' : ''}
+                  className="text-xs uppercase tracking-wider border border-dust px-3 py-2 hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   edit
                 </button>

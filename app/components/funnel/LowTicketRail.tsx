@@ -32,11 +32,15 @@ export default function LowTicketRail({
   if (!picks || picks.length === 0) return null;
 
   if (variant === 'compact') {
-    const cheapest = picks[0];
+    // True price floor across ALL picks (picks[0] is only the cheapest of the
+    // first group), and never quote a deposit-style deposit as a full price.
+    const floor = Math.min(...picks.map((p) => p.price));
+    const floorIsDeposit = picks.find((p) => p.price === floor)?.depositStyle === true;
     return (
       <div className="border-t border-dust pt-4 mt-2">
         <p className="text-center text-sm text-saddle">
-          want a taste while it comes together? jerky &amp; boxes from ${cheapest.price.toFixed(2)}, shipped —{' '}
+          want a taste while it comes together? jerky &amp; boxes from ${floor.toFixed(2)}
+          {floorIsDeposit ? ' down' : ''}, shipped —{' '}
           <Link href="/shop" className="underline hover:text-charcoal transition-colors">
             shop small &rarr;
           </Link>

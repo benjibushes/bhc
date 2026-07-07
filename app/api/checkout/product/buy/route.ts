@@ -49,6 +49,14 @@ export async function POST(request: Request) {
   if (!product || !product['Active']) {
     return NextResponse.json({ error: 'That product is unavailable.' }, { status: 404 });
   }
+  // Audit fix C-5: mirror the isSellableRow shipping gate at CHARGE time. A
+  // product explicitly un-checked for nationwide shipping is hidden from /shop
+  // and 404s on its PDP — a stale/shared link must not be able to charge it
+  // anyway (the rancher would get a paid ship-it order they marked
+  // un-shippable). Blank counts as shippable, same as the marketplace gate.
+  if (product['Ships Nationwide'] === false) {
+    return NextResponse.json({ error: 'That product is unavailable.' }, { status: 404 });
+  }
 
   const displayCents = Math.round(Number(product['Display Price'] || 0) * 100);
   const baseCents = Math.round(Number(product['Rancher Base'] || 0) * 100);
@@ -104,6 +112,9 @@ export async function POST(request: Request) {
       productId: product.id,
       rancherId,
       rancherName: String(product['Rancher Name'] || rancher['Ranch Name'] || 'the ranch'),
+      // C-1.5: the flag rides PI metadata so settlement sends deposit-truthful
+      // receipts + a "confirm BEFORE shipping" rancher email.
+      depositStyle: product['Deposit Style'] === true,
       mode: wantEmbedded ? 'embedded' : 'hosted',
       returnUrl: `${SITE_URL}/order/success`,
       successUrl: `${SITE_URL}/order/success`,

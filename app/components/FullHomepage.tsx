@@ -185,8 +185,10 @@ export default function FullHomepage() {
                 </li>
               ))}
             </ol>
+            {/* Audit fix D-1: "No marketplace" contradicted the shop card on
+                this very page. The true claim is no MIDDLEMAN — scoped copy. */}
             <p className="text-center text-xs text-saddle mt-6">
-              No marketplace. No middleman markup. Direct relationship with the rancher who raised your beef.
+              No middleman markup. Direct relationship with the rancher who raised your beef.
             </p>
           </div>
         </Container>
@@ -373,8 +375,12 @@ export default function FullHomepage() {
             <Divider />
 
             <div className="text-center">
+              {/* Audit fix D-1: pre-shop copy claimed "No e-commerce checkout.
+                  No public marketplace." three sections below the card that
+                  sells /shop — an on-page self-contradiction. The durable
+                  truth: no faceless warehouse, no algorithms. */}
               <p className="text-lg text-saddle">
-                No e-commerce checkout. No public marketplace. No algorithms.<br />
+                No warehouse. No faceless brand. No algorithms.<br />
                 <strong className="text-charcoal">Just real people, real beef, real trust.</strong>
               </p>
             </div>

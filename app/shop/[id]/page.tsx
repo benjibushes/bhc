@@ -132,15 +132,21 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const rangeMatch = p.depositStyle
     ? p.priceRange.replace(/,/g, '').match(/(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)/)
     : null;
-  const offers = rangeMatch
-    ? {
-        '@type': 'AggregateOffer',
-        lowPrice: Number(rangeMatch[1]).toFixed(2),
-        highPrice: Number(rangeMatch[2]).toFixed(2),
-        priceCurrency: 'USD',
-        availability: 'https://schema.org/InStock',
-        url: `${SITE_URL}/shop/${p.id}`,
-      }
+  // Audit fix (D-3/C-1.2): a deposit-style product with a missing/unparseable
+  // Price Range must NEVER fall back to a flat Offer at the deposit price —
+  // that would tell Google a $95-355 product costs $95. Omit offers entirely
+  // instead (Product markup without offers is valid; a lie is not).
+  const offers = p.depositStyle
+    ? rangeMatch
+      ? {
+          '@type': 'AggregateOffer',
+          lowPrice: Number(rangeMatch[1]).toFixed(2),
+          highPrice: Number(rangeMatch[2]).toFixed(2),
+          priceCurrency: 'USD',
+          availability: 'https://schema.org/InStock',
+          url: `${SITE_URL}/shop/${p.id}`,
+        }
+      : null
     : {
         '@type': 'Offer',
         price: p.price.toFixed(2),
@@ -163,7 +169,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           ...(p.description ? { description: p.description } : {}),
           ...(p.category ? { category: p.category } : {}),
           brand: { '@type': 'Brand', name: p.rancher },
-          offers,
+          ...(offers ? { offers } : {}),
         }
       : null;
 

@@ -68,6 +68,12 @@ export async function settleProductPurchase(pi: any): Promise<void> {
   const displayCents = Number(pi?.metadata?.displayCents || 0);
   const baseCents = Number(pi?.metadata?.baseCents || 0);
   const marginCents = Number(pi?.metadata?.marginCents || Math.max(0, displayCents - baseCents));
+  // DEPOSIT-STYLE (audit fix C-1.5): a price-range product where this charge is
+  // a DEPOSIT, not the full price. Every notification below MUST say so — the
+  // old copy told the buyer "on its way" and the rancher "pack it, ship it",
+  // the exact opposite of the storefront's "balance confirmed before shipping"
+  // promise. Absent/legacy PIs default to false (full-purchase copy).
+  const depositStyle = String(pi?.metadata?.depositStyle || '') === 'true';
 
   if (!pi?.id || !displayCents) {
     // Malformed → can never settle. Permanent so Stripe stops the 3-day retry.
@@ -106,7 +112,9 @@ export async function settleProductPurchase(pi: any): Promise<void> {
   const shipTo = formatShipping(pi);
 
   const created: any = await createRecord(TABLES.RANCHER_ORDERS, {
-    'Order Ref': `${productName} — ${buyerName || buyerEmail}`,
+    // Deposit-style orders carry the marker in the ref so the ops view reads
+    // the truth at a glance (no schema change needed).
+    'Order Ref': `${depositStyle ? 'DEPOSIT — ' : ''}${productName} — ${buyerName || buyerEmail}`,
     'Product Name': productName,
     'Rancher Name': rancherName,
     'Rancher Record ID': rancherId,
@@ -142,25 +150,43 @@ export async function settleProductPurchase(pi: any): Promise<void> {
   }
 
   // LOUD operator signal — a real sale. This is exactly the alert that should
-  // ring after the noise cut.
+  // ring after the noise cut. Deposit-style says so (C-1.5) — Ben must never
+  // read a $95 deposit as a completed $95 sale.
   await sendOperatorSignal({
     urgency: 'loud',
     kind: 'sale',
-    summary: `PRODUCT SOLD — ${productName} · $${dollars(displayCents)}`,
-    detail:
-      `${buyerName || buyerEmail} bought ${productName} from ${rancherName}.\n` +
-      `You keep $${dollars(marginCents)} · rancher nets $${dollars(baseCents)}.\n` +
-      `Tell ${rancherName} to ship to:\n${shipTo || '(address on the order)'}`,
+    summary: depositStyle
+      ? `DEPOSIT PAID — ${productName} · $${dollars(displayCents)} down (balance TBD)`
+      : `PRODUCT SOLD — ${productName} · $${dollars(displayCents)}`,
+    detail: depositStyle
+      ? `${buyerName || buyerEmail} put $${dollars(displayCents)} down on ${productName} from ${rancherName}.\n` +
+        `DEPOSIT-STYLE: ${rancherName} confirms size + the balance with the buyer BEFORE shipping.\n` +
+        `You keep $${dollars(marginCents)} of the deposit · rancher nets $${dollars(baseCents)}.\n` +
+        `Ship to (once confirmed):\n${shipTo || '(address on the order)'}`
+      : `${buyerName || buyerEmail} bought ${productName} from ${rancherName}.\n` +
+        `You keep $${dollars(marginCents)} · rancher nets $${dollars(baseCents)}.\n` +
+        `Tell ${rancherName} to ship to:\n${shipTo || '(address on the order)'}`,
     dedupeKey: `product-sold:${pi.id}`,
   }).catch(() => {});
 
   // Buyer receipt (brand voice). All interpolated strings HTML-escaped.
+  // Deposit-style receipt matches the storefront promise exactly: deposit
+  // counts toward the total, rancher reaches out BEFORE anything ships.
   const buyerFirst = escapeHtml(buyerName ? buyerName.split(/\s+/)[0] : 'there');
   if (buyerEmail) {
     await sendEmail({
       to: buyerEmail,
-      subject: `you're set — ${productName} is on its way`,
-      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+      subject: depositStyle
+        ? `you're set — your ${productName} deposit is in`
+        : `you're set — ${productName} is on its way`,
+      html: depositStyle
+        ? `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+        <p>hey ${buyerFirst},</p>
+        <p>your deposit's in — <strong>${escapeHtml(rancherName)}</strong> has your <strong>${escapeHtml(productName)}</strong> reservation and will reach out to confirm the size you want + the balance <em>before anything ships</em>.</p>
+        <p style="font-size:14px;color:#5A5752">deposit paid: $${dollars(displayCents)} — it counts toward your total. nothing ships until you've confirmed the details together.</p>
+        <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+      </div>`
+        : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
         <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for a <strong>${escapeHtml(productName)}</strong> and will ship it direct to you.</p>
         <p style="font-size:14px;color:#5A5752">paid: $${dollars(displayCents)}. you'll get tracking as soon as it's on the way.</p>
@@ -170,15 +196,31 @@ export async function settleProductPurchase(pi: any): Promise<void> {
     }).catch(() => {});
   }
 
-  // Rancher ship-it notification (operational — clear, not marketing).
+  // Rancher notification (operational — clear, not marketing). Deposit-style
+  // flips the instruction from "pack it, ship it" to "CONFIRM FIRST" — the
+  // rancher must never ship a $95–355 range box against a deposit-only payout.
   try {
     const rancher: any = rancherId ? await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null) : null;
     const rancherEmail = String(rancher?.['Email'] || '').trim();
     if (rancherEmail) {
       await sendEmail({
         to: rancherEmail,
-        subject: `new order to ship — ${productName}`,
-        html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+        subject: depositStyle
+          ? `deposit in — confirm details BEFORE shipping — ${productName}`
+          : `new order to ship — ${productName}`,
+        html: depositStyle
+          ? `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+          <p>hi ${escapeHtml(rancherName)},</p>
+          <p>a buyer put a <strong>$${dollars(displayCents)} deposit</strong> down on a <strong>${escapeHtml(productName)}</strong>. <strong>do not ship yet</strong> — reach out first, confirm the size they want, and settle the balance with them. their deposit counts toward the total.</p>
+          <div style="background:#fff;border:1px solid #A7A29A;padding:16px;margin:16px 0;font-size:15px">
+            buyer: ${escapeHtml(buyerName || buyerEmail || '(on the order)')}<br>
+            ${buyerEmail ? `email: ${escapeHtml(buyerEmail)}<br>` : ''}
+            ship to (once confirmed):<br>${escapeHtml(shipTo || '(see BuyHalfCow order)').replace(/\n/g, '<br>')}
+          </div>
+          <p style="font-size:14px;color:#2A2A2A">you've already netted <strong>$${dollars(baseCents)}</strong> of the deposit in your Stripe account. confirm details → collect the balance → then ship &amp; reply with tracking.</p>
+          <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+        </div>`
+          : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
           <p>hi ${escapeHtml(rancherName)},</p>
           <p>you have a paid BuyHalfCow order to ship:</p>
           <div style="background:#fff;border:1px solid #A7A29A;padding:16px;margin:16px 0;font-size:15px">

@@ -58,6 +58,10 @@ function toClientProduct(r: any) {
     shelfStable: !!r['Shelf Stable'],
     active: r['Active'] === true,
     live: isSellableRow(r),
+    // Deposit-style rows are ops-managed (price-range products) — the tab
+    // labels them and the API fences their content edits (audit fix C-2e).
+    depositStyle: r['Deposit Style'] === true,
+    priceRange: String(r['Price Range'] || ''),
   };
 }
 
@@ -217,15 +221,42 @@ export async function PATCH(request: Request) {
 
   const patch: Record<string, any> = {};
 
+  const editing = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable']
+    .some((k) => k in body);
+
+  // Audit fix C-2e: DEPOSIT-STYLE rows are ops-managed price-range products
+  // (Display Price = the deposit, Rancher Base is hand-set, Price Range is a
+  // display contract). A self-serve content edit would re-derive Base off the
+  // category margin (clobbering the ops Base) or reprice the deposit under a
+  // stale range. Ranchers may hide/show them; content changes go through Ben.
+  if (editing && product['Deposit Style'] === true) {
+    return NextResponse.json(
+      { error: 'this is a deposit-style (price-range) product — text ben to change its details or pricing. you can still hide/show it.' },
+      { status: 409 },
+    );
+  }
+
   // Hide/show is the one non-content field a rancher may toggle. Re-showing
   // while approval mode is on goes back through review.
+  let heldForApproval = false;
   if (typeof body.active === 'boolean') {
-    patch['Active'] = body.active && requireApproval() && product['Active'] !== true ? false : body.active;
+    // Audit fix C-2c: re-showing requires the rancher to STILL be Connect-
+    // active — otherwise the product lists on /shop but every buy 409s (a
+    // listed-but-unbuyable dead-end button).
+    if (body.active === true) {
+      const rancher: any = await getRecordById(TABLES.RANCHERS, session.rancherId).catch(() => null);
+      if (!rancher || !isRancherOnConnect(rancher)) {
+        return NextResponse.json(
+          { error: 'finish your Stripe setup to list products — head to Billing to complete it.' },
+          { status: 403 },
+        );
+      }
+    }
+    heldForApproval = body.active === true && requireApproval() && product['Active'] !== true;
+    patch['Active'] = heldForApproval ? false : body.active;
   }
 
   // Content edits ride the same validator as create (all-or-nothing).
-  const editing = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable']
-    .some((k) => k in body);
   if (editing) {
     const merged = {
       name: body.name ?? String(product['Product Name'] || ''),
@@ -256,6 +287,26 @@ export async function PATCH(request: Request) {
   await updateRecord(TABLES.RANCHER_PRODUCTS, productId, patch);
   revalidateShop(productId);
 
+  // Audit fix C-2g: a re-show held by approval mode must never strand silently
+  // — ping Ben (same signal the held CREATE path sends) and tell the rancher.
+  if (heldForApproval) {
+    try {
+      const { sendOperatorSignal } = await import('@/lib/operatorSignal');
+      await sendOperatorSignal({
+        urgency: 'normal',
+        kind: 'sale',
+        summary: `Product re-show pending approval: ${product['Product Name'] || productId}`,
+        detail: 'Rancher tapped "show" while approval mode is on — flip Active in Rancher Products to list it.',
+        dedupeKey: `product-approval-${productId}`,
+      });
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   const fresh: any = await getRecordById(TABLES.RANCHER_PRODUCTS, productId).catch(() => null);
-  return NextResponse.json({ product: fresh ? toClientProduct(fresh) : { id: productId } });
+  return NextResponse.json({
+    product: fresh ? toClientProduct(fresh) : { id: productId },
+    pendingApproval: heldForApproval,
+  });
 }
