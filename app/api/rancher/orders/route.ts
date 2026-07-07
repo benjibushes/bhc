@@ -1,0 +1,131 @@
+// app/api/rancher/orders/route.ts
+//
+// Rancher product-ORDER management (Phase 10 unison loop). Until now a
+// marketplace order reached the rancher as ONE email and then vanished — no
+// dashboard surface, no mark-shipped, no tracking back to the buyer. This
+// closes the loop:
+//   GET  → my product orders (Rancher Orders rows owned by me), newest first
+//   POST → mark shipped: { orderId, trackingNumber? } → Status 'Shipped' +
+//          Shipped At + Tracking Number, and the BUYER gets the tracking
+//          email automatically (the promise "you'll get tracking" in the
+//          receipt finally has a sender).
+//
+// Auth = requireRancher; ownership = the order row's 'Rancher Record ID'
+// (stamped by settlement) must equal the session rancher. Money fields are
+// read-only here — this route never touches amounts, Stripe, or settlement.
+
+import { NextResponse } from 'next/server';
+import { requireRancher } from '@/lib/rancherAuth';
+import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { sendEmail } from '@/lib/email';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+const ownerOf = (row: any) => String(row?.['Rancher Record ID'] || '').trim();
+
+// Same minimal escaper the settlement emails use — every interpolated string
+// below is HTML-escaped (buyer name, product, ranch, tracking).
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function toClientOrder(r: any) {
+  const ref = String(r['Order Ref'] || '');
+  return {
+    id: r.id,
+    ref,
+    productName: String(r['Product Name'] || ''),
+    buyerName: String(r['Buyer Name'] || ''),
+    buyerEmail: String(r['Buyer Email'] || ''),
+    shipTo: String(r['Ship To Address'] || ''),
+    buyerPaid: Number(r['Buyer Paid'] || 0),
+    payout: Number(r['Rancher Payout'] || 0),
+    status: String(r['Status'] || 'New'),
+    orderedAt: String(r['Ordered At'] || ''),
+    shippedAt: String(r['Shipped At'] || ''),
+    trackingNumber: String(r['Tracking Number'] || ''),
+    // Deposit-style orders carry the marker settlement stamped into the ref —
+    // the UI must say "confirm details first", never "ship it".
+    depositStyle: ref.startsWith('DEPOSIT — '),
+  };
+}
+
+export async function GET(request: Request) {
+  const r = await requireRancher(request);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
+
+  const rows = ((await getAllRecords(TABLES.RANCHER_ORDERS).catch(() => [])) as any[])
+    .filter((row) => ownerOf(row) === session.rancherId)
+    .map(toClientOrder)
+    .sort((a, b) => (b.orderedAt || '').localeCompare(a.orderedAt || ''));
+
+  return NextResponse.json({ orders: rows });
+}
+
+export async function POST(request: Request) {
+  const r = await requireRancher(request);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+  const orderId = String(body?.orderId || '').trim();
+  const trackingNumber = String(body?.trackingNumber || '').trim().slice(0, 120);
+  if (!/^rec[A-Za-z0-9]{14}$/.test(orderId)) {
+    return NextResponse.json({ error: 'Invalid order id' }, { status: 400 });
+  }
+
+  const order: any = await getRecordById(TABLES.RANCHER_ORDERS, orderId).catch(() => null);
+  if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+  if (ownerOf(order) !== session.rancherId) {
+    return NextResponse.json({ error: 'This order does not belong to you.' }, { status: 403 });
+  }
+  const status = String(order['Status'] || 'New');
+  if (status === 'Refunded') {
+    return NextResponse.json({ error: 'This order was refunded — nothing to ship.' }, { status: 409 });
+  }
+  if (status === 'Shipped') {
+    return NextResponse.json({ error: 'Already marked shipped.' }, { status: 409 });
+  }
+
+  await updateRecord(TABLES.RANCHER_ORDERS, orderId, {
+    Status: 'Shipped',
+    'Shipped At': new Date().toISOString(),
+    ...(trackingNumber ? { 'Tracking Number': trackingNumber } : {}),
+  });
+
+  // The tracking email the receipt promised. Transactional (whitelisted in
+  // emailFrequencyGuard) — best-effort, never blocks the status update.
+  const buyerEmail = String(order['Buyer Email'] || '').trim();
+  const buyerFirst = escapeHtml(String(order['Buyer Name'] || '').trim().split(/\s+/)[0] || 'there');
+  const productName = escapeHtml(String(order['Product Name'] || 'your order'));
+  const ranchName = escapeHtml(String(order['Rancher Name'] || session.ranchName || 'the ranch'));
+  const trackingSafe = escapeHtml(trackingNumber);
+  if (buyerEmail) {
+    await sendEmail({
+      to: buyerEmail,
+      subject: `on the way — ${String(order['Product Name'] || 'your order')}`,
+      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+        <p>hey ${buyerFirst},</p>
+        <p>your <strong>${productName}</strong> just shipped from <strong>${ranchName}</strong>.</p>
+        ${trackingSafe ? `<p style="font-size:14px;color:#2A2A2A">tracking: <strong>${trackingSafe}</strong></p>` : ''}
+        <p style="font-size:14px;color:#5A5752">if anything shows up wrong or freezer-burned, we make it right — just reply to this email.</p>
+        <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+      </div>`,
+      templateName: 'product_shipped',
+    }).catch(() => {});
+  }
+
+  const fresh: any = await getRecordById(TABLES.RANCHER_ORDERS, orderId).catch(() => null);
+  return NextResponse.json({ order: fresh ? toClientOrder(fresh) : { id: orderId, status: 'Shipped' } });
+}

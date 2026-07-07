@@ -30,6 +30,15 @@ interface SellResult {
   sms: string;
 }
 
+// Phase 10 — buyer omniscience: the whole relationship across all three
+// systems (demand / rancher deals / marketplace) the moment Ben types an email.
+interface BuyerContext {
+  found: boolean;
+  consumer: { name: string; state: string; stage: string; smsOptIn: boolean } | null;
+  referrals: { status: string; rancher: string; depositPaidAt: string }[];
+  orders: { product: string; paid: number; status: string; deposit: boolean }[];
+}
+
 const money = (n: number) => `$${n.toFixed(n % 1 === 0 ? 0 : 2)}`;
 
 export default function AdminSellPage() {
@@ -46,9 +55,32 @@ export default function AdminSellPage() {
   const [result, setResult] = useState<SellResult | null>(null);
   const [genErr, setGenErr] = useState('');
   const [copied, setCopied] = useState(false);
+  const [ctx, setCtx] = useState<BuyerContext | null>(null);
 
   const ready = buyerEmail.includes('@');
   const first = buyerName.trim().split(' ')[0] || '';
+
+  // Buyer context on email entry (debounced) — who am I talking to?
+  useEffect(() => {
+    setCtx(null);
+    if (!buyerEmail.includes('@')) return;
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/admin/buyer-context?email=${encodeURIComponent(buyerEmail.trim())}`);
+        const data = await res.json().catch(() => null);
+        if (res.ok && data) {
+          setCtx(data);
+          // Auto-fill what we know — fewer keystrokes on a live call.
+          if (data.consumer?.name && !buyerName.trim()) setBuyerName(data.consumer.name);
+          if (data.consumer?.state && !buyerState) setBuyerState(data.consumer.state);
+        }
+      } catch {
+        /* lookup is a bonus, never a blocker */
+      }
+    }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buyerEmail]);
 
   // Load the menu whenever the state changes (also loads with no state —
   // products are always sellable; ranchers just lose the in-state sort).
@@ -182,6 +214,39 @@ export default function AdminSellPage() {
             className="w-full p-3 border border-dust bg-bone text-[15px]" />
         </label>
       </div>
+
+      {/* ── Buyer context strip — who you're talking to, across all 3 systems ── */}
+      {ctx && ctx.found && (
+        <div className="border border-dust bg-bone px-4 py-3 mb-6 text-[13px] flex flex-wrap gap-x-4 gap-y-1 items-baseline">
+          <span className="font-serif text-[15px]">
+            {ctx.consumer?.name || buyerEmail}
+          </span>
+          {ctx.consumer?.state && <span className="text-saddle">{ctx.consumer.state}</span>}
+          {ctx.consumer?.stage && (
+            <span className="text-[10px] uppercase tracking-wider border border-dust px-1.5 py-0.5 text-saddle">
+              {ctx.consumer.stage}
+            </span>
+          )}
+          {ctx.consumer?.smsOptIn && <span className="text-[11px] text-sage">sms ok</span>}
+          {ctx.referrals.map((r, i) => (
+            <span key={`r${i}`} className="text-saddle">
+              share: {r.rancher || 'unassigned'} · {r.status}
+              {r.depositPaidAt ? ' · deposit paid ✓' : ''}
+            </span>
+          ))}
+          {ctx.orders.map((o, i) => (
+            <span key={`o${i}`} className="text-saddle">
+              bought: {o.product} ${o.paid.toFixed(0)}{o.deposit ? ' (deposit)' : ''} · {o.status}
+            </span>
+          ))}
+          {ctx.referrals.length === 0 && ctx.orders.length === 0 && (
+            <span className="text-saddle">in the system — no purchases yet</span>
+          )}
+        </div>
+      )}
+      {ctx && !ctx.found && ready && (
+        <p className="text-xs text-saddle mb-6">new lead — first touch. the link you send creates their record.</p>
+      )}
 
       {/* ── Result bar — pinned above the columns so it's always visible ── */}
       {genErr && <p className="text-weathered text-sm mb-4">{genErr}</p>}
