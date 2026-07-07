@@ -118,6 +118,17 @@ export default function SellPage() {
               </Button>
             </div>
 
+            {/* Rancher-call-path fix (2026-07-06): the pitch page had NO
+                talk-first path — a rancher who wants a human before a form
+                had nowhere to go. /book?purpose=rancher resolves the live
+                discovery event server-side (never a dead slug). */}
+            <p className="text-sm text-saddle pt-3">
+              Rather talk it through first?{' '}
+              <a href="/book?purpose=rancher" className="underline hover:text-charcoal transition-colors">
+                Book a 15-min call with Ben &rarr;
+              </a>
+            </p>
+
             <p className="text-xs text-saddle pt-2">
               No upfront fee · You set your prices · Leave anytime
             </p>
