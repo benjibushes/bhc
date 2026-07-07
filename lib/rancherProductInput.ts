@@ -27,6 +27,12 @@ export const PRODUCT_CATEGORIES = [
 
 // Margin tiering (founder-approved 2026-07-04: "whatever protects my margin"):
 // impulse/shelf-stable items carry 20%, frozen boxes/bundles/shares 15%.
+//
+// PRICING-APPRAISAL TRIGGER (2026-07-06 research): jerky/sticks can carry 25%
+// (top of the impulse band; shipped rail = leak-proof, so the take holds) —
+// but ONLY once supply is healthy. Raising a rancher's cut while supply-starved
+// and recruiting is bad timing. When Connect-active ranchers per demand state
+// stop being the constraint, bump Jerky + Snack Sticks to 0.25 here.
 export const MARGIN_BY_CATEGORY: Record<string, number> = {
   Jerky: 0.2,
   'Snack Sticks': 0.2,

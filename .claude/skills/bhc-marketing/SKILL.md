@@ -108,7 +108,8 @@ from BHC.md's "KEY URLS" table:
 
 | Asset type | Default URL |
 |------------|-------------|
-| Buyer-targeted social | `https://www.buyhalfcow.com/access` |
+| Buyer social — cold / TOFU (THE DEFAULT) | `https://www.buyhalfcow.com/shop` |
+| Buyer social — share-intent / BOFU only | `https://www.buyhalfcow.com/access` |
 | Rancher-targeted social | `https://www.buyhalfcow.com/map/add-a-rancher` |
 | Founder-targeted social | `https://www.buyhalfcow.com/founders` |
 | Brand-targeted | `https://www.buyhalfcow.com/brand-partners` |
@@ -120,6 +121,13 @@ from BHC.md's "KEY URLS" table:
 | Gear / affiliate | `https://www.buyhalfcow.com/gear` |
 
 For Instagram captions, write "link in bio" instead of pasting the URL.
+
+**THE POINTER RULE (2026-07-06, reach research):** cold/broad buyer content
+defaults to `/shop` — a $13 jerky is a yes anyone can say today, and product
+buyers auto-enter the share ladder-up cron. Point at `/access` ONLY when the
+post is explicitly about buying a share (freezer economics, half-cow math,
+"get matched"). Asking a cold audience for the $2k yes first is the #1
+revenue leak; never re-introduce it.
 
 ### Step 7 — Sign emails
 
