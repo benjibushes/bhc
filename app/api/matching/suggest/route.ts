@@ -1389,6 +1389,28 @@ export async function POST(request: Request) {
               );
             } catch {}
           }
+
+          // PWA push alongside the intro email (2026-07-08) — the routed-lead
+          // moment is the single most important rancher notification and it
+          // previously rode email only. Mirrors the deposit-paid push in
+          // lib/rancherNotify.ts: best-effort + dark-safe (sendRancherPush
+          // no-ops without VAPID env or subscriptions), never throws.
+          // Skipped when the intro send failed above — the referral was
+          // rolled back to Pending Approval, so a push now would announce a
+          // lead that isn't actually routed (the retry path re-fires both).
+          if (introSendOk) {
+            try {
+              const { sendRancherPush } = await import('@/lib/rancherPush');
+              const buyerFirstNameForPush = String(buyerName || '').trim().split(/\s+/)[0] || 'A buyer';
+              await sendRancherPush(topMatch.id, {
+                title: `new buyer routed — ${buyerFirstNameForPush}${buyerState ? ` (${buyerState})` : ''}`,
+                body: `${buyerFirstNameForPush} was just matched to you${orderType ? ` for a ${orderType}` : ''}. their contact info is in your email + dashboard.`,
+                url: '/rancher',
+              });
+            } catch (pushErr: any) {
+              console.warn('[matching/suggest] routed-lead push skipped (non-fatal):', pushErr?.message);
+            }
+          }
         }
 
         // Telegram alert for Ready-to-Buy routes — highest priority lead type.

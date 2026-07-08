@@ -96,14 +96,13 @@ export default function ApplyForm() {
       setError('Please enter a valid email.');
       return;
     }
-    if (!form.headPerYear) {
-      setError('Please tell us your D2C volume.');
-      return;
-    }
-    if (!form.constraint) {
-      setError('Please pick your biggest constraint.');
-      return;
-    }
+    // headPerYear + constraint are genuinely OPTIONAL (2026-07-08) — they live
+    // inside the collapsed "optional: 30 more seconds" accordion and the server
+    // only requires name/ranch/email/state. Requiring them here made Submit
+    // silently no-op for anyone who filled just the 4 required fields: the
+    // early return fired before setSubmitting(true), and the only error render
+    // sat hidden inside the closed <details>. Never re-add without moving the
+    // fields out of the accordion.
     setSubmitting(true);
     try {
       const res = await fetch('/api/apply', {
@@ -485,14 +484,18 @@ export default function ApplyForm() {
         </div>
       </div>
 
+        </div>
+      </details>
+
+      {/* Error renders OUTSIDE the optional <details>, next to Submit
+          (2026-07-08). It used to live inside the collapsed accordion, so a
+          fetch failure (429/500) was invisible unless the rancher happened to
+          have opened "optional: 30 more seconds". */}
       {error && (
         <div className="p-3 border border-weathered text-weathered text-sm">
           {error}
         </div>
       )}
-
-        </div>
-      </details>
 
       <button
         type="submit"

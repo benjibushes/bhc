@@ -31,7 +31,7 @@ import { settleBuyerDeposit, settleFinalInvoice, isPermanentSettlementError } fr
 import { settleProductPurchase, reconcileProductOrderRefund } from '@/lib/productSettlement';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
-import { sendEmail } from '@/lib/email';
+import { sendEmail, sendRancherGoLiveEmail, sendRancherBankConnected } from '@/lib/email';
 import { markDepositRefunded, markDepositDisputed, PAYMENTS_TABLE } from '@/lib/contracts/payments';
 import { logAuditEntry } from '@/lib/auditLog';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
@@ -675,6 +675,30 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
       // endpoint at app/api/admin/ranchers/[id]/go-live/route.ts:80.
       triggerLaunchWarmup(`connect-webhook-auto-go-live:${rancher.id}`);
 
+      // Go-live email to the RANCHER (2026-07-08) — this rail used to flip
+      // a rancher Live with zero rancher-facing notification (only the ops
+      // Telegram below). bankConnected:true folds the "bank connected ✓"
+      // news into this ONE email: the same webhook pass IS the Connect
+      // activation moment, and the celebration block below skips its
+      // rancher email when shouldAutoGoLive — never two emails from one
+      // event. Skip silently when the record has no email; own try/catch
+      // so a send failure never blocks the ops Telegram.
+      try {
+        const rancherEmail = rancher['Email'];
+        if (rancherEmail) {
+          const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+          await sendRancherGoLiveEmail({
+            operatorName: String(operatorName),
+            ranchName: String(rancher['Ranch Name'] || operatorName),
+            email: String(rancherEmail),
+            slug: rancher['Slug'] ? String(rancher['Slug']) : undefined,
+            bankConnected: true,
+          });
+        }
+      } catch (emailErr: any) {
+        console.error('[stripe-connect webhook] go-live email failed (non-fatal):', emailErr?.message);
+      }
+
       // LOUD Telegram to ops — HTML-escape dynamic ranch name for safety.
       const ranchLabel = String(
         rancher['Ranch Name'] || rancher['Operator Name'] || rancher['Email'] || accountId,
@@ -709,6 +733,29 @@ async function syncRancherConnectStatus(accountId: string): Promise<void> {
       );
     } catch (e: any) {
       console.warn('[stripe-connect webhook] telegram celebration failed:', e?.message);
+    }
+
+    // Rancher-facing "bank connected — deposits on" email (2026-07-08) —
+    // this milestone used to fire admin Telegram ONLY; the rancher never
+    // heard their bank was wired. Rides the same first-activation gate as
+    // the celebration above. Skipped when this same pass auto-flipped
+    // go-live: the go-live email already carries the bank news
+    // (bankConnected) — never two emails from one event. Skip silently
+    // when the record has no email; best-effort, never throws.
+    if (!shouldAutoGoLive) {
+      try {
+        const rancherEmail = rancher['Email'];
+        if (rancherEmail) {
+          const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+          await sendRancherBankConnected({
+            operatorName: String(operatorName),
+            ranchName: String(rancher['Ranch Name'] || operatorName),
+            email: String(rancherEmail),
+          });
+        }
+      } catch (e: any) {
+        console.warn('[stripe-connect webhook] bank-connected email failed (non-fatal):', e?.message);
+      }
     }
   }
 }

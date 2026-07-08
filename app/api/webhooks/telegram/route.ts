@@ -10,7 +10,7 @@ import {
   answerCallbackQuery,
   TELEGRAM_ADMIN_CHAT_ID,
 } from '@/lib/telegram';
-import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification, sendRancherCheckIn, sendPipelineUpdateEmail } from '@/lib/email';
+import { sendEmail, sendConsumerApproval, sendBroadcastEmail, sendBuyerIntroNotification, sendRancherCheckIn, sendPipelineUpdateEmail, sendRancherGoLiveEmail } from '@/lib/email';
 import { callClaude } from '@/lib/ai';
 import { bulkRouteStateToRancher } from '@/lib/bulkRoute';
 import { goLiveRancher } from '@/lib/goLiveRancher';
@@ -2660,27 +2660,43 @@ Output ONLY the email body. First line should be the subject line prefixed with 
           // Notify the rancher their verification passed
           if (rancherEmail) {
             const slug = rancher['Slug'] || '';
-            const dashToken = jwt.sign(
-              { type: 'rancher-login', rancherId, email: rancherEmail.trim().toLowerCase() },
-              JWT_SECRET,
-              { expiresIn: '7d' }
-            );
-            const dashUrl = `${SITE_URL}/rancher/verify?token=${dashToken}`;
-            await sendEmail({
-              to: rancherEmail,
-              subject: 'Verification Complete — Ready to Go Live on BuyHalfCow',
-              html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
-                <h1 style="font-family:Georgia,serif;font-size:22px;">Verification Complete</h1>
-                <p>Hi ${escHtml(name)},</p>
-                <p>Your product verification has been approved. You're almost live on BuyHalfCow.</p>
-                <p><strong>Next step:</strong> Make sure your landing page has your pricing, payment links, and about text filled in. Then hit "Request Go Live" on your dashboard.</p>
-                <div style="margin:30px 0;text-align:center;">
-                  <a href="${dashUrl}" style="background:#2D5016;color:#fff;padding:14px 28px;text-decoration:none;font-weight:600;display:inline-block;">Open Dashboard</a>
-                </div>
-                <p>Once your page is live, buyers in your area will start seeing your ranch and can purchase directly.</p>
-                <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
-              </div>`,
-            });
+            if (readyToGoLiveVerify) {
+              // The auto-go-live flip above already made them Live — the
+              // "hit Request Go Live" email below would point an
+              // ALREADY-LIVE rancher at a button that no longer applies.
+              // Send the go-live email instead (page URL + what happens
+              // next + dashboard link). The not-flipped branch keeps the
+              // verification email since those ranchers still have setup
+              // left before going live.
+              await sendRancherGoLiveEmail({
+                operatorName: String(name),
+                ranchName: String(rancher['Ranch Name'] || name),
+                email: String(rancherEmail),
+                slug: slug ? String(slug) : undefined,
+              });
+            } else {
+              const dashToken = jwt.sign(
+                { type: 'rancher-login', rancherId, email: rancherEmail.trim().toLowerCase() },
+                JWT_SECRET,
+                { expiresIn: '7d' }
+              );
+              const dashUrl = `${SITE_URL}/rancher/verify?token=${dashToken}`;
+              await sendEmail({
+                to: rancherEmail,
+                subject: 'Verification Complete — Ready to Go Live on BuyHalfCow',
+                html: `<div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;">
+                  <h1 style="font-family:Georgia,serif;font-size:22px;">Verification Complete</h1>
+                  <p>Hi ${escHtml(name)},</p>
+                  <p>Your product verification has been approved. You're almost live on BuyHalfCow.</p>
+                  <p><strong>Next step:</strong> Make sure your landing page has your pricing, payment links, and about text filled in. Then hit "Request Go Live" on your dashboard.</p>
+                  <div style="margin:30px 0;text-align:center;">
+                    <a href="${dashUrl}" style="background:#2D5016;color:#fff;padding:14px 28px;text-decoration:none;font-weight:600;display:inline-block;">Open Dashboard</a>
+                  </div>
+                  <p>Once your page is live, buyers in your area will start seeing your ranch and can purchase directly.</p>
+                  <p style="font-size:12px;color:#A7A29A;margin-top:30px;">— Benjamin, BuyHalfCow</p>
+                </div>`,
+              });
+            }
           }
 
           if (chatId) {

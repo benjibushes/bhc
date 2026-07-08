@@ -3,9 +3,12 @@
 // Public discovery entry point for ranchers. Unlike /map/add-a-rancher
 // (which adds yellow-pin Prospects to the public map for everyone to see),
 // /apply is for ranchers who want to actively partner with BHC. The form
-// captures qualification context (head/year, channels, constraints) then
-// either mints a wizard token + redirects them straight in (high-qual)
-// or queues for manual review (low-qual).
+// captures qualification context (head/year, channels, constraints) and the
+// server ALWAYS auto-approves — every applicant gets the wizard link right
+// on the success screen (low-qual just gets flagged for Ben's triage in
+// Telegram). Copy fixed 2026-07-08: the old "pre-approval in 24 hours"
+// framing was a fake gate that added a day of imagined waiting to an
+// instant flow.
 //
 // Why separate from /map/add-a-rancher: the map form is "every D2C rancher
 // in America" — submission is community-driven, sometimes a third-party
@@ -18,11 +21,11 @@ import ApplyForm from './ApplyForm';
 export const metadata: Metadata = {
   title: 'Apply to partner · BuyHalfCow',
   description:
-    'Active ranchers — apply to partner with BuyHalfCow. We send you ready-to-buy families in your state, run the marketing engine, and stay out of your way. Pre-approval in 24 hours.',
+    'Active ranchers — apply to partner with BuyHalfCow. We send you ready-to-buy families in your state, run the marketing engine, and stay out of your way. Apply in 90 seconds — build your page immediately.',
   openGraph: {
     title: 'Apply to partner · BuyHalfCow',
     description:
-      'D2C ranchers — apply to partner. Marketing engine + ready-to-buy families in your state. Pre-approval in 24h.',
+      'D2C ranchers — apply to partner. Marketing engine + ready-to-buy families in your state. Apply in 90 seconds — build your page immediately.',
     type: 'website',
     url: 'https://www.buyhalfcow.com/apply',
   },
@@ -43,8 +46,9 @@ export default function ApplyPage() {
             tell us about your ranch.
           </h1>
           <p className="text-saddle text-base sm:text-lg leading-relaxed">
-            We pre-approve serious ranchers in 24 hours. If you ship D2C
-            beef and want more buyers without running the marketing
+            You&apos;re in as soon as you hit submit — the form takes about
+            90 seconds, then you build your ranch page right after. If you
+            ship D2C beef and want more buyers without running the marketing
             yourself — this is for you.
           </p>
         </div>
@@ -75,10 +79,10 @@ export default function ApplyPage() {
             what we'll ask
           </p>
           <p className="text-sm sm:text-base text-charcoal leading-relaxed">
-            Basic contact + state, then 4 fit-check questions about your
-            volume, current channels, and biggest constraint. Takes about
-            2 minutes. Approved applicants get a wizard link emailed
-            within 24 hours — most get same-day.
+            Name, ranch, email, state — that&apos;s the whole application.
+            A few optional fit-check questions if you have 30 more seconds.
+            The link to build your ranch page appears right after you hit
+            submit, and we email it too so you can come back later.
           </p>
         </div>
 

@@ -132,10 +132,19 @@ async function mintOnboardingUrl(
       options.fromWizard && options.wizardToken
         ? `${SITE_URL}/rancher/setup?token=${encodeURIComponent(options.wizardToken)}&connectComplete=1`
         : `${SITE_URL}/rancher/billing?onboarding=done`;
+    // refreshUrl carries the SAME wizard context as returnUrl. Stripe GETs the
+    // refresh_url when its account-link goes stale (>24h), and our GET handler
+    // reads from/wizardToken off the query string — without them, a wizard
+    // rancher resuming a stale link was re-minted with the /rancher/billing
+    // return_url and skipped the wizard's remaining steps after KYC.
+    const refreshUrl =
+      options.fromWizard && options.wizardToken
+        ? `${SITE_URL}/api/rancher/connect/start?from=wizard&wizardToken=${encodeURIComponent(options.wizardToken)}`
+        : `${SITE_URL}/api/rancher/connect/start`;
     const { url } = await createOnboardingLink({
       accountId,
       returnUrl,
-      refreshUrl: `${SITE_URL}/api/rancher/connect/start`,
+      refreshUrl,
     });
     return { ok: true, url, accountId };
   } catch (e: any) {

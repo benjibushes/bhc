@@ -10,7 +10,10 @@ import { JWT_SECRET } from '@/lib/secrets';
 
 // Stuck-onboarding nudge cron. Runs daily 16:00 UTC.
 //
-// Three stuck-buckets the platform was previously not nudging:
+// Stuck-buckets the platform was previously not nudging:
+//   - Connect-stuck (started Stripe Connect KYC, never finished, page not live)
+//   - Live-no-deposits (tier_v2, Page Live = true, Connect never went active —
+//     the page is up but every buyer deposit is blocked)
 //   - Onboarding Status = 'Call Complete' (had the call, never finished wizard)
 //   - Onboarding Status = 'Docs Sent' (got setup link, never opened it)
 //   - Agreement Signed = true AND Page Live = false (signed but didn't finish
@@ -105,10 +108,28 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
       // CONNECT-STUCK — started Stripe Connect KYC but never finished. The #1
       // silent drop-off: previously NO bucket caught them, so a rancher who
       // abandoned the bank/SSN step just vanished with zero follow-up. Anchor on
-      // when they started (fallback to signed/docs for rows predating the stamp).
-      anchorISO = r['Connect Started At'] || r['Agreement Signed At'] || r['Docs Sent At'] || null;
+      // when they started. The fallback chain matters: tier/select persisted the
+      // Connect account WITHOUT stamping 'Connect Started At' (only connect/start
+      // stamped it — fixed now, but historical rows carry a null anchor), so
+      // fall through signed → docs → record creation; no rancher is unreachable.
+      anchorISO =
+        r['Connect Started At'] || r['Agreement Signed At'] || r['Docs Sent At'] || r._createdTime || null;
       bucketLabel = 'connect-stuck';
       missing.push('Finish connecting your bank with Stripe — about 5 minutes, then buyers can pay you');
+    } else if (isTierV2 && pageLive && !connectActive) {
+      // LIVE-NO-DEPOSITS — page is live but Stripe Connect never went active, so
+      // every buyer deposit is blocked (tier_v2 eligibility requires
+      // Connect=active). Both the bucket above and signed-no-page below exclude
+      // Page Live=true, which left the realest stuck cohort — signed ranchers
+      // sitting live for months at Connect='onboarding' — with zero chasing.
+      // Same anchor fallback chain as connect-stuck so a missing stamp can't
+      // hide them.
+      anchorISO =
+        r['Connect Started At'] || r['Agreement Signed At'] || r['Docs Sent At'] || r._createdTime || null;
+      bucketLabel = 'live-no-deposits';
+      missing.push(
+        "Your page is live, but you can't take buyer deposits until you finish connecting your bank with Stripe — about 5 minutes"
+      );
     } else if (agreementSigned && !pageLive) {
       anchorISO = r['Agreement Signed At'] || null;
       bucketLabel = 'signed-no-page';

@@ -33,6 +33,10 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendConsumerApproval',
   'sendFoundingHerdWelcome',
   'sendRancherGoLiveEmail',
+  // Rancher-expected one-shot Stripe Connect milestone ("bank connected —
+  // deposits on"). Fires at most once per rancher (gated on the Connected At
+  // stamp in the Connect webhook), so whitelisting cannot cause volume.
+  'sendRancherBankConnected',
   'sendRancherSelfSubmitWelcome',
   'sendProspectClaimMagicLink',
   // Customer-expected order confirmation after wholesale checkout.
