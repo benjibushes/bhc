@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
@@ -425,6 +425,9 @@ export default function RancherDashboardPage() {
       marketing: 'marketing',
       earnings: 'earnings',
       benefits: 'benefits',
+      // Products tab deep link — the monthly stock check-in email + docs
+      // point ranchers at /rancher#products.
+      products: 'products',
     };
     const next = hashToTab[hash];
     if (next) setActiveTab(next);
@@ -484,6 +487,13 @@ export default function RancherDashboardPage() {
   }, []);
 
   const [isAdminImpersonating, setIsAdminImpersonating] = useState(false);
+
+  // Audit fix (silent-wipe guard): the parity fields (refund policy, social
+  // links, fulfillment, FAQ) are seeded BLANK and hydrated by a separate GET.
+  // If that GET fails, saving the page used to send the blanks and WIPE the
+  // stored values in Airtable. This ref flips true only on successful
+  // hydration; handleSavePage omits the parity fields until then.
+  const parityHydratedRef = useRef(false);
 
   const fetchDashboard = async () => {
     setLoadError(false);
@@ -620,6 +630,7 @@ export default function RancherDashboardPage() {
         const lpRes = await fetch('/api/rancher/landing-page', { credentials: 'include' });
         if (lpRes.ok) {
           const lp = await lpRes.json();
+          parityHydratedRef.current = true;
           setPageForm((f) => ({
             ...f,
             'Refund Policy': lp['Refund Policy'] || '',
@@ -1393,6 +1404,20 @@ export default function RancherDashboardPage() {
         if (body[numKey]) body[numKey] = parseFloat(body[numKey]) || null;
         else body[numKey] = null;
       }
+      // Silent-wipe guard: if the parity GET never hydrated these fields,
+      // pageForm still holds the blank seeds — sending them would erase the
+      // rancher's stored refund policy / socials / fulfillment / FAQ in
+      // Airtable. Omit them entirely so a failed hydration can't destroy data.
+      if (!parityHydratedRef.current) {
+        for (const parityKey of [
+          'Refund Policy', 'Google Reviews URL', 'Facebook URL', 'Instagram URL',
+          'Processing Facility', 'Pickup City', 'Delivery Radius Miles',
+          'Shipping Lead Time Days', 'Fulfillment Cost Notes',
+          'Fulfillment Types', 'FAQ',
+        ]) {
+          delete body[parityKey];
+        }
+      }
       const res = await fetch('/api/rancher/landing-page', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1406,8 +1431,13 @@ export default function RancherDashboardPage() {
       setPageSaved(true);
       setTimeout(() => setPageSaved(false), 3000);
       // Mirror the saved specialty into rancherInfo so the P1-4 no-pricing
-      // alarm reflects the new sold cuts without a full dashboard refetch.
+      // alarm reflects the new sold cuts immediately.
       setRancherInfo((ri) => (ri ? { ...ri, tierSpecialty: [...soldCuts] } : ri));
+      // Full refetch: a first-time slug save must reach rancherInfo.slug or
+      // "Request Go Live" + preview links stay dead-ended until a manual
+      // reload; deposit-modal prices go stale the same way. Fire-and-forget —
+      // the saved banner is already up.
+      fetchDashboard();
     } catch {
       setPageError('Network error. Please check your connection.');
     } finally {

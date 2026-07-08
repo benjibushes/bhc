@@ -153,7 +153,15 @@ export default async function RancherPage(
   const certifications = r['Certifications'] || '';
   const nextProcessingDate = r['Next Processing Date'] || '';
   const reserveLink = r['Reserve Link'] || '';
-  const customNotes = r['Custom Notes'] || '';
+  // Custom Notes renders PUBLICLY as "A note from the ranch". Internal deal
+  // terms belong in 'Ops Notes (Internal)' — but ops notes were historically
+  // pasted here (the Ashcraft commission-terms leak), so defensively suppress
+  // anything that reads like internal ops rather than buyer-facing copy.
+  const rawCustomNotes = String(r['Custom Notes'] || '');
+  const looksInternal =
+    /commission|retainer|do not override|internal|per sale|payout|\$\d+\s*\/\s*mo/i.test(rawCustomNotes) ||
+    rawCustomNotes.trimStart().startsWith('[');
+  const customNotes = looksInternal ? '' : rawCustomNotes;
   // Cal.com slug — normalized (strip cal.com URL prefix, leading/trailing
   // slashes). When set, surface "Book a 15-min call" CTA on the public page
   // so organic-search visitors can self-schedule without going through the

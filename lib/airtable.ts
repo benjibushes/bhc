@@ -687,7 +687,13 @@ export async function getActiveRancherPages() {
   try {
     const records = await withTimeout(
       base(TABLES.RANCHERS)
-        .select({ filterByFormula: '{Page Live} = 1' })
+        .select({
+          // Mirror getRancherOrProspectBySlug's visibility gates: a hidden or
+          // removed rancher must not appear in the directory/map only to
+          // soft-404 when clicked (au-beef asymmetry).
+          filterByFormula:
+            'AND({Page Live} = 1, NOT({Public Map Hidden} = 1), {Verification Status} != "Removed")',
+        })
         .all(),
       resolveAirtableTimeoutMs(),
       TABLES.RANCHERS,

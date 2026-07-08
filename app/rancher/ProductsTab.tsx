@@ -140,6 +140,7 @@ export default function ProductsTab({
 
   async function markShipped(o: RancherOrder) {
     setShippingId(o.id);
+    setSaveErr('');
     try {
       const res = await fetch('/api/rancher/orders', {
         method: 'POST',
@@ -367,6 +368,12 @@ export default function ProductsTab({
 
       {savedNote && (
         <p className="text-sm text-sage border border-sage/40 bg-bone-warm px-4 py-3">{savedNote}</p>
+      )}
+      {/* Errors from mark-shipped / stock updates fire while the form is
+          CLOSED — rendering saveErr only inside the form made those failures
+          invisible (rancher clicks, nothing happens, order stays unshipped). */}
+      {!showForm && saveErr && (
+        <p className="text-sm text-weathered border border-weathered/40 bg-bone-warm px-4 py-3">{saveErr}</p>
       )}
 
       {/* ── Add / edit form ── */}
