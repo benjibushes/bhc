@@ -68,6 +68,11 @@ export async function settleProductPurchase(pi: any): Promise<void> {
   const displayCents = Number(pi?.metadata?.displayCents || 0);
   const baseCents = Number(pi?.metadata?.baseCents || 0);
   const marginCents = Number(pi?.metadata?.marginCents || Math.max(0, displayCents - baseCents));
+  // Shipping passthrough (2026-07-07): rides metadata from createProductCheckout.
+  // Part of what the buyer paid + what the rancher nets; NEVER part of the
+  // margin. Absent/legacy PIs → 0 (shipping-included pricing).
+  const shippingCents = Math.max(0, Number(pi?.metadata?.shippingCents || 0));
+  const paidCents = displayCents + shippingCents;
   // DEPOSIT-STYLE (audit fix C-1.5): a price-range product where this charge is
   // a DEPOSIT, not the full price. Every notification below MUST say so — the
   // old copy told the buyer "on its way" and the rancher "pack it, ship it",
@@ -124,8 +129,8 @@ export async function settleProductPurchase(pi: any): Promise<void> {
     'Buyer Email': buyerEmail,
     'Buyer Name': buyerName,
     'Ship To Address': shipTo,
-    'Buyer Paid': displayCents / 100,
-    'Rancher Payout': baseCents / 100,
+    'Buyer Paid': paidCents / 100,
+    'Rancher Payout': (baseCents + shippingCents) / 100,
     'BHC Margin': marginCents / 100,
     'Stripe Payment Intent': pi.id,
     'Status': 'New',
@@ -160,14 +165,14 @@ export async function settleProductPurchase(pi: any): Promise<void> {
     kind: 'sale',
     summary: depositStyle
       ? `DEPOSIT PAID — ${productName} · $${dollars(displayCents)} down (balance TBD)`
-      : `PRODUCT SOLD — ${productName} · $${dollars(displayCents)}`,
+      : `PRODUCT SOLD — ${productName} · $${dollars(paidCents)}`,
     detail: depositStyle
       ? `${buyerName || buyerEmail} put $${dollars(displayCents)} down on ${productName} from ${rancherName}.\n` +
         `DEPOSIT-STYLE: ${rancherName} confirms size + the balance with the buyer BEFORE shipping.\n` +
         `You keep $${dollars(marginCents)} of the deposit · rancher nets $${dollars(baseCents)}.\n` +
         `Ship to (once confirmed):\n${shipTo || '(address on the order)'}`
       : `${buyerName || buyerEmail} bought ${productName} from ${rancherName}.\n` +
-        `You keep $${dollars(marginCents)} · rancher nets $${dollars(baseCents)}.\n` +
+        `You keep $${dollars(marginCents)} · rancher nets $${dollars(baseCents + shippingCents)}${shippingCents > 0 ? ` (incl. $${dollars(shippingCents)} shipping)` : ''}.\n` +
         `Tell ${rancherName} to ship to:\n${shipTo || '(address on the order)'}`,
     dedupeKey: `product-sold:${pi.id}`,
   }).catch(() => {});
@@ -192,7 +197,7 @@ export async function settleProductPurchase(pi: any): Promise<void> {
         : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
         <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for a <strong>${escapeHtml(productName)}</strong> and will ship it direct to you.</p>
-        <p style="font-size:14px;color:#5A5752">paid: $${dollars(displayCents)}. you'll get tracking as soon as it's on the way.</p>
+        <p style="font-size:14px;color:#5A5752">paid: $${dollars(paidCents)}${shippingCents > 0 ? ` ($${dollars(displayCents)} + $${dollars(shippingCents)} shipping)` : ''}. you'll get tracking as soon as it's on the way.</p>
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`,
       templateName: 'product_receipt',
@@ -220,7 +225,7 @@ export async function settleProductPurchase(pi: any): Promise<void> {
             ${buyerEmail ? `email: ${escapeHtml(buyerEmail)}<br>` : ''}
             ship to (once confirmed):<br>${escapeHtml(shipTo || '(see BuyHalfCow order)').replace(/\n/g, '<br>')}
           </div>
-          <p style="font-size:14px;color:#2A2A2A">you've already netted <strong>$${dollars(baseCents)}</strong> of the deposit in your Stripe account. confirm details → collect the balance → then ship &amp; reply with tracking.</p>
+          <p style="font-size:14px;color:#2A2A2A">you've already netted <strong>$${dollars(baseCents)}</strong> of the deposit in your Stripe account. confirm details → collect the balance (quote it WITH your shipping cost — the deposit didn't include shipping) → then ship &amp; reply with tracking.</p>
           <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
         </div>`
           : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
@@ -230,7 +235,7 @@ export async function settleProductPurchase(pi: any): Promise<void> {
             <strong>${escapeHtml(productName)}</strong><br>
             ship to:<br>${escapeHtml(shipTo || '(see BuyHalfCow order)').replace(/\n/g, '<br>')}
           </div>
-          <p style="font-size:14px;color:#2A2A2A">you net <strong>$${dollars(baseCents)}</strong> — already routed to your Stripe account. pack it, ship it, and reply with the tracking number.</p>
+          <p style="font-size:14px;color:#2A2A2A">you net <strong>$${dollars(baseCents + shippingCents)}</strong>${shippingCents > 0 ? ` (includes the $${dollars(shippingCents)} shipping the buyer paid)` : ''} — already routed to your Stripe account. pack it, ship it, and reply with the tracking number.</p>
           <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
         </div>`,
         templateName: 'rancher_order_notify',
@@ -282,7 +287,7 @@ export async function settleProductPurchase(pi: any): Promise<void> {
         action_source: 'system_generated',
         user_data: buildUserData({ email: buyerEmail || undefined, firstName }),
         custom_data: {
-          value: displayCents / 100,
+          value: paidCents / 100,
           currency: 'usd',
           content_ids: productId ? [productId] : [],
           content_type: 'product',

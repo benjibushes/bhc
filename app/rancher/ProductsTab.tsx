@@ -61,6 +61,7 @@ interface RancherProduct {
   shipsInDays?: number | null;
   packaging?: string;
   feeds?: string;
+  shippingCost?: number | null;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -79,6 +80,7 @@ const EMPTY_FORM = {
   shipsInDays: '' as string,
   packaging: '',
   feeds: '',
+  shippingCost: '' as string, // blank = shipping included in the price
 };
 
 export default function ProductsTab({
@@ -193,6 +195,7 @@ export default function ProductsTab({
       shipsInDays: p.shipsInDays == null ? '' : String(p.shipsInDays),
       packaging: p.packaging || '',
       feeds: p.feeds || '',
+      shippingCost: p.shippingCost == null ? '' : String(p.shippingCost),
     });
     setEditingId(p.id);
     setSaveErr('');
@@ -236,6 +239,7 @@ export default function ProductsTab({
         shipsInDays: form.shipsInDays.trim() === '' ? '' : Number(form.shipsInDays),
         packaging: form.packaging,
         feeds: form.feeds,
+        shippingCost: form.shippingCost.trim() === '' ? '' : Number(form.shippingCost),
       };
       const res = await fetch('/api/rancher/products', {
         method: editingId ? 'PATCH' : 'POST',
@@ -253,10 +257,14 @@ export default function ProductsTab({
         setSavedNote('saved — the marketplace updates in a few seconds.');
       } else {
         setProducts((list) => [data.product, ...list]);
+        // Share nudge points at THEIR product page when it's actually live
+        // (a non-sellable row's PDP 404s — never hand out a dead link).
         setSavedNote(
           data.pendingApproval
             ? 'saved — held for a quick review before it lists.'
-            : 'live on the marketplace in a few seconds. share it: buyhalfcow.com/shop',
+            : data.product?.live && data.product?.id
+              ? `live on the marketplace in a few seconds. share it: buyhalfcow.com/shop/${data.product.id}`
+              : 'live on the marketplace in a few seconds. share it: buyhalfcow.com/shop',
         );
       }
       setShowForm(false);
@@ -414,10 +422,10 @@ export default function ProductsTab({
             </label>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <label className="block">
               <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
-                retail price (what the buyer pays, shipping included)
+                retail price (what the buyer pays)
               </span>
               <input
                 type="number"
@@ -428,6 +436,25 @@ export default function ProductsTab({
                 placeholder="19.99"
                 className="w-full p-3 border border-dust bg-bone text-[15px]"
               />
+            </label>
+            <label className="block">
+              <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
+                shipping charge (optional)
+              </span>
+              <input
+                type="number"
+                min="0"
+                max="200"
+                step="0.01"
+                value={form.shippingCost}
+                onChange={(e) => setForm((f) => ({ ...f, shippingCost: e.target.value }))}
+                placeholder="0.00"
+                className="w-full p-3 border border-dust bg-bone text-[15px]"
+              />
+              <span className="block text-[11px] text-saddle mt-1">
+                leave blank if shipping&rsquo;s built into your price. if set, the buyer pays it at
+                checkout and 100% of it comes to you.
+              </span>
             </label>
             <label className="block">
               <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">
@@ -525,15 +552,22 @@ export default function ProductsTab({
             </span>
           </label>
 
-          {/* Transparent margin math — the same numbers the API will write. */}
-          {preview && (
-            <div className="bg-bone border-l-2 border-l-sage px-3.5 py-2.5 text-[13px]">
-              buyer pays <strong>{money(preview.displayCents / 100)}</strong> · you net{' '}
-              <strong>{money(preview.baseCents / 100)}</strong> · buyhalfcow&rsquo;s cut{' '}
-              {money(preview.marginCents / 100)} ({Math.round(preview.marginRate * 100)}%) — skimmed
-              automatically at checkout, your payout needs nothing from you.
-            </div>
-          )}
+          {/* Transparent margin math — the same numbers the API will write.
+              Shipping is a pure passthrough: never part of buyhalfcow's cut. */}
+          {preview && (() => {
+            const shipNum = Number(form.shippingCost);
+            const ship = Number.isFinite(shipNum) && shipNum > 0 ? shipNum : 0;
+            return (
+              <div className="bg-bone border-l-2 border-l-sage px-3.5 py-2.5 text-[13px]">
+                buyer pays <strong>{money(preview.displayCents / 100 + ship)}</strong>
+                {ship > 0 ? <> ({money(preview.displayCents / 100)} + {money(ship)} shipping)</> : null} · you net{' '}
+                <strong>{money(preview.baseCents / 100 + ship)}</strong>
+                {ship > 0 ? ' (shipping comes to you in full)' : ''} · buyhalfcow&rsquo;s cut{' '}
+                {money(preview.marginCents / 100)} ({Math.round(preview.marginRate * 100)}%) — skimmed
+                automatically at checkout, your payout needs nothing from you.
+              </div>
+            );
+          })()}
 
           <label className="block">
             <span className="block text-xs uppercase tracking-wider text-saddle mb-1.5">

@@ -60,9 +60,10 @@ export default async function MarketplacePage() {
             buyers per the journey-overhaul research (Phase 4). */}
         <p className="text-[13.5px] text-sage mt-2.5 mb-7 leading-normal max-w-[60ch]">
           every ranch here is verified — a real family operation.{' '}
-          <strong>shipping&rsquo;s included in the price you see.</strong> if a cut ever shows up
-          wrong or freezer-burned, we make it right — no forms, no runaround. checkout secured by
-          Stripe, and a real person answers your receipt. &mdash; Ben
+          <strong>the full cost is on every card — shipping&rsquo;s either included or shown
+          up front, never a surprise at checkout.</strong> if a cut ever shows up wrong or
+          freezer-burned, we make it right — no forms, no runaround. checkout secured by Stripe,
+          and a real person answers your receipt. &mdash; Ben
         </p>
 
         {/* HOW IT WORKS (Phase 12 — the information gap): the whole store's

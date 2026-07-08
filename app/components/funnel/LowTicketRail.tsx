@@ -76,7 +76,7 @@ export default function LowTicketRail({
               <div className="text-xs text-saddle line-clamp-1">
                 {p.depositStyle
                   ? <>from {p.priceRange || `$${p.price.toFixed(0)}`} · ${p.price.toFixed(0)} deposit</>
-                  : <>${p.price.toFixed(2)}{p.weight ? ` · ${p.weight}` : ''} · shipping included</>}
+                  : <>${p.price.toFixed(2)}{p.weight ? ` · ${p.weight}` : ''} · {p.shippingCost > 0 ? `+ $${p.shippingCost.toFixed(2)} shipping` : 'shipping included'}</>}
               </div>
             </div>
             <Link

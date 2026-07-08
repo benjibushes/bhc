@@ -18,27 +18,38 @@ import { getStripeClient } from '@/lib/stripeConnect';
 import { isDemoMode } from '@/lib/demo/demoMode';
 
 export interface ProductChargeInput {
-  /** What the buyer pays, in cents (the fee-invisible Display Price). */
+  /** What the buyer pays for the product, in cents (the fee-invisible Display Price). */
   displayCents: number;
-  /** What the rancher nets, in cents (Rancher Base). */
+  /** What the rancher nets on the product, in cents (Rancher Base). */
   baseCents: number;
+  /**
+   * Optional per-order shipping charge, in cents ('Shipping Cost' on the row).
+   * Added ON TOP of the display price at checkout and passed through to the
+   * rancher 100% — BHC never skims shipping (the application fee stays
+   * Display − Base). Omitted/0 = shipping included in the display price.
+   */
+  shippingCents?: number;
 }
 
 export interface ProductCharge {
-  totalChargedCents: number;   // buyer pays this
-  applicationFeeCents: number; // BHC margin
-  rancherNetCents: number;     // rancher receives this
+  totalChargedCents: number;   // buyer pays this (display + shipping)
+  applicationFeeCents: number; // BHC margin (display − base; shipping never skimmed)
+  rancherNetCents: number;     // rancher receives this (base + shipping)
+  shippingCents: number;       // normalized shipping component (0 = included)
 }
 
 /**
  * Pure money math for a low-ticket product charge. Validates the invariant
  * that keeps the platform safe: the base must be a positive amount no greater
  * than the display price, so the margin (fee) is always in [0, display).
- * Throws on invalid input — a bad product must NEVER reach Stripe.
+ * Shipping is a pure passthrough — it raises the buyer total and the rancher
+ * net by the same amount and can never change the fee. Throws on invalid
+ * input — a bad product must NEVER reach Stripe.
  */
 export function computeProductCharge(input: ProductChargeInput): ProductCharge {
   const display = Math.round(Number(input.displayCents));
   const base = Math.round(Number(input.baseCents));
+  const shipping = Math.round(Number(input.shippingCents ?? 0));
   if (!Number.isFinite(display) || display <= 0) {
     throw new Error(`invalid display price: ${input.displayCents}`);
   }
@@ -48,11 +59,15 @@ export function computeProductCharge(input: ProductChargeInput): ProductCharge {
   if (base > display) {
     throw new Error(`rancher base (${base}) exceeds display price (${display}) — margin would be negative`);
   }
+  if (!Number.isFinite(shipping) || shipping < 0) {
+    throw new Error(`invalid shipping cost: ${input.shippingCents}`);
+  }
   const applicationFeeCents = display - base;
   return {
-    totalChargedCents: display,
+    totalChargedCents: display + shipping,
     applicationFeeCents,
-    rancherNetCents: base,
+    rancherNetCents: base + shipping,
+    shippingCents: shipping,
   };
 }
 
@@ -93,19 +108,30 @@ export interface CreateProductCheckoutInput {
   // settlement send truthful emails ("deposit paid — confirm details") instead
   // of "paid, ship it". Charge mechanics are IDENTICAL either way.
   depositStyle?: boolean;
+  // SHIPPING COST (2026-07-07): optional per-order shipping the buyer pays as
+  // a separate Stripe shipping line. 100% passthrough to the rancher — the
+  // application fee stays Display − Base. Omitted/0 = shipping included.
+  // Callers must pass 0 for deposit-style products (shipping settles with the
+  // balance the rancher collects directly).
+  shippingCents?: number;
 }
 
 /**
  * Create the Stripe Connect direct-charge Checkout Session for a low-ticket
- * product. Collects the shipping address (the rancher ships it) but adds NO
- * shipping line — the catalog Display Price is all-in (Silverline's per-lb
- * price already covers shipping; other ranchers set an all-in Display Price).
+ * product. Collects the shipping address (the rancher ships it). Shipping
+ * charge: when the product carries a 'Shipping Cost' (shippingCents > 0) it
+ * renders as Stripe's native Shipping line and passes through 100% to the
+ * rancher; otherwise the Display Price is all-in and no shipping line appears.
  * metadata.type = 'product_purchase' routes the webhook to settleProductPurchase.
  */
 export async function createProductCheckout(
   input: CreateProductCheckoutInput,
 ): Promise<{ url?: string; clientSecret?: string; sessionId: string }> {
-  const charge = computeProductCharge({ displayCents: input.displayCents, baseCents: input.baseCents });
+  const charge = computeProductCharge({
+    displayCents: input.displayCents,
+    baseCents: input.baseCents,
+    shippingCents: input.shippingCents,
+  });
   const isEmbedded = input.mode === 'embedded';
 
   // Fail loud on a mode/URL mismatch — a half-configured session must never
@@ -133,9 +159,24 @@ export async function createProductCheckout(
       ...(isEmbedded ? { ui_mode: 'embedded' as const } : {}),
       // Prefill for operator links; omit for self-serve (Stripe collects it).
       ...(input.buyerEmail ? { customer_email: input.buyerEmail } : {}),
-      // Rancher ships → we must collect where. No shipping_options: the
-      // Display Price is all-in, so we don't add a separate shipping charge.
+      // Rancher ships → we must collect where. When the product carries a
+      // 'Shipping Cost', it renders as Stripe's native Shipping line (buyer
+      // sees product + shipping, one total); otherwise the Display Price is
+      // all-in and no shipping line appears.
       shipping_address_collection: { allowed_countries: ['US'] },
+      ...(charge.shippingCents > 0
+        ? {
+            shipping_options: [
+              {
+                shipping_rate_data: {
+                  type: 'fixed_amount' as const,
+                  fixed_amount: { amount: charge.shippingCents, currency: 'usd' },
+                  display_name: 'Shipping from the ranch',
+                },
+              },
+            ],
+          }
+        : {}),
       // Prefer a real Stripe Price (on the connected account) when synced;
       // otherwise inline price_data. Either way the charge total = display and
       // the application_fee (margin) below is unchanged.
@@ -153,7 +194,9 @@ export async function createProductCheckout(
                     ? 'Deposit — the ranch confirms your size + the balance with you before shipping.'
                     : 'Ships direct from the ranch.',
                 },
-                unit_amount: charge.totalChargedCents,
+                // Product line = the display price only; shipping (when set)
+                // rides the shipping_options line so the receipt itemizes.
+                unit_amount: input.displayCents,
               },
               quantity: 1,
             },
@@ -168,9 +211,12 @@ export async function createProductCheckout(
           rancherName: input.rancherName,
           buyerEmail: input.buyerEmail || '',
           buyerName: input.buyerName || '',
-          displayCents: String(charge.totalChargedCents),
-          baseCents: String(charge.rancherNetCents),
+          displayCents: String(input.displayCents),
+          baseCents: String(input.baseCents),
           marginCents: String(charge.applicationFeeCents),
+          // Shipping passthrough — settlement adds it to Buyer Paid + Rancher
+          // Payout; it is never part of the margin.
+          shippingCents: String(charge.shippingCents),
           // C-1.5: settlement branches receipt/rancher/operator copy on this.
           depositStyle: input.depositStyle ? 'true' : 'false',
         },

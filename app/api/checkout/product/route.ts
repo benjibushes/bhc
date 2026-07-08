@@ -68,6 +68,12 @@ export async function POST(request: Request) {
   if (!hasStock(product)) {
     return NextResponse.json({ error: 'Sold out — Orders Left is 0 on this product.' }, { status: 409 });
   }
+  // Shipping passthrough (same rule as the public buy route): buyer pays it,
+  // rancher keeps 100%. Deposit-style always 0 — shipping settles with the balance.
+  const shippingCents =
+    product['Deposit Style'] === true
+      ? 0
+      : Math.max(0, Math.round(Number(product['Shipping Cost'] || 0) * 100));
 
   // Rancher — must be Connect-active to take a direct charge.
   const rancherId = String(product['Rancher Record ID'] || '').trim();
@@ -123,13 +129,15 @@ export async function POST(request: Request) {
       rancherName: String(product['Rancher Name'] || rancher['Ranch Name'] || 'the ranch'),
       // C-1.5: deposit truth rides into settlement + the Stripe line item.
       depositStyle: product['Deposit Style'] === true,
+      shippingCents,
       successUrl: `${SITE_URL}/order/success`,
       cancelUrl: `${SITE_URL}/order/cancelled`,
     });
     return NextResponse.json({
       url,
       product: product['Product Name'],
-      buyerPays: displayCents / 100,
+      buyerPays: (displayCents + shippingCents) / 100,
+      shipping: shippingCents / 100,
       yourMargin: (displayCents - baseCents) / 100,
       depositStyle: product['Deposit Style'] === true,
       priceRange: String(product['Price Range'] || ''),
