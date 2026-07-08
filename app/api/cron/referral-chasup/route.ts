@@ -10,7 +10,11 @@ import { withCronRun } from '@/lib/cronRun';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import jwt from 'jsonwebtoken';
 
-export const maxDuration = 60;
+// 60 → 300 (2026-07-08): 7-day peak hit 47s (78% of the old ceiling) and the
+// chase list grows with active referrals. batch-approve crossed its own
+// ceiling this week and was silently hard-killed for 2 days — same class of
+// bug; headroom is cheap, a silent mid-list kill is not.
+export const maxDuration = 300;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_CHASE_UPS = 3;
