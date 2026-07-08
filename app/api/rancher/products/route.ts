@@ -31,6 +31,7 @@ import {
   getRecordById,
   getAllRecords,
   deleteRecord,
+  escapeAirtableValue,
 } from '@/lib/airtable';
 import { isSellableRow, isLocalPickupRow } from '@/lib/marketplaceProducts';
 import { deriveProductPricing, validateProductInput } from '@/lib/rancherProductInput';
@@ -96,7 +97,11 @@ export async function GET(request: Request) {
   if (r instanceof NextResponse) return r;
   const { session } = r;
 
-  const rows = ((await getAllRecords(TABLES.RANCHER_PRODUCTS).catch(() => [])) as any[]).filter(
+  // Scale audit 2026-07-07: server-side filter on the owner key (JS belt stays).
+  const rows = ((await getAllRecords(
+    TABLES.RANCHER_PRODUCTS,
+    `{Rancher Record ID} = "${escapeAirtableValue(session.rancherId)}"`,
+  ).catch(() => [])) as any[]).filter(
     (row) => ownerOf(row) === session.rancherId,
   );
   return NextResponse.json({ products: rows.map(toClientProduct) });

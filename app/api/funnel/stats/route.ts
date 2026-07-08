@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 import { getAllRecords, TABLES } from '@/lib/airtable';
 import { isRancherOperationalForBuyers, getOperationalServedStates } from '@/lib/rancherEligibility';
 import { normalizeState } from '@/lib/states';
+import { cacheGet as sharedCacheGet, cacheSet as sharedCacheSet } from '@/lib/sharedCache';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,14 +23,24 @@ interface StatsData {
 }
 
 let cache: { at: number; data: StatsData } | null = null;
+// Single-flight: concurrent requests on a cold lambda previously EACH ran
+// their own full compute() (the in-process cache is only written after the
+// await resolves) — N simultaneous funnel mounts = N Consumers full scans.
+let computeInFlight: Promise<StatsData> | null = null;
+const STATS_REDIS_KEY = 'funnelstats:cache';
 
 async function compute(): Promise<StatsData> {
   const [cons, rans] = await Promise.all([
-    getAllRecords(TABLES.CONSUMERS).catch(() => []) as Promise<any[]>,
+    // Scale audit 2026-07-07 (CRITICAL): Consumers is the fastest-growing
+    // table (2,493 rows = 25 paginated requests per scan) and this route
+    // needed ONE number from it. Server-side filter: UPPER() keeps the
+    // exact case-tolerant semantics of the old JS toUpperCase() compare.
+    getAllRecords(TABLES.CONSUMERS, 'UPPER({Buyer Stage}) = "CLOSED"').catch(() => []) as Promise<any[]>,
+    // Ranchers full list rides the L1/L2 table cache (allowlisted).
     getAllRecords(TABLES.RANCHERS).catch(() => []) as Promise<any[]>,
   ]);
   const op = rans.filter(isRancherOperationalForBuyers);
-  const closed = cons.filter((c) => String(c['Buyer Stage'] || '').toUpperCase() === 'CLOSED').length;
+  const closed = cons.length;
   const byState: Record<string, number> = {};
   for (const r of op) {
     for (const s of getOperationalServedStates(r)) byState[s] = (byState[s] || 0) + 1;
@@ -41,7 +52,19 @@ export async function GET(req: Request) {
   const state = normalizeState(new URL(req.url).searchParams.get('state'));
   try {
     if (!cache || Date.now() - cache.at > 300_000) {
-      cache = { at: Date.now(), data: await compute() };
+      // L2 shared cache: a cold instance adopts the value another instance
+      // already computed instead of paying its own Airtable reads. Fail-open.
+      const shared = await sharedCacheGet<StatsData>(STATS_REDIS_KEY);
+      if (shared !== undefined) {
+        cache = { at: Date.now(), data: shared };
+      } else {
+        if (!computeInFlight) {
+          computeInFlight = compute().finally(() => { computeInFlight = null; });
+        }
+        const data = await computeInFlight;
+        cache = { at: Date.now(), data };
+        await sharedCacheSet(STATS_REDIS_KEY, data, 300_000);
+      }
     }
     const d = cache.data;
     return NextResponse.json({

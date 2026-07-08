@@ -11,8 +11,8 @@
 // helper in lib/rancherCrm.ts (unit-tested in lib/rancherCrm.test.ts).
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, TABLES } from '@/lib/airtable';
 import { requireRancher } from '@/lib/rancherAuth';
+import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import { groupReferralsByBuyer, type CrmReferral } from '@/lib/rancherCrm';
 
 export const dynamic = 'force-dynamic';
@@ -24,13 +24,12 @@ export async function GET(request: Request) {
     if (r instanceof NextResponse) return r;
     const { session } = r;
 
-    // Same scoping rationale as dashboard/route.ts: Airtable ARRAYJOIN on a
-    // linked-record field renders the linked record's PRIMARY FIELD, not its
-    // id, so a filterByFormula on {Rancher} can't match by id. Load + filter
-    // client-side, restricting strictly to this rancher's referrals.
+    // Scale audit 2026-07-07: same rancher-scoped read as the dashboard —
+    // server-side filter on the denorm record-id fields (O(mine), not
+    // O(all)); JS ownership filter below stays as the belt.
     let myReferrals: any[] = [];
     try {
-      const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+      const allRefs = await fetchReferralRowsForRancher(session.rancherId);
       const myId = session.rancherId;
       myReferrals = allRefs.filter((row: any) => {
         const rancher = Array.isArray(row['Rancher']) ? row['Rancher'] : [];

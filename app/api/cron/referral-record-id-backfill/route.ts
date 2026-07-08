@@ -28,12 +28,19 @@ interface CronResult {
 }
 
 async function realHandler(_request: Request): Promise<CronResult> {
-  // Full read (no formula) — we must SEE every row to detect a stale/cleared
-  // stamp, which a "missing id" filter would miss. Projected to the four
-  // fields the repair decision needs, so payload stays small.
+  // Scale audit 2026-07-07: the hourly pass now reads only rows MODIFIED in
+  // the last 2 hours — drift can only exist on a row something recently
+  // touched (re-link, clear, manual edit all bump LAST_MODIFIED_TIME), so
+  // this catches every repair case at ~1 request instead of a full-table
+  // scan every hour (17 pages and growing 1:1 with buyers). One pass a day
+  // (03:xx UTC) still does the unfiltered full sweep as the belt against
+  // anything a timestamp can't express. Projected to the four fields the
+  // repair decision needs, so payload stays small.
+  const fullSweep = new Date().getUTCHours() === 3;
+  const windowFormula = "LAST_MODIFIED_TIME() > DATEADD(NOW(), -2, 'hours')";
   let rows: any[] = [];
   try {
-    rows = (await getAllRecords(TABLES.REFERRALS, undefined, {
+    rows = (await getAllRecords(TABLES.REFERRALS, fullSweep ? undefined : windowFormula, {
       fields: ['Rancher', 'Suggested Rancher', 'Rancher Record Id', 'Suggested Rancher Record Id'],
     })) as any[];
   } catch (e: any) {
@@ -57,7 +64,7 @@ async function realHandler(_request: Request): Promise<CronResult> {
   return {
     status: errors.length ? 'partial' : 'success',
     recordsTouched: repaired,
-    notes: `scanned=${rows.length} repaired=${repaired} errs=${errors.length}` + (errors.length ? ` err1=${errors[0]}` : ''),
+    notes: `mode=${fullSweep ? 'full-sweep' : 'modified-2h'} scanned=${rows.length} repaired=${repaired} errs=${errors.length}` + (errors.length ? ` err1=${errors[0]}` : ''),
   };
 }
 

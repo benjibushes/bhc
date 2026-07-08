@@ -262,11 +262,23 @@ import { cacheGet as sharedCacheGet, cacheSet as sharedCacheSet, cacheDel as sha
 type Cached = { ts: number; data: Array<Record<string, any>> };
 const CACHE_TTL_MS = 10_000;
 const _cache: Record<string, Cached> = {};
+// Tables hot enough to cache (scale audit 2026-07-07). Measured read volume:
+//   RANCHERS — matching/suggest + consumers signup, every buyer hit (#254).
+//   RANCHER_PRODUCTS — /access (paid-ad front door), /shop checkout page,
+//     buy/intent gates, every rancher page: full-scan per hit before this.
+//   RECOMMENDED_PRODUCTS — /gear (force-dynamic) + /api/gear (client-fetched
+//     on /member + success): weekly-fresh content re-read per view.
+// NOT cacheable: Referrals/Consumers/Payments (capacity + money logic reads
+// must stay live-correct). Writes self-bust: createRecord/updateRecord call
+// invalidateAirtableCache(tableName) whenever _cacheKey(tableName) is set,
+// so a rancher's product edit is visible fleet-wide immediately.
+const CACHED_TABLES = new Set<string>([
+  TABLES.RANCHERS,
+  TABLES.RANCHER_PRODUCTS,
+  TABLES.RECOMMENDED_PRODUCTS,
+]);
 function _cacheKey(tableName: string): string | null {
-  // Only the full ranchers list is hot enough to cache. Add more tables
-  // here only after measuring read volume — stale cache on referrals or
-  // consumers would break the capacity logic.
-  return tableName === TABLES.RANCHERS ? `${tableName}::full` : null;
+  return CACHED_TABLES.has(tableName) ? `${tableName}::full` : null;
 }
 // Redis (L2) key for a table's full-list cache. Distinct namespace from the
 // L1 key so the shared value is self-describing across instances/services.
@@ -291,8 +303,10 @@ export function invalidateAirtableCache(tableName?: string): void {
   // forget keeps this function synchronous, preserving every existing call
   // site (createRecord/updateRecord invoke it inline).
   if (!tableName) {
-    // Clear-all: only RANCHERS is cached today, so clear its shared key.
-    void sharedCacheDel(_redisCacheKey(TABLES.RANCHERS)).catch(() => {});
+    // Clear-all: clear every allowlisted table's shared key.
+    for (const t of CACHED_TABLES) {
+      void sharedCacheDel(_redisCacheKey(t)).catch(() => {});
+    }
   } else if (_cacheKey(tableName)) {
     void sharedCacheDel(_redisCacheKey(tableName)).catch(() => {});
   }

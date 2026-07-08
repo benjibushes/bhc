@@ -16,7 +16,7 @@
 
 import { NextResponse } from 'next/server';
 import { requireRancher } from '@/lib/rancherAuth';
-import { getAllRecords, getRecordById, updateRecord, TABLES } from '@/lib/airtable';
+import { getAllRecords, getRecordById, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { claimOnce } from '@/lib/rancherCapacity';
 import { sendEmail } from '@/lib/email';
 
@@ -61,7 +61,14 @@ export async function GET(request: Request) {
   if (r instanceof NextResponse) return r;
   const { session } = r;
 
-  const rows = ((await getAllRecords(TABLES.RANCHER_ORDERS).catch(() => [])) as any[])
+  // Scale audit 2026-07-07: server-side filter on the plain-text owner key —
+  // O(this rancher's orders), not O(all orders platform-wide). Rancher Orders
+  // grows 1:1 with ad-driven product sales; the full scan burned the shared
+  // 5 req/s Airtable budget on every Products-tab open. JS belt stays.
+  const rows = ((await getAllRecords(
+    TABLES.RANCHER_ORDERS,
+    `{Rancher Record ID} = "${escapeAirtableValue(session.rancherId)}"`,
+  ).catch(() => [])) as any[])
     .filter((row) => ownerOf(row) === session.rancherId)
     .map(toClientOrder)
     .sort((a, b) => (b.orderedAt || '').localeCompare(a.orderedAt || ''));
