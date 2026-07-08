@@ -54,6 +54,10 @@ export async function POST(req: Request) {
 
   const referralId = String(body.referralId || '').trim();
   const cutSize = String(body.cutSize || '').toLowerCase();
+  // WHITELABEL (2026-07-07): the deposit page requests { mode: 'embedded' } to
+  // render checkout ON buyhalfcow.com; anything else stays hosted-redirect
+  // (emailed/texted links, no-publishable-key fallback). Same money path.
+  const wantEmbedded = body.mode === 'embedded';
   if (!referralId) return NextResponse.json({ error: 'referralId required' }, { status: 400 });
   if (!CUT_LABELS[cutSize]) return NextResponse.json({ error: 'cutSize must be quarter|half|whole' }, { status: 400 });
 
@@ -306,7 +310,7 @@ export async function POST(req: Request) {
   }
 
   // Create Stripe Checkout Session
-  let result: { url: string; paymentIntentId: string; sessionId: string; connectAccountId: string };
+  let result: { url?: string; clientSecret?: string; paymentIntentId: string; sessionId: string; connectAccountId: string };
   try {
     result = await createDepositCheckout({
       rancherConnectAccountId: connectAccountId,
@@ -323,6 +327,8 @@ export async function POST(req: Request) {
       productLabel,
       successUrl: `${SITE_URL}/checkout/${referralId}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${SITE_URL}/checkout/${referralId}/deposit?canceled=1`,
+      mode: wantEmbedded ? 'embedded' : 'hosted',
+      returnUrl: `${SITE_URL}/checkout/${referralId}/success?session_id={CHECKOUT_SESSION_ID}`,
     });
   } catch (e: any) {
     // Log the technical detail server-side ONLY. Return a stable machine code +
@@ -464,6 +470,11 @@ export async function POST(req: Request) {
     console.error('[meta-capi] deposit InitiateCheckout setup failed:', e);
   }
 
+  if (wantEmbedded) {
+    // connectAccountId is NOT a secret — the browser needs it to scope
+    // Stripe.js to the connected account for the direct-charge embedded form.
+    return NextResponse.json({ clientSecret: result.clientSecret, connectAccountId: result.connectAccountId });
+  }
   return NextResponse.json({ url: result.url });
 }
 
