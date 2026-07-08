@@ -13,10 +13,48 @@ import Link from 'next/link';
 import { loadStripe } from '@stripe/stripe-js/pure';
 import type { Stripe } from '@stripe/stripe-js';
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from '@stripe/react-stripe-js';
+import PaymentForm from './PaymentForm';
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 
-export default function CheckoutMount({ productId, quantity = 1 }: { productId: string; quantity?: number }) {
+export interface PaymentElementConfig {
+  connectAccountId: string;
+  totalCents: number;
+  depositStyle: boolean;
+}
+
+export default function CheckoutMount({
+  productId,
+  quantity = 1,
+  paymentElement = null,
+}: {
+  productId: string;
+  quantity?: number;
+  /**
+   * BRAND-OWNED CHECKOUT (Payment Element migration, spec R10 rollback flag).
+   * When the server page passes this (flag on + publishable key + Connect
+   * account resolved), the on-domain PaymentForm renders instead of the
+   * embedded Stripe iframe. null → legacy embedded/hosted flow, byte-identical
+   * to before — flip NEXT_PUBLIC_PRODUCT_PAYMENT_ELEMENT off to roll back.
+   */
+  paymentElement?: PaymentElementConfig | null;
+}) {
+  if (paymentElement && PUBLISHABLE_KEY) {
+    return (
+      <PaymentForm
+        publishableKey={PUBLISHABLE_KEY}
+        connectAccountId={paymentElement.connectAccountId}
+        productId={productId}
+        quantity={quantity}
+        totalCents={paymentElement.totalCents}
+        depositStyle={paymentElement.depositStyle}
+      />
+    );
+  }
+  return <LegacyEmbeddedMount productId={productId} quantity={quantity} />;
+}
+
+function LegacyEmbeddedMount({ productId, quantity }: { productId: string; quantity: number }) {
   const [stripePromise, setStripePromise] = useState<Promise<Stripe | null> | null>(null);
   const [clientSecret, setClientSecret] = useState('');
   const [err, setErr] = useState('');

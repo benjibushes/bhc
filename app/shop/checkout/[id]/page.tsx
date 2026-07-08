@@ -12,6 +12,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { loadMarketplaceProductAnyStock } from '@/lib/marketplaceProducts';
+import { getRecordById, TABLES } from '@/lib/airtable';
 import ProductImage from '../../ProductImage';
 import CheckoutMount from './CheckoutMount';
 import Card from '../../../components/Card';
@@ -44,6 +45,32 @@ export default async function ProductCheckoutPage({
   const quantity = p.depositStyle
     ? 1
     : Math.min(5, Math.max(1, Number.isInteger(qtyRaw) ? qtyRaw : 1));
+
+  // BRAND-OWNED CHECKOUT (Payment Element migration, spec R10 rollback flag):
+  // when the flag is on, resolve the Connect account SERVER-SIDE so the
+  // on-domain PaymentForm can scope Stripe.js with zero extra client round
+  // trips. Any miss (flag off, no key, rancher not active) → null → legacy
+  // embedded/hosted flow, byte-identical to before.
+  let paymentElement: { connectAccountId: string; totalCents: number; depositStyle: boolean } | null = null;
+  if (
+    process.env.NEXT_PUBLIC_PRODUCT_PAYMENT_ELEMENT === 'true' &&
+    process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY &&
+    !soldOut
+  ) {
+    try {
+      const rr: any = p.rancherId ? await getRecordById(TABLES.RANCHERS, p.rancherId) : null;
+      const acct = String(rr?.['Stripe Connect Account Id'] || '').trim();
+      if (rr && String(rr['Stripe Connect Status'] || '') === 'active' && acct) {
+        paymentElement = {
+          connectAccountId: acct,
+          totalCents:
+            Math.round(p.price * 100) * quantity +
+            (p.depositStyle ? 0 : Math.round(p.shippingCost * 100)),
+          depositStyle: p.depositStyle,
+        };
+      }
+    } catch { /* legacy flow — never block checkout on this lookup */ }
+  }
 
   // GTM-hardening F4: a buyer arriving from a stale (ISR) PDP after a
   // sell-out gets an honest sold-out state — never a 404 one tap from paying.
@@ -142,7 +169,7 @@ export default async function ProductCheckoutPage({
             shaves the iframe's connection setup off perceived load time. */}
         <link rel="preconnect" href="https://js.stripe.com" />
 
-        <CheckoutMount productId={p.id} quantity={quantity} />
+        <CheckoutMount productId={p.id} quantity={quantity} paymentElement={paymentElement} />
 
         <TrustStrip className="text-xs mt-5" />
       </div>
