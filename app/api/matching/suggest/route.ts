@@ -8,6 +8,7 @@ import { sendEmail, sendBuyerIntroNotification, sendStateWaitlistLetter } from '
 import { sendSMSToConsumer } from '@/lib/twilio';
 import { isSmsWindow } from '@/lib/sendWindow';
 import { normalizeState, normalizeStates } from '@/lib/states';
+import { hopDistance, adjacencyViolations } from '@/lib/stateAdjacency';
 import jwt from 'jsonwebtoken';
 import { getMaxActiveReferrals, incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { isActiveDealReferral } from '@/lib/capacityCount';
@@ -341,9 +342,34 @@ export async function POST(request: Request) {
       }
       const routingRaw = (r['Routing States'] || '').toString().trim();
       const served = normalizeStates(routingRaw || r['States Served']);
+      // FOOD-MILES GUARD (2026-07-08): a configured Routing State further
+      // than ROUTING_MAX_HOPS (default 2) from the rancher's home state is a
+      // config smell — warn mode flags it to the operator (once/day/rancher),
+      // strict mode (ROUTING_ADJACENCY_ENFORCE=strict) drops it from the
+      // served set entirely so a fat-fingered far state can never route.
+      const maxHops = Number(process.env.ROUTING_MAX_HOPS) || 2;
+      const strict = process.env.ROUTING_ADJACENCY_ENFORCE === 'strict';
+      const violations = primaryState ? adjacencyViolations(primaryState, served, maxHops) : [];
+      if (violations.length > 0) {
+        const detail = violations.map((v) => `${v.state} (${v.hops < 0 ? 'unreachable' : v.hops + ' hops'})`).join(', ');
+        void import('@/lib/operatorSignal').then(({ sendOperatorSignal }) =>
+          sendOperatorSignal({
+            urgency: 'normal',
+            kind: 'system-error',
+            summary: `Routing States far from home: ${String(r['Ranch Name'] || r.id)}`,
+            detail:
+              `${String(r['Ranch Name'] || r.id)} (home ${primaryState}) routes to ${detail} — ` +
+              `beyond the ${maxHops}-hop food-miles threshold. ` +
+              (strict ? 'STRICT mode: these states were EXCLUDED from routing.' : 'Warn mode: still routing — prune Routing States or set ROUTING_ADJACENCY_ENFORCE=strict.'),
+            dedupeKey: `routing-adjacency:${r.id}`,
+            dedupeWindowMs: 24 * 60 * 60 * 1000,
+          }),
+        ).catch(() => {});
+      }
+      const tooFar = strict ? new Set(violations.map((v) => v.state)) : new Set<string>();
       const merged = new Set<string>();
       if (primaryState) merged.add(primaryState);
-      for (const s of served) if (s) merged.add(s);
+      for (const s of served) if (s && !tooFar.has(s)) merged.add(s);
       return Array.from(merged);
     };
     const parseStateOverride = (raw: any): Record<string, number> | null => {
@@ -741,6 +767,14 @@ export async function POST(request: Request) {
           if (p !== 0) return p;
         }
 
+        // 1c. FOOD MILES (2026-07-08): among non-primary candidates who reach
+        //     this buyer via Routing States, the geographically CLOSER home
+        //     state wins — a bordering-state rancher beats one two states
+        //     over. Zero effect when hops tie (falls through to load-balance).
+        const aHops = hopDistance(normalizeState(a['State']) || '', normalizedBuyerState);
+        const bHops = hopDistance(normalizeState(b['State']) || '', normalizedBuyerState);
+        if (aHops !== bHops) return aHops - bHops;
+
         // 2. Then by capacity (fewer active = preferred for load-balance)
         const aRefs = a['Current Active Referrals'] || 0;
         const bRefs = b['Current Active Referrals'] || 0;
@@ -808,8 +842,14 @@ export async function POST(request: Request) {
         // No primary-state preference here (none are in-state). Load-balance →
         // round-robin → performance, same tiebreakers as the local sort.
         nationwideEligible.sort((a: any, b: any) => {
-          // Retainer priority (S0.2) first — none are in-state here, so it
-          // applies across the whole nationwide pool (still starvation-floored).
+          // FOOD MILES (2026-07-08): even in the nationwide fallback, the
+          // geographically nearest approved rancher wins — an adjacent-state
+          // shipper beats a cross-country one before any other tiebreak.
+          const aHops = hopDistance(normalizeState(a['State']) || '', normalizedBuyerState);
+          const bHops = hopDistance(normalizeState(b['State']) || '', normalizedBuyerState);
+          if (aHops !== bHops) return aHops - bHops;
+          // Retainer priority (S0.2) — none are in-state here, so it applies
+          // across the whole nationwide pool (still starvation-floored).
           const p = retainerPriorityCmp(a, b);
           if (p !== 0) return p;
           const aRefs = a['Current Active Referrals'] || 0;
