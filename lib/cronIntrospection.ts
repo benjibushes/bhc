@@ -34,6 +34,7 @@ export const EXPECTED_CRONS_24H = [
   // stale capacity-hold expiry — frees dead-intro slots before the 14:30
   // stuck-buyer-recovery pass routes them (dark until STALE_HOLD_EXPIRY_ENABLED).
   'referral-stale-expiry',
+  'nurture-drip',
   'abandoned-quiz-nudge',
   'auto-verify-stale',
   'awaiting-payment-nudge',

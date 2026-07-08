@@ -212,6 +212,10 @@
     {
       "path": "/api/cron/referral-stale-expiry",
       "schedule": "10 13 * * *"
+    },
+    {
+      "path": "/api/cron/nurture-drip",
+      "schedule": "30 16 * * *"
     }
   ]
 }
