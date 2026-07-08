@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isSellableRow, hasStock, groupProducts, pickFunnelProducts, productsForRancher, type MarketplaceProduct } from './marketplaceProducts';
+import { isSellableRow, isLocalPickupRow, hasStock, groupProducts, pickFunnelProducts, productsForRancher, type MarketplaceProduct } from './marketplaceProducts';
 
 const ok = { 'Active': true, 'Ships Nationwide': true, 'Display Price': 25, 'Rancher Base': 21.25 };
 
@@ -34,7 +34,7 @@ const mk = (id: string, category: string): MarketplaceProduct => ({
   id, name: id, rancher: 'R', category, tier: '', price: 10, base: 8, weight: '', shelfStable: false, image: '', description: '',
   depositStyle: false, priceRange: '', ordersLeft: null,
   whatsIncluded: '', shipsInDays: null, packaging: '', feeds: '',
-  rancherId: '', shippingCost: 0,
+  rancherId: '', shippingCost: 0, localOnly: false,
 });
 
 test('groupProducts: collapses categories into display groups, in order', () => {
@@ -107,4 +107,17 @@ test('productsForRancher: returns only that rancher\'s products; blank id return
   assert.deepEqual(productsForRancher([a, b, orphan], ''), []);
   // An orphan row must never leak onto some rancher's page via '' === '' matching.
   assert.deepEqual(productsForRancher([orphan], ''), []);
+});
+
+// ── local pickup (2026-07-07) ────────────────────────────────────────────────
+
+test('isLocalPickupRow: EXPLICIT Ships Nationwide=false + all money/stock gates', () => {
+  const local = { 'Active': true, 'Ships Nationwide': false, 'Display Price': 25, 'Rancher Base': 21.25 };
+  assert.equal(isLocalPickupRow(local), true);
+  assert.equal(isSellableRow(local), false);            // never on /shop or the feed
+  assert.equal(isLocalPickupRow({ ...local, 'Ships Nationwide': true }), false);
+  assert.equal(isLocalPickupRow({ ...local, 'Ships Nationwide': undefined }), false); // blank = nationwide, not local
+  assert.equal(isLocalPickupRow({ ...local, 'Active': false }), false);   // Active is the delist switch
+  assert.equal(isLocalPickupRow({ ...local, 'Orders Left': 0 }), false);  // sold out still gates
+  assert.equal(isLocalPickupRow({ ...local, 'Rancher Base': 30 }), false); // money invariant still holds
 });

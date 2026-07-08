@@ -36,6 +36,8 @@ export interface ProductCardProduct {
   ordersLeft?: number | null;
   /** Per-order shipping in dollars; 0/undefined = shipping included in price. */
   shippingCost?: number;
+  /** Pickup-at-the-ranch product — renders only on the rancher's own page. */
+  localOnly?: boolean;
 }
 
 export default function ProductCard({ p }: { p: ProductCardProduct }) {
@@ -73,14 +75,16 @@ export default function ProductCard({ p }: { p: ProductCardProduct }) {
           <p className="text-[13px] text-charcoal/80 leading-snug m-0 line-clamp-2">{p.description}</p>
         ) : null}
 
-        <div className="text-xs text-sage line-clamp-1">
-          {deposit
-            ? 'your rancher confirms size + the balance before it ships'
-            : p.shippingCost && p.shippingCost > 0
-              ? `${p.shelfStable ? 'shelf-stable' : 'ships frozen'} · + $${p.shippingCost.toFixed(2)} shipping`
-              : p.shelfStable
-                ? 'shelf-stable · ships free, no freezer needed'
-                : 'ships frozen · shipping included'}
+        <div className={`text-xs line-clamp-1 ${p.localOnly ? 'text-saddle font-medium' : 'text-sage'}`}>
+          {p.localOnly
+            ? 'local pickup at the ranch — no shipping'
+            : deposit
+              ? 'your rancher confirms size + the balance before it ships'
+              : p.shippingCost && p.shippingCost > 0
+                ? `${p.shelfStable ? 'shelf-stable' : 'ships frozen'} · + $${p.shippingCost.toFixed(2)} shipping`
+                : p.shelfStable
+                  ? 'shelf-stable · ships free, no freezer needed'
+                  : 'ships frozen · shipping included'}
         </div>
 
         {/* Real scarcity only — the grid never shows sold-out rows, so any

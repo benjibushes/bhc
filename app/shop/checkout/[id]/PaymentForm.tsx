@@ -27,11 +27,13 @@ function InnerForm({
   quantity,
   totalCents,
   depositStyle,
+  localOnly,
 }: {
   productId: string;
   quantity: number;
   totalCents: number;
   depositStyle: boolean;
+  localOnly: boolean;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -136,7 +138,9 @@ function InnerForm({
       </label>
 
       <div>
-        <span className="block text-[13px] text-saddle mb-1.5">shipping address</span>
+        <span className="block text-[13px] text-saddle mb-1.5">
+          {localOnly ? 'your address — contact info only, this order is picked up at the ranch' : 'shipping address'}
+        </span>
         <AddressElement options={{ mode: 'shipping', allowedCountries: ['US'] }} />
       </div>
 
@@ -172,6 +176,7 @@ export default function PaymentForm({
   quantity,
   totalCents,
   depositStyle,
+  localOnly = false,
 }: {
   publishableKey: string;
   connectAccountId: string;
@@ -179,6 +184,7 @@ export default function PaymentForm({
   quantity: number;
   totalCents: number;
   depositStyle: boolean;
+  localOnly?: boolean;
 }) {
   // Scope Stripe.js to the connected account — direct charge confirm requires it.
   const stripePromise = useMemo<Promise<Stripe | null>>(
@@ -202,6 +208,7 @@ export default function PaymentForm({
         quantity={quantity}
         totalCents={totalCents}
         depositStyle={depositStyle}
+        localOnly={localOnly}
       />
     </Elements>
   );

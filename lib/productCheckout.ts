@@ -131,6 +131,9 @@ export interface CreateProductCheckoutInput {
   // route). Product line + fee scale by qty; shipping stays flat per order.
   // Deposit-style is always 1 (one reservation).
   quantity?: number;
+  // LOCAL PICKUP (2026-07-07): pickup-at-the-ranch product. Callers pass the
+  // resolver's flag; shippingCents must already be 0 for these.
+  localOnly?: boolean;
 }
 
 /**
@@ -144,7 +147,7 @@ export interface CreateProductCheckoutInput {
 export function buildProductMetadata(
   input: Pick<
     CreateProductCheckoutInput,
-    'productId' | 'productName' | 'rancherId' | 'rancherName' | 'buyerEmail' | 'buyerName' | 'displayCents' | 'baseCents' | 'depositStyle'
+    'productId' | 'productName' | 'rancherId' | 'rancherName' | 'buyerEmail' | 'buyerName' | 'displayCents' | 'baseCents' | 'depositStyle' | 'localOnly'
   >,
   charge: ProductCharge,
 ): Record<string, string> {
@@ -166,6 +169,9 @@ export function buildProductMetadata(
     quantity: String(charge.quantity),
     // C-1.5: settlement branches receipt/rancher/operator copy on this.
     depositStyle: input.depositStyle ? 'true' : 'false',
+    // LOCAL PICKUP — settlement branches emails/signals to "coordinate
+    // pickup" instead of "ship to". Absent/legacy PIs read as 'ship'.
+    fulfillment: input.localOnly ? 'pickup' : 'ship',
   };
 }
 
@@ -250,7 +256,9 @@ export async function createProductCheckout(
                   // fallback + operator-texted links show only this page.
                   description: input.depositStyle
                     ? 'Deposit — the ranch confirms your size + the balance with you before shipping.'
-                    : 'Ships direct from the ranch.',
+                    : input.localOnly
+                      ? 'Local pickup at the ranch — no shipping.'
+                      : 'Ships direct from the ranch.',
                 },
                 // Product line = the UNIT display price; qty scales the line,
                 // shipping (when set) rides shipping_options so receipts itemize.

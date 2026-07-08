@@ -32,6 +32,8 @@ export interface ResolvedProductPurchase {
   shippingCents: number;
   quantity: number;
   depositStyle: boolean;
+  /** Pickup-at-the-ranch product (Ships Nationwide explicitly false). */
+  localOnly: boolean;
   /** display×qty + shipping — what the buyer's card is charged. */
   totalCents: number;
 }
@@ -55,11 +57,12 @@ export async function resolveProductPurchase(input: {
   if (!product || !product['Active']) {
     return { ok: false, status: 404, error: 'That product is unavailable.' };
   }
-  // Mirror the isSellableRow shipping gate at CHARGE time — a stale/shared
-  // link must never charge a product the rancher marked un-shippable.
-  if (product['Ships Nationwide'] === false) {
-    return { ok: false, status: 404, error: 'That product is unavailable.' };
-  }
+  // LOCAL PICKUP (2026-07-07): Ships Nationwide=false is a sellable pickup
+  // product (Active is the delist switch). It charges with pickup semantics —
+  // NO shipping fee, and every downstream surface (metadata → settlement →
+  // emails) says pickup instead of ship. Zero-mismatch: the flag rides the
+  // whole rail from this one read.
+  const localOnly = product['Ships Nationwide'] === false;
   if (!hasStock(product)) {
     return { ok: false, status: 409, error: 'That one just sold out — more coming.' };
   }
@@ -72,8 +75,10 @@ export async function resolveProductPurchase(input: {
 
   const depositStyle = product['Deposit Style'] === true;
   // Shipping passthrough: buyer pays it, rancher keeps 100%. Deposit-style
-  // always 0 — shipping settles with the balance the rancher collects.
-  const shippingCents = depositStyle
+  // always 0 (shipping settles with the balance); LOCAL PICKUP always 0 —
+  // charging a shipping fee on a pickup product is exactly the mismatch this
+  // rail exists to make impossible.
+  const shippingCents = depositStyle || localOnly
     ? 0
     : Math.max(0, Math.round(Number(product['Shipping Cost'] || 0) * 100));
 
@@ -111,6 +116,7 @@ export async function resolveProductPurchase(input: {
     shippingCents,
     quantity,
     depositStyle,
+    localOnly,
     totalCents: displayCents * quantity + shippingCents,
   };
 }

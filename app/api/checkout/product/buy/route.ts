@@ -102,6 +102,7 @@ export async function POST(request: Request) {
       // C-1.5: the flag rides PI metadata so settlement sends deposit-truthful
       // receipts + a "confirm BEFORE shipping" rancher email.
       depositStyle: product['Deposit Style'] === true,
+      localOnly: resolved.localOnly,
       shippingCents,
       quantity,
       mode: wantEmbedded ? 'embedded' : 'hosted',

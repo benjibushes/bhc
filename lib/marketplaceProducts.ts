@@ -54,6 +54,12 @@ export interface MarketplaceProduct {
   // Per-order shipping charge in dollars (0 = shipping included in price).
   // Buyer pays it at checkout as a separate line; rancher keeps 100% of it.
   shippingCost: number;
+  // LOCAL PICKUP (2026-07-07): Ships Nationwide un-checked no longer means
+  // "delisted" (Active/hide is the delist switch) — it means the product is
+  // pickup-at-the-ranch only. Local products render ONLY on the rancher's own
+  // page (labeled), never /shop, the feed, or cold funnels; checkout charges
+  // no shipping and every surface says pickup. Zero-mismatch by construction.
+  localOnly: boolean;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -88,8 +94,34 @@ export function hasStock(r: any): boolean {
   return Number(left) > 0;
 }
 
-/** Load every sellable nationwide-shippable product, cheapest first. */
-export async function loadMarketplaceProducts(): Promise<MarketplaceProduct[]> {
+/**
+ * LOCAL-PICKUP sellable: every isSellableRow gate EXCEPT the nationwide
+ * clause is inverted — Ships Nationwide must be EXPLICITLY false. These rows
+ * sell with pickup semantics on the rancher's own page only.
+ */
+export function isLocalPickupRow(r: any): boolean {
+  const price = Number(r?.['Display Price'] || 0);
+  const base = Number(r?.['Rancher Base'] || 0);
+  return (
+    r?.['Active'] === true &&
+    r?.['Ships Nationwide'] === false &&
+    price > 0 &&
+    base > 0 &&
+    base <= price &&
+    hasStock(r)
+  );
+}
+
+/**
+ * Load every sellable nationwide-shippable product, cheapest first.
+ * `includeLocal: true` ALSO returns local-pickup rows (tagged localOnly) —
+ * used ONLY by the rancher's own landing page; /shop, the ad feed, and the
+ * cold funnel rails stay nationwide-only so a TX buyer never sees a MT
+ * pickup product outside that ranch's page.
+ */
+export async function loadMarketplaceProducts(
+  opts?: { includeLocal?: boolean },
+): Promise<MarketplaceProduct[]> {
   let rows: any[] = [];
   try {
     rows = (await getAllRecords(TABLES.RANCHER_PRODUCTS)) as any[];
@@ -97,7 +129,7 @@ export async function loadMarketplaceProducts(): Promise<MarketplaceProduct[]> {
     return [];
   }
   return rows
-    .filter(isSellableRow)
+    .filter((r) => isSellableRow(r) || (opts?.includeLocal === true && isLocalPickupRow(r)))
     .map((r) => ({
       id: r.id,
       name: String(r['Product Name'] || ''),
@@ -122,6 +154,7 @@ export async function loadMarketplaceProducts(): Promise<MarketplaceProduct[]> {
       feeds: String(r['Feeds'] || ''),
       rancherId: String(r['Rancher Record ID'] || '').trim(),
       shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
+      localOnly: r['Ships Nationwide'] === false,
     }))
     .sort((a, b) => a.price - b.price);
 }
@@ -136,9 +169,13 @@ export function productsForRancher(
   return products.filter((p) => p.rancherId === id);
 }
 
-/** Load one rancher's live sellable products (for their public landing page). */
+/**
+ * Load one rancher's live sellable products (for their public landing page).
+ * INCLUDES local-pickup rows — the rancher's own page is exactly where their
+ * local buyers land, so pickup products belong here (labeled) and nowhere else.
+ */
 export async function loadProductsForRancher(rancherId: string): Promise<MarketplaceProduct[]> {
-  return productsForRancher(await loadMarketplaceProducts(), rancherId);
+  return productsForRancher(await loadMarketplaceProducts({ includeLocal: true }), rancherId);
 }
 
 /** Load one product by record id — returns null if missing or not sellable. */
@@ -168,9 +205,11 @@ export async function loadMarketplaceProductAnyStock(
   if (!r) return null;
   const price = Number(r['Display Price'] || 0);
   const base = Number(r['Rancher Base'] || 0);
+  // LOCAL PICKUP: Ships Nationwide=false is a sellable pickup product now
+  // (labeled + charged with pickup semantics), NOT a delist — Active is the
+  // delist switch. So the nationwide clause is no longer a 404 condition.
   const sellableExceptStock =
     r['Active'] === true &&
-    r['Ships Nationwide'] !== false &&
     price > 0 &&
     base > 0 &&
     base <= price;
@@ -201,6 +240,7 @@ export async function loadMarketplaceProductAnyStock(
       feeds: String(r['Feeds'] || ''),
       rancherId: String(r['Rancher Record ID'] || '').trim(),
       shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
+      localOnly: r['Ships Nationwide'] === false,
     },
     soldOut: !hasStock(r),
   };

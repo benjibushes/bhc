@@ -84,6 +84,9 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
   // the exact opposite of the storefront's "balance confirmed before shipping"
   // promise. Absent/legacy PIs default to false (full-purchase copy).
   const depositStyle = String(pi?.metadata?.depositStyle || '') === 'true';
+  // LOCAL PICKUP (2026-07-07): the buyer collects at the ranch — every
+  // notification below must say pickup, never "ship to". Absent/legacy → ship.
+  const isPickup = String(pi?.metadata?.fulfillment || 'ship') === 'pickup';
 
   if (!pi?.id || !displayCents) {
     // Malformed → can never settle. Permanent so Stripe stops the 3-day retry.
@@ -146,7 +149,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
   const created: any = await createRecord(TABLES.RANCHER_ORDERS, {
     // Deposit-style orders carry the marker in the ref so the ops view reads
     // the truth at a glance (no schema change needed).
-    'Order Ref': `${depositStyle ? 'DEPOSIT — ' : ''}${qtyLabel}${productName} — ${buyerName || buyerEmail}`,
+    'Order Ref': `${depositStyle ? 'DEPOSIT — ' : ''}${isPickup ? 'PICKUP — ' : ''}${qtyLabel}${productName} — ${buyerName || buyerEmail}`,
     // GTM-hardening F2: link back to the product row so a refund/dispute can
     // RESTORE its 'Orders Left' (inventory symmetry with the decrement below).
     'Product Record ID': String(pi?.metadata?.productId || ''),
@@ -199,10 +202,14 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         `DEPOSIT-STYLE: ${rancherName} confirms size + the balance with the buyer BEFORE shipping.\n` +
         `You keep $${dollars(marginCents)} of the deposit · rancher nets $${dollars(baseCents)}.\n` +
         `Ship to (once confirmed):\n${shipTo || '(address on the order)'}`
-      : `${buyerName || buyerEmail} bought ${qtyLabel}${productName} from ${rancherName}.\n` +
-        `You keep $${dollars(marginCents * quantity)} · rancher nets $${dollars(baseCents * quantity + shippingCents)}${shippingCents > 0 ? ` (incl. $${dollars(shippingCents)} shipping)` : ''}.\n` +
-        `Tell ${rancherName} to ship to:\n${shipTo || '(address on the order)'}` +
-        (!shipTo ? `\n⚠️ NO SHIP-TO CAPTURED — pull the address from the Stripe payment (${pi.id}) and get it to ${rancherName}.` : ''),
+      : isPickup
+        ? `${buyerName || buyerEmail} bought ${qtyLabel}${productName} from ${rancherName} — LOCAL PICKUP.\n` +
+          `You keep $${dollars(marginCents * quantity)} · rancher nets $${dollars(baseCents * quantity)}.\n` +
+          `${rancherName} coordinates pickup with the buyer${buyerEmail ? ` (${buyerEmail})` : ''}.`
+        : `${buyerName || buyerEmail} bought ${qtyLabel}${productName} from ${rancherName}.\n` +
+          `You keep $${dollars(marginCents * quantity)} · rancher nets $${dollars(baseCents * quantity + shippingCents)}${shippingCents > 0 ? ` (incl. $${dollars(shippingCents)} shipping)` : ''}.\n` +
+          `Tell ${rancherName} to ship to:\n${shipTo || '(address on the order)'}` +
+          (!shipTo ? `\n⚠️ NO SHIP-TO CAPTURED — pull the address from the Stripe payment (${pi.id}) and get it to ${rancherName}.` : ''),
     dedupeKey: `product-sold:${pi.id}`,
   }).catch(() => {});
 
@@ -215,7 +222,9 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
       to: buyerEmail,
       subject: depositStyle
         ? `you're set — your ${productName} deposit is in`
-        : `order's in — ${productName} ships from the ranch soon`,
+        : isPickup
+          ? `you're set — ${productName} is ready to plan pickup`
+          : `order's in — ${productName} ships from the ranch soon`,
       html: depositStyle
         ? `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
@@ -225,8 +234,8 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
       </div>`
         : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
-        <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for <strong>${quantity > 1 ? `${quantity}× ` : 'a '}${escapeHtml(productName)}</strong> and will ship it direct to you.</p>
-        <p style="font-size:14px;color:#5A5752">paid: $${dollars(paidCents)}${quantity > 1 || shippingCents > 0 ? ` (${quantity > 1 ? `${quantity} × $${dollars(displayCents)}` : `$${dollars(displayCents)}`}${shippingCents > 0 ? ` + $${dollars(shippingCents)} shipping` : ''})` : ''}. you'll get tracking as soon as it's on the way.</p>
+        <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for <strong>${quantity > 1 ? `${quantity}× ` : 'a '}${escapeHtml(productName)}</strong>${isPickup ? ' and will reach out to set up your pickup at the ranch.' : ' and will ship it direct to you.'}</p>
+        <p style="font-size:14px;color:#5A5752">paid: $${dollars(paidCents)}${quantity > 1 || shippingCents > 0 ? ` (${quantity > 1 ? `${quantity} × $${dollars(displayCents)}` : `$${dollars(displayCents)}`}${shippingCents > 0 ? ` + $${dollars(shippingCents)} shipping` : ''})` : ''}. ${isPickup ? 'local pickup — no shipping charged; the ranch will confirm the time and place with you.' : "you'll get tracking as soon as it's on the way."}</p>
         ${shipTo ? `<p style="font-size:13px;color:#5A5752">shipping to:<br>${escapeHtml(shipTo).replace(/\n/g, '<br>')}<br><span style="color:#A7A29A">typo in the address? just reply to this email and we'll fix it before it ships.</span></p>` : ''}
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`,
@@ -245,7 +254,9 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         to: rancherEmail,
         subject: depositStyle
           ? `deposit in — confirm details BEFORE shipping — ${productName}`
-          : `new order to ship — ${productName}`,
+          : isPickup
+            ? `pickup order paid — coordinate with the buyer — ${productName}`
+            : `new order to ship — ${productName}`,
         html: depositStyle
           ? `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
           <p>hi ${escapeHtml(rancherName)},</p>
@@ -258,7 +269,20 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
           <p style="font-size:14px;color:#2A2A2A">you've already netted <strong>$${dollars(baseCents)}</strong> of the deposit in your Stripe account. confirm details → collect the balance (quote it WITH your shipping cost — the deposit didn't include shipping) → then ship &amp; reply with tracking.</p>
           <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
         </div>`
-          : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+          : isPickup
+            ? `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
+          <p>hi ${escapeHtml(rancherName)},</p>
+          <p>you have a paid <strong>LOCAL PICKUP</strong> order — nothing to ship:</p>
+          <div style="background:#fff;border:1px solid #A7A29A;padding:16px;margin:16px 0;font-size:15px">
+            <strong>${quantity > 1 ? `${quantity}× ` : ''}${escapeHtml(productName)}</strong><br>
+            buyer: ${escapeHtml(buyerName || buyerEmail || '(on the order)')}<br>
+            ${buyerEmail ? `email: ${escapeHtml(buyerEmail)}<br>` : ''}
+            ${shipTo ? `buyer address (contact info, NOT a ship-to):<br>${escapeHtml(shipTo).replace(/\n/g, '<br>')}` : ''}
+          </div>
+          <p style="font-size:14px;color:#2A2A2A">you net <strong>$${dollars(baseCents * quantity)}</strong> — already routed to your Stripe account. reach out to the buyer, set a pickup time at the ranch, and mark the order complete in your dashboard (Products tab) once they've picked it up.</p>
+          <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
+        </div>`
+            : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
           <p>hi ${escapeHtml(rancherName)},</p>
           <p>you have a paid BuyHalfCow order to ship:</p>
           <div style="background:#fff;border:1px solid #A7A29A;padding:16px;margin:16px 0;font-size:15px">
