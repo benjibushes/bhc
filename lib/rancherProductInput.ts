@@ -112,6 +112,8 @@ export interface ProductInput {
   weight?: string;
   imageUrl?: string;
   shipsNationwide?: boolean;
+  // BYOC (2026-07-08): rancher's own store link. Empty string clears it.
+  externalCheckoutUrl?: string;
   shelfStable?: boolean;
   // Inventory: blank/undefined = unlimited; an integer >= 0 = orders left
   // (0 = deliberately paused as sold out). Decremented per settled order.
@@ -233,6 +235,20 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     shippingCostField = s > 0 ? Math.round(s * 100) / 100 : null;
   }
 
+  // External checkout URL (BYOC): optional; when present must be a real
+  // http(s) URL — anything else is rejected so /go can trust the record.
+  let externalUrl = '';
+  if (body.externalCheckoutUrl !== undefined && String(body.externalCheckoutUrl).trim() !== '') {
+    const raw = String(body.externalCheckoutUrl).trim();
+    try {
+      const u = new URL(raw);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('bad protocol');
+      externalUrl = u.toString();
+    } catch {
+      return { ok: false as const, error: 'External store link must be a full http(s) URL (or leave it blank).' };
+    }
+  }
+
   const fields: Record<string, string | number | boolean | null> = {
     'Product Name': name,
     'Display Price': displayCents / 100,
@@ -241,6 +257,7 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     'Weight / Size': weight,
     'Image URL': imageUrl,
     'Ships Nationwide': body.shipsNationwide === false ? false : true,
+    'External Checkout URL': externalUrl,
     'Shelf Stable': !!body.shelfStable,
     'Orders Left': ordersLeftField,
     "What's Included": whatsIncluded,

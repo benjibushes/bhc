@@ -57,6 +57,7 @@ function toClientProduct(r: any) {
     description: String(r['Description'] || ''),
     image: String(r['Image URL'] || ''),
     shipsNationwide: r['Ships Nationwide'] !== false,
+    externalCheckoutUrl: String(r['External Checkout URL'] || ''),
     shelfStable: !!r['Shelf Stable'],
     active: r['Active'] === true,
     // Live = buyable somewhere: nationwide rows on /shop + ranch page, local
@@ -309,6 +310,7 @@ export async function PATCH(request: Request) {
       weight: body.weight ?? String(product['Weight / Size'] || ''),
       imageUrl: body.imageUrl ?? String(product['Image URL'] || ''),
       shipsNationwide: body.shipsNationwide ?? product['Ships Nationwide'] !== false,
+      externalCheckoutUrl: body.externalCheckoutUrl !== undefined ? String(body.externalCheckoutUrl || '').trim() : String(product['External Checkout URL'] || ''),
       shelfStable: body.shelfStable ?? !!product['Shelf Stable'],
       ordersLeft: 'ordersLeft' in body ? body.ordersLeft : (product['Orders Left'] ?? null),
       whatsIncluded: 'whatsIncluded' in body ? body.whatsIncluded : product["What's Included"],

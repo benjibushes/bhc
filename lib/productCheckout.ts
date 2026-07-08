@@ -16,6 +16,7 @@
 
 import { getStripeClient } from '@/lib/stripeConnect';
 import { isDemoMode } from '@/lib/demo/demoMode';
+import { absorbStripeFee } from '@/lib/feeMath';
 
 export interface ProductChargeInput {
   /** What the buyer pays for the product, in cents (the fee-invisible Display Price). */
@@ -38,7 +39,9 @@ export interface ProductChargeInput {
 
 export interface ProductCharge {
   totalChargedCents: number;   // buyer pays this (display×qty + shipping)
-  applicationFeeCents: number; // BHC margin ((display − base)×qty; shipping never skimmed)
+  applicationFeeCents: number; // fee actually charged: gross margin − absorbed processing (net-your-number)
+  grossMarginCents: number;    // (display − base)×qty — margin before absorption; shipping never skimmed
+  absorbedCents: number;       // processing cost BHC absorbed for the rancher
   rancherNetCents: number;     // rancher receives this (base×qty + shipping)
   shippingCents: number;       // normalized shipping component (0 = included)
   quantity: number;            // normalized units (>= 1)
@@ -74,10 +77,24 @@ export function computeProductCharge(input: ProductChargeInput): ProductCharge {
   if (!Number.isFinite(quantity) || quantity < 1 || quantity > 10) {
     throw new Error(`invalid quantity: ${input.quantity}`);
   }
-  const applicationFeeCents = (display - base) * quantity;
+  // NET-YOUR-NUMBER (2026-07-08): the gross margin (display − base) is what
+  // BHC would keep in a world without card fees. Stripe's processing fee
+  // comes out of the RANCHER's balance on a direct charge, so before this
+  // the dashboard's "you net $X" quietly overstated their payout by ~2.9%.
+  // We now shrink the application fee by the processing estimate (floored,
+  // lib/feeMath) so the rancher's real payout lands on the promised number.
+  // Buyer price unchanged; the absorption is BHC-margin only.
+  const grossMarginCents = (display - base) * quantity;
+  const totalChargedCents = display * quantity + shipping;
+  const { feeCents: applicationFeeCents, absorbedCents } = absorbStripeFee({
+    grossFeeCents: grossMarginCents,
+    totalChargeCents: totalChargedCents,
+  });
   return {
-    totalChargedCents: display * quantity + shipping,
+    totalChargedCents,
     applicationFeeCents,
+    grossMarginCents,
+    absorbedCents,
     rancherNetCents: base * quantity + shipping,
     shippingCents: shipping,
     quantity,
@@ -162,6 +179,8 @@ export function buildProductMetadata(
     displayCents: String(input.displayCents),
     baseCents: String(input.baseCents),
     marginCents: String(charge.applicationFeeCents),
+    grossMarginCents: String(charge.grossMarginCents),
+    absorbedStripeFeeCents: String(charge.absorbedCents),
     // Shipping passthrough — settlement adds it to Buyer Paid + Rancher
     // Payout; it is never part of the margin.
     shippingCents: String(charge.shippingCents),

@@ -21,6 +21,7 @@ import { claimOnce } from '@/lib/rancherCapacity';
 import { checkOriginGuard } from '@/lib/csrfGuard';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
+import { absorbStripeFee } from '@/lib/feeMath';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -269,8 +270,18 @@ export async function POST(req: Request) {
   // Charged fee === displayed fee === locked rate. Math is unchanged beyond
   // the rate source.
   const feeRate = depositCommissionRate(rancher, tier);
-  const platformFeeCents = Math.round(fullSaleCents * feeRate);
-  const totalChargedCents = amountCents + platformFeeCents;
+  // NET-YOUR-NUMBER (2026-07-08): buyer total still carries the GROSS
+  // commission (price unchanged), but the application fee Stripe actually
+  // takes is absorbed down by the processing estimate (lib/feeMath) so the
+  // rancher nets their full deposit. This mirror of createDepositCheckout's
+  // math exists ONLY so recorded fee === charged fee (the #247 invariant);
+  // both sides call the same absorbStripeFee.
+  const grossPlatformFeeCents = Math.round(fullSaleCents * feeRate);
+  const totalChargedCents = amountCents + grossPlatformFeeCents;
+  const { feeCents: platformFeeCents } = absorbStripeFee({
+    grossFeeCents: grossPlatformFeeCents,
+    totalChargeCents: totalChargedCents,
+  });
 
   // M5/C5 concurrent-create serialization. The re-pay guard above only trips
   // on POST-settlement signals (Deposit Paid At / Awaiting Payment / Slot

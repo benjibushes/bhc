@@ -1143,7 +1143,16 @@ export default async function RancherPage(
               </div>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6">
                 {liveProducts.map((p) => (
-                  <ProductCard key={p.id} p={p} />
+                  <ProductCard
+                    key={p.id}
+                    p={{
+                      ...p,
+                      // BYOC: the rancher's own store wins on THEIR page —
+                      // routed through /go for attribution. /shop never
+                      // receives externalHref.
+                      externalHref: p.externalCheckoutUrl ? `/go/store/${p.id}` : undefined,
+                    }}
+                  />
                 ))}
               </div>
             </div>

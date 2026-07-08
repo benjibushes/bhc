@@ -48,6 +48,7 @@ interface RancherProduct {
   description: string;
   image: string;
   shipsNationwide: boolean;
+  externalCheckoutUrl: string;
   shelfStable: boolean;
   active: boolean;
   live: boolean;
@@ -75,6 +76,7 @@ const EMPTY_FORM = {
   description: '',
   imageUrl: '',
   shipsNationwide: true,
+  externalCheckoutUrl: '',
   shelfStable: false,
   ordersLeft: '' as string, // blank = unlimited
   whatsIncluded: '',
@@ -190,6 +192,7 @@ export default function ProductsTab({
       description: p.description,
       imageUrl: p.image,
       shipsNationwide: p.shipsNationwide,
+      externalCheckoutUrl: p.externalCheckoutUrl || '',
       shelfStable: p.shelfStable,
       ordersLeft: p.ordersLeft == null ? '' : String(p.ordersLeft),
       whatsIncluded: p.whatsIncluded || '',
@@ -234,6 +237,7 @@ export default function ProductsTab({
         description: form.description,
         imageUrl: form.imageUrl,
         shipsNationwide: form.shipsNationwide,
+        externalCheckoutUrl: form.externalCheckoutUrl.trim(),
         shelfStable: form.shelfStable,
         ordersLeft: form.ordersLeft.trim() === '' ? '' : Number(form.ordersLeft),
         whatsIncluded: form.whatsIncluded,
@@ -273,6 +277,7 @@ export default function ProductsTab({
               description: form.description,
               image: form.imageUrl,
               shipsNationwide: form.shipsNationwide,
+              externalCheckoutUrl: form.externalCheckoutUrl.trim(),
               shelfStable: form.shelfStable,
               active: true,
               live: false, // next load reconciles the real state
@@ -382,6 +387,7 @@ export default function ProductsTab({
       description: p.description,
       imageUrl: p.image,
       shipsNationwide: p.shipsNationwide,
+      externalCheckoutUrl: p.externalCheckoutUrl || '',
       shelfStable: p.shelfStable,
       ordersLeft: p.ordersLeft == null ? '' : String(p.ordersLeft),
       whatsIncluded: p.whatsIncluded || '',
@@ -636,7 +642,8 @@ export default function ProductsTab({
                 <strong>{money(preview.baseCents / 100 + ship)}</strong>
                 {ship > 0 ? ' (shipping comes to you in full)' : ''} · buyhalfcow&rsquo;s cut{' '}
                 {money(preview.marginCents / 100)} ({Math.round(preview.marginRate * 100)}%) — skimmed
-                automatically at checkout, your payout needs nothing from you.
+                automatically at checkout, your payout needs nothing from you. card
+                processing is on us — the net you see is the net you get.
               </div>
             );
           })()}
@@ -716,6 +723,28 @@ export default function ProductsTab({
               {form.shipsNationwide
                 ? 'where it sells: ✓ the nationwide shop · ✓ your ranch page. buyers anywhere order it shipped; you pack + ship it.'
                 : 'where it sells: ✓ your ranch page · ✓ the shop’s local "farmers market" for buyers in your state. buyers pay online, no shipping charged — you coordinate the pickup.'}
+            </span>
+          </div>
+
+          {/* BYOC (2026-07-08): rancher already sells this on their own
+              store → their link wins on THEIR page (routed via /go for
+              attribution). Optional; blank = BHC checkout everywhere. */}
+          <div className="space-y-1">
+            <label className="block text-xs uppercase tracking-wider text-saddle" htmlFor="externalCheckoutUrl">
+              already sell this on your own store? (optional)
+            </label>
+            <input
+              id="externalCheckoutUrl"
+              type="url"
+              value={form.externalCheckoutUrl}
+              onChange={(e) => setForm((f) => ({ ...f, externalCheckoutUrl: e.target.value }))}
+              placeholder="https://your-store.com/products/..."
+              className="w-full border border-dust bg-bone px-3 py-2 text-sm focus:outline-none focus:border-charcoal"
+            />
+            <span className="block text-[11px] text-saddle">
+              paste your Shopify/Square/website checkout link — on your ranch page the buy
+              button sends buyers to YOUR store instead of ours. leave blank to use
+              buyhalfcow checkout (deposits, zero card fees on your side).
             </span>
           </div>
           <div className="flex flex-wrap gap-5 text-sm">

@@ -246,6 +246,7 @@ export async function getConnectAccountStatus(accountId: string): Promise<Connec
 // ---------------------------------------------------------------------------
 
 import { TierSlug } from '@/lib/tiers';
+import { absorbStripeFee } from '@/lib/feeMath';
 
 export interface CreateDepositCheckoutInput {
   rancherConnectAccountId: string;  // acct_* — direct charge target
@@ -325,12 +326,23 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
   // (fullSaleCents − depositCents) directly outside BHC. Net result:
   // BHC commission is paid in full at deposit time regardless of how the
   // rancher splits the rest.
-  const platformFeeCents = Math.round(input.fullSaleCents * feeRate);
+  const grossPlatformFeeCents = Math.round(input.fullSaleCents * feeRate);
   // Buyer pays the rancher's full deposit PLUS the full BHC service fee.
   // Rancher receives exactly `input.amountCents` (Stripe routes the total
   // to rancher's Connect acct, then transfers application_fee_amount to
   // the BHC platform acct).
-  const totalChargedCents = input.amountCents + platformFeeCents;
+  const totalChargedCents = input.amountCents + grossPlatformFeeCents;
+  // NET-YOUR-NUMBER (2026-07-08): Stripe's processing fee comes out of the
+  // rancher's balance (fees_collector='stripe'), so before this the rancher
+  // actually netted deposit − ~2.9%. We now shrink our application fee by
+  // the estimated processing cost (floored — see lib/feeMath) so the
+  // rancher's payout lands on the promised deposit amount. Buyer price is
+  // UNCHANGED (still amount + gross fee); the absorption comes out of BHC's
+  // side only.
+  const { feeCents: platformFeeCents, absorbedCents } = absorbStripeFee({
+    grossFeeCents: grossPlatformFeeCents,
+    totalChargeCents: totalChargedCents,
+  });
   // Balance the rancher will collect later at fulfillment (outside BHC).
   // Stamped in metadata so the rancher dashboard + buyer receipt can
   // surface it without re-computing.
@@ -385,6 +397,11 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
           depositCents: String(input.amountCents),
           fullSaleCents: String(input.fullSaleCents),
           platformFeeCents: String(platformFeeCents),
+          // NET-YOUR-NUMBER split: gross commission at the tier rate and the
+          // processing absorption BHC granted (gross − platform fee). The
+          // Monday scorecard's processing P&L reads these.
+          grossPlatformFeeCents: String(grossPlatformFeeCents),
+          absorbedStripeFeeCents: String(absorbedCents),
           totalChargedCents: String(totalChargedCents),
           fulfillmentBalanceCents: String(fulfillmentBalanceCents),
           // NRD policy (2026-06-05): refundable until rancher accepts the

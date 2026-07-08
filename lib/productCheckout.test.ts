@@ -5,22 +5,29 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeProductCharge, createProductCheckout, buildProductMetadata } from './productCheckout';
 
-test('computeProductCharge: margin = display − base; buyer pays display; rancher nets base', () => {
-  // Silverline jerky: $25 display, $21.25 base → $3.75 BHC margin
+test('computeProductCharge: fee = gross margin − processing estimate (net-your-number)', () => {
+  // Silverline jerky: $25 display, $21.25 base → $3.75 gross margin;
+  // est fee on $25 = 73+30 = 103¢ → app fee 272¢, absorption 103¢
   const c = computeProductCharge({ displayCents: 2500, baseCents: 2125 });
   assert.equal(c.totalChargedCents, 2500);
   assert.equal(c.rancherNetCents, 2125);
-  assert.equal(c.applicationFeeCents, 375);
+  assert.equal(c.grossMarginCents, 375);
+  assert.equal(c.applicationFeeCents, 375 - (Math.round(2500 * 0.029) + 30));
+  assert.equal(c.applicationFeeCents + c.absorbedCents, 375);
 });
 
-test('computeProductCharge: snack sticks $13.59 / $11.55', () => {
+test('computeProductCharge: snack sticks $13.59 / $11.55 — small ticket floors at $1', () => {
   const c = computeProductCharge({ displayCents: 1359, baseCents: 1155 });
-  assert.equal(c.applicationFeeCents, 204);
+  assert.equal(c.grossMarginCents, 204);
+  // est = 39+30 = 69 → 204-69 = 135, above the $1 floor
+  assert.equal(c.applicationFeeCents, 135);
+  assert.equal(c.absorbedCents, 69);
 });
 
-test('computeProductCharge: zero-margin (base = display) is allowed → fee 0', () => {
+test('computeProductCharge: zero-margin (base = display) is allowed → fee 0, nothing to absorb', () => {
   const c = computeProductCharge({ displayCents: 1000, baseCents: 1000 });
   assert.equal(c.applicationFeeCents, 0);
+  assert.equal(c.absorbedCents, 0);
   assert.equal(c.rancherNetCents, 1000);
 });
 
@@ -28,7 +35,10 @@ test('computeProductCharge: rounds fractional cents', () => {
   const c = computeProductCharge({ displayCents: 999.6, baseCents: 850.2 });
   assert.equal(c.totalChargedCents, 1000);
   assert.equal(c.rancherNetCents, 850);
-  assert.equal(c.applicationFeeCents, 150);
+  assert.equal(c.grossMarginCents, 150);
+  // est on $10 = 29+30 = 59 → 91; floor min(150, max(100, 20)) = 100 → 91<100? no: max(100, 150-59=91) = 100
+  assert.equal(c.applicationFeeCents, 100);
+  assert.equal(c.absorbedCents, 50);
 });
 
 test('computeProductCharge: THROWS when base exceeds display (negative margin blocked)', () => {
@@ -86,15 +96,18 @@ test('createProductCheckout: bad money is rejected regardless of mode', async ()
 test('computeProductCharge: no shipping → totals unchanged, shipping normalized to 0', () => {
   const c = computeProductCharge({ displayCents: 2500, baseCents: 2000 });
   assert.equal(c.totalChargedCents, 2500);
-  assert.equal(c.applicationFeeCents, 500);
+  assert.equal(c.grossMarginCents, 500);
+  assert.equal(c.applicationFeeCents, 500 - (Math.round(2500 * 0.029) + 30));
   assert.equal(c.rancherNetCents, 2000);
   assert.equal(c.shippingCents, 0);
 });
 
-test('computeProductCharge: shipping raises buyer total + rancher net by the same amount — fee untouched', () => {
+test('computeProductCharge: shipping raises buyer total + rancher net — gross margin never touches shipping, but absorption covers processing on the FULL charge', () => {
   const c = computeProductCharge({ displayCents: 2500, baseCents: 2000, shippingCents: 1200 });
   assert.equal(c.totalChargedCents, 3700);   // buyer pays product + shipping
-  assert.equal(c.applicationFeeCents, 500);  // BHC margin NEVER touches shipping
+  assert.equal(c.grossMarginCents, 500);     // margin NEVER touches shipping
+  // absorption est on the full $37 charge = 107+30 = 137
+  assert.equal(c.applicationFeeCents, 500 - 137);
   assert.equal(c.rancherNetCents, 3200);     // rancher keeps 100% of shipping
   assert.equal(c.shippingCents, 1200);
 });
@@ -109,7 +122,10 @@ test('computeProductCharge: negative or junk shipping is rejected', () => {
 test('computeProductCharge: quantity scales product + fee; shipping stays flat per order', () => {
   const c = computeProductCharge({ displayCents: 2500, baseCents: 2000, shippingCents: 1200, quantity: 3 });
   assert.equal(c.totalChargedCents, 2500 * 3 + 1200);
-  assert.equal(c.applicationFeeCents, 500 * 3);
+  assert.equal(c.grossMarginCents, 500 * 3);
+  // absorption est on the full $87 charge = 252+30 = 282
+  assert.equal(c.applicationFeeCents, 500 * 3 - 282);
+  assert.equal(c.absorbedCents, 282);
   assert.equal(c.rancherNetCents, 2000 * 3 + 1200);
   assert.equal(c.quantity, 3);
 });
@@ -138,14 +154,19 @@ test('buildProductMetadata: exact settlement key set + string values', () => {
     charge,
   );
   assert.deepEqual(Object.keys(md).sort(), [
-    'baseCents', 'buyerEmail', 'buyerName', 'depositStyle', 'displayCents',
-    'fulfillment', 'marginCents', 'productId', 'productName', 'quantity',
+    'absorbedStripeFeeCents', 'baseCents', 'buyerEmail', 'buyerName',
+    'depositStyle', 'displayCents', 'fulfillment', 'grossMarginCents',
+    'marginCents', 'productId', 'productName', 'quantity',
     'rancherId', 'rancherName', 'shippingCents', 'type',
   ]);
   assert.equal(md.type, 'product_purchase');
   assert.equal(md.displayCents, '2500');   // UNIT price, not total
   assert.equal(md.baseCents, '2000');      // UNIT base
-  assert.equal(md.marginCents, '1000');    // (display−base)×qty
+  // marginCents = the fee actually charged (net of absorption); gross kept
+  // separately. $62 charge → est 210¢ → 1000 − 210 = 790.
+  assert.equal(md.grossMarginCents, '1000'); // (display−base)×qty
+  assert.equal(md.marginCents, '790');
+  assert.equal(md.absorbedStripeFeeCents, '210');
   assert.equal(md.shippingCents, '1200');  // flat per order
   assert.equal(md.quantity, '2');
   assert.equal(md.depositStyle, 'false');

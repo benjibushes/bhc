@@ -62,6 +62,10 @@ export interface MarketplaceProduct {
   // for buyers whose state matches the ranch. Never the ad feed or cold
   // funnels; checkout charges no shipping and every surface says pickup.
   localOnly: boolean;
+  // BYOC Tier 2 (2026-07-08): the rancher's own store link for this product.
+  // When set, the rancher-page card links out via /go/[id] instead of BHC
+  // checkout. NEVER surfaces on /shop or the funnel rails (money integrity).
+  externalCheckoutUrl: string;
   // Ranch home state (normalized 2-letter code, '' unknown) — joined from the
   // Ranchers table so the farmers-market rail can match pickup products to
   // the buyer's state. Populated by loadMarketplaceProducts; single-product
@@ -178,6 +182,7 @@ export async function loadMarketplaceProducts(
       rancherId: String(r['Rancher Record ID'] || '').trim(),
       shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
       localOnly: r['Ships Nationwide'] === false,
+      externalCheckoutUrl: String(r['External Checkout URL'] || '').trim(),
       rancherState: stateByRancher[String(r['Rancher Record ID'] || '').trim()] || '',
     }))
     .sort((a, b) => a.price - b.price);
@@ -280,6 +285,7 @@ export async function loadMarketplaceProductAnyStock(
       rancherId: String(r['Rancher Record ID'] || '').trim(),
       shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
       localOnly: r['Ships Nationwide'] === false,
+      externalCheckoutUrl: String(r['External Checkout URL'] || '').trim(),
       rancherState: '',
     },
     soldOut: !hasStock(r),
