@@ -287,19 +287,33 @@ export interface CreateDepositCheckoutInput {
   productLabel: string;  // e.g. "Half Cow — Ashcraft Beef"
   successUrl: string;
   cancelUrl: string;
+  // WHITELABEL (2026-07-07): 'embedded' renders the deposit checkout in an
+  // iframe ON buyhalfcow.com (mirrors createProductCheckout). Money model,
+  // metadata, idempotency, and webhooks are byte-identical — presentation
+  // only. Default 'hosted' keeps emailed/texted deposit links working
+  // (admin invoice + rancher request-deposit callers).
+  mode?: 'embedded' | 'hosted';
+  returnUrl?: string; // required for embedded; absolute https URL
 }
 
-export async function createDepositCheckout(input: CreateDepositCheckoutInput): Promise<{ url: string; paymentIntentId: string; sessionId: string; connectAccountId: string }> {
+export async function createDepositCheckout(input: CreateDepositCheckoutInput): Promise<{ url?: string; clientSecret?: string; paymentIntentId: string; sessionId: string; connectAccountId: string }> {
   // DEMO MODE (local only, NEXT_PUBLIC_DEMO_MODE) — never true in prod; see
   // lib/demo/demoMode.ts. Return a fake checkout so the reserve/deposit button
   // doesn't error mid-video — NO Stripe call, no charge.
   if (isDemoMode()) {
     return {
       url: '/checkout/DEMO/deposit',
+      clientSecret: 'cs_DEMO_deposit_secret',
       paymentIntentId: 'pi_DEMO_deposit',
       sessionId: 'cs_DEMO_deposit',
       connectAccountId: 'acct_DEMO',
     };
+  }
+  const isEmbedded = input.mode === 'embedded';
+  // Fail loud on a mode/URL mismatch (mirrors createProductCheckout) — a
+  // half-configured session must never reach Stripe.
+  if (isEmbedded && !input.returnUrl) {
+    throw new Error('embedded deposit checkout requires a returnUrl');
   }
   // Locked-rate precedence lives at the caller (depositCommissionRate) —
   // this function just applies the rate it was handed. Math below is
@@ -391,8 +405,11 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
         nonRefundablePolicy: 'rancher_accept',
         nonRefundablePolicyVersion: 'NRD-2026-06-05',
       },
-      success_url: input.successUrl,
-      cancel_url: input.cancelUrl,
+      // Embedded ⇒ ui_mode + return_url (Stripe redirects the parent page out
+      // of the iframe on completion). Hosted ⇒ success/cancel. Never both.
+      ...(isEmbedded
+        ? { ui_mode: 'embedded' as const, return_url: input.returnUrl }
+        : { success_url: input.successUrl, cancel_url: input.cancelUrl }),
       // WALLETS/LINK: do NOT add `automatic_payment_methods` here — that is a
       // PaymentIntent-only param and 400s a Checkout Session. Omitting
       // `payment_method_types` (as we do) already enables DYNAMIC payment
@@ -450,6 +467,18 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
   // require the url; settlement matches the Payments row by referral
   // (pi.metadata.referralId) and backfills the real PI id on the
   // payment_intent.succeeded webhook (see markDepositSucceeded referral fallback).
+  if (isEmbedded) {
+    // session.url is null in embedded mode — the client mounts on client_secret.
+    if (!session.client_secret) {
+      throw new Error('Stripe Checkout Session returned no client secret');
+    }
+    return {
+      clientSecret: session.client_secret,
+      paymentIntentId,
+      sessionId: session.id,
+      connectAccountId: input.rancherConnectAccountId,
+    };
+  }
   if (!url) {
     throw new Error('Stripe Checkout Session returned no url');
   }

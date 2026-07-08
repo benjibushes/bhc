@@ -9,6 +9,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { trackEvent, metaEventId } from '@/lib/analytics';
 import { CutBreakdown, type Tier } from '@/app/components/CutBreakdown';
+import DepositCheckoutMount, { depositEmbeddedAvailable } from './DepositCheckoutMount';
 import { BEN_SALES_CAL_URL } from '@/lib/salesContact';
 import { REFUND_POLICY_SHORT } from '@/lib/refundPolicy';
 import { closedReferralUiState } from '@/lib/referralClosedState';
@@ -83,6 +84,10 @@ function DepositPageContent() {
   const [errStatus, setErrStatus] = useState('');
   const [selectedCut, setSelectedCut] = useState<string>('half');
   const [submitting, setSubmitting] = useState(false);
+  // WHITELABEL (2026-07-07): when set, the Stripe checkout renders ON this
+  // page (embedded, brand-wrapped) instead of redirecting to
+  // checkout.stripe.com — the $1k+ moment stays on buyhalfcow.com.
+  const [embedded, setEmbedded] = useState<{ clientSecret: string; connectAccountId: string } | null>(null);
   // F2/A4 — explicit ToS + refund-policy acceptance at the payment point.
   // The pay CTA stays disabled until checked; the POST requires it (400
   // terms_required otherwise), so acceptance is recorded at create time.
@@ -144,7 +149,14 @@ function DepositPageContent() {
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ referralId: refId, cutSize: selectedCut, termsAccepted }),
+        body: JSON.stringify({
+          referralId: refId,
+          cutSize: selectedCut,
+          termsAccepted,
+          // On-domain embedded checkout when the publishable key exists;
+          // hosted redirect stays the graceful fallback.
+          ...(depositEmbeddedAvailable() ? { mode: 'embedded' } : {}),
+        }),
       });
       const j = await res.json();
       if (!res.ok) {
@@ -159,7 +171,11 @@ function DepositPageContent() {
         setSubmitting(false);
         return;
       }
-      if (j?.url) {
+      if (j?.clientSecret && j?.connectAccountId) {
+        // Embedded: mount the payment form right here — no redirect.
+        setEmbedded({ clientSecret: j.clientSecret, connectAccountId: j.connectAccountId });
+        setSubmitting(false);
+      } else if (j?.url) {
         window.location.href = j.url;
       } else {
         setErrCode('checkout_failed');
@@ -499,6 +515,29 @@ function DepositPageContent() {
             banner instead of covered by it (the exact buyer every ad click
             sends is first-visit + mobile). 0px once a consent choice is made.
             Inert on desktop (md:static ignores bottom). */}
+        {embedded ? (
+          /* ── ON-DOMAIN PAYMENT (whitelabel) ────────────────────────────────
+             The Stripe form renders here, wrapped in our chrome — the buyer
+             never leaves buyhalfcow.com for the biggest charge we take. */
+          <div className="pt-3">
+            <p className="font-serif text-xl mb-1">
+              {selectedCutData ? `your ${selectedCutData.label.toLowerCase()} deposit` : 'your deposit'}
+            </p>
+            <p className="text-saddle text-sm mb-3">
+              fully refundable until {info.rancher.name} accepts · secured by stripe · we don&apos;t store card data
+            </p>
+            <DepositCheckoutMount clientSecret={embedded.clientSecret} connectAccountId={embedded.connectAccountId} />
+            <p className="text-center mt-3">
+              <button
+                type="button"
+                onClick={() => setEmbedded(null)}
+                className="text-saddle text-sm underline hover:text-charcoal"
+              >
+                &larr; change your cut or details
+              </button>
+            </p>
+          </div>
+        ) : (
         <div className="sticky -mx-4 md:mx-0 px-4 md:px-0 pt-3 pb-4 md:pb-0 md:static bg-bone md:bg-transparent border-t border-divider md:border-0" style={{ bottom: 'var(--consent-h, 0px)' }}>
           {/* error surfaces here, above the button, so it's never hidden under
               the sticky block on mobile */}
@@ -542,7 +581,7 @@ function DepositPageContent() {
             className="w-full bg-charcoal text-bone px-4 md:px-8 py-4 min-h-[48px] text-base hover:bg-saddle transition disabled:opacity-50 flex items-center justify-center"
           >
             {submitting
-              ? 'redirecting to stripe…'
+              ? 'securing your checkout…'
               : selectedCutData
                 ? `reserve your ${selectedCutData.label.toLowerCase()} — secure deposit →`
                 : 'reserve your share — secure deposit →'}
@@ -565,6 +604,7 @@ function DepositPageContent() {
             </a>
           </p>
         </div>
+        )}
 
         <div className="mt-8 pt-6 border-t border-divider text-center">
           <Link href={`/checkout/${refId}/ask`} className="text-saddle text-sm hover:underline">

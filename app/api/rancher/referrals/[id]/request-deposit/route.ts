@@ -200,7 +200,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       successUrl: `${SITE_URL}/checkout/${referralId}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${SITE_URL}/checkout/${referralId}/deposit?canceled=1`,
     });
-    checkoutUrl = checkout.url;
+    // Hosted mode (no `mode` passed) guarantees a url — narrow for TS.
+    checkoutUrl = checkout.url || '';
+    if (!checkoutUrl) throw new Error('no checkout url');
     paymentIntentId = checkout.paymentIntentId;
     sessionId = checkout.sessionId;
   } catch (e: any) {

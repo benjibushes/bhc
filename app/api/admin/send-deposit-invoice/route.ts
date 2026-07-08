@@ -164,6 +164,11 @@ export async function POST(req: Request) {
     successUrl: `${SITE_URL}/checkout/${referralId}/success?session_id={CHECKOUT_SESSION_ID}`,
     cancelUrl: `${SITE_URL}/checkout/${referralId}/deposit?canceled=1`,
   });
+  // Hosted mode (no `mode` passed) guarantees a url — narrow for TS + fail loud.
+  const checkoutUrl = session.url || '';
+  if (!checkoutUrl) {
+    return NextResponse.json({ error: 'Stripe returned no checkout url' }, { status: 502 });
+  }
 
   // Persist Payments row tracking the PI for webhook close-loop.
   try {
@@ -205,7 +210,7 @@ export async function POST(req: Request) {
       depositCents,
       fullSaleCents,
       chargedCents: depositCents + Math.round(fullSaleCents * feeRate),
-      checkoutUrl: session.url,
+      checkoutUrl,
     });
   } catch (e: any) {
     console.error('[send-deposit-invoice] email send failed:', e?.message);
@@ -268,7 +273,7 @@ export async function POST(req: Request) {
   return NextResponse.json({
     ok: true,
     referralId,
-    checkoutUrl: session.url,
+    checkoutUrl,
     depositCents,
     fullSaleCents,
   });
