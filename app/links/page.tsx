@@ -40,7 +40,8 @@ export default function LinksPage() {
           <p className="font-serif text-[22px] leading-none">buyhalfcow</p>
           <p className="text-[14px] text-saddle leading-relaxed max-w-[36ch] mx-auto">
             i connect families to verified ranches for real beef — a whole,
-            half, or quarter at a time. &mdash; Ben
+            half, or quarter at a time.{' '}
+            <span className="whitespace-nowrap">&mdash; Ben</span>
           </p>
         </div>
 
