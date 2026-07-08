@@ -39,6 +39,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
     group: 'PIPELINE', icon: '🤠', label: 'Ranchers', href: '/admin/ranchers', shortcut: 'g k',
     visibleTo: ['admin', 'onboarding'],
   },
+  { group: 'PIPELINE', icon: '📞', label: 'Sell Console', href: '/admin/sell', shortcut: 'g l' },
   { group: 'PIPELINE', icon: '📨', label: 'All deals', href: '/admin/referrals', shortcut: 'g r' },
   { group: 'PIPELINE', icon: '📬', label: 'Inquiries', href: '/admin/inquiries' },
   { group: 'PIPELINE', icon: '🕓', label: 'Lead timeline', href: '/admin/timeline' },

@@ -35,16 +35,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  // Validate: every supplied value must be a finite positive number
-  const ALLOWED_KEYS: Array<keyof AdminConfig> = [
+  // Validate: numeric keys must be finite non-negative numbers; boolean keys
+  // must be real booleans. funnelOfferOperatorCall used to be silently
+  // dropped here — the /admin/settings toggle saved "OK" but never persisted.
+  const NUMERIC_KEYS: Array<keyof AdminConfig> = [
     'stallThresholdDays',
     'highIntentCutoff',
     'migrationDeadlineDays',
     'capacityWarningPct',
   ];
+  const BOOLEAN_KEYS: Array<keyof AdminConfig> = ['funnelOfferOperatorCall'];
 
   const updates: Partial<AdminConfig> = {};
-  for (const key of ALLOWED_KEYS) {
+  for (const key of NUMERIC_KEYS) {
     if (!(key in body)) continue;
     const val = (body as any)[key];
     const num = Number(val);
@@ -55,6 +58,17 @@ export async function POST(request: Request) {
       );
     }
     (updates as any)[key] = num;
+  }
+  for (const key of BOOLEAN_KEYS) {
+    if (!(key in body)) continue;
+    const val = (body as any)[key];
+    if (typeof val !== 'boolean') {
+      return NextResponse.json(
+        { error: `Invalid value for ${key}: must be true or false` },
+        { status: 400 },
+      );
+    }
+    (updates as any)[key] = val;
   }
 
   if (Object.keys(updates).length === 0) {
