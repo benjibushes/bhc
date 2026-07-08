@@ -155,23 +155,23 @@ export default function ApplyForm() {
           {/* The server always returns wizardUrl on a real submission — the
               guards below only cover the hypothetical missing-field case
               (e.g. the honeypot's decoy response, which no human ever sees). */}
-          <p className="text-xs uppercase tracking-wider text-saddle font-semibold mb-3">
-            pre-approved
+          <p className="text-xs uppercase tracking-wider text-sage font-semibold mb-3">
+            you&apos;re in 🤝
           </p>
-          <h2 className="font-serif text-2xl text-charcoal mb-4">
-            You&apos;re in. Two paths to live.
+          <h2 className="font-serif text-3xl text-charcoal mb-3">
+            welcome to the network.
           </h2>
-          <p className="text-saddle text-sm sm:text-base leading-relaxed mb-4">
-            Step 1 (recommended): 15-min discovery call so we can answer
-            questions and tailor your setup. Step 2: setup wizard (5 min). Or
-            skip ahead and dive into the wizard now.
+          <p className="text-saddle text-sm sm:text-base leading-relaxed mb-5">
+            your ranch page is reserved. build it now — takes about 5 minutes,
+            and you can save and come back anytime. buyers in your state see
+            it the moment you go live.
           </p>
           {success.wizardUrl && (
             <a
               href={success.wizardUrl}
-              className="inline-flex items-center gap-2 px-7 py-3.5 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-divider"
+              className="inline-flex items-center gap-2 px-8 py-4 bg-charcoal text-bone text-sm font-medium tracking-wide uppercase transition-base hover:bg-saddle"
             >
-              Skip — open wizard now →
+              build my page — 5 minutes →
             </a>
           )}
         </div>
@@ -180,15 +180,15 @@ export default function ApplyForm() {
           <div className="border border-dust bg-bone p-6 space-y-4">
             <div>
               <p className="text-xs uppercase tracking-wider text-saddle font-semibold mb-2">
-                Recommended next step
+                or, if you&apos;d rather talk first
               </p>
               <h3 className="font-serif text-xl text-charcoal mb-2">
-                15-min discovery call with Ben
+                15-min call with Ben — totally optional
               </h3>
               <p className="text-sm text-saddle leading-relaxed">
-                Quick fit-check + Q&amp;A. Helps us tailor your wizard
-                setup. Onboarding call (30 min) comes after you complete
-                the wizard.
+                questions about pricing, processing, how buyers reach you —
+                grab a slot and we&apos;ll walk it together. your page link
+                stays live either way.
               </p>
             </div>
             {calEmbed ? (
@@ -330,6 +330,22 @@ export default function ApplyForm() {
         </div>
       </div>
 
+      {/* Fit-check + extras — OPTIONAL (stupid-simple signup 2026-07-08).
+          Four fields get a rancher in; everything below just helps Ben route
+          buyers faster. Collapsed by default so the form reads as one card. */}
+      <details className="group border border-dust bg-bone">
+        <summary className="cursor-pointer list-none p-5 sm:p-6 flex items-center justify-between gap-3">
+          <span>
+            <span className="block text-sm font-medium text-charcoal">
+              optional: 30 more seconds → buyers routed faster
+            </span>
+            <span className="block text-xs text-saddle mt-0.5">
+              volume, what you need most, how you sell today — skip it if you're in a hurry.
+            </span>
+          </span>
+          <span className="text-saddle text-lg leading-none group-open:rotate-45 transition-transform">+</span>
+        </summary>
+        <div className="px-0 pb-0 space-y-4">
       {/* Fit-check questions */}
       <div className="bg-bone border border-dust p-5 sm:p-6 space-y-5">
         <p className="text-xs uppercase tracking-wider text-saddle font-semibold">
@@ -338,7 +354,7 @@ export default function ApplyForm() {
 
         <div>
           <p className="text-sm font-medium text-charcoal mb-2">
-            How many head do you sell D2C per year? *
+            How many head do you sell D2C per year?
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {(['<5', '5-25', '25-100', '100+'] as VolumeBand[]).map((v) => (
@@ -360,7 +376,7 @@ export default function ApplyForm() {
 
         <div>
           <p className="text-sm font-medium text-charcoal mb-2">
-            Biggest constraint right now? *
+            Biggest constraint right now?
           </p>
           <div className="space-y-2">
             {(
@@ -422,7 +438,7 @@ export default function ApplyForm() {
 
         <div>
           <p className="text-sm font-medium text-charcoal mb-2">
-            Currently accept buyer deposits online (Stripe, Shopify, etc)? *
+            Currently accept buyer deposits online (Stripe, Shopify, etc)?
           </p>
           <div className="flex gap-3">
             {(['yes', 'no'] as const).map((v) => (
@@ -474,6 +490,9 @@ export default function ApplyForm() {
           {error}
         </div>
       )}
+
+        </div>
+      </details>
 
       <button
         type="submit"
