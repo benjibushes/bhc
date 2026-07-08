@@ -606,9 +606,16 @@ export async function POST(request: Request) {
     if (ADMIN_EMAIL_FOR_FORWARD) {
       try {
         const { sendEmail } = await import('@/lib/email');
+        // ONE-INBOX (2026-07-08): the forward is a WORKING copy, not a
+        // notification — replyTo points at the original sender so hitting
+        // reply in the admin inbox goes straight to the buyer/rancher
+        // (previously it looped back to the platform's reply-catch domain),
+        // and the subject stays clean so the human never sees our triage
+        // tag. Triage metadata lives in the context block below.
         await sendEmail({
           to: ADMIN_EMAIL_FOR_FORWARD,
-          subject: `[BHC inbound] ${classification.objectionCategory} · ${subject}`,
+          replyTo: from,
+          subject: `Re: ${subject}`,
           html: `<div style="font-family:monospace;font-size:12px;border-bottom:1px solid #ccc;padding-bottom:8px;margin-bottom:12px;">
 <strong>From:</strong> ${from}<br>
 <strong>To:</strong> ${Array.isArray(to) ? to.join(', ') : to}<br>
