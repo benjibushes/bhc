@@ -89,6 +89,12 @@ export const EXCLUDED_CRONS_24H: Readonly<Record<string, string>> = {
     'also dark-by-default (PRODUCT_STOCK_CHECKIN_ENABLED gate returns before withCronRun)',
   'weekly-scorecard':
     'weekly (Mondays 14:00 UTC) — a 24h expectation would false-alarm six days a week by design.',
+  'prospect-outreach-draft':
+    'dark-by-default: PROSPECT_OUTREACH_ENABLED gate returns BEFORE withCronRun — no Cron ' +
+    "Runs row while dark. MOVE to EXPECTED_CRONS_24H when the flag goes live.",
+  'prospect-outreach-send':
+    'dark-by-default (same PROSPECT_OUTREACH_ENABLED gate) + hourly-but-windowed: outside ' +
+    'Mon-Fri 9-5 MT it exits without acting by design.',
   'log-retention':
     'dark-by-default: the LOG_RETENTION_ENABLED gate returns BEFORE withCronRun, so no ' +
     'Cron Runs row exists while dark and the watchdog would alarm daily by design. ' +

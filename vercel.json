@@ -208,6 +208,14 @@
     {
       "path": "/api/cron/weekly-scorecard",
       "schedule": "0 14 * * 1"
+    },
+    {
+      "path": "/api/cron/prospect-outreach-draft",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/prospect-outreach-send",
+      "schedule": "20 * * * *"
     }
   ]
 }
