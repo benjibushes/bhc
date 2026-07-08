@@ -23,6 +23,8 @@ import RanchHeroCover, { RanchCoverFallback } from './RanchHeroCover';
 import CertificationBadges from './CertificationBadges';
 import FaqSection, { parseFaq, type FaqItem } from './FaqSection';
 import FulfillmentSection, { parseFulfillment } from './FulfillmentSection';
+import ProductCard from '../../components/ProductCard';
+import { loadProductsForRancher, type MarketplaceProduct } from '@/lib/marketplaceProducts';
 
 // Public rancher landing page — the unit of conversion. Verified partners
 // get full pricing + lead capture; prospects get the same shell with pricing
@@ -268,6 +270,19 @@ export default async function RancherPage(
   try {
     if (r['Custom Products']) customProducts = JSON.parse(r['Custom Products']);
   } catch (e) { logBadJson('Custom Products', e); }
+
+  // Live marketplace products (Rancher Products rows) — the rancher's real,
+  // buyable-today store. These sold on /shop but were INVISIBLE here (only the
+  // legacy Custom Products JSON rendered — the Silverline gap). Fail-soft: a
+  // read error just hides the section.
+  let liveProducts: MarketplaceProduct[] = [];
+  if (!isProspect) {
+    try {
+      liveProducts = await loadProductsForRancher(String(r.id || ''));
+    } catch (e) {
+      console.error(`[rancher-page] marketplace products fetch failed for ${slug}:`, e);
+    }
+  }
 
   // FAQ — long-text JSON array of {q,a}. parseFaq is defensive (bad JSON →
   // []) and logs via the shared logBadJson so operators can fix bad rows.
@@ -1107,6 +1122,32 @@ export default async function RancherPage(
           the same parsed list. Renders nothing when there are no questions.
          ───────────────────────────────────────────────────────────────────── */}
       <FaqSection items={faqItems} />
+
+      {/* ── LIVE MARKETPLACE PRODUCTS ────────────────────────────────────────
+          The rancher's real Rancher Products rows — buyable today on /shop.
+          Same ProductCard as the marketplace grid so a product renders
+          identically everywhere. Renders nothing when they list none.
+         ───────────────────────────────────────────────────────────────────── */}
+      {!isProspect && liveProducts.length > 0 && (
+        <section className="py-16 md:py-20">
+          <Container>
+            <div className="max-w-5xl mx-auto space-y-10">
+              <div className="text-center space-y-2">
+                <Pill tone="neutral" className="mx-auto">Shipped to your door</Pill>
+                <h2 className="font-serif text-3xl md:text-4xl">Shop {name} beef</h2>
+                <p className="text-charcoal/75 max-w-[52ch] mx-auto">
+                  smaller than a share, shipped nationwide — from this ranch to your door.
+                </p>
+              </div>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6">
+                {liveProducts.map((p) => (
+                  <ProductCard key={p.id} p={p} />
+                ))}
+              </div>
+            </div>
+          </Container>
+        </section>
+      )}
 
       {/* ── CUSTOM PRODUCTS ──────────────────────────────────────────────── */}
       {!isProspect && customProducts.length > 0 && (
