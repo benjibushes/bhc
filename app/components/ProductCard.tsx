@@ -42,6 +42,10 @@ export interface ProductCardProduct {
    *  links out to the rancher's own store via /go/[id] instead of BHC
    *  checkout. /shop never passes this. */
   externalHref?: string;
+  /** When set (and no externalHref), replaces the buy button with a quiet
+   *  note — used when the ranch can't take an online charge yet (Connect
+   *  not active) so a buyer is never sent into a checkout that 409s. */
+  buyNote?: string;
 }
 
 export default function ProductCard({ p, compact = false }: { p: ProductCardProduct; compact?: boolean }) {
@@ -112,6 +116,10 @@ export default function ProductCard({ p, compact = false }: { p: ProductCardProd
             >
               buy on their store &rarr;
             </a>
+          ) : p.buyNote ? (
+            <div className="text-[12.5px] text-saddle text-center border border-dust py-2.5 px-2">
+              {p.buyNote}
+            </div>
           ) : (
             <BuyButton
               productId={p.id}

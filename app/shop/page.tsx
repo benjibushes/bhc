@@ -47,8 +47,11 @@ export default async function MarketplacePage() {
   // pickup product. ISR stays intact: the full (small) set ships in the
   // payload and the client matches it to the buyer's state.
   const all = await loadMarketplaceProducts({ includeLocal: true, withStates: true });
-  const products = all.filter((p) => !p.localOnly);
-  const localProducts: LocalMarketProduct[] = all
+  // A ranch that can't take a direct charge yet (Connect != active) never
+  // lists on /shop — the buy route would 409 and dead-end the buyer.
+  const chargeable = all.filter((p) => p.rancherConnectActive !== false);
+  const products = chargeable.filter((p) => !p.localOnly);
+  const localProducts: LocalMarketProduct[] = chargeable
     .filter((p) => p.localOnly && p.rancherState)
     .map((p) => ({
       id: p.id,
