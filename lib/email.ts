@@ -5256,3 +5256,139 @@ export async function sendOperatorPreCallBrief(data: {
     }),
   });
 }
+
+// ─── WAITLIST NURTURE DRIP (#111, 2026-07-08) ────────────────────────────────
+// Four timed touches for qualified-but-unrouted buyers (lib/nurtureDrip.ts
+// owns WHO/WHEN; these own the words). House rules: one CTA, lowercase
+// subjects, reply-friendly, signed — Ben. All ride guardedSend (suppression,
+// frequency cap, Email Log claim) like every other buyer email.
+
+function nurtureShell(opts: { title: string; inner: string; ctaHref: string; ctaLabel: string }): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+h1 { font-family: Georgia, serif; font-size: 24px; margin: 0 0 20px; }
+p { color: #6B4F3F; margin: 12px 0; }
+.highlight { background: #F4F1EC; border-left: 3px solid #0E0E0E; padding: 12px 16px; margin: 20px 0; color: #0E0E0E; }
+.cta { display: inline-block; padding: 14px 28px; background: #0E0E0E; color: #F4F1EC !important; text-decoration: none; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin: 20px 0; }
+.footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>${opts.title}</h1>
+  ${opts.inner}
+  <a class="cta" href="${opts.ctaHref}">${opts.ctaLabel}</a>
+  <p style="font-size: 13px;">Questions? Just reply — it's really me.</p>
+  <div class="footer"><p>— Ben<br>BuyHalfCow</p></div>
+</div>
+</body>
+</html>`;
+}
+
+/** Touch 1 (day 2) — education: what a share actually costs + how it works. */
+export async function sendNurtureEducation(data: { firstName: string; email: string; state: string }) {
+  const subject = 'what a beef share actually costs (real numbers)';
+  return guardedSend({
+    templateName: 'sendNurtureEducation',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: nurtureShell({
+        title: 'The real math on a beef share',
+        inner: `
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>While we line up your rancher in ${esc(data.state)}, here's the thing most folks ask first: what does this actually cost?</p>
+  <div class="highlight">A share is priced per pound, cut how you want it, straight from one animal. Most families find a quarter fills a standard freezer drawer set; a half runs a chest freezer. The free guide walks the exact math — price per pound, freezer space, and how the deposit works.</div>
+  <p>Ten minutes of reading and you'll know more than 99% of grocery shoppers ever will about where beef prices come from.</p>`,
+        ctaHref: `${SITE_URL}/guide`,
+        ctaLabel: 'read the free guide',
+      }),
+    }),
+  });
+}
+
+/** Touch 2 (day 6) — shop bridge: same ranches, shipped this week. */
+export async function sendNurtureShopBridge(data: { firstName: string; email: string }) {
+  const subject = 'beef from these same ranches — shipped this week';
+  return guardedSend({
+    templateName: 'sendNurtureShopBridge',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: nurtureShell({
+        title: "Don't wait on a freezer full to taste it",
+        inner: `
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>Your share spot is still held — supply moves at the speed of ranchers, and we don't rush the folks raising your beef.</p>
+  <p>But the shop ships now: jerky, sampler boxes, and ground beef bundles from the same verified ranches, starting at $13. Shipping's included or shown up front — never a checkout surprise.</p>
+  <div class="highlight">Most share buyers start with a box. You'll know exactly whose beef you're committing a freezer to.</div>`,
+        ctaHref: `${SITE_URL}/shop`,
+        ctaLabel: 'see the shop',
+      }),
+    }),
+  });
+}
+
+/** Touch 3 (day 12) — check-in: reply-friendly, keeps the signal fresh. */
+export async function sendNurtureCheckIn(data: { firstName: string; email: string; state: string }) {
+  const subject = 'still want in on a share?';
+  return guardedSend({
+    templateName: 'sendNurtureCheckIn',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: nurtureShell({
+        title: 'Quick check-in',
+        inner: `
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>You're still on the ${esc(data.state)} list and nothing's needed from you — I just don't want to route a rancher's limited slots to anyone who's moved on.</p>
+  <div class="highlight">Still want a share this season? You don't have to do anything — you're in. If your timing or freezer situation changed, hit reply and tell me; it helps me route the right families first.</div>
+  <p>And if you're hungry meanwhile, the shop ships this week from the same ranches.</p>`,
+        ctaHref: `${SITE_URL}/member`,
+        ctaLabel: 'see your status',
+      }),
+    }),
+  });
+}
+
+/** Touch 4 (day 21) — the long-haul note: honest supply talk + refer-a-ranch. */
+export async function sendNurtureLongHaul(data: { firstName: string; email: string; state: string }) {
+  const subject = `the honest update on ${data.state.toLowerCase()} beef`;
+  return guardedSend({
+    templateName: 'sendNurtureLongHaul',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: nurtureShell({
+        title: 'Where things stand',
+        inner: `
+  <p>Hi ${esc(data.firstName)},</p>
+  <p>Straight talk: I only route buyers to ranchers I've verified, and in ${esc(data.state)} I'm still building that bench. Your spot holds — I'd rather be slow than send you to a ranch I wouldn't buy from myself.</p>
+  <div class="highlight">Want to speed it up? If you know a ranch that sells direct — farmers market, a sign on the highway, your cousin's neighbor — send them to buyhalfcow.com/sell or drop them on the map. Demand in your state is exactly what gets ranchers to say yes.</div>
+  <p>This is the last of these check-ins. When your rancher is ready, the next email you get introduces you to them by name.</p>`,
+        ctaHref: `${SITE_URL}/map/add-a-rancher`,
+        ctaLabel: 'know a ranch? add them',
+      }),
+    }),
+  });
+}
