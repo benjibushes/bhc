@@ -64,9 +64,13 @@ export async function POST(req: Request) {
       { status: 422 },
     );
   }
-  if (connectStatus !== 'active' && connectStatus !== 'onboarding') {
+  // Gate audit 2026-07-07: 'onboarding' was tolerated here — the ONLY deposit
+  // gate that did (every other path requires 'active'). An onboarding account
+  // can't reliably take a direct charge; the invoice link would dead-end the
+  // buyer Ben just closed on the phone. Active only, like everywhere else.
+  if (connectStatus !== 'active') {
     return NextResponse.json(
-      { error: `rancher Stripe Connect status is "${connectStatus}" — cannot send deposit` },
+      { error: `rancher Stripe Connect status is "${connectStatus}" — must be active before sending a deposit invoice` },
       { status: 422 },
     );
   }

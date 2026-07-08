@@ -159,6 +159,19 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     return { ok: false, error: 'price looks too high — double-check it (max $2,000). typo like 1999 instead of 19.99?' };
   }
 
+  // SHARE FENCE (gate audit 2026-07-07): whole/half/quarter shares are the
+  // qualified deposit rail — they must NEVER be one-click buyable from cold
+  // /shop traffic. A rancher naming a Bundle "Half Beef Share $1,900" would
+  // bypass the entire qualification gate. Eighth shares are the sanctioned
+  // tier product (their own category); word PAIRS only, so "half-pound
+  // jerky" or "quarter-inch cut" never false-positive.
+  if (/\b(whole|half|quarter)\s*[- ]?\s*(beef|cow|share|steer|animal)s?\b/i.test(name)) {
+    return {
+      ok: false,
+      error: 'whole, half, and quarter shares sell through your share pricing in My Page (buyers reserve with a deposit) — not as one-click products. list boxes, bundles, or an eighth share here instead.',
+    };
+  }
+
   const category = String(body.category || '').trim();
   if (!(PRODUCT_CATEGORIES as readonly string[]).includes(category)) {
     return { ok: false, error: 'pick a category.' };
