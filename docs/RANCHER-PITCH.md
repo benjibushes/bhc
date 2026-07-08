@@ -31,7 +31,11 @@ show up with the line of customers."**
   auto-expire and free the slot; lead flow only pauses on real live deals.
 - Non-exclusive. Pause or leave whenever. Free to start.
 
-Money (tier_v2 truth — never quote flat 10%):
+Money (tier_v2 truth — never quote flat 10%). **The kill line, live in the
+checkout math since 2026-07-08: "on our checkout, card processing is on us —
+the number you set is the number you get."** (True on product sales and all
+commission tiers; Operator deposits have no commission to absorb from, so
+don't extend the claim there.)
 - **Free tiers**: commission comes out of the buyer's deposit (Legacy
   Connect 10% · Pasture 7% · Ranch 3%). You pay nothing until money moves.
 - **Operator — $500/mo, 0% commission**: "we close, you ship." Ben runs the
