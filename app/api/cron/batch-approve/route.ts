@@ -15,7 +15,19 @@ import { requireCron } from '@/lib/cronAuth';
 import { triggerLaunchWarmup } from '@/lib/triggerLaunchWarmup';
 import jwt from 'jsonwebtoken';
 
-export const maxDuration = 120;
+// 120 → 300 (2026-07-08): run durations grew 52s → 104s over a week as the
+// waitlist-retry pool expanded, crossed 120s on Jul 7, and Vercel hard-killed
+// the run mid-list two days straight — no Cron Runs row (withCronRun writes
+// in `finally`, which a hard kill never reaches) and buyers late in the
+// queue never attempted. Paired with the SOFT_DEADLINE_MS time-box below so
+// a long run exits cleanly and visibly instead of being killed silently.
+export const maxDuration = 300;
+
+// Stop dispatching new work at this run age and exit CLEANLY: the go-live
+// block, Telegram summary, and Cron Runs row all still land inside
+// maxDuration, and the row carries a timeBoxed marker so truncation is
+// visible. ~60s headroom for the reporting tail.
+const SOFT_DEADLINE_MS = 240_000;
 
 import { JWT_SECRET } from '@/lib/secrets';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
@@ -39,6 +51,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
   if (isMaintenanceMode()) {
     return { status: 'maintenance-blocked', recordsTouched: 0, notes: 'MAINTENANCE_MODE=true' };
   }
+
+  const runStartMs = Date.now();
+  // Set when a loop hits SOFT_DEADLINE_MS; forces status='partial' + a note
+  // so a truncated morning is a visible signal, never a silent one.
+  let timeBoxedAt = '';
+  const overDeadline = () => Date.now() - runStartMs > SOFT_DEADLINE_MS;
 
   // ── CAPACITY COUNTER SELF-HEAL ──────────────────────────────────────────
     // The increment/decrement counter on ranchers can drift (missed decrements,
@@ -163,6 +181,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
     const errors: string[] = [];
 
     for (const consumer of pending as any[]) {
+      if (overDeadline()) {
+        timeBoxedAt = `pending@${approved}/${pending.length}`;
+        break;
+      }
       try {
         const intentClassification = consumer['Intent Classification'] || '';
         // Derive segment: use stored Segment field if present, otherwise infer from Order Type/Budget
@@ -433,6 +455,10 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
       for (let qIdx = 0; qIdx < queue.length; qIdx++) {
         const consumer = queue[qIdx].c;
+        if (overDeadline()) {
+          timeBoxedAt = timeBoxedAt || `waitlist@${qIdx}/${queue.length}`;
+          break;
+        }
         if (waitlistedMatched >= DAILY_INTRO_CAP) {
           // FIX 2026-05-19: previously computed `cappedSkipped = queue.length
           // - waitlistedRetried - unqualifiedSkipped`. That mixed buckets —
@@ -545,14 +571,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
 
 📥 Pending reviewed: ${pending.length}
 ✅ Approved: ${approved}
-🤝 Matched to ranchers: ${matched}${ranchersGoLive > 0 ? `\n🚀 Ranchers auto-published: ${ranchersGoLive}` : ''}${waitlistedMatched > 0 ? `\n🔄 Waitlisted re-matched: ${waitlistedMatched}/${waitlistedRetried}` : ''}${capacityFixed > 0 ? `\n🔧 Capacity counters fixed: ${capacityFixed}` : ''}${errors.length > 0 ? `\n⚠️ Errors: ${errors.length} (${errors.slice(0, 3).join(', ')})` : ''}`;
+🤝 Matched to ranchers: ${matched}${ranchersGoLive > 0 ? `\n🚀 Ranchers auto-published: ${ranchersGoLive}` : ''}${waitlistedMatched > 0 ? `\n🔄 Waitlisted re-matched: ${waitlistedMatched}/${waitlistedRetried}` : ''}${capacityFixed > 0 ? `\n🔧 Capacity counters fixed: ${capacityFixed}` : ''}${errors.length > 0 ? `\n⚠️ Errors: ${errors.length} (${errors.slice(0, 3).join(', ')})` : ''}${timeBoxedAt ? `\n⏱ Time-boxed at ${Math.round(SOFT_DEADLINE_MS / 1000)}s (${timeBoxedAt}) — remainder picked up tomorrow.` : ''}`;
 
     await sendTelegramUpdate(summary);
 
   return {
-    status: errors.length > 0 ? 'partial' : 'success',
+    status: errors.length > 0 || timeBoxedAt ? 'partial' : 'success',
     recordsTouched: approved + matched + ranchersGoLive + waitlistedMatched + capacityFixed,
-    notes: `approved=${approved} matched=${matched} live=${ranchersGoLive} waitlist=${waitlistedMatched}/${waitlistedRetried} capFix=${capacityFixed} errs=${errors.length} unqualified=${unqualifiedSkipped} capped=${cappedSkipped}`,
+    notes: `approved=${approved} matched=${matched} live=${ranchersGoLive} waitlist=${waitlistedMatched}/${waitlistedRetried} capFix=${capacityFixed} errs=${errors.length} unqualified=${unqualifiedSkipped} capped=${cappedSkipped}${timeBoxedAt ? ` timeBoxed=${timeBoxedAt}` : ''}`,
     skipReasonBreakdown: Object.keys(unqualifiedReasons).length > 0 ? unqualifiedReasons : undefined,
   };
 }
