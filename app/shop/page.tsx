@@ -46,7 +46,7 @@ export default async function MarketplacePage() {
   // location-matched "near you" rail — a TX buyer still never sees an MT
   // pickup product. ISR stays intact: the full (small) set ships in the
   // payload and the client matches it to the buyer's state.
-  const all = await loadMarketplaceProducts({ includeLocal: true });
+  const all = await loadMarketplaceProducts({ includeLocal: true, withStates: true });
   const products = all.filter((p) => !p.localOnly);
   const localProducts: LocalMarketProduct[] = all
     .filter((p) => p.localOnly && p.rancherState)

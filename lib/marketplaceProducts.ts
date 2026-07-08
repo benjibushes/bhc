@@ -127,7 +127,7 @@ export function isLocalPickupRow(r: any): boolean {
  * pickup product outside that ranch's page.
  */
 export async function loadMarketplaceProducts(
-  opts?: { includeLocal?: boolean },
+  opts?: { includeLocal?: boolean; withStates?: boolean },
 ): Promise<MarketplaceProduct[]> {
   let rows: any[] = [];
   try {
@@ -135,15 +135,22 @@ export async function loadMarketplaceProducts(
   } catch {
     return [];
   }
-  // Ranch-state join for the farmers-market rail (RANCHERS is cache-allowlisted,
-  // so this is a Redis hit on the hot path). Best-effort: on failure every
-  // product gets rancherState '' and the local rail simply doesn't render.
+  // Ranch-state join for the farmers-market rail — OPT-IN via withStates
+  // (only /shop needs it). PROD INCIDENT 2026-07-08: doing this join
+  // unconditionally put a full Ranchers read on EVERY rancher-page render;
+  // the shared Redis cache can't serve inside prerender contexts (no-store
+  // fetch → "Dynamic server usage" → treated as miss), so each render hit
+  // Airtable raw and expired-ISR rancher pages started timing out into
+  // 500s. Best-effort: on failure every product gets rancherState '' and
+  // the local rail simply doesn't render.
   const stateByRancher: Record<string, string> = {};
-  try {
-    for (const r of (await getAllRecords(TABLES.RANCHERS)) as any[]) {
-      stateByRancher[r.id] = normalizeState(r['State']) || '';
-    }
-  } catch { /* rail degrades to nationwide-only */ }
+  if (opts?.withStates === true) {
+    try {
+      for (const r of (await getAllRecords(TABLES.RANCHERS)) as any[]) {
+        stateByRancher[r.id] = normalizeState(r['State']) || '';
+      }
+    } catch { /* rail degrades to nationwide-only */ }
+  }
   return rows
     .filter((r) => isSellableRow(r) || (opts?.includeLocal === true && isLocalPickupRow(r)))
     .map((r) => ({
