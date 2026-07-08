@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server';
 import { resolveProductPurchase } from '@/lib/productBuyGates';
 import { createProductPaymentIntent } from '@/lib/productPaymentIntent';
+import { ensureApplePayDomains } from '@/lib/applePayDomain';
 import { isDemoMode } from '@/lib/demo/demoMode';
 import { rateLimit } from '@/lib/rateLimit';
 
@@ -70,6 +71,15 @@ export async function POST(request: Request) {
   if (isDemoMode()) {
     return NextResponse.json({ demoUrl: '/checkout/DEMO/product' });
   }
+
+  // Wallets (PR D): register our payment-method domains on this rancher's
+  // account so Apple Pay renders. Fire-and-forget — never blocks the mint;
+  // an unvalidated domain silently degrades to card-only.
+  void ensureApplePayDomains({
+    id: resolved.rancherId,
+    connectAccountId: resolved.connectAccountId,
+    alreadyRegistered: resolved.rancher['Apple Pay Domain Registered'] === true,
+  }).catch(() => {});
 
   try {
     const { clientSecret, totalCents } = await createProductPaymentIntent({
