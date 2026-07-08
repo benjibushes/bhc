@@ -1,6 +1,6 @@
 # BuyHalfCow — Operating Manual
 
-*Written 2026-07-08, the day everything went live. This is the one document
+*Written 2026-07-08, the day everything went live. Sealed the same night after PRs #341–#349 (time-box honesty, farmers market, onboarding war-ready, payments layer, nurture). This is the one document
 that says what the business is, how the machine runs itself, what Ben reads,
 and what Ben does. If you only keep one doc open, keep this one.*
 
@@ -72,9 +72,14 @@ reports to Telegram daily from tomorrow; after the first sane report, flip
 to `true` (or tell Claude "flip waiting activation"). This is deliberate:
 one day of evidence before the largest send surface goes hot.
 
+**Armed at dry-run (2):** `NURTURE_ENABLED` — the waitlist drip (built
+2026-07-08 late, PR #348: d2 education · d6 shop bridge · d12 check-in ·
+d21 long-haul). First report ~16:30 UTC daily; after one sane report say
+"flip nurture live."
+
 **Deliberately OFF (not forgotten):**
-- `EMAIL_SEQUENCES_ENABLED` — old nurture engine is dead; nurture is a
-  scoped REBUILD (backlog #111, say "turn nurture on").
+- `EMAIL_SEQUENCES_ENABLED` — the OLD nurture engine stays dead; the new
+  nurture-drip cron replaced it (see armed switches above).
 - `NATIONWIDE_ROUTING_ENABLED` — strategy lock: local-first until supply.
 - `CAMPAIGN_LIVE` / `CAMPAIGN_ROUTER_ENABLED` — drop-day levers.
 - `CAPACITY_LIBERATOR_ENABLED` — overlaps stale-hold expiry (would
@@ -129,8 +134,14 @@ relationship flags (stalled intros, ranchers with zero closes in 30d).
   capacity exists; that's the only sanctioned waitlist touch.
 - **Payment plans?** Parked, researched, ready:
   docs/PAYMENT-PLANS-BACKUP-BUILD.md. Say "build payment plans".
-- **Nurture?** Say "turn nurture on" — it ships dark, then dry-run, then
-  live, same 3-state pattern as everything else.
+- **Nurture?** BUILT + armed at dry-run (#348). Read one report, say
+  "flip nurture live."
+- **Money story (2026-07-08 final):** net-your-number is live — BHC's fee
+  absorbs the card-processing estimate on its checkout. Sayable: "card
+  processing is on us — the number you set is the number you get." Never
+  "no Stripe fees"; never extended to Operator DEPOSITS. Ranchers with
+  their own stores: per-product external link routes their page's buyers
+  to their store via /go/store (attribution kept).
 
 ## 7. Break-glass
 
