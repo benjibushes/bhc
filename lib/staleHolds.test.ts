@@ -48,15 +48,26 @@ test('no timestamps at all → never guess, never expire', () => {
   assert.equal(isStaleHold({ id: 'x', Status: 'Intro Sent' } as any, NOW), false);
 });
 
-test('selectStaleHolds: oldest first, capped', () => {
+test('selectStaleHolds: oldest first, capped, unlinked rows excluded', () => {
   const rows = [
-    stale({ id: 'newer', 'Intro Sent At': days(25) }),
-    stale({ id: 'oldest', 'Intro Sent At': days(90) }),
-    stale({ id: 'fresh', 'Intro Sent At': days(3) }),
-    stale({ id: 'mid', 'Intro Sent At': days(40) }),
+    stale({ id: 'newer', 'Intro Sent At': days(25), Rancher: ['recA'] }),
+    stale({ id: 'oldest', 'Intro Sent At': days(90), Rancher: ['recA'] }),
+    stale({ id: 'fresh', 'Intro Sent At': days(3), Rancher: ['recA'] }),
+    stale({ id: 'mid', 'Intro Sent At': days(40), Rancher: ['recA'] }),
+    stale({ id: 'unlinked', 'Intro Sent At': days(200) }), // no Rancher → frees nothing → excluded
   ];
   const picked = selectStaleHolds(rows as any, NOW, { cap: 2 });
   assert.deepEqual(picked.map((r) => r.id), ['oldest', 'mid']);
+});
+
+test('selectStaleHolds: capacity-blocked ranchers jump the queue', () => {
+  const rows = [
+    stale({ id: 'old-noop', 'Intro Sent At': days(90), Rancher: ['recIdle'] }),
+    stale({ id: 'newer-blocked', 'Intro Sent At': days(25), Rancher: ['recFull'] }),
+    stale({ id: 'mid-noop', 'Intro Sent At': days(40), Rancher: ['recIdle'] }),
+  ];
+  const picked = selectStaleHolds(rows as any, NOW, { cap: 2, priorityRancherIds: new Set(['recFull']) });
+  assert.deepEqual(picked.map((r) => r.id), ['newer-blocked', 'old-noop']);
 });
 
 test('freedByRancher groups by first Rancher link', () => {

@@ -454,7 +454,7 @@ export async function restoreBuyerAfterClosedLost(buyerId: string, referralId: s
     const safeRefId = escapeAirtableValue(referralId);
     const otherActive: any[] = await getAllRecords(
       TABLES.REFERRALS,
-      `AND(SEARCH("${safeBuyerId}", ARRAYJOIN({Buyer})), {Status} != "Closed Won", {Status} != "Closed Lost", RECORD_ID() != "${safeRefId}")`,
+      `AND(SEARCH("${safeBuyerId}", ARRAYJOIN({Buyer})), {Status} != "Closed Won", {Status} != "Closed Lost", {Status} != "Dormant", RECORD_ID() != "${safeRefId}")`,
     );
     const now = new Date().toISOString();
     if (otherActive.length === 0) {

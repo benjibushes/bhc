@@ -74,6 +74,15 @@ export async function sendOperatorSignal(input: SignalInput): Promise<{ sent: bo
       return { sent: false, reason: 'deduped' };
     }
     _dedupe[dedupeKey] = Date.now();
+    // Cross-instance dedupe (bulletproof 2026-07-08): the in-memory map is
+    // per-lambda, so a cold-start burst fanned one alert across N instances.
+    // claimOnce (Redis SET NX EX) makes the window global; fails OPEN when
+    // Redis is absent — worst case is the old per-instance behavior.
+    try {
+      const { claimOnce } = await import('@/lib/rancherCapacity');
+      const won = await claimOnce(`signal:${dedupeKey}`, Math.max(60, Math.floor(dedupeWindowMs / 1000)));
+      if (!won) return { sent: false, reason: 'deduped-global' };
+    } catch { /* fail open */ }
   }
 
   // ── URGENCY FLOOR (2026-07-05, noise cut) ────────────────────────────────

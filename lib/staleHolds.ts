@@ -22,11 +22,12 @@
 //     of Last Rancher Activity At / Last Buyer Activity At / Intro Sent At /
 //     created time is older than the cutoff.
 //
-// Expiry flips Status → 'Dormant': the slot frees (countHeldReferrals skips
-// Dormant), the stored counter self-heals within ~2h (batch-approve
-// recompute), the buyer stays re-marketable (lib/demandRouter treats Dormant
-// as not-in-deal), and the daily stuck-buyer-recovery cron can route the
-// freed capacity the next morning.
+// Expiry flips Status → 'Dormant' AND (bulletproof 2026-07-08) the cron
+// closes the loop itself: it resets stranded buyers (MATCHED → READY when no
+// live deal remains) and resyncs the capacity counters (Redis + Airtable
+// mirror) in the same run — freed slots are visible to the matcher
+// immediately and the 14:30 UTC stuck-buyer-recovery pass routes them the
+// same day.
 
 export interface StaleHoldRow {
   id: string;
@@ -77,17 +78,36 @@ export function isStaleHold(
   return now - newest > staleDays * 24 * 60 * 60 * 1000;
 }
 
-/** Select expirable rows (oldest first), capped for rate-limit sanity. */
+/**
+ * Select expirable rows, capped for rate-limit sanity.
+ * Bulletproof 2026-07-08:
+ *  - rows with NO Rancher link are excluded — they hold no counted capacity
+ *    (countHeldReferrals attributes via the Rancher link), so flipping them
+ *    frees nothing while burning run-cap.
+ *  - opts.priorityRancherIds (capacity-blocked OPERATIONAL ranchers) sort
+ *    FIRST — the flips that actually reopen routing land on day one instead
+ *    of behind no-op backlog. Oldest-first within each group.
+ */
 export function selectStaleHolds(
   referrals: StaleHoldRow[],
   now: number,
-  opts?: { staleDays?: number; cap?: number },
+  opts?: { staleDays?: number; cap?: number; priorityRancherIds?: Set<string> },
 ): StaleHoldRow[] {
   const staleDays = opts?.staleDays ?? DEFAULT_STALE_DAYS;
   const cap = opts?.cap ?? 50;
+  const priority = opts?.priorityRancherIds ?? new Set<string>();
+  const linkedRancher = (r: StaleHoldRow): string => {
+    const link = Array.isArray(r['Rancher']) ? (r['Rancher'] as unknown[]) : [];
+    return link.length > 0 ? String(link[0]) : '';
+  };
   return referrals
-    .filter((r) => isStaleHold(r, now, staleDays))
-    .sort((a, b) => newestActivityMs(a) - newestActivityMs(b))
+    .filter((r) => isStaleHold(r, now, staleDays) && linkedRancher(r) !== '')
+    .sort((a, b) => {
+      const ap = priority.has(linkedRancher(a)) ? 0 : 1;
+      const bp = priority.has(linkedRancher(b)) ? 0 : 1;
+      if (ap !== bp) return ap - bp;
+      return newestActivityMs(a) - newestActivityMs(b);
+    })
     .slice(0, cap);
 }
 
