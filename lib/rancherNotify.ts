@@ -104,6 +104,23 @@ export async function notifyRancherDepositPaid(
 
   const rancherId: string | undefined = String(rancher['id'] || rancher['Id'] || '') || undefined;
 
+  // PWA push (2026-07-08) — the fastest channel to a rancher's pocket.
+  // Best-effort + dark-safe: sendRancherPush no-ops without VAPID env or
+  // subscriptions, never throws, and rides ALONGSIDE email/SMS (a phone
+  // buzzing on the kitchen counter beats an inbox for "call the buyer now").
+  if (rancherId) {
+    try {
+      const { sendRancherPush } = await import('@/lib/rancherPush');
+      await sendRancherPush(rancherId, {
+        title: opts.isReminder ? `reminder: ${buyerFirstName} is waiting` : `💰 deposit paid — call ${buyerFirstName}`,
+        body: `${buyerFirstName}${state ? ` (${state})` : ''} put a deposit down${cut ? ` on a ${cut}` : ''}${buyerPhone ? ` — ${buyerPhone}` : ''}. tap Accept Slot to lock them in.`,
+        url: '/rancher#deals',
+      });
+    } catch (e: any) {
+      console.warn('[rancherNotify] push skipped (non-fatal):', e?.message);
+    }
+  }
+
   // Email — gated on having an address. Suppression handled inside sendEmail.
   if (rancherEmail) {
     try {
