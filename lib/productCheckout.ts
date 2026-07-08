@@ -134,6 +134,42 @@ export interface CreateProductCheckoutInput {
 }
 
 /**
+ * THE settlement contract — the ONE metadata builder both mint paths share
+ * (Checkout Session here, raw PaymentIntent in lib/productPaymentIntent.ts).
+ * settleProductPurchase reads ONLY these keys; sharing the builder makes
+ * metadata drift between the two paths structurally impossible. Pure —
+ * unit-tested key-for-key in lib/productCheckout.test.ts. Add a key here and
+ * BOTH rails carry it.
+ */
+export function buildProductMetadata(
+  input: Pick<
+    CreateProductCheckoutInput,
+    'productId' | 'productName' | 'rancherId' | 'rancherName' | 'buyerEmail' | 'buyerName' | 'displayCents' | 'baseCents' | 'depositStyle'
+  >,
+  charge: ProductCharge,
+): Record<string, string> {
+  return {
+    type: 'product_purchase',
+    productId: input.productId,
+    productName: input.productName,
+    rancherId: input.rancherId,
+    rancherName: input.rancherName,
+    buyerEmail: input.buyerEmail || '',
+    buyerName: input.buyerName || '',
+    displayCents: String(input.displayCents),
+    baseCents: String(input.baseCents),
+    marginCents: String(charge.applicationFeeCents),
+    // Shipping passthrough — settlement adds it to Buyer Paid + Rancher
+    // Payout; it is never part of the margin.
+    shippingCents: String(charge.shippingCents),
+    // Units — settlement scales Buyer Paid/Payout + decrements stock by this.
+    quantity: String(charge.quantity),
+    // C-1.5: settlement branches receipt/rancher/operator copy on this.
+    depositStyle: input.depositStyle ? 'true' : 'false',
+  };
+}
+
+/**
  * Create the Stripe Connect direct-charge Checkout Session for a low-ticket
  * product. Collects the shipping address (the rancher ships it). Shipping
  * charge: when the product carries a 'Shipping Cost' (shippingCents > 0) it
@@ -225,25 +261,7 @@ export async function createProductCheckout(
       ],
       payment_intent_data: {
         application_fee_amount: charge.applicationFeeCents,
-        metadata: {
-          type: 'product_purchase',
-          productId: input.productId,
-          productName: input.productName,
-          rancherId: input.rancherId,
-          rancherName: input.rancherName,
-          buyerEmail: input.buyerEmail || '',
-          buyerName: input.buyerName || '',
-          displayCents: String(input.displayCents),
-          baseCents: String(input.baseCents),
-          marginCents: String(charge.applicationFeeCents),
-          // Shipping passthrough — settlement adds it to Buyer Paid + Rancher
-          // Payout; it is never part of the margin.
-          shippingCents: String(charge.shippingCents),
-          // Units — settlement scales Buyer Paid/Payout + decrements stock by this.
-          quantity: String(charge.quantity),
-          // C-1.5: settlement branches receipt/rancher/operator copy on this.
-          depositStyle: input.depositStyle ? 'true' : 'false',
-        },
+        metadata: buildProductMetadata(input, charge),
       },
       // Embedded ⇒ return_url (Stripe redirects the parent page out of the iframe
       // on completion). Hosted ⇒ success/cancel. Never both — Stripe 400s.
