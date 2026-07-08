@@ -118,6 +118,30 @@ export default async function ProductCheckoutPage({
           </p>
         ) : null}
 
+        {/* Buy-moment reassurance (checkout teardown 2026-07-07): delivery
+            expectation + honest scarcity + the guarantee, ABOVE the payment
+            form — the exact spot purchase anxiety peaks. Every line is
+            data-true or a standing operational promise; nothing fabricated. */}
+        <div className="text-[12.5px] text-saddle leading-relaxed mb-4 space-y-1">
+          {!p.depositStyle && (
+            <p>
+              {p.shipsInDays
+                ? <>ships from the ranch within ~{p.shipsInDays} {p.shipsInDays === 1 ? 'day' : 'days'} — tracking hits your inbox the moment it&rsquo;s on the way.</>
+                : <>ships direct from the ranch — tracking hits your inbox the moment it&rsquo;s on the way.</>}
+            </p>
+          )}
+          {!soldOut && p.ordersLeft !== null && p.ordersLeft <= 10 && (
+            <p>{p.ordersLeft} {p.ordersLeft === 1 ? 'order' : 'orders'} left from this batch.</p>
+          )}
+          <p>
+            if anything shows up wrong or freezer-burned, we make it right — no forms, no runaround.
+          </p>
+        </div>
+
+        {/* Warm up Stripe's origin while the buyer reads the summary —
+            shaves the iframe's connection setup off perceived load time. */}
+        <link rel="preconnect" href="https://js.stripe.com" />
+
         <CheckoutMount productId={p.id} quantity={quantity} />
 
         <TrustStrip className="text-xs mt-5" />

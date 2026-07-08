@@ -131,7 +131,7 @@ export async function POST(request: Request) {
       depositStyle: product['Deposit Style'] === true,
       shippingCents,
       successUrl: `${SITE_URL}/order/success`,
-      cancelUrl: `${SITE_URL}/order/cancelled`,
+      cancelUrl: `${SITE_URL}/order/cancelled?pid=${product.id}`,
     });
     return NextResponse.json({
       url,

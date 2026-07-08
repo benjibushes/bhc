@@ -446,7 +446,11 @@ export async function POST(request: Request) {
         // idempotent via claimOnce + existing-order lookup); permanent → 200.
         if (metaType === 'product_purchase') {
           try {
-            await settleProductPurchase(pi);
+            // accountId = the connected account (event.account, resolved at
+            // :175) — lets settlement fetch pi.latest_charge when the payload
+            // PI is charges-less (modern API shape). Without it the ship-to/
+            // email recovery in settleProductPurchase is dead code.
+            await settleProductPurchase(pi, accountId);
           } catch (e: any) {
             console.error('[stripe-connect] product_purchase settlement failed:', e);
             await flipStripeEventFailed(event.id, e?.message || 'unknown').catch(() => {});

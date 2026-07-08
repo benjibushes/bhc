@@ -146,7 +146,7 @@ export async function POST(request: Request) {
       mode: wantEmbedded ? 'embedded' : 'hosted',
       returnUrl: `${SITE_URL}/order/success`,
       successUrl: `${SITE_URL}/order/success`,
-      cancelUrl: `${SITE_URL}/order/cancelled`,
+      cancelUrl: `${SITE_URL}/order/cancelled?pid=${product.id}`,
     });
     // ── Meta Conversions API: server-side InitiateCheckout ──────────────
     // Buyer started checkout for this product. Server fire survives ATT/adblock

@@ -165,3 +165,23 @@ test('price ceiling: fat-fingered 1999-instead-of-19.99 is rejected; $2,000 exac
   assert.equal(validateProductInput({ ...base, displayPrice: 2000.01 }).ok, false);
   assert.equal(validateProductInput({ ...base, displayPrice: 19990 }).ok, false);
 });
+
+test('SHARE FENCE: whole/half/quarter share names are rejected; boxes + eighth share + half-pound pass', () => {
+  const base = { displayPrice: 1900, category: 'Bundle' };
+  assert.equal(validateProductInput({ ...base, name: 'Half Beef Share' }).ok, false);
+  assert.equal(validateProductInput({ ...base, name: 'half cow deposit' }).ok, false);
+  assert.equal(validateProductInput({ ...base, name: 'QUARTER-BEEF bundle' }).ok, false);
+  assert.equal(validateProductInput({ ...base, name: 'Whole Animal' }).ok, false);
+  assert.equal(validateProductInput({ ...base, name: 'Whole steer, pasture raised' }).ok, false);
+  // legit products must never false-positive
+  assert.equal(validateProductInput({ ...base, name: 'Half-Pound Jerky 3-Pack', displayPrice: 25, category: 'Jerky' }).ok, true);
+  assert.equal(validateProductInput({ ...base, name: 'Eighth Share', displayPrice: 749, category: 'Eighth Share' }).ok, true);
+  assert.equal(validateProductInput({ ...base, name: '20lb Ground Beef Box', displayPrice: 280, category: 'Ground Box' }).ok, true);
+});
+
+test('PATCH merge regression: shippingCost survives an unrelated content edit', () => {
+  // Direct validator check of the fix's contract: absent shippingCost clears,
+  // present value persists — the route now always threads the existing value.
+  const withShip = validateProductInput({ name: 'Jerky', displayPrice: 25, category: 'Jerky', shippingCost: 8.5 });
+  assert.ok(withShip.ok && withShip.fields['Shipping Cost'] === 8.5);
+});

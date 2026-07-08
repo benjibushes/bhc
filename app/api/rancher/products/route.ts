@@ -307,6 +307,10 @@ export async function PATCH(request: Request) {
       shipsInDays: 'shipsInDays' in body ? body.shipsInDays : (product['Ships In Days'] ?? null),
       packaging: 'packaging' in body ? body.packaging : product['Packaging'],
       feeds: 'feeds' in body ? body.feeds : product['Feeds'],
+      // Audit fix (2026-07-07): shippingCost was MISSING from this merge — any
+      // content edit re-validated without it and silently CLEARED the row's
+      // 'Shipping Cost' (validator writes null when absent).
+      shippingCost: 'shippingCost' in body ? body.shippingCost : (product['Shipping Cost'] ?? null),
     };
     const v = validateProductInput(merged);
     if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
