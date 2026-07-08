@@ -369,6 +369,10 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       customer_email: input.buyerEmail,
       payment_intent_data: {
         application_fee_amount: platformFeeCents,
+        // Card-statement anchor — direct charges print the rancher's Stripe
+        // descriptor; the suffix adds the name the buyer recognizes (dispute
+        // prevention on the highest-ticket charge). Truncated to 22 chars total.
+        statement_descriptor_suffix: 'BUYHALFCOW',
         metadata: {
           type: 'buyer_deposit',
           referralId: input.referralId,

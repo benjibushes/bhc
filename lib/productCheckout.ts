@@ -270,6 +270,10 @@ export async function createProductCheckout(
       payment_intent_data: {
         application_fee_amount: charge.applicationFeeCents,
         metadata: buildProductMetadata(input, charge),
+        // Card-statement anchor — direct charges print the rancher's Stripe
+        // descriptor; the suffix adds the name the buyer recognizes (dispute
+        // prevention). Stripe truncates prefix+suffix to 22 chars.
+        statement_descriptor_suffix: 'BUYHALFCOW',
       },
       // Embedded ⇒ return_url (Stripe redirects the parent page out of the iframe
       // on completion). Hosted ⇒ success/cancel. Never both — Stripe 400s.
