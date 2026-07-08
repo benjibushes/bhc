@@ -20,6 +20,7 @@ import {
   getAllRecords,
   getRancherBySlug,
   escapeAirtableValue,
+  getRecordById,
 } from '@/lib/airtable';
 import { incrementCapacity, decrementCapacity, syncCapacityToAirtable, claimOnce } from '@/lib/rancherCapacity';
 import { resolveBuyerSession, setBuyerSessionCookie } from '@/lib/buyerAuth';
@@ -145,6 +146,10 @@ export async function POST(req: Request) {
   const buyerPhone = phoneInput;
   let consumerId = existingSession?.consumerId || '';
   let adoptedExisting = false;
+  // QUIZ GATE state — set true only when the resolved consumer carries a
+  // 'Qualified At' stamp (the funnel+quiz completion mark). Checked below
+  // before any referral/session minting.
+  let quizQualified = false;
 
   if (!consumerId) {
     try {
@@ -153,6 +158,7 @@ export async function POST(req: Request) {
       if (existing.length > 0) {
         adoptedExisting = true;
         consumerId = existing[0].id;
+        quizQualified = !!existing[0]['Qualified At'];
         buyerName = buyerName || existing[0]['Full Name'] || '';
         buyerState = buyerState || existing[0]['State'] || '';
         // Backfill Phone/State on the existing Consumer when blank so the
@@ -183,7 +189,21 @@ export async function POST(req: Request) {
           catch (e: any) { console.warn('[checkout/reserve] consumer backfill skipped:', e?.message); }
         }
       } else {
-        // Field set lives in lib/reserveDeposit (buildReserveConsumerFields,
+        // QUIZ GATE (founder rule 2026-07-08): a share deposit is NEVER sold
+        // to someone who hasn't been through the quiz. A brand-new email has
+        // by definition not taken it — 409 { fallback:true } sends them to
+        // /access?rancher=<slug>, which pre-pins this ranch so they land
+        // right back here qualified. (Campaign /r/[token] links are exempt
+        // by construction — those grants only mint for already-qualified
+        // waitlist buyers.)
+        return NextResponse.json(
+          {
+            error: 'Take the 90-second quiz first — it locks your spot with this ranch.',
+            fallback: true,
+          },
+          { status: 409 },
+        );
+        // (unreachable) Field set lives in lib/reserveDeposit (buildReserveConsumerFields,
         // tested) — includes Status='Approved' so the buyer can always log in
         // (member LOGIN_ALLOWED gate), plus the Interests/SMS-consent fixes.
         const created: any = await createRecord(
@@ -217,6 +237,27 @@ export async function POST(req: Request) {
     } catch (e: any) {
       console.warn('[checkout/reserve] SMS opt-in persist skipped (non-fatal):', e?.message);
     }
+  }
+
+  // QUIZ GATE enforcement (founder rule 2026-07-08): whole/half/quarter
+  // deposits only after the quiz. Existing-session buyers get their stamp
+  // checked here (one read); email-path buyers were checked at lookup; new
+  // emails were bounced above. Unqualified → 409 fallback → the client
+  // sends them to /access?rancher=<slug> with this ranch pre-pinned.
+  if (!quizQualified && consumerId) {
+    try {
+      const c: any = await getRecordById(TABLES.CONSUMERS, consumerId);
+      quizQualified = !!c?.['Qualified At'];
+    } catch { /* fail-closed below */ }
+  }
+  if (!quizQualified) {
+    return NextResponse.json(
+      {
+        error: 'Take the 90-second quiz first — it locks your spot with this ranch.',
+        fallback: true,
+      },
+      { status: 409 },
+    );
   }
 
   // ── Duplicate-mint guards (write-safety audit 2026-07-07) ────────────────
