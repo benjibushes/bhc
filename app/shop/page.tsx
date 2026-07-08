@@ -23,7 +23,7 @@ import { loadMarketplaceProducts, groupProducts } from '@/lib/marketplaceProduct
 import Container from '../components/Container';
 import Card from '../components/Card';
 import Button from '../components/Button';
-import ProductCard from '../components/ProductCard';
+import ShopGrid from './ShopGrid';
 import TrustStrip from '../components/TrustStrip';
 
 export const revalidate = 300;
@@ -42,79 +42,53 @@ export const metadata: Metadata = {
 export default async function MarketplacePage() {
   const products = await loadMarketplaceProducts();
   const groups = groupProducts(products);
+  // Flatten group membership onto each product for the client grid's chips
+  // (ShopGrid can't import lib/marketplaceProducts — it's server-only).
+  const gridProducts = groups.flatMap((g) =>
+    g.items.map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      rancher: p.rancher,
+      weight: p.weight,
+      image: p.image,
+      shelfStable: p.shelfStable,
+      depositStyle: p.depositStyle,
+      priceRange: p.priceRange,
+      ordersLeft: p.ordersLeft,
+      shippingCost: p.shippingCost,
+      group: g.key,
+    })),
+  );
 
   return (
-    <main className="min-h-screen bg-bone text-charcoal py-16">
+    <main className="min-h-screen bg-bone text-charcoal py-10 md:py-14">
       <Container>
-        <h1 className="font-serif text-[clamp(30px,6vw,46px)] mb-2 lowercase">
-          real beef, shipped to your door
-        </h1>
-        <p className="text-charcoal/85 text-[17px] max-w-[54ch] mb-1.5 leading-normal">
-          you&rsquo;re buying from the family that raised the animal — not a warehouse. start small
-          (jerky, a box) or go all in on a share.
-        </p>
-
-        {/* Trust strip — honest, non-fabricated, on the exact page ads point at.
-            Risk-reversal stated as operational certainty ("we make it right"),
-            not support-desk uncertainty — the #1 conversion lever for new-food
-            buyers per the journey-overhaul research (Phase 4). */}
-        <p className="text-[13.5px] text-sage mt-2.5 mb-7 leading-normal max-w-[60ch]">
-          every ranch here is verified — a real family operation.{' '}
-          <strong>the full cost is on every card — shipping&rsquo;s either included or shown
-          up front, never a surprise at checkout.</strong> if a cut ever shows up wrong or
-          freezer-burned, we make it right — no forms, no runaround. checkout secured by Stripe,
-          and a real person answers your receipt. &mdash; Ben
-        </p>
-
-        {/* HOW IT WORKS (Phase 12 — the information gap): the whole store's
-            process in one glance, before any product decision. Three plain
-            steps, no mystery — every PDP repeats its own product-specific
-            version of this. */}
-        <div className="flex flex-wrap gap-x-6 gap-y-1.5 mb-8 text-[13px] text-charcoal/80">
-          <span><strong className="text-charcoal">1.</strong> pick your beef — every listing says exactly what&rsquo;s in the box</span>
-          <span><strong className="text-charcoal">2.</strong> the ranch packs it — vacuum-sealed, shipped frozen (jerky ships shelf-stable)</span>
-          <span><strong className="text-charcoal">3.</strong> tracking hits your inbox the moment it ships — every listing says how fast</span>
+        {/* MARKETPLACE REDESIGN (founder 2026-07-08): the old page was
+            editorial — one giant card per row, four section headers, ~8k px
+            of mobile scroll for ten products, two viewports of copy before
+            the first price. A marketplace browses: compact header, ONE trust
+            line, sticky chips + sort, 2-up/4-up grid, products above the
+            fold. The long-form trust + how-it-works copy lives on every PDP
+            where the buying decision actually happens. */}
+        <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
+          <h1 className="font-serif text-[clamp(26px,5vw,40px)] lowercase">shop the ranches</h1>
+          <span className="text-xs text-dust tabular-nums">{products.length} products · {new Set(products.map((p) => p.rancher)).size} ranches</span>
         </div>
+        <p className="text-charcoal/85 text-[15px] max-w-[58ch] leading-normal mb-2">
+          real beef from the family that raised it — shipped frozen to your door.
+          full cost on every card: shipping&rsquo;s included or shown up front, never a
+          checkout surprise.
+        </p>
+        <p className="text-[12.5px] text-sage mb-4">
+          verified ranches · secured by stripe · wrong or freezer-burned? we make it right — no forms. &mdash; Ben
+        </p>
 
-        {groups.length === 0 ? (
+        {gridProducts.length === 0 ? (
           <p className="text-saddle">the shop is stocking up — check back shortly.</p>
         ) : (
           <>
-            {/* Category quick-nav — the page's structural spine. One glance =
-                the whole store's shape; one tap = the section you came for.
-                Anchor links (no JS), scroll-mt on sections clears the sticky
-                header. Only shows when there's more than one section. */}
-            {groups.length > 1 && (
-              <nav aria-label="shop sections" className="flex flex-wrap gap-2 mb-10">
-                {groups.map((g) => (
-                  <a
-                    key={g.key}
-                    href={`#${g.key}`}
-                    className="px-3.5 py-2 border border-dust text-[13px] text-charcoal hover:bg-charcoal hover:text-bone transition-base"
-                  >
-                    {g.title} <span className="text-dust">·</span>{' '}
-                    <span className="tabular-nums">{g.items.length}</span>
-                  </a>
-                ))}
-              </nav>
-            )}
-
-            {groups.map((group) => (
-              <section key={group.key} id={group.key} className="mb-12 scroll-mt-24">
-                <div className="flex items-baseline justify-between gap-3 border-b border-dust pb-2 mb-1">
-                  <h2 className="font-serif text-2xl lowercase">{group.title}</h2>
-                  <span className="text-xs text-dust tabular-nums shrink-0">
-                    {group.items.length} {group.items.length === 1 ? 'product' : 'products'}
-                  </span>
-                </div>
-                <div className="text-[13.5px] text-saddle mb-4">{group.sub}</div>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
-                  {group.items.map((p) => (
-                    <ProductCard key={p.id} p={p} />
-                  ))}
-                </div>
-              </section>
-            ))}
+            <ShopGrid products={gridProducts} />
 
             {/* SHARE ANCHOR — last, as the graduation. De-emphasized (secondary
                 Button) so the product Buy buttons stay the loudest thing on the
@@ -125,13 +99,14 @@ export default async function MarketplacePage() {
               className="border-l-2 border-l-sage mt-2 flex items-center gap-4 flex-wrap"
             >
               <div className="flex-1 min-w-[220px]">
-                <div className="font-serif text-lg">ready to go all in? a half or whole share</div>
+                <div className="font-serif text-lg">ready to go all in? reserve a share</div>
                 <div className="text-[13px] text-charcoal/80">
-                  the best price per pound — a freezer stocked from one animal, one ranch, all year.
+                  the best price per pound, from the ranch nearest you — deposit fully
+                  refundable until your rancher accepts.
                 </div>
               </div>
-              <Button href="/map" variant="secondary" size="sm">
-                find a ranch &rarr;
+              <Button href="/access" variant="secondary" size="sm">
+                reserve your share &rarr;
               </Button>
             </Card>
           </>

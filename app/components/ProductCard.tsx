@@ -40,20 +40,23 @@ export interface ProductCardProduct {
   localOnly?: boolean;
 }
 
-export default function ProductCard({ p }: { p: ProductCardProduct }) {
+export default function ProductCard({ p, compact = false }: { p: ProductCardProduct; compact?: boolean }) {
   const href = `/shop/${p.id}`;
   const deposit = !!p.depositStyle;
+  // compact = marketplace-grid variant (2-up mobile): square image, tighter
+  // type/padding, description hidden. Full variant unchanged for the rancher
+  // page + funnel rails.
   return (
     <div className="bg-bone border border-dust flex flex-col transition-base hover:border-charcoal">
-      <Link href={href} className="block aspect-[4/3] overflow-hidden bg-bone-deep">
+      <Link href={href} className={`block ${compact ? 'aspect-square' : 'aspect-[4/3]'} overflow-hidden bg-bone-deep`}>
         <ProductImage src={p.image || ''} alt={p.name} className="w-full h-full object-cover block" />
       </Link>
-      <div className="p-4 flex flex-col gap-2 flex-1">
-        <div className="min-h-[3.6rem]">
-          <Link href={href} className="font-serif text-lg leading-tight text-charcoal line-clamp-2">
+      <div className={`${compact ? 'p-2.5 gap-1.5' : 'p-4 gap-2'} flex flex-col flex-1`}>
+        <div className={compact ? 'min-h-[2.6rem]' : 'min-h-[3.6rem]'}>
+          <Link href={href} className={`font-serif ${compact ? 'text-[15px]' : 'text-lg'} leading-tight text-charcoal line-clamp-2`}>
             {p.name}
           </Link>
-          <div className="text-xs text-saddle mt-0.5 line-clamp-1">
+          <div className={`${compact ? 'text-[11px]' : 'text-xs'} text-saddle mt-0.5 line-clamp-1`}>
             {p.rancher}
             {p.weight ? ` · ${p.weight}` : ''}
           </div>
@@ -71,19 +74,21 @@ export default function ProductCard({ p }: { p: ProductCardProduct }) {
           <PriceTag amount={p.price} size="sm" />
         )}
 
-        {p.description ? (
+        {!compact && p.description ? (
           <p className="text-[13px] text-charcoal/80 leading-snug m-0 line-clamp-2">{p.description}</p>
         ) : null}
 
-        <div className={`text-xs line-clamp-1 ${p.localOnly ? 'text-saddle font-medium' : 'text-sage'}`}>
+        <div className={`${compact ? 'text-[11px]' : 'text-xs'} line-clamp-1 ${p.localOnly ? 'text-saddle font-medium' : 'text-sage'}`}>
           {p.localOnly
             ? 'local pickup at the ranch — no shipping'
             : deposit
-              ? 'your rancher confirms size + the balance before it ships'
+              ? compact
+                ? 'size + balance confirmed before shipping'
+                : 'your rancher confirms size + the balance before it ships'
               : p.shippingCost && p.shippingCost > 0
                 ? `${p.shelfStable ? 'shelf-stable' : 'ships frozen'} · + $${p.shippingCost.toFixed(2)} shipping`
                 : p.shelfStable
-                  ? 'shelf-stable · ships free, no freezer needed'
+                  ? compact ? 'shelf-stable · ships free' : 'shelf-stable · ships free, no freezer needed'
                   : 'ships frozen · shipping included'}
         </div>
 
