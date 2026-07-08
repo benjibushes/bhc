@@ -1,0 +1,24 @@
+{
+  "name": "BuyHalfCow Ranch",
+  "short_name": "BHC Ranch",
+  "description": "your ranch page, orders, and buyers — in your pocket",
+  "start_url": "/rancher",
+  "scope": "/rancher",
+  "display": "standalone",
+  "background_color": "#F4F1EC",
+  "theme_color": "#0E0E0E",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/bhc-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

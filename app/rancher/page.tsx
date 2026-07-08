@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import PushSetupCard from './PushSetupCard';
 import { useRouter } from 'next/navigation';
 import Container from '../components/Container';
 import Divider from '../components/Divider';
@@ -1930,6 +1931,10 @@ export default function RancherDashboardPage() {
             <div>
               <h1 className="font-serif text-3xl md:text-4xl">{rancherInfo.ranchName}</h1>
               <p className="text-saddle mt-1">{rancherInfo.name} &middot; {rancherInfo.state}</p>
+              {/* PWA push — renders nothing when push is dark/unsupported. */}
+              <div className="mt-2">
+                <PushSetupCard />
+              </div>
             </div>
             <div className="flex items-center gap-4 flex-wrap">
               {/* WAVE 3a — global search. Always available (not gated on lead

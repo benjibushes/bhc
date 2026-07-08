@@ -243,6 +243,25 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
     }).catch(() => {});
   }
 
+  // PWA push (2026-07-08) — instant pocket alert, rides alongside the email.
+  // Dark-safe no-op without VAPID env/subscriptions; never blocks settlement.
+  if (rancherId) {
+    try {
+      const { sendRancherPush } = await import('@/lib/rancherPush');
+      await sendRancherPush(rancherId, {
+        title: depositStyle
+          ? `💰 deposit in — confirm before shipping`
+          : isPickup
+            ? `💰 pickup order paid — reach out`
+            : `📦 new order to ship`,
+        body: `${quantity > 1 ? `${quantity}× ` : ''}${productName} — ${buyerName || buyerEmail || 'a buyer'}. you net $${dollars(baseCents * quantity + (isPickup ? 0 : shippingCents))}.`,
+        url: '/rancher#products',
+      });
+    } catch (e: any) {
+      console.warn('[productSettlement] push skipped (non-fatal):', e?.message);
+    }
+  }
+
   // Rancher notification (operational — clear, not marketing). Deposit-style
   // flips the instruction from "pack it, ship it" to "CONFIRM FIRST" — the
   // rancher must never ship a $95–355 range box against a deposit-only payout.
