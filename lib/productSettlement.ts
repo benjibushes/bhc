@@ -20,6 +20,7 @@
 //     to Refunded + alerts (was silent — the row stayed 'New' forever).
 
 import { getAllRecords, createRecord, updateRecord, TABLES, escapeAirtableValue, getRecordById } from '@/lib/airtable';
+import { getStripeClient } from '@/lib/stripeConnect';
 import { claimOnce } from '@/lib/rancherCapacity';
 import { PermanentSettlementError } from '@/lib/stripeSettlement';
 import { sendOperatorSignal } from '@/lib/operatorSignal';
@@ -48,20 +49,20 @@ function formatShipping(pi: any): string {
 
 const dollars = (c: number) => (c / 100).toFixed(2);
 
-export async function settleProductPurchase(pi: any): Promise<void> {
+export async function settleProductPurchase(pi: any, connectedAccountId?: string): Promise<void> {
   const productName = String(pi?.metadata?.productName || 'a product');
   const rancherId = String(pi?.metadata?.rancherId || '');
   const rancherName = String(pi?.metadata?.rancherName || 'the ranch');
   // Email: operator links stamp metadata.buyerEmail; self-serve storefront buys
   // don't (Stripe collects it) → fall back to the charge's billing/receipt email.
   const charge0 = pi?.charges?.data?.[0] || {};
-  const buyerEmail = (
+  let buyerEmail = (
     String(pi?.metadata?.buyerEmail || '').trim() ||
     String(charge0?.billing_details?.email || '').trim() ||
     String(pi?.receipt_email || '').trim()
   ).toLowerCase();
   // Name: metadata (operator) → the shipping/billing name Stripe collected.
-  const buyerName = (
+  let buyerName = (
     String(pi?.metadata?.buyerName || '').trim() ||
     String(pi?.shipping?.name || charge0?.shipping?.name || charge0?.billing_details?.name || '').trim()
   );
@@ -114,7 +115,29 @@ export async function settleProductPurchase(pi: any): Promise<void> {
   }
   if (Array.isArray(existing) && existing.length > 0) return;
 
-  const shipTo = formatShipping(pi);
+  let shipTo = formatShipping(pi);
+
+  // AUDIT CRITICAL (2026-07-07): on modern Stripe API versions the webhook PI
+  // payload is CHARGES-LESS — pi.charges.data[0] is empty, so ship-to and the
+  // self-serve buyer email can come back blank on a PAID order (rancher gets a
+  // ship-it email with no address; buyer gets no receipt). Recover them by
+  // fetching the latest charge on the connected account. Best-effort — a fetch
+  // failure keeps today's behavior, never blocks settlement.
+  if ((!shipTo || !buyerEmail || !buyerName) && connectedAccountId && typeof pi?.latest_charge === 'string' && pi.latest_charge) {
+    try {
+      const stripe = getStripeClient();
+      const ch: any = await stripe.charges.retrieve(pi.latest_charge, { stripeAccount: connectedAccountId });
+      if (!shipTo) shipTo = formatShipping({ charges: { data: [ch] } });
+      if (!buyerEmail) {
+        buyerEmail = String(ch?.billing_details?.email || ch?.receipt_email || '').trim().toLowerCase();
+      }
+      if (!buyerName) {
+        buyerName = String(ch?.shipping?.name || ch?.billing_details?.name || '').trim();
+      }
+    } catch (e: any) {
+      console.warn('[productSettlement] latest_charge fetch failed (degrading to payload fields):', e?.message);
+    }
+  }
 
   const created: any = await createRecord(TABLES.RANCHER_ORDERS, {
     // Deposit-style orders carry the marker in the ref so the ops view reads
@@ -173,7 +196,8 @@ export async function settleProductPurchase(pi: any): Promise<void> {
         `Ship to (once confirmed):\n${shipTo || '(address on the order)'}`
       : `${buyerName || buyerEmail} bought ${productName} from ${rancherName}.\n` +
         `You keep $${dollars(marginCents)} · rancher nets $${dollars(baseCents + shippingCents)}${shippingCents > 0 ? ` (incl. $${dollars(shippingCents)} shipping)` : ''}.\n` +
-        `Tell ${rancherName} to ship to:\n${shipTo || '(address on the order)'}`,
+        `Tell ${rancherName} to ship to:\n${shipTo || '(address on the order)'}` +
+        (!shipTo ? `\n⚠️ NO SHIP-TO CAPTURED — pull the address from the Stripe payment (${pi.id}) and get it to ${rancherName}.` : ''),
     dedupeKey: `product-sold:${pi.id}`,
   }).catch(() => {});
 
@@ -256,6 +280,21 @@ export async function settleProductPurchase(pi: any): Promise<void> {
       const prod: any = await getRecordById(TABLES.RANCHER_PRODUCTS, productId).catch(() => null);
       const left = prod?.['Orders Left'];
       if (prod && left !== undefined && left !== null && left !== '') {
+        // OVERSELL (audit 2026-07-07): stock was already 0 when this order
+        // settled — a session minted before sell-out got paid after it. The
+        // clamp below hides that silently; the rancher can't ship what they
+        // don't have, so ring the operator to resolve (refund or restock).
+        if (Number(left) <= 0) {
+          await sendOperatorSignal({
+            urgency: 'loud',
+            kind: 'sale',
+            summary: `OVERSOLD — ${productName} settled with 0 stock`,
+            detail:
+              `${buyerName || buyerEmail || 'A buyer'} paid for ${productName} from ${rancherName}, but 'Orders Left' was already 0.\n` +
+              `A checkout session minted before sell-out completed after it. Resolve with ${rancherName}: restock + ship, or refund.`,
+            dedupeKey: `product-oversold:${pi.id}`,
+          }).catch(() => {});
+        }
         const next = Math.max(0, Number(left) - 1);
         await updateRecord(TABLES.RANCHER_PRODUCTS, productId, { 'Orders Left': next });
         try {
@@ -346,7 +385,7 @@ export async function settleProductPurchase(pi: any): Promise<void> {
 // tell it apart from a deposit refund).
 export async function reconcileProductOrderRefund(
   piId: string,
-  opts: { kind: 'refund' | 'dispute'; amountCents?: number },
+  opts: { kind: 'refund' | 'dispute'; amountCents?: number; partial?: boolean },
 ): Promise<boolean> {
   if (!piId) return false;
   let rows: any[];
@@ -363,6 +402,26 @@ export async function reconcileProductOrderRefund(
 
   const order = rows[0];
   if (String(order['Status'] || '') === 'Refunded') return true; // already reconciled
+
+  // PARTIAL refund (audit 2026-07-07): a $10-of-$170 goodwill refund must NOT
+  // flip the order to Refunded, restore stock, or stop the ship — the buyer
+  // still gets their box. Alert loudly with the real amount and leave the
+  // order live. Disputes never take this branch (a chargeback of any size is
+  // a stop-ship).
+  if (opts.kind === 'refund' && opts.partial) {
+    const productP = String(order['Product Name'] || 'a product');
+    const rancherP = String(order['Rancher Name'] || 'the ranch');
+    await sendOperatorSignal({
+      urgency: 'loud',
+      kind: 'sale',
+      summary: `PARTIAL REFUND — ${productP} ($${dollars(opts.amountCents || 0)})`,
+      detail:
+        `A partial refund of $${dollars(opts.amountCents || 0)} was issued on the ${productP} order from ${rancherP}.\n` +
+        `Order stays LIVE — the buyer still gets their box; nothing was un-shipped or restocked.`,
+      dedupeKey: `product-partial-refund:${piId}:${opts.amountCents || 0}`,
+    }).catch(() => {});
+    return true;
+  }
 
   // GTM-hardening F2 (secondary): flip EVERY row for this PI — the Redis-down
   // race guard can leave a rare duplicate row, and a 'New' twin would sit on

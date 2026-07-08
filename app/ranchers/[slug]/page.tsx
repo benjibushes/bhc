@@ -25,6 +25,7 @@ import FaqSection, { parseFaq, type FaqItem } from './FaqSection';
 import FulfillmentSection, { parseFulfillment } from './FulfillmentSection';
 import ProductCard from '../../components/ProductCard';
 import { loadProductsForRancher, type MarketplaceProduct } from '@/lib/marketplaceProducts';
+import { jsonLdSafe } from '@/lib/jsonLdSafe';
 
 // Public rancher landing page — the unit of conversion. Verified partners
 // get full pricing + lead capture; prospects get the same shell with pricing
@@ -487,12 +488,12 @@ export default async function RancherPage(
     <main className="min-h-screen bg-bone text-charcoal">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdSafe(jsonLd) }}
       />
       {faqJsonLd && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+          dangerouslySetInnerHTML={{ __html: jsonLdSafe(faqJsonLd) }}
         />
       )}
 

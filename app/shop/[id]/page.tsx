@@ -12,6 +12,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
+import { jsonLdSafe } from '@/lib/jsonLdSafe';
 import { getRecordById, getAllRecords, TABLES } from '@/lib/airtable';
 
 import BuyButton from '../BuyButton';
@@ -248,7 +249,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   return (
     <main className="min-h-screen bg-bone text-charcoal pt-8 pb-14">
       {jsonLd ? (
-        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdSafe(jsonLd) }} />
       ) : null}
       <ProductViewTracker productId={p.id} name={p.name} price={p.price} />
 

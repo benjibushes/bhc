@@ -349,7 +349,9 @@ export async function POST(request: Request) {
         // a deposit OR a product — reconcile the product order + short-circuit.
         // Throws on transient → 5xx redeliver (reconcile is idempotent).
         try {
-          const wasProduct = await reconcileProductOrderRefund(piId, { kind: 'refund', amountCents: refundedCents });
+          // partial rides through so a $10-of-$170 goodwill refund doesn't
+          // flip the whole order to Refunded / restore stock / stop the ship.
+          const wasProduct = await reconcileProductOrderRefund(piId, { kind: 'refund', amountCents: refundedCents, partial: isPartial });
           if (wasProduct) break;
         } catch (e: any) {
           console.error('[stripe-connect charge.refunded] product reconcile failed:', e);

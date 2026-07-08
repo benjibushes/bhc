@@ -46,6 +46,9 @@ const DEFAULT_MARGIN = 0.15;
 // $5 floor — below this, Stripe's fixed fee eats the margin and the row reads
 // as a data-entry mistake, not a product.
 export const MIN_PRODUCT_PRICE_CENTS = 500;
+// $2,000 ceiling — above this it's a typo (1999 vs 19.99), not a marketplace
+// product; shares above this price sell through the deposit rail, not /shop.
+export const MAX_PRODUCT_PRICE_CENTS = 200000;
 
 export interface ProductPricing {
   displayCents: number;
@@ -148,6 +151,12 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
   const displayCents = Math.round(price * 100);
   if (displayCents < MIN_PRODUCT_PRICE_CENTS) {
     return { ok: false, error: 'price must be at least $5.' };
+  }
+  // Fat-finger ceiling: "1999" instead of "19.99" would list a $1,999 jerky
+  // live within seconds (and a buyer could really pay it). Marketplace
+  // products top out around an eighth share — $2,000 is generous headroom.
+  if (displayCents > MAX_PRODUCT_PRICE_CENTS) {
+    return { ok: false, error: 'price looks too high — double-check it (max $2,000). typo like 1999 instead of 19.99?' };
   }
 
   const category = String(body.category || '').trim();
