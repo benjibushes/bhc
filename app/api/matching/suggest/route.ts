@@ -725,7 +725,15 @@ export async function POST(request: Request) {
           // without populating Routing States, the rancher routes home-state
           // only (same as the !adminApprovedMultiState branch).
           const routingRaw = (r['Routing States'] || '').toString().trim();
-          const served = normalizeStates(routingRaw);
+          let served = normalizeStates(routingRaw);
+          // FOOD-MILES STRICT (bulletproof 2026-07-08): under
+          // ROUTING_ADJACENCY_ENFORCE=strict, far states are excluded from
+          // ACTUAL matching here — previously strict only altered sub-cap
+          // math while the operator Telegram claimed exclusion.
+          if (process.env.ROUTING_ADJACENCY_ENFORCE === 'strict' && rState) {
+            const maxHopsStrict = Number(process.env.ROUTING_MAX_HOPS) || 2;
+            served = served.filter((st) => st === rState || hopDistance(rState, st) <= maxHopsStrict);
+          }
           if (!(rState === normalizedBuyerState || served.includes(normalizedBuyerState))) return false;
         }
         // Tier Specialty filter — see definition above. Quarter buyers won't

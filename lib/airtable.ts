@@ -499,7 +499,7 @@ export async function findReferralByBuyerEmail(email: string) {
       TABLES.REFERRALS,
     );
     if (!records.length) return null;
-    const CLOSED = new Set(['Closed Lost', 'Closed Won']);
+    const CLOSED = new Set(['Closed Lost', 'Closed Won', 'Dormant']);
     const ts = (v: any) => {
       const t = v ? new Date(v as string).getTime() : 0;
       return Number.isFinite(t) ? t : 0;

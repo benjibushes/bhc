@@ -111,7 +111,14 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         skipReasons['not-stuck-yet'] = (skipReasons['not-stuck-yet'] || 0) + 1;
         continue;
       }
-      if (!readyToBuy) {
+      // BULLETPROOF FIX (2026-07-08): 'Ready to Buy' is an unreliable proxy —
+      // it's stamped by warmup clicks AND a signup branch that's gated on the
+      // buyer's state having an operational rancher AT SIGNUP TIME. A READY
+      // buyer who signed up before their state had supply never gets the
+      // stamp and was structurally unreachable here (the two stuck MO buyers).
+      // A quiz-qualified READY buyer (Qualified At set) is routable — that IS
+      // the qualification rule (quiz-required, never Intent Score alone).
+      if (!readyToBuy && !c['Qualified At']) {
         skipReasons['not-stuck-yet'] = (skipReasons['not-stuck-yet'] || 0) + 1;
         continue;
       }
@@ -122,11 +129,16 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
         continue;
       }
 
-      // Cooldown: don't retry within 24h of last attempt.
+      // Cooldown — BULLETPROOF FIX (2026-07-08): was 24h, which meant
+      // batch-approve's 09:01 UTC 'Last Match Attempt At' stamp cooldown-
+      // locked the ENTIRE pool out of this cron's 14:30 run every single day
+      // (5.5h gap < 24h). 4h keeps same-hour double-runs suppressed while
+      // letting the two daily rails each take their shot.
+      const RECOVERY_COOLDOWN_MS = 4 * 60 * 60 * 1000;
       const lastAttempt = c['Last Match Attempt At'];
       if (lastAttempt) {
         const ms = new Date(lastAttempt).getTime();
-        if (ms > 0 && now - ms < DAY_MS) {
+        if (ms > 0 && now - ms < RECOVERY_COOLDOWN_MS) {
           skipReasons['paused'] = (skipReasons['paused'] || 0) + 1;
           continue;
         }
