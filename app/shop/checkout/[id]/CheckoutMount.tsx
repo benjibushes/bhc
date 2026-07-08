@@ -16,7 +16,7 @@ import { EmbeddedCheckoutProvider, EmbeddedCheckout } from '@stripe/react-stripe
 
 const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 
-export default function CheckoutMount({ productId }: { productId: string }) {
+export default function CheckoutMount({ productId, quantity = 1 }: { productId: string; quantity?: number }) {
   const [stripePromise, setStripePromise] = useState<Promise<Stripe | null> | null>(null);
   const [clientSecret, setClientSecret] = useState('');
   const [err, setErr] = useState('');
@@ -33,7 +33,7 @@ export default function CheckoutMount({ productId }: { productId: string }) {
         const res = await fetch('/api/checkout/product/buy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ productId, mode: embedded ? 'embedded' : 'hosted' }),
+          body: JSON.stringify({ productId, quantity, mode: embedded ? 'embedded' : 'hosted' }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data?.error || 'could not start checkout');
@@ -55,7 +55,7 @@ export default function CheckoutMount({ productId }: { productId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [productId]);
+  }, [productId, quantity]);
 
   const fetchClientSecret = useCallback(() => Promise.resolve(clientSecret), [clientSecret]);
 

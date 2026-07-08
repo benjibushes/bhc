@@ -76,6 +76,20 @@ export async function POST(request: Request) {
       ? 0
       : Math.max(0, Math.round(Number(product['Shipping Cost'] || 0) * 100));
 
+  // Quantity: 1-5 from the PDP picker (deposit-style = one reservation, always
+  // 1). Never trusted raw — clamped, then checked against real stock so a
+  // 3-pack request can't oversell a 2-left batch.
+  const rawQty = Number(body?.quantity || 1);
+  let quantity = Number.isInteger(rawQty) ? Math.min(5, Math.max(1, rawQty)) : 1;
+  if (product['Deposit Style'] === true) quantity = 1;
+  const leftRaw = product['Orders Left'];
+  if (leftRaw !== undefined && leftRaw !== null && leftRaw !== '' && quantity > Number(leftRaw)) {
+    return NextResponse.json(
+      { error: `only ${Number(leftRaw)} left from this batch — lower the quantity.` },
+      { status: 409 },
+    );
+  }
+
   const rancherId = String(product['Rancher Record ID'] || '').trim();
   const rancher: any = rancherId ? await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null) : null;
   if (!rancher || String(rancher['Stripe Connect Status'] || '') !== 'active') {
@@ -128,6 +142,7 @@ export async function POST(request: Request) {
       // receipts + a "confirm BEFORE shipping" rancher email.
       depositStyle: product['Deposit Style'] === true,
       shippingCents,
+      quantity,
       mode: wantEmbedded ? 'embedded' : 'hosted',
       returnUrl: `${SITE_URL}/order/success`,
       successUrl: `${SITE_URL}/order/success`,
@@ -151,7 +166,7 @@ export async function POST(request: Request) {
         event_source_url: `${SITE_URL}/shop/${product.id}`,
         user_data: buildUserData({ ip: capiIp, userAgent: capiUserAgent, fbp, fbc }),
         custom_data: {
-          value: (displayCents + shippingCents) / 100,
+          value: (displayCents * quantity + shippingCents) / 100,
           currency: 'usd',
           content_ids: [product.id],
           content_type: 'product',

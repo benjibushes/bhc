@@ -103,3 +103,20 @@ test('computeProductCharge: negative or junk shipping is rejected', () => {
   assert.throws(() => computeProductCharge({ displayCents: 2500, baseCents: 2000, shippingCents: -1 }), /invalid shipping/);
   assert.throws(() => computeProductCharge({ displayCents: 2500, baseCents: 2000, shippingCents: NaN }), /invalid shipping/);
 });
+
+// ── quantity (2026-07-07) ────────────────────────────────────────────────────
+
+test('computeProductCharge: quantity scales product + fee; shipping stays flat per order', () => {
+  const c = computeProductCharge({ displayCents: 2500, baseCents: 2000, shippingCents: 1200, quantity: 3 });
+  assert.equal(c.totalChargedCents, 2500 * 3 + 1200);
+  assert.equal(c.applicationFeeCents, 500 * 3);
+  assert.equal(c.rancherNetCents, 2000 * 3 + 1200);
+  assert.equal(c.quantity, 3);
+});
+
+test('computeProductCharge: quantity defaults to 1 and rejects junk / 0 / >10', () => {
+  assert.equal(computeProductCharge({ displayCents: 2500, baseCents: 2000 }).quantity, 1);
+  assert.throws(() => computeProductCharge({ displayCents: 2500, baseCents: 2000, quantity: 0 }), /invalid quantity/);
+  assert.throws(() => computeProductCharge({ displayCents: 2500, baseCents: 2000, quantity: 11 }), /invalid quantity/);
+  assert.throws(() => computeProductCharge({ displayCents: 2500, baseCents: 2000, quantity: NaN }), /invalid quantity/);
+});
