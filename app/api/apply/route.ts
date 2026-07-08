@@ -115,12 +115,10 @@ export async function POST(req: Request) {
     !body.operatorName?.trim() ||
     !body.ranchName?.trim() ||
     !body.email?.trim() ||
-    !body.state ||
-    !body.headPerYear ||
-    !body.constraint
+    !body.state
   ) {
     return NextResponse.json(
-      { error: 'Name, ranch, email, state, volume, and constraint are required.' },
+      { error: 'Name, ranch, email, and state are required.' },
       { status: 400 }
     );
   }
@@ -145,8 +143,8 @@ export async function POST(req: Request) {
 
   const opDetails = [
     `[APPLY ${new Date().toISOString().slice(0, 10)}]`,
-    `Volume: ${body.headPerYear} head/year`,
-    `Constraint: ${constraintLabel[body.constraint]}`,
+    `Volume: ${body.headPerYear || 'not specified'} head/year`,
+    `Constraint: ${body.constraint ? constraintLabel[body.constraint] : 'not specified'}`,
     `Channels: ${channelsList}`,
     `Accepts deposits online: ${body.acceptsDeposits || 'not specified'}`,
     body.website ? `Website: ${body.website}` : null,
@@ -243,8 +241,8 @@ export async function POST(req: Request) {
       `${emoji} <b>${tier}</b> · /apply\n\n` +
         `<b>${body.operatorName}</b> · ${body.ranchName} (${body.state})\n` +
         `${email}${body.phone ? ` · ${body.phone}` : ''}\n\n` +
-        `Volume: <b>${body.headPerYear}</b> head/year\n` +
-        `Constraint: ${constraintLabel[body.constraint]}\n` +
+        `Volume: <b>${body.headPerYear || '?'}</b> head/year\n` +
+        `Constraint: ${body.constraint ? constraintLabel[body.constraint] : '?'}\n` +
         `Channels: ${channelsList}\n` +
         `Deposits online: ${body.acceptsDeposits || '?'}\n` +
         `Score: ${score}/9${body.website ? ` · ${body.website}` : ''}\n\n` +

@@ -109,23 +109,21 @@ export default function SellPage() {
               <strong>as low as 0%</strong>. Either way, nothing before you do.
             </p>
 
+            {/* Two real doors (2026-07-08): self-serve primary, a HUMAN as a
+                first-class option — not a buried text link. Ranchers are
+                phone people; the call button converts the form-averse half. */}
             <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
               <Button href={SIGNUP_HREF} variant="primary" size="lg">
-                Start selling — it&rsquo;s free
+                Start free — 5 minutes
               </Button>
-              <Button href={MAP_HREF} variant="secondary" size="lg">
-                Just put me on the map
+              <Button href="/book?purpose=rancher" variant="secondary" size="lg">
+                Book a 15-min call with Ben
               </Button>
             </div>
-
-            {/* Rancher-call-path fix (2026-07-06): the pitch page had NO
-                talk-first path — a rancher who wants a human before a form
-                had nowhere to go. /book?purpose=rancher resolves the live
-                discovery event server-side (never a dead slug). */}
             <p className="text-sm text-saddle pt-3">
-              Rather talk it through first?{' '}
-              <a href="/book?purpose=rancher" className="underline hover:text-charcoal transition-colors">
-                Book a 15-min call with Ben &rarr;
+              Just want visibility?{' '}
+              <a href={MAP_HREF} className="underline hover:text-charcoal transition-colors">
+                Put your ranch on the map &rarr;
               </a>
             </p>
 
@@ -234,10 +232,10 @@ export default function SellPage() {
                 Start selling — it&rsquo;s free
               </a>
               <a
-                href={MAP_HREF}
+                href="/book?purpose=rancher"
                 className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                Just put me on the map
+                Book a 15-min call
               </a>
             </div>
             <p className="text-sm pt-4 text-dust">
