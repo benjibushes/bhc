@@ -1151,6 +1151,13 @@ export default async function RancherPage(
                       // routed through /go for attribution. /shop never
                       // receives externalHref.
                       externalHref: p.externalCheckoutUrl ? `/go/store/${p.id}` : undefined,
+                      // No Connect + no own store = never send the buyer
+                      // into a checkout that 409s (product buy requires a
+                      // direct charge). Honest note instead.
+                      buyNote:
+                        !p.externalCheckoutUrl && String(r['Stripe Connect Status'] || '') !== 'active'
+                          ? 'online ordering opens soon — ask the ranch when you reach out'
+                          : undefined,
                     }}
                   />
                 ))}

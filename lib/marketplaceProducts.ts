@@ -71,6 +71,12 @@ export interface MarketplaceProduct {
   // the buyer's state. Populated by loadMarketplaceProducts; single-product
   // loaders leave it '' (the PDP doesn't need it).
   rancherState: string;
+  // Can this ranch take a BHC direct charge right now? (Stripe Connect
+  // Status === 'active', joined with withStates.) /shop filters on this so
+  // a not-yet-connected rancher's product can never dead-end a buyer at
+  // checkout (the buy route 409s without it). Defaults true where the join
+  // didn't run — surfaces without the join must gate separately.
+  rancherConnectActive: boolean;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -148,11 +154,15 @@ export async function loadMarketplaceProducts(
   // 500s. Best-effort: on failure every product gets rancherState '' and
   // the local rail simply doesn't render.
   const stateByRancher: Record<string, string> = {};
+  const connectActiveByRancher: Record<string, boolean> = {};
+  let joined = false;
   if (opts?.withStates === true) {
     try {
       for (const r of (await getAllRecords(TABLES.RANCHERS)) as any[]) {
         stateByRancher[r.id] = normalizeState(r['State']) || '';
+        connectActiveByRancher[r.id] = String(r['Stripe Connect Status'] || '') === 'active';
       }
+      joined = true;
     } catch { /* rail degrades to nationwide-only */ }
   }
   return rows
@@ -184,6 +194,12 @@ export async function loadMarketplaceProducts(
       localOnly: r['Ships Nationwide'] === false,
       externalCheckoutUrl: String(r['External Checkout URL'] || '').trim(),
       rancherState: stateByRancher[String(r['Rancher Record ID'] || '').trim()] || '',
+      // Fail-open (true) when the join didn't run — those callers gate at
+      // the buy route; fail-CLOSED per-rancher when the join ran and the
+      // rancher isn't Connect-active.
+      rancherConnectActive: joined
+        ? connectActiveByRancher[String(r['Rancher Record ID'] || '').trim()] === true
+        : true,
     }))
     .sort((a, b) => a.price - b.price);
 }
@@ -287,6 +303,7 @@ export async function loadMarketplaceProductAnyStock(
       localOnly: r['Ships Nationwide'] === false,
       externalCheckoutUrl: String(r['External Checkout URL'] || '').trim(),
       rancherState: '',
+      rancherConnectActive: true,
     },
     soldOut: !hasStock(r),
   };
