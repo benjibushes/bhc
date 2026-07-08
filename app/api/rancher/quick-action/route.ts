@@ -7,6 +7,7 @@ import {
   updateRecord,
 } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
+import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import {
@@ -515,7 +516,8 @@ async function applyAction(
         let lifetimeWins = 0;
         let lifetimeCommission = 0;
         try {
-          const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+          // Scale audit 2026-07-07: rancher-scoped filtered read (JS filter below = belt).
+          const allRefs = (await fetchReferralRowsForRancher(decoded.rancherId)) as any[];
           const wins = allRefs.filter((r) => {
             if (r['Status'] !== 'Closed Won') return false;
             const ids = r['Rancher'] || r['Suggested Rancher'] || [];

@@ -62,12 +62,14 @@ export async function GET(request: Request) {
     }
   };
 
-  const [consumers, ranchers, referrals, payments, funnelEvents, conversations, rancherOrders] = await Promise.all([
+  // Scale audit 2026-07-07: the Funnel Events full scan was DEAD WEIGHT —
+  // the funnel section uses the state-snapshot model and the read ended in
+  // `void funnelEvents;`. Dropping it cut ~16 paginated requests per open.
+  const [consumers, ranchers, referrals, payments, conversations, rancherOrders] = await Promise.all([
     safe(() => getAllRecords(TABLES.CONSUMERS) as Promise<any[]>, 'consumers'),
     safe(() => getAllRecords(TABLES.RANCHERS) as Promise<any[]>, 'ranchers'),
     safe(() => getAllRecords(TABLES.REFERRALS) as Promise<any[]>, 'referrals'),
     safe(() => getAllRecords(TABLES.PAYMENTS) as Promise<any[]>, 'payments'),
-    safe(() => getAllRecords(FUNNEL_TABLE) as Promise<any[]>, 'funnelEvents'),
     safe(() => getAllRecords(TABLES.CONVERSATIONS) as Promise<any[]>, 'conversations'),
     safe(() => getAllRecords(TABLES.RANCHER_ORDERS) as Promise<any[]>, 'rancherOrders'),
   ]);
@@ -238,9 +240,6 @@ export async function GET(request: Request) {
     console.warn('[command-center] funnel section failed:', e?.message);
     funnel = null;
   }
-  // Note: funnelEvents is read for parity/future use; the snapshot model above
-  // is the live source. Reference it so it isn't flagged unused.
-  void funnelEvents;
 
   // ════════════════════════════════════════════════════════════════════════
   // 3. CHANNEL — top Sources: signups → closes → commission → ROAS
@@ -331,7 +330,15 @@ export async function GET(request: Request) {
     if (emailEventsConfigured) {
       // Only read the table when tracking is actually on — otherwise it's all
       // zero by definition and we'd be paying for a needless full-table scan.
-      const sends = await safe(() => getAllRecords(TABLES.EMAIL_SENDS) as Promise<any[]>, 'emailSends');
+      // Bounded to 30 days — engagement rates are a recent-health metric;
+      // the unbounded scan was 46 pages and growing with every send.
+      const sends = await safe(
+        () => getAllRecords(
+          TABLES.EMAIL_SENDS,
+          "IS_AFTER(CREATED_TIME(), DATEADD(NOW(), -30, 'days'))",
+        ) as Promise<any[]>,
+        'emailSends',
+      );
       if (sends) {
         emailDelivered = sends.filter((s: any) => s['Delivered At']).length;
         emailOpens = sends.filter((s: any) => s['Opened At']).length;

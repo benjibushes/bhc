@@ -11,6 +11,7 @@ import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import jwt from 'jsonwebtoken';
 import { requireRancher } from '@/lib/rancherAuth';
+import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 
 // Pass reasons a rancher can give when declining a lead.
 // Mutually exclusive — "Other" deliberately omitted to force a real signal.
@@ -741,7 +742,8 @@ export async function PATCH(
       const buyerName = referral['Buyer Name'] || 'Unknown';
       if (status === 'Closed Won') {
         // L2e: pull rancher's win history to show monthly + lifetime + first-sale milestone
-        const allRefs = await getAllRecords(TABLES.REFERRALS) as any[];
+        // Scale audit 2026-07-07: rancher-scoped filtered read (JS filter below = belt).
+        const allRefs = (await fetchReferralRowsForRancher(decoded.rancherId)) as any[];
         const rancherWins = allRefs.filter((r) => {
           if (r['Status'] !== 'Closed Won') return false;
           const ids = r['Rancher'] || r['Suggested Rancher'] || [];

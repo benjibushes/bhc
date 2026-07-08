@@ -15,6 +15,7 @@
 import { NextResponse } from 'next/server';
 import { TABLES, getAllRecords, getRecordById } from '@/lib/airtable';
 import { requireRancher } from '@/lib/rancherAuth';
+import { fetchReferralRowsForRancher } from '@/lib/referralReads';
 import {
   buildEarningsCsv,
   filterByClosedDate,
@@ -59,7 +60,8 @@ export async function GET(request: Request) {
   // long comment in /api/rancher/dashboard/route.ts).
   let rows: EarningsRow[] = [];
   try {
-    const allRefs = (await getAllRecords(TABLES.REFERRALS)) as any[];
+    // Scale audit 2026-07-07: rancher-scoped filtered read (JS filter below = belt).
+    const allRefs = (await fetchReferralRowsForRancher(rancherId)) as any[];
     rows = allRefs
       .filter((ref: any) => {
         const owns = Array.isArray(ref['Rancher']) ? ref['Rancher'] : [];
