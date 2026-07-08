@@ -38,6 +38,10 @@ export interface ProductCardProduct {
   shippingCost?: number;
   /** Pickup-at-the-ranch product — renders only on the rancher's own page. */
   localOnly?: boolean;
+  /** BYOC (2026-07-08): when set (rancher-page surfaces only), the buy action
+   *  links out to the rancher's own store via /go/[id] instead of BHC
+   *  checkout. /shop never passes this. */
+  externalHref?: string;
 }
 
 export default function ProductCard({ p, compact = false }: { p: ProductCardProduct; compact?: boolean }) {
@@ -101,11 +105,20 @@ export default function ProductCard({ p, compact = false }: { p: ProductCardProd
         )}
 
         <div className="mt-auto pt-1">
-          <BuyButton
-            productId={p.id}
-            price={p.price}
-            label={deposit ? `reserve — $${p.price.toFixed(0)} deposit` : undefined}
-          />
+          {p.externalHref ? (
+            <a
+              href={p.externalHref}
+              className="block w-full text-center bg-charcoal text-bone py-2.5 text-sm transition-base hover:bg-charcoal/85"
+            >
+              buy on their store &rarr;
+            </a>
+          ) : (
+            <BuyButton
+              productId={p.id}
+              price={p.price}
+              label={deposit ? `reserve — $${p.price.toFixed(0)} deposit` : undefined}
+            />
+          )}
         </div>
       </div>
     </div>
