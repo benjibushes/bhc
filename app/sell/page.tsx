@@ -97,9 +97,10 @@ export default function SellPage() {
               keep more of the check.
             </h1>
             <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle">
-              BuyHalfCow sends real buyers to your ranch. Quarter, half, or
-              whole cow — you set the prices, you talk to the family, you get
-              paid direct.
+              BuyHalfCow sends real buyers from your own area to your ranch —
+              and keeps sending them until your capacity is sold out. Quarter,
+              half, or whole cow: you set the prices, you talk to the family,
+              you get paid direct.
             </p>
 
             {/* The hook: free to start, stated plain — tier-accurate. */}

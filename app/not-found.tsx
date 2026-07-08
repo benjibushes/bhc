@@ -27,7 +27,7 @@ export default function NotFound() {
               <p className="text-[11px] uppercase tracking-widest text-saddle group-hover:text-bone/70 font-semibold mb-2">
                 I want beef
               </p>
-              <p className="font-serif text-xl mb-2">Take the quiz</p>
+              <p className="font-serif text-xl mb-2">Reserve your share</p>
               <p className="text-xs text-saddle group-hover:text-bone/70 leading-relaxed">
                 90 seconds. We match you to a verified rancher in your state.
               </p>
