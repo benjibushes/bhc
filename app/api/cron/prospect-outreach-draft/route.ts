@@ -72,7 +72,6 @@ async function realHandler(_request: Request): Promise<CronResult> {
       prospect: picks[0],
       waitingInState: demand[picks[0].state] || 0,
       seed: picks[0].id,
-      phone: process.env.OUTREACH_PHONE || undefined,
     });
     await sendTelegramMessage(
       TELEGRAM_ADMIN_CHAT_ID,
@@ -94,7 +93,6 @@ async function realHandler(_request: Request): Promise<CronResult> {
       prospect: p,
       waitingInState: demand[p.state] || 0,
       seed: p.id,
-      phone: process.env.OUTREACH_PHONE || undefined,
     });
     if (!draft) {
       skipped++;
