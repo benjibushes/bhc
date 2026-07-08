@@ -10,8 +10,8 @@
 // — all money comes from the trusted Rancher Products row.
 
 import { NextResponse } from 'next/server';
-import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
-import { hasStock } from '@/lib/marketplaceProducts';
+import { updateRecord, TABLES } from '@/lib/airtable';
+import { resolveProductPurchase } from '@/lib/productBuyGates';
 import { createProductCheckout } from '@/lib/productCheckout';
 import { ensureStripePrice } from '@/lib/productStripeSync';
 import { rateLimit } from '@/lib/rateLimit';
@@ -41,64 +41,16 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
-  const productId = String(body?.productId || '').trim();
-  if (!/^rec[A-Za-z0-9]{14}$/.test(productId)) {
-    return NextResponse.json({ error: 'Invalid product' }, { status: 400 });
+  // ALL purchase gates live in the shared resolver (Payment Element PR A) —
+  // this route and /api/checkout/product/intent can never drift.
+  const resolved = await resolveProductPurchase({
+    productId: String(body?.productId || ''),
+    quantity: Number(body?.quantity || 1),
+  });
+  if (!resolved.ok) {
+    return NextResponse.json({ error: resolved.error }, { status: resolved.status });
   }
-
-  const product: any = await getRecordById(TABLES.RANCHER_PRODUCTS, productId).catch(() => null);
-  if (!product || !product['Active']) {
-    return NextResponse.json({ error: 'That product is unavailable.' }, { status: 404 });
-  }
-  // Audit fix C-5: mirror the isSellableRow shipping gate at CHARGE time. A
-  // product explicitly un-checked for nationwide shipping is hidden from /shop
-  // and 404s on its PDP — a stale/shared link must not be able to charge it
-  // anyway (the rancher would get a paid ship-it order they marked
-  // un-shippable). Blank counts as shippable, same as the marketplace gate.
-  if (product['Ships Nationwide'] === false) {
-    return NextResponse.json({ error: 'That product is unavailable.' }, { status: 404 });
-  }
-  // INVENTORY (Phase 11): sold-out is un-buyable at charge time too — an ad
-  // click or stale link can never oversell a rancher's stock.
-  if (!hasStock(product)) {
-    return NextResponse.json({ error: 'That one just sold out — more coming.' }, { status: 409 });
-  }
-
-  const displayCents = Math.round(Number(product['Display Price'] || 0) * 100);
-  const baseCents = Math.round(Number(product['Rancher Base'] || 0) * 100);
-  if (!displayCents || !baseCents || baseCents > displayCents) {
-    return NextResponse.json({ error: 'That product is not ready to sell yet.' }, { status: 409 });
-  }
-  // Shipping passthrough: buyer pays it, rancher keeps 100% of it. Deposit-style
-  // products always 0 — shipping settles with the balance the rancher collects.
-  const shippingCents =
-    product['Deposit Style'] === true
-      ? 0
-      : Math.max(0, Math.round(Number(product['Shipping Cost'] || 0) * 100));
-
-  // Quantity: 1-5 from the PDP picker (deposit-style = one reservation, always
-  // 1). Never trusted raw — clamped, then checked against real stock so a
-  // 3-pack request can't oversell a 2-left batch.
-  const rawQty = Number(body?.quantity || 1);
-  let quantity = Number.isInteger(rawQty) ? Math.min(5, Math.max(1, rawQty)) : 1;
-  if (product['Deposit Style'] === true) quantity = 1;
-  const leftRaw = product['Orders Left'];
-  if (leftRaw !== undefined && leftRaw !== null && leftRaw !== '' && quantity > Number(leftRaw)) {
-    return NextResponse.json(
-      { error: `only ${Number(leftRaw)} left from this batch — lower the quantity.` },
-      { status: 409 },
-    );
-  }
-
-  const rancherId = String(product['Rancher Record ID'] || '').trim();
-  const rancher: any = rancherId ? await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null) : null;
-  if (!rancher || String(rancher['Stripe Connect Status'] || '') !== 'active') {
-    return NextResponse.json({ error: 'That ranch can\'t take orders right now.' }, { status: 409 });
-  }
-  const connectAccountId = String(rancher['Stripe Connect Account Id'] || '').trim();
-  if (!connectAccountId) {
-    return NextResponse.json({ error: 'That ranch can\'t take orders right now.' }, { status: 409 });
-  }
+  const { product, connectAccountId, rancherId, displayCents, baseCents, shippingCents, quantity } = resolved;
 
   // Ensure the Stripe Product+Price on the connected account (mint-on-first-sell).
   let stripePriceId: string | undefined;
@@ -137,7 +89,7 @@ export async function POST(request: Request) {
       stripePriceId,
       productId: product.id,
       rancherId,
-      rancherName: String(product['Rancher Name'] || rancher['Ranch Name'] || 'the ranch'),
+      rancherName: resolved.rancherName,
       // C-1.5: the flag rides PI metadata so settlement sends deposit-truthful
       // receipts + a "confirm BEFORE shipping" rancher email.
       depositStyle: product['Deposit Style'] === true,
