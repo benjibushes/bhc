@@ -25,11 +25,25 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function ProductCheckoutPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ProductCheckoutPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ qty?: string }>;
+}) {
   const { id } = await params;
   const loaded = await loadMarketplaceProductAnyStock(id);
   if (!loaded) notFound(); // bad / inactive / unsellable id → immediate 404, no loading flash
   const { product: p, soldOut } = loaded;
+
+  // Quantity from the PDP picker (?qty=N). Clamped here for the summary; the
+  // buy endpoint re-clamps + stock-checks server-side (URL is not trusted).
+  const sp = await searchParams;
+  const qtyRaw = Number(sp?.qty || 1);
+  const quantity = p.depositStyle
+    ? 1
+    : Math.min(5, Math.max(1, Number.isInteger(qtyRaw) ? qtyRaw : 1));
 
   // GTM-hardening F4: a buyer arriving from a stale (ISR) PDP after a
   // sell-out gets an honest sold-out state — never a 404 one tap from paying.
@@ -72,15 +86,23 @@ export default async function ProductCheckoutPage({ params }: { params: Promise<
             <ProductImage src={p.image} alt={p.name} className="w-full h-full object-cover block" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="font-serif text-[17px] leading-tight">{p.name}</div>
+            <div className="font-serif text-[17px] leading-tight">
+              {quantity > 1 ? `${quantity}× ` : ''}{p.name}
+            </div>
             <div className="text-xs text-saddle mt-0.5">
               {p.rancher} · {p.depositStyle ? 'deposit — details confirmed with you' : 'ships direct from the ranch'}
             </div>
           </div>
           <div className="text-right">
-            <PriceTag amount={p.price} size="sm" className="whitespace-nowrap" />
+            <PriceTag amount={p.price * quantity + (p.depositStyle ? 0 : p.shippingCost)} size="sm" className="whitespace-nowrap" />
             {p.depositStyle ? (
               <div className="text-[10px] uppercase tracking-wider text-saddle">deposit</div>
+            ) : quantity > 1 || p.shippingCost > 0 ? (
+              <div className="text-[10px] uppercase tracking-wider text-saddle whitespace-nowrap">
+                {quantity > 1 ? `${quantity} × $${p.price.toFixed(2)}` : ''}
+                {quantity > 1 && p.shippingCost > 0 ? ' + ' : ''}
+                {p.shippingCost > 0 ? `$${p.shippingCost.toFixed(2)} shipping` : ''}
+              </div>
             ) : null}
           </div>
         </Card>
@@ -96,7 +118,7 @@ export default async function ProductCheckoutPage({ params }: { params: Promise<
           </p>
         ) : null}
 
-        <CheckoutMount productId={p.id} />
+        <CheckoutMount productId={p.id} quantity={quantity} />
 
         <TrustStrip className="text-xs mt-5" />
       </div>

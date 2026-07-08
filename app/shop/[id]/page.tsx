@@ -16,6 +16,7 @@ import { jsonLdSafe } from '@/lib/jsonLdSafe';
 import { getRecordById, getAllRecords, TABLES } from '@/lib/airtable';
 
 import BuyButton from '../BuyButton';
+import QtyBuy from '../QtyBuy';
 import ProductImage from '../ProductImage';
 import ProductViewTracker from './ProductViewTracker';
 import Container from '../../components/Container';
@@ -404,11 +405,19 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                       see what&rsquo;s available now &rarr;
                     </Button>
                   </div>
-                ) : (
+                ) : p.depositStyle ? (
                   <BuyButton
                     productId={p.id}
                     price={p.price}
-                    label={p.depositStyle ? `reserve — $${p.price.toFixed(0)} deposit` : undefined}
+                    label={`reserve — $${p.price.toFixed(0)} deposit`}
+                  />
+                ) : (
+                  // Qty picker (audit fix: buyers couldn't buy 2 of anything).
+                  // Cap at real stock; unlimited-stock rows cap at 5.
+                  <QtyBuy
+                    productId={p.id}
+                    price={p.price}
+                    maxQty={p.ordersLeft == null ? 5 : p.ordersLeft}
                   />
                 )}
               </div>

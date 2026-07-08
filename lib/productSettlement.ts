@@ -73,7 +73,11 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
   // Part of what the buyer paid + what the rancher nets; NEVER part of the
   // margin. Absent/legacy PIs → 0 (shipping-included pricing).
   const shippingCents = Math.max(0, Number(pi?.metadata?.shippingCents || 0));
-  const paidCents = displayCents + shippingCents;
+  // Units (2026-07-07): displayCents is the UNIT price; qty scales product +
+  // margin, shipping stays flat. Absent/legacy PIs → 1.
+  const quantity = Math.max(1, Math.round(Number(pi?.metadata?.quantity || 1)) || 1);
+  const paidCents = displayCents * quantity + shippingCents;
+  const qtyLabel = quantity > 1 ? `${quantity}× ` : '';
   // DEPOSIT-STYLE (audit fix C-1.5): a price-range product where this charge is
   // a DEPOSIT, not the full price. Every notification below MUST say so — the
   // old copy told the buyer "on its way" and the rancher "pack it, ship it",
@@ -142,7 +146,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
   const created: any = await createRecord(TABLES.RANCHER_ORDERS, {
     // Deposit-style orders carry the marker in the ref so the ops view reads
     // the truth at a glance (no schema change needed).
-    'Order Ref': `${depositStyle ? 'DEPOSIT — ' : ''}${productName} — ${buyerName || buyerEmail}`,
+    'Order Ref': `${depositStyle ? 'DEPOSIT — ' : ''}${qtyLabel}${productName} — ${buyerName || buyerEmail}`,
     // GTM-hardening F2: link back to the product row so a refund/dispute can
     // RESTORE its 'Orders Left' (inventory symmetry with the decrement below).
     'Product Record ID': String(pi?.metadata?.productId || ''),
@@ -153,8 +157,9 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
     'Buyer Name': buyerName,
     'Ship To Address': shipTo,
     'Buyer Paid': paidCents / 100,
-    'Rancher Payout': (baseCents + shippingCents) / 100,
-    'BHC Margin': marginCents / 100,
+    'Rancher Payout': (baseCents * quantity + shippingCents) / 100,
+    'BHC Margin': (marginCents * quantity) / 100,
+    'Quantity': quantity,
     'Stripe Payment Intent': pi.id,
     'Status': 'New',
     'Ordered At': new Date().toISOString(),
@@ -188,14 +193,14 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
     kind: 'sale',
     summary: depositStyle
       ? `DEPOSIT PAID — ${productName} · $${dollars(displayCents)} down (balance TBD)`
-      : `PRODUCT SOLD — ${productName} · $${dollars(paidCents)}`,
+      : `PRODUCT SOLD — ${qtyLabel}${productName} · $${dollars(paidCents)}`,
     detail: depositStyle
       ? `${buyerName || buyerEmail} put $${dollars(displayCents)} down on ${productName} from ${rancherName}.\n` +
         `DEPOSIT-STYLE: ${rancherName} confirms size + the balance with the buyer BEFORE shipping.\n` +
         `You keep $${dollars(marginCents)} of the deposit · rancher nets $${dollars(baseCents)}.\n` +
         `Ship to (once confirmed):\n${shipTo || '(address on the order)'}`
-      : `${buyerName || buyerEmail} bought ${productName} from ${rancherName}.\n` +
-        `You keep $${dollars(marginCents)} · rancher nets $${dollars(baseCents + shippingCents)}${shippingCents > 0 ? ` (incl. $${dollars(shippingCents)} shipping)` : ''}.\n` +
+      : `${buyerName || buyerEmail} bought ${qtyLabel}${productName} from ${rancherName}.\n` +
+        `You keep $${dollars(marginCents * quantity)} · rancher nets $${dollars(baseCents * quantity + shippingCents)}${shippingCents > 0 ? ` (incl. $${dollars(shippingCents)} shipping)` : ''}.\n` +
         `Tell ${rancherName} to ship to:\n${shipTo || '(address on the order)'}` +
         (!shipTo ? `\n⚠️ NO SHIP-TO CAPTURED — pull the address from the Stripe payment (${pi.id}) and get it to ${rancherName}.` : ''),
     dedupeKey: `product-sold:${pi.id}`,
@@ -220,8 +225,8 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
       </div>`
         : `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
-        <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for a <strong>${escapeHtml(productName)}</strong> and will ship it direct to you.</p>
-        <p style="font-size:14px;color:#5A5752">paid: $${dollars(paidCents)}${shippingCents > 0 ? ` ($${dollars(displayCents)} + $${dollars(shippingCents)} shipping)` : ''}. you'll get tracking as soon as it's on the way.</p>
+        <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for <strong>${quantity > 1 ? `${quantity}× ` : 'a '}${escapeHtml(productName)}</strong> and will ship it direct to you.</p>
+        <p style="font-size:14px;color:#5A5752">paid: $${dollars(paidCents)}${quantity > 1 || shippingCents > 0 ? ` (${quantity > 1 ? `${quantity} × $${dollars(displayCents)}` : `$${dollars(displayCents)}`}${shippingCents > 0 ? ` + $${dollars(shippingCents)} shipping` : ''})` : ''}. you'll get tracking as soon as it's on the way.</p>
         ${shipTo ? `<p style="font-size:13px;color:#5A5752">shipping to:<br>${escapeHtml(shipTo).replace(/\n/g, '<br>')}<br><span style="color:#A7A29A">typo in the address? just reply to this email and we'll fix it before it ships.</span></p>` : ''}
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`,
@@ -257,10 +262,10 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
           <p>hi ${escapeHtml(rancherName)},</p>
           <p>you have a paid BuyHalfCow order to ship:</p>
           <div style="background:#fff;border:1px solid #A7A29A;padding:16px;margin:16px 0;font-size:15px">
-            <strong>${escapeHtml(productName)}</strong><br>
+            <strong>${quantity > 1 ? `${quantity}× ` : ''}${escapeHtml(productName)}</strong><br>
             ship to:<br>${escapeHtml(shipTo || '(see BuyHalfCow order)').replace(/\n/g, '<br>')}
           </div>
-          <p style="font-size:14px;color:#2A2A2A">you net <strong>$${dollars(baseCents + shippingCents)}</strong>${shippingCents > 0 ? ` (includes the $${dollars(shippingCents)} shipping the buyer paid)` : ''} — already routed to your Stripe account. pack it, then mark it shipped in your dashboard (Products tab) and paste the tracking number — that sends the buyer their tracking email automatically. or just reply here with the tracking and we'll handle it.</p>
+          <p style="font-size:14px;color:#2A2A2A">you net <strong>$${dollars(baseCents * quantity + shippingCents)}</strong>${shippingCents > 0 ? ` (includes the $${dollars(shippingCents)} shipping the buyer paid)` : ''} — already routed to your Stripe account. pack it, then mark it shipped in your dashboard (Products tab) and paste the tracking number — that sends the buyer their tracking email automatically. or just reply here with the tracking and we'll handle it.</p>
           <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
         </div>`,
         templateName: 'rancher_order_notify',
@@ -285,18 +290,18 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         // settled — a session minted before sell-out got paid after it. The
         // clamp below hides that silently; the rancher can't ship what they
         // don't have, so ring the operator to resolve (refund or restock).
-        if (Number(left) <= 0) {
+        if (Number(left) < quantity) {
           await sendOperatorSignal({
             urgency: 'loud',
             kind: 'sale',
-            summary: `OVERSOLD — ${productName} settled with 0 stock`,
+            summary: `OVERSOLD — ${qtyLabel}${productName} settled with ${Number(left)} in stock`,
             detail:
-              `${buyerName || buyerEmail || 'A buyer'} paid for ${productName} from ${rancherName}, but 'Orders Left' was already 0.\n` +
+              `${buyerName || buyerEmail || 'A buyer'} paid for ${qtyLabel}${productName} from ${rancherName}, but 'Orders Left' was ${Number(left)}.\n` +
               `A checkout session minted before sell-out completed after it. Resolve with ${rancherName}: restock + ship, or refund.`,
             dedupeKey: `product-oversold:${pi.id}`,
           }).catch(() => {});
         }
-        const next = Math.max(0, Number(left) - 1);
+        const next = Math.max(0, Number(left) - quantity);
         await updateRecord(TABLES.RANCHER_PRODUCTS, productId, { 'Orders Left': next });
         try {
           const { revalidatePath } = await import('next/cache');
@@ -445,7 +450,10 @@ export async function reconcileProductOrderRefund(
       const prod: any = await getRecordById(TABLES.RANCHER_PRODUCTS, productId).catch(() => null);
       const left = prod?.['Orders Left'];
       if (prod && left !== undefined && left !== null && left !== '') {
-        await updateRecord(TABLES.RANCHER_PRODUCTS, productId, { 'Orders Left': Number(left) + 1 });
+        // Restore the ORDER's unit count (multi-unit orders restore all units;
+        // legacy rows without Quantity restore 1 — the old behavior).
+        const orderQty = Math.max(1, Math.round(Number(order['Quantity'] || 1)) || 1);
+        await updateRecord(TABLES.RANCHER_PRODUCTS, productId, { 'Orders Left': Number(left) + orderQty });
         try {
           const { revalidatePath } = await import('next/cache');
           revalidatePath('/shop');

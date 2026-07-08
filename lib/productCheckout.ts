@@ -29,13 +29,19 @@ export interface ProductChargeInput {
    * Display − Base). Omitted/0 = shipping included in the display price.
    */
   shippingCents?: number;
+  /**
+   * Units purchased (default 1). Product price + margin scale by quantity;
+   * shipping is charged ONCE per order (flat, ships in one box).
+   */
+  quantity?: number;
 }
 
 export interface ProductCharge {
-  totalChargedCents: number;   // buyer pays this (display + shipping)
-  applicationFeeCents: number; // BHC margin (display − base; shipping never skimmed)
-  rancherNetCents: number;     // rancher receives this (base + shipping)
+  totalChargedCents: number;   // buyer pays this (display×qty + shipping)
+  applicationFeeCents: number; // BHC margin ((display − base)×qty; shipping never skimmed)
+  rancherNetCents: number;     // rancher receives this (base×qty + shipping)
   shippingCents: number;       // normalized shipping component (0 = included)
+  quantity: number;            // normalized units (>= 1)
 }
 
 /**
@@ -50,6 +56,7 @@ export function computeProductCharge(input: ProductChargeInput): ProductCharge {
   const display = Math.round(Number(input.displayCents));
   const base = Math.round(Number(input.baseCents));
   const shipping = Math.round(Number(input.shippingCents ?? 0));
+  const quantity = Math.round(Number(input.quantity ?? 1));
   if (!Number.isFinite(display) || display <= 0) {
     throw new Error(`invalid display price: ${input.displayCents}`);
   }
@@ -62,12 +69,18 @@ export function computeProductCharge(input: ProductChargeInput): ProductCharge {
   if (!Number.isFinite(shipping) || shipping < 0) {
     throw new Error(`invalid shipping cost: ${input.shippingCents}`);
   }
-  const applicationFeeCents = display - base;
+  // Quantity is bounded here as the last line of defense — the buy route
+  // clamps user input, but a fee computed off an absurd qty must be impossible.
+  if (!Number.isFinite(quantity) || quantity < 1 || quantity > 10) {
+    throw new Error(`invalid quantity: ${input.quantity}`);
+  }
+  const applicationFeeCents = (display - base) * quantity;
   return {
-    totalChargedCents: display + shipping,
+    totalChargedCents: display * quantity + shipping,
     applicationFeeCents,
-    rancherNetCents: base + shipping,
+    rancherNetCents: base * quantity + shipping,
     shippingCents: shipping,
+    quantity,
   };
 }
 
@@ -114,6 +127,10 @@ export interface CreateProductCheckoutInput {
   // Callers must pass 0 for deposit-style products (shipping settles with the
   // balance the rancher collects directly).
   shippingCents?: number;
+  // QUANTITY (2026-07-07): units purchased (default 1, capped by the buy
+  // route). Product line + fee scale by qty; shipping stays flat per order.
+  // Deposit-style is always 1 (one reservation).
+  quantity?: number;
 }
 
 /**
@@ -131,6 +148,7 @@ export async function createProductCheckout(
     displayCents: input.displayCents,
     baseCents: input.baseCents,
     shippingCents: input.shippingCents,
+    quantity: input.quantity,
   });
   const isEmbedded = input.mode === 'embedded';
 
@@ -186,7 +204,7 @@ export async function createProductCheckout(
       // the application_fee (margin) below is unchanged.
       line_items: [
         input.stripePriceId
-          ? { price: input.stripePriceId, quantity: 1 }
+          ? { price: input.stripePriceId, quantity: charge.quantity }
           : {
               price_data: {
                 currency: 'usd',
@@ -198,11 +216,11 @@ export async function createProductCheckout(
                     ? 'Deposit — the ranch confirms your size + the balance with you before shipping.'
                     : 'Ships direct from the ranch.',
                 },
-                // Product line = the display price only; shipping (when set)
-                // rides the shipping_options line so the receipt itemizes.
+                // Product line = the UNIT display price; qty scales the line,
+                // shipping (when set) rides shipping_options so receipts itemize.
                 unit_amount: input.displayCents,
               },
-              quantity: 1,
+              quantity: charge.quantity,
             },
       ],
       payment_intent_data: {
@@ -221,6 +239,8 @@ export async function createProductCheckout(
           // Shipping passthrough — settlement adds it to Buyer Paid + Rancher
           // Payout; it is never part of the margin.
           shippingCents: String(charge.shippingCents),
+          // Units — settlement scales Buyer Paid/Payout + decrements stock by this.
+          quantity: String(charge.quantity),
           // C-1.5: settlement branches receipt/rancher/operator copy on this.
           depositStyle: input.depositStyle ? 'true' : 'false',
         },
