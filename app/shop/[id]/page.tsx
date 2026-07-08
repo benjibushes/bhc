@@ -22,6 +22,8 @@ import Container from '../../components/Container';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
 import PriceTag from '../../components/PriceTag';
+import ProductCard from '../../components/ProductCard';
+import { loadProductsForRancher } from '@/lib/marketplaceProducts';
 
 export const revalidate = 300;
 
@@ -31,6 +33,7 @@ interface Prod {
   id: string;
   name: string;
   rancher: string;
+  rancherId: string; // Ranchers record id ('' when unlinked)
   rancherSlug: string; // '' unless the ranch has a live public page
   rancherState: string;
   category: string;
@@ -109,6 +112,7 @@ async function loadProduct(id: string): Promise<Prod | null> {
     id: r.id,
     name: String(r['Product Name'] || ''),
     rancher: String(r['Rancher Name'] || ''),
+    rancherId: rancherRecId,
     rancherSlug,
     rancherState,
     category: String(sel(r['Category']) || ''),
@@ -183,6 +187,17 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const avgRating = reviews.length
     ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
     : 0;
+
+  // Cross-sell: the same ranch's other live products (audit fix — the PDP had
+  // no onward path to them, including on the sold-out state ads land on).
+  let moreFromRanch: Awaited<ReturnType<typeof loadProductsForRancher>> = [];
+  if (p.rancherId) {
+    try {
+      moreFromRanch = (await loadProductsForRancher(p.rancherId))
+        .filter((x) => x.id !== p.id)
+        .slice(0, 3);
+    } catch { /* section just doesn't render */ }
+  }
 
   // Product JSON-LD — only when an image + price exist (Google requires image).
   // shippingDetails declares FREE US shipping (price is genuinely all-in).
@@ -466,6 +481,20 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               find a ranch &rarr;
             </Button>
           </Card>
+
+          {/* MORE FROM THIS RANCH — cross-sell (audit fix). Renders on the
+              sold-out state too, exactly where a dead ad click needs somewhere
+              buyable to go. */}
+          {moreFromRanch.length > 0 && (
+            <div className="mt-10">
+              <h2 className="font-serif text-2xl mb-4">more from {p.rancher || 'this ranch'}</h2>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {moreFromRanch.map((mp) => (
+                  <ProductCard key={mp.id} p={mp} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </Container>
     </main>

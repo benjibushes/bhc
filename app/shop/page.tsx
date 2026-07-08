@@ -73,7 +73,7 @@ export default async function MarketplacePage() {
         <div className="flex flex-wrap gap-x-6 gap-y-1.5 mb-8 text-[13px] text-charcoal/80">
           <span><strong className="text-charcoal">1.</strong> pick your beef — every listing says exactly what&rsquo;s in the box</span>
           <span><strong className="text-charcoal">2.</strong> the ranch packs it — vacuum-sealed, shipped frozen (jerky ships shelf-stable)</span>
-          <span><strong className="text-charcoal">3.</strong> tracking hits your inbox — it&rsquo;s at your door days later</span>
+          <span><strong className="text-charcoal">3.</strong> tracking hits your inbox the moment it ships — every listing says how fast</span>
         </div>
 
         {groups.length === 0 ? (

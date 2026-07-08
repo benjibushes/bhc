@@ -30,6 +30,7 @@ import {
   updateRecord,
   getRecordById,
   getAllRecords,
+  deleteRecord,
 } from '@/lib/airtable';
 import { isSellableRow } from '@/lib/marketplaceProducts';
 import { deriveProductPricing, validateProductInput } from '@/lib/rancherProductInput';
@@ -235,7 +236,7 @@ export async function PATCH(request: Request) {
   // here to do exactly that), including deposit-style rows, without touching
   // the hand-set Base/price. Content keys drive the deposit fence; a
   // stock-only PATCH takes the dedicated path below.
-  const CONTENT_KEYS = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable', 'whatsIncluded', 'shipsInDays', 'packaging', 'feeds'];
+  const CONTENT_KEYS = ['name', 'displayPrice', 'category', 'description', 'weight', 'imageUrl', 'shipsNationwide', 'shelfStable', 'whatsIncluded', 'shipsInDays', 'packaging', 'feeds', 'shippingCost'];
   const editing = CONTENT_KEYS.some((k) => k in body);
   const stockOnly = 'ordersLeft' in body && !editing;
 
@@ -348,4 +349,49 @@ export async function PATCH(request: Request) {
     product: fresh ? toClientProduct(fresh) : { id: productId },
     pendingApproval: heldForApproval,
   });
+}
+
+// DELETE /api/rancher/products — permanently remove a product (audit fix:
+// a typo/test product could only be hidden, never removed; dead rows piled up
+// in the dashboard and Ben got pinged to clean them out of Airtable by hand).
+// Fenced: ownership required; deposit-style (ops-managed) rows refuse — those
+// carry hand-set pricing and belong to Ben's workflow.
+export async function DELETE(request: Request) {
+  const r = await requireRancher(request);
+  if (r instanceof NextResponse) return r;
+  const { session } = r;
+
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+  const productId = String(body?.productId || '').trim();
+  if (!/^rec[A-Za-z0-9]{14}$/.test(productId)) {
+    return NextResponse.json({ error: 'Invalid product id' }, { status: 400 });
+  }
+
+  const product: any = await getRecordById(TABLES.RANCHER_PRODUCTS, productId).catch(() => null);
+  if (!product) return NextResponse.json({ error: 'Product not found' }, { status: 404 });
+  if (ownerOf(product) !== session.rancherId) {
+    return NextResponse.json({ error: 'This product does not belong to you.' }, { status: 403 });
+  }
+  if (product['Deposit Style'] === true) {
+    return NextResponse.json(
+      { error: 'this is a deposit-style product managed with ben — text him to remove it. you can hide it any time.' },
+      { status: 409 },
+    );
+  }
+
+  try {
+    await deleteRecord(TABLES.RANCHER_PRODUCTS, productId);
+  } catch (e: any) {
+    console.error('[rancher/products DELETE] failed:', e?.message);
+    return NextResponse.json({ error: 'could not delete — try again in a minute.' }, { status: 502 });
+  }
+  // Past orders keep their own copy of the product name/ids — deleting the
+  // row never breaks the Rancher Orders history.
+  revalidateShop(productId);
+  return NextResponse.json({ deleted: true });
 }
