@@ -108,6 +108,11 @@ export default function SellPage() {
               <strong>Free to start. $0 up front.</strong> Pay only when you
               sell — or pick a plan with commission{' '}
               <strong>as low as 0%</strong>. Either way, nothing before you do.
+              {/* net-your-number (2026-07-08): absorption is live in the
+                  checkout math — this line is literally true for every sale
+                  through our checkout. */}
+              {' '}And on our checkout, card processing is on us — the number
+              you set is the number you get.
             </p>
 
             {/* Two real doors (2026-07-08): self-serve primary, a HUMAN as a
