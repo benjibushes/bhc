@@ -39,11 +39,10 @@ export default async function ProductCheckoutPage({ params }: { params: Promise<
       <main className="min-h-screen bg-bone text-charcoal pt-7 pb-14 px-4">
         <div className="max-w-[640px] mx-auto text-center">
           <Card padding="lg">
-            <h1 className="font-serif text-2xl mb-2 lowercase">just sold out</h1>
+            <h1 className="font-serif text-2xl mb-2 lowercase">sold out</h1>
             <p className="text-sm text-saddle leading-relaxed mb-4">
-              <strong>{p.name}</strong> from {p.rancher} sold its last order moments ago — this
-              batch is spoken for, and the ranch restocks as the next animals come through. nothing
-              was charged.
+              <strong>{p.name}</strong> from {p.rancher} is sold out — this batch is spoken for,
+              and the ranch restocks as the next animals come through. nothing was charged.
             </p>
             <Link
               href="/shop"

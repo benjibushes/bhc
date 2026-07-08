@@ -256,7 +256,27 @@ export default function ProductsTab({
         }
         setSavedNote('saved — the marketplace updates in a few seconds.');
       } else {
-        setProducts((list) => [data.product, ...list]);
+        // Blank-row guard (same as toggle/edit): the route's post-create
+        // re-fetch can blip and return only {id} — rendering that stub crashed
+        // the tab right after a SUCCESSFUL first save (error boundary + a
+        // duplicate-resubmit trap). Render a minimal row from the form instead.
+        const createdRow: RancherProduct = data.product?.name
+          ? data.product
+          : {
+              id: String(data.product?.id || ''),
+              name: form.name,
+              price: Number(form.displayPrice) || 0,
+              base: 0,
+              category: form.category,
+              weight: form.weight,
+              description: form.description,
+              image: form.imageUrl,
+              shipsNationwide: form.shipsNationwide,
+              shelfStable: form.shelfStable,
+              active: true,
+              live: false, // next load reconciles the real state
+            };
+        if (createdRow.id) setProducts((list) => [createdRow, ...list]);
         // Share nudge points at THEIR product page when it's actually live
         // (a non-sellable row's PDP 404s — never hand out a dead link).
         setSavedNote(
@@ -303,6 +323,7 @@ export default function ProductsTab({
 
   async function toggleActive(p: RancherProduct) {
     setTogglingId(p.id);
+    setSaveErr('');
     try {
       const res = await fetch('/api/rancher/products', {
         method: 'PATCH',
@@ -319,11 +340,59 @@ export default function ProductsTab({
       if (data.pendingApproval) {
         setSavedNote('sent for a quick review — it lists as soon as ben approves it.');
       }
-    } catch {
-      /* leave list as-is; next load reconciles */
+    } catch (e: any) {
+      // Audit fix: hide/show failures were fully silent — click, nothing
+      // happens, no message (expired session, Airtable blip, Connect gate).
+      setSaveErr(e?.message || 'could not update — refresh and try again');
     } finally {
       setTogglingId(null);
     }
+  }
+
+  async function deleteProduct(p: RancherProduct) {
+    if (!window.confirm(`delete "${p.name}" for good? this can't be undone.`)) return;
+    setTogglingId(p.id);
+    setSaveErr('');
+    try {
+      const res = await fetch('/api/rancher/products', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: p.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'delete failed');
+      setProducts((list) => list.filter((x) => x.id !== p.id));
+      setSavedNote('deleted.');
+    } catch (e: any) {
+      setSaveErr(e?.message || 'could not delete — refresh and try again');
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  // Duplicate: prefill the add form from an existing row (photo URL carries
+  // over — no re-upload). Deposit-style rows are ops-managed and excluded.
+  function startDuplicate(p: RancherProduct) {
+    setForm({
+      name: `${p.name} (copy)`,
+      displayPrice: String(p.price || ''),
+      category: p.category,
+      weight: p.weight,
+      description: p.description,
+      imageUrl: p.image,
+      shipsNationwide: p.shipsNationwide,
+      shelfStable: p.shelfStable,
+      ordersLeft: p.ordersLeft == null ? '' : String(p.ordersLeft),
+      whatsIncluded: p.whatsIncluded || '',
+      shipsInDays: p.shipsInDays == null ? '' : String(p.shipsInDays),
+      packaging: p.packaging || '',
+      feeds: p.feeds || '',
+      shippingCost: p.shippingCost == null ? '' : String(p.shippingCost),
+    });
+    setEditingId(null); // POST, not PATCH — creates a new row
+    setSaveErr('');
+    setSavedNote('');
+    setShowForm(true);
   }
 
   // ── Connect gate — a form they can't submit is worse than a clear next step.
@@ -619,6 +688,15 @@ export default function ProductsTab({
               />
               ships nationwide
             </label>
+            {/* Audit fix: unchecking was an undocumented kill-switch — the
+                product silently vanished from /shop AND the rancher's own page
+                with only a reason-less "not listed" badge. */}
+            {!form.shipsNationwide && (
+              <span className="text-[12px] text-weathered self-center">
+                unchecked = this product won&rsquo;t show on the marketplace or your ranch page
+                (buyers can&rsquo;t see or buy it)
+              </span>
+            )}
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -775,26 +853,27 @@ export default function ProductsTab({
                     view
                   </a>
                 )}
-                {p.depositStyle && (
-                  <span className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      placeholder={p.ordersLeft == null ? 'stock' : String(p.ordersLeft)}
-                      value={stockDraft[p.id] ?? ''}
-                      onChange={(e) => setStockDraft((d) => ({ ...d, [p.id]: e.target.value }))}
-                      className="w-[70px] p-2 border border-dust bg-bone-warm text-xs"
-                    />
-                    <button
-                      onClick={() => saveStock(p)}
-                      disabled={stockSavingId === p.id || (stockDraft[p.id] ?? '') === ''}
-                      className="text-xs uppercase tracking-wider border border-dust px-2 py-2 hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40"
-                    >
-                      {stockSavingId === p.id ? '…' : 'set'}
-                    </button>
-                  </span>
-                )}
+                {/* Stock quick-set on EVERY row (audit fix) — inventory is the
+                    highest-frequency edit; it was buried in the full edit form
+                    for regular products (only deposit-style had the box). */}
+                <span className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder={p.ordersLeft == null ? 'stock' : String(p.ordersLeft)}
+                    value={stockDraft[p.id] ?? ''}
+                    onChange={(e) => setStockDraft((d) => ({ ...d, [p.id]: e.target.value }))}
+                    className="w-[70px] p-2 border border-dust bg-bone-warm text-xs"
+                  />
+                  <button
+                    onClick={() => saveStock(p)}
+                    disabled={stockSavingId === p.id || (stockDraft[p.id] ?? '') === ''}
+                    className="text-xs uppercase tracking-wider border border-dust px-2 py-2 hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-40"
+                  >
+                    {stockSavingId === p.id ? '…' : 'set'}
+                  </button>
+                </span>
                 <button
                   onClick={() => startEdit(p)}
                   disabled={p.depositStyle}
@@ -803,13 +882,33 @@ export default function ProductsTab({
                 >
                   edit
                 </button>
+                {!p.depositStyle && (
+                  <button
+                    onClick={() => startDuplicate(p)}
+                    title="start a new product prefilled from this one (photo carries over)"
+                    className="text-xs uppercase tracking-wider border border-dust px-3 py-2 hover:bg-charcoal hover:text-bone transition-colors"
+                  >
+                    duplicate
+                  </button>
+                )}
                 <button
                   onClick={() => toggleActive(p)}
                   disabled={togglingId === p.id}
+                  title={p.active ? 'hide from the marketplace and your ranch page (buyers can\'t see or buy it)' : ''}
                   className="text-xs uppercase tracking-wider border border-dust px-3 py-2 hover:bg-charcoal hover:text-bone transition-colors disabled:opacity-50"
                 >
                   {togglingId === p.id ? '…' : p.active ? 'hide' : 'show'}
                 </button>
+                {!p.depositStyle && (
+                  <button
+                    onClick={() => deleteProduct(p)}
+                    disabled={togglingId === p.id}
+                    title="delete for good (a hidden product keeps its info — delete can't be undone)"
+                    className="text-xs uppercase tracking-wider border border-weathered/40 text-weathered px-3 py-2 hover:bg-weathered hover:text-bone transition-colors disabled:opacity-50"
+                  >
+                    delete
+                  </button>
+                )}
               </div>
             </div>
           ))}

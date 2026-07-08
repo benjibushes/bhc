@@ -210,7 +210,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
       to: buyerEmail,
       subject: depositStyle
         ? `you're set — your ${productName} deposit is in`
-        : `you're set — ${productName} is on its way`,
+        : `order's in — ${productName} ships from the ranch soon`,
       html: depositStyle
         ? `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:600px;margin:0 auto;padding:40px;border:1px solid #A7A29A;background:#F4F1EC">
         <p>hey ${buyerFirst},</p>
@@ -222,6 +222,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
         <p>hey ${buyerFirst},</p>
         <p>you're all set — <strong>${escapeHtml(rancherName)}</strong> got your order for a <strong>${escapeHtml(productName)}</strong> and will ship it direct to you.</p>
         <p style="font-size:14px;color:#5A5752">paid: $${dollars(paidCents)}${shippingCents > 0 ? ` ($${dollars(displayCents)} + $${dollars(shippingCents)} shipping)` : ''}. you'll get tracking as soon as it's on the way.</p>
+        ${shipTo ? `<p style="font-size:13px;color:#5A5752">shipping to:<br>${escapeHtml(shipTo).replace(/\n/g, '<br>')}<br><span style="color:#A7A29A">typo in the address? just reply to this email and we'll fix it before it ships.</span></p>` : ''}
         <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
       </div>`,
       templateName: 'product_receipt',
@@ -259,7 +260,7 @@ export async function settleProductPurchase(pi: any, connectedAccountId?: string
             <strong>${escapeHtml(productName)}</strong><br>
             ship to:<br>${escapeHtml(shipTo || '(see BuyHalfCow order)').replace(/\n/g, '<br>')}
           </div>
-          <p style="font-size:14px;color:#2A2A2A">you net <strong>$${dollars(baseCents + shippingCents)}</strong>${shippingCents > 0 ? ` (includes the $${dollars(shippingCents)} shipping the buyer paid)` : ''} — already routed to your Stripe account. pack it, ship it, and reply with the tracking number.</p>
+          <p style="font-size:14px;color:#2A2A2A">you net <strong>$${dollars(baseCents + shippingCents)}</strong>${shippingCents > 0 ? ` (includes the $${dollars(shippingCents)} shipping the buyer paid)` : ''} — already routed to your Stripe account. pack it, then mark it shipped in your dashboard (Products tab) and paste the tracking number — that sends the buyer their tracking email automatically. or just reply here with the tracking and we'll handle it.</p>
           <p style="font-size:12px;color:#A7A29A">— Ben<br>BuyHalfCow</p>
         </div>`,
         templateName: 'rancher_order_notify',
