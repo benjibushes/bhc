@@ -157,3 +157,11 @@ test('shippingCost: blank/0 clears the field (shipping included); values pass; j
   assert.equal(validateProductInput({ ...base, shippingCost: 250 }).ok, false);
   assert.equal(validateProductInput({ ...base, shippingCost: Number('junk') }).ok, false);
 });
+
+test('price ceiling: fat-fingered 1999-instead-of-19.99 is rejected; $2,000 exactly passes', () => {
+  const base = { name: 'Jerky', category: 'Jerky' };
+  assert.equal(validateProductInput({ ...base, displayPrice: 1999 }).ok, true); // $1,999 valid
+  assert.equal(validateProductInput({ ...base, displayPrice: 2000 }).ok, true); // boundary
+  assert.equal(validateProductInput({ ...base, displayPrice: 2000.01 }).ok, false);
+  assert.equal(validateProductInput({ ...base, displayPrice: 19990 }).ok, false);
+});

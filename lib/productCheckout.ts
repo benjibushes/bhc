@@ -154,6 +154,10 @@ export async function createProductCheckout(
   const session = await stripe.checkout.sessions.create(
     {
       mode: 'payment',
+      // Sessions default to a 24h life — a link minted before a sell-out
+      // could pay a full day later. 30 min (Stripe's floor) shrinks the
+      // oversell window; settlement still rings OVERSOLD if one slips through.
+      expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
       // Whitelabel: embedded renders in an iframe on buyhalfcow.com. The direct
       // charge, application_fee, metadata, and webhook are all identical to hosted.
       ...(isEmbedded ? { ui_mode: 'embedded' as const } : {}),
