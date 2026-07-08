@@ -20,6 +20,7 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { loadMarketplaceProducts, groupProducts } from '@/lib/marketplaceProducts';
+import type { LocalMarketProduct } from './ShopGrid';
 import Container from '../components/Container';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -40,7 +41,29 @@ export const metadata: Metadata = {
 };
 
 export default async function MarketplacePage() {
-  const products = await loadMarketplaceProducts();
+  // FARMERS MARKET (2026-07-08): includeLocal pulls pickup-only products too.
+  // They are split OUT of the nationwide grid below and rendered only in the
+  // location-matched "near you" rail — a TX buyer still never sees an MT
+  // pickup product. ISR stays intact: the full (small) set ships in the
+  // payload and the client matches it to the buyer's state.
+  const all = await loadMarketplaceProducts({ includeLocal: true });
+  const products = all.filter((p) => !p.localOnly);
+  const localProducts: LocalMarketProduct[] = all
+    .filter((p) => p.localOnly && p.rancherState)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      rancher: p.rancher,
+      weight: p.weight,
+      image: p.image,
+      shelfStable: p.shelfStable,
+      depositStyle: p.depositStyle,
+      priceRange: p.priceRange,
+      ordersLeft: p.ordersLeft,
+      localOnly: true,
+      rancherState: p.rancherState,
+    }));
   const groups = groupProducts(products);
   // Flatten group membership onto each product for the client grid's chips
   // (ShopGrid can't import lib/marketplaceProducts — it's server-only).
@@ -88,7 +111,7 @@ export default async function MarketplacePage() {
           <p className="text-saddle">the shop is stocking up — check back shortly.</p>
         ) : (
           <>
-            <ShopGrid products={gridProducts} />
+            <ShopGrid products={gridProducts} localProducts={localProducts} />
 
             {/* SHARE ANCHOR — last, as the graduation. De-emphasized (secondary
                 Button) so the product Buy buttons stay the loudest thing on the
