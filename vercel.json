@@ -200,6 +200,10 @@
     {
       "path": "/api/cron/product-review-ask",
       "schedule": "20 18 * * *"
+    },
+    {
+      "path": "/api/cron/log-retention",
+      "schedule": "10 9 * * *"
     }
   ]
 }
