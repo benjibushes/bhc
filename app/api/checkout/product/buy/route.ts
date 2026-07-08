@@ -52,6 +52,15 @@ export async function POST(request: Request) {
   }
   const { product, connectAccountId, rancherId, displayCents, baseCents, shippingCents, quantity } = resolved;
 
+  // Wallets (PR D): same lazy registration on the session path, so hosted/
+  // embedded Checkout buyers grow Apple Pay too. Fire-and-forget.
+  const { ensureApplePayDomains } = await import('@/lib/applePayDomain');
+  void ensureApplePayDomains({
+    id: rancherId,
+    connectAccountId,
+    alreadyRegistered: resolved.rancher['Apple Pay Domain Registered'] === true,
+  }).catch(() => {});
+
   // Ensure the Stripe Product+Price on the connected account (mint-on-first-sell).
   let stripePriceId: string | undefined;
   try {
