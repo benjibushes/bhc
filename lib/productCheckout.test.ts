@@ -80,3 +80,26 @@ test('createProductCheckout: bad money is rejected regardless of mode', async ()
     /exceeds display/,
   );
 });
+
+// ── shipping passthrough (2026-07-07) ────────────────────────────────────────
+
+test('computeProductCharge: no shipping → totals unchanged, shipping normalized to 0', () => {
+  const c = computeProductCharge({ displayCents: 2500, baseCents: 2000 });
+  assert.equal(c.totalChargedCents, 2500);
+  assert.equal(c.applicationFeeCents, 500);
+  assert.equal(c.rancherNetCents, 2000);
+  assert.equal(c.shippingCents, 0);
+});
+
+test('computeProductCharge: shipping raises buyer total + rancher net by the same amount — fee untouched', () => {
+  const c = computeProductCharge({ displayCents: 2500, baseCents: 2000, shippingCents: 1200 });
+  assert.equal(c.totalChargedCents, 3700);   // buyer pays product + shipping
+  assert.equal(c.applicationFeeCents, 500);  // BHC margin NEVER touches shipping
+  assert.equal(c.rancherNetCents, 3200);     // rancher keeps 100% of shipping
+  assert.equal(c.shippingCents, 1200);
+});
+
+test('computeProductCharge: negative or junk shipping is rejected', () => {
+  assert.throws(() => computeProductCharge({ displayCents: 2500, baseCents: 2000, shippingCents: -1 }), /invalid shipping/);
+  assert.throws(() => computeProductCharge({ displayCents: 2500, baseCents: 2000, shippingCents: NaN }), /invalid shipping/);
+});

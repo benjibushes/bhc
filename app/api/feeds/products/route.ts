@@ -44,6 +44,9 @@ export async function GET() {
     'brand',
     'condition',
     'identifier_exists',
+    // Google shipping format: country:region:service:price. Real per-product
+    // shipping when the rancher set one; 0.00 = shipping included in price.
+    'shipping',
   ].join('\t');
 
   const rows = products
@@ -52,14 +55,20 @@ export async function GET() {
     // Google requires an image; photo-less rows wait until one lands.
     .filter((p) => p.image)
     .map((p) => {
-      const title = clean(`${p.name} — ${p.rancher}`).slice(0, 150);
+      // Weight/size in the title (Google guidance): "Beef Jerky (3 oz) — Ranch X"
+      // distinguishes same-ranch size variants and anchors price-to-quantity.
+      const title = clean(`${p.name}${p.weight ? ` (${p.weight})` : ''} — ${p.rancher}`).slice(0, 150);
       const desc = clean(
         [
           p.description,
           p.whatsIncluded ? `What you get: ${p.whatsIncluded}` : '',
           p.shelfStable
-            ? 'Shelf-stable, ships free nationwide.'
-            : 'Ships frozen, direct from the ranch — shipping included.',
+            ? p.shippingCost > 0
+              ? 'Shelf-stable, ships nationwide.'
+              : 'Shelf-stable, ships free nationwide.'
+            : p.shippingCost > 0
+              ? 'Ships frozen, direct from the ranch, nationwide.'
+              : 'Ships frozen, direct from the ranch — shipping included.',
         ]
           .filter(Boolean)
           .join(' '),
@@ -75,6 +84,7 @@ export async function GET() {
         clean(p.rancher || 'BuyHalfCow'),
         'new',
         'false', // ranch goods have no GTIN/MPN
+        `US::Standard:${(p.shippingCost || 0).toFixed(2)} USD`,
       ].join('\t');
     });
 

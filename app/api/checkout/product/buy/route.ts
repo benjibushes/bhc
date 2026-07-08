@@ -69,6 +69,12 @@ export async function POST(request: Request) {
   if (!displayCents || !baseCents || baseCents > displayCents) {
     return NextResponse.json({ error: 'That product is not ready to sell yet.' }, { status: 409 });
   }
+  // Shipping passthrough: buyer pays it, rancher keeps 100% of it. Deposit-style
+  // products always 0 — shipping settles with the balance the rancher collects.
+  const shippingCents =
+    product['Deposit Style'] === true
+      ? 0
+      : Math.max(0, Math.round(Number(product['Shipping Cost'] || 0) * 100));
 
   const rancherId = String(product['Rancher Record ID'] || '').trim();
   const rancher: any = rancherId ? await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null) : null;
@@ -121,6 +127,7 @@ export async function POST(request: Request) {
       // C-1.5: the flag rides PI metadata so settlement sends deposit-truthful
       // receipts + a "confirm BEFORE shipping" rancher email.
       depositStyle: product['Deposit Style'] === true,
+      shippingCents,
       mode: wantEmbedded ? 'embedded' : 'hosted',
       returnUrl: `${SITE_URL}/order/success`,
       successUrl: `${SITE_URL}/order/success`,
@@ -144,7 +151,7 @@ export async function POST(request: Request) {
         event_source_url: `${SITE_URL}/shop/${product.id}`,
         user_data: buildUserData({ ip: capiIp, userAgent: capiUserAgent, fbp, fbc }),
         custom_data: {
-          value: displayCents / 100,
+          value: (displayCents + shippingCents) / 100,
           currency: 'usd',
           content_ids: [product.id],
           content_type: 'product',

@@ -144,3 +144,16 @@ test('ordersLeft: blank = unlimited (null field), integers pass, junk rejected',
   assert.equal(validateProductInput({ ...GOOD, ordersLeft: 2.5 as any }).ok, false);
   assert.equal(validateProductInput({ ...GOOD, ordersLeft: -1 as any }).ok, false);
 });
+
+test('shippingCost: blank/0 clears the field (shipping included); values pass; junk + out-of-range rejected', () => {
+  const base = { name: 'Jerky', displayPrice: 25, category: 'Jerky' };
+  const blank = validateProductInput({ ...base });
+  assert.ok(blank.ok && blank.fields['Shipping Cost'] === null);
+  const zero = validateProductInput({ ...base, shippingCost: 0 });
+  assert.ok(zero.ok && zero.fields['Shipping Cost'] === null);
+  const set = validateProductInput({ ...base, shippingCost: 12.5 });
+  assert.ok(set.ok && set.fields['Shipping Cost'] === 12.5);
+  assert.equal(validateProductInput({ ...base, shippingCost: -3 }).ok, false);
+  assert.equal(validateProductInput({ ...base, shippingCost: 250 }).ok, false);
+  assert.equal(validateProductInput({ ...base, shippingCost: Number('junk') }).ok, false);
+});

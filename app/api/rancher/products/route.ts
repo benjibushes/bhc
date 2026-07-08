@@ -70,6 +70,7 @@ function toClientProduct(r: any) {
     shipsInDays: Number(r['Ships In Days']) > 0 ? Number(r['Ships In Days']) : null,
     packaging: String(r['Packaging'] || ''),
     feeds: String(r['Feeds'] || ''),
+    shippingCost: Number(r['Shipping Cost']) > 0 ? Number(r['Shipping Cost']) : null,
   };
 }
 

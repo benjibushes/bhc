@@ -52,6 +52,8 @@ interface Prod {
   shipsInDays: number | null;
   packaging: string;
   feeds: string;
+  // Per-order shipping in dollars (0 = shipping included in the price).
+  shippingCost: number;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -123,6 +125,7 @@ async function loadProduct(id: string): Promise<Prod | null> {
     shipsInDays: Number(r['Ships In Days']) > 0 ? Number(r['Ships In Days']) : null,
     packaging: String(r['Packaging'] || ''),
     feeds: String(r['Feeds'] || ''),
+    shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
   };
 }
 
@@ -132,7 +135,11 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   if (!p) return { title: 'Shop real ranch beef, shipped nationwide' };
   // Title has no "| BuyHalfCow" — the layout template appends " — BuyHalfCow".
   const title = `${p.name} — ${p.rancher}`;
-  const description = p.description || 'Real beef, shipped to your door from a family ranch. Shipping included.';
+  const description =
+    p.description ||
+    (p.shippingCost > 0
+      ? 'Real beef, shipped to your door from a family ranch.'
+      : 'Real beef, shipped to your door from a family ranch. Shipping included.');
   const images = p.image ? [{ url: p.image }] : [];
   return {
     title,
@@ -207,7 +214,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         url: `${SITE_URL}/shop/${p.id}`,
         shippingDetails: {
           '@type': 'OfferShippingDetails',
-          shippingRate: { '@type': 'MonetaryAmount', value: '0', currency: 'USD' },
+          // Real rate: 0 = shipping included; a priced-shipping product must
+          // never assert free shipping to Google.
+          shippingRate: { '@type': 'MonetaryAmount', value: p.shippingCost.toFixed(2), currency: 'USD' },
           shippingDestination: { '@type': 'DefinedRegion', addressCountry: 'US' },
         },
       };
@@ -354,9 +363,11 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               <div className="text-[13px] text-sage">
                 {p.depositStyle
                   ? 'deposit today · rancher confirms size + balance · ships frozen, nationwide'
-                  : p.shelfStable
-                    ? 'shelf-stable · ships free, no freezer needed'
-                    : 'ships frozen, direct from the ranch · shipping included, nationwide'}
+                  : p.shippingCost > 0
+                    ? `${p.shelfStable ? 'shelf-stable' : 'ships frozen, direct from the ranch'} · + $${p.shippingCost.toFixed(2)} shipping, nationwide`
+                    : p.shelfStable
+                      ? 'shelf-stable · ships free, no freezer needed'
+                      : 'ships frozen, direct from the ranch · shipping included, nationwide'}
               </div>
 
               {/* Real scarcity only — shown because it's literally true. */}
@@ -391,7 +402,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               <p className="text-[12.5px] text-saddle leading-relaxed mt-0.5">
                 {p.depositStyle
                   ? 'your deposit counts toward the total — the balance is only settled after you and the rancher confirm the details. '
-                  : 'the price you see is the price you pay — shipping included. '}
+                  : p.shippingCost > 0
+                    ? `$${p.price.toFixed(2)} + $${p.shippingCost.toFixed(2)} shipping — that's the whole total, no surprises at checkout. `
+                    : 'the price you see is the price you pay — shipping included. '}
                 if a cut ever shows up wrong or freezer-burned, we make it right — no forms, no
                 runaround. checkout secured by Stripe. questions? reply to your receipt — a real
                 person answers. &mdash; Ben

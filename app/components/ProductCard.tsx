@@ -34,6 +34,8 @@ export interface ProductCardProduct {
   depositStyle?: boolean;
   priceRange?: string;
   ordersLeft?: number | null;
+  /** Per-order shipping in dollars; 0/undefined = shipping included in price. */
+  shippingCost?: number;
 }
 
 export default function ProductCard({ p }: { p: ProductCardProduct }) {
@@ -74,9 +76,11 @@ export default function ProductCard({ p }: { p: ProductCardProduct }) {
         <div className="text-xs text-sage line-clamp-1">
           {deposit
             ? 'your rancher confirms size + the balance before it ships'
-            : p.shelfStable
-              ? 'shelf-stable · ships free, no freezer needed'
-              : 'ships frozen · shipping included'}
+            : p.shippingCost && p.shippingCost > 0
+              ? `${p.shelfStable ? 'shelf-stable' : 'ships frozen'} · + $${p.shippingCost.toFixed(2)} shipping`
+              : p.shelfStable
+                ? 'shelf-stable · ships free, no freezer needed'
+                : 'ships frozen · shipping included'}
         </div>
 
         {/* Real scarcity only — the grid never shows sold-out rows, so any

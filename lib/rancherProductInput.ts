@@ -119,6 +119,11 @@ export interface ProductInput {
   shipsInDays?: number | '' | null;
   packaging?: string;
   feeds?: string;
+  // Shipping (2026-07-07): optional per-order shipping charge in DOLLARS.
+  // Blank/0 = shipping included in the retail price (the default). When set,
+  // the buyer pays it at checkout as a separate shipping line and the rancher
+  // keeps 100% of it — BHC's margin never touches shipping.
+  shippingCost?: number | '' | null;
 }
 
 export type ValidatedProduct =
@@ -194,6 +199,18 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     shipsInDaysField = d;
   }
 
+  // Shipping cost: blank or 0 → cleared (shipping included). Capped at $200 —
+  // above that it's a typo, not a shipping rate for a beef box.
+  let shippingCostField: number | null = null;
+  const rawShip = body.shippingCost;
+  if (!(rawShip === undefined || rawShip === null || rawShip === '')) {
+    const s = Number(rawShip);
+    if (!Number.isFinite(s) || s < 0 || s > 200) {
+      return { ok: false, error: 'shipping charge must be between $0 and $200 (leave blank if shipping is built into your price).' };
+    }
+    shippingCostField = s > 0 ? Math.round(s * 100) / 100 : null;
+  }
+
   const fields: Record<string, string | number | boolean | null> = {
     'Product Name': name,
     'Display Price': displayCents / 100,
@@ -208,6 +225,7 @@ export function validateProductInput(body: ProductInput): ValidatedProduct {
     'Ships In Days': shipsInDaysField,
     Packaging: packaging,
     Feeds: feeds,
+    'Shipping Cost': shippingCostField,
   };
 
   return { ok: true, fields, displayCents };

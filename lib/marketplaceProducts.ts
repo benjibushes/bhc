@@ -51,6 +51,9 @@ export interface MarketplaceProduct {
   // landing page list THEIR live products (the Silverline gap: products sold
   // on /shop but invisible on /ranchers/<slug>).
   rancherId: string;
+  // Per-order shipping charge in dollars (0 = shipping included in price).
+  // Buyer pays it at checkout as a separate line; rancher keeps 100% of it.
+  shippingCost: number;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -118,6 +121,7 @@ export async function loadMarketplaceProducts(): Promise<MarketplaceProduct[]> {
       packaging: String(r['Packaging'] || ''),
       feeds: String(r['Feeds'] || ''),
       rancherId: String(r['Rancher Record ID'] || '').trim(),
+      shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
     }))
     .sort((a, b) => a.price - b.price);
 }
@@ -196,6 +200,7 @@ export async function loadMarketplaceProductAnyStock(
       packaging: String(r['Packaging'] || ''),
       feeds: String(r['Feeds'] || ''),
       rancherId: String(r['Rancher Record ID'] || '').trim(),
+      shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
     },
     soldOut: !hasStock(r),
   };
