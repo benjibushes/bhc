@@ -87,6 +87,8 @@ export const EXCLUDED_CRONS_24H: Readonly<Record<string, string>> = {
   'product-stock-checkin':
     'monthly (1st, 16:00 UTC) — a 24h expectation would false-alarm ~29 days a month; ' +
     'also dark-by-default (PRODUCT_STOCK_CHECKIN_ENABLED gate returns before withCronRun)',
+  'weekly-scorecard':
+    'weekly (Mondays 14:00 UTC) — a 24h expectation would false-alarm six days a week by design.',
   'log-retention':
     'dark-by-default: the LOG_RETENTION_ENABLED gate returns BEFORE withCronRun, so no ' +
     'Cron Runs row exists while dark and the watchdog would alarm daily by design. ' +

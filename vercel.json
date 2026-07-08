@@ -204,6 +204,10 @@
     {
       "path": "/api/cron/log-retention",
       "schedule": "10 9 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-scorecard",
+      "schedule": "0 14 * * 1"
     }
   ]
 }

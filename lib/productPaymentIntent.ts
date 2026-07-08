@@ -72,6 +72,11 @@ export async function createProductPaymentIntent(
       currency: 'usd',
       application_fee_amount: charge.applicationFeeCents,
       automatic_payment_methods: { enabled: true },
+      // Card-statement anchor (2026-07-08): direct charges print the RANCHER's
+      // Stripe descriptor — if that's an LLC name the buyer doesn't recognize,
+      // statement-time confusion becomes disputes. The suffix appends a name
+      // the buyer definitely knows. Stripe truncates prefix+suffix to 22 chars.
+      statement_descriptor_suffix: 'BUYHALFCOW',
       description: `${charge.quantity > 1 ? `${charge.quantity}× ` : ''}${input.productName} — ${input.rancherName}`,
       // receipt_email deliberately OMITTED (spec R8): the connected account's
       // ranch-named Stripe auto-receipt must never double-send against BHC's
