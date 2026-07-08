@@ -116,9 +116,11 @@ export default function FullHomepage() {
                 <p className="text-xs uppercase tracking-widest text-saddle mb-2">stock the freezer</p>
                 <h3 className="font-serif text-2xl mb-2 lowercase">a half or whole share</h3>
                 <p className="text-saddle text-sm mb-6 flex-1">
-                  a year of beef, direct from a verified ranch near you. take the 90-second quiz and we match you.
+                  a year of beef from the verified ranch nearest you — matched in
+                  90 seconds. your deposit holds the spot, fully refundable
+                  until your rancher accepts.
                 </p>
-                <span className="inline-flex"><Button href="/access" size="md">take the quiz →</Button></span>
+                <span className="inline-flex"><Button href="/access" size="md">reserve your share →</Button></span>
                 <p className="text-xs text-saddle mt-3">
                   or <a href="/ranchers" className="underline hover:text-charcoal transition-colors">browse the ranchers</a>
                 </p>
@@ -168,9 +170,9 @@ export default function FullHomepage() {
             <ol className="grid grid-cols-1 sm:grid-cols-4 gap-4 md:gap-3">
               {[
                 { n: '1', t: 'Apply', d: '90-second quiz. We capture your state, household size, timing.' },
-                { n: '2', t: 'Get routed', d: 'We match you with a verified rancher serving your area within hours.' },
+                { n: '2', t: 'Get routed', d: 'We match you to the verified ranch nearest you — low food miles, real local beef.' },
                 { n: '3', t: 'Talk direct', d: 'Rancher emails you direct with pricing, cuts, processing date.' },
-                { n: '4', t: 'Beef in your freezer', d: '2–4 weeks. No marketplace markup. BHC Promise on every match.' },
+                { n: '4', t: 'Beef in your freezer', d: '2–4 weeks. Deposit refundable until your rancher accepts. BHC Promise on every match.' },
               ].map((step) => (
                 <li
                   key={step.n}
@@ -555,8 +557,8 @@ export default function FullHomepage() {
           for scrollers with share intent. */}
       <StickyMobileCTA
         href="/shop"
-        label="Shop real beef — shipped"
-        subLabel="or take the 90-second quiz for a full share"
+        label="Taste the ranch — beef, shipped"
+        subLabel="or reserve your share — 90 seconds, deposit refundable"
       />
       </main>
   );

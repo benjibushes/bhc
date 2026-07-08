@@ -16,7 +16,7 @@ copy, CTAs. Used by the marketing skill. Update when business model evolves.
 
 - **Generic / press:** "BuyHalfCow is the private network connecting families directly to verified ranchers. Real beef, no middleman, no markup on your meat." _(2026-06-15: dropped the "10% commission only on closed deals" tag — commission is now tier-based and, for tier_v2 ranchers, collected upfront on the deposit. Don't state a flat 10% in press.)_
 - **Buyer-facing:** "Source beef directly from a real ranch in your state. Quarter, half, or whole. The way local families have been doing it for generations."
-- **Rancher-facing (tier_v2):** "We bring qualified, in-state buyers to your door and run the sales call. You raise and fulfill the beef. Pick your plan — pay as little as 0% commission." _(Legacy line, now tier-dependent: ~~"You close the deal. We take 10%."~~ — only true for un-migrated legacy ranchers. tier_v2 rates: Legacy Connect 10% · Pasture 7% · Ranch 3% · Operator 0%.)_
+- **Rancher-facing (tier_v2):** "We send you qualified buyers from your own area until your capacity is sold out — you raise and fulfill, keep your brand and your customers. Free to start; pay as little as 0% commission." _(2026-07-08: "until you sell out" is now literally true — stale intros auto-expire and stop clogging capacity; lead flow only pauses on REAL live deals. Flagship pitch for serious share ranchers = the $500/mo Operator tier: "we close, you ship.")__(Legacy line, now tier-dependent: ~~"You close the deal. We take 10%."~~ — only true for un-migrated legacy ranchers. tier_v2 rates: Legacy Connect 10% · Pasture 7% · Ranch 3% · Operator 0%.)_
 - **Founder/backer-facing:** "100 spots, $1,000 each. Numbered placement, lifetime priority, no equity, no theatrics. The Founding Herd is the people who paid in before this was easy to bet on."
 - **Brand-facing:** "Three tiers. $99/$499/$2,500. Get your brand in front of D2C ranchers + the families who buy real beef."
 - **Mission line (always available):** "We're gonna take back American ranching and agriculture. One family, one rancher, one freezer at a time."
@@ -525,6 +525,8 @@ Skill should:
 ---
 
 ## REVISION NOTES
+
+- **2026-07-08 — BUSINESS-MODEL ALIGNMENT:** shares-first everywhere (founder ruling): the whole/half/quarter share reservation is the product; /shop = "taste it first" downsell; /gear = third rung. New sayable product truths: (1) NEAREST-RANCH MATCHING — routing prefers the closest ranch by state adjacency, low food miles, "your beef doesn't cross the country" (TRUE FOR SHARES ONLY — never claim "nearest" on shipped shop products, they ship nationwide); (2) REFUNDABLE DEPOSIT — "your deposit holds the spot, fully refundable until your rancher accepts" is the #1 risk-reversal line, use at every share CTA; (3) LEADS UNTIL SOLD OUT — rancher pitch: lead flow continues until capacity is genuinely sold (auto-expiry keeps it honest); (4) REAL SCARCITY ONLY — batch counts and processing dates are true numbers; use them, never invent urgency.
 
 - v1 (2026-05-03): Initial draft. Locked from current production state of marketplace + Founding Herd + brand partner offer.
 - Future revisions: append phase as `## v2 (date) — Stripe Connect rollout` etc. Don't delete history.

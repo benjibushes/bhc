@@ -50,7 +50,7 @@ export default function GuideCaptureForm() {
         </p>
         <div className="flex gap-2 justify-center flex-wrap pt-1">
           <Button href="/shop" size="md">shop the ranches &rarr;</Button>
-          <Button href="/access" variant="secondary" size="md">take the quiz</Button>
+          <Button href="/access" variant="secondary" size="md">reserve your share</Button>
         </div>
       </div>
     );

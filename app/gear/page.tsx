@@ -192,7 +192,7 @@ export default async function GearPage() {
               </a>{' '}
               · or{' '}
               <a href="/access" className="underline hover:text-charcoal transition-colors">
-                take the quiz for a full share &rarr;
+                reserve your share — deposit refundable &rarr;
               </a>
             </p>
           </>
