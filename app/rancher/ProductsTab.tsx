@@ -530,7 +530,10 @@ export default function ProductsTab({
               />
               <span className="block text-[11px] text-saddle mt-1">
                 {form.shipsNationwide
-                  ? <>leave blank if shipping&rsquo;s built into your price. if set, the buyer pays it at checkout and 100% of it comes to you.</>
+                  ? <>leave blank if shipping&rsquo;s built into your price. if set, the buyer pays it at checkout and 100% of it comes to you.{' '}
+                      <a href="/rancher/shipping-guide" target="_blank" rel="noreferrer" className="underline">
+                        how to ship frozen so it arrives frozen &rarr;
+                      </a></>
                   : <>local pickup — no shipping is ever charged on this product.</>}
               </span>
             </label>
