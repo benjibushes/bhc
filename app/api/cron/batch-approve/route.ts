@@ -319,6 +319,12 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'pa
       const readyToGoLive = allRanchers.filter((r: any) => {
         if (r['Onboarding Status'] !== 'Verification Complete') return false;
         if (r['Page Live'] === true) return false;
+        // Canonical legal gate (2026-07-08): never auto-go-live without a signed
+        // agreement — mirrors the Connect webhook's auto-go-live rail + the
+        // go-live-sync cron, both of which require Agreement Signed. Without
+        // this, batch-approve was the one rail that could flip Page Live on an
+        // unsigned rancher.
+        if (r['Agreement Signed'] !== true) return false;
         // Required: Slug + a way to collect payment. About Text is NOT required —
         // the wizard never makes it mandatory and rancher-go-live-sync doesn't gate
         // on it, so requiring it here silently stranded ranchers who finished

@@ -118,7 +118,7 @@ export default function SellPage() {
                 Start free — 5 minutes
               </Button>
               <Button href="/book?purpose=rancher" variant="secondary" size="lg">
-                Book a 15-min call with Ben
+                Book a call with Ben
               </Button>
             </div>
             <p className="text-sm text-saddle pt-3">
@@ -236,7 +236,7 @@ export default function SellPage() {
                 href="/book?purpose=rancher"
                 className="inline-block px-10 py-5 bg-transparent text-bone hover:bg-bone hover:text-charcoal transition-colors duration-300 font-medium tracking-wider uppercase border-2 border-bone"
               >
-                Book a 15-min call
+                Book a call
               </a>
             </div>
             <p className="text-sm pt-4 text-dust">

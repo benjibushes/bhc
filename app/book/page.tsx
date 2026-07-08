@@ -30,18 +30,37 @@ export default async function BookGenericPage({
 
   return (
     <main className="min-h-screen bg-[#FAF7F2] flex flex-col items-center px-4 py-10 md:py-16">
-      {/* On-brand header — serif, saddle accent, no nav/footer (ChromeGate seals this route) */}
+      {/* On-brand header — serif, saddle accent, no nav/footer (ChromeGate seals this route).
+          Copy branches on purpose: ranchers arriving from /sell get the onboarding
+          pitch (buyer routing, tier cost, Stripe payout), not the buyer order copy.
+          No minutes claim on the rancher side — the Rancher Onboarding event resolves
+          dynamically (slug `30min` is actually 45min; see lib/calBooking.ts). */}
       <header className="w-full max-w-xl mb-8 text-center">
         <p className="text-xs font-mono tracking-widest uppercase text-[#92632F] mb-3">
           BuyHalfCow.com
         </p>
-        <h1 className="font-serif text-3xl md:text-4xl text-[#0E0E0E] leading-tight mb-3">
-          Book your call
-        </h1>
-        <p className="text-sm text-[#5C5C5C] leading-relaxed max-w-sm mx-auto">
-          Pick a time that works for you. We&apos;ll cover your order, the ranch, and
-          delivery — usually 15–20 minutes.
-        </p>
+        {purpose === 'rancher' ? (
+          <>
+            <h1 className="font-serif text-3xl md:text-4xl text-[#0E0E0E] leading-tight mb-3">
+              Book a call about your ranch
+            </h1>
+            <p className="text-sm text-[#5C5C5C] leading-relaxed max-w-sm mx-auto">
+              Pick a time that works for you. We&apos;ll cover how buyhalfcow routes
+              qualified buyers to your ranch, what the tiers cost, and how you get
+              paid — direct to your own Stripe account.
+            </p>
+          </>
+        ) : (
+          <>
+            <h1 className="font-serif text-3xl md:text-4xl text-[#0E0E0E] leading-tight mb-3">
+              Book your call
+            </h1>
+            <p className="text-sm text-[#5C5C5C] leading-relaxed max-w-sm mx-auto">
+              Pick a time that works for you. We&apos;ll cover your order, the ranch, and
+              delivery — usually 15–20 minutes.
+            </p>
+          </>
+        )}
       </header>
 
       {/* Operator sales call iframe — battle-tested embed, always works */}

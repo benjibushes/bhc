@@ -1977,9 +1977,18 @@ export async function sendRancherGoLiveEmail(data: {
   ranchName: string;
   email: string;
   dashboardUrl?: string;
+  /** Public page slug — when present the email links the rancher's live
+   *  page (/ranchers/<slug>) so they can see exactly what buyers see. */
+  slug?: string;
+  /** True when the SAME event that flipped go-live also activated Stripe
+   *  Connect (webhook auto-go-live). The go-live email then carries the
+   *  bank news too — callers must NOT also send sendRancherBankConnected
+   *  from that event (one event, one email). */
+  bankConnected?: boolean;
 }) {
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
   const dashboardUrl = data.dashboardUrl || `${baseUrl}/rancher`;
+  const pageUrl = data.slug ? `${baseUrl}/ranchers/${data.slug}` : '';
   const subject = "You're Live — Buyer Leads Are Coming";
   return guardedSend({
     templateName: 'sendRancherGoLiveEmail',
@@ -2009,14 +2018,77 @@ export async function sendRancherGoLiveEmail(data: {
             <h1>You're Live</h1>
             <p>Hi ${esc(data.operatorName)},</p>
             <p><strong>${esc(data.ranchName)} is now live on BuyHalfCow.</strong> Buyer leads will appear in your dashboard as we match approved buyers to your operation.</p>
+            ${pageUrl ? `<p>Your public page: <a href="${esc(pageUrl)}">${esc(pageUrl)}</a></p>` : ''}
+            ${data.bankConnected ? `<p><strong>Bank connected ✓</strong> — your Stripe account is active, so buyer deposits pay out straight to you.</p>` : ''}
             <div class="divider"></div>
             <p><strong>How it works:</strong></p>
             <ol style="color: #6B4F3F; line-height: 2;">
-              <li>When we find a buyer in your area, we'll send you an intro email with their contact details</li>
+              <li>When we find a buyer in your area, we'll send you an intro email with their contact details (plus a push notification if you've enabled them on your dashboard)</li>
               <li>Connect with them about cuts, processing dates, and pickup — get them excited about your beef</li>
               <li>When a buyer's ready to commit, we handle the sale. You raise and fulfill the beef and collect the balance at pickup.</li>
             </ol>
             <div class="divider"></div>
+            <p><a href="${esc(dashboardUrl)}" class="button">View Your Dashboard</a></p>
+            <p>Questions? Just reply to this email.</p>
+            <div class="footer">
+              <p>— Ben<br>BuyHalfCow<br>Questions? Email ${ADMIN_EMAIL}</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    }),
+  });
+}
+
+// =====================================================
+// RANCHER BANK CONNECTED EMAIL
+//
+// Fires from the Stripe Connect webhook the FIRST time a rancher's
+// Connect account goes active (gated on the same Connected At stamp as
+// the admin Telegram celebration), so the rancher — not just ops — hears
+// their bank is wired and deposits are on. When the SAME webhook pass
+// also auto-flips go-live, the caller sends ONLY sendRancherGoLiveEmail
+// (which carries the bank news via bankConnected) — never two emails
+// from one event.
+// =====================================================
+export async function sendRancherBankConnected(data: {
+  operatorName: string;
+  ranchName: string;
+  email: string;
+  dashboardUrl?: string;
+}) {
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
+  const dashboardUrl = data.dashboardUrl || `${baseUrl}/rancher`;
+  const firstName = String(data.operatorName || '').trim().split(/\s+/)[0] || 'there';
+  const subject = `bank connected — deposits on for ${data.ranchName}`;
+  return guardedSend({
+    templateName: 'sendRancherBankConnected',
+    recipientEmail: data.email,
+    subject,
+    send: () => resend.emails.send({
+      from: getFromEmail(),
+      to: data.email,
+      subject,
+      headers: getUnsubscribeHeaders(data.email),
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0E0E0E; background: #F4F1EC; margin: 0; padding: 20px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border: 1px solid #A7A29A; }
+            h1 { font-family: Georgia, serif; font-size: 28px; margin: 0 0 20px 0; }
+            p { margin: 16px 0; color: #6B4F3F; }
+            .button { display: inline-block; padding: 12px 24px; background: #2A2A2A; color: white; text-decoration: none; font-weight: 600; margin: 16px 0; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #A7A29A; font-size: 12px; color: #A7A29A; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Bank Connected ✓</h1>
+            <p>Hi ${esc(firstName)},</p>
+            <p><strong>${esc(data.ranchName)}'s Stripe account is fully connected.</strong> Buyer deposits are on — when a buyer reserves their share, the money pays out straight to your bank. Nothing more to set up on the money side.</p>
             <p><a href="${esc(dashboardUrl)}" class="button">View Your Dashboard</a></p>
             <p>Questions? Just reply to this email.</p>
             <div class="footer">

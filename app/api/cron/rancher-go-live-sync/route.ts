@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllRecords, updateRecord, TABLES } from '@/lib/airtable';
+import { sendRancherGoLiveEmail } from '@/lib/email';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
@@ -213,6 +214,25 @@ async function realHandler(
         triggerLaunchWarmup(`rancher-go-live-sync:${rancher.id}`);
       } catch (e: any) {
         console.warn(`[rancher-go-live-sync] could not trigger launch warmup for ${name}:`, e?.message);
+      }
+
+      // Go-live email to the RANCHER (2026-07-08) — this safety-net rail
+      // used to flip a rancher Live with zero rancher-facing notification
+      // (only the ops Telegram below). Skip silently when the record has
+      // no email; own try/catch so a send failure never blocks the note.
+      try {
+        const rancherEmail = rancher['Email'];
+        if (rancherEmail) {
+          const operatorName = rancher['Operator Name'] || rancher['Ranch Name'] || 'Rancher';
+          await sendRancherGoLiveEmail({
+            operatorName: String(operatorName),
+            ranchName: String(rancher['Ranch Name'] || operatorName),
+            email: String(rancherEmail),
+            slug: rancher['Slug'] ? String(rancher['Slug']) : undefined,
+          });
+        }
+      } catch (emailErr: any) {
+        console.error(`[rancher-go-live-sync] go-live email failed for ${name}:`, emailErr?.message);
       }
 
       // Telegram note per rancher flipped

@@ -97,6 +97,12 @@ export async function POST(req: Request) {
         'Stripe Connect Account Id': accountId,
         'Stripe Connect Status': 'onboarding',
         'Pricing Model': 'tier_v2',
+        // Stamp the Connect anchor here too, not just in connect/start — most
+        // ranchers get their Connect account created via THIS route (wizard
+        // tier pick), and without the stamp the onboarding-stuck cron's
+        // connect-stuck bucket had a null anchor and never chased them.
+        // Guarded so a pre-existing stamp is never overwritten.
+        ...(rancher['Connect Started At'] ? {} : { 'Connect Started At': new Date().toISOString() }),
       });
     } catch (e: any) {
       console.error('[tier/select] Airtable persist failed:', e?.message);

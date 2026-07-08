@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
-import { findOrCreateRancherByEmail } from '@/lib/airtable';
+import {
+  findOrCreateRancherByEmail,
+  updateRecord,
+  getAllRecords,
+  escapeAirtableValue,
+  TABLES,
+} from '@/lib/airtable';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { sendRancherApplyAutoApproved } from '@/lib/email';
 import { JWT_SECRET } from '@/lib/secrets';
@@ -15,6 +21,10 @@ import { rateLimit, getRequestIp } from '@/lib/rateLimit';
 //   • Creates Airtable Ranchers record w/ Status='Pending',
 //     Onboarding Status='Lead', Pricing Model defaults to 'tier_v2'
 //     (new ranchers get deposit-direct path; can be downgraded by Ben).
+//   • Mints a collision-safe Slug from Ranch Name (2026-07-08) — without
+//     it an /apply rancher can never reach a live public page self-serve:
+//     sign-agreement auto-go-live requires a Slug, the wizard PATCH
+//     allowlist excludes it, and batch-approve skips slug-less ranchers.
 //   • Mints rancher-setup JWT (60d) → returns wizard URL.
 //   • Fires Telegram alert tagged w/ qualification score so Ben can
 //     prioritize the high-volume + high-intent apps.
@@ -79,6 +89,45 @@ function qualificationScore(body: ApplyBody): number {
 
 function isValidEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+// Slug minting (2026-07-08) — replicates the kebab + collision-check pattern
+// from /api/rancher/activate. Two ranchers with the same name (e.g. two
+// "Bar S Ranch") must NOT auto-generate the same slug — getRancherBySlug
+// returns whichever Airtable lists first, so the second rancher's page and
+// all their direct traffic would silently route to the first. Append -2, -3,
+// … until free; on lookup failure fall back to a suffixed slug rather than
+// risk writing a collision.
+function kebab(name: string): string {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 60);
+}
+
+async function mintUniqueSlug(
+  ranchName: string,
+  opts: { excludeRecordId?: string; fallbackSuffix: string },
+): Promise<string> {
+  const base = kebab(ranchName) || `ranch-${opts.fallbackSuffix}`;
+  let unique = base;
+  try {
+    for (let n = 2; n < 50; n++) {
+      const safe = escapeAirtableValue(unique);
+      const taken = (
+        (await getAllRecords(TABLES.RANCHERS, `LOWER({Slug}) = "${safe}"`)) as any[]
+      ).filter((r) => r.id !== opts.excludeRecordId);
+      if (taken.length === 0) break;
+      unique = `${base}-${n}`;
+    }
+  } catch (e: any) {
+    console.warn('[apply] slug collision check failed:', e?.message);
+    unique = `${base}-${opts.fallbackSuffix}`;
+  }
+  return unique;
 }
 
 export async function POST(req: Request) {
@@ -163,6 +212,13 @@ export async function POST(req: Request) {
   // Team Emails, phone, and (Ranch Name + State) so a 2nd team member or a
   // re-submit under a different email can't fork a new "Jesse" row. On a
   // match we return the EXISTING rancher's wizard URL instead of duplicating.
+  // Mint the Slug BEFORE create (2026-07-08). There's no record id yet, so
+  // the no-collision fallback uses a random suffix instead of activate's
+  // record-id suffix.
+  const slug = await mintUniqueSlug(body.ranchName.trim(), {
+    fallbackSuffix: Math.random().toString(36).slice(2, 8),
+  });
+
   let rancherId: string;
   try {
     const { record, created } = await findOrCreateRancherByEmail(
@@ -177,12 +233,32 @@ export async function POST(req: Request) {
         Status: 'Pending',
         'Pricing Model': 'tier_v2',
         'Operation Details': opDetails,
+        Slug: slug,
       },
       { phone: body.phone?.trim(), ranchName: body.ranchName.trim(), state: body.state },
     );
 
     if (!created) {
       // Existing rancher — hand back their existing wizard URL, don't dupe.
+      //
+      // Slug backfill (2026-07-08): rows created before /apply minted slugs
+      // have none, which blocks sign-agreement auto-go-live + batch-approve.
+      // Re-mint from the record's own Ranch Name (dedupe can match by phone /
+      // team email, so it may differ from what was just submitted), excluding
+      // the record itself from the collision check. Non-fatal — the wizard
+      // URL still goes out if the write hiccups.
+      if (!record['Slug']) {
+        try {
+          const backfillSlug = await mintUniqueSlug(
+            String(record['Ranch Name'] || body.ranchName.trim()),
+            { excludeRecordId: record.id, fallbackSuffix: String(record.id).slice(-6) },
+          );
+          await updateRecord(TABLES.RANCHERS, record.id, { Slug: backfillSlug });
+        } catch (e: any) {
+          console.warn('[apply] slug backfill failed (non-fatal):', e?.message);
+        }
+      }
+
       const existingToken = jwt.sign(
         { type: 'rancher-setup', rancherId: record.id },
         JWT_SECRET,
