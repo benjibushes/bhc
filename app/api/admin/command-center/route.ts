@@ -62,13 +62,14 @@ export async function GET(request: Request) {
     }
   };
 
-  const [consumers, ranchers, referrals, payments, funnelEvents, conversations] = await Promise.all([
+  const [consumers, ranchers, referrals, payments, funnelEvents, conversations, rancherOrders] = await Promise.all([
     safe(() => getAllRecords(TABLES.CONSUMERS) as Promise<any[]>, 'consumers'),
     safe(() => getAllRecords(TABLES.RANCHERS) as Promise<any[]>, 'ranchers'),
     safe(() => getAllRecords(TABLES.REFERRALS) as Promise<any[]>, 'referrals'),
     safe(() => getAllRecords(TABLES.PAYMENTS) as Promise<any[]>, 'payments'),
     safe(() => getAllRecords(FUNNEL_TABLE) as Promise<any[]>, 'funnelEvents'),
     safe(() => getAllRecords(TABLES.CONVERSATIONS) as Promise<any[]>, 'conversations'),
+    safe(() => getAllRecords(TABLES.RANCHER_ORDERS) as Promise<any[]>, 'rancherOrders'),
   ]);
 
   const now = Date.now();
@@ -137,6 +138,26 @@ export async function GET(request: Request) {
         console.warn('[command-center] ad spend read failed:', e?.message);
       }
 
+      // Product rail (Rancher Orders — the low-ticket shop). The money view
+      // was blind to this rail: shop sales counted nowhere on /admin. Fields
+      // come from lib/productSettlement.ts (Buyer Paid / BHC Margin dollars,
+      // Status New → Shipped). null when the table read failed.
+      let productOrders: number | null = null;
+      let productRevenue: number | null = null;
+      let productMarginBHC: number | null = null;
+      let productUnshipped: number | null = null;
+      let productOrdersThisMonth: number | null = null;
+      if (rancherOrders) {
+        productOrders = rancherOrders.length;
+        productRevenue = round2(rancherOrders.reduce((s: number, o: any) => s + num(o['Buyer Paid']), 0));
+        productMarginBHC = round2(rancherOrders.reduce((s: number, o: any) => s + num(o['BHC Margin']), 0));
+        productUnshipped = rancherOrders.filter((o: any) => str(o['Status']) === 'New').length;
+        productOrdersThisMonth = rancherOrders.filter((o: any) => {
+          const t = o['Ordered At'];
+          return t && new Date(t).getTime() >= startOfMonth;
+        }).length;
+      }
+
       money = {
         openPipelineRevenue: round2(openPipelineRevenue),
         openPipelineCount,
@@ -150,6 +171,11 @@ export async function GET(request: Request) {
         commissionUnpaid: round2(commissionUnpaid),
         blendedRoas,
         adSpend,
+        productOrders,
+        productRevenue,
+        productMarginBHC,
+        productUnshipped,
+        productOrdersThisMonth,
       };
     }
   } catch (e: any) {

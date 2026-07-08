@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isSellableRow, hasStock, groupProducts, pickFunnelProducts, type MarketplaceProduct } from './marketplaceProducts';
+import { isSellableRow, hasStock, groupProducts, pickFunnelProducts, productsForRancher, type MarketplaceProduct } from './marketplaceProducts';
 
 const ok = { 'Active': true, 'Ships Nationwide': true, 'Display Price': 25, 'Rancher Base': 21.25 };
 
@@ -34,6 +34,7 @@ const mk = (id: string, category: string): MarketplaceProduct => ({
   id, name: id, rancher: 'R', category, tier: '', price: 10, base: 8, weight: '', shelfStable: false, image: '', description: '',
   depositStyle: false, priceRange: '', ordersLeft: null,
   whatsIncluded: '', shipsInDays: null, packaging: '', feeds: '',
+  rancherId: '',
 });
 
 test('groupProducts: collapses categories into display groups, in order', () => {
@@ -96,4 +97,14 @@ test('hasStock mirrors the inventory clause exactly', () => {
   assert.equal(hasStock({}), true);
   assert.equal(hasStock({ 'Orders Left': 5 }), true);
   assert.equal(hasStock({ 'Orders Left': 0 }), false);
+});
+
+test('productsForRancher: returns only that rancher\'s products; blank id returns none', () => {
+  const a = { ...mk('a', 'Jerky'), rancherId: 'recAAAAAAAAAAAAAA' };
+  const b = { ...mk('b', 'Jerky'), rancherId: 'recBBBBBBBBBBBBBB' };
+  const orphan = mk('c', 'Jerky'); // legacy row with no owner key
+  assert.deepEqual(productsForRancher([a, b, orphan], 'recAAAAAAAAAAAAAA').map((p) => p.id), ['a']);
+  assert.deepEqual(productsForRancher([a, b, orphan], ''), []);
+  // An orphan row must never leak onto some rancher's page via '' === '' matching.
+  assert.deepEqual(productsForRancher([orphan], ''), []);
 });

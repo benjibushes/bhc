@@ -26,6 +26,12 @@ interface MoneySection {
   commissionUnpaid: number;
   blendedRoas: number | null;
   adSpend: number | null;
+  // Product rail (Rancher Orders — the low-ticket shop). null = table read failed.
+  productOrders: number | null;
+  productRevenue: number | null;
+  productMarginBHC: number | null;
+  productUnshipped: number | null;
+  productOrdersThisMonth: number | null;
 }
 interface FunnelStage {
   key: string;
@@ -245,6 +251,26 @@ export default function CommandCenter() {
                   value={`${money.blendedRoas}x`}
                   sub={money.adSpend != null ? `on ${usd(money.adSpend)} spend` : undefined}
                   tone={money.blendedRoas >= 1 ? 'good' : 'warn'}
+                />
+              )}
+              {/* Product rail — shop (Rancher Orders) money. The money view
+                  was blind to this rail before; shop sales counted nowhere. */}
+              {money.productRevenue == null ? (
+                <PendingMetric label="Shop sales" hint="no product orders yet" />
+              ) : (
+                <Metric
+                  label="Shop sales"
+                  value={usd(money.productRevenue)}
+                  sub={`${money.productOrders ?? 0} orders · ${usd(money.productMarginBHC ?? 0)} BHC margin`}
+                  tone="good"
+                />
+              )}
+              {money.productUnshipped != null && money.productUnshipped > 0 && (
+                <Metric
+                  label="Awaiting shipment"
+                  value={`${money.productUnshipped}`}
+                  sub={`${money.productOrdersThisMonth ?? 0} ordered this month`}
+                  tone="warn"
                 />
               )}
             </div>

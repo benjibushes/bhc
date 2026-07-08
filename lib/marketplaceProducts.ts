@@ -47,6 +47,10 @@ export interface MarketplaceProduct {
   shipsInDays: number | null;
   packaging: string;
   feeds: string;
+  // Owner key ('Rancher Record ID' on the row) — lets the rancher's public
+  // landing page list THEIR live products (the Silverline gap: products sold
+  // on /shop but invisible on /ranchers/<slug>).
+  rancherId: string;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -113,8 +117,24 @@ export async function loadMarketplaceProducts(): Promise<MarketplaceProduct[]> {
       shipsInDays: Number(r['Ships In Days']) > 0 ? Number(r['Ships In Days']) : null,
       packaging: String(r['Packaging'] || ''),
       feeds: String(r['Feeds'] || ''),
+      rancherId: String(r['Rancher Record ID'] || '').trim(),
     }))
     .sort((a, b) => a.price - b.price);
+}
+
+/** Pure filter: the products owned by one rancher (record id match). */
+export function productsForRancher(
+  products: MarketplaceProduct[],
+  rancherId: string,
+): MarketplaceProduct[] {
+  const id = String(rancherId || '').trim();
+  if (!id) return [];
+  return products.filter((p) => p.rancherId === id);
+}
+
+/** Load one rancher's live sellable products (for their public landing page). */
+export async function loadProductsForRancher(rancherId: string): Promise<MarketplaceProduct[]> {
+  return productsForRancher(await loadMarketplaceProducts(), rancherId);
 }
 
 /** Load one product by record id — returns null if missing or not sellable. */
@@ -175,6 +195,7 @@ export async function loadMarketplaceProductAnyStock(
       shipsInDays: Number(r['Ships In Days']) > 0 ? Number(r['Ships In Days']) : null,
       packaging: String(r['Packaging'] || ''),
       feeds: String(r['Feeds'] || ''),
+      rancherId: String(r['Rancher Record ID'] || '').trim(),
     },
     soldOut: !hasStock(r),
   };
