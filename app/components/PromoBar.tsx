@@ -17,22 +17,18 @@ export default function PromoBar() {
   useEffect(() => {
     try {
       if (typeof window === 'undefined') return;
-      // Suppress on admin/dashboard surfaces — keep operator screens clean.
-      // Also suppress on the low-ticket money step (product checkout + order
-      // outcome): a Hats ad at the payment moment is a conversion leak.
+      // ALLOWLIST (mobile QA 2026-07-08, shares-first): the hat bar was the
+      // FIRST PIXEL on /shop, every PDP, rancher pages, and the homepage —
+      // a $20-hat ad above the $13–$6,800 beef. Inverted from a blocklist so
+      // money surfaces are clean BY CONSTRUCTION: the bar renders only on
+      // content/browse surfaces, and any future page defaults to no-bar.
       const p = window.location.pathname;
-      if (
-        p.startsWith('/admin') ||
-        p.startsWith('/rancher') ||
-        p.startsWith('/member') ||
-        p.startsWith('/shop/checkout') ||
-        p.startsWith('/order')
-      ) return;
+      const CONTENT_SURFACES = ['/gear', '/news', '/wins', '/map', '/faq', '/about'];
+      if (!CONTENT_SURFACES.some((s) => p === s || p.startsWith(s + '/'))) return;
       const dismissed = localStorage.getItem(STORAGE_KEY);
       if (!dismissed) setHidden(false);
     } catch {
-      // localStorage blocked — show anyway
-      setHidden(false);
+      // localStorage blocked — stay hidden (fail toward a clean page)
     }
   }, []);
 
