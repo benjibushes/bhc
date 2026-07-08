@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isSellableRow, isLocalPickupRow, hasStock, groupProducts, pickFunnelProducts, productsForRancher, type MarketplaceProduct } from './marketplaceProducts';
+import { isSellableRow, isLocalPickupRow, hasStock, groupProducts, pickFunnelProducts, productsForRancher, localMarketFor, type MarketplaceProduct } from './marketplaceProducts';
 
 const ok = { 'Active': true, 'Ships Nationwide': true, 'Display Price': 25, 'Rancher Base': 21.25 };
 
@@ -34,7 +34,7 @@ const mk = (id: string, category: string): MarketplaceProduct => ({
   id, name: id, rancher: 'R', category, tier: '', price: 10, base: 8, weight: '', shelfStable: false, image: '', description: '',
   depositStyle: false, priceRange: '', ordersLeft: null,
   whatsIncluded: '', shipsInDays: null, packaging: '', feeds: '',
-  rancherId: '', shippingCost: 0, localOnly: false,
+  rancherId: '', shippingCost: 0, localOnly: false, rancherState: '',
 });
 
 test('groupProducts: collapses categories into display groups, in order', () => {
@@ -110,6 +110,23 @@ test('productsForRancher: returns only that rancher\'s products; blank id return
 });
 
 // ── local pickup (2026-07-07) ────────────────────────────────────────────────
+
+test('localMarketFor: matches buyer state to pickup products, never cross-state', () => {
+  const txLocal = { ...mk('tx1', 'Jerky'), localOnly: true, rancherState: 'TX' };
+  const mtLocal = { ...mk('mt1', 'Jerky'), localOnly: true, rancherState: 'MT' };
+  const txShipped = { ...mk('tx2', 'Jerky'), localOnly: false, rancherState: 'TX' };
+  const orphanLocal = { ...mk('o1', 'Jerky'), localOnly: true, rancherState: '' };
+  const all = [txLocal, mtLocal, txShipped, orphanLocal];
+  // exact match only — shipped products and other states stay out
+  assert.deepEqual(localMarketFor(all, 'TX').map((p) => p.id), ['tx1']);
+  // full state names normalize
+  assert.deepEqual(localMarketFor(all, 'Texas').map((p) => p.id), ['tx1']);
+  // unknown buyer state → nothing (never guess)
+  assert.deepEqual(localMarketFor(all, ''), []);
+  assert.deepEqual(localMarketFor(all, 'garbage'), []);
+  // a local product with unknown ranch state can never surface ('' === '' guard)
+  assert.deepEqual(localMarketFor([orphanLocal], ''), []);
+});
 
 test('isLocalPickupRow: EXPLICIT Ships Nationwide=false + all money/stock gates', () => {
   const local = { 'Active': true, 'Ships Nationwide': false, 'Display Price': 25, 'Rancher Base': 21.25 };

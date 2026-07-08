@@ -710,10 +710,12 @@ export default function ProductsTab({
                 local pickup only
               </label>
             </div>
+            {/* DISTRIBUTION PREVIEW — say exactly where the product will
+                appear so the toggle's consequence is never a surprise. */}
             <span className="block text-[11px] text-saddle">
               {form.shipsNationwide
-                ? 'lists on the marketplace + your ranch page — nationwide buyers can order it shipped.'
-                : 'shows ONLY on your ranch page with a "local pickup" label — buyers pay online, no shipping is charged, and you coordinate the pickup.'}
+                ? 'where it sells: ✓ the nationwide shop · ✓ your ranch page. buyers anywhere order it shipped; you pack + ship it.'
+                : 'where it sells: ✓ your ranch page · ✓ the shop’s local "farmers market" for buyers in your state. buyers pay online, no shipping charged — you coordinate the pickup.'}
             </span>
           </div>
           <div className="flex flex-wrap gap-5 text-sm">

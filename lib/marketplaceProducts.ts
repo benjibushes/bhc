@@ -17,6 +17,7 @@
 // downsell entry but is NOT how the marketplace organizes itself.
 
 import { getAllRecords, getRecordById, TABLES } from '@/lib/airtable';
+import { normalizeState } from '@/lib/states';
 
 export interface MarketplaceProduct {
   id: string;
@@ -56,10 +57,16 @@ export interface MarketplaceProduct {
   shippingCost: number;
   // LOCAL PICKUP (2026-07-07): Ships Nationwide un-checked no longer means
   // "delisted" (Active/hide is the delist switch) — it means the product is
-  // pickup-at-the-ranch only. Local products render ONLY on the rancher's own
-  // page (labeled), never /shop, the feed, or cold funnels; checkout charges
-  // no shipping and every surface says pickup. Zero-mismatch by construction.
+  // pickup-at-the-ranch only. Local products render on the rancher's own page
+  // (labeled) and — farmers market 2026-07-08 — in /shop's "near you" rail
+  // for buyers whose state matches the ranch. Never the ad feed or cold
+  // funnels; checkout charges no shipping and every surface says pickup.
   localOnly: boolean;
+  // Ranch home state (normalized 2-letter code, '' unknown) — joined from the
+  // Ranchers table so the farmers-market rail can match pickup products to
+  // the buyer's state. Populated by loadMarketplaceProducts; single-product
+  // loaders leave it '' (the PDP doesn't need it).
+  rancherState: string;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -128,6 +135,15 @@ export async function loadMarketplaceProducts(
   } catch {
     return [];
   }
+  // Ranch-state join for the farmers-market rail (RANCHERS is cache-allowlisted,
+  // so this is a Redis hit on the hot path). Best-effort: on failure every
+  // product gets rancherState '' and the local rail simply doesn't render.
+  const stateByRancher: Record<string, string> = {};
+  try {
+    for (const r of (await getAllRecords(TABLES.RANCHERS)) as any[]) {
+      stateByRancher[r.id] = normalizeState(r['State']) || '';
+    }
+  } catch { /* rail degrades to nationwide-only */ }
   return rows
     .filter((r) => isSellableRow(r) || (opts?.includeLocal === true && isLocalPickupRow(r)))
     .map((r) => ({
@@ -155,8 +171,24 @@ export async function loadMarketplaceProducts(
       rancherId: String(r['Rancher Record ID'] || '').trim(),
       shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
       localOnly: r['Ships Nationwide'] === false,
+      rancherState: stateByRancher[String(r['Rancher Record ID'] || '').trim()] || '',
     }))
     .sort((a, b) => a.price - b.price);
+}
+
+/**
+ * Farmers-market filter (pure, tested): the local-pickup products a buyer in
+ * `buyerState` can actually go get. Accepts raw region strings ('TX',
+ * 'Texas'); unknown/empty buyer state or unknown ranch state → no matches
+ * (never show a pickup product the buyer can't reach).
+ */
+export function localMarketFor(
+  products: MarketplaceProduct[],
+  buyerState: string,
+): MarketplaceProduct[] {
+  const st = normalizeState(buyerState);
+  if (!st) return [];
+  return products.filter((p) => p.localOnly && p.rancherState === st);
 }
 
 /** Pure filter: the products owned by one rancher (record id match). */
@@ -241,6 +273,7 @@ export async function loadMarketplaceProductAnyStock(
       rancherId: String(r['Rancher Record ID'] || '').trim(),
       shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
       localOnly: r['Ships Nationwide'] === false,
+      rancherState: '',
     },
     soldOut: !hasStock(r),
   };
