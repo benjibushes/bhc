@@ -415,6 +415,14 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
     throw new PermanentSettlementError(`final_invoice missing required ids — refId=${!!referralId} rancherId=${!!rancherId} piId=${!!pi.id} actualMetadataKeys=[${metadataKeys}]`);
   }
 
+  // Concurrency serializer (write-safety audit 2026-07-07): the Closed-Won
+  // row-flip check below is read-then-act — two SIMULTANEOUS deliveries both
+  // read a not-yet-closed row and both run recordClose (double capacity
+  // decrement, double funnel revenue, double affiliate credit). Same
+  // claimOnce pattern as settleBuyerDeposit (:108). Fails OPEN when Redis is
+  // down — the row-flip check remains the belt for the serial case.
+  if (!(await claimOnce(`settle-final:${pi.id}`, 60))) return;
+
   // Hydrate referral to compute Total Sale Amount for Closed Won.
   let referralRow: any = null;
   try {

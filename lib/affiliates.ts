@@ -1,4 +1,5 @@
 import { getAllRecords, createRecord, updateRecord, TABLES, escapeAirtableValue } from './airtable';
+import { claimOnce } from './rancherCapacity';
 
 /**
  * Canonical affiliate-code normalization. ALL writes and ALL lookups MUST
@@ -285,6 +286,18 @@ export async function creditAffiliateOnClose(input: {
 
   const rate = Number(process.env.AFFILIATE_COMMISSION_RATE || '0.05');
   const commissionDollars = Math.round(input.saleAmount * rate * 100) / 100;
+
+  // Write-safety audit 2026-07-07: the Earnings Pending stamp below is a
+  // non-atomic read-modify-write. Per-referral claim serializes concurrent
+  // executions (double webhook delivery would double-credit OR lose a credit
+  // to a lost update) and dedupes short-window re-runs; the long-window
+  // re-run case is blocked upstream by settleFinalInvoice's Closed-Won
+  // row-flip check. Interim until the Affiliate Commissions ledger (TODO
+  // above) makes credits append-only rows.
+  if (!(await claimOnce(`affiliate-credit:${input.referralId}`, 300))) {
+    console.warn(`[creditAffiliateOnClose] duplicate credit suppressed for ref=${input.referralId}`);
+    return;
+  }
 
   // Stamp commission earned on the Affiliates row (best-effort, fail-open).
   // For now we don't have an Affiliate Commissions ledger table — stamp the

@@ -21,7 +21,7 @@ import {
   getRancherBySlug,
   escapeAirtableValue,
 } from '@/lib/airtable';
-import { incrementCapacity, decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
+import { incrementCapacity, decrementCapacity, syncCapacityToAirtable, claimOnce } from '@/lib/rancherCapacity';
 import { resolveBuyerSession, setBuyerSessionCookie } from '@/lib/buyerAuth';
 import { checkOriginGuard } from '@/lib/csrfGuard';
 import { rateLimit, getRequestIp } from '@/lib/rateLimit';
@@ -219,25 +219,82 @@ export async function POST(req: Request) {
     }
   }
 
-  // Create the deposit-intent referral pinned to the rancher.
-  let referral: any;
+  // ── Duplicate-mint guards (write-safety audit 2026-07-07) ────────────────
+  // The dominant real-world duplicate is a SERIAL retry: the route does 5+
+  // sequential Airtable calls, the buyer re-submits after a slow response,
+  // and a second Pending referral + second capacity hold appear — and the
+  // abandoned-reserve recovery cron later nudges a buyer who already PAID on
+  // the other row. Reuse an existing open deposit-intent referral for this
+  // buyer+rancher instead of always-creating. Fail-open: a lookup error just
+  // falls through to create (never blocks the money path).
+  let referral: any = null;
   try {
-    referral = await createReferral(
-      buildReserveReferralFields({ rancher, consumerId, buyerName, buyerEmail, buyerPhone, buyerState, cut }),
-    );
+    const { fetchReferralRowsForRancher } = await import('@/lib/referralReads');
+    const mine = (await fetchReferralRowsForRancher(rancher.id)).filter((row: any) => {
+      const buyers = Array.isArray(row['Buyer']) ? row['Buyer'] : [];
+      const status = String(row['Status'] || '');
+      return (
+        buyers.includes(consumerId) &&
+        !row['Deposit Paid At'] &&
+        (status === 'Pending' || status === 'Pending Approval')
+      );
+    });
+    if (mine.length > 0) {
+      referral = mine[0];
+    }
   } catch (e: any) {
-    console.error('[checkout/reserve] referral create failed:', e?.message);
-    return NextResponse.json({ error: 'Could not start your reservation — try again.' }, { status: 500 });
+    console.warn('[checkout/reserve] dedup lookup skipped (non-fatal):', e?.message);
+  }
+
+  if (!referral) {
+    // Concurrency claim: two truly simultaneous POSTs (double-tap/two tabs)
+    // serialize here — the loser re-runs the dedup lookup to adopt the
+    // winner's referral. claimOnce fails OPEN when Redis is down (serial
+    // dedup above remains the belt).
+    const claimed = await claimOnce(`reserve:${consumerId}:${rancher.id}`, 15);
+    if (!claimed) {
+      await new Promise((r) => setTimeout(r, 1200));
+      try {
+        const { fetchReferralRowsForRancher } = await import('@/lib/referralReads');
+        const mine = (await fetchReferralRowsForRancher(rancher.id)).filter((row: any) => {
+          const buyers = Array.isArray(row['Buyer']) ? row['Buyer'] : [];
+          return buyers.includes(consumerId) && !row['Deposit Paid At'];
+        });
+        if (mine.length > 0) referral = mine[0];
+      } catch {}
+      if (!referral) {
+        return NextResponse.json(
+          { error: 'Your reservation is already starting — give it a few seconds and try again.' },
+          { status: 409 },
+        );
+      }
+    }
+  }
+
+  const reusedReferral = !!referral;
+  if (!referral) {
+    try {
+      referral = await createReferral(
+        buildReserveReferralFields({ rancher, consumerId, buyerName, buyerEmail, buyerPhone, buyerState, cut }),
+      );
+    } catch (e: any) {
+      console.error('[checkout/reserve] referral create failed:', e?.message);
+      return NextResponse.json({ error: 'Could not start your reservation — try again.' }, { status: 500 });
+    }
   }
 
   // Hold the slot during checkout (mirror orders/request:220-228). Transient:
   // an abandoned Pending referral is reconciled by capacity-drift-check.
-  try {
-    const newCount = await incrementCapacity(rancher.id);
-    await syncCapacityToAirtable(rancher.id, newCount);
-    await updateRecord(TABLES.RANCHERS, rancher.id, { 'Last Assigned At': new Date().toISOString() });
-  } catch (e: any) {
-    console.warn('[checkout/reserve] capacity bump skipped:', e?.message);
+  // Only on a FRESH referral — a reused row already holds its slot (the
+  // double-hold was exactly the drift this guard exists to prevent).
+  if (!reusedReferral) {
+    try {
+      const newCount = await incrementCapacity(rancher.id);
+      await syncCapacityToAirtable(rancher.id, newCount);
+      await updateRecord(TABLES.RANCHERS, rancher.id, { 'Last Assigned At': new Date().toISOString() });
+    } catch (e: any) {
+      console.warn('[checkout/reserve] capacity bump skipped:', e?.message);
+    }
   }
 
   const depositPath = depositPathFor(referral.id, cut);
