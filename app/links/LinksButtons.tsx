@@ -1,54 +1,17 @@
 'use client';
 
-// Bio-hub buttons — ranked by the RPM/intent research: tripwire → quiz →
-// capture → gear. Each tap fires a tracked event so Ben can see which rung
-// his bio traffic actually takes (the weekly-read numbers).
+// Bio-hub rungs — SHARES-FIRST (founder directive 2026-07-08, supersedes the
+// shop-first default from the attention research: supply is activating and
+// the share IS the business; the bio leads with it).
+//
+// Layout: one HERO card (the share reservation — serif, price-anchored,
+// risk-reversed) → shop tripwire → guide capture → gear+merch as a compact
+// half-width pair. Every tap fires the same tracked events as before so the
+// weekly read of which rung bio traffic takes stays continuous.
 
 import Link from 'next/link';
 import { useEffect } from 'react';
-import { trackEvent, type AnalyticsEventName } from '@/lib/analytics';
-
-const LINKS: {
-  href: string;
-  title: string;
-  sub: string;
-  event: AnalyticsEventName;
-  primary?: boolean;
-  external?: boolean;
-}[] = [
-  {
-    href: '/shop',
-    title: '🥩 shop beef — shipped to your door',
-    sub: 'jerky from $13.59 · boxes · ground — shipping included, from verified ranches',
-    event: 'links_shop',
-    primary: true,
-  },
-  {
-    href: '/access',
-    title: '🧊 fill your freezer — half or whole share',
-    sub: '90-second quiz, we match you to a ranch near you · deposit fully refundable',
-    event: 'links_access',
-  },
-  {
-    href: '/guide',
-    title: '📖 free guide: the real cost of a half cow',
-    sub: 'the honest math — what it costs, what you get, how much freezer you need',
-    event: 'links_guide',
-  },
-  {
-    href: '/gear',
-    title: 'the gear ben actually uses',
-    sub: 'freezers, grills, knives — the tools behind the beef',
-    event: 'links_gear',
-  },
-  {
-    href: 'https://merch.buyhalfcow.com?utm_source=buyhalfcow&utm_medium=links&utm_campaign=bio-hub',
-    title: '🧢 the merch — hats & tees',
-    sub: '"buy beef. not bullshit." — rep the herd, from $20',
-    event: 'links_merch',
-    external: true,
-  },
-];
+import { trackEvent } from '@/lib/analytics';
 
 export default function LinksButtons() {
   useEffect(() => {
@@ -57,35 +20,79 @@ export default function LinksButtons() {
 
   return (
     <div className="space-y-3">
-      {LINKS.map((l) => {
-        const cls = l.primary
-          ? 'block bg-charcoal text-bone p-4 text-center transition-base hover:bg-saddle'
-          : 'block bg-bone-warm border border-charcoal text-charcoal p-4 text-center transition-base hover:bg-bone-deep';
-        const inner = (
-          <>
-            <span className="block font-medium text-[15.5px]">{l.title}</span>
-            <span className={`block text-[12px] mt-1 ${l.primary ? 'text-bone/75' : 'text-saddle'}`}>
-              {l.sub}
-            </span>
-          </>
-        );
-        return l.external ? (
-          <a
-            key={l.href}
-            href={l.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => trackEvent(l.event)}
-            className={cls}
-          >
-            {inner}
-          </a>
-        ) : (
-          <Link key={l.href} href={l.href} onClick={() => trackEvent(l.event)} className={cls}>
-            {inner}
-          </Link>
-        );
-      })}
+      {/* ── HERO — the share. The one thing this page exists to sell. ── */}
+      <Link
+        href="/access"
+        onClick={() => trackEvent('links_access')}
+        className="block bg-charcoal text-bone px-5 py-6 text-center transition-base hover:bg-saddle"
+      >
+        <span className="block text-[11px] uppercase tracking-[0.18em] text-bone/60 mb-1.5">
+          whole · half · quarter
+        </span>
+        <span className="block font-serif text-[24px] leading-tight">
+          fill your freezer with one ranch&rsquo;s beef
+        </span>
+        <span className="block text-[13px] mt-2.5 text-bone/80 leading-snug">
+          steaks, roasts, and ground at one honest price per pound — from a
+          named ranch we verified. 90 seconds to get matched.
+        </span>
+        <span className="mt-4 inline-block border border-bone/40 px-5 py-2.5 text-[12.5px] font-medium uppercase tracking-wider">
+          reserve your share &rarr;
+        </span>
+        <span className="block text-[11.5px] mt-2.5 text-bone/60">
+          deposit holds your spot · fully refundable until your rancher accepts
+        </span>
+      </Link>
+
+      {/* ── rung 2: tripwire — taste it first ── */}
+      <Link
+        href="/shop"
+        onClick={() => trackEvent('links_shop')}
+        className="block bg-bone-warm border border-charcoal text-charcoal p-4 text-center transition-base hover:bg-bone-deep"
+      >
+        <span className="block font-medium text-[15.5px]">
+          🥩 not ready for a freezer-full? taste it first
+        </span>
+        <span className="block text-[12px] mt-1 text-saddle">
+          jerky from $13.59 · boxes · ground — shipped nationwide from the same ranches
+        </span>
+      </Link>
+
+      {/* ── rung 3: capture ── */}
+      <Link
+        href="/guide"
+        onClick={() => trackEvent('links_guide')}
+        className="block bg-bone-warm border border-dust text-charcoal p-4 text-center transition-base hover:bg-bone-deep"
+      >
+        <span className="block font-medium text-[15px]">
+          📖 free guide: the real cost of a half cow
+        </span>
+        <span className="block text-[12px] mt-1 text-saddle">
+          the honest math — price per pound, freezer space, what you actually get
+        </span>
+      </Link>
+
+      {/* ── rung 4: gear + merch, one compact row ── */}
+      <div className="grid grid-cols-2 gap-3">
+        <Link
+          href="/gear"
+          onClick={() => trackEvent('links_gear')}
+          className="block bg-bone-warm border border-dust text-charcoal px-3 py-3.5 text-center transition-base hover:bg-bone-deep"
+        >
+          <span className="block font-medium text-[14px]">the gear</span>
+          <span className="block text-[11.5px] mt-0.5 text-saddle">freezers · grills · knives</span>
+        </Link>
+        <a
+          href="https://merch.buyhalfcow.com?utm_source=buyhalfcow&utm_medium=links&utm_campaign=bio-hub"
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => trackEvent('links_merch')}
+          className="block bg-bone-warm border border-dust text-charcoal px-3 py-3.5 text-center transition-base hover:bg-bone-deep"
+        >
+          <span className="block font-medium text-[14px]">🧢 the merch</span>
+          <span className="block text-[11.5px] mt-0.5 text-saddle">hats &amp; tees from $20</span>
+        </a>
+      </div>
     </div>
   );
 }
