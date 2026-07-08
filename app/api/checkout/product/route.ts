@@ -69,9 +69,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Sold out — Orders Left is 0 on this product.' }, { status: 409 });
   }
   // Shipping passthrough (same rule as the public buy route): buyer pays it,
-  // rancher keeps 100%. Deposit-style always 0 — shipping settles with the balance.
+  // rancher keeps 100%. Deposit-style always 0 — shipping settles with the
+  // balance. LOCAL PICKUP always 0 — never charge shipping on a pickup.
+  const localOnly = product['Ships Nationwide'] === false;
   const shippingCents =
-    product['Deposit Style'] === true
+    product['Deposit Style'] === true || localOnly
       ? 0
       : Math.max(0, Math.round(Number(product['Shipping Cost'] || 0) * 100));
 
@@ -129,6 +131,7 @@ export async function POST(request: Request) {
       rancherName: String(product['Rancher Name'] || rancher['Ranch Name'] || 'the ranch'),
       // C-1.5: deposit truth rides into settlement + the Stripe line item.
       depositStyle: product['Deposit Style'] === true,
+      localOnly,
       shippingCents,
       successUrl: `${SITE_URL}/order/success`,
       cancelUrl: `${SITE_URL}/order/cancelled?pid=${product.id}`,

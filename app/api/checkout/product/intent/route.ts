@@ -93,6 +93,7 @@ export async function POST(request: Request) {
       shippingCents: resolved.shippingCents,
       quantity: resolved.quantity,
       depositStyle: resolved.depositStyle,
+      localOnly: resolved.localOnly,
       buyerEmail: email,
       attemptId,
     });

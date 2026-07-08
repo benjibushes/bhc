@@ -35,6 +35,7 @@ export interface CreateProductPaymentIntentInput {
   shippingCents?: number;
   quantity?: number;
   depositStyle?: boolean;
+  localOnly?: boolean;
   /** Buyer email from our own brand input — settlement receipt fallback #1. */
   buyerEmail?: string;
   /**
@@ -87,6 +88,7 @@ export async function createProductPaymentIntent(
             displayCents: input.displayCents,
             baseCents: input.baseCents,
             depositStyle: input.depositStyle,
+            localOnly: input.localOnly,
           },
           charge,
         ),

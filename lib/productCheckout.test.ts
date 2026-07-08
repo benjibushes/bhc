@@ -139,8 +139,8 @@ test('buildProductMetadata: exact settlement key set + string values', () => {
   );
   assert.deepEqual(Object.keys(md).sort(), [
     'baseCents', 'buyerEmail', 'buyerName', 'depositStyle', 'displayCents',
-    'marginCents', 'productId', 'productName', 'quantity', 'rancherId',
-    'rancherName', 'shippingCents', 'type',
+    'fulfillment', 'marginCents', 'productId', 'productName', 'quantity',
+    'rancherId', 'rancherName', 'shippingCents', 'type',
   ]);
   assert.equal(md.type, 'product_purchase');
   assert.equal(md.displayCents, '2500');   // UNIT price, not total
@@ -149,5 +149,19 @@ test('buildProductMetadata: exact settlement key set + string values', () => {
   assert.equal(md.shippingCents, '1200');  // flat per order
   assert.equal(md.quantity, '2');
   assert.equal(md.depositStyle, 'false');
+  assert.equal(md.fulfillment, 'ship');   // default; localOnly:true → 'pickup' (settlement branches on it)
   for (const v of Object.values(md)) assert.equal(typeof v, 'string');
+});
+
+test('buildProductMetadata: localOnly stamps fulfillment=pickup', () => {
+  const charge = computeProductCharge({ displayCents: 2500, baseCents: 2000 });
+  const md = buildProductMetadata(
+    {
+      productId: 'recAAAAAAAAAAAAAA', productName: 'Jerky', rancherId: 'recBBBBBBBBBBBBBB',
+      rancherName: 'Ranch X', buyerEmail: '', buyerName: '',
+      displayCents: 2500, baseCents: 2000, depositStyle: false, localOnly: true,
+    },
+    charge,
+  );
+  assert.equal(md.fulfillment, 'pickup');
 });

@@ -32,7 +32,7 @@ import {
   getAllRecords,
   deleteRecord,
 } from '@/lib/airtable';
-import { isSellableRow } from '@/lib/marketplaceProducts';
+import { isSellableRow, isLocalPickupRow } from '@/lib/marketplaceProducts';
 import { deriveProductPricing, validateProductInput } from '@/lib/rancherProductInput';
 import { ensureStripePrice } from '@/lib/productStripeSync';
 
@@ -58,7 +58,10 @@ function toClientProduct(r: any) {
     shipsNationwide: r['Ships Nationwide'] !== false,
     shelfStable: !!r['Shelf Stable'],
     active: r['Active'] === true,
-    live: isSellableRow(r),
+    // Live = buyable somewhere: nationwide rows on /shop + ranch page, local
+    // pickup rows on the ranch page only (localOnly flags which).
+    live: isSellableRow(r) || isLocalPickupRow(r),
+    localOnly: r['Ships Nationwide'] === false,
     // Deposit-style rows are ops-managed (price-range products) — the tab
     // labels them and the API fences their content edits (audit fix C-2e).
     depositStyle: r['Deposit Style'] === true,

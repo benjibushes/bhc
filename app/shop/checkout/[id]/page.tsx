@@ -51,7 +51,7 @@ export default async function ProductCheckoutPage({
   // on-domain PaymentForm can scope Stripe.js with zero extra client round
   // trips. Any miss (flag off, no key, rancher not active) → null → legacy
   // embedded/hosted flow, byte-identical to before.
-  let paymentElement: { connectAccountId: string; totalCents: number; depositStyle: boolean } | null = null;
+  let paymentElement: { connectAccountId: string; totalCents: number; depositStyle: boolean; localOnly: boolean } | null = null;
   if (
     process.env.NEXT_PUBLIC_PRODUCT_PAYMENT_ELEMENT === 'true' &&
     process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY &&
@@ -63,10 +63,12 @@ export default async function ProductCheckoutPage({
       if (rr && String(rr['Stripe Connect Status'] || '') === 'active' && acct) {
         paymentElement = {
           connectAccountId: acct,
+          // Local pickup: never a shipping charge (mirrors the mint gates).
           totalCents:
             Math.round(p.price * 100) * quantity +
-            (p.depositStyle ? 0 : Math.round(p.shippingCost * 100)),
+            (p.depositStyle || p.localOnly ? 0 : Math.round(p.shippingCost * 100)),
           depositStyle: p.depositStyle,
+          localOnly: p.localOnly,
         };
       }
     } catch { /* legacy flow — never block checkout on this lookup */ }
@@ -117,7 +119,7 @@ export default async function ProductCheckoutPage({
               {quantity > 1 ? `${quantity}× ` : ''}{p.name}
             </div>
             <div className="text-xs text-saddle mt-0.5">
-              {p.rancher} · {p.depositStyle ? 'deposit — details confirmed with you' : 'ships direct from the ranch'}
+              {p.rancher} · {p.localOnly ? 'local pickup at the ranch' : p.depositStyle ? 'deposit — details confirmed with you' : 'ships direct from the ranch'}
             </div>
           </div>
           <div className="text-right">
@@ -150,7 +152,12 @@ export default async function ProductCheckoutPage({
             form — the exact spot purchase anxiety peaks. Every line is
             data-true or a standing operational promise; nothing fabricated. */}
         <div className="text-[12.5px] text-saddle leading-relaxed mb-4 space-y-1">
-          {!p.depositStyle && (
+          {p.localOnly ? (
+            <p>
+              <strong>local pickup only</strong> — no shipping is charged. after you pay, the ranch
+              reaches out to set the pickup time and place.
+            </p>
+          ) : !p.depositStyle && (
             <p>
               {p.shipsInDays
                 ? <>ships from the ranch within ~{p.shipsInDays} {p.shipsInDays === 1 ? 'day' : 'days'} — tracking hits your inbox the moment it&rsquo;s on the way.</>

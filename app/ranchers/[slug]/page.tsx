@@ -1137,7 +1137,8 @@ export default async function RancherPage(
                 <Pill tone="neutral" className="mx-auto">Shipped to your door</Pill>
                 <h2 className="font-serif text-3xl md:text-4xl">Shop {name} beef</h2>
                 <p className="text-charcoal/75 max-w-[52ch] mx-auto">
-                  smaller than a share, shipped nationwide — from this ranch to your door.
+                  smaller than a share — shipped to your door, or picked up at the ranch. every
+                  card says exactly which.
                 </p>
               </div>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6">

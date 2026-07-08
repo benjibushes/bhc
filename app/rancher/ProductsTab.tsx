@@ -62,6 +62,7 @@ interface RancherProduct {
   packaging?: string;
   feeds?: string;
   shippingCost?: number | null;
+  localOnly?: boolean;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -518,11 +519,13 @@ export default function ProductsTab({
                 value={form.shippingCost}
                 onChange={(e) => setForm((f) => ({ ...f, shippingCost: e.target.value }))}
                 placeholder="0.00"
-                className="w-full p-3 border border-dust bg-bone text-[15px]"
+                disabled={!form.shipsNationwide}
+                className="w-full p-3 border border-dust bg-bone text-[15px] disabled:opacity-40"
               />
               <span className="block text-[11px] text-saddle mt-1">
-                leave blank if shipping&rsquo;s built into your price. if set, the buyer pays it at
-                checkout and 100% of it comes to you.
+                {form.shipsNationwide
+                  ? <>leave blank if shipping&rsquo;s built into your price. if set, the buyer pays it at checkout and 100% of it comes to you.</>
+                  : <>local pickup — no shipping is ever charged on this product.</>}
               </span>
             </label>
             <label className="block">
@@ -679,24 +682,41 @@ export default function ProductsTab({
             )}
           </div>
 
+          {/* FULFILLMENT (2026-07-07): explicit choice, zero ambiguity. Ships
+              nationwide → listed on /shop + your page, buyer pays shipping if
+              set. Local pickup → your ranch page ONLY, clearly labeled, no
+              shipping charged, order emails say "coordinate pickup". */}
+          <div className="space-y-1.5">
+            <span className="block text-xs uppercase tracking-wider text-saddle">
+              how does the buyer get it?
+            </span>
+            <div className="flex flex-wrap gap-5 text-sm">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="fulfillmentMode"
+                  checked={form.shipsNationwide}
+                  onChange={() => setForm((f) => ({ ...f, shipsNationwide: true }))}
+                />
+                ships nationwide
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="fulfillmentMode"
+                  checked={!form.shipsNationwide}
+                  onChange={() => setForm((f) => ({ ...f, shipsNationwide: false }))}
+                />
+                local pickup only
+              </label>
+            </div>
+            <span className="block text-[11px] text-saddle">
+              {form.shipsNationwide
+                ? 'lists on the marketplace + your ranch page — nationwide buyers can order it shipped.'
+                : 'shows ONLY on your ranch page with a "local pickup" label — buyers pay online, no shipping is charged, and you coordinate the pickup.'}
+            </span>
+          </div>
           <div className="flex flex-wrap gap-5 text-sm">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.shipsNationwide}
-                onChange={(e) => setForm((f) => ({ ...f, shipsNationwide: e.target.checked }))}
-              />
-              ships nationwide
-            </label>
-            {/* Audit fix: unchecking was an undocumented kill-switch — the
-                product silently vanished from /shop AND the rancher's own page
-                with only a reason-less "not listed" badge. */}
-            {!form.shipsNationwide && (
-              <span className="text-[12px] text-weathered self-center">
-                unchecked = this product won&rsquo;t show on the marketplace or your ranch page
-                (buyers can&rsquo;t see or buy it)
-              </span>
-            )}
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -841,7 +861,13 @@ export default function ProductsTab({
                     : 'border border-dust text-saddle'
                 }`}
               >
-                {p.live ? 'live on the marketplace' : p.active ? 'not listed' : 'hidden'}
+                {p.live
+                  ? p.localOnly
+                    ? 'live — local pickup, your page only'
+                    : 'live on the marketplace'
+                  : p.active
+                    ? 'not listed'
+                    : 'hidden'}
               </span>
               <div className="flex gap-2">
                 {p.live && (

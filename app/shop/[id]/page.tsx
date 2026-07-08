@@ -59,6 +59,8 @@ interface Prod {
   feeds: string;
   // Per-order shipping in dollars (0 = shipping included in the price).
   shippingCost: number;
+  // Pickup-at-the-ranch product (Ships Nationwide explicitly false).
+  localOnly: boolean;
 }
 
 const sel = (v: any) => (v && typeof v === 'object' ? v.name : v) || '';
@@ -132,6 +134,7 @@ async function loadProduct(id: string): Promise<Prod | null> {
     packaging: String(r['Packaging'] || ''),
     feeds: String(r['Feeds'] || ''),
     shippingCost: Math.max(0, Number(r['Shipping Cost'] || 0)),
+    localOnly: r['Ships Nationwide'] === false,
   };
 }
 
@@ -229,6 +232,11 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         priceCurrency: 'USD',
         availability: p.soldOut ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
         url: `${SITE_URL}/shop/${p.id}`,
+        // LOCAL PICKUP products assert NO shipping details — telling Google a
+        // pickup product ships would be exactly the mismatch we're killing.
+        ...(p.localOnly
+          ? {}
+          : {
         shippingDetails: {
           '@type': 'OfferShippingDetails',
           // Real rate: 0 = shipping included; a priced-shipping product must
@@ -236,6 +244,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           shippingRate: { '@type': 'MonetaryAmount', value: p.shippingCost.toFixed(2), currency: 'USD' },
           shippingDestination: { '@type': 'DefinedRegion', addressCountry: 'US' },
         },
+            }),
       };
   const jsonLd =
     p.image && p.price > 0
@@ -377,14 +386,16 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 </ol>
               </div>
 
-              <div className="text-[13px] text-sage">
-                {p.depositStyle
-                  ? 'deposit today · rancher confirms size + balance · ships frozen, nationwide'
-                  : p.shippingCost > 0
-                    ? `${p.shelfStable ? 'shelf-stable' : 'ships frozen, direct from the ranch'} · + $${p.shippingCost.toFixed(2)} shipping, nationwide`
-                    : p.shelfStable
-                      ? 'shelf-stable · ships free, no freezer needed'
-                      : 'ships frozen, direct from the ranch · shipping included, nationwide'}
+              <div className={`text-[13px] ${p.localOnly ? 'text-saddle font-medium' : 'text-sage'}`}>
+                {p.localOnly
+                  ? `local pickup only — at the ranch${p.rancherState ? ` in ${p.rancherState}` : ''} · no shipping`
+                  : p.depositStyle
+                    ? 'deposit today · rancher confirms size + balance · ships frozen, nationwide'
+                    : p.shippingCost > 0
+                      ? `${p.shelfStable ? 'shelf-stable' : 'ships frozen, direct from the ranch'} · + $${p.shippingCost.toFixed(2)} shipping, nationwide`
+                      : p.shelfStable
+                        ? 'shelf-stable · ships free, no freezer needed'
+                        : 'ships frozen, direct from the ranch · shipping included, nationwide'}
               </div>
 
               {/* Real scarcity only — shown because it's literally true. */}
@@ -425,11 +436,13 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               {/* Risk-reversal above the fold, right at the buy decision —
                   operational certainty, not "contact support" (Phase 4). */}
               <p className="text-[12.5px] text-saddle leading-relaxed mt-0.5">
-                {p.depositStyle
-                  ? 'your deposit counts toward the total — the balance is only settled after you and the rancher confirm the details. '
-                  : p.shippingCost > 0
-                    ? `$${p.price.toFixed(2)} + $${p.shippingCost.toFixed(2)} shipping — that's the whole total, no surprises at checkout. `
-                    : 'the price you see is the price you pay — shipping included. '}
+                {p.localOnly
+                  ? 'local pickup — you pay online and the ranch confirms your pickup time; no shipping is ever charged. '
+                  : p.depositStyle
+                    ? 'your deposit counts toward the total — the balance is only settled after you and the rancher confirm the details. '
+                    : p.shippingCost > 0
+                      ? `$${p.price.toFixed(2)} + $${p.shippingCost.toFixed(2)} shipping — that's the whole total, no surprises at checkout. `
+                      : 'the price you see is the price you pay — shipping included. '}
                 if a cut ever shows up wrong or freezer-burned, we make it right — no forms, no
                 runaround. checkout secured by Stripe. questions? reply to your receipt — a real
                 person answers. &mdash; Ben

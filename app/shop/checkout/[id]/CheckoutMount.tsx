@@ -21,6 +21,7 @@ export interface PaymentElementConfig {
   connectAccountId: string;
   totalCents: number;
   depositStyle: boolean;
+  localOnly: boolean;
 }
 
 export default function CheckoutMount({
@@ -48,6 +49,7 @@ export default function CheckoutMount({
         quantity={quantity}
         totalCents={paymentElement.totalCents}
         depositStyle={paymentElement.depositStyle}
+        localOnly={paymentElement.localOnly}
       />
     );
   }
