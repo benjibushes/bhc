@@ -3682,10 +3682,6 @@ export async function sendEmail(params: {
   // 'sendRancherIntroNotification' so they bypass the cap — otherwise
   // high-volume routing weeks silently drop 60%+ of rancher introductions.
   templateName?: string;
-  // Sender override (2026-07-08, prospect outreach): cold outreach must ride
-  // its own from-identity, never the default transactional sender. Omitted →
-  // getFromEmail() as always. All guard/logging rails apply either way.
-  from?: string;
 }) {
   return guardedSend({
     templateName: params.templateName || 'sendEmail',
@@ -3693,7 +3689,7 @@ export async function sendEmail(params: {
     subject: params.subject,
     send: () => {
       const emailData: any = {
-        from: params.from || getFromEmail(),
+        from: getFromEmail(),
         to: params.to,
         subject: params.subject,
         html: params.html,
