@@ -126,30 +126,35 @@ export const BANNED_PHRASES = [
   'circle back',
   'no pressure, but',
   'as a fellow',
+  'feel free to reach out',
+  'don’t hesitate to',
+  "don't hesitate to",
+  'at your earliest convenience',
+  'i look forward to hearing',
 ];
 
 export function violatesVoice(draft: string): string | null {
   const d = draft.toLowerCase();
   for (const p of BANNED_PHRASES) if (d.includes(p)) return p;
   const words = draft.trim().split(/\s+/).length;
-  if (words > 110) return `too long (${words} words)`;
+  if (words > 115) return `too long (${words} words)`;
   if (words < 35) return `too short (${words} words)`;
   if ((draft.match(/!/g) || []).length > 1) return 'exclamation overload';
   if (/\bAI\b|\bautomated\b|\bautomation\b/i.test(draft)) return 'mentions automation';
   return null;
 }
 
-const VOICE_SYSTEM = `You write short first-touch emails from Ben, the solo founder of BuyHalfCow — a network that routes families who want to buy beef in bulk directly to family ranches. Ben is a Montana rancher-aligned founder, not a marketer.
+const VOICE_SYSTEM = `You write short first-touch emails from Ben, the solo founder of BuyHalfCow — a network that routes families who want to buy beef in bulk directly to family ranches. Ben is a Montana guy who grew up around cattle, not a marketer. He types like he talks.
 
 VOICE (non-negotiable):
-- lowercase openers, plain english, short sentences. reads like a text from a busy rancher, not a pitch.
+- casual and personal, like a note to a neighbor: lowercase openers, contractions, short sentences, an occasional fragment. plain english. zero pitch-deck energy.
 - concrete numbers over adjectives. no hype words, no "seamless/leverage/unlock/elevate", no exclamation points.
-- specific to THIS ranch: reference one real detail from the facts given (their booking model, their history, their finish style, their town) in your own words — never quote their website back at them robotically.
-- the pitch, in whatever words fit naturally: there are [N] families in their state on our waitlist wanting bulk beef; we route buyers, they raise and fulfill, keep their brand and customers; free to start, they only pay when something sells.
-- ONE ask: a short call or a look at the signup page. never both hard-pushed.
-- end with an easy out phrased like a human would: some variation of "if it's not for you, tell me no thanks and that's the last you'll hear from me."
+- specific to THIS ranch: reference one real detail from the facts given (their booking model, their history, their finish style, their town) in your own words — the way you'd mention it on the phone, never quoting their website back at them.
+- the point, in whatever words fit naturally: there are [N] families in their state on our waitlist wanting bulk beef; we send the buyers, they raise and fulfill, keep their brand and their customers; free to start, they only pay when something sells.
+- ONE ask, low-pressure: a quick call or text. when Ben's cell number is provided in the facts, work it in naturally near the end — "call or text me, [number]" / "my cell's [number], text works" — NEVER a signature block or a "Phone:" label.
+- end with an easy out phrased like a human would: some variation of "if it's not for you, just say no thanks and that's the last you'll hear from me."
 - sign exactly: — Ben
-- 45-95 words for the body. no greeting-name errors: address the operator by first name if known, else the ranch name, else no name.
+- 45-100 words for the body. no greeting-name errors: address the operator by first name if known, else the ranch name, else no name.
 
 STRUCTURAL VARIANCE (critical — no two emails may share a skeleton):
 Use the opening style you're assigned in the user message. Never re-use the phrase "exactly the kind of direct operation" or "the hard part is keeping the buyers coming".
@@ -172,6 +177,9 @@ export interface DraftInput {
   waitingInState: number;
   /** deterministic seed for variance (record id works) */
   seed: string;
+  /** Ben's outreach cell (OUTREACH_PHONE env) — the single strongest
+   *  real-person signal in a cold email. Omitted → no phone line. */
+  phone?: string;
 }
 
 export interface DraftResult {
@@ -209,6 +217,7 @@ export async function draftOutreach(input: DraftInput): Promise<DraftResult | nu
     p.sizeSignal ? `Operation signal: ${p.sizeSignal}` : null,
     p.fitReasons ? `Why they fit (internal notes, do NOT quote verbatim): ${p.fitReasons.slice(0, 500)}` : null,
     `Families on our waitlist in ${p.state}: ${input.waitingInState}`,
+    input.phone ? `Ben's cell (work it in naturally near the end): ${input.phone}` : null,
     `Opening style for THIS email: ${openingStyleFor(input.seed)}`,
   ]
     .filter(Boolean)
