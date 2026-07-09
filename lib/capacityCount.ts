@@ -59,3 +59,21 @@ export function countHeldReferrals(rancherId: string, referrals: any[]): number 
   }
   return n;
 }
+
+// CAPACITY = CLOSED SALES, not held leads (founder rule 2026-07-08). A rancher
+// with Max Active Referalls = 50 has FIFTY head to sell — they keep receiving
+// qualified buyers until they've CLOSED fifty sales, not until fifty leads sit
+// in their pipeline. Held leads are pipeline depth (a load-balance tiebreak),
+// never the cap: "the limit is about how many closed sales are happening, not
+// how many leads they get." Counts Closed Won attributed via the Rancher link
+// (same attribution as countHeldReferrals). Pure + synchronous.
+export function countClosedWonReferrals(rancherId: string, referrals: any[]): number {
+  if (!rancherId || !Array.isArray(referrals)) return 0;
+  let n = 0;
+  for (const ref of referrals) {
+    if (ref?.['Status'] !== 'Closed Won') continue;
+    const link = ref?.['Rancher'];
+    if (Array.isArray(link) && link.includes(rancherId)) n++;
+  }
+  return n;
+}

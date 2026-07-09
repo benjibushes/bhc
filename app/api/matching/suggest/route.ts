@@ -454,6 +454,30 @@ export async function POST(request: Request) {
       return activeRefsByRancherState.get(rancherId)?.get(state) || 0;
     };
 
+    // ── CAPACITY = CLOSED SALES (founder rule 2026-07-08) ────────────────────
+    // Closed Won live counts — a tiny terminal-only result set — bucketed per
+    // rancher (global sold-out cap) and per rancher+state (per-state cap). The
+    // held maps above are demoted to the load-balance tiebreak in the sort.
+    const closedWonByRancher = new Map<string, number>();
+    const closedWonByRancherState = new Map<string, Map<string, number>>();
+    try {
+      const wonRefs = (await getAllRecords(TABLES.REFERRALS, `{Status} = "Closed Won"`)) as any[];
+      for (const ref of wonRefs) {
+        const rancherIds = (Array.isArray(ref['Rancher']) ? ref['Rancher'] : []) as string[];
+        if (rancherIds.length === 0) continue;
+        const allocState = normalizeState(String(ref['State Allocation'] || ref['Buyer State'] || ''));
+        for (const rid of rancherIds) {
+          closedWonByRancher.set(rid, (closedWonByRancher.get(rid) || 0) + 1);
+          if (!allocState) continue;
+          let inner = closedWonByRancherState.get(rid);
+          if (!inner) { inner = new Map<string, number>(); closedWonByRancherState.set(rid, inner); }
+          inner.set(allocState, (inner.get(allocState) || 0) + 1);
+        }
+      }
+    } catch { /* fail-open: no sales counted → everyone has capacity */ }
+    const getClosedWonInState = (rancherId: string, state: string): number =>
+      closedWonByRancherState.get(rancherId)?.get(state) || 0;
+
     // Helper: check if rancher is active, signed, and under capacity.
     // Also excludes any rancher in `excludeRancherIds` — used when re-routing
     // a lead that a rancher just passed on, so the same rancher doesn't get
@@ -517,21 +541,25 @@ export async function POST(request: Request) {
       // tier_v2 sub-floor / no-price guard — see passesTierV2CutFloor above.
       if (!passesTierV2CutFloor(r)) return false;
       const maxReferrals = getMaxActiveReferrals(r);
-      const currentReferrals = r['Current Active Referrals'] || 0;
-      if (isHotLead) {
-        // Hot-lead bypass: ignore the soft cap up to 2× the configured max.
-        if (currentReferrals >= maxReferrals * HARD_CEILING_MULTIPLIER) return false;
-      } else {
-        if (currentReferrals >= maxReferrals) return false;
-      }
+      // CAPACITY = CLOSED SALES (founder rule 2026-07-08): a rancher is "sold
+      // out" only when their CLOSED WON count hits their slot count — never
+      // because held leads piled up. Held (Current Active Referrals) is now a
+      // load-balance tiebreak in the sort below, not a gate. This is a hard
+      // physical cap (N head to sell) so it blocks hot AND cold leads equally
+      // — you can't route a buyer to a rancher who already sold every head.
+      const closedWon = closedWonByRancher.get(r.id) || 0;
+      if (closedWon >= maxReferrals) return false;
       // Per-state sub-cap. Cold leads only — hot leads keep the bypass
       // intent (warmup-engaged opt-ins shouldn't sit in queue waiting for
       // a state-fairness slot to free up). The global 1.2× hard ceiling
       // above is still enforced atomically post-INCR.
       if (!isHotLead) {
+        // Per-state fairness cap ALSO on closed sales: a multi-state rancher
+        // is "sold out" of a state's allocation only when THAT state's Closed
+        // Won hits the sub-cap, not when its leads pile up.
         const subCap = getStateSubCap(r, normalizedBuyerState, maxReferrals);
-        const inState = getActiveInState(r.id, normalizedBuyerState);
-        if (inState >= subCap) return false;
+        const wonInState = getClosedWonInState(r.id, normalizedBuyerState);
+        if (wonInState >= subCap) return false;
       }
       return true;
     };
