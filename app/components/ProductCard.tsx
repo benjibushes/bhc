@@ -112,12 +112,12 @@ export default function ProductCard({ p, compact = false }: { p: ProductCardProd
           {p.externalHref ? (
             <a
               href={p.externalHref}
-              className="block w-full text-center bg-charcoal text-bone py-2.5 text-sm transition-base hover:bg-charcoal/85"
+              className="block w-full text-center bg-charcoal text-bone py-2.5 rounded-full text-sm transition-base hover:bg-charcoal/85"
             >
               buy on their store &rarr;
             </a>
           ) : p.buyNote ? (
-            <div className="text-[12.5px] text-saddle text-center border border-dust py-2.5 px-2">
+            <div className="text-[12.5px] text-saddle text-center border border-dust rounded-full py-2.5 px-2">
               {p.buyNote}
             </div>
           ) : (

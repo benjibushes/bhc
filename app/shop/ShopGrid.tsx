@@ -97,7 +97,7 @@ export default function ShopGrid({
           <button
             key={c.key}
             onClick={() => setActive(c.key)}
-            className={`shrink-0 px-3 py-1.5 text-[12.5px] border transition-base ${
+            className={`shrink-0 px-3.5 py-1.5 text-[12.5px] border rounded-full transition-base ${
               active === c.key
                 ? 'bg-charcoal text-bone border-charcoal'
                 : 'bg-bone text-charcoal border-dust hover:border-charcoal'
@@ -111,7 +111,7 @@ export default function ShopGrid({
           value={sort}
           onChange={(e) => setSort(e.target.value as SortKey)}
           aria-label="Sort products"
-          className="shrink-0 text-[12.5px] px-2 py-1.5 border border-dust bg-bone text-charcoal focus:outline-none focus:border-charcoal"
+          className="shrink-0 text-[12.5px] px-3 py-1.5 border border-dust rounded-full bg-bone text-charcoal focus:outline-none focus:border-charcoal"
         >
           <option value="price-asc">price: low → high</option>
           <option value="price-desc">price: high → low</option>
