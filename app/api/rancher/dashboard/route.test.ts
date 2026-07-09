@@ -17,11 +17,17 @@ import assert from 'node:assert/strict';
 
 type Row = Record<string, any>;
 
-// Mirror of computeUnpaidCommission in dashboard/route.ts
-function computeUnpaidCommission(closedWon: Row[], pricingModel: string): number {
-  if (pricingModel === 'tier_v2') return 0;
+// Mirror of referralRail + computeUnpaidCommission in dashboard/route.ts
+// (RAIL-PER-ROW, audit fix #4): a row rode the deposit rail — owes nothing —
+// only when 'Deposit Paid At' is stamped; every other Closed Won row (legacy
+// invoice OR off-rail tier_v2 close) owes commission until paid.
+function referralRail(r: Row): 'tier_v2' | 'legacy' {
+  const dp = r['Deposit Paid At'] ?? r.deposit_paid_at ?? '';
+  return String(dp || '').trim() ? 'tier_v2' : 'legacy';
+}
+function computeUnpaidCommission(closedWon: Row[]): number {
   return closedWon
-    .filter((r) => !r['Commission Paid'])
+    .filter((r) => referralRail(r) === 'legacy' && !r['Commission Paid'])
     .reduce((sum, r) => sum + (Number(r['Commission Due']) || 0), 0);
 }
 
@@ -49,17 +55,20 @@ const closedWon: Row[] = [
   { 'Commission Due': 25, 'Commission Paid': false },
 ];
 
-test('legacy: sums unpaid Commission Due across closed-won', () => {
-  assert.equal(computeUnpaidCommission(closedWon, 'legacy'), 125);
+test('legacy rows (no deposit paid): sums unpaid Commission Due across closed-won', () => {
+  assert.equal(computeUnpaidCommission(closedWon), 125);
 });
 
-test('tier_v2: always 0 — commission was taken at deposit, no post-close invoice', () => {
-  assert.equal(computeUnpaidCommission(closedWon, 'tier_v2'), 0);
-});
-
-test('blank / unknown pricing model defaults to legacy behavior', () => {
-  assert.equal(computeUnpaidCommission(closedWon, ''), 125);
-  assert.equal(computeUnpaidCommission(closedWon, 'mystery'), 125);
+test('rail-per-row: a deposit-paid row owes nothing; an off-rail row still owes', () => {
+  const mixed: Row[] = [
+    // Rode the deposit rail — commission taken at deposit, owes nothing.
+    { 'Commission Due': 200, 'Commission Paid': false, 'Deposit Paid At': '2026-07-01T00:00:00Z' },
+    // Off-rail close (no deposit) — still owes, previously leaked as $0.
+    { 'Commission Due': 90, 'Commission Paid': false },
+    // Legacy invoice already paid — excluded.
+    { 'Commission Due': 40, 'Commission Paid': true },
+  ];
+  assert.equal(computeUnpaidCommission(mixed), 90);
 });
 
 test('missing / non-numeric Commission Due coerces to 0', () => {
@@ -68,7 +77,7 @@ test('missing / non-numeric Commission Due coerces to 0', () => {
     { 'Commission Due': null, 'Commission Paid': false },
     { 'Commission Due': 30, 'Commission Paid': false },
   ];
-  assert.equal(computeUnpaidCommission(rows, 'legacy'), 30);
+  assert.equal(computeUnpaidCommission(rows), 30);
 });
 
 // ─── Fix 1: close-won must not strand a deposit balance ─────────────────────

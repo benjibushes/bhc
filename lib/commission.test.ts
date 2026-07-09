@@ -17,12 +17,36 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   netEarningsFor,
+  referralRail,
   normalizeCommissionRate,
   isCommissionRateFieldEmpty,
   hasLockedCommissionRate,
   getRancherCommissionRate,
   calcCommissionForRancher,
 } from './commission';
+
+test('referralRail: deposit paid → tier_v2 rail (net = full, nothing to invoice)', () => {
+  assert.equal(referralRail({ 'Deposit Paid At': '2026-07-01T00:00:00Z' }), 'tier_v2');
+  assert.equal(referralRail({ deposit_paid_at: '2026-07-01' }), 'tier_v2');
+  assert.equal(referralRail({ depositPaidAt: '2026-07-01' }), 'tier_v2');
+});
+
+test('referralRail: no deposit paid → legacy rail, regardless of rancher tier', () => {
+  // Migrated tier_v2 rancher, legacy invoice-collected row → legacy economics.
+  assert.equal(referralRail({ 'Deposit Paid At': '', 'Stripe Invoice URL': 'https://x' }), 'legacy');
+  // Off-rail tier_v2 close (call-closed, no deposit) → legacy, MUST be invoiced.
+  assert.equal(referralRail({ 'Commission Due': 100 }), 'legacy');
+  assert.equal(referralRail({ 'Deposit Paid At': '   ' }), 'legacy'); // whitespace
+  assert.equal(referralRail({}), 'legacy');
+  assert.equal(referralRail(null), 'legacy');
+});
+
+test('referralRail feeds netEarningsFor: deposit row keeps 100%, off-rail nets out', () => {
+  const depositRow = { 'Deposit Paid At': '2026-07-01', 'Sale Amount': 1000, 'Commission Due': 100 };
+  const offRailRow = { 'Sale Amount': 1000, 'Commission Due': 100 };
+  assert.equal(netEarningsFor(referralRail(depositRow), 1000, 100), 1000);
+  assert.equal(netEarningsFor(referralRail(offRailRow), 1000, 100), 900);
+});
 
 test('netEarningsFor: tier_v2 net = revenue (commission was the buyer add-on)', () => {
   assert.equal(netEarningsFor('tier_v2', 2000, 200), 2000);

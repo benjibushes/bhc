@@ -102,6 +102,21 @@ test('buildEarningsCsv tier_v2 rail: Net to You = full sale amount', () => {
   assert.match(lines[1], /2000\.00,200\.00,2000\.00/); // net = sale (buyer paid commission)
 });
 
+test('buildEarningsCsv RAIL-PER-ROW: depositPaidAt decides net, overriding the fallback', () => {
+  // fallback 'tier_v2' but the row never paid a deposit → LEGACY net (nets out).
+  const offRail = buildEarningsCsv(
+    [row({ saleAmount: 2000, commissionDue: 200, depositPaidAt: '' })],
+    'tier_v2',
+  );
+  assert.match(offRail.trimEnd().split('\r\n')[1], /2000\.00,200\.00,1800\.00/);
+  // fallback 'legacy' but the row DID pay a deposit → tier_v2 net (full sale).
+  const depositRow = buildEarningsCsv(
+    [row({ saleAmount: 2000, commissionDue: 200, depositPaidAt: '2026-07-01' })],
+    'legacy',
+  );
+  assert.match(depositRow.trimEnd().split('\r\n')[1], /2000\.00,200\.00,2000\.00/);
+});
+
 test('filterByClosedDate: no bounds returns a copy of all rows', () => {
   const rows = [row({ id: 'a' }), row({ id: 'b' })];
   const out = filterByClosedDate(rows);

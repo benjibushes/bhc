@@ -6,7 +6,7 @@ import { sendTelegramUpdate, sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID, sendTe
 import { sendRerouteNotification, sendPilotUpsellEmail, sendInstantCommissionInvoice } from '@/lib/email';
 import { isQualifiedForRouting } from '@/lib/qualification';
 import { createCommissionInvoice } from '@/lib/stripe-commission';
-import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, getRancherCommissionRate } from '@/lib/commission';
+import { calcCommission, calcCommissionForRancher, hasLockedCommissionRate, getRancherCommissionRate, referralRail } from '@/lib/commission';
 import { decrementCapacity, syncCapacityToAirtable } from '@/lib/rancherCapacity';
 import { shouldDecrementOnClose } from '@/lib/refundLifecycle';
 import jwt from 'jsonwebtoken';
@@ -794,12 +794,16 @@ export async function PATCH(
           try {
             const rancherForInvoice = await getRecordById(TABLES.RANCHERS, decoded.rancherId) as any;
             const invoiceEmail = rancherForInvoice?.['Email'] || '';
-            // Tier_v2 ranchers SKIP — commission already taken at deposit via
-            // application_fee_amount. Legacy invoice here would double-bill.
-            const pricingModel = String(rancherForInvoice?.['Pricing Model'] || 'legacy');
-            const skipLegacyInvoice = pricingModel === 'tier_v2';
+            // RAIL-PER-ROW (audit fix #4): skip the commission invoice ONLY
+            // when THIS referral actually rode the deposit rail (Deposit Paid
+            // At stamped) — commission was already skimmed at deposit via
+            // application_fee_amount, so an invoice here would double-bill.
+            // A tier_v2 rancher who closes OFF-RAIL (on a call, no deposit
+            // ever paid) still owes commission and MUST be invoiced — the old
+            // `pricingModel === 'tier_v2'` skip silently ate that commission.
+            const skipLegacyInvoice = referralRail(referral) === 'tier_v2';
             if (skipLegacyInvoice) {
-              console.log(`[referrals/close] rancher ${decoded.rancherId} is tier_v2 — skipping legacy commission invoice`);
+              console.log(`[referrals/close] ${id} rode the deposit rail — commission taken at deposit, skipping post-close invoice`);
             }
             if (invoiceEmail && !skipLegacyInvoice) {
               try {

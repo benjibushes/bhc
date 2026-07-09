@@ -162,3 +162,34 @@ export function netEarningsFor(
   if (String(rail || '').trim().toLowerCase() === 'tier_v2') return rev;
   return rev - com;
 }
+
+/**
+ * Which economic rail did a SINGLE referral actually ride? — RAIL-PER-ROW
+ * (dashboard SaaS audit, 2026-07-08). Findings #3 + #4.
+ *
+ * THE BUG: earnings math keyed the rail off the rancher's CURRENT
+ * `Pricing Model` and applied it to ALL historical rows. A rancher migrated
+ * to tier_v2 still has (a) legacy invoice-collected history and (b) off-rail
+ * "closed on a call, no deposit" closes — and BOTH were being treated as
+ * tier_v2 deposit-rail economics. Result: net earnings overstated by the
+ * commission actually paid (Silverline +$440), the tax CSV overstated the
+ * same, "Collected — taken at deposit" shown on invoice-collected rows, and
+ * — the live money leak — off-rail tier_v2 closes never got a commission
+ * invoice AND were force-counted as $0 unpaid, so BHC silently ate the
+ * commission (Foodstead +$156.91, growing per close).
+ *
+ * THE DISCRIMINATOR: a referral rode the tier_v2 DEPOSIT rail — commission
+ * skimmed at deposit time via application_fee_amount, so net = full revenue
+ * and there is nothing to invoice — IF AND ONLY IF a deposit was actually
+ * paid on it (`Deposit Paid At` stamped). Everything else is legacy
+ * economics: commission is collected by post-close invoice, net =
+ * revenue − commission, and the row IS invoice-eligible. Never per-rancher.
+ *
+ * Accepts either a raw Airtable record ('Deposit Paid At') or a shaped
+ * dashboard/API object (`deposit_paid_at`).
+ */
+export function referralRail(ref: any): 'tier_v2' | 'legacy' {
+  const depositPaidAt =
+    ref?.['Deposit Paid At'] ?? ref?.deposit_paid_at ?? ref?.depositPaidAt ?? '';
+  return String(depositPaidAt || '').trim() ? 'tier_v2' : 'legacy';
+}
