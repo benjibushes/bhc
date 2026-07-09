@@ -119,7 +119,7 @@ export default function SellPage() {
                 first-class option — not a buried text link. Ranchers are
                 phone people; the call button converts the form-averse half. */}
             <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
-              <Button href={SIGNUP_HREF} variant="primary" size="lg">
+              <Button href={SIGNUP_HREF} variant="accent" size="lg">
                 Start free — 5 minutes
               </Button>
               <Button href="/book?purpose=rancher" variant="secondary" size="lg">

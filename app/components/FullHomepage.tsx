@@ -120,7 +120,7 @@ export default function FullHomepage() {
                   90 seconds. your deposit holds the spot, fully refundable
                   until your rancher accepts.
                 </p>
-                <span className="inline-flex"><Button href="/access" size="md">reserve your share →</Button></span>
+                <span className="inline-flex"><Button href="/access" variant="accent" size="md">reserve your share →</Button></span>
                 <p className="text-xs text-saddle mt-3">
                   or <a href="/ranchers" className="underline hover:text-charcoal transition-colors">browse the ranchers</a>
                 </p>

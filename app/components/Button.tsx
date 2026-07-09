@@ -2,6 +2,7 @@ import Link from 'next/link';
 
 // Brand button — three variants, three sizes, loading state, full a11y.
 //   primary    — solid charcoal on bone (default CTA)
+//   accent     — warm wheat-gold pill (hero / key conversion CTAs)
 //   secondary  — outline charcoal on bone (paired with primary)
 //   ghost      — text-only, underline-on-hover (footer / inline)
 //   destructive — weathered red (rare; only for irreversible actions)
@@ -13,7 +14,7 @@ import Link from 'next/link';
 // Loading state shows a spinner + disables click. The spinner is inline
 // SVG so there's no layout shift between idle/loading.
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'destructive';
+type Variant = 'primary' | 'accent' | 'secondary' | 'ghost' | 'destructive';
 type Size = 'sm' | 'md' | 'lg';
 
 interface ButtonProps {
@@ -40,6 +41,10 @@ const SIZE_CLASSES: Record<Size, string> = {
 const VARIANT_CLASSES: Record<Variant, string> = {
   primary:
     'bg-charcoal text-bone border border-charcoal hover:bg-divider hover:border-divider',
+  // WARM ACCENT (2026-07-09) — wheat-gold pill w/ charcoal text; hero + key
+  // conversion CTAs. The Primal-Pastures signature, on BHC's palette.
+  accent:
+    'bg-tallow text-charcoal border border-tallow hover:bg-tallow-deep hover:border-tallow-deep',
   secondary:
     'bg-transparent text-charcoal border border-charcoal hover:bg-charcoal hover:text-bone',
   ghost:
@@ -66,6 +71,7 @@ export default function Button({
   const styles = [
     'inline-flex items-center justify-center gap-2',
     'font-medium tracking-wide uppercase',
+    'rounded-full',
     'transition-base',
     'focus-visible:outline-2 focus-visible:outline-offset-2',
     SIZE_CLASSES[size],

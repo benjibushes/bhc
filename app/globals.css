@@ -33,6 +33,12 @@
   --color-bone-warm: #ECE8E0;
   --color-bone-deep: #E5E2DC;
 
+  /* WARM ACCENT (Primal-inspired, 2026-07-09) — a soft wheat/tallow gold for
+     hero + primary conversion CTAs. Sits between amber (map pins) and saddle;
+     reads premium on bone with charcoal text (Primal's butter-yellow pill). */
+  --color-tallow: #E3C381;
+  --color-tallow-deep: #D4AE5E;
+
   /* ──────────────────────────────────────────────────────────────────────
      TYPE — Playfair Display for headlines (one face, varied weights).
      Inter for body/UI. Restrained scale: hero 60/56 → 18/14 captions.
