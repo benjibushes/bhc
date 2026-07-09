@@ -534,9 +534,15 @@ export default async function RancherPage(
               {/* Verification + state pill row */}
               <div className="flex flex-wrap items-center gap-2">
                 {isProspect ? (
-                  <Pill tone="amber">Unclaimed listing</Pill>
+                  <Pill tone="amber" className="!bg-amber !text-charcoal !border-transparent">Unclaimed listing</Pill>
                 ) : (
-                  <Pill tone="positive" icon={<span aria-hidden>✓</span>}>
+                  <Pill
+                    tone="positive"
+                    icon={<span aria-hidden>✓</span>}
+                    /* solid over the hero photo (2026-07-09 mobile QA) — the
+                       translucent positive tone was invisible on the cover. */
+                    className="!bg-sage !text-bone !border-transparent"
+                  >
                     Verified partner
                   </Pill>
                 )}
