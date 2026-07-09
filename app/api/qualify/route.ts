@@ -59,7 +59,9 @@ interface QualifyAnswers {
   ack: boolean;
 }
 
-// Score 0-100. Auto-route threshold: 75. Below 75 → waitlist (nurture).
+// Score 0-100. Stored for prioritization/analytics — NOT a routing gate
+// anymore (funnel completion routes; only explicit "Not Sure"/"Just exploring"
+// self-ID holds a buyer — see the gate below).
 function scoreAnswers(a: QualifyAnswers): number {
   let s = 0;
   // Tier specified concretely = 25 pts. "Not Sure" gets 5 pts only.
@@ -200,9 +202,15 @@ export async function POST(request: Request) {
     consumerUpdates['Timing'] = timing;
   }
 
-  // Score gate. Below 75 → record incomplete + stay in nurture. Don't fire
-  // matching/suggest — these buyers aren't ready for a rancher's time.
-  if (score < 75) {
+  // FUNNEL = QUALIFIED (founder rule 2026-07-08): completing the quiz routes
+  // you to your in-state rancher. The numeric score is NO LONGER a gate —
+  // leads are free now that capacity counts CLOSED SALES, not held leads, so
+  // there's no reason to hold a funnel-completer. We hold ONLY buyers who
+  // EXPLICITLY self-identified as not ready: "Not Sure" tier or "Just
+  // exploring" timing. Everyone else fires matching/suggest. (Score is still
+  // stored for prioritization + analytics.)
+  const explicitlyNotReady = tier === 'Not Sure' || timing === 'Just exploring';
+  if (explicitlyNotReady) {
     consumerUpdates['Qualification Path'] = 'incomplete';
     try {
       await updateRecord(TABLES.CONSUMERS, consumerId, consumerUpdates);
