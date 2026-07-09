@@ -9,7 +9,7 @@
 // CSV escaping (commas, quotes, newlines in buyer names) + date-range filtering
 // so a malformed cell can never corrupt the rancher's bookkeeping file.
 
-import { netEarningsFor } from './commission';
+import { netEarningsFor, referralRail } from './commission';
 
 export interface EarningsRow {
   /** Referral record id — stable key, useful for de-duping in a sheet. */
@@ -21,6 +21,10 @@ export interface EarningsRow {
   /** Whatever date represents "closed" — Closed At, falling back to created. */
   closedAt: string;
   introSentAt: string;
+  /** RAIL-PER-ROW (audit fix #3): 'Deposit Paid At' — present ⇒ this row rode
+   *  the tier_v2 deposit rail (net = full sale); blank ⇒ legacy/off-rail (net
+   *  = sale − commission). Optional so older callers still compile. */
+  depositPaidAt?: string;
 }
 
 /**
@@ -102,15 +106,24 @@ export function filterByClosedDate(
   });
 }
 
-/** Build the full CSV string (header + rows). Always ends with a trailing newline. */
-export function buildEarningsCsv(rows: EarningsRow[], rail: string = 'legacy'): string {
+/**
+ * Build the full CSV string (header + rows). Always ends with a trailing
+ * newline. `fallbackRail` is used only for rows that carry no depositPaidAt
+ * info (older callers) — when a row has depositPaidAt, the rail is decided
+ * PER ROW so a migrated rancher's legacy history isn't overstated (audit #3).
+ */
+export function buildEarningsCsv(rows: EarningsRow[], fallbackRail: string = 'legacy'): string {
   const lines: string[] = [];
   lines.push(EARNINGS_CSV_HEADERS.map(csvEscape).join(','));
   for (const r of rows) {
-    // SLICE E — rail-split "Net to You". tier_v2: BHC's commission was charged
-    // ON TOP of the rancher's price at deposit (buyer paid it) → net = sale
-    // amount. legacy (the default, byte-identical): net = sale − commission.
-    const net = netEarningsFor(rail, Number(r.saleAmount) || 0, Number(r.commissionDue) || 0);
+    // RAIL-PER-ROW "Net to You": a deposit-paid row nets 100% of the sale
+    // (commission skimmed at deposit); a legacy/off-rail row nets it out. Row
+    // rail wins over the caller's fallback whenever depositPaidAt is known.
+    const rowRail =
+      r.depositPaidAt !== undefined
+        ? referralRail({ deposit_paid_at: r.depositPaidAt })
+        : fallbackRail;
+    const net = netEarningsFor(rowRail, Number(r.saleAmount) || 0, Number(r.commissionDue) || 0);
     lines.push([
       csvEscape(r.id),
       csvEscape(csvNeutralizeFormula(r.buyerName)),

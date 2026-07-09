@@ -10,7 +10,7 @@ import { requireRancher } from '@/lib/rancherAuth';
 
 export const maxDuration = 60;
 
-import { getRancherCommissionRate, netEarningsFor } from '@/lib/commission';
+import { getRancherCommissionRate, netEarningsFor, referralRail } from '@/lib/commission';
 
 // Pure: total commission the rancher still owes BHC on closed-won deals.
 // tier_v2 ranchers NEVER owe a post-close invoice — BHC's cut was taken at
@@ -23,11 +23,16 @@ import { getRancherCommissionRate, netEarningsFor } from '@/lib/commission';
 // unit-tested without spinning the route.
 export function computeUnpaidCommission(
   closedWon: Array<Record<string, any>>,
-  pricingModel: string,
+  _pricingModel?: string,
 ): number {
-  if (pricingModel === 'tier_v2') return 0;
+  // RAIL-PER-ROW (audit fix #4): unpaid commission is owed on LEGACY-rail
+  // rows only — a row whose deposit was actually paid had commission skimmed
+  // at deposit and owes nothing. This now correctly counts off-rail tier_v2
+  // closes (call-closed, no deposit) as owed, which previously leaked (the
+  // old `if (pricingModel === 'tier_v2') return 0` zeroed the whole rancher).
+  // The pricingModel arg is retained for call-site compat but ignored.
   return closedWon
-    .filter((r) => !r['Commission Paid'])
+    .filter((r) => referralRail(r) === 'legacy' && !r['Commission Paid'])
     .reduce((sum, r) => sum + (Number(r['Commission Due']) || 0), 0);
 }
 
@@ -319,11 +324,22 @@ export async function GET(request: Request) {
         totalRevenue,
         totalCommission,
         unpaidCommission,
-        // SLICE E — rail-split net. tier_v2: commission was charged ON TOP of
-        // the rancher's price at deposit (buyer paid it) → net = totalRevenue.
-        // legacy: rancher pays commission post-close → net = revenue − commission
-        // (byte-identical to the old math).
-        netEarnings: netEarningsFor(pricingModel, totalRevenue, totalCommission),
+        // SLICE E — rail-split net, now PER ROW (audit fix #3). tier_v2 deposit
+        // rows (deposit actually paid): commission skimmed at deposit → net =
+        // full sale. legacy/off-rail rows: commission owed post-close → net =
+        // sale − commission. Summed per referral so a migrated rancher's
+        // legacy invoice history + off-rail closes are no longer overstated as
+        // tier_v2 economics.
+        netEarnings: closedWon.reduce(
+          (sum: number, r: any) =>
+            sum +
+            netEarningsFor(
+              referralRail(r),
+              Number(r['Sale Amount']) || 0,
+              Number(r['Commission Due']) || 0,
+            ),
+          0,
+        ),
         // Lead Quality metrics — recent-window summary so ranchers can see
         // what proportion of their leads convert vs ghost. Builds trust that
         // the platform protects them from "slop" and is worth a retainer.

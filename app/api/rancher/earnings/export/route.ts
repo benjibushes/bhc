@@ -77,6 +77,9 @@ export async function GET(request: Request) {
         commissionDue: Number(ref['Commission Due'] || 0),
         closedAt: String(ref['Closed At'] || ref['_createdTime'] || ''),
         introSentAt: String(ref['Intro Sent At'] || ''),
+        // RAIL-PER-ROW (audit fix #3): lets buildEarningsCsv decide net per
+        // row so a migrated rancher's legacy/off-rail history isn't overstated.
+        depositPaidAt: String(ref['Deposit Paid At'] || ''),
       }));
   } catch (e: any) {
     console.error('[rancher/earnings/export] referrals load failed:', e?.message || e);

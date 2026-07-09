@@ -9,7 +9,7 @@ import StateMultiSelect from '../components/StateMultiSelect';
 import ImageUploader from '../components/ImageUploader';
 import Link from 'next/link';
 import { deriveLadder, deriveDeposit, checkWholePrice, MIN_TIER_PRICE } from '@/lib/pricing';
-import { netEarningsFor } from '@/lib/commission';
+import { netEarningsFor, referralRail } from '@/lib/commission';
 import { gradeLead, gradeSortWeight } from '@/lib/leadGrade';
 import {
   groupReferralsByBuyer,
@@ -547,6 +547,15 @@ export default function RancherDashboardPage() {
         );
         setSoldCuts(spec.length > 0 ? spec : ['Quarter', 'Half', 'Whole']);
       }
+      // Re-arm the silent-wipe guard (audit fix): every refetch re-seeds the
+      // parity fields BLANK just below, then re-hydrates them from the
+      // landing-page GET. The ref used to stay true from a PREVIOUS successful
+      // hydration, so one failed parity GET after any save/refetch left the
+      // form holding blanks with the guard disarmed — the next Save nulled all
+      // 9 stored fields. Reset here, immediately before the blank re-seed
+      // (NOT at the top of fetchDashboard — the early-return paths above leave
+      // the form untouched and must not disarm pending parity edits).
+      parityHydratedRef.current = false;
       setPageForm({
         'Slug': r.slug || '',
         'Logo URL': r.logoUrl || '',
@@ -3236,24 +3245,29 @@ export default function RancherDashboardPage() {
                     at deposit (the buyer paid it) → Your Net = Total Revenue,
                     and the Commission card says who actually paid it so the
                     row's math reads honestly. Legacy math is unchanged. */}
+                {/* RAIL-PER-ROW (audit fix #3): the money VALUES are now
+                    server-computed per referral, so a migrated rancher's
+                    legacy/off-rail history is no longer overstated. The
+                    sub-copy keys off the ACTUAL unpaid balance, not the
+                    per-rancher tier flag — a tier_v2 rancher with any
+                    invoice-owed history must not see "100% of your price". */}
                 <StatCard
                   label={`Commission (${((rancherInfo.commissionRate ?? 0.10) * 100).toFixed(1)}%)`}
                   value={`$${stats.totalCommission.toLocaleString()}`}
-                  sub={rancherInfo.pricingModel === 'tier_v2' ? 'buyers paid this on top' : ''}
+                  sub={rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? 'buyers paid this on top' : ''}
                 />
                 <StatCard
                   label="Your Net"
                   value={`$${stats.netEarnings.toLocaleString()}`}
-                  sub={rancherInfo.pricingModel === 'tier_v2' ? '100% of your price' : ''}
+                  sub={rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? '100% of your price' : ''}
                 />
-                {/* tier_v2 ranchers never owe a post-close invoice — BHC's cut is
-                    taken at deposit time. unpaidCommission is forced to 0 server-
-                    side; show "collected at deposit" so the card isn't a confusing
-                    $0/"Invoice pending". Legacy ranchers see the real balance. */}
-                {rancherInfo.pricingModel === 'tier_v2' ? (
-                  <StatCard label="Commission" value="Collected" sub="taken at deposit" />
+                {/* Unpaid card is now driven by the real balance, not the tier
+                    flag: any owed commission (legacy OR off-rail tier_v2 close)
+                    shows a payable balance; zero owed shows "Collected". */}
+                {stats.unpaidCommission > 0 ? (
+                  <StatCard label="Unpaid Commission" value={`$${stats.unpaidCommission.toLocaleString()}`} sub="Invoice pending" />
                 ) : (
-                  <StatCard label="Unpaid Commission" value={`$${stats.unpaidCommission.toLocaleString()}`} sub={stats.unpaidCommission > 0 ? 'Invoice pending' : ''} />
+                  <StatCard label="Commission" value="Collected" sub={rancherInfo.pricingModel === 'tier_v2' ? 'taken at deposit' : ''} />
                 )}
               </div>
 
@@ -3283,15 +3297,19 @@ export default function RancherDashboardPage() {
                           <td className="py-3 pr-4">{ref.buyer_name}</td>
                           <td className="py-3 pr-4">${ref.sale_amount.toLocaleString()}</td>
                           <td className="py-3 pr-4">${ref.commission_due.toLocaleString()}</td>
-                          {/* SLICE E — per-row net is rail-split: tier_v2 keeps
-                              100% of the sale (buyer paid the commission on top);
-                              legacy nets it out, byte-identical to before. */}
-                          <td className="py-3 pr-4 font-medium">${netEarningsFor(rancherInfo.pricingModel, ref.sale_amount, ref.commission_due).toLocaleString()}</td>
+                          {/* RAIL-PER-ROW (audit fix #3): net is split by what
+                              THIS row rode — a deposit-paid row keeps 100% of
+                              the sale (commission was skimmed at deposit); a
+                              legacy/off-rail row nets the commission out. Never
+                              the rancher's current tier flag. */}
+                          <td className="py-3 pr-4 font-medium">${netEarningsFor(referralRail(ref), ref.sale_amount, ref.commission_due).toLocaleString()}</td>
                           <td className="py-3">
-                            {/* tier_v2: commission was collected at deposit time —
-                                no invoice to pay. Show "Collected" instead of the
-                                legacy Paid/Pending + "Pay now" invoice flow. */}
-                            {rancherInfo.pricingModel === 'tier_v2' ? (
+                            {/* Deposit-rail row: commission collected at deposit —
+                                "Collected". Legacy/off-rail row: the real Paid/
+                                Pending + "Pay now" invoice flow (an off-rail
+                                tier_v2 close now correctly shows a payable invoice
+                                instead of a false "Collected"). */}
+                            {referralRail(ref) === 'tier_v2' ? (
                               <span className="px-2 py-0.5 text-xs bg-sage/15 text-sage-dark">
                                 Collected
                               </span>
