@@ -39,6 +39,12 @@
   --color-tallow: #E3C381;
   --color-tallow-deep: #D4AE5E;
 
+  /* SOFT ELEVATION (2026-07-09 conversion polish) — gentle lift, NOT Material.
+     Cards drop their hard 1px border for whitespace + a whisper shadow, the
+     Primal-Pastures softness. Two levels: rest + hover. */
+  --shadow-soft: 0 1px 2px rgba(14,14,14,0.04), 0 12px 32px -14px rgba(14,14,14,0.10);
+  --shadow-hover: 0 6px 14px rgba(14,14,14,0.06), 0 22px 50px -16px rgba(14,14,14,0.18);
+
   /* ──────────────────────────────────────────────────────────────────────
      TYPE — Playfair Display for headlines (one face, varied weights).
      Inter for body/UI. Restrained scale: hero 60/56 → 18/14 captions.
@@ -197,3 +203,18 @@ textarea::-webkit-validation-bubble-message {
   border-radius: 2px;
   animation: bhc-pulse 1.6s var(--ease-out) infinite;
 }
+
+/* ── SOFT-ELEVATION UTILITIES (Primal softness, 2026-07-09) ─────────────── */
+.elev { box-shadow: var(--shadow-soft); }
+.elev-hover { transition: box-shadow var(--duration-base) var(--ease-out), transform var(--duration-base) var(--ease-out); }
+.elev-hover:hover { box-shadow: var(--shadow-hover); }
+
+/* ACROSS-THE-BOARD button softening — any solid-fill <a>/<button> CTA not
+   built via the Button primitive still gets pill corners + the roomy feel
+   (catches custom CTAs on founders / nav / modals without per-file edits). */
+a[class*="bg-charcoal"]:not([class*="rounded"]):not([class*="w-full"]),
+button[class*="bg-charcoal"]:not([class*="rounded"]):not([class*="w-full"]),
+a[class*="bg-tallow"]:not([class*="rounded"]),
+button[class*="bg-tallow"]:not([class*="rounded"]),
+a[class*="bg-sage"]:not([class*="rounded"]),
+button[class*="bg-sage"]:not([class*="rounded"]) { border-radius: 9999px; }

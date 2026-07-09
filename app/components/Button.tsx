@@ -7,7 +7,7 @@ import Link from 'next/link';
 //   ghost      — text-only, underline-on-hover (footer / inline)
 //   destructive — weathered red (rare; only for irreversible actions)
 //
-//   sm — chips, inline actions (px-4 py-2 text-xs)
+//   sm — chips, inline actions (roomy pills, sentence-case — Primal softness)
 //   md — default CTAs (px-6 py-3 text-sm)
 //   lg — hero CTAs (px-8 py-4 text-base)
 //
@@ -33,9 +33,9 @@ interface ButtonProps {
 }
 
 const SIZE_CLASSES: Record<Size, string> = {
-  sm: 'px-4 py-2 text-xs',
-  md: 'px-6 py-3 text-sm',
-  lg: 'px-8 py-4 text-base',
+  sm: 'px-5 py-2.5 text-[13px]',
+  md: 'px-7 py-3.5 text-sm',
+  lg: 'px-9 py-4 text-base',
 };
 
 const VARIANT_CLASSES: Record<Variant, string> = {
@@ -70,7 +70,7 @@ export default function Button({
   const isDisabled = disabled || loading;
   const styles = [
     'inline-flex items-center justify-center gap-2',
-    'font-medium tracking-wide uppercase',
+    'font-medium',
     'rounded-full',
     'transition-base',
     'focus-visible:outline-2 focus-visible:outline-offset-2',
