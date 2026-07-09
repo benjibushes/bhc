@@ -6,6 +6,7 @@ import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
 import { isActiveDealReferral } from '@/lib/capacityCount';
 import { readyStuckBuyersFormula, activeDealReferralsFormula } from '@/lib/cronReadFilters';
+import { strandedMatchedBuyerIds } from '@/lib/strandedBuyers';
 
 // SCALE (#3): filtered reads with graceful fallback. This cron only processes
 // consumers at Buyer Stage=READY and only needs active-deal referrals to build
@@ -71,6 +72,32 @@ async function realHandler(_request: Request): Promise<{ status: 'success' | 'ma
   }
 
   const skipReasons: Record<string, number> = {};
+
+  // ── STRANDED-MATCHED RESTORE (routing forensics 2026-07-08) ──────────────
+  // A buyer stuck at Buyer Stage='MATCHED' whose only referral(s) went
+  // terminal (Closed Lost by a rancher, Dormant) is invisible to every
+  // routing rail — all of them read Buyer Stage='READY'. Reset those to READY
+  // FIRST so the READY read below (same run) reconsiders them against current
+  // supply. Runs before the main pass; failures are per-buyer best-effort.
+  let restoredStranded = 0;
+  try {
+    const [matched, activeRefs] = await Promise.all([
+      getAllRecords(TABLES.CONSUMERS, '{Buyer Stage} = "MATCHED"').catch(
+        async () => (await getAllRecords(TABLES.CONSUMERS)) as any[],
+      ) as Promise<any[]>,
+      readActiveDealReferrals(),
+    ]);
+    const strandedIds = strandedMatchedBuyerIds(matched, activeRefs);
+    for (const id of strandedIds.slice(0, 50)) {
+      try {
+        await updateRecord(TABLES.CONSUMERS, id, { 'Buyer Stage': 'READY' });
+        restoredStranded++;
+      } catch { /* per-buyer best-effort — next run retries */ }
+    }
+    if (restoredStranded > 0) {
+      skipReasons['stranded-matched-restored'] = restoredStranded;
+    }
+  } catch { /* restore is a backstop; never block the recovery pass */ }
 
   {
     const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';

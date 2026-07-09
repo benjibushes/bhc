@@ -1,5 +1,11 @@
 # Content Pack — Month 1 (July 2026)
 
+> **Making these talking-head style?** Use `marketing/TALKING-HEAD-SCRIPTS.md`
+> — the same ideas rewritten as pure spoken scripts (you, phone, one take, no
+> b-roll or screen recordings), plus a repeatable format you can crank on
+> repeat forever. This file keeps the fuller b-roll/screen-rec versions +
+> captions for when you want to produce a heavier cut.
+
 *Shoot-ready. Pairs with `docs/CONTENT-GTM-GAMEPLAN.md` (the operating system)
 and `docs/VIDEO-SCRIPTS-GTM.md` (the three promo lane scripts — NOT duplicated
 here; this pack adds their captions + everything else for 30 days).*
