@@ -46,7 +46,7 @@ const HOW = [
 
 export default function PartnersPage() {
   return (
-    <main className="min-h-screen py-16 md:py-24 bg-bone text-charcoal">
+    <main className="min-h-screen pt-8 pb-16 md:py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-3xl mx-auto space-y-10">
           <div className="text-center space-y-5">

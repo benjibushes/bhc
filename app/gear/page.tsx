@@ -90,7 +90,7 @@ export default async function GearPage() {
   const groups = groupByCategory(catalog);
 
   return (
-    <main className="min-h-screen py-16 md:py-24 bg-bone text-charcoal">
+    <main className="min-h-screen pt-8 pb-16 md:py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-3xl mx-auto text-center space-y-5 mb-12">
           <h1 className="font-serif text-4xl md:text-5xl">ben&rsquo;s gear</h1>

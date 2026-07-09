@@ -55,7 +55,7 @@ export default async function NewsPage() {
   const posts = await loadPosts();
 
   return (
-    <main className="min-h-screen py-24 bg-bone text-charcoal">
+    <main className="min-h-screen pt-10 pb-16 md:py-24 bg-bone text-charcoal">
       <Container>
         <div className="max-w-3xl mx-auto space-y-12">
           <div className="text-center space-y-6">

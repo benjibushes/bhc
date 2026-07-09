@@ -144,9 +144,13 @@ export default function CertificationBadges({
     <div className={`flex flex-wrap gap-2 ${className}`}>
       {chips.map((chip, i) =>
         chip.icon ? (
+          // Solid chips (2026-07-09 mobile QA): these render in the hero OVER
+          // the cover photo — the old translucent bg-sage/12 + dark text was
+          // near-invisible against a busy image. Solid sage + bone text reads
+          // on the photo AND on the bone body.
           <span
             key={i}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide bg-sage/12 text-sage-dark border border-sage/30"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide bg-sage text-bone border border-transparent"
           >
             <Icon name={chip.icon} />
             {chip.label}
@@ -154,7 +158,7 @@ export default function CertificationBadges({
         ) : (
           <span
             key={i}
-            className="inline-flex items-center px-3 py-1.5 text-xs font-semibold uppercase tracking-wide bg-bone-deep text-charcoal border border-dust"
+            className="inline-flex items-center px-3 py-1.5 text-xs font-semibold uppercase tracking-wide bg-bone text-charcoal border border-transparent"
           >
             {chip.label}
           </span>

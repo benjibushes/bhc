@@ -139,7 +139,7 @@ export default async function WinsPage() {
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      <section className="py-14 md:py-24 border-b border-divider/10">
+      <section className="pt-8 pb-12 md:py-24 border-b border-divider/10">
         <Container>
           <div className="max-w-3xl space-y-5">
             <Pill tone="positive">Real deals · real ranchers</Pill>

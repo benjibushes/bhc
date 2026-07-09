@@ -334,7 +334,7 @@ export default async function FoundersPage({
       )}
 
       {/* HERO */}
-      <section className="py-20 md:py-28">
+      <section className="pt-10 pb-14 md:py-28">
         <Container>
           <div className="max-w-3xl mx-auto text-center space-y-5">
             <p className="text-xs uppercase tracking-[0.2em] text-saddle">
