@@ -24,12 +24,16 @@ export default function FullHomepage() {
 
   return (
     <main className="min-h-screen bg-bone text-charcoal">
-      {/* Logo + Hero */}
-      <section className="py-12 md:py-20">
+      {/* Logo + Hero — mobile tightened (2026-07-09): the old py-12 + 128px
+          logo + full-paragraph subhead buried the value + CTA far below the
+          phone fold. Compact top spacing, smaller logo on mobile, and a
+          two-line subhead so the headline + trust points land in the first
+          viewport. Desktop (md:) unchanged. */}
+      <section className="pt-6 pb-10 md:py-20">
         <Container>
-          <div className="text-center space-y-8">
-            <div className="flex justify-center mb-8">
-              <div className="w-32 h-32 md:w-40 md:h-40 relative flex items-center justify-center">
+          <div className="text-center space-y-5 md:space-y-8">
+            <div className="flex justify-center mb-2 md:mb-8">
+              <div className="w-20 h-20 md:w-40 md:h-40 relative flex items-center justify-center">
                 <Image
                   src="/bhc-logo.png"
                   alt="BuyHalfCow"
@@ -49,12 +53,12 @@ export default function FullHomepage() {
                 : <>a private network<br />rebuilding real food</>}
             </h1>
 
-            <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle">
-              Connecting every household to a ranch they trust. Direct from
-              verified American ranchers. Quarter, half, or whole cow —
-              matched to the ranch nearest you, the way local families have
-              done it for generations. Real beef from the people who raised
-              it, deposit refundable until your rancher accepts.
+            <p className="text-lg md:text-2xl max-w-2xl mx-auto leading-snug md:leading-relaxed text-saddle">
+              Real beef, direct from a verified ranch near you — quarter, half,
+              or whole cow, matched in 90 seconds.
+              <span className="block mt-2 text-charcoal font-medium">
+                Deposit&rsquo;s fully refundable until your rancher accepts you.
+              </span>
             </p>
 
             <LiveCounter />
