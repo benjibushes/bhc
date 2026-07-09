@@ -51,9 +51,10 @@ export default function FullHomepage() {
 
             <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle">
               Connecting every household to a ranch they trust. Direct from
-              verified American ranchers. Quarter, half, or whole cow — the
-              way local families have been doing it for generations. No
-              marketplace markup. No algorithms.
+              verified American ranchers. Quarter, half, or whole cow —
+              matched to the ranch nearest you, the way local families have
+              done it for generations. Real beef from the people who raised
+              it, deposit refundable until your rancher accepts.
             </p>
 
             <LiveCounter />
@@ -380,9 +381,9 @@ export default function FullHomepage() {
               {/* Audit fix D-1: pre-shop copy claimed "No e-commerce checkout.
                   No public marketplace." three sections below the card that
                   sells /shop — an on-page self-contradiction. The durable
-                  truth: no faceless warehouse, no algorithms. */}
+                  truth: no faceless warehouse, no middleman owning your customer. */}
               <p className="text-lg text-saddle">
-                No warehouse. No faceless brand. No algorithms.<br />
+                No warehouse. No faceless brand. No middleman between you and the ranch.<br />
                 <strong className="text-charcoal">Just real people, real beef, real trust.</strong>
               </p>
             </div>
@@ -424,7 +425,7 @@ export default function FullHomepage() {
                 <div className="text-center space-y-3">
                   <div className="w-12 h-12 bg-charcoal text-bone rounded-full flex items-center justify-center font-serif text-xl mx-auto">4</div>
                   <p className="font-medium">Beef in your freezer</p>
-                  <p className="text-sm text-saddle">2–4 weeks. No marketplace markup. BHC Promise on every match.</p>
+                  <p className="text-sm text-saddle">2–4 weeks, straight from the ranch. BHC Promise on every match.</p>
                 </div>
               </div>
             </div>
