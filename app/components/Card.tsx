@@ -1,6 +1,6 @@
-// Card — surface primitive for any contained content (tier card, alert,
-// form section). Elevation via subtle border + warm bone tint instead of
-// drop shadow (Western paper aesthetic, not Material).
+// Card — surface primitive. Softness overhaul (2026-07-09): borderless,
+// rounded-2xl, whisper-shadow elevation (.elev) + warm tint. Primal-clean,
+// not hard-bordered paper.
 //
 // Variants:
 //   default   — bone bg, dust border
@@ -27,11 +27,13 @@ interface CardProps {
   ariaLabel?: string;
 }
 
+// SOFTNESS OVERHAUL (2026-07-09): hard 1px borders → whitespace + whisper
+// shadow (.elev) + generous radius. The Primal-Pastures feel on BHC's palette.
 const VARIANT_CLASSES: Record<Variant, string> = {
-  default: 'bg-bone border border-dust',
-  warm: 'bg-bone-warm border border-dust',
-  inverted: 'bg-charcoal text-bone border border-charcoal dark-surface',
-  outline: 'bg-transparent border-2 border-charcoal',
+  default: 'bg-bone rounded-2xl elev',
+  warm: 'bg-bone-warm rounded-2xl elev',
+  inverted: 'bg-charcoal text-bone rounded-2xl dark-surface',
+  outline: 'bg-transparent rounded-2xl border border-charcoal',
 };
 
 const PADDING_CLASSES: Record<Padding, string> = {
@@ -57,7 +59,7 @@ export default function Card({
     PADDING_CLASSES[padding],
     'transition-base',
     isInteractive
-      ? 'hover:-translate-y-0.5 hover:border-charcoal cursor-pointer'
+      ? 'elev-hover hover:-translate-y-0.5 cursor-pointer'
       : '',
     className,
   ]

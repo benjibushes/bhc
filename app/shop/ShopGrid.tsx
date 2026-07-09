@@ -163,7 +163,7 @@ export default function ShopGrid({
         </section>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-5 mt-5">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 md:gap-7 mt-6">
         {visible.map((p) => (
           <ProductCard key={p.id} p={p} compact />
         ))}

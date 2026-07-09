@@ -55,7 +55,7 @@ export default function ProductCard({ p, compact = false }: { p: ProductCardProd
   // type/padding, description hidden. Full variant unchanged for the rancher
   // page + funnel rails.
   return (
-    <div className="bg-bone border border-dust flex flex-col transition-base hover:border-charcoal">
+    <div className="bg-bone rounded-2xl overflow-hidden flex flex-col elev-hover transition-base hover:-translate-y-1">
       <Link href={href} className={`block ${compact ? 'aspect-square' : 'aspect-[4/3]'} overflow-hidden bg-bone-deep`}>
         <ProductImage src={p.image || ''} alt={p.name} className="w-full h-full object-cover block" />
       </Link>
