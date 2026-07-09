@@ -63,6 +63,7 @@ export type AnalyticsEventName =
   | 'links_view'
   | 'links_shop'
   | 'links_access'
+  | 'links_map'
   | 'links_guide'
   | 'links_gear'
   | 'links_merch'
