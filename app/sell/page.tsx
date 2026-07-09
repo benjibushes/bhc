@@ -86,9 +86,12 @@ export default function SellPage() {
   return (
     <main className="min-h-screen bg-bone text-charcoal">
       {/* ── HERO ──────────────────────────────────────────────────────── */}
-      <section className="py-16 md:py-24">
+      {/* Mobile tightened (2026-07-09): py-16 + a 4-line intro paragraph
+          pushed the CTAs below the phone fold. Compact top spacing + a
+          two-line intro so the headline + first CTA land in view. */}
+      <section className="pt-8 pb-12 md:py-24">
         <Container>
-          <div className="max-w-3xl mx-auto text-center space-y-6">
+          <div className="max-w-3xl mx-auto text-center space-y-5 md:space-y-6">
             <p className="text-xs uppercase tracking-widest text-saddle font-semibold">
               for ranchers
             </p>
@@ -96,11 +99,10 @@ export default function SellPage() {
               sell your beef direct.<br />
               keep more of the check.
             </h1>
-            <p className="text-xl md:text-2xl max-w-2xl mx-auto leading-relaxed text-saddle">
-              BuyHalfCow sends real buyers from your own area to your ranch —
-              and keeps sending them until your capacity is sold out. Quarter,
-              half, or whole cow: you set the prices, you talk to the family,
-              you get paid direct.
+            <p className="text-lg md:text-2xl max-w-2xl mx-auto leading-snug md:leading-relaxed text-saddle">
+              We send real buyers from your own area to your ranch — and keep
+              sending them until you&rsquo;re sold out. You set the prices, you
+              get paid direct.
             </p>
 
             {/* The hook: free to start, stated plain — tier-accurate. */}
