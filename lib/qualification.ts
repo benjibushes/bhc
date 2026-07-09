@@ -131,8 +131,14 @@ export function isQualifiedForRouting(buyer: any): { ok: boolean; reason?: strin
   // ready-to-buy / warmup fallback — those caused the 2026-06-05 cascade (179
   // healed buyers → matching/suggest → 39 cross-state misroutes to Ashcraft +
   // Hartsock). Pre-quiz buyers get a fresh /qualify invite via the nurture cron.
-  const qualScore = Number(buyer['Qualification Score'] || 0);
-  if (buyer['Qualified At'] && qualScore >= 75) {
+  // FUNNEL = QUALIFIED (founder rule 2026-07-08): a completed funnel
+  // (Qualified At stamped) routes — NO score floor. Order-type-unsure is
+  // already rejected above; the /api/qualify gate holds explicit "Not Sure"/
+  // "Just exploring" buyers before they ever get Qualified At. So a stamped
+  // Qualified At == a real funnel completion. Only an explicit "just
+  // exploring" BUDGET self-ID (legacy funnel field) still holds them.
+  const qualScore = Number(buyer['Qualification Score'] || 0); // retained for callers/sorting
+  if (buyer['Qualified At'] && !isJustExploringValue(budget)) {
     return { ok: true, signal: 'qualified-quiz' };
   }
 
