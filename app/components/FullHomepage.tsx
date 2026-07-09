@@ -68,25 +68,6 @@ export default function FullHomepage() {
               Follow the movement:{' '}
               <a href="https://instagram.com/buyhalfcow" target="_blank" rel="noopener noreferrer" className="underline hover:text-charcoal transition-colors">@buyhalfcow</a>
             </p>
-
-            {/* Editorial hero photo slot (Phase 4). Renders ONLY once Ben drops
-                a real ranch photo at public/hero-ranch.jpg — onError removes the
-                whole band, so there's no broken image and no layout hole while
-                the slot waits for photography. Warm/bone-toned frame; no fake
-                stock imagery per brand rules. */}
-            <div className="pt-6">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/hero-ranch.jpg"
-                alt="the ranch behind the beef"
-                loading="lazy"
-                className="w-full max-h-[420px] object-cover border border-dust bg-bone-deep"
-                onError={(e) => {
-                  const el = e.target as HTMLImageElement;
-                  el.parentElement!.style.display = 'none';
-                }}
-              />
-            </div>
           </div>
         </Container>
       </section>
