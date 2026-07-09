@@ -121,3 +121,19 @@ test('isActiveDealReferral: malformed input does not throw', () => {
   assert.equal(isActiveDealReferral({} as any), false);
   assert.equal(isActiveDealReferral({ Status: 'Pending Approval', Rancher: 'not-an-array' } as any), false);
 });
+
+import { countClosedWonReferrals } from './capacityCount';
+test('countClosedWonReferrals: counts only Closed Won on the Rancher link', () => {
+  const R='recR1';
+  const refs=[
+    {Status:'Closed Won', Rancher:[R]},
+    {Status:'Closed Won', Rancher:[R]},
+    {Status:'Intro Sent', Rancher:[R]},       // held, not a sale
+    {Status:'Closed Lost', Rancher:[R]},       // lost, not a sale
+    {Status:'Closed Won', Rancher:['recOTHER']},
+    {Status:'Closed Won', 'Suggested Rancher':[R]}, // suggested-only never counts
+  ];
+  assert.equal(countClosedWonReferrals(R, refs), 2);
+  assert.equal(countClosedWonReferrals('', refs), 0);
+  assert.equal(countClosedWonReferrals(R, null as any), 0);
+});
