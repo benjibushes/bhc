@@ -480,7 +480,12 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       // has distinct Quarter/Half/Whole Price), so folding both into the key
       // makes a cut change a NEW idempotent request instead of a hard wall,
       // while a true double-submit of the SAME cut still dedupes safely.
-      idempotencyKey: `deposit-${input.referralId}-${input.amountCents}-${input.fullSaleCents}`,
+      // v2 suffix (2026-07-14): Stripe pins an idempotency key to the EXACT
+      // params of its first use for ~24h. Shipping the Link-off param change
+      // under the old key made every re-mint 400 for referrals with a prior
+      // attempt (live: Dave/Champion Valley, "that didn't go through").
+      // BUMP THIS SUFFIX whenever session params change shape.
+      idempotencyKey: `deposit-${input.referralId}-${input.amountCents}-${input.fullSaleCents}-v2`,
     },
   );
   const url = session.url;
@@ -629,7 +634,8 @@ export async function createFinalInvoiceCheckout(
     },
     {
       stripeAccount: input.rancherConnectAccountId,
-      idempotencyKey: `final-invoice-${input.referralId}`,
+      // v2: same param-pinning rule as the deposit key above.
+      idempotencyKey: `final-invoice-${input.referralId}-v2`,
     },
   );
 
