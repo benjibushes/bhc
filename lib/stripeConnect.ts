@@ -485,7 +485,7 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       // under the old key made every re-mint 400 for referrals with a prior
       // attempt (live: Dave/Champion Valley, "that didn't go through").
       // BUMP THIS SUFFIX whenever session params change shape.
-      idempotencyKey: `deposit-${input.referralId}-${input.amountCents}-${input.fullSaleCents}-v2`,
+      idempotencyKey: `deposit-${input.referralId}-${input.amountCents}-${input.fullSaleCents}-v3`,
     },
   );
   const url = session.url;
@@ -635,7 +635,7 @@ export async function createFinalInvoiceCheckout(
     {
       stripeAccount: input.rancherConnectAccountId,
       // v2: same param-pinning rule as the deposit key above.
-      idempotencyKey: `final-invoice-${input.referralId}-v2`,
+      idempotencyKey: `final-invoice-${input.referralId}-v3`,
     },
   );
 
