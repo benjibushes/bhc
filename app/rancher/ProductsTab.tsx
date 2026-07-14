@@ -21,6 +21,7 @@ import {
   deriveProductPricing,
   MIN_PRODUCT_PRICE_CENTS,
 } from '@/lib/rancherProductInput';
+import { absorptionPreview } from '@/lib/feeMath';
 
 interface RancherOrder {
   id: string;
@@ -634,10 +635,21 @@ export default function ProductsTab({
           </label>
 
           {/* Transparent margin math — the same numbers the API will write.
-              Shipping is a pure passthrough: never part of buyhalfcow's cut. */}
+              Shipping is a pure passthrough: never part of buyhalfcow's cut.
+              Card-fee copy is TRUTHFUL per price point: absorbStripeFee floors
+              BHC's fee at max($1, 2% of charge), so a thin-margin/cheap item
+              gets partial or zero absorption — the shortfall comes out of the
+              rancher. absorptionPreview (lib/feeMath, same math as checkout's
+              computeProductCharge at qty 1) decides which sentence renders. */}
           {preview && (() => {
             const shipNum = Number(form.shippingCost);
             const ship = Number.isFinite(shipNum) && shipNum > 0 ? shipNum : 0;
+            const shipCents = Math.round(ship * 100);
+            const fees = absorptionPreview({
+              displayCents: preview.displayCents,
+              baseCents: preview.baseCents,
+              shippingCents: shipCents,
+            });
             return (
               <div className="bg-bone border-l-2 border-l-sage px-3.5 py-2.5 text-[13px]">
                 buyer pays <strong>{money(preview.displayCents / 100 + ship)}</strong>
@@ -645,8 +657,17 @@ export default function ProductsTab({
                 <strong>{money(preview.baseCents / 100 + ship)}</strong>
                 {ship > 0 ? ' (shipping comes to you in full)' : ''} · buyhalfcow&rsquo;s cut{' '}
                 {money(preview.marginCents / 100)} ({Math.round(preview.marginRate * 100)}%) — skimmed
-                automatically at checkout, your payout needs nothing from you. card
-                processing is on us — the net you see is the net you get.
+                automatically at checkout, your payout needs nothing from you.{' '}
+                {fees.shortfallCents === 0 ? (
+                  <>card processing is on us — the net you see is the net you get.</>
+                ) : (
+                  <>
+                    card fees: we cover {money(fees.absorbedCents / 100)} of the ~
+                    {money(fees.estCents / 100)} card fee — about {money(fees.shortfallCents / 100)}{' '}
+                    comes out of your payout at this price. you&rsquo;ll actually net about{' '}
+                    <strong>{money((preview.baseCents + shipCents - fees.shortfallCents) / 100)}</strong>.
+                  </>
+                )}
               </div>
             );
           })()}

@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stripeFeeEstimateCents, absorbStripeFee } from './feeMath';
+import { stripeFeeEstimateCents, absorbStripeFee, absorptionPreview } from './feeMath';
 
 test('stripeFeeEstimateCents: 2.9% + 30¢', () => {
   assert.equal(stripeFeeEstimateCents(0), 0);
@@ -49,6 +49,60 @@ test('absorb: fee never increases, never negative, floor capped at gross', () =>
   const jerky = absorbStripeFee({ grossFeeCents: 204, totalChargeCents: 1359 });
   assert.equal(jerky.feeCents, Math.max(100, 204 - 69));
   assert.ok(jerky.feeCents <= 204 && jerky.feeCents >= 100);
+});
+
+// ── absorptionPreview — the ProductsTab truth-in-copy helper ────────────────
+// The preview promise "card processing is on us" is only honest when
+// shortfallCents === 0. These cases pin the three regimes: full absorption,
+// zero absorption (gross fee already below the floor), and floor-partial.
+
+test('preview: healthy margin → full absorption, zero shortfall', () => {
+  // $50 display / $42.50 base (15%), no shipping: gross 750, est 175,
+  // floor min(750, max(100, 100)) = 100 → fee 575, absorbed 175 = est.
+  const p = absorptionPreview({ displayCents: 5000, baseCents: 4250, shippingCents: 0 });
+  assert.equal(p.estCents, 175);
+  assert.equal(p.absorbedCents, 175);
+  assert.equal(p.shortfallCents, 0);
+});
+
+test('preview: floor-bound cheap product → zero absorbed, full shortfall', () => {
+  // $6 ground beef / $5.10 base: gross 90 is already below the $1 floor —
+  // absorption is impossible, the rancher eats the whole ~47¢ card fee.
+  const p = absorptionPreview({ displayCents: 600, baseCents: 510, shippingCents: 0 });
+  assert.equal(p.estCents, 47);
+  assert.equal(p.absorbedCents, 0);
+  assert.equal(p.shortfallCents, 47);
+});
+
+test('preview: mid case clears the floor → est fully absorbed', () => {
+  // $20 / $17: gross 300, est 88, floor 100 → fee max(100, 212) = 212,
+  // absorbed 88 (full estimate), shortfall 0.
+  const p = absorptionPreview({ displayCents: 2000, baseCents: 1700, shippingCents: 0 });
+  assert.equal(p.estCents, 88);
+  assert.equal(p.absorbedCents, 88);
+  assert.equal(p.shortfallCents, 0);
+});
+
+test('preview: floor-partial → some absorbed, some shortfall', () => {
+  // $8 / $6.80: gross 120, est 53, floor 100 → fee max(100, 67) = 100,
+  // absorbed 20, shortfall 33 — the honest-copy branch case.
+  const p = absorptionPreview({ displayCents: 800, baseCents: 680, shippingCents: 0 });
+  assert.equal(p.estCents, 53);
+  assert.equal(p.absorbedCents, 20);
+  assert.equal(p.shortfallCents, 33);
+});
+
+test('preview: shipping raises the estimate off the FULL total (parity with checkout)', () => {
+  // $6 / $5.10 + $12 shipping: est on $18 total = round(1800*.029)+30 = 82;
+  // gross margin unchanged (90 < floor) → absorbed 0, shortfall = 82.
+  const p = absorptionPreview({ displayCents: 600, baseCents: 510, shippingCents: 1200 });
+  assert.equal(p.estCents, stripeFeeEstimateCents(1800));
+  assert.equal(p.absorbedCents, 0);
+  assert.equal(p.shortfallCents, p.estCents);
+  // And a healthy-margin product with shipping still fully absorbs.
+  const healthy = absorptionPreview({ displayCents: 9500, baseCents: 8075, shippingCents: 2500 });
+  assert.equal(healthy.absorbedCents, stripeFeeEstimateCents(12000));
+  assert.equal(healthy.shortfallCents, 0);
 });
 
 test('absorb: invariants hold across a sweep', () => {
