@@ -2972,7 +2972,7 @@ export default function RancherDashboardPage() {
                               <button
                                 onClick={() => openFinalInvoiceModal(ref)}
                                 className="px-4 py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
-                                title={invoiceSent ? 'Re-send the final balance invoice to buyer' : 'Send final balance invoice to buyer (100% to you)'}
+                                title={invoiceSent ? 'Re-send the final balance invoice to buyer' : 'Send final balance invoice to buyer (no BHC fee — card processing applies)'}
                               >
                                 {invoiceSent ? 'Re-send invoice' : 'Send Final Invoice'}
                               </button>
@@ -3262,7 +3262,7 @@ export default function RancherDashboardPage() {
                 <StatCard
                   label="Your Net"
                   value={`$${stats.netEarnings.toLocaleString()}`}
-                  sub={rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? '100% of your price' : ''}
+                  sub={rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? 'no BHC fee owed' : ''}
                 />
                 {/* Unpaid card is now driven by the real balance, not the tier
                     flag: any owed commission (legacy OR off-rail tier_v2 close)
@@ -4758,7 +4758,7 @@ export default function RancherDashboardPage() {
             {finalInvoiceResult ? (
               <div className="border border-sage bg-sage/10 p-4 space-y-3">
                 <p className="text-sm text-sage-dark">
-                  <strong>Invoice sent.</strong> Buyer received an email with the Stripe payment link for <strong>${finalInvoiceResult.balanceAmount.toFixed(2)}</strong>. 100% to your account when they pay — BHC takes nothing on the final balance.
+                  <strong>Invoice sent.</strong> Buyer received an email with the Stripe payment link for <strong>${finalInvoiceResult.balanceAmount.toFixed(2)}</strong>. Goes straight to your account minus card processing — BHC takes nothing on the final balance.
                 </p>
                 <p className="text-xs text-sage-dark">
                   Payment link:{' '}
@@ -4790,7 +4790,7 @@ export default function RancherDashboardPage() {
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
                     />
                     <p className="text-xs text-saddle mt-1">
-                      This is your gross sale price (what you want to net). Commission was already charged on top of this at deposit time — you keep 100% of this number.
+                      This is your gross sale price (what you want to net). Commission was already charged on top of this at deposit time — BHC takes nothing on the balance. Stripe&apos;s card processing (~2.9% + 30¢) comes out of the balance charge.
                     </p>
                     {/* U30 — the prefill comes from tier pricing; when no tier
                         price is set this arrives EMPTY with no explanation of
@@ -5789,7 +5789,7 @@ function PipelineExplainer({ depositEligible }: { depositEligible?: boolean }) {
         { n: '1', label: 'request deposit', sub: 'send the buyer a card link to lock their slot' },
         { n: '2', label: 'buyer pays', sub: 'the deposit lands straight in your stripe account' },
         { n: '3', label: 'accept slot', sub: 'confirm you can fill it — deposit becomes non-refundable' },
-        { n: '4', label: 'send final invoice', sub: 'collect the rest of the balance (100% yours)' },
+        { n: '4', label: 'send final invoice', sub: 'collect the rest of the balance (no BHC fee)' },
         { n: '5', label: 'deliver', sub: 'mark the beef delivered and you’re done' },
       ]
     : [
@@ -6090,7 +6090,7 @@ function ReferralCard({
           <button
             onClick={onSendFinal}
             className="px-4 min-h-[44px] py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors"
-            title="Send final balance invoice to buyer (100% to you, no BHC fee)"
+            title="Send final balance invoice to buyer (no BHC fee — card processing applies)"
           >
             {finalSent ? 'Re-send Final Invoice' : 'Send Final Invoice'}
           </button>
