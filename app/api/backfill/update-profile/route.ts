@@ -4,7 +4,11 @@ import { TABLES } from '@/lib/airtable';
 import jwt from 'jsonwebtoken';
 import { sendTelegramUpdate } from '@/lib/telegram';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-backfill-secret-change-me';
+// SECURITY (2026-07-14): the old fallback 'bhc-backfill-secret-change-me'
+// made every backfill token FORGEABLE whenever JWT_SECRET was unset — a
+// grep-able constant in a public repo. lib/secrets requireEnv fails loud
+// instead (route 500s until the env is set), which is the correct failure.
+import { JWT_SECRET } from '@/lib/secrets';
 
 function calculateIntentScore(data: { orderType: string; budgetRange: string; notes: string }) {
   let score = 10; // phone + email bonus (existing backfill users have both)

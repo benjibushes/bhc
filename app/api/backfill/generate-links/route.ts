@@ -6,7 +6,11 @@ import { requireAdmin } from '@/lib/adminAuth';
 
 export const maxDuration = 60;
 
-const JWT_SECRET = process.env.JWT_SECRET || 'bhc-backfill-secret-change-me';
+// SECURITY (2026-07-14): the old fallback 'bhc-backfill-secret-change-me'
+// made every backfill token FORGEABLE whenever JWT_SECRET was unset — a
+// grep-able constant in a public repo. lib/secrets requireEnv fails loud
+// instead (route 500s until the env is set), which is the correct failure.
+import { JWT_SECRET } from '@/lib/secrets';
 const EXPIRY_DAYS = parseInt(process.env.BACKFILL_LINK_EXPIRY_DAYS || '30');
 
 export async function POST(request: Request) {
