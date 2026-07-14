@@ -41,8 +41,8 @@
 //   • Telegram operator ping.
 
 import { NextResponse } from 'next/server';
-import { TABLES, getRecordById, createRecord, updateRecord } from '@/lib/airtable';
-import { createDepositCheckout } from '@/lib/stripeConnect';
+import { TABLES, getRecordById, updateRecord } from '@/lib/airtable';
+import { mintDepositGrantToken } from '@/lib/campaignReserve';
 import { requireRancher } from '@/lib/rancherAuth';
 import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
@@ -54,7 +54,6 @@ import {
   depositEmailOutcome,
   type DepositEmailOutcome,
 } from '@/lib/depositRequest';
-import { REFERRAL_ID_TEXT_FIELD } from '@/lib/contracts/payments';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -145,7 +144,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       { ok: true, alreadyPaid: true, message: 'Deposit already paid for this referral.' },
     );
   }
-  if (existingDepositUrl && !resend) {
+  // SELF-HEAL (2026-07-14): pre-fix rows stored the raw Stripe-hosted session
+  // URL, which Stripe expires after ~24h — replaying that URL hands the buyer
+  // a dead link. Any stored checkout.stripe.com URL is treated as absent so a
+  // fresh DURABLE link is minted below even without ?resend=true.
+  const storedUrlIsExpiring = existingDepositUrl.includes('checkout.stripe.com');
+  if (existingDepositUrl && !storedUrlIsExpiring && !resend) {
     return NextResponse.json({
       ok: true,
       alreadySent: true,
@@ -175,40 +179,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // buyer-email "Today" figure below, so quoted === charged === locked.
   const feeRate = depositCommissionRate(rancher, tierSlug);
 
-  const connectAcct = String(rancher['Stripe Connect Account Id'] || '').trim();
   const ranchName = String(rancher['Ranch Name'] || rancher['Operator Name'] || 'the ranch').trim();
-  const productLabel = `${cut} Cow — ${ranchName}`;
 
-  // Create the Stripe Connect deposit Checkout Session (direct charge; the
-  // application_fee is computed INSIDE createDepositCheckout from the tier rate
-  // on the FULL sale price — commission is collected upfront on top).
+  // DURABLE LINK (2026-07-14 — replaces the request-time Stripe session).
+  // Before: this route minted a Stripe-hosted Checkout Session and emailed its
+  // raw URL. Those URLs expire after ~24h, so any buyer opening the email the
+  // next day hit Stripe's "expired" error — 8 deposits requested, 0 paid.
+  // Now: email a signed ~30d pay link (/r/p/<grant>) that lands the buyer on
+  // the on-domain deposit page with a referral-scoped grant cookie; the page
+  // mints a FRESH Stripe session (+ the Payments row, recordDeposit) at
+  // pay-click. No expiring artifact exists anywhere in the flow, and the
+  // application_fee/net-your-number math runs identically at pay time.
+  // When the referral carries no linked Buyer record we fall back to the bare
+  // deposit-page URL — the buyer signs in via magic link instead of the grant.
   let checkoutUrl: string;
-  let paymentIntentId: string;
-  let sessionId: string;
+  const cutParam = `?cut=${cut.toLowerCase()}`;
   try {
-    const checkout = await createDepositCheckout({
-      rancherConnectAccountId: connectAcct,
-      tier: tierSlug,
-      commissionRate: feeRate,
-      amountCents: depositCents,
-      fullSaleCents,
-      buyerEmail,
-      referralId,
-      buyerId,
-      rancherId: session.rancherId,
-      productLabel,
-      successUrl: `${SITE_URL}/checkout/${referralId}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${SITE_URL}/checkout/${referralId}/deposit?canceled=1`,
-    });
-    // Hosted mode (no `mode` passed) guarantees a url — narrow for TS.
-    checkoutUrl = checkout.url || '';
-    if (!checkoutUrl) throw new Error('no checkout url');
-    paymentIntentId = checkout.paymentIntentId;
-    sessionId = checkout.sessionId;
+    checkoutUrl = buyerId
+      ? `${SITE_URL}/r/p/${mintDepositGrantToken({ consumerId: buyerId, referralId }, { expiresIn: '30d' })}`
+      : `${SITE_URL}/checkout/${referralId}/deposit${cutParam}`;
   } catch (e: any) {
-    console.error('[request-deposit] Stripe checkout creation failed:', e?.message);
+    console.error('[request-deposit] pay-link mint failed:', e?.message);
     return NextResponse.json(
-      { error: `Stripe checkout failed: ${e?.message || 'unknown'}` },
+      { error: 'Could not create the payment link — try again.' },
       { status: 500 },
     );
   }
@@ -232,31 +225,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // PI id below regardless.
   }
 
-  // Payments row keyed on the Stripe Payment Intent Id so the connect webhook's
-  // markDepositSucceeded can find it (same shape as the admin route — schema
-  // field is the SPACED `Stripe Payment Intent Id`).
-  try {
-    await createRecord(TABLES.PAYMENTS, {
-      'Buyer Email': buyerEmail,
-      'Rancher': [session.rancherId],
-      'Referral': [referralId],
-      // Denormalized referral id (finding 3, 2026-07-01) — under Clover
-      // paymentIntentId above is EMPTY at create time, so settlement finds
-      // this row BY REFERRAL via {Referral Id Text} (see
-      // lib/contracts/payments.findPaymentsByReferral). Without it, a
-      // request-deposit row could never settle.
-      [REFERRAL_ID_TEXT_FIELD]: referralId,
-      'Stripe Payment Intent Id': paymentIntentId,
-      'Stripe Connect Account Id': connectAcct,
-      'Stripe Checkout Session Id': sessionId,
-      'Amount Cents': depositCents,
-      'Status': 'pending',
-      'Tier': tierSlug === 'legacy_connect' ? 'Legacy Connect' : tierSlug.charAt(0).toUpperCase() + tierSlug.slice(1),
-      'Type': 'buyer_deposit',
-    });
-  } catch (e: any) {
-    console.warn('[request-deposit] Payments row create failed (non-fatal):', e?.message);
-  }
+  // NOTE (2026-07-14): no Payments row is pre-created here anymore. The buyer
+  // mints the Stripe session at pay-click on the deposit page, whose POST
+  // creates the Payments row via recordDeposit BEFORE handing the buyer to
+  // Stripe (and fails the request if that write fails) — strictly safer than
+  // the old request-time pending row, which orphaned whenever the link died.
 
   // Email the buyer the deposit link (reuses the deposit-invoice email).
   // chargedCents mirrors createDepositCheckout's totalChargedCents exactly
@@ -336,7 +309,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({
     ok: true,
     url: checkoutUrl,
-    paymentIntentId,
     cutTier: cut,
     depositAmount: depositDollars,
     fullSaleAmount: fullSaleDollars,

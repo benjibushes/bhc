@@ -52,6 +52,7 @@ export const EXPECTED_CRONS_24H = [
   'demand-router',
   'deploy-drift',
   'deposit-accept-sla',
+  'email-canary',
   'email-sequences',
   'final-invoice-dunning',
   'fulfillment-chase',
