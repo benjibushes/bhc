@@ -6257,6 +6257,10 @@ function AccountSettingsSection({
   const [phone, setPhone] = useState(rancher.phone || '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Non-fatal warning riding a successful save — e.g. the email changed but
+  // the Supabase password-login sync failed (rank 9): the save stood, but the
+  // rancher needs to know their password login may need a reset.
+  const [savedWarning, setSavedWarning] = useState('');
   const [error, setError] = useState('');
   // Self-serve account closure (soft-delete via /api/rancher/remove). The
   // route was previously reachable only with a wizard-token magic link — an
@@ -6305,6 +6309,7 @@ function AccountSettingsSection({
     setSaving(true);
     setError('');
     setSaved(false);
+    setSavedWarning('');
     try {
       const res = await fetch('/api/rancher/landing-page', {
         method: 'PATCH',
@@ -6323,6 +6328,7 @@ function AccountSettingsSection({
         return;
       }
       setSaved(true);
+      if (typeof data?.warning === 'string' && data.warning) setSavedWarning(data.warning);
       onSaved({
         name: operatorName.trim(),
         ranchName: ranchName.trim(),
@@ -6380,6 +6386,11 @@ function AccountSettingsSection({
                 autoComplete="email"
                 className="w-full px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
               />
+              {email.trim().toLowerCase() !== (rancher.email || '').trim().toLowerCase() && (
+                <p className="mt-1 text-xs text-saddle">
+                  Changing your login email updates where login links go and your password login.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium uppercase tracking-wider mb-1 text-saddle">Phone</label>
@@ -6394,7 +6405,11 @@ function AccountSettingsSection({
             </div>
           </div>
           {error && <div className="p-3 border border-weathered text-weathered text-sm">{error}</div>}
-          {saved && <div className="p-3 border border-sage/40 bg-sage/10 text-sage-dark text-sm">Saved.</div>}
+          {saved && (
+            <div className="p-3 border border-sage/40 bg-sage/10 text-sage-dark text-sm">
+              Saved.{savedWarning ? <span className="block mt-1 text-weathered">⚠️ {savedWarning}</span> : null}
+            </div>
+          )}
           <button
             type="submit"
             disabled={saving}

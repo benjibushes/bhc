@@ -69,3 +69,30 @@ export function isSupabaseAuthConfigured(): boolean {
     SUPABASE_URL && SUPABASE_ANON_KEY && SUPABASE_SERVICE_ROLE_KEY,
   );
 }
+
+/**
+ * Locate a Supabase Auth user id by email. The admin SDK exposes only
+ * listUsers (paginated), so we page until we find a case-insensitive email
+ * match or run out of pages. Bounded to 20 pages (20k users) as a safety cap.
+ *
+ * Shared by set-password (upsert-by-email) and the landing-page email-change
+ * sync (dashboard-audit rank 9: an email change must move the Supabase Auth
+ * user with it or password login silently breaks).
+ */
+export async function findSupabaseUserIdByEmail(
+  admin: SupabaseClient,
+  email: string,
+): Promise<string | null> {
+  const target = email.trim().toLowerCase();
+  const perPage = 1000;
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error || !data) return null;
+    const match = data.users.find(
+      (u) => String(u.email || '').trim().toLowerCase() === target,
+    );
+    if (match) return match.id;
+    if (data.users.length < perPage) break; // last page
+  }
+  return null;
+}
