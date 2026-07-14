@@ -19,6 +19,7 @@ import { getLatestCronRuns, missingExpectedCrons } from '@/lib/cronIntrospection
 import { sendOperatorSignal } from '@/lib/operatorSignal';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { runPlatformProbes } from '@/lib/platformProbes';
 
 export const maxDuration = 60;
 
@@ -158,12 +159,39 @@ async function realHandler(_request: Request): Promise<CronResult> {
   const sent24h = emailSends.filter((e: any) => String(e['Status'] || '') === 'sent').length;
   const suppressed24h = emailSends.filter((e: any) => String(e['Status'] || '') === 'suppressed').length;
   const bounced24h = emailSends.filter((e: any) => String(e['Status'] || '') === 'bounced').length;
+  // 'failed' = SDK-level send errors (dead key class) — logged truthfully
+  // since the 2026-07-14 email-truth fix. Nonzero = the pipe is sick TODAY.
+  const failed24h = emailSends.filter((e: any) => String(e['Status'] || '') === 'failed').length;
+
+  // ── MORNING-PULSE PROBES (2026-07-14) ──
+  // Live assertions, not env-presence guesses: Stripe key, Resend key, Redis,
+  // and the silent-killer env set — each red line carries its fix. Born from
+  // the Resend outage where a dead key looked healthy for days.
+  const probes = await runPlatformProbes();
+  const probeReds = probes.filter((p) => !p.ok);
+  const probeSkips = probes.filter((p) => p.ok && p.skipped);
 
   const fmtUsd = (cents: number) =>
     `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
+  // The one-glance banner: green means "walk away", red means "read on".
+  const anyRed =
+    probeReds.length > 0 ||
+    cronErrorRuns.length > 0 ||
+    (missingCrons !== null && missingCrons.length > 0) ||
+    failed24h > 0 ||
+    readErrors.length > 0;
+
   const lines = [
+    anyRed ? '🚨 <b>BHC needs attention</b>' : '✅ <b>BHC all green</b>',
     '☀️ <b>BHC Daily Health Digest</b>',
+    '',
+    probeReds.length === 0
+      ? `✅ <b>Probes:</b> ${probes.length}/${probes.length} green (stripe · resend · redis · secrets)${probeSkips.length ? ` · ${probeSkips.length} skipped (network)` : ''}`
+      : [
+          `🚨 <b>Probes:</b> ${probeReds.length}/${probes.length} FAILING`,
+          ...probeReds.map((p) => `  ❌ ${p.name}: ${p.detail}${p.fix ? `\n     FIX: ${p.fix}` : ''}`),
+        ].join('\n'),
     '',
     `<b>Closed today:</b> ${referralsClosedToday.length} deal${referralsClosedToday.length === 1 ? '' : 's'} · ${fmtUsd(closedTodayValueCents)}`,
     `<b>Pipeline:</b> ${referralsAwaiting} awaiting payment · ${referralsLocked} slot locked`,
@@ -176,7 +204,9 @@ async function realHandler(_request: Request): Promise<CronResult> {
       ? `🚨 <b>Connect stuck:</b> ${connectStuck} tier_v2 rancher${connectStuck === 1 ? '' : 's'} can't take deposits (Stripe Connect ≠ active)`
       : `✅ <b>Connect:</b> all tier_v2 ranchers can take deposits`,
     '',
-    `<b>Email (24h):</b> ${sent24h} sent · ${suppressed24h} suppressed · ${bounced24h} bounced`,
+    failed24h > 0
+      ? `🚨 <b>Email (24h):</b> ${sent24h} sent · ${failed24h} FAILED · ${suppressed24h} suppressed · ${bounced24h} bounced — failed sends mean the pipe is sick NOW`
+      : `<b>Email (24h):</b> ${sent24h} sent · ${suppressed24h} suppressed · ${bounced24h} bounced`,
     '',
     cronErrorRuns.length > 0
       ? `🚨 <b>Cron failures (24h):</b> ${cronErrorRuns.length} runs across ${failedCronNames.length} crons → ${failedCronNames.slice(0, 8).join(', ')}`
@@ -201,11 +231,13 @@ async function realHandler(_request: Request): Promise<CronResult> {
     console.warn('[daily-health-digest] telegram fire failed:', e?.message)
   );
 
-  // The monitor must not report green when its own reads broke. All 5 failed →
-  // error; some failed → partial; clean → success. This makes the outage the
-  // Cron Runs row is meant to catch visible instead of self-concealed.
+  // The monitor must not report green when its own reads broke, and a failing
+  // PROBE (dead key, missing webhook secret) must downgrade the run so the
+  // Cron Runs board shows red even if Telegram delivery itself failed.
   const status: CronResult['status'] =
-    readErrors.length === 0 ? 'success' : readErrors.length >= 5 ? 'error' : 'partial';
+    readErrors.length >= 5 ? 'error'
+    : readErrors.length > 0 || probeReds.length > 0 ? 'partial'
+    : 'success';
 
   return {
     status,

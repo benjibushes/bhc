@@ -451,6 +451,27 @@ async function guardedSend(opts: {
   }
   try {
     const result: any = await opts.send();
+    // EMAIL TRUTH (2026-07-14 outage): the Resend SDK does NOT throw on API
+    // errors — it RESOLVES with { error }. An invalid/revoked key returned
+    // { error: validation_error } here, fell through the suppression check,
+    // logged status='sent', and reported success:true — so the audit log
+    // showed a healthy pipe while every send died and ranchers reported
+    // "links not sending". An error result is a FAILED send: log it as
+    // failed and tell the caller the truth. (The daily email-canary cron
+    // independently probes the key; this makes the per-send record honest.)
+    if (result?.error) {
+      const reason = String(result.error?.message || JSON.stringify(result.error)).slice(0, 200);
+      await logEmailSend({
+        recipientEmail: opts.recipientEmail,
+        recipientConsumerId: opts.recipientConsumerId,
+        templateName: opts.templateName,
+        subject: opts.subject,
+        status: 'failed',
+        suppressionReason: reason,
+        campaign: opts.campaign,
+      });
+      return { success: false, suppressed: false, reason };
+    }
     // Detect the internal resend wrapper's short-circuit for suppressed
     // recipients (Unsubscribed/Bounced/Complained). The wrapper returns
     // { data: { id: 'skipped-suppressed' } } instead of actually sending.
