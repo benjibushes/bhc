@@ -1372,6 +1372,10 @@ export default function RancherDashboardPage() {
       // clears the cell). Deposits derive from the one-input ladder but save
       // through the same path + field names as before.
       const body: Record<string, any> = { ...pageForm };
+      // No editor exists for States Served — the seeded (stale) echo was
+      // riding every save, defeating the server's Preferred→Served mirror
+      // and, when the seed was blank, actively NULLING States Served.
+      delete body['States Served'];
       for (const key of [
         'Quarter Price', 'Half Price', 'Whole Price',
         'Quarter Deposit', 'Half Deposit', 'Whole Deposit',

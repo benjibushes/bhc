@@ -725,9 +725,14 @@ export async function PATCH(request: Request) {
       fields['Preferred States'] = codes.length > 0 ? stringifyStates(codes) : '';
       // Mirror Preferred → States Served so the public landing page reflects
       // what the rancher SAYS they serve. Routing States stays admin-only.
-      if (!('States Served' in fields)) {
-        fields['States Served'] = fields['Preferred States'];
-      }
+      // UNCONDITIONAL (Preferred wins): the only caller sending both is the
+      // dashboard, whose States Served is by definition the stale echo — the
+      // old `if (!('States Served' in fields))` guard meant a dashboard save
+      // NEVER updated the public page. Legacy callers sending only States
+      // Served skip this branch entirely and are untouched. A cleared
+      // Preferred ('' → null upstream) never reaches here, so it can't blank
+      // the live public coverage.
+      fields['States Served'] = fields['Preferred States'];
     }
 
     // Prior-row snapshot — shared by the Preferred-States diff alert and the
