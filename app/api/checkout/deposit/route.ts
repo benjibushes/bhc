@@ -22,6 +22,7 @@ import { checkOriginGuard } from '@/lib/csrfGuard';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { metaEventId } from '@/lib/analytics';
 import { absorbStripeFee } from '@/lib/feeMath';
+import { isDepositAlreadyPaid } from '@/lib/depositPaidState';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -100,14 +101,14 @@ export async function POST(req: Request) {
   // and trigger a second Telegram celebration. Block both POST + GET so
   // the deposit page surfaces "already paid" state via the 409.
   const refStatus = String(referral['Status'] || '');
-  // Re-pay guard. A settled deposit stamps `Deposit Paid At` and flips Status to
-  // `Awaiting Payment` (NOT Closed Won). Without keying on those, a buyer who
-  // returns to the deposit page (back button, re-clicked magic link, reorder,
-  // funnel CTA) passes this gate and is charged a SECOND deposit — a fresh
-  // PaymentIntent is not deduped by the pi.id idempotency anchors. `Deposit Paid
-  // At` is the reliable signal (a date field, immune to select-option stripping).
-  const depositAlreadyPaid =
-    !!referral['Deposit Paid At'] || refStatus === 'Awaiting Payment' || refStatus === 'Slot Locked';
+  // Re-pay guard — lib/depositPaidState (pure, tested). A settled deposit
+  // stamps `Deposit Paid At` (+ Status 'Awaiting Payment'); a rancher REQUEST
+  // also flips Status to 'Awaiting Payment' but stamps only 'Deposit Requested
+  // At' — that requested-but-unpaid state MUST stay payable (2026-07-14
+  // bricked-buyer bug: bare status===Awaiting Payment read as paid → every
+  // requested deposit 409'd "already paid" while the emailed Stripe link died
+  // at 24h — 8 requested, 0 payable).
+  const depositAlreadyPaid = isDepositAlreadyPaid(referral);
   if (refStatus === 'Closed Won' || refStatus === 'Closed Lost' || depositAlreadyPaid) {
     return NextResponse.json(
       {
@@ -235,11 +236,25 @@ export async function POST(req: Request) {
   // is empty) and means an un-backfilled rancher charges a true partial reserve,
   // never 100%. deriveDeposit is always < price for any price ≥ MIN_TIER_PRICE
   // (gated above), so the buyer always pays a partial and the balance is real.
+  // RANCHER-QUOTED AMOUNT (2026-07-14): when the rancher explicitly requested
+  // a deposit for THIS cut (request-deposit stamps Order Type + Deposit Amount
+  // + Deposit Requested At), the buyer must be charged the number the rancher
+  // quoted — not the per-cut default. Previously the durable page silently
+  // ignored the quote, so a custom ask (e.g. "$500 to hold your half") charged
+  // the saved default instead. Only honored while the request is pending
+  // (guard above ensures unpaid), only for the matching cut, and only within
+  // the same bounds as the default path (0 < quote ≤ full price).
+  const quotedDollars = Number(referral['Deposit Amount']);
+  const quotedCutMatches =
+    String(referral['Order Type'] || '').trim().toLowerCase() === cutSize &&
+    String(referral['Deposit Requested At'] || '').trim() !== '';
   const depositDollarsRaw = Number(rancher[depositFieldMap[cutSize]]);
   const depositDollars =
-    Number.isFinite(depositDollarsRaw) && depositDollarsRaw > 0 && depositDollarsRaw <= fullSaleDollars
-      ? depositDollarsRaw
-      : deriveDeposit(fullSaleDollars);
+    quotedCutMatches && Number.isFinite(quotedDollars) && quotedDollars > 0 && quotedDollars <= fullSaleDollars
+      ? quotedDollars
+      : Number.isFinite(depositDollarsRaw) && depositDollarsRaw > 0 && depositDollarsRaw <= fullSaleDollars
+        ? depositDollarsRaw
+        : deriveDeposit(fullSaleDollars);
 
   const fullSaleCents = Math.round(fullSaleDollars * 100);
   const amountCents = Math.round(depositDollars * 100);
@@ -532,14 +547,14 @@ export async function GET(req: Request) {
   // and trigger a second Telegram celebration. Block both POST + GET so
   // the deposit page surfaces "already paid" state via the 409.
   const refStatus = String(referral['Status'] || '');
-  // Re-pay guard. A settled deposit stamps `Deposit Paid At` and flips Status to
-  // `Awaiting Payment` (NOT Closed Won). Without keying on those, a buyer who
-  // returns to the deposit page (back button, re-clicked magic link, reorder,
-  // funnel CTA) passes this gate and is charged a SECOND deposit — a fresh
-  // PaymentIntent is not deduped by the pi.id idempotency anchors. `Deposit Paid
-  // At` is the reliable signal (a date field, immune to select-option stripping).
-  const depositAlreadyPaid =
-    !!referral['Deposit Paid At'] || refStatus === 'Awaiting Payment' || refStatus === 'Slot Locked';
+  // Re-pay guard — lib/depositPaidState (pure, tested). A settled deposit
+  // stamps `Deposit Paid At` (+ Status 'Awaiting Payment'); a rancher REQUEST
+  // also flips Status to 'Awaiting Payment' but stamps only 'Deposit Requested
+  // At' — that requested-but-unpaid state MUST stay payable (2026-07-14
+  // bricked-buyer bug: bare status===Awaiting Payment read as paid → every
+  // requested deposit 409'd "already paid" while the emailed Stripe link died
+  // at 24h — 8 requested, 0 payable).
+  const depositAlreadyPaid = isDepositAlreadyPaid(referral);
   if (refStatus === 'Closed Won' || refStatus === 'Closed Lost' || depositAlreadyPaid) {
     // Resolve the linked rancher's slug even on the already-paid branch. The
     // success page renders AFTER payment (Status flips to Awaiting Payment),

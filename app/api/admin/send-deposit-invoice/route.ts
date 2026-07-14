@@ -11,14 +11,13 @@
 // + persists Referral if missing + fires email.
 
 import { NextResponse } from 'next/server';
-import { getAllRecords, getRecordById, createRecord, createReferral, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
+import { getAllRecords, getRecordById, createReferral, updateRecord, TABLES, escapeAirtableValue } from '@/lib/airtable';
 import { requireAdmin } from '@/lib/adminAuth';
-import { createDepositCheckout } from '@/lib/stripeConnect';
+import { mintDepositGrantToken } from '@/lib/campaignReserve';
 import { sendBuyerDepositInvoice } from '@/lib/emailMinimal';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 import { depositCommissionRate, type TierSlug } from '@/lib/tiers';
-import { REFERRAL_ID_TEXT_FIELD } from '@/lib/contracts/payments';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -105,6 +104,13 @@ export async function POST(req: Request) {
   // Referral when we know them. Without these, downstream gates
   // (rancher accept, send-final-invoice) silently 409.
   const fullSaleAmount = fullSaleDollars;
+  // 'Deposit Requested At' is LOAD-BEARING (2026-07-14): the deposit page's
+  // re-pay guard (lib/depositPaidState) reads {Status:'Awaiting Payment' +
+  // request stamp + no Deposit Paid At} as PAYABLE. Without the stamp, an
+  // admin-invoiced buyer reads as already-paid and the durable link 409s.
+  // It also lets confirmPaymentGuard block a manual "confirm payment" while
+  // this invoice is outstanding — same semantics as the rancher flow.
+  const requestedAtISO = new Date().toISOString();
   let referralId = '';
   if (existingReferrals.length > 0) {
     referralId = existingReferrals[0].id;
@@ -115,6 +121,7 @@ export async function POST(req: Request) {
         'Order Type': cutTier,
         'Deposit Amount': depositDollars,
         'Total Sale Amount': fullSaleAmount > 0 ? fullSaleAmount : depositDollars,
+        'Deposit Requested At': requestedAtISO,
       });
     } catch (e: any) {
       console.warn('[send-deposit-invoice] referral update failed:', e?.message);
@@ -131,6 +138,7 @@ export async function POST(req: Request) {
       'Match Type': 'Local',
       'Deposit Amount': depositDollars,
       'Total Sale Amount': fullSaleAmount > 0 ? fullSaleAmount : depositDollars,
+      'Deposit Requested At': requestedAtISO,
     });
     referralId = (created as any).id;
   }
@@ -152,52 +160,22 @@ export async function POST(req: Request) {
   // email's "Today" figure, so quoted === charged === locked.
   const feeRate = depositCommissionRate(rancher, tierSlug);
 
-  // Create Stripe direct-charge Checkout. application_fee_amount is computed
-  // inside createDepositCheckout from the locked-rate-aware rate above.
-  const session = await createDepositCheckout({
-    rancherConnectAccountId: connectAcct,
-    tier: tierSlug,
-    commissionRate: feeRate,
-    amountCents: depositCents,
-    fullSaleCents,
-    buyerEmail,
-    referralId,
-    buyerId: buyer.id,
-    rancherId,
-    productLabel,
-    successUrl: `${SITE_URL}/checkout/${referralId}/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancelUrl: `${SITE_URL}/checkout/${referralId}/deposit?canceled=1`,
-  });
-  // Hosted mode (no `mode` passed) guarantees a url — narrow for TS + fail loud.
-  const checkoutUrl = session.url || '';
-  if (!checkoutUrl) {
-    return NextResponse.json({ error: 'Stripe returned no checkout url' }, { status: 502 });
-  }
-
-  // Persist Payments row tracking the PI for webhook close-loop.
+  // DURABLE LINK (2026-07-14 — replaces the request-time Stripe session).
+  // The old raw Stripe-hosted Checkout URL expired after ~24h, dead-ending any
+  // buyer who opened the email later. Now: a signed ~30d pay link
+  // (/r/p/<grant>) lands the buyer on the on-domain deposit page with a
+  // referral-scoped grant cookie; the page mints a FRESH Stripe session (and
+  // the Payments row, via recordDeposit) at pay-click with identical
+  // locked-rate commission math. No expiring artifact, no orphan pending rows.
+  let checkoutUrl: string;
   try {
-    await createRecord(TABLES.PAYMENTS, {
-      'Buyer Email': buyerEmail,
-      'Rancher': [rancherId],
-      'Referral': [referralId],
-      // Denormalized referral id (finding 3, 2026-07-01) — under Clover
-      // session.paymentIntentId below is EMPTY at create time, so settlement
-      // finds this row BY REFERRAL via {Referral Id Text}. Without it, an
-      // admin-invoiced deposit row could never settle.
-      [REFERRAL_ID_TEXT_FIELD]: referralId,
-      // Final-sweep fix (2026-06-10): schema field is `Stripe Payment Intent Id`
-      // (spaced). The unspaced name was silent-stripped → markDepositSucceeded
-      // could never find the Payments row for admin-invoiced deposits.
-      'Stripe Payment Intent Id': session.paymentIntentId,
-      'Stripe Connect Account Id': session.connectAccountId,
-      'Stripe Checkout Session Id': session.sessionId,
-      'Amount Cents': depositCents,
-      'Status': 'pending',
-      'Tier': tierSlug === 'legacy_connect' ? 'Legacy Connect' : tierSlug.charAt(0).toUpperCase() + tierSlug.slice(1),
-      'Type': 'buyer_deposit',
-    });
+    checkoutUrl = `${SITE_URL}/r/p/${mintDepositGrantToken(
+      { consumerId: buyer.id, referralId },
+      { expiresIn: '30d' },
+    )}`;
   } catch (e: any) {
-    console.warn('[send-deposit-invoice] payments row create failed (non-fatal):', e?.message);
+    console.error('[send-deposit-invoice] pay-link mint failed:', e?.message);
+    return NextResponse.json({ error: 'Could not create the payment link' }, { status: 500 });
   }
 
   // Fire deposit-invoice email to the buyer w/ the checkout URL.

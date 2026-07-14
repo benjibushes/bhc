@@ -216,6 +216,10 @@
     {
       "path": "/api/cron/nurture-drip",
       "schedule": "30 16 * * *"
+    },
+    {
+      "path": "/api/cron/email-canary",
+      "schedule": "15 8 * * *"
     }
   ]
 }

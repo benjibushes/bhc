@@ -41,6 +41,7 @@
 // are split out).
 
 import { signJwt, verifyJwtWithFallback } from '@/lib/jwt';
+import type { SignOptions } from 'jsonwebtoken';
 import { CUT_LABELS, type Cut } from '@/lib/reserveDeposit';
 
 // ---------------------------------------------------------------------------
@@ -149,15 +150,25 @@ export interface DepositGrantPayload extends DepositGrantClaims {
  * Mint the referral-scoped deposit grant. Set by the /r route as the
  * `bhc-deposit-grant` cookie after it has resolved the buyer's OWN referral.
  * Pins both consumerId and referralId so it authorizes exactly one checkout.
+ *
+ * opts.expiresIn: the COOKIE grant stays short (DEPOSIT_GRANT_TTL). Durable
+ * EMAILED links (/r/p/<token>, the rancher request-deposit + admin invoice
+ * flows) mint at ~30d — the URL token only proves "this buyer, this referral";
+ * the route re-mints a fresh short cookie on every tap, and the deposit page
+ * mints the actual Stripe session at pay-click. Nothing money-bearing rides
+ * the long TTL.
  */
-export function mintDepositGrantToken(claims: DepositGrantClaims): string {
+export function mintDepositGrantToken(
+  claims: DepositGrantClaims,
+  opts?: { expiresIn?: SignOptions['expiresIn'] },
+): string {
   const consumerId = String(claims.consumerId || '').trim();
   const referralId = String(claims.referralId || '').trim();
   if (!consumerId) throw new Error('mintDepositGrantToken: consumerId required');
   if (!referralId) throw new Error('mintDepositGrantToken: referralId required');
   return signJwt(
     { purpose: DEPOSIT_GRANT_PURPOSE, consumerId, referralId },
-    { expiresIn: DEPOSIT_GRANT_TTL },
+    { expiresIn: opts?.expiresIn || DEPOSIT_GRANT_TTL },
   );
 }
 
