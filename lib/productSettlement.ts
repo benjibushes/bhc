@@ -521,5 +521,26 @@ export async function reconcileProductOrderRefund(
     dedupeKey: `product-${opts.kind}:${piId}`,
   }).catch(() => {});
 
+  // Tell the BUYER (checkout audit 2026-07-14): refunding in silence was a
+  // trust hole — money moved with zero confirmation from BuyHalfCow. Best-
+  // effort; a mail failure must not fail the reconcile (Stripe already moved
+  // the money — this record flip is the source of truth).
+  const buyerEmail = String(order['Buyer Email'] || '').trim();
+  if (buyerEmail) {
+    try {
+      const { sendBuyerRefundNotice } = await import('@/lib/emailMinimal');
+      await sendBuyerRefundNotice({
+        buyerEmail,
+        buyerName: String(order['Buyer Name'] || '').trim(),
+        productName: product,
+        rancherName: rancher,
+        amountCents: opts.amountCents,
+        kind: opts.kind === 'dispute' ? 'dispute' : 'refund',
+      });
+    } catch (e: any) {
+      console.warn('[productSettlement] buyer refund notice failed (non-fatal):', e?.message);
+    }
+  }
+
   return true;
 }

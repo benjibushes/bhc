@@ -317,3 +317,37 @@ function escape(s: string): string {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+
+// ── Buyer refund/dispute notice (checkout audit 2026-07-14) ─────────────────
+// reconcileProductOrderRefund flipped the order + rang the operator but told
+// the BUYER nothing — money moved back in silence, a trust and support-ticket
+// generator. One plain, branded note: what was refunded, how much, when to
+// expect it. Template whitelisted transactional (money event, never capped).
+export async function sendBuyerRefundNotice(opts: {
+  buyerEmail: string;
+  buyerName: string;
+  productName: string;
+  rancherName: string;
+  amountCents?: number;
+  kind: 'refund' | 'dispute';
+}) {
+  const first = (opts.buyerName || '').trim().split(/\s+/)[0] || 'there';
+  const amt = opts.amountCents ? `$${(opts.amountCents / 100).toFixed(2)}` : 'your payment';
+  const headline = opts.kind === 'dispute' ? 'your dispute has been processed' : 'your refund is on its way';
+  const body =
+    opts.kind === 'dispute'
+      ? `Your bank has processed the dispute for your <strong>${escape(opts.productName)}</strong> order from ${escape(opts.rancherName)}. The order has been cancelled on our side — nothing further is needed from you.`
+      : `We've refunded <strong>${amt}</strong> for your <strong>${escape(opts.productName)}</strong> order from ${escape(opts.rancherName)}. Refunds usually land back on your card within 5–10 business days, depending on your bank.`;
+  return sendEmail({
+    to: opts.buyerEmail,
+    subject: opts.kind === 'dispute' ? 'Your BuyHalfCow order — dispute processed' : `Your BuyHalfCow refund — ${escape(opts.productName)}`,
+    templateName: 'buyer_refund_notice',
+    html: `
+      <div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#26251E;">
+        <p style="font-size:20px;">hey ${escape(first)} — ${headline}.</p>
+        <p style="font-size:15px;line-height:1.6;">${body}</p>
+        <p style="font-size:15px;line-height:1.6;">If anything about this looks wrong, just reply to this email — a real person reads it.</p>
+        <p style="font-size:15px;">&mdash; Ben, BuyHalfCow</p>
+      </div>`,
+  });
+}

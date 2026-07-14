@@ -14,7 +14,7 @@ import { updateRecord, TABLES } from '@/lib/airtable';
 import { resolveProductPurchase } from '@/lib/productBuyGates';
 import { createProductCheckout } from '@/lib/productCheckout';
 import { ensureStripePrice } from '@/lib/productStripeSync';
-import { rateLimit } from '@/lib/rateLimit';
+import { rateLimitStrict, getTrustedClientIp } from '@/lib/rateLimit';
 import { fireCapi, buildUserData, getMetaCookiesFromRequest } from '@/lib/metaCapi';
 
 export const runtime = 'nodejs';
@@ -22,15 +22,10 @@ export const dynamic = 'force-dynamic';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.buyhalfcow.com';
 
-function clientIp(req: Request): string {
-  const xff = req.headers.get('x-forwarded-for') || '';
-  return xff.split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
-}
-
 export async function POST(request: Request) {
   // Rate limit — public endpoint. 12 checkout starts / min / IP is generous for
   // a human, tight enough to stop a script minting sessions in a loop.
-  const rl = await rateLimit(`product-buy:${clientIp(request)}`, { requests: 12, window: '1m' });
+  const rl = await rateLimitStrict(`product-buy:${getTrustedClientIp(request)}`, { requests: 12 });
   if (!rl.ok) {
     return NextResponse.json({ error: 'Too many attempts — wait a minute and try again.' }, { status: 429 });
   }
@@ -117,7 +112,7 @@ export async function POST(request: Request) {
     // count. content_ids=[productId] is what a Meta retargeting audience matches
     // on. Fire-and-forget — fireCapi fails open, never blocks the checkout.
     try {
-      const capiIp = clientIp(request);
+      const capiIp = getTrustedClientIp(request);
       const capiUserAgent = request.headers.get('user-agent') || undefined;
       const { fbp, fbc } = getMetaCookiesFromRequest(request);
       void fireCapi([{
