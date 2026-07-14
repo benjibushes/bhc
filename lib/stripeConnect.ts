@@ -431,14 +431,19 @@ export async function createDepositCheckout(input: CreateDepositCheckoutInput): 
       ...(isEmbedded
         ? { ui_mode: 'embedded' as const, return_url: input.returnUrl }
         : { success_url: input.successUrl, cancel_url: input.cancelUrl }),
-      // WALLETS/LINK: do NOT add `automatic_payment_methods` here — that is a
-      // PaymentIntent-only param and 400s a Checkout Session. Omitting
-      // `payment_method_types` (as we do) already enables DYNAMIC payment
-      // methods, so Apple Pay / Google Pay / Link render automatically once the
-      // connected account has them on + the Apple Pay domain is registered for
-      // the direct-charge funds flow. `customer_email` (above) lets Link
-      // recognize returning buyers for a one-tap deposit. (Verified vs Stripe
-      // docs 2026-06-25.)
+      // CARD + WALLETS ONLY — Link is deliberately OFF (2026-07-14, live
+      // incident): with dynamic payment methods, Stripe Link recognized a
+      // buyer's email and walled the ENTIRE payment form behind "Confirm
+      // it's you — enter the code sent to (•••) ••96" — an OTP to a possibly
+      // years-old phone number, with only a tiny "Pay without Link" escape.
+      // Blocked a real $827 deposit (Dave @ Champion Valley). Our ICP skews
+      // older/less-technical; an OTP wall at the money moment costs more
+      // than Link's one-tap saves. `payment_method_types: ['card']` still
+      // renders Apple Pay / Google Pay (wallets ride the card method once
+      // the domain is registered) — it removes only the Link OTP takeover.
+      // Do NOT add `automatic_payment_methods` — PaymentIntent-only param,
+      // 400s a Checkout Session.
+      payment_method_types: ['card'],
       // No sales tax on deposits. BHC is Montana-based (no state sales tax) and
       // a deposit is a refundable reservation, not the final taxable sale.
       // Mirrors createTierCheckoutSession (#118). Keeping automatic_tax ON
@@ -587,6 +592,9 @@ export async function createFinalInvoiceCheckout(
   const session = await stripe.checkout.sessions.create(
     {
       mode: 'payment',
+      // Link OFF here too (2026-07-14) — same OTP-wall trap as the deposit
+      // session, on the LARGER final-balance charge. Card + wallets only.
+      payment_method_types: ['card'],
       line_items: [
         {
           price_data: {
