@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import RancherSubNav from '../RancherSubNav';
 
 interface ThreadSummary {
@@ -26,22 +27,47 @@ interface Message {
 }
 
 export default function RancherInboxPage() {
+  const router = useRouter();
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetch('/api/rancher/inbox', { credentials: 'include' })
-      .then((r) => r.json())
-      .then((j) => {
-        setThreads(j.threads || []);
+  // U10 pattern (mirrors app/rancher/page.tsx fetchDashboard): a 401/403 means
+  // the session is gone → login, anything else non-ok is transient → retry
+  // card. Pre-fix, any failure parsed to {error} and rendered as an EMPTY
+  // inbox — a rancher with an expired session believed no buyer ever wrote.
+  const load = async () => {
+    setLoading(true);
+    setLoadError(false);
+    try {
+      const res = await fetch('/api/rancher/inbox', { credentials: 'include' });
+      if (res.status === 401 || res.status === 403) {
+        // Keep the loading state up through the redirect — no empty-inbox flash.
+        router.push('/rancher/login');
+        return;
+      }
+      if (!res.ok) {
+        setLoadError(true);
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+        return;
+      }
+      const j = await res.json();
+      setThreads(j.threads || []);
+      setLoading(false);
+    } catch {
+      setLoadError(true);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const open = async (id: string) => {
@@ -93,6 +119,30 @@ export default function RancherInboxPage() {
       <div className="bg-bone min-h-screen text-charcoal">
         <RancherSubNav active="messages" />
         <div className="p-8">Loading messages…</div>
+      </div>
+    );
+  }
+
+  // A failed load (5xx / network) is NOT an empty inbox — say so and offer a
+  // retry instead of the false "no messages" empty state.
+  if (loadError) {
+    return (
+      <div className="bg-bone min-h-screen text-charcoal">
+        <RancherSubNav active="messages" />
+        <div className="max-w-4xl mx-auto p-6">
+          <div className="border border-dust bg-white p-6">
+            <p className="text-sm text-saddle">
+              Couldn&apos;t load your inbox — your messages are safe, we just couldn&apos;t reach them.
+            </p>
+            <button
+              type="button"
+              onClick={load}
+              className="mt-3 px-5 py-2 min-h-[44px] bg-charcoal text-bone hover:bg-saddle transition-colors text-sm font-medium uppercase tracking-wider"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
