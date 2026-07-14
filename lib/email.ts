@@ -1188,6 +1188,54 @@ export async function sendRancherDepositPaid(data: {
   return { success: !!r.success, suppressed: r.suppressed, reason: r.reason };
 }
 
+// ── RANCHER: final invoice paid — the deal is fully paid ─────────────────────
+// Fires from lib/stripeSettlement.ts::settleFinalInvoice the instant the
+// buyer's final-balance charge lands. Before this, only the admin Telegram
+// fired — the rancher's biggest money moment (deal fully paid) was invisible
+// to them until they checked Stripe.
+//
+// Same conventions as sendRancherDepositPaid: routes through sendEmail so it
+// inherits the suppression check + tagged Reply-To ('rnc' → replies land
+// against the rancher record). 'sendRancherFinalPaid' is in
+// TRANSACTIONAL_WHITELIST — a fully-paid confirmation must never be
+// frequency-capped.
+export async function sendRancherFinalPaid(data: {
+  rancherEmail: string;
+  rancherFirstName?: string;
+  buyerFirstName: string;
+  finalAmount: number; // dollars charged on the final invoice
+  totalSaleAmount: number; // dollars, full sale (deposit + final)
+  rancherId?: string; // for tagged Reply-To
+}): Promise<{ success: boolean; suppressed?: boolean; reason?: string }> {
+  const rFirst = data.rancherFirstName || 'there';
+  const buyer = esc(data.buyerFirstName || 'Your buyer');
+  const finalStr = `$${data.finalAmount.toFixed(2)}`;
+  const totalStr = `$${data.totalSaleAmount.toFixed(2)}`;
+  const dashUrl = `${SITE_URL}/rancher`;
+  const subject = `${data.buyerFirstName || 'Your buyer'} paid their final balance — ${finalStr}`;
+
+  const r = await sendEmail({
+    to: data.rancherEmail,
+    subject,
+    templateName: 'sendRancherFinalPaid',
+    _replyContext: data.rancherId ? { type: 'rnc', recordId: data.rancherId } : undefined,
+    html: `<!DOCTYPE html><html><head>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0E0E0E;background:#F4F1EC;margin:0;padding:20px}.container{max-width:600px;margin:0 auto;background:#fff;padding:40px;border:1px solid #A7A29A}h1{font-family:Georgia,serif;font-size:24px;margin:0 0 18px}p{margin:14px 0;color:#2A2A2A}.box{background:#FAF8F4;border-left:3px solid #2E7D32;padding:16px 20px;margin:18px 0}.cta{display:inline-block;background:#0E0E0E;color:#fff;text-decoration:none;padding:14px 28px;margin:8px 0;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:14px}</style>
+</head><body><div class="container">
+  <h1>Paid in full, ${esc(rFirst)}.</h1>
+  <p>${buyer} just paid their final balance of <strong>${finalStr}</strong> — the deal is fully paid.</p>
+  <div class="box">
+    <p style="margin:0 0 6px;"><strong>Final balance:</strong> ${finalStr}</p>
+    <p style="margin:0;"><strong>Total sale:</strong> ${totalStr}</p>
+  </div>
+  <p>BHC took nothing on this charge — commission was collected at deposit. The payout lands in your bank in ~2 business days.</p>
+  <p><a class="cta" href="${dashUrl}">View the deal in your dashboard →</a></p>
+  <p style="font-size:13px;color:#6B4F3F;margin-top:24px;">Questions? Reply right here. — Ben, BuyHalfCow</p>
+</div></body></html>`,
+  });
+  return { success: !!r.success, suppressed: r.suppressed, reason: r.reason };
+}
+
 // ── RANCHER: fulfillment chase — did the beef make it home? ──────────────────
 // E3/B15 (2026-07-01): fires from the fulfillment-chase cron when a
 // deposit-paid, rancher-accepted referral's Processing Date passes with no

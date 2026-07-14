@@ -3,12 +3,17 @@ import jwt from 'jsonwebtoken';
 import { getRecordById, updateRecord, TABLES } from '@/lib/airtable';
 import { JWT_SECRET } from '@/lib/secrets';
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
+import { requireRancher } from '@/lib/rancherAuth';
+import { getLiveCapacity } from '@/lib/rancherCapacity';
 
 // Self-serve removal endpoint. Rancher hits this from the wizard's "Remove me
 // from the database" link or from the re-engagement email's opt-out link.
 //
-// Auth: rancher-setup JWT (same token type used by /api/rancher/setup —
-// reuse so users on existing magic links can remove without a new token mint).
+// Auth (two doors, same soft-delete):
+//   1. rancher-setup JWT via ?token= (same token type as /api/rancher/setup —
+//      reuse so users on existing magic links can remove without a new mint).
+//   2. logged-in dashboard session (bhc-rancher-auth cookie) — before this,
+//      an onboarded rancher had NO self-serve way to close their account.
 //
 // Behavior: soft-delete. We don't drop the row — we flip:
 //   Verification Status: Removed
@@ -36,9 +41,15 @@ function verifyToken(token: string): { rancherId: string } | null {
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const token = url.searchParams.get('token') || '';
-  const decoded = verifyToken(token);
-  if (!decoded) {
-    return NextResponse.json({ error: 'Invalid or expired removal link' }, { status: 401 });
+  let rancherId = token ? verifyToken(token)?.rancherId || '' : '';
+  if (!rancherId) {
+    if (token) {
+      // A token was presented and failed — keep the link-specific message.
+      return NextResponse.json({ error: 'Invalid or expired removal link' }, { status: 401 });
+    }
+    const r = await requireRancher(req);
+    if (r instanceof NextResponse) return r;
+    rancherId = r.session.rancherId;
   }
 
   let body: Record<string, unknown> = {};
@@ -51,12 +62,29 @@ export async function POST(req: Request) {
 
   let rancher: any;
   try {
-    rancher = await getRecordById(TABLES.RANCHERS, decoded.rancherId);
+    rancher = await getRecordById(TABLES.RANCHERS, rancherId);
   } catch {
     return NextResponse.json({ error: 'Rancher record not found' }, { status: 404 });
   }
   if (!rancher) {
     return NextResponse.json({ error: 'Rancher record not found' }, { status: 404 });
+  }
+
+  // Mid-deal guard (both auth doors — a wizard-stage rancher simply has no
+  // held referrals): a rancher holding live buyers can't self-close, or those
+  // buyers silently lose their deal mid-payment.
+  try {
+    const held = await getLiveCapacity(rancherId);
+    if (held > 0) {
+      return NextResponse.json(
+        { error: "You have active buyers mid-deal. Finish those deals or email hello@buyhalfcow.com and we'll close things out together." },
+        { status: 409 },
+      );
+    }
+  } catch (e: any) {
+    // Fail closed: if we can't verify there are no live buyers, don't remove.
+    console.error('[rancher/remove] held-referral check failed:', e?.message);
+    return NextResponse.json({ error: 'Could not verify your account has no active deals — try again in a moment' }, { status: 500 });
   }
 
   const ranchName = (rancher['Ranch Name'] || rancher['Operator Name'] || 'Rancher').toString();
@@ -82,7 +110,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    await updateRecord(TABLES.RANCHERS, decoded.rancherId, updates);
+    await updateRecord(TABLES.RANCHERS, rancherId, updates);
   } catch (e: any) {
     console.error('[rancher/remove] update failed:', e?.message);
     return NextResponse.json({ error: 'Removal failed — try again' }, { status: 500 });

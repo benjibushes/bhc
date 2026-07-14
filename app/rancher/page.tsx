@@ -44,6 +44,9 @@ interface RancherInfo {
   preferredStates?: string;
   routingStates?: string;
   shipsNationwide: boolean;
+  // Admin-only gate that pairs with Ships Nationwide — nationwide routing is
+  // live only when BOTH are set. Drives the pending/live note on the checkbox.
+  adminApprovedMultiState?: boolean;
   certifications: string;
   // Landing page fields
   slug: string;
@@ -1369,6 +1372,10 @@ export default function RancherDashboardPage() {
       // clears the cell). Deposits derive from the one-input ladder but save
       // through the same path + field names as before.
       const body: Record<string, any> = { ...pageForm };
+      // No editor exists for States Served — the seeded (stale) echo was
+      // riding every save, defeating the server's Preferred→Served mirror
+      // and, when the seed was blank, actively NULLING States Served.
+      delete body['States Served'];
       for (const key of [
         'Quarter Price', 'Half Price', 'Whole Price',
         'Quarter Deposit', 'Half Deposit', 'Whole Deposit',
@@ -2969,7 +2976,7 @@ export default function RancherDashboardPage() {
                               <button
                                 onClick={() => openFinalInvoiceModal(ref)}
                                 className="px-4 py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors disabled:opacity-50"
-                                title={invoiceSent ? 'Re-send the final balance invoice to buyer' : 'Send final balance invoice to buyer (100% to you)'}
+                                title={invoiceSent ? 'Re-send the final balance invoice to buyer' : 'Send final balance invoice to buyer (no BHC fee — card processing applies)'}
                               >
                                 {invoiceSent ? 'Re-send invoice' : 'Send Final Invoice'}
                               </button>
@@ -3259,7 +3266,7 @@ export default function RancherDashboardPage() {
                 <StatCard
                   label="Your Net"
                   value={`$${stats.netEarnings.toLocaleString()}`}
-                  sub={rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? '100% of your price' : ''}
+                  sub={rancherInfo.pricingModel === 'tier_v2' && stats.unpaidCommission === 0 ? 'no BHC fee owed' : ''}
                 />
                 {/* Unpaid card is now driven by the real balance, not the tier
                     flag: any owed commission (legacy OR off-rail tier_v2 close)
@@ -3849,15 +3856,33 @@ export default function RancherDashboardPage() {
                     })()}
                   </div>
 
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id="shipsNationwide"
-                      checked={pageForm['Ships Nationwide'] === 'true'}
-                      onChange={e => setPageForm(p => ({ ...p, 'Ships Nationwide': e.target.checked ? 'true' : '' }))}
-                      className="w-4 h-4"
-                    />
-                    <label htmlFor="shipsNationwide" className="text-sm">We ship nationwide</label>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="shipsNationwide"
+                        checked={pageForm['Ships Nationwide'] === 'true'}
+                        onChange={e => setPageForm(p => ({ ...p, 'Ships Nationwide': e.target.checked ? 'true' : '' }))}
+                        className="w-4 h-4"
+                      />
+                      <label htmlFor="shipsNationwide" className="text-sm">We ship nationwide</label>
+                    </div>
+                    {/* Honesty note: routing nationwide also requires the
+                        admin-only Admin Approved Multi-State flag — mirror the
+                        Preferred States pending/live pattern so checking the
+                        box never LOOKS self-serve when it isn't. */}
+                    {pageForm['Ships Nationwide'] === 'true' && (
+                      rancherInfo.adminApprovedMultiState ? (
+                        <p className="text-xs">
+                          <span className="font-bold text-sage-dark">✓ Nationwide routing live</span>
+                        </p>
+                      ) : (
+                        <p className="text-xs">
+                          <span className="font-bold text-amber-dark">⏳ Pending review</span>
+                          <span className="text-charcoal"> — nationwide routing turns on once our team approves it (usually same day).</span>
+                        </p>
+                      )
+                    )}
                   </div>
 
                   {/* ── Trust & Policies ──────────────────────────────────────
@@ -4737,7 +4762,7 @@ export default function RancherDashboardPage() {
             {finalInvoiceResult ? (
               <div className="border border-sage bg-sage/10 p-4 space-y-3">
                 <p className="text-sm text-sage-dark">
-                  <strong>Invoice sent.</strong> Buyer received an email with the Stripe payment link for <strong>${finalInvoiceResult.balanceAmount.toFixed(2)}</strong>. 100% to your account when they pay — BHC takes nothing on the final balance.
+                  <strong>Invoice sent.</strong> Buyer received an email with the Stripe payment link for <strong>${finalInvoiceResult.balanceAmount.toFixed(2)}</strong>. Goes straight to your account minus card processing — BHC takes nothing on the final balance.
                 </p>
                 <p className="text-xs text-sage-dark">
                   Payment link:{' '}
@@ -4769,7 +4794,7 @@ export default function RancherDashboardPage() {
                       className="w-full px-4 py-3 border border-dust bg-bone focus:outline-none focus:border-charcoal"
                     />
                     <p className="text-xs text-saddle mt-1">
-                      This is your gross sale price (what you want to net). Commission was already charged on top of this at deposit time — you keep 100% of this number.
+                      This is your gross sale price (what you want to net). Commission was already charged on top of this at deposit time — BHC takes nothing on the balance. Stripe&apos;s card processing (~2.9% + 30¢) comes out of the balance charge.
                     </p>
                     {/* U30 — the prefill comes from tier pricing; when no tier
                         price is set this arrives EMPTY with no explanation of
@@ -5616,8 +5641,12 @@ function HomeTab({
                   ? 'Full right now'
                   : `${rancherInfo.maxActiveReferrals - rancherInfo.currentActiveReferrals} open`}
             </p>
+            {/* "slots held" not "working" — this counts all 5 slot-holding
+                statuses (incl. Awaiting Payment / Slot Locked), a superset of
+                the in-conversation card next door. Same word for two different
+                sets read as a bug. */}
             <p className="text-xs text-dust mt-0.5">
-              {rancherInfo.currentActiveReferrals} of {rancherInfo.maxActiveReferrals} working
+              {rancherInfo.currentActiveReferrals} of {rancherInfo.maxActiveReferrals} slots held
             </p>
           </button>
           {slotsOpen && (
@@ -5627,7 +5656,7 @@ function HomeTab({
           )}
         </div>
         <div className="border border-dust bg-white p-4">
-          <p className="text-xs text-saddle uppercase tracking-wider">Buyers working</p>
+          <p className="text-xs text-saddle uppercase tracking-wider">In conversation</p>
           <p className="font-serif text-xl text-charcoal mt-1">{activeRefs.length}</p>
           <p className="text-xs text-dust mt-0.5">
             {stats.closedWon} deal{stats.closedWon === 1 ? '' : 's'} closed
@@ -5764,7 +5793,7 @@ function PipelineExplainer({ depositEligible }: { depositEligible?: boolean }) {
         { n: '1', label: 'request deposit', sub: 'send the buyer a card link to lock their slot' },
         { n: '2', label: 'buyer pays', sub: 'the deposit lands straight in your stripe account' },
         { n: '3', label: 'accept slot', sub: 'confirm you can fill it — deposit becomes non-refundable' },
-        { n: '4', label: 'send final invoice', sub: 'collect the rest of the balance (100% yours)' },
+        { n: '4', label: 'send final invoice', sub: 'collect the rest of the balance (no BHC fee)' },
         { n: '5', label: 'deliver', sub: 'mark the beef delivered and you’re done' },
       ]
     : [
@@ -6065,7 +6094,7 @@ function ReferralCard({
           <button
             onClick={onSendFinal}
             className="px-4 min-h-[44px] py-2 text-sm bg-sage text-bone hover:bg-sage-dark transition-colors"
-            title="Send final balance invoice to buyer (100% to you, no BHC fee)"
+            title="Send final balance invoice to buyer (no BHC fee — card processing applies)"
           >
             {finalSent ? 'Re-send Final Invoice' : 'Send Final Invoice'}
           </button>
@@ -6220,6 +6249,7 @@ function AccountSettingsSection({
   rancher: RancherInfo;
   onSaved: (next: { name: string; ranchName: string; email: string; phone: string }) => void;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [operatorName, setOperatorName] = useState(rancher.name || '');
   const [ranchName, setRanchName] = useState(rancher.ranchName || '');
@@ -6228,6 +6258,47 @@ function AccountSettingsSection({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  // Self-serve account closure (soft-delete via /api/rancher/remove). The
+  // route was previously reachable only with a wizard-token magic link — an
+  // onboarded rancher had no way to close their account from the dashboard.
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeConfirm, setRemoveConfirm] = useState('');
+  const [removeReason, setRemoveReason] = useState('');
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState('');
+  const [removed, setRemoved] = useState(false);
+
+  async function removeRanch() {
+    const expected = (rancher.ranchName || '').trim().toLowerCase();
+    if (!expected || removeConfirm.trim().toLowerCase() !== expected) {
+      setRemoveError('Type your ranch name exactly as it appears above to confirm.');
+      return;
+    }
+    setRemoving(true);
+    setRemoveError('');
+    try {
+      const res = await fetch('/api/rancher/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ reason: removeReason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRemoveError(typeof data?.error === 'string' ? data.error : 'Could not remove your ranch — try again.');
+        return;
+      }
+      setRemoved(true);
+      // A removed rancher shouldn't stay logged in — clear the session
+      // cookie, then land on login once they've seen the confirmation.
+      await fetch('/api/auth/rancher/session', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+      setTimeout(() => router.push('/rancher/login'), 2500);
+    } catch {
+      setRemoveError('Network error — try again in a moment.');
+    } finally {
+      setRemoving(false);
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -6331,6 +6402,66 @@ function AccountSettingsSection({
           >
             {saving ? 'Saving…' : 'Save account'}
           </button>
+
+          {/* Danger zone — soft-delete account closure. Kept quiet (text link)
+              until asked for; type-the-ranch-name confirm before the POST. */}
+          <div className="pt-4 border-t border-dust">
+            {removed ? (
+              <p className="text-sm text-saddle">
+                Your ranch has been removed. Logging you out…
+              </p>
+            ) : !removeOpen ? (
+              <button
+                type="button"
+                onClick={() => setRemoveOpen(true)}
+                className="text-xs text-weathered underline underline-offset-2 hover:text-charcoal"
+              >
+                remove my ranch from BuyHalfCow
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-saddle">
+                  This removes <strong className="text-charcoal">{rancher.ranchName}</strong> from
+                  the map and stops new buyers from being routed to you. Your history stays on
+                  record. To confirm, type your ranch name:
+                </p>
+                <input
+                  type="text"
+                  value={removeConfirm}
+                  onChange={(e) => setRemoveConfirm(e.target.value)}
+                  placeholder={rancher.ranchName}
+                  className="w-full px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+                />
+                <textarea
+                  value={removeReason}
+                  onChange={(e) => setRemoveReason(e.target.value)}
+                  placeholder="Anything we could have done better? (optional)"
+                  rows={2}
+                  className="w-full px-3 py-2 border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+                />
+                {removeError && (
+                  <div className="p-3 border border-weathered text-weathered text-sm">{removeError}</div>
+                )}
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={removeRanch}
+                    disabled={removing}
+                    className="px-5 min-h-[44px] bg-weathered text-bone hover:bg-charcoal transition-colors text-sm font-medium uppercase tracking-wider disabled:opacity-50"
+                  >
+                    {removing ? 'Removing…' : 'Remove my ranch'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setRemoveOpen(false); setRemoveError(''); setRemoveConfirm(''); }}
+                    className="px-5 min-h-[44px] border border-dust text-charcoal hover:bg-bone transition-colors text-sm font-medium uppercase tracking-wider"
+                  >
+                    Keep my account
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </form>
       )}
     </div>

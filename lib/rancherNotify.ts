@@ -17,7 +17,7 @@
 // Side effects only — never throws. Returns a small result for the caller's
 // log/summary. Callers pass already-fetched rows so we don't re-hit Airtable.
 
-import { sendRancherDepositPaid } from '@/lib/email';
+import { sendRancherDepositPaid, sendRancherFinalPaid } from '@/lib/email';
 import { fireRancherSMSEvent } from '@/lib/smsEvents';
 import { resolveBuyerContact } from '@/lib/reserveDeposit';
 
@@ -153,6 +153,100 @@ export async function notifyRancherDepositPaid(
     } catch (e: any) {
       console.warn('[rancherNotify] deposit-paid SMS failed (non-fatal):', e?.message);
     }
+  }
+
+  return result;
+}
+
+/**
+ * Pure content builder for the final-invoice-paid rancher alert (push + email
+ * subject). Extracted so channel copy is unit-testable without touching the
+ * send layer. Amounts are dollars.
+ */
+export function buildRancherFinalPaidContent(input: {
+  buyerFirstName?: string;
+  finalAmount: number;
+  totalSaleAmount: number;
+}): { pushTitle: string; pushBody: string; emailSubject: string } {
+  const buyerFirst = String(input.buyerFirstName || '').trim() || 'Your buyer';
+  const finalStr = `$${input.finalAmount.toFixed(2)}`;
+  const totalStr = `$${input.totalSaleAmount.toFixed(2)}`;
+  return {
+    pushTitle: `🎯 ${buyerFirst} paid in full — ${finalStr}`,
+    pushBody: `total sale ${totalStr}. payout lands in your bank in ~2 business days.`,
+    emailSubject: `${buyerFirst} paid their final balance — ${finalStr}`,
+  };
+}
+
+/**
+ * Notify the rancher that the final balance settled and the deal is fully
+ * paid (push + email). Deposit-paid's sibling: before this, only the admin
+ * Telegram fired on final-invoice settlement — the rancher never got their
+ * payday ping.
+ *
+ * @param referral  already-fetched Referral row (for the denormalized Buyer Name)
+ * @param rancher   already-fetched Ranchers row (for email/push target)
+ * @param opts.finalAmount      dollars charged on this final invoice
+ * @param opts.totalSaleAmount  dollars for the full sale (deposit + final)
+ */
+export async function notifyRancherFinalPaid(
+  referral: Record<string, any>,
+  rancher: Record<string, any>,
+  opts: { finalAmount: number; totalSaleAmount: number },
+): Promise<RancherNotifyResult> {
+  const result: RancherNotifyResult = {
+    emailSent: false,
+    smsSent: false,
+    hadEmail: false,
+    hadPhone: false,
+  };
+
+  const buyerName = String(referral['Buyer Name'] || '').trim();
+  const buyerFirstName = buyerName.split(/\s+/)[0] || 'Your buyer';
+  const content = buildRancherFinalPaidContent({
+    buyerFirstName,
+    finalAmount: opts.finalAmount,
+    totalSaleAmount: opts.totalSaleAmount,
+  });
+
+  const rancherEmail = resolveRancherEmail(rancher);
+  result.hadEmail = !!rancherEmail;
+  result.hadPhone = !!String(rancher['Phone'] || '').trim();
+
+  const rancherId: string | undefined = String(rancher['id'] || rancher['Id'] || '') || undefined;
+
+  // PWA push — best-effort + dark-safe (no-ops without VAPID/subscriptions),
+  // rides alongside email so the payday ping hits the rancher's pocket first.
+  if (rancherId) {
+    try {
+      const { sendRancherPush } = await import('@/lib/rancherPush');
+      await sendRancherPush(rancherId, {
+        title: content.pushTitle,
+        body: content.pushBody,
+        url: '/rancher#deals',
+      });
+    } catch (e: any) {
+      console.warn('[rancherNotify] final-paid push skipped (non-fatal):', e?.message);
+    }
+  }
+
+  // Email — gated on having an address. Suppression handled inside sendEmail.
+  if (rancherEmail) {
+    try {
+      const r = await sendRancherFinalPaid({
+        rancherEmail,
+        rancherFirstName: rancherFirstName(rancher),
+        buyerFirstName,
+        finalAmount: opts.finalAmount,
+        totalSaleAmount: opts.totalSaleAmount,
+        rancherId,
+      });
+      result.emailSent = !!r.success;
+    } catch (e: any) {
+      console.warn('[rancherNotify] final-paid email failed (non-fatal):', e?.message);
+    }
+  } else {
+    result.skipped = 'rancher has no email';
   }
 
   return result;

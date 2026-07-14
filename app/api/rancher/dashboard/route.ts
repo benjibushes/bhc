@@ -259,6 +259,10 @@ export async function GET(request: Request) {
         preferredStates: rancher['Preferred States'] || rancher['States Served'] || '',
         routingStates: rancher['Routing States'] || rancher['States Served'] || '',
         shipsNationwide: rancher['Ships Nationwide'] || false,
+        // Nationwide routing needs BOTH Ships Nationwide (rancher-editable)
+        // AND this admin-only flag — surfaced so the checkbox can say
+        // "pending review" instead of silently doing nothing.
+        adminApprovedMultiState: !!rancher['Admin Approved Multi-State'],
         certifications: rancher['Certifications'] || '',
         // Landing page fields
         slug: rancher['Slug'] || '',

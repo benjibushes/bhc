@@ -526,6 +526,29 @@ export async function settleFinalInvoice(pi: any): Promise<void> {
     }
   })();
 
+  // ── Rancher instant-notify (push + email) ───────────────────────────────
+  // Deposit-paid's sibling (2026-07-14): before this, only the admin Telegram
+  // below fired — the rancher was never told the balance landed and the deal
+  // fully paid. Best-effort: a notify failure must never throw or roll back
+  // the (already-completed) settlement above.
+  try {
+    const rancherRow: any = await getRecordById(TABLES.RANCHERS, rancherId).catch(() => null);
+    if (rancherRow) {
+      const { notifyRancherFinalPaid } = await import('@/lib/rancherNotify');
+      const r = await notifyRancherFinalPaid(referralRow, rancherRow, {
+        finalAmount,
+        totalSaleAmount: closeSaleAmount,
+      });
+      if (!r.emailSent) {
+        console.warn(`[settleFinalInvoice] rancher final-paid email not sent (ref=${referralId}): ${r.skipped || 'send failed'}`);
+      }
+    } else {
+      console.warn('[settleFinalInvoice] rancher final-paid notify skipped — rancher row unreadable');
+    }
+  } catch (e: any) {
+    console.warn('[settleFinalInvoice] rancher final-paid notify failed:', e?.message);
+  }
+
   try {
     await sendTelegramMessage(
       TELEGRAM_ADMIN_CHAT_ID,
