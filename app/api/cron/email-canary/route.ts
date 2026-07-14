@@ -23,6 +23,7 @@
 import { sendTelegramMessage, TELEGRAM_ADMIN_CHAT_ID } from '@/lib/telegram';
 import { withCronRun } from '@/lib/cronRun';
 import { requireCron } from '@/lib/cronAuth';
+import { probeResendKey } from '@/lib/platformProbes';
 
 export const maxDuration = 30;
 
@@ -33,50 +34,33 @@ interface CanaryResult {
 }
 
 async function realHandler(_request: Request): Promise<CanaryResult> {
-  const key = process.env.RESEND_API_KEY || '';
+  // One probe, two consumers: this canary + the daily-health-digest both call
+  // lib/platformProbes.probeResendKey — same detection, no drift.
+  const probe = await probeResendKey();
 
-  const alert = async (headline: string, detail: string) => {
+  if (!probe.ok) {
     try {
       if (TELEGRAM_ADMIN_CHAT_ID) {
         await sendTelegramMessage(
           TELEGRAM_ADMIN_CHAT_ID,
-          `🚨 <b>EMAIL CANARY: ${headline}</b>\n\n${detail}\n\n` +
-            `Every buyer email (deposit links, receipts, magic links) is DOWN until this is fixed. ` +
-            `Fix: resend.com → API Keys → create key → Vercel env RESEND_API_KEY → redeploy.`,
+          `🚨 <b>EMAIL CANARY: ${probe.detail}</b>\n\n` +
+            `Every buyer email (deposit links, receipts, magic links) is DOWN until this is fixed.\n` +
+            `FIX: ${probe.fix || 'rotate RESEND_API_KEY in Vercel + redeploy'}`,
         );
       }
     } catch (e: any) {
       console.error('[email-canary] telegram alert failed:', e?.message);
     }
-  };
-
-  if (!key) {
-    await alert('RESEND_API_KEY is NOT SET', 'The env var is missing/empty in this environment.');
-    return { status: 'error', recordsTouched: 0, notes: 'RESEND_API_KEY missing' };
+    return { status: 'error', recordsTouched: 0, notes: probe.detail };
   }
 
-  let res: Response;
-  try {
-    res = await fetch('https://api.resend.com/domains', {
-      headers: { Authorization: `Bearer ${key}` },
-      cache: 'no-store',
-    });
-  } catch (e: any) {
-    // Network blip — don't cry wolf; report partial so a persistent failure
-    // still shows up in Cron Runs.
-    return { status: 'partial', recordsTouched: 0, notes: `resend unreachable: ${e?.message || 'network error'}` };
+  if (probe.skipped) {
+    // Network blip — don't cry wolf; partial keeps a persistent failure
+    // visible in Cron Runs.
+    return { status: 'partial', recordsTouched: 0, notes: probe.detail };
   }
 
-  if (res.ok) {
-    return { status: 'success', recordsTouched: 0, notes: 'resend key valid' };
-  }
-
-  if (res.status === 400 || res.status === 401 || res.status === 403) {
-    await alert('Resend API key INVALID', `Resend rejected the key (HTTP ${res.status}).`);
-    return { status: 'error', recordsTouched: 0, notes: `resend key rejected (HTTP ${res.status})` };
-  }
-
-  return { status: 'partial', recordsTouched: 0, notes: `resend non-200 (HTTP ${res.status}) — likely their outage` };
+  return { status: 'success', recordsTouched: 0, notes: 'resend key valid' };
 }
 
 async function authedHandler(request: Request): Promise<Response> {

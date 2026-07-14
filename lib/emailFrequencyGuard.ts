@@ -342,7 +342,10 @@ export async function logEmailSend(input: {
   recipientConsumerId?: string;
   templateName: string;
   subject: string;
-  status: 'sent' | 'suppressed' | 'bounced' | 'complained';
+  // 'failed' (2026-07-14): the Resend SDK resolves API errors as { error }
+  // instead of throwing — a dead key used to be logged as 'sent', poisoning
+  // the audit log while every email died. Failed sends must log as failed.
+  status: 'sent' | 'suppressed' | 'bounced' | 'complained' | 'failed';
   suppressionReason?: string;
   /**
    * Optional campaign name. When present, written to the Email Sends
