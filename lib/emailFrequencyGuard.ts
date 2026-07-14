@@ -129,6 +129,10 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // once-ever per order (claim-stamped 'Review Asked At' + submit-side 409),
   // so whitelisting cannot create volume.
   'product_review_ask',
+  // Fulfillment-SLA chase (2026-07-14): one nudge EVER per order (stamped
+  // 'SLA Nudged At' before a second could fire) — whitelisting cannot create
+  // volume, and capping it would silently strand a paid unshipped order.
+  'product_sla_nudge',
   // Sales-floor pivot 2026-06-09: 4 new minimal-pipeline templates. All
   // are 1:1 transactional triggered by buyer state changes (signup, quiz
   // complete, sales-call close, rancher accept). Capping any of these
@@ -142,6 +146,7 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   // the #1 funnel conversion email is silently frequency-capped.
   'quiz_complete_deposit_invite',
   'buyer_deposit_invoice',
+  'buyer_refund_notice',
   'slot_locked_confirmation',
   // 2026-06-30 audit: two funnel-critical 1:1 triggers the buyer is actively
   // waiting on. sendQuizInvite is the backup quiz link when the client redirect

@@ -228,6 +228,10 @@
     {
       "path": "/api/cron/deposit-link-refresh",
       "schedule": "50 9 * * *"
+    },
+    {
+      "path": "/api/cron/product-fulfillment-sla",
+      "schedule": "20 15 * * *"
     }
   ]
 }
