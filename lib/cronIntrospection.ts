@@ -55,6 +55,7 @@ export const EXPECTED_CRONS_24H = [
   'deposit-link-refresh',
   'email-canary',
   'product-settlement-net',
+  'product-fulfillment-sla',
   'email-sequences',
   'final-invoice-dunning',
   'fulfillment-chase',

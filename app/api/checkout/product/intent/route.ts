@@ -14,19 +14,14 @@ import { resolveProductPurchase } from '@/lib/productBuyGates';
 import { createProductPaymentIntent } from '@/lib/productPaymentIntent';
 import { ensureApplePayDomains } from '@/lib/applePayDomain';
 import { isDemoMode } from '@/lib/demo/demoMode';
-import { rateLimit } from '@/lib/rateLimit';
+import { rateLimitStrict, getTrustedClientIp } from '@/lib/rateLimit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function clientIp(req: Request): string {
-  const xff = req.headers.get('x-forwarded-for') || '';
-  return xff.split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
-}
-
 export async function POST(request: Request) {
   // Same budget as the session mint: generous for a human, tight for a script.
-  const rl = await rateLimit(`product-intent:${clientIp(request)}`, { requests: 12, window: '1m' });
+  const rl = await rateLimitStrict(`product-intent:${getTrustedClientIp(request)}`, { requests: 12 });
   if (!rl.ok) {
     return NextResponse.json({ error: 'Too many attempts — wait a minute and try again.' }, { status: 429 });
   }
