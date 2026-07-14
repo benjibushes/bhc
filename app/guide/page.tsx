@@ -84,6 +84,10 @@ export default function GuidePage() {
             · or{' '}
             <a href="/access" className="underline hover:text-charcoal transition-colors">
               take the 90-second quiz &rarr;
+            </a>{' '}
+            · or{' '}
+            <a href="/half-a-cow" className="underline hover:text-charcoal transition-colors">
+              find half a cow near you &rarr;
             </a>
           </p>
         </div>
