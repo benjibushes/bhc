@@ -6245,6 +6245,7 @@ function AccountSettingsSection({
   rancher: RancherInfo;
   onSaved: (next: { name: string; ranchName: string; email: string; phone: string }) => void;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [operatorName, setOperatorName] = useState(rancher.name || '');
   const [ranchName, setRanchName] = useState(rancher.ranchName || '');
@@ -6253,6 +6254,47 @@ function AccountSettingsSection({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  // Self-serve account closure (soft-delete via /api/rancher/remove). The
+  // route was previously reachable only with a wizard-token magic link — an
+  // onboarded rancher had no way to close their account from the dashboard.
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeConfirm, setRemoveConfirm] = useState('');
+  const [removeReason, setRemoveReason] = useState('');
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState('');
+  const [removed, setRemoved] = useState(false);
+
+  async function removeRanch() {
+    const expected = (rancher.ranchName || '').trim().toLowerCase();
+    if (!expected || removeConfirm.trim().toLowerCase() !== expected) {
+      setRemoveError('Type your ranch name exactly as it appears above to confirm.');
+      return;
+    }
+    setRemoving(true);
+    setRemoveError('');
+    try {
+      const res = await fetch('/api/rancher/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ reason: removeReason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRemoveError(typeof data?.error === 'string' ? data.error : 'Could not remove your ranch — try again.');
+        return;
+      }
+      setRemoved(true);
+      // A removed rancher shouldn't stay logged in — clear the session
+      // cookie, then land on login once they've seen the confirmation.
+      await fetch('/api/auth/rancher/session', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+      setTimeout(() => router.push('/rancher/login'), 2500);
+    } catch {
+      setRemoveError('Network error — try again in a moment.');
+    } finally {
+      setRemoving(false);
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -6356,6 +6398,66 @@ function AccountSettingsSection({
           >
             {saving ? 'Saving…' : 'Save account'}
           </button>
+
+          {/* Danger zone — soft-delete account closure. Kept quiet (text link)
+              until asked for; type-the-ranch-name confirm before the POST. */}
+          <div className="pt-4 border-t border-dust">
+            {removed ? (
+              <p className="text-sm text-saddle">
+                Your ranch has been removed. Logging you out…
+              </p>
+            ) : !removeOpen ? (
+              <button
+                type="button"
+                onClick={() => setRemoveOpen(true)}
+                className="text-xs text-weathered underline underline-offset-2 hover:text-charcoal"
+              >
+                remove my ranch from BuyHalfCow
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-saddle">
+                  This removes <strong className="text-charcoal">{rancher.ranchName}</strong> from
+                  the map and stops new buyers from being routed to you. Your history stays on
+                  record. To confirm, type your ranch name:
+                </p>
+                <input
+                  type="text"
+                  value={removeConfirm}
+                  onChange={(e) => setRemoveConfirm(e.target.value)}
+                  placeholder={rancher.ranchName}
+                  className="w-full px-3 py-2 min-h-[44px] border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+                />
+                <textarea
+                  value={removeReason}
+                  onChange={(e) => setRemoveReason(e.target.value)}
+                  placeholder="Anything we could have done better? (optional)"
+                  rows={2}
+                  className="w-full px-3 py-2 border border-dust bg-bone text-charcoal text-sm focus:outline-none focus:border-charcoal"
+                />
+                {removeError && (
+                  <div className="p-3 border border-weathered text-weathered text-sm">{removeError}</div>
+                )}
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={removeRanch}
+                    disabled={removing}
+                    className="px-5 min-h-[44px] bg-weathered text-bone hover:bg-charcoal transition-colors text-sm font-medium uppercase tracking-wider disabled:opacity-50"
+                  >
+                    {removing ? 'Removing…' : 'Remove my ranch'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setRemoveOpen(false); setRemoveError(''); setRemoveConfirm(''); }}
+                    className="px-5 min-h-[44px] border border-dust text-charcoal hover:bg-bone transition-colors text-sm font-medium uppercase tracking-wider"
+                  >
+                    Keep my account
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </form>
       )}
     </div>
