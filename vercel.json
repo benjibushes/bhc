@@ -224,6 +224,10 @@
     {
       "path": "/api/cron/product-settlement-net",
       "schedule": "40 2,8,14,20 * * *"
+    },
+    {
+      "path": "/api/cron/deposit-link-refresh",
+      "schedule": "50 9 * * *"
     }
   ]
 }
