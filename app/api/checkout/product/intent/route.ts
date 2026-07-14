@@ -42,6 +42,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'that email doesn\'t look right — check it and try again.' }, { status: 400 });
   }
 
+
+  // Consent (checkout audit 2026-07-14): the charge relies on the written
+  // shipping/refund/perishable policy at /promise. The client sends
+  // consent:true only after the buyer acknowledges it — enforce server-side
+  // so a hand-crafted request can't skip the disclosure.
+  if (body?.consent !== true) {
+    return NextResponse.json({ error: 'consent required — agree to the shipping & refund policy.' }, { status: 400 });
+  }
+
   // ALL purchase gates — shared with the session route via resolveProductPurchase.
   const resolved = await resolveProductPurchase({
     productId: String(body?.productId || ''),

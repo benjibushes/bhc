@@ -38,6 +38,15 @@ export async function POST(request: Request) {
   }
   // ALL purchase gates live in the shared resolver (Payment Element PR A) —
   // this route and /api/checkout/product/intent can never drift.
+
+  // Consent (checkout audit 2026-07-14): the charge relies on the written
+  // shipping/refund/perishable policy at /promise. The client sends
+  // consent:true only after the buyer acknowledges it — enforce server-side
+  // so a hand-crafted request can't skip the disclosure.
+  if (body?.consent !== true) {
+    return NextResponse.json({ error: 'consent required — agree to the shipping & refund policy.' }, { status: 400 });
+  }
+
   const resolved = await resolveProductPurchase({
     productId: String(body?.productId || ''),
     quantity: Number(body?.quantity || 1),
