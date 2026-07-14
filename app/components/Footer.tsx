@@ -11,6 +11,7 @@ export default function Footer() {
         <div className="text-center space-y-6">
           <div className="flex flex-wrap justify-center gap-4 text-sm">
             <Button href="/map" variant="secondary">Map</Button>
+            <Button href="/half-a-cow" variant="secondary">Half a Cow Near You</Button>
             <Button href="/shop" variant="secondary">Shop</Button>
             <Button href="/wins" variant="secondary">Wins</Button>
             <Button href="/founders" variant="secondary">Founders</Button>

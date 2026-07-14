@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next';
 import { getActiveRancherPages, getAllRecords, TABLES } from '@/lib/airtable';
 import { loadMarketplaceProducts } from '@/lib/marketplaceProducts';
 import { US_STATES } from '@/lib/states';
+import { SEO_STATES } from '@/lib/stateSeo';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Canonical = www. (non-www 307s to www). Sitemap must use canonical
@@ -89,5 +90,22 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.7,
   }));
 
-  return [...staticRoutes, ...stateRoutes, ...rancherRoutes, ...newsRoutes, ...productRoutes];
+  // "half a cow [state]" keyword pages — /half-a-cow hub + one full-name-slug
+  // page per state (competitive-report gap #1). Static list, no fetch.
+  const halfACowRoutes: MetadataRoute.Sitemap = [
+    {
+      url: `${baseUrl}/half-a-cow`,
+      lastModified: new Date(),
+      changeFrequency: 'weekly' as const,
+      priority: 0.8,
+    },
+    ...SEO_STATES.map((s) => ({
+      url: `${baseUrl}/half-a-cow/${s.slug}`,
+      lastModified: new Date(),
+      changeFrequency: 'weekly' as const,
+      priority: 0.7,
+    })),
+  ];
+
+  return [...staticRoutes, ...stateRoutes, ...halfACowRoutes, ...rancherRoutes, ...newsRoutes, ...productRoutes];
 }
