@@ -1376,6 +1376,81 @@ async function alertInvoicePaymentFailed(invoice: any) {
   } catch (e) {
     console.error('[brand-past-due] dunning email failed (non-fatal):', e);
   }
+
+  // ── Dashboard-audit rank 7: RANCHER subscription past_due dunning ────
+  // Consumer + brand branches existed; a paid-tier rancher's card failure
+  // was invisible to the rancher. Own try/catch, non-fatal, runs regardless
+  // of consumer/brand hits above.
+  //
+  // Gated on invoice.subscription: add-on purchases are one-off invoices
+  // (no subscription) — without this gate the email fallback would dun a
+  // rancher for an add-on invoice retry.
+  //
+  // FIELD-NAME LANDMINE: Ranchers uses 'Stripe Subscription Id' (lowercase
+  // 'd', per app/api/rancher/tier/change/route.ts) while Consumers uses
+  // 'Stripe Subscription ID' — copy-pasting the consumer lookup silently
+  // misses.
+  if (invoice.subscription) {
+    try {
+      const customerEmail = String(invoice.customer_email || '').trim().toLowerCase();
+      let rancherMatches: any[] = [];
+      try {
+        rancherMatches = (await getAllRecords(
+          TABLES.RANCHERS,
+          `{Stripe Subscription Id} = "${escapeAirtableValue(invoice.subscription)}"`,
+        )) as any[];
+      } catch {}
+      if (rancherMatches.length === 0 && customerEmail) {
+        try {
+          const byEmail = (await getAllRecords(
+            TABLES.RANCHERS,
+            `LOWER({Email}) = "${escapeAirtableValue(customerEmail)}"`,
+          )) as any[];
+          // An email match whose row carries a DIFFERENT subscription id is
+          // some other product's invoice (e.g. a rancher who's also a
+          // founder) — never dun them for a sub that isn't theirs.
+          rancherMatches = byEmail.filter((row: any) => {
+            const trackedSub = String(row['Stripe Subscription Id'] || '').trim();
+            return !trackedSub || trackedSub === String(invoice.subscription);
+          });
+        } catch {}
+      }
+      if (rancherMatches.length > 0) {
+        const rancherRow = rancherMatches[0];
+        const rancherEmail = String(rancherRow['Email'] || customerEmail).trim();
+        if (rancherEmail) {
+          const { sendRancherPaymentFailed } = await import('@/lib/email');
+          await sendRancherPaymentFailed({
+            rancherName: String(rancherRow['Ranch Name'] || rancherRow['Operator Name'] || 'your ranch'),
+            contactName: String(rancherRow['Operator Name'] || rancherRow['Ranch Name'] || 'there'),
+            email: rancherEmail,
+            hostedInvoiceUrl: invoice.hosted_invoice_url || undefined,
+            amountCents: invoice.amount_due || 0,
+            rancherId: rancherRow.id,
+          });
+        }
+        // Stamp past_due so /rancher/billing shows the warning banner and
+        // admin can filter churn-risk. Plain string — Airtable singleSelect.
+        try {
+          await updateRecord(TABLES.RANCHERS, rancherRow.id, {
+            'Subscription Status': 'past_due',
+          });
+        } catch {}
+        // Best-effort push — never blocks, never throws (sendRancherPush's
+        // contract), and a rancher with no devices is a silent 0.
+        try {
+          const { sendRancherPush } = await import('@/lib/rancherPush');
+          await sendRancherPush(rancherRow.id, {
+            title: 'your BuyHalfCow payment failed',
+            body: 'update your card to keep your plan active',
+            url: '/rancher/billing',
+          });
+        } catch {}
+      }
+    } catch (e) {
+      console.error('[rancher-past-due] dunning failed (non-fatal):', e);
+    }
+  }
 }
 
 // ============================================================================

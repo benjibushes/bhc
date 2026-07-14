@@ -262,7 +262,26 @@ function RancherBillingContent() {
           )}
         </div>
 
-        {/* Subscription status */}
+        {/* Subscription status.
+            Portal button gate (dashboard-audit rank 7): was `=== 'active'`
+            only — a past_due rancher (the one who most needs to fix a card)
+            had NO self-serve path to the Stripe portal. Any state Stripe can
+            still update a payment method in gets the button; past_due/unpaid
+            additionally get a prominent warning banner. */}
+        {['past_due', 'unpaid'].includes(data.subscriptionStatus) && (
+          <div className="border border-weathered bg-weathered/10 p-4 mb-4">
+            <p className="text-sm mb-3">
+              ⚠️ <strong>Your last payment failed</strong> — your plan and its perks are at
+              risk of lapsing. Update your card:
+            </p>
+            <button
+              onClick={openPortal}
+              className="bg-charcoal text-bone px-6 py-2 uppercase tracking-wider text-xs"
+            >
+              Update payment method →
+            </button>
+          </div>
+        )}
         <div className="border border-dust bg-white p-6 mb-4">
           <div className="text-xs text-saddle uppercase tracking-wider mb-2">Subscription</div>
           <div className="flex items-baseline gap-3">
@@ -275,7 +294,7 @@ function RancherBillingContent() {
               </span>
             )}
           </div>
-          {data.subscriptionStatus === 'active' && (
+          {['active', 'past_due', 'unpaid', 'trialing'].includes(data.subscriptionStatus) && (
             <button
               onClick={openPortal}
               className="mt-3 text-saddle text-sm underline hover:text-charcoal"

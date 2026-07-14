@@ -45,6 +45,11 @@ export const TRANSACTIONAL_WHITELIST: ReadonlySet<string> = new Set([
   'sendBrandListingConfirmation',
   // Customer-expected payment failure notice — must reach the brand to retry.
   'sendBrandPaymentFailed',
+  // Rancher twin of sendBrandPaymentFailed (dashboard-audit rank 7): a
+  // paid-tier rancher's subscription card declined. One-shot per
+  // invoice.payment_failed event; suppressing it makes churn invisible to
+  // the rancher until Stripe cancels the plan.
+  'sendRancherPaymentFailed',
   // Customer-expected pre-renewal heads-up (3-7d before subscription renews) —
   // gives customer time to update card / cancel intentionally / etc. Suppressing
   // = surprise charge = chargeback. P3-A audit fix.
