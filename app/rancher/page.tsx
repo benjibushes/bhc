@@ -1421,6 +1421,26 @@ export default function RancherDashboardPage() {
         if (body[numKey]) body[numKey] = parseFloat(body[numKey]) || null;
         else body[numKey] = null;
       }
+      // Slug-rename confirm (dashboard-audit rank 10): a LIVE page's URL is
+      // on business cards / IG bios — renaming it deserves a beat of thought.
+      // Old links keep working via the Previous-Slugs 308, but the rancher
+      // should still update bios. Cancel aborts the whole save (simplest
+      // consistent behavior). Normalization mirrors the server's slug rule.
+      const nextSlug = String(body['Slug'] || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+      if (
+        rancherInfo?.pageLive &&
+        rancherInfo.slug &&
+        nextSlug &&
+        nextSlug !== rancherInfo.slug &&
+        !window.confirm('Change your page URL? Old links will keep working via redirect, but update your bio links when you can.')
+      ) {
+        setPageSaving(false);
+        return;
+      }
       // Silent-wipe guard: if the parity GET never hydrated these fields,
       // pageForm still holds the blank seeds — sending them would erase the
       // rancher's stored refund policy / socials / fulfillment / FAQ in

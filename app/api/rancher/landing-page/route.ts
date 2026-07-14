@@ -11,6 +11,7 @@ import { normalizeImageUrl } from '@/lib/imageUrl';
 import { validateAccountPatch, ACCOUNT_EDITABLE_KEYS } from '@/lib/accountProfile';
 import { validatePauseValue, validatePauseTransition } from '@/lib/pauseStatus';
 import { getSupabaseAdmin, findSupabaseUserIdByEmail } from '@/lib/supabaseAuth';
+import { appendPreviousSlug } from '@/lib/slugHistory';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '@/lib/secrets';
 
@@ -859,6 +860,34 @@ export async function PATCH(request: Request) {
           );
         } catch (e: any) {
           console.error('[landing-page] session re-mint failed:', e?.message);
+        }
+      }
+    }
+
+    // ── Slug rename history (rank 10) ────────────────────────────────────
+    // A live page's slug changed: record the old slug in 'Previous Slugs' so
+    // every link the rancher ever shared 308-redirects (app/ranchers/[slug]
+    // falls back to getRancherByPreviousSlug). SEPARATE best-effort write,
+    // AFTER the main save: the 'Previous Slugs' field may not exist in the
+    // Airtable base yet, and an UNKNOWN_FIELD_NAME here must be a logged
+    // no-op — never a failed save. Slug cleared to empty skips history (no
+    // current slug = no redirect target; the page is effectively unpublished).
+    if (priorRow && typeof fields['Slug'] === 'string' && fields['Slug']) {
+      const priorSlug = String(priorRow['Slug'] || '').trim().toLowerCase();
+      if (priorSlug && priorSlug !== fields['Slug'] && priorRow['Page Live']) {
+        try {
+          await updateRecord(TABLES.RANCHERS, session.rancherId, {
+            'Previous Slugs': appendPreviousSlug(
+              String(priorRow['Previous Slugs'] || ''),
+              priorSlug,
+              fields['Slug'],
+            ),
+          });
+        } catch (e: any) {
+          console.warn(
+            '[landing-page] Previous Slugs write failed (create the long-text field in Airtable to enable rename redirects):',
+            e?.message,
+          );
         }
       }
     }
