@@ -44,6 +44,9 @@ interface RancherInfo {
   preferredStates?: string;
   routingStates?: string;
   shipsNationwide: boolean;
+  // Admin-only gate that pairs with Ships Nationwide — nationwide routing is
+  // live only when BOTH are set. Drives the pending/live note on the checkbox.
+  adminApprovedMultiState?: boolean;
   certifications: string;
   // Landing page fields
   slug: string;
@@ -3849,15 +3852,33 @@ export default function RancherDashboardPage() {
                     })()}
                   </div>
 
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id="shipsNationwide"
-                      checked={pageForm['Ships Nationwide'] === 'true'}
-                      onChange={e => setPageForm(p => ({ ...p, 'Ships Nationwide': e.target.checked ? 'true' : '' }))}
-                      className="w-4 h-4"
-                    />
-                    <label htmlFor="shipsNationwide" className="text-sm">We ship nationwide</label>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="shipsNationwide"
+                        checked={pageForm['Ships Nationwide'] === 'true'}
+                        onChange={e => setPageForm(p => ({ ...p, 'Ships Nationwide': e.target.checked ? 'true' : '' }))}
+                        className="w-4 h-4"
+                      />
+                      <label htmlFor="shipsNationwide" className="text-sm">We ship nationwide</label>
+                    </div>
+                    {/* Honesty note: routing nationwide also requires the
+                        admin-only Admin Approved Multi-State flag — mirror the
+                        Preferred States pending/live pattern so checking the
+                        box never LOOKS self-serve when it isn't. */}
+                    {pageForm['Ships Nationwide'] === 'true' && (
+                      rancherInfo.adminApprovedMultiState ? (
+                        <p className="text-xs">
+                          <span className="font-bold text-sage-dark">✓ Nationwide routing live</span>
+                        </p>
+                      ) : (
+                        <p className="text-xs">
+                          <span className="font-bold text-amber-dark">⏳ Pending review</span>
+                          <span className="text-charcoal"> — nationwide routing turns on once our team approves it (usually same day).</span>
+                        </p>
+                      )
+                    )}
                   </div>
 
                   {/* ── Trust & Policies ──────────────────────────────────────

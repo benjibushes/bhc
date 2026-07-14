@@ -730,22 +730,41 @@ export async function PATCH(request: Request) {
       }
     }
 
-    // If Preferred States changed, snapshot the prior value so we can alert
+    // Prior-row snapshot — shared by the Preferred-States diff alert and the
+    // Ships-Nationwide flip alert below (one Airtable read, not one per
+    // alert). Best-effort: a failed read skips the alerts, never the save.
+    let priorRow: any = null;
+    if ('Preferred States' in fields || 'Ships Nationwide' in fields) {
+      try {
+        priorRow = await getRecordById(TABLES.RANCHERS, session.rancherId);
+      } catch {
+        // Non-fatal — proceed without the alerts.
+      }
+    }
+
+    // If Preferred States changed, keep the prior value so we can alert
     // Ben with the diff. Routing States is admin-controlled — rancher edits
     // here only request a change; Ben promotes by editing Routing States.
     let preferredChanged: { before: string; after: string } | null = null;
-    if ('Preferred States' in fields) {
-      try {
-        const prior = await getRecordById(TABLES.RANCHERS, session.rancherId) as any;
-        const before = String(prior?.['Preferred States'] || '').trim();
-        const after = String(fields['Preferred States'] || '').trim();
-        if (before !== after) {
-          preferredChanged = { before, after };
-        }
-      } catch {
-        // Non-fatal — proceed without the alert.
+    if (priorRow && 'Preferred States' in fields) {
+      const before = String(priorRow['Preferred States'] || '').trim();
+      const after = String(fields['Preferred States'] || '').trim();
+      if (before !== after) {
+        preferredChanged = { before, after };
       }
     }
+
+    // Ships Nationwide flipped ON by a rancher who isn't admin-approved yet:
+    // the checkbox alone does NOT activate nationwide routing (matching also
+    // requires the admin-only Admin Approved Multi-State flag), so Ben needs
+    // a review ping. Flip OFF or an already-approved toggle → nothing pending,
+    // no alert. Ships Nationwide is already coerced to a boolean above.
+    const nationwidePendingFlip =
+      !!priorRow &&
+      'Ships Nationwide' in fields &&
+      fields['Ships Nationwide'] === true &&
+      !priorRow['Ships Nationwide'] &&
+      !priorRow['Admin Approved Multi-State'];
 
     // ── Account / profile fields (WAVE 3b) ───────────────────────────────
     // Operator Name / Ranch Name / Email / Phone are allowlisted above but
@@ -776,6 +795,18 @@ export async function PATCH(request: Request) {
         );
       } catch (e) {
         console.error('Telegram preferred-states alert error:', e);
+      }
+    }
+
+    if (nationwidePendingFlip) {
+      try {
+        const name = priorRow?.['Operator Name'] || priorRow?.['Ranch Name'] || 'Unknown';
+        await sendTelegramMessage(
+          TELEGRAM_ADMIN_CHAT_ID,
+          `🌎 <b>SHIPS NATIONWIDE flipped ON</b> — ${name}. Not admin-approved yet; set Admin Approved Multi-State in Airtable to activate nationwide routing.`
+        );
+      } catch (e) {
+        console.error('Telegram ships-nationwide alert error:', e);
       }
     }
 
