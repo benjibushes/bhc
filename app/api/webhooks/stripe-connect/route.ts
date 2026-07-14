@@ -455,6 +455,24 @@ export async function POST(request: Request) {
             console.error('[stripe-connect] product_purchase settlement failed:', e);
             await flipStripeEventFailed(event.id, e?.message || 'unknown').catch(() => {});
             if (isPermanentSettlementError(e)) {
+              // PERMANENT = money was taken but no order can ever be written
+              // without a hand-fix (malformed/inverted metadata). Returning a
+              // silent 200 here was checkout-audit critical #1's worst branch —
+              // the buyer stayed invisible with zero alert. Scream, then 200
+              // (retries can't help a permanent failure).
+              await sendOperatorSignal({
+                urgency: 'loud',
+                kind: 'system-error',
+                summary: 'PAID product order CANNOT settle (permanent)',
+                detail:
+                  `PaymentIntent ${pi?.id || 'unknown'} on account ${accountId || 'unknown'} succeeded ` +
+                  `(buyer charged, funds split) but settlement failed permanently: ${e?.message || 'unknown'}. ` +
+                  `No order row / receipt / ship-to email exists. Fix the PI metadata by hand, then re-run ` +
+                  `product-settlement-net — it will pick the PI up.`,
+                dedupeKey: `product-settle-permanent:${pi?.id || event.id}`,
+              }).catch((sigErr: any) =>
+                console.error('[stripe-connect] permanent-failure signal failed:', sigErr?.message),
+              );
               return NextResponse.json({ received: true, permanent: true });
             }
             return NextResponse.json({ error: 'product settlement failed' }, { status: 500 });

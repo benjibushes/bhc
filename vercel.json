@@ -220,6 +220,10 @@
     {
       "path": "/api/cron/email-canary",
       "schedule": "15 8 * * *"
+    },
+    {
+      "path": "/api/cron/product-settlement-net",
+      "schedule": "40 2,8,14,20 * * *"
     }
   ]
 }
