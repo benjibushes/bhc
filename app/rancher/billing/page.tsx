@@ -18,6 +18,10 @@ interface BillingData {
   subscriptionStatus: string;
   subscriptionStarted: string | null;
   subscriptionNext: string | null;
+  // True only when the rancher has a REAL Stripe Subscription Id —
+  // legacy_connect carries a synthetic 'active' status with no subscription,
+  // and the plan switcher must hide for them (tier/change 409s without one).
+  hasRealSubscription?: boolean;
   connectStatus: string;
   connectAccountId: string | null;
   // How many KYC items Stripe is still waiting on (0 when none / unknown).
@@ -63,6 +67,17 @@ const ADDON_CATALOG = [
   { slug: 'founder_letter', label: 'Founder-Letter Campaign', priceCents: 75000, description: '3-email founder-voice sequence to your customer list' },
 ];
 
+// The 3 paid tiers, for the plan switcher (dashboard-audit rank 8).
+// Hardcoded like ADDON_CATALOG above — lib/tiers.ts re-exports from
+// lib/secrets (throws at import when env is missing), so it is NOT safe to
+// import into a client component. Prices/rates mirror TIERS in lib/tiers.ts;
+// the server route revalidates the slug against the real catalog anyway.
+const TIER_CATALOG = [
+  { slug: 'pasture', label: 'Pasture', monthlyCents: 15000, commissionPct: '7%' },
+  { slug: 'ranch', label: 'Ranch', monthlyCents: 35000, commissionPct: '3%' },
+  { slug: 'operator', label: 'Operator', monthlyCents: 50000, commissionPct: '0%' },
+];
+
 export default function RancherBillingPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-bone text-charcoal flex items-center justify-center"><p>Loading billing…</p></div>}>
@@ -79,6 +94,13 @@ function RancherBillingContent() {
   // Add-on purchase error — kept separate from `error` (which is page-fatal and
   // swaps the whole view for an error screen). Renders inline in the add-on shop.
   const [purchaseErr, setPurchaseErr] = useState('');
+  // Plan switcher (dashboard-audit rank 8) — POST /api/rancher/tier/change had
+  // ZERO UI callers, so a subscribed rancher literally could not change plans
+  // anywhere (tier/select 409s them toward the change route this UI now calls).
+  const [showPlans, setShowPlans] = useState(false);
+  const [tierChanging, setTierChanging] = useState<string | null>(null);
+  const [tierChangeMsg, setTierChangeMsg] = useState('');
+  const [tierChangeErr, setTierChangeErr] = useState('');
   const justOnboarded = search.get('onboarding') === 'done';
   // While polling for the post-onboarding status flip (Stripe webhook → Airtable
   // → live read can lag a few seconds), show a "still refreshing" hint.
@@ -144,6 +166,38 @@ function RancherBillingContent() {
       else setError(j?.error || 'Portal session failed');
     } catch (e: any) {
       setError(e?.message);
+    }
+  };
+
+  const changeTier = async (slug: string, label: string, priceLabel: string) => {
+    if (!window.confirm(`Switch to ${label} (${priceLabel}/mo)? The difference is prorated on your next invoice.`)) return;
+    setTierChanging(slug);
+    setTierChangeErr('');
+    setTierChangeMsg('');
+    try {
+      const res = await fetch('/api/rancher/tier/change', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tier: slug }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j?.ok) {
+        // The Airtable Tier field flips when the customer.subscription.updated
+        // webhook lands — the refetched label can lag a few seconds.
+        setTierChangeMsg('Plan updated — your next invoice reflects the change. The plan shown here may take a minute to catch up.');
+        await loadData();
+      } else if (res.status === 409) {
+        // No real subscription after all — the no-subscription path the
+        // change route itself points at is the tier checkout.
+        window.location.href = `/partner/checkout/${slug}`;
+      } else {
+        setTierChangeErr(typeof j?.error === 'string' ? j.error : 'Plan change failed — try again.');
+      }
+    } catch (e: any) {
+      setTierChangeErr(e?.message || 'Plan change failed — try again.');
+    } finally {
+      setTierChanging(null);
     }
   };
 
@@ -234,6 +288,63 @@ function RancherBillingContent() {
           {data.monthlyCents != null && data.commissionRate != null && (
             <div className="text-saddle">
               {fmtCurrency(data.monthlyCents)}/mo + {fmtRatePct(data.commissionRate)}% commission
+            </div>
+          )}
+          {/* Plan switcher — only for ranchers with a REAL subscription
+              (legacy_connect's synthetic 'active' has nothing to prorate;
+              they upgrade via the legacy banner's checkout links above).
+              past_due is allowed — Stripe permits subscription updates and
+              the rank-7 dunning banner stays the primary call to action. */}
+          {data.tier && data.hasRealSubscription && (
+            <div className="mt-4 pt-3 border-t border-divider">
+              {!showPlans ? (
+                <button
+                  onClick={() => setShowPlans(true)}
+                  className="text-saddle text-sm underline hover:text-charcoal"
+                >
+                  Change plan →
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-xs text-saddle uppercase tracking-wider mb-1">Change plan</div>
+                  {TIER_CATALOG.map((t) => {
+                    const isCurrent = t.slug === data.tier;
+                    return (
+                      <div key={t.slug} className="flex items-center justify-between gap-3 border border-divider p-3">
+                        <div className="text-sm">
+                          <span className="font-semibold">{t.label}</span>{' '}
+                          <span className="text-saddle">
+                            · {fmtCurrency(t.monthlyCents)}/mo + {t.commissionPct} commission
+                          </span>
+                        </div>
+                        {isCurrent ? (
+                          <span className="text-xs text-saddle uppercase tracking-wider">Current plan</span>
+                        ) : (
+                          <button
+                            onClick={() => changeTier(t.slug, t.label, fmtCurrency(t.monthlyCents))}
+                            disabled={tierChanging !== null}
+                            className="text-sm underline text-saddle hover:text-charcoal disabled:opacity-50"
+                          >
+                            {tierChanging === t.slug ? 'Switching…' : 'Switch →'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <p className="text-xs text-saddle">
+                    Switching is prorated by Stripe on your next invoice — no double charge.
+                  </p>
+                </div>
+              )}
+              {tierChangeMsg && (
+                <div className="mt-3 p-3 border border-sage/40 bg-sage/10 text-sage-dark text-sm">{tierChangeMsg}</div>
+              )}
+              {tierChangeErr && (
+                <div className="mt-3 p-3 border-l-4 border-weathered bg-weathered/10 text-sm text-weathered flex items-center justify-between gap-3">
+                  <span>{tierChangeErr}</span>
+                  <button type="button" onClick={() => setTierChangeErr('')} className="text-lg leading-none hover:opacity-70">×</button>
+                </div>
+              )}
             </div>
           )}
           {!data.tier && (
